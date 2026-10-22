@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Headless prior-binary rollback drill.
 #
-# Runs the previous released binary (v0.47.1) over a copy of synthetic session
+# Runs the previous released binary (v0.48.0) over a copy of synthetic session
 # fixtures the candidate has read and recovered, headless with redirected
 # input, and compares replay, pending-action recovery and command behaviour to
 # the preservation contract:
@@ -46,7 +46,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-readonly PRIOR_TAG=v0.47.1
+readonly PRIOR_TAG=v0.48.0
 readonly CONV_ID=1788000000000-d81101
 readonly PEND_ID=1788000000001-d81102
 readonly CONV_USER='what does the rollback drill replay'
@@ -292,7 +292,7 @@ echo '==> candidate reads and recovers the fixtures'
 status=$(headless "$candidate" "$chome")
 [[ $status == 0 ]] || fail "the candidate fresh run exited $status"
 has "$stage/out" '/login' 'the candidate fresh run never said what to do about a missing key'
-has "$stage/out" '/model' 'the candidate fresh run never named /model'
+has "$stage/out" 'coding agent' 'the candidate fresh run never named the coding agent'
 if grep -q $'\e' "$stage/out"; then
     fail 'the candidate fresh run wrote an escape sequence to redirected output'
 fi

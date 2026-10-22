@@ -18,8 +18,9 @@
 //! A turn holds the run while it is under way, and gives it back however it
 //! ends. A turn whose caller stopped waiting may have left the program
 //! mid-answer, and one whose run ended left nothing to answer, so neither run
-//! takes a further turn: the next prompt stops it and is refused. An
-//! interrupt reaches only a turn under way, and one rung as a turn ends is
+//! takes a further turn: the next prompt stops it and is refused before its
+//! turn begins, so that whoever holds the run can launch another for that
+//! prompt. An interrupt reaches only a turn under way, and one rung as a turn ends is
 //! forgotten when the run is given back. Closing asks a turn under way to stop
 //! and waits, for at most [`CLOSING`], until it gives the run back, then holds
 //! the run while it stops it, so that every close returns once nothing the run
@@ -74,8 +75,8 @@ enum Slot {
     /// Stopped.
     Closed,
     /// Stopped as far as it could be, without its end confirmed, or left
-    /// while it was being stopped.
-    Unstopped,
+    /// while it was being stopped; and why.
+    Unstopped(Unstopped),
 }
 
 /// An installed agent's run, answering as a [`Backend`].
@@ -149,7 +150,7 @@ fn gate(capabilities: &Capabilities, capability: Capability) -> Result<(), Error
 }
 
 /// A stop that could not be confirmed, as the contract's failure.
-fn unstopped(unstopped: Unstopped) -> Error {
+fn unstopped(unstopped: &Unstopped) -> Error {
     Failure::new(&unstopped.to_string()).into()
 }
 
@@ -164,6 +165,8 @@ struct Away<'s> {
     finished: bool,
     /// Whether the run it took was confirmed to have stopped.
     stopped: bool,
+    /// Why the run it took was not, once its stop has said.
+    unstopped: Option<Unstopped>,
 }
 
 impl Drop for Away<'_> {
@@ -172,7 +175,8 @@ impl Drop for Away<'_> {
         let closing = matches!(*slot, Slot::Away { closing: true });
         *slot = match self.running.take() {
             None if self.stopped => Slot::Closed,
-            None => Slot::Unstopped,
+            // Left while it was being stopped, when the stop said nothing.
+            None => Slot::Unstopped(self.unstopped.take().unwrap_or(Unstopped::Unfinished)),
             Some(running) if self.finished && !closing && !running.host.ended() => {
                 // A stop rung as the turn ended has nothing left to stop.
                 running.host.rest();
@@ -227,9 +231,10 @@ impl Backend for External {
                         *slot = Slot::Closed;
                         return Err(Failure::new("this agent's run has ended").into());
                     }
-                    Slot::Unstopped => {
-                        *slot = Slot::Unstopped;
-                        return Err(unstopped(Unstopped));
+                    Slot::Unstopped(left) => {
+                        let failure = unstopped(&left);
+                        *slot = Slot::Unstopped(left);
+                        return Err(failure);
                     }
                 }
             };
@@ -238,10 +243,15 @@ impl Backend for External {
                 running: Some(running),
                 finished: false,
                 stopped: false,
+                unstopped: None,
             };
             if spent {
-                if let Some(running) = away.running.take() {
-                    running.host.stop(STOP_GRACE).await.map_err(unstopped)?;
+                if let Some(running) = away.running.take()
+                    && let Err(left) = running.host.stop(STOP_GRACE).await
+                {
+                    let failure = unstopped(&left);
+                    away.unstopped = Some(left);
+                    return Err(failure);
                 }
                 away.stopped = true;
                 return Err(Failure::new(
@@ -312,9 +322,10 @@ impl Backend for External {
                             *slot = Slot::Closed;
                             return Ok(());
                         }
-                        Slot::Unstopped => {
-                            *slot = Slot::Unstopped;
-                            return Err(unstopped(Unstopped));
+                        Slot::Unstopped(left) => {
+                            let failure = unstopped(&left);
+                            *slot = Slot::Unstopped(left);
+                            return Err(failure);
                         }
                         Slot::Away { closing } => {
                             if !closing {
@@ -331,9 +342,14 @@ impl Backend for External {
                         running: Some(running),
                         finished: false,
                         stopped: false,
+                        unstopped: None,
                     };
-                    if let Some(running) = away.running.take() {
-                        running.host.stop(STOP_GRACE).await.map_err(unstopped)?;
+                    if let Some(running) = away.running.take()
+                        && let Err(left) = running.host.stop(STOP_GRACE).await
+                    {
+                        let failure = unstopped(&left);
+                        away.unstopped = Some(left);
+                        return Err(failure);
                     }
                     away.stopped = true;
                     return Ok(());

@@ -63,7 +63,9 @@ pub(crate) trait Stream: Send {
 }
 
 /// What an output pipe must be to be waited on: read without waiting, and on
-/// Unix named by a descriptor the reactor can watch.
+/// Unix named by a descriptor the reactor can watch. That descriptor is the
+/// one the pipe owns, the same whenever asked and open while the pipe lives:
+/// registering it with the reactor is sound only on that word.
 #[cfg(unix)]
 pub(crate) trait Pipe: Output + std::os::fd::AsRawFd {}
 #[cfg(unix)]

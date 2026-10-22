@@ -16,6 +16,27 @@ fn startup_distinguishes_no_credential_from_an_unselected_provider() {
     assert_eq!(unasked(Some(first().name), true), NO_MODEL_CHOSEN);
 }
 
+/// `/login` is where nothing is set up, and what it offers there is the way on:
+/// an account, a key, or an installed coding agent, each of which leaves the
+/// conversation asking a model without a `/model` first. The sentence names the
+/// agent route as `/login` words it, and does not send anyone to `/model`
+/// after a login that has already taken one.
+#[test]
+fn nothing_to_ask_names_the_agent_route_and_no_model_to_choose_after_it() {
+    assert!(
+        NOTHING_TO_ASK.contains("Use /login"),
+        "it must still name /login: {NOTHING_TO_ASK}"
+    );
+    assert!(
+        NOTHING_TO_ASK.contains("installed coding agent"),
+        "it must name the agent route /login offers: {NOTHING_TO_ASK}"
+    );
+    assert!(
+        !NOTHING_TO_ASK.contains("/model"),
+        "no login route here leaves a model to choose: {NOTHING_TO_ASK}"
+    );
+}
+
 /// The built-in providers, as one generation the tests read against.
 fn catalogue() -> Providers {
     providers()

@@ -12,6 +12,10 @@
 //! program not found or not executable, with the sentences saying what to do;
 //! and a route with no yes, with what to ask. Only then is the hold taken from
 //! `content_use`, the child's sandbox policy built, and the process started.
+//! The first two are decided in one place, [`Agent::program`], which an
+//! operation that would ask about a route before starting the agent consults
+//! first through [`Steps::refusal`], so nobody is asked to agree to a launch
+//! that is refused whatever the answer.
 //! A probe and an account step are starts like a turn's and go through the
 //! same gates, each under a hold of its own. An account step the dialect
 //! speaks over the program's own wire is bounded: a version or status within
@@ -41,24 +45,31 @@
 //! moment, confined or not as the sandbox is then, so a run started after the
 //! sandbox was turned off or on is held to the same choice a command would be.
 //! Every run of one [`Runs`] is launched on one control, so none starts beside
-//! another still held or one that could not be confirmed stopped.
+//! another still held or one that could not be confirmed stopped. The [`Runs`]
+//! that [`Steps`] hands out for one `externalAgents` entry share one control
+//! between them, so a route rebuilt for that entry, by a resume, a move onto
+//! the agent or a connect, starts no run beside one the route it replaces
+//! left held. A [`Runs`] made by [`Runs::new`] has a control of its own.
 //!
 //! An account step on any instance the configuration names, the
 //! conversation's route or not, is taken through [`Steps`], under the same
 //! policy at that moment and the same gates, and so is the run of a session
-//! an agent ran, picked back up on that agent from elsewhere. What it read is all it returns:
+//! an agent ran, picked back up on that agent from elsewhere. An account step
+//! runs on a control of its own, apart from any run's. What it read is all it returns:
 //! a step that could not be started reads as unreadable, saying why, so a
 //! caller claims nothing the step did not establish.
 
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use crucible_config::{Driver, ExternalAgent};
 use crucible_execution::{Backend, Capabilities, Capability, Failure, SessionRef, Text};
 use crucible_external_harnesses::{
-    Account, Control, Dialect, Discovery, Host, Launch, PREPARING, Reading, Refusal, Request, Shape,
+    Account, Control, Dialect, Discovery, Host, Launch, PREPARING, Program, Reading, Refusal,
+    Request, Shape,
 };
 use crucible_models::Effort;
 use crucible_runtime::BoxFuture;
@@ -246,6 +257,46 @@ impl Agent {
                 dialect.program()
             )),
             Discovery::NotExecutable(path) => Err(format!("{} is not executable", path.display())),
+        }
+    }
+
+    /// Its program, where nothing refuses a start before any process: its row
+    /// is shipped, and its program was found. This is the one place those two
+    /// are decided, in that order, so that a question put before a start and
+    /// the start itself refuse the same launch for the same reason.
+    ///
+    /// # Errors
+    ///
+    /// [`Unlaunched::Withheld`] for a row this release does not ship, else
+    /// [`Unlaunched::NotInstalled`] for a program not found or not
+    /// executable, else [`Unlaunched::Unknown`] where its route has no
+    /// sentences to say what to do.
+    pub fn program(&self, consent: &Consent) -> Result<&Program, Unlaunched> {
+        let row = self.row;
+        let shown = consent
+            .routes()
+            .warned(row.route)
+            .map_or(row.driver.name(), |warned| warned.shown);
+        if !row.shipping {
+            return Err(Unlaunched::Withheld {
+                agent: shown.to_owned(),
+                documented: row.documented(),
+            });
+        }
+        match &self.discovery {
+            Discovery::Found(program) => Ok(program),
+            missing @ (Discovery::Missing | Discovery::NotExecutable(_)) => {
+                // The command is the same in every mode, and asking is a mode
+                // every row runs in.
+                let command = (row.dialect)(crucible_tools::Mode::default())
+                    .map_or(row.driver.name(), |dialect| dialect.program());
+                Err(
+                    installing::refusal(row, missing, shown, command).map_or_else(
+                        || Unlaunched::Unknown(row.route.to_owned()),
+                        Unlaunched::NotInstalled,
+                    ),
+                )
+            }
         }
     }
 
@@ -610,32 +661,7 @@ impl<'a> Launcher<'a> {
         life: Life<'_>,
     ) -> Result<Host, Unlaunched> {
         let row = agent.row;
-        let shown = self
-            .consent
-            .routes()
-            .warned(row.route)
-            .map_or(row.driver.name(), |warned| warned.shown);
-        if !row.shipping {
-            return Err(Unlaunched::Withheld {
-                agent: shown.to_owned(),
-                documented: row.documented(),
-            });
-        }
-        let program = match &agent.discovery {
-            Discovery::Found(program) => program.clone(),
-            missing @ (Discovery::Missing | Discovery::NotExecutable(_)) => {
-                // The command is the same in every mode, and asking is a mode
-                // every row runs in.
-                let command = (row.dialect)(crucible_tools::Mode::default())
-                    .map_or(row.driver.name(), |dialect| dialect.program());
-                return Err(
-                    installing::refusal(row, missing, shown, command).map_or_else(
-                        || Unlaunched::Unknown(row.route.to_owned()),
-                        Unlaunched::NotInstalled,
-                    ),
-                );
-            }
-        };
+        let program = agent.program(self.consent)?.clone();
         let held = content_use::held(self.consent, row.route).map_err(|unheld| match unheld {
             Unheld::Asks(warned) => Unlaunched::Asks(warned),
             Unheld::Unknown => Unlaunched::Unknown(row.route.to_owned()),
@@ -814,6 +840,11 @@ pub struct Steps {
     registry: &'static Registry,
     /// The `PATH` an agent's program is looked for on.
     path: Option<OsString>,
+    /// What every [`Runs`] this hands out for an `externalAgents` entry is
+    /// launched on, by the entry's name, made when the entry's first is asked
+    /// for. An entry is one the configuration names, so there are no more than
+    /// it has.
+    controls: Mutex<HashMap<Box<str>, Control>>,
 }
 
 impl std::fmt::Debug for Steps {
@@ -841,7 +872,20 @@ impl Steps {
             consent: launcher.consent.clone(),
             registry,
             path,
+            controls: Mutex::default(),
         }
+    }
+
+    /// What every run of the entry `instance` is launched on; none once this
+    /// process has numbered every control it can.
+    fn control(&self, instance: &str) -> Option<Control> {
+        let mut kept = self.controls.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(control) = kept.get(instance) {
+            return Some(control.clone());
+        }
+        let control = Control::new()?;
+        kept.insert(instance.into(), control.clone());
+        Some(control)
     }
 
     /// What is installed as `executable`, looked for on the `PATH` every step
@@ -896,7 +940,8 @@ impl Steps {
     }
 
     /// Runs of `agent`, the entry `instance`, each launched under the policy
-    /// and the yeses every step is.
+    /// and the yeses every step is, and on the control every other [`Runs`]
+    /// this hands out for that entry is launched on.
     #[must_use]
     pub fn runs(&self, agent: Agent, instance: &str) -> Runs {
         Runs {
@@ -907,8 +952,26 @@ impl Steps {
             consent: self.consent.clone(),
             agent,
             instance: instance.into(),
-            control: Control::new(),
+            control: self.control(instance),
         }
+    }
+
+    /// Why a start of the configured `agent`, whose registry row is `row`,
+    /// would be refused before any process, as [`Agent::program`] decides it;
+    /// nothing where it would not be.
+    #[must_use]
+    pub fn refusal(&self, row: &'static Row, agent: &ExternalAgent) -> Option<Unlaunched> {
+        Agent {
+            row,
+            discovery: discover(agent.executable(), |name| {
+                (name == "PATH").then(|| self.path.clone()).flatten()
+            }),
+            profile: None,
+            model: None,
+            effort: None,
+        }
+        .program(&self.consent)
+        .err()
     }
 
     /// What the account step `step` of the configured `agent` read, run to

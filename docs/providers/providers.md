@@ -88,8 +88,8 @@ Warning: No model selected. Use /model to select the model to ask.
 ```
 
 ```
-Warning: No models available. Use /login or set an API key environment
-variable. Then use /model to select a model.
+Warning: No models available. Use /login to sign in or to use an installed
+coding agent, or set an API key environment variable.
 ```
 
 A `/login` where no provider is being asked fills the second rung: it takes the
@@ -394,7 +394,8 @@ moves the conversation off the agent onto it, in a new session. A model of a
 provider whose `access` names an installed agent the conversation is not on
 moves it onto that agent, in a new session, as [installed
 agents](agents.md) describes. For an agent that chooses its own model,
-`/model` and `/effort` say so instead.
+`/model` alone and `/effort` say so instead; a model named on the line still
+moves the conversation off the agent onto another provider.
 
 Where a vendor serves a model faster for a higher price, `/fast` asks for it,
 after saying what it costs. [Fast](fast.md) lists which models have a fast form,

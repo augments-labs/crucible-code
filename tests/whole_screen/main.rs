@@ -2716,7 +2716,7 @@ fn the_login_panel_says_what_starting_an_agent_runs_and_going_back_starts_nothin
     window.types_until("", "Nothing starts");
     let launch = window.picture();
     assert!(
-        launch.contains("runs this profile's hooks, MCP servers and plugins"),
+        launch.contains("Starting it runs the hooks, helper commands, MCP servers and plugins"),
         "{launch}"
     );
     assert!(
@@ -4600,15 +4600,39 @@ fn releases_newest_first() -> Vec<&'static str> {
         .collect()
 }
 
-/// How many lines `version`'s section takes in the changelog.
-fn release_lines(version: &str) -> usize {
+/// How many rows `version`'s section takes in the changelog once its lines
+/// are wrapped to `width` columns: a blank line is one row, and a line breaks
+/// at the last space that fits, or in a word longer than the width.
+fn release_rows(version: &str, width: usize) -> usize {
     let heading = format!("## [{version}]");
     include_str!("../../CHANGELOG.md")
         .lines()
         .skip_while(|line| !line.starts_with(&heading))
         .skip(1)
         .take_while(|line| !line.starts_with("## ["))
-        .count()
+        .map(|line| {
+            let mut rows = 1;
+            let mut used = 0;
+            for word in line.split_whitespace() {
+                let mut length = word.chars().count();
+                // A word that fits nowhere on the row it is on starts the next.
+                if used > 0 && used + 1 + length > width {
+                    rows += 1;
+                    used = 0;
+                }
+                if used > 0 {
+                    used += 1;
+                }
+                // A word longer than a whole row is broken across rows.
+                while length > width {
+                    rows += 1;
+                    length -= width;
+                }
+                used += length;
+            }
+            rows
+        })
+        .sum()
 }
 
 /// The rows of `picture` without the edges they are drawn between or the
@@ -4803,12 +4827,15 @@ fn release_notes_list_down_then_enter_puts_the_second_version_alone_in_the_trans
     let every = releases_newest_first();
     let second = every.get(1).copied().expect("two releases");
     // Tall enough for the whole release, so its heading and the command above
-    // it are still on screen however long the newest-but-one notes run: no
-    // changelog line wraps to more than two rows at this width.
-    let rows = 2 * release_lines(second) + 40;
+    // it are still on screen however long the newest-but-one notes run. The
+    // text is wrapped narrower than the 80 columns the window has, to leave
+    // room for the rail and the indent the transcript draws it with, so the
+    // rows counted are never fewer than the rows drawn.
+    let columns = 80;
+    let rows = release_rows(second, usize::from(columns) - 16) + 40;
     let mut window = Watched::open(
         "release-notes-list-second",
-        80,
+        columns,
         u16::try_from(rows).expect("a release fits a terminal"),
     );
     window.types_until("/release-notes\r", "enter opens it");

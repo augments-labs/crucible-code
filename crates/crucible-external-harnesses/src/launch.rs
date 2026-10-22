@@ -2,11 +2,15 @@
 //!
 //! A [`Launch`] is every value one start needs, written out as plain values by
 //! the composition root: the program, which was found by an absolute lookup
-//! and is identified by what it was when it was selected; the arguments and
-//! the environment, which start from nothing and hold only what the dialect
-//! names; the sandbox policy the child runs under; the session to resume and
-//! the profile directory, where there are any; and a [`Held`], which says the
-//! route's content-use hold answered yes.
+//! and is identified by what its metadata said when it was selected (its
+//! length and modification time, and on Unix its device, inode and change
+//! time; the change time is the platform's clock, and one that ticks coarsely
+//! does not tell apart a same-length rewrite within a tick of the selection),
+//! which is compared again at each start without reading a byte of it;
+//! the arguments and the environment, which start from nothing and hold only
+//! what the dialect names; the sandbox policy the child runs under; the
+//! session to resume and the profile directory, where there are any; and a
+//! [`Held`], which says the route's content-use hold answered yes.
 //!
 //! A `Held` is taken by value and is neither `Clone` nor `Copy`, so it starts
 //! at most one process: the launch that carries it is consumed by the one call
@@ -20,20 +24,12 @@
 //! sentences each is refused with.
 
 use std::fmt;
-use std::fs::{self, File};
-use std::io::{self, Read};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use crucible_execution::Confinement;
 use crucible_sandbox::SandboxPolicy;
-use sha2::{Digest, Sha256};
-
-/// The largest executable whose bytes are digested for its identity. A larger
-/// one is identified by its size and modification time alone, because reading
-/// a few hundred megabytes before every start would be a cost paid on every
-/// turn.
-pub const DIGESTED: u64 = 64 * 1024 * 1024;
 
 /// The most bytes a resume reference keeps, which is the session reference
 /// the execution contract allows.
@@ -95,45 +91,45 @@ impl fmt::Debug for Held {
     }
 }
 
-/// What a file looked like when it was selected.
+/// What a file's metadata says it is: enough to tell, without reading it,
+/// that it is not the file that was looked at.
+///
+/// On Unix that is its length, modification time, device, inode and change
+/// time. The change time is the platform's own and cannot be set back, so a
+/// file put in its place by a rename, or of the same length and rewritten in
+/// place, is told apart even where its modification time was restored. The
+/// limit is the clock: a filesystem that stamps times from a coarse clock
+/// (Linux before 6.13 ticks every millisecond or few) does not tell apart a
+/// same-length rewrite within one tick of the selection. On Windows it is the
+/// length and modification time alone, which a program with the right to write
+/// the file can restore.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Identity {
+struct Stamp {
     /// Its length.
     size: u64,
     /// When it was last written, where the platform says.
     modified: Option<SystemTime>,
-    /// A digest of its bytes, where it is no larger than [`DIGESTED`].
-    digest: Option<[u8; 32]>,
+    /// Which file on which device it is, and when it last changed.
+    #[cfg(unix)]
+    node: (u64, u64, i64, i64),
 }
 
-impl Identity {
-    /// What `path` is now.
-    fn of(path: &Path) -> io::Result<Self> {
-        let metadata = fs::metadata(path)?;
-        let size = metadata.len();
-        let digest = if size <= DIGESTED {
-            let mut file = File::open(path)?.take(DIGESTED);
-            let mut hasher = Sha256::new();
-            let mut buffer = vec![0_u8; 64 * 1024];
-            loop {
-                let read = file.read(&mut buffer)?;
-                let Some(chunk) = buffer.get(..read) else {
-                    break;
-                };
-                if chunk.is_empty() {
-                    break;
-                }
-                hasher.update(chunk);
-            }
-            Some(hasher.finalize().into())
-        } else {
-            None
-        };
-        Ok(Self {
-            size,
+impl Stamp {
+    /// What `metadata` says.
+    fn of(metadata: &fs::Metadata) -> Self {
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt as _;
+        Self {
+            size: metadata.len(),
             modified: metadata.modified().ok(),
-            digest,
-        })
+            #[cfg(unix)]
+            node: (
+                metadata.dev(),
+                metadata.ino(),
+                metadata.ctime(),
+                metadata.ctime_nsec(),
+            ),
+        }
     }
 }
 
@@ -142,8 +138,8 @@ impl Identity {
 pub struct Program {
     /// Where it is: absolute.
     path: PathBuf,
-    /// What it was when it was found.
-    identity: Identity,
+    /// What its metadata said when it was found.
+    stamp: Stamp,
 }
 
 impl Program {
@@ -153,15 +149,17 @@ impl Program {
         &self.path
     }
 
-    /// Refuses when the file is no longer the one that was found.
+    /// Refuses when the file is no longer the one that was found. It looks at
+    /// the file's metadata and never reads its bytes, so asking it before a
+    /// start, and again once the sandbox is prepared, costs a `stat` each.
     ///
     /// # Errors
     ///
-    /// [`Refusal::Changed`] when its size, modification time or digest moved,
-    /// or it can no longer be read.
+    /// [`Refusal::Changed`] when its length, modification time or, on Unix,
+    /// device, inode or change time moved, or it can no longer be reached.
     pub fn unchanged(&self) -> Result<(), Refusal> {
-        match Identity::of(&self.path) {
-            Ok(now) if now == self.identity => Ok(()),
+        match fs::metadata(&self.path) {
+            Ok(now) if Stamp::of(&now) == self.stamp => Ok(()),
             Ok(_) | Err(_) => Err(Refusal::Changed(self.path.clone())),
         }
     }
@@ -192,13 +190,10 @@ impl Discovery {
         if !metadata.is_file() || !executable(&metadata) {
             return Self::NotExecutable(path.to_path_buf());
         }
-        match Identity::of(path) {
-            Ok(identity) => Self::Found(Program {
-                path: path.to_path_buf(),
-                identity,
-            }),
-            Err(_) => Self::NotExecutable(path.to_path_buf()),
-        }
+        Self::Found(Program {
+            path: path.to_path_buf(),
+            stamp: Stamp::of(&metadata),
+        })
     }
 
     /// What a refusal over this says, as the sentence and what to do next, for

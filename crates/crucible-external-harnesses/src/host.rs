@@ -33,10 +33,13 @@
 //! and only then stops the sandbox's process, which ends the scope it started
 //! and nothing else: a host never stops a process it did not start. A run
 //! that could not be confirmed to have stopped keeps its agent's one place, so
-//! no other run of that agent is started beside it.
+//! no other run of that agent is started beside it. A launch whose future is
+//! dropped before it ends releases the place, except when it was waiting on
+//! the stop of a process it could not speak to.
 
 use std::borrow::Cow;
 use std::fmt;
+use std::io;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -406,6 +409,47 @@ impl Drop for Asking<'_> {
     }
 }
 
+/// The agent's place while a launch is under way: released when the launch
+/// ends in a refusal or its future is dropped, unless a stop it abandoned
+/// left a process that was not confirmed ended, as a host's drop does.
+struct Launching<'s>(Option<&'s Shared>);
+
+impl Launching<'_> {
+    /// The launch ended in a host, whose drop releases the place from here.
+    fn handed_over(mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for Launching<'_> {
+    fn drop(&mut self) {
+        if let Some(shared) = self.0
+            && !shared.unstopped.load(Ordering::SeqCst)
+        {
+            shared.running.store(false, Ordering::SeqCst);
+        }
+    }
+}
+
+/// A stop of a launched process that is being waited on: dropped before it
+/// has answered, the process is not confirmed to have ended.
+struct Unconfirmed<'s>(Option<&'s Shared>);
+
+impl Unconfirmed<'_> {
+    /// The stop answered, or there was none to wait on.
+    fn confirmed(mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for Unconfirmed<'_> {
+    fn drop(&mut self) {
+        if let Some(shared) = self.0 {
+            shared.unstopped.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
 /// How one exchange with the program ended, before the host reports it.
 enum Ending {
     /// The program ended the turn.
@@ -516,13 +560,14 @@ impl Host {
         {
             return Err(Refusal::Busy);
         }
-        // Released again on every refusal below; from the moment a host
-        // exists, its drop releases it, unless the run could not be confirmed
-        // to have stopped.
+        // Released again on every refusal below and when this future is
+        // dropped before it ends; from the moment a host exists, its drop
+        // releases it, unless the run could not be confirmed to have stopped.
+        let launching = Launching(Some(&control.shared));
         control.rest();
         let started = Self::start(service, &runtime, control, launch).await;
-        if started.is_err() {
-            control.shared.running.store(false, Ordering::SeqCst);
+        if started.is_ok() {
+            launching.handed_over();
         }
         started
     }
@@ -607,12 +652,15 @@ impl Host {
             .collect();
         let patience = launch.patience();
         // Preparing can take a while, and the program is run as it was found
-        // or not at all.
+        // or not at all: its metadata is compared again, not its bytes.
         launch.program().unchanged()?;
         let mut process = session.start(command).await?;
-        let pipes = Pipes::taken(process.as_mut(), patience, runtime)
-            .await
-            .map_err(|_| Refusal::Unspoken)?;
+        // Taking the pipes waits only where it stops a process it cannot
+        // speak to, so a drop inside it abandons a stop.
+        let stopping = Unconfirmed(Some(&control.shared));
+        let pipes = Pipes::taken(process.as_mut(), patience, runtime).await;
+        stopping.confirmed();
+        let pipes = pipes.map_err(|_| Refusal::Unspoken)?;
         Ok(Self {
             process,
             frames: Frames::new(pipes.heard),
@@ -705,7 +753,7 @@ impl Host {
                 Ok(outcome)
             }
             Ending::Failed(failure) => {
-                let failure = Failure::new(self.shown(failure.reason()).as_str());
+                let failure = failure.reworded(self.shown(failure.reason()).as_str());
                 sink.post(Event::Failed(failure.clone()));
                 Err(failure)
             }
@@ -1189,20 +1237,41 @@ impl Host {
     /// # Errors
     ///
     /// [`Unstopped`] where it could not be confirmed to have stopped, so that
-    /// its process may still be running.
+    /// its process may still be running; it keeps the error that left the
+    /// stop unconfirmed, where there was one.
     pub async fn stop(mut self, grace: Duration) -> Result<(), Unstopped> {
         self.finish(grace).await;
-        let unconfirmed = matches!(self.finished, Some(Finish::Unreaped(_)) | None);
+        // The error is taken out of the host, which must still read as not
+        // confirmed stopped when it drops: a stop begun and not finished.
+        let unconfirmed = match self.finished.take() {
+            Some(Finish::Unreaped(cause)) => {
+                self.stopping = true;
+                Some(Unstopped::Unreaped(cause))
+            }
+            None => Some(Unstopped::Unfinished),
+            finished @ Some(_) => {
+                self.finished = finished;
+                None
+            }
+        };
         drop(self);
-        if unconfirmed { Err(Unstopped) } else { Ok(()) }
+        unconfirmed.map_or(Ok(()), Err)
     }
 }
 
 /// A run that could not be confirmed to have stopped: its process may still
 /// be running.
-#[derive(Debug, Clone, Copy, thiserror::Error)]
-#[error("this agent's run could not be confirmed to have stopped, so it may still be running")]
-pub struct Unstopped;
+#[derive(Debug, thiserror::Error)]
+pub enum Unstopped {
+    /// Stopping it failed or was not answered in time, and this is the error
+    /// the stop left.
+    #[error("this agent's run could not be confirmed to have stopped, so it may still be running")]
+    Unreaped(#[source] io::Error),
+
+    /// Stopping it never finished.
+    #[error("this agent's run was not stopped to its end, so it may still be running")]
+    Unfinished,
+}
 
 /// The weakest claim among what confines a process at all: its filesystem,
 /// its descriptors, its descendants, the kernel's surface and its privileges.

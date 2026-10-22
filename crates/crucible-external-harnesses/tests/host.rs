@@ -16,15 +16,16 @@ use crucible_external_harnesses::fake_peer::{
 };
 use crucible_external_harnesses::{
     Account, Act, Control, Dialect, Discovery, Held, Host, Launch, PREPARING, Ran, Reading,
-    Refusal, Request, STOP_GRACE, Shape, Told,
+    Refusal, Request, STOP_GRACE, Shape, Told, Unstopped,
 };
 use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
     SandboxCapability, SandboxCleanup, SandboxCommand, SandboxError, SandboxFeature,
-    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxInspection,
-    SandboxLaunch, SandboxNetworkPolicy, SandboxPolicy, SandboxRequest, SandboxResourceLimits,
-    SandboxService, SandboxSession, inspection,
+    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxInput,
+    SandboxInspection, SandboxLaunch, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy,
+    SandboxProcess, SandboxRequest, SandboxResourceLimits, SandboxService, SandboxSession,
+    SandboxUsage, SandboxViolation, inspection,
 };
 use crucible_sandbox_local::LocalSandbox;
 use crucible_types::TurnId;
@@ -37,9 +38,6 @@ const SENTINEL: &str = "sentinel-c0ffee-5ec7e7";
 const ROUTE: &str = "agent:plain";
 
 /// Puts a changed copy of the program at `path` in its place.
-///
-/// Replaced rather than written into: an installed peer can be a link to the
-/// one Cargo built, and writing through it would change every other test's.
 #[allow(clippy::expect_used)]
 fn rewritten(path: &Path) {
     let mut bytes = fs::read(path).expect("readable");
@@ -322,6 +320,160 @@ async fn a_stop_abandoned_in_its_grace_leaves_a_relaunch_refused() {
         "{relaunched:?}"
     );
     assert_eq!(fake_peer::played(&at.0), 1);
+}
+
+/// A sandbox whose processes run as the local one's do, but whose stop of one
+/// always fails, so that no stop can be confirmed.
+struct Stubborn(Arc<dyn SandboxService>);
+
+impl SandboxService for Stubborn {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        self.0.probe()
+    }
+
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            let session: Box<dyn SandboxSession> =
+                Box::new(StubbornSession(self.0.prepare(request).await?));
+            Ok(session)
+        })
+    }
+}
+
+/// Its session.
+struct StubbornSession(Box<dyn SandboxSession>);
+
+impl SandboxSession for StubbornSession {
+    fn inspection(&self) -> &SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn materialize(&mut self) -> BoxFuture<'_, Result<(), SandboxError>> {
+        self.0.materialize()
+    }
+
+    fn stage<'a>(
+        self: Box<Self>,
+        command: SandboxCommand,
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxLaunch>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let launch: Box<dyn SandboxLaunch> =
+                Box::new(StubbornLaunch(self.0.stage(command).await?));
+            Ok(launch)
+        })
+    }
+}
+
+/// Its staged launch.
+struct StubbornLaunch(Box<dyn SandboxLaunch>);
+
+impl SandboxLaunch for StubbornLaunch {
+    fn inspection(&self) -> &SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn release<'a>(self: Box<Self>) -> BoxFuture<'a, Result<Box<dyn SandboxProcess>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let process: Box<dyn SandboxProcess> =
+                Box::new(StubbornProcess(self.0.release().await?));
+            Ok(process)
+        })
+    }
+}
+
+/// Its process, which never reads as ended and whose stop always fails.
+struct StubbornProcess(Box<dyn SandboxProcess>);
+
+impl SandboxProcess for StubbornProcess {
+    fn take_stdin(&mut self) -> Option<Box<dyn std::io::Write + Send>> {
+        self.0.take_stdin()
+    }
+
+    fn take_async_stdin(&mut self) -> Option<Box<dyn SandboxInput>> {
+        self.0.take_async_stdin()
+    }
+
+    fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.0.take_stdout()
+    }
+
+    fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.0.take_stderr()
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        Ok(None)
+    }
+
+    fn stop(&mut self) -> BoxFuture<'_, std::io::Result<()>> {
+        Box::pin(async { Err(std::io::Error::other(STUCK)) })
+    }
+
+    fn inspection(&self) -> &SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn usage(&self) -> SandboxUsage {
+        self.0.usage()
+    }
+
+    fn violation(&self) -> Option<SandboxViolation> {
+        self.0.violation()
+    }
+}
+
+/// What the stubborn sandbox's failed stop says.
+const STUCK: &str = "the scope did not answer";
+
+/// A stop the sandbox could not confirm fails carrying the error that left it
+/// unconfirmed, so that whoever reads the failure can say why.
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::expect_used)]
+async fn an_unstopped_run_keeps_the_error_that_left_it_unconfirmed() {
+    let at = Owned::new("unstopped-source");
+    let program = found(&at.0, "plain", &Script::of([Reply::new().hear_out()]));
+    let control = Control::new().expect("a control");
+    let host = Host::launch(
+        Arc::new(Stubborn(local())),
+        Handle::current(),
+        &control,
+        launch(program, &at.0, Request::default()),
+    )
+    .await
+    .expect("started");
+
+    let unstopped = host
+        .stop(Duration::ZERO)
+        .await
+        .expect_err("a stop that cannot be confirmed fails");
+
+    let cause = std::error::Error::source(&unstopped).expect("the error that left it unconfirmed");
+    let cause = cause
+        .downcast_ref::<std::io::Error>()
+        .expect("an I/O error");
+    assert_eq!(cause.to_string(), STUCK);
+}
+
+/// A stop that never finished says so, rather than naming an error it never
+/// had.
+#[test]
+fn an_unstopped_run_whose_stop_never_finished_says_so_and_names_no_error() {
+    let never = Unstopped::Unfinished;
+    let failed = Unstopped::Unreaped(std::io::Error::other(STUCK));
+
+    assert!(std::error::Error::source(&never).is_none());
+    assert_ne!(never.to_string(), failed.to_string());
 }
 
 /// The plain protocol with its account steps spoken: a step begins with its
@@ -1101,4 +1253,236 @@ async fn a_sandbox_that_never_says_what_it_could_hold_refuses_in_time() {
         "{refused}"
     );
     assert_eq!(fake_peer::played(&at.0), 0);
+}
+
+/// Where a sandbox that starts its process holds the launch.
+#[derive(Clone, Copy)]
+enum Hold {
+    /// After the spawn, before the process is handed over.
+    Release,
+    /// While the stop of a process handed over without its pipes is waited on.
+    Stop,
+}
+
+/// A sandbox that starts its process and then holds the launch, so that a
+/// launch can be dropped at a known point before the host holds a run.
+struct Holding {
+    inner: Arc<dyn SandboxService>,
+    at: Hold,
+    /// Told once the launch is held.
+    reached: Arc<tokio::sync::Notify>,
+}
+
+impl SandboxService for Holding {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        self.inner.probe()
+    }
+
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            let session: Box<dyn SandboxSession> = Box::new(HoldingSession {
+                inner: self.inner.prepare(request).await?,
+                at: self.at,
+                reached: Arc::clone(&self.reached),
+            });
+            Ok(session)
+        })
+    }
+}
+
+/// Its session.
+struct HoldingSession {
+    inner: Box<dyn SandboxSession>,
+    at: Hold,
+    reached: Arc<tokio::sync::Notify>,
+}
+
+impl SandboxSession for HoldingSession {
+    fn inspection(&self) -> &SandboxInspection {
+        self.inner.inspection()
+    }
+
+    fn materialize(&mut self) -> BoxFuture<'_, Result<(), SandboxError>> {
+        self.inner.materialize()
+    }
+
+    fn stage<'a>(
+        self: Box<Self>,
+        command: SandboxCommand,
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxLaunch>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let launch: Box<dyn SandboxLaunch> = Box::new(HoldingLaunch {
+                inner: self.inner.stage(command).await?,
+                at: self.at,
+                reached: self.reached,
+            });
+            Ok(launch)
+        })
+    }
+}
+
+/// Its staged launch.
+struct HoldingLaunch {
+    inner: Box<dyn SandboxLaunch>,
+    at: Hold,
+    reached: Arc<tokio::sync::Notify>,
+}
+
+impl SandboxLaunch for HoldingLaunch {
+    fn inspection(&self) -> &SandboxInspection {
+        self.inner.inspection()
+    }
+
+    fn release<'a>(self: Box<Self>) -> BoxFuture<'a, Result<Box<dyn SandboxProcess>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let spawned = self.inner.release().await?;
+            match self.at {
+                Hold::Release => {
+                    let _spawned = spawned;
+                    self.reached.notify_one();
+                    std::future::pending().await
+                }
+                Hold::Stop => {
+                    let process: Box<dyn SandboxProcess> = Box::new(Pipeless {
+                        inner: spawned,
+                        reached: self.reached,
+                    });
+                    Ok(process)
+                }
+            }
+        })
+    }
+}
+
+/// A process handed over without its input, whose stop does not answer.
+struct Pipeless {
+    inner: Box<dyn SandboxProcess>,
+    reached: Arc<tokio::sync::Notify>,
+}
+
+impl SandboxProcess for Pipeless {
+    fn take_stdin(&mut self) -> Option<Box<dyn std::io::Write + Send>> {
+        None
+    }
+
+    fn take_async_stdin(&mut self) -> Option<Box<dyn SandboxInput>> {
+        None
+    }
+
+    fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.inner.take_stdout()
+    }
+
+    fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.inner.take_stderr()
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        self.inner.try_wait()
+    }
+
+    fn stop(&mut self) -> BoxFuture<'_, std::io::Result<()>> {
+        Box::pin(async {
+            self.reached.notify_one();
+            std::future::pending().await
+        })
+    }
+
+    fn inspection(&self) -> &SandboxInspection {
+        self.inner.inspection()
+    }
+
+    fn usage(&self) -> SandboxUsage {
+        self.inner.usage()
+    }
+
+    fn violation(&self) -> Option<SandboxViolation> {
+        self.inner.violation()
+    }
+}
+
+/// A launch given up on after its process was spawned and before the host held
+/// a run leaves the agent's place free: the next launch is not refused as
+/// though a run were still live.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_launch_dropped_after_its_spawn_leaves_the_next_launch_unrefused() {
+    let at = Owned::new("dropped-launch");
+    let program = found(&at.0, "plain", &Script::of([Reply::lines(["one"])]));
+    let control = Control::new().expect("a control");
+    let reached = Arc::new(tokio::sync::Notify::new());
+    let held = Holding {
+        inner: local(),
+        at: Hold::Release,
+        reached: Arc::clone(&reached),
+    };
+    let mut launching = Box::pin(Host::launch(
+        Arc::new(held),
+        Handle::current(),
+        &control,
+        launch(program.clone(), &at.0, Request::default()),
+    ));
+
+    tokio::select! {
+        started = &mut launching => panic!("the held launch finished: {started:?}"),
+        () = reached.notified() => {}
+    }
+    drop(launching);
+    let next = Host::launch(
+        local(),
+        Handle::current(),
+        &control,
+        launch(program, &at.0, Request::default()),
+    )
+    .await;
+
+    let host = next.expect("the agent's place is free");
+    host.stop(STOP_GRACE).await.expect("stopped");
+}
+
+/// A launch given up on while the stop of a process it could not speak to was
+/// still being waited on has not confirmed that process ended, so the agent's
+/// place stays taken, as a run whose stop was abandoned keeps it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_launch_dropped_while_a_pipeless_process_is_stopped_leaves_a_relaunch_refused() {
+    let at = Owned::new("dropped-stop");
+    let program = found(&at.0, "plain", &Script::of([Reply::lines(["one"])]));
+    let control = Control::new().expect("a control");
+    let reached = Arc::new(tokio::sync::Notify::new());
+    let held = Holding {
+        inner: local(),
+        at: Hold::Stop,
+        reached: Arc::clone(&reached),
+    };
+    let mut launching = Box::pin(Host::launch(
+        Arc::new(held),
+        Handle::current(),
+        &control,
+        launch(program.clone(), &at.0, Request::default()),
+    ));
+
+    tokio::select! {
+        started = &mut launching => panic!("the held launch finished: {started:?}"),
+        () = reached.notified() => {}
+    }
+    drop(launching);
+    let next = Host::launch(
+        local(),
+        Handle::current(),
+        &control,
+        launch(program, &at.0, Request::default()),
+    )
+    .await;
+
+    assert!(matches!(next, Err(Refusal::Unstopped)), "{next:?}");
 }

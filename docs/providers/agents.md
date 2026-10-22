@@ -9,9 +9,9 @@ in place of its own models: no key for the provider is looked for, and the
 agent is started by the conversation's first turn rather than when crucible
 starts. An agent reaches only the provider it signs in to: Claude Code reaches
 `anthropic` and Antigravity `google`, and an `access` that names an agent under
-any other provider is refused at start. A disconnected agent, or one that cannot
-run in the conversation's mode, is refused before anything is recorded. The sections below say how each
-agent is run.
+any other provider is refused at start. A disconnected agent, or one whose
+program cannot be run, is refused before anything is recorded. The sections
+below say how each agent is run.
 
 `/login` in a conversation running on an agent offers all three choices. For
 the provider the agent reaches, a subscription or key is stored, the
@@ -62,15 +62,21 @@ nothing. Disconnecting, or signing out, writes the agent's `enabled: false`
 and takes away the `access` of every provider reached through it, in one
 update, so the next session asks that provider directly.
 
+Removing stops the agent's run in the conversation first and then takes its
+entry out of the user file; where the file cannot be written and the
+conversation was on that agent, the line says the agent is stopped for this run
+only and its settings could not be removed, and the entry stays, so the next
+run starts the agent again. Where the conversation was on another route,
+nothing was stopped and the line says only that the removal failed.
+
 Connecting an agent moves the conversation onto it at once, whatever provider
 it was asking, in a new session bound to it with nothing carried over, and the line it
 ends on names the agent and says the conversation starts fresh there; the
 session it left stays listed and can be resumed. In `/resume`, a session an
-agent ran names the agent on its line. Where the agent cannot be started in
-the conversation's mode, the conversation stays where it was and the next
-session starts on the agent. Connecting the agent a conversation is already on
-leaves it there, and where it was disconnected, its next turn starts the agent
-again.
+agent ran names the agent on its line. Where the agent cannot be started, the
+conversation stays where it was and the next session starts on the agent.
+Connecting the agent a conversation is already on leaves it there, and where it
+was disconnected, its next turn starts the agent again.
 
 While a conversation runs on an agent, the row under the box says, where the
 provider and model would be, which agent runs its turns and who is paid for
@@ -89,7 +95,9 @@ that provider, moves the conversation off the agent onto that provider and
 model at once, in a new session, as a login for it would, and is written down
 as the `provider`, model and rung asked; a rung that model does not serve is
 refused and nothing moves. An agent that chooses its own model has
-`/model` and `/effort` say so instead.
+`/model` alone and `/effort` say so instead; a model named on the `/model` line
+of a provider with a credential in hand moves the conversation off the agent
+onto it, and one of the agent's own provider is refused.
 
 A model taken of a provider whose `access` names an installed agent, while the
 conversation runs on no agent that reaches that provider, moves the
@@ -187,11 +195,13 @@ the agent's turn goes on without it. Allowing for
 the rest of the session keeps, for that session alone and never in its settings
 files, only the agent's rules for the command you were asked about: the command
 itself, or every command that begins with the words a rule names, such as every
-`git` command for `git:*`. A rule with a wildcard or shell syntax in its words,
-such as `;`, `|`, `$`, a quote or `=`, or a rule for any other tool, is not
-kept. Where the agent offers no such rule, or says its rule would allow more
-than you were asked, the allow is for that call alone. Once a turn is stopped,
-every question it asked is answered no, whatever was chosen.
+`git` command for `git:*`. A rule with a wildcard, a rule for any other tool,
+and a rule for the commands that begin with words holding shell syntax, such as
+`;`, `|`, `$`, a quote or `=`, are not kept; the command itself is kept even
+when it holds shell syntax. Where the agent offers no such rule, or says its
+rule would allow more than you were asked, the allow is for that call alone.
+Once a turn is stopped, every question it asked is answered no, whatever was
+chosen.
 
 **Project settings.** The agent runs the hooks and helper commands and connects
 the servers a project's own Claude Code settings name before it is asked
@@ -275,6 +285,13 @@ prints during a turn means the profile is signed out, and the turn fails
 saying to sign in. Signing out runs the agent's own logout, then asks again
 whether a session can be opened, and says the sign-out is unverified unless
 the agent then answers that it is signed out.
+
+**Its session.** Each time the agent is started again, after a failed turn, a
+change of mode or `/resume`, it is asked to resume the session it last named.
+Where it answers that it has no session by that name, that message fails with
+what the agent said, and the next one starts it on a new session, which holds
+nothing of what was said before; any other refusal leaves the session it named
+to be asked for again.
 
 **Permissions.** The agent asks about every action itself. In ask mode each
 question comes to you; in allow edits crucible answers yes, for that action

@@ -53,9 +53,17 @@
 //! uncertain and one whose caller stopped waiting leave a backend that takes
 //! no further turn: it is closed, and the next turn launches another through
 //! the [`Relaunch`] the conversation holds, resuming the agent's own session
-//! by the name the agent last gave it. Where the one closed could not be
+//! by the name the agent last gave it. A failure the backend says left the
+//! agent with no session by that name lets the name go, so the launch after
+//! it starts a new session rather than fail again asking for that one; no
+//! other failure does. Where the one closed could not be
 //! confirmed stopped, that launch is refused instead, so no second run is
-//! started beside it. A change of mode does the same, since
+//! started beside it. A run that ended in a turn that finished, as one whose
+//! stop was not heeded does, is found out by the next prompt: the backend
+//! closes it and refuses the prompt before its turn begins, so nothing of
+//! the prompt reached the agent, and that same prompt is taken again on a
+//! run launched in its place, once, unless the person has stopped it. A
+//! change of mode does the same, since
 //! the agent is told its mode only at launch, and so it never changes
 //! mid-turn. A mode the agent has no launch for is never taken: neither by a
 //! change nor by a conversation moved onto the route in it.
@@ -81,7 +89,7 @@ use std::time::Instant;
 
 use crucible_execution::{
     About, Backend, Cost, Decision, Error, Event, Failure, Lookup, NAME_BYTES, Outcome, PENDINGS,
-    Pending, PendingRef, Sink, Text, TurnRequest, Usage,
+    Pending, PendingRef, SessionFate, Sink, Text, TurnRequest, Usage,
 };
 use crucible_models::{Effort, ProviderError};
 use crucible_runner::{
@@ -339,7 +347,8 @@ pub(crate) struct Outside {
     model: Option<Box<str>>,
     /// The effort the agent is launched at; `None` leaves it its own.
     effort: Option<Effort>,
-    /// The agent's own name for its session, as last given.
+    /// The agent's own name for its session, as last given, until a turn's
+    /// failure says the agent has no session by it.
     named: Option<ExternalRef>,
     /// The next turn.
     turn: TurnId,
@@ -556,11 +565,40 @@ impl Outside {
         run: &RunContext<'_>,
         session: &Session,
     ) -> Result<Turned, TurnError> {
+        // A run held from an earlier turn may have ended since, as one whose
+        // stop was not heeded does. It refuses the prompt before the turn
+        // begins, nothing of the prompt has reached the agent, and the attempt
+        // has closed the run, so the prompt goes again to the run launched
+        // in its place; where the one closed could not be confirmed stopped,
+        // that launch is refused and says so.
+        let held = self.backend.is_some() && !self.spent && !self.disconnected;
+        let turn = self.turn;
+        let (turned, unbegun) = self.attempt(prompt, asker, run, session).await;
+        if held && unbegun && !run.cancel().requested() {
+            self.turn = turn;
+            return self.attempt(prompt, asker, run, session).await.0;
+        }
+        turned
+    }
+
+    /// One try at [`Outside::turn`], and whether it ended without the turn
+    /// having begun, so that nothing of `prompt` reached the agent.
+    async fn attempt(
+        &mut self,
+        prompt: &str,
+        asker: &mut dyn Asker,
+        run: &RunContext<'_>,
+        session: &Session,
+    ) -> (Result<Turned, TurnError>, bool) {
         if self.disconnected {
-            return Err(transport(
-                self.driver,
-                "this agent was disconnected from Crucible; connect it again to continue".into(),
-            ));
+            return (
+                Err(transport(
+                    self.driver,
+                    "this agent was disconnected from Crucible; connect it again to continue"
+                        .into(),
+                )),
+                false,
+            );
         }
         if self.spent {
             self.retire().await;
@@ -575,13 +613,21 @@ impl Outside {
                     self.named.as_ref(),
                 )
                 .await;
-            self.backend = Some(
-                launched
-                    .map_err(|failure| transport(self.driver, failure.reason().as_str().into()))?,
-            );
+            match launched {
+                Ok(backend) => self.backend = Some(backend),
+                Err(failure) => {
+                    return (
+                        Err(transport(self.driver, failure.reason().as_str().into())),
+                        false,
+                    );
+                }
+            }
         }
         let Some(backend) = self.backend.as_deref() else {
-            return Err(transport(self.driver, "the agent was not launched".into()));
+            return (
+                Err(transport(self.driver, "the agent was not launched".into())),
+                false,
+            );
         };
         let turn = self.turn;
         self.turn = turn.next();
@@ -660,12 +706,21 @@ impl Outside {
         let failed = told.failed;
         let spent = Spend::new(told.spent);
 
+        let unbegun = !told.began && ended.is_err();
         let spent_run = ended.is_err() || uncertain.is_some();
         self.spent = false;
         if spent_run {
             self.retire().await;
         }
-        match ended {
+        if let Err(Error::Failed(failure)) = &ended {
+            match failure.fate() {
+                SessionFate::Kept => {}
+                // Resumed again it would fail again, so the next launch
+                // starts the agent on a session of its own.
+                SessionFate::Gone => self.named = None,
+            }
+        }
+        let turned = match ended {
             Ok(Outcome::Cancelled) if uncertain.is_some() => Ok(Turned::Uncertain(
                 RunResult::reported(run, StopReason::Cancelled, spent),
             )),
@@ -684,7 +739,8 @@ impl Outside {
                 }
                 Err(transport(self.driver, problem.into()))
             }
-        }
+        };
+        (turned, unbegun)
     }
 }
 

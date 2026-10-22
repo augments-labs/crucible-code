@@ -1190,7 +1190,12 @@ pub type Serving = Box<dyn Fn(Served, &StoredCredentials) -> Result<Resolved, Ap
 ///
 /// Said under the welcome where a run starts with no key for any provider, and
 /// again in place of any turn typed before there is one.
-pub const NOTHING_TO_ASK: &str = "Warning: No models available. Use /login or set an API key environment variable. Then use /model to select a model.";
+///
+/// It names what `/login` offers here, an account, a key or an installed
+/// coding agent, and stops there: each takes a model or an agent that chooses
+/// its own, so no `/model` is left to be told. A key exported instead is read
+/// at the next start, which says what is still missing then.
+pub const NOTHING_TO_ASK: &str = "Warning: No models available. Use /login to sign in or to use an installed coding agent, or set an API key environment variable.";
 
 /// What it says when there is a provider to ask and nothing to ask it for.
 ///
