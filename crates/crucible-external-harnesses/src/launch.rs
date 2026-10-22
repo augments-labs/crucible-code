@@ -4,7 +4,9 @@
 //! the composition root: the program, which was found by an absolute lookup
 //! and is identified by what its metadata said when it was selected (its
 //! length and modification time, and on Unix its device, inode and change
-//! time), which is compared again at each start without reading a byte of it;
+//! time; the change time is the platform's clock, and one that ticks coarsely
+//! does not tell apart a same-length rewrite within a tick of the selection),
+//! which is compared again at each start without reading a byte of it;
 //! the arguments and the environment, which start from nothing and hold only
 //! what the dialect names; the sandbox policy the child runs under; the
 //! session to resume and the profile directory, where there are any; and a
@@ -94,10 +96,13 @@ impl fmt::Debug for Held {
 ///
 /// On Unix that is its length, modification time, device, inode and change
 /// time. The change time is the platform's own and cannot be set back, so a
-/// file of the same length rewritten in place, or put in its place by a
-/// rename, is told apart even where its modification time was restored. On
-/// Windows it is the length and modification time alone, which a program with
-/// the right to write the file can restore.
+/// file put in its place by a rename, or of the same length and rewritten in
+/// place, is told apart even where its modification time was restored. The
+/// limit is the clock: a filesystem that stamps times from a coarse clock
+/// (Linux before 6.13 ticks every millisecond or few) does not tell apart a
+/// same-length rewrite within one tick of the selection. On Windows it is the
+/// length and modification time alone, which a program with the right to write
+/// the file can restore.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Stamp {
     /// Its length.

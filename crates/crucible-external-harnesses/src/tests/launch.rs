@@ -135,10 +135,33 @@ fn a_same_size_program_with_its_time_restored_is_not_the_one_selected() {
         "a replacement"
     );
 
-    // Rewritten where it lies.
+    // Rewritten where it lies. Before Linux 6.13 a change time comes from a
+    // clock that ticks every millisecond or few, and a rewrite inside the
+    // tick of the selection is not told apart, which the stamp's documentation
+    // says; so the rewrite waits for the change time to have moved on.
     fs::write(&path, bytes(1)).expect("written");
     restored(&path);
     let program = selected(&path);
+    let ctime = |path: &std::path::Path| {
+        use std::os::unix::fs::MetadataExt as _;
+        let metadata = fs::metadata(path).expect("a change time");
+        (metadata.ctime(), metadata.ctime_nsec())
+    };
+    let selected_at = ctime(&path);
+    let scratch = at.0.join("scratch");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        // A file written now is stamped by the clock a rewrite would be.
+        fs::write(&scratch, [0_u8]).expect("written");
+        if ctime(&scratch) != selected_at {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the clock that stamps change times moved on within five seconds"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
     let mut file = File::options().write(true).open(&path).expect("opened");
     file.write_all(&bytes(3)).expect("rewritten");
     drop(file);
