@@ -1234,7 +1234,7 @@ fn closed_network_cannot_reach_host_loopback_unix_sockets_dns_or_metadata() {
     if skipped_without_enforcement(&service) {
         return;
     }
-    let sample = Sample::new("sandbox-network-closed");
+    let sample = Sample::socket("sandbox-network-closed");
     let tcp = TcpListener::bind(("127.0.0.1", 0)).expect("host TCP listener");
     let port = tcp.local_addr().expect("listener address").port();
     let socket_path = sample

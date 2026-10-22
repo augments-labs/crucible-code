@@ -1394,7 +1394,7 @@ mod tests {
 
     #[test]
     fn preparation_refuses_workspace_special_files() {
-        let sample = Sample::new("sandbox-workspace-special-file");
+        let sample = Sample::socket("sandbox-workspace-special-file");
         let _socket = std::os::unix::net::UnixListener::bind(sample.root().join("host.sock"))
             .expect("host socket");
         let request = SandboxRequest::new(
@@ -1435,7 +1435,7 @@ mod tests {
         );
         assert!(prepare(&request).is_err());
 
-        let special = Sample::new("sandbox-read-only-special");
+        let special = Sample::socket("sandbox-read-only-special");
         let _socket = std::os::unix::net::UnixListener::bind(special.root().join("host.sock"))
             .expect("host socket");
         let read_only = SandboxPolicy::new(

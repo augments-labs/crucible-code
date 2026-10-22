@@ -476,7 +476,7 @@ mod tests {
 
     #[test]
     fn mount_sources_refuse_links_special_files_and_narrowed_subtrees() {
-        let sample = Sample::new("sandbox-mount-source-validation");
+        let sample = Sample::socket("sandbox-mount-source-validation");
         sample.write("plain.txt", "plain");
         symlink(
             sample.root().join("plain.txt"),
