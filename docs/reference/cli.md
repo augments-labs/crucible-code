@@ -796,7 +796,7 @@ model to ask, since nobody is there to type `/model`. Rather than reading every
 remaining line and answering none of them, the run says so and fails:
 
 ```
-crucible: Warning: No models available. Use /login or set an API key environment variable. Then use /model to select a model. No turn was taken.
+crucible: Warning: No models available. Use /login to sign in or to use an installed coding agent, or set an API key environment variable. No turn was taken.
 ```
 
 When a provider is chosen and only the model is missing, the sentence is

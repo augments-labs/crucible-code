@@ -52,6 +52,8 @@ mod refusing;
 mod routing;
 #[path = "external/session.rs"]
 mod session;
+#[path = "external/stopping.rs"]
+mod stopping;
 
 /// The runtime an agent's turns run on: its pipes are read on it, so it
 /// drives input and output as the application's own does.

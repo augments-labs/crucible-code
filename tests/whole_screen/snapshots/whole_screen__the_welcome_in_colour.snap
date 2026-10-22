@@ -60,11 +60,11 @@ expression: window.picture_in_colour()
   80..80 fg=38;5;30
 |                                                                               ┃|
   80..80 fg=38;5;30
-|Warning: No models available. Use /login or set an API key environment         ┃|
-  1..70 bold fg=38;5;30
+|Warning: No models available. Use /login to sign in or to use an installed     ┃|
+  1..74 bold fg=38;5;30
   80..80 fg=38;5;30
-|variable. Then use /model to select a model.                                   ┃|
-  1..44 bold fg=38;5;30
+|coding agent, or set an API key environment variable.                          ┃|
+  1..53 bold fg=38;5;30
   80..80 fg=38;5;30
 |                                                                               ┃|
   80..80 fg=38;5;30
