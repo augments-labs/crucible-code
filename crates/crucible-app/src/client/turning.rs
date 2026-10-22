@@ -12,7 +12,7 @@ use crucible_types::{Attachment, Compacting, Spend};
 use super::deciding::{Deciding, Front};
 use super::reading;
 use crate::Conversation;
-use crate::content_use::Warned;
+use crate::content_use::{Warned, full_sentence};
 use crate::providers;
 use crate::remember::RememberError;
 
@@ -265,7 +265,7 @@ impl Ended {
             }
             Self::Warned(warned) => Outcome::Turn(TurnOutcome::Warned {
                 route: Text::cut(warned.route),
-                sentence: Text::cut(warned.warning.sentence),
+                sentence: Text::cut(&full_sentence(&warned)),
                 source: Text::cut(&warned.warning.cited()),
             }),
         }
