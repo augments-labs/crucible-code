@@ -206,7 +206,7 @@ before it and the file is cut to match.
 ## Conversation, journal and checkpoints
 
 A session a provider's model runs is written as format 13, and one an installed
-agent runs as format 14; both remain readable alongside formats 3–12 and 15. Format 12
+agent runs as format 14; both remain readable alongside formats 3–12. Format 12
 adds bounded provider continuation beside completed agent messages: signed
 thinking, encrypted reasoning and native ordering needed for subsequent tool
 passes. This private state is not rendered or given to the recap model, and a
@@ -745,7 +745,8 @@ Each of these is preceded by a `{"requires_format":14}` line, so a build that
 does not know it refuses the log rather than skipping it. Where the agent says
 it has no session by the name it gave, a `gone` line repeats that name, preceded
 by a `{"requires_format":15}` line; read back, the log names no agent session
-until the agent names another, and the transcript above it is kept. A name longer than
+until the agent names another, and the transcript above it is kept.
+A name longer than
 256 bytes, or a profile longer than 4 KiB, is refused rather than shortened,
 since a shortened one could match a different agent. The reported version is
 cut at 256 bytes and the work under way at 64 KiB, on a character boundary,
