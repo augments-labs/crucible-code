@@ -69,6 +69,15 @@ only and its settings could not be removed, and the entry stays, so the next
 run starts the agent again. Where the conversation was on another route,
 nothing was stopped and the line says only that the removal failed.
 
+Where the file cannot be written for a disconnect, the line says the agent is
+stopped for this run only and the disconnect could not be saved, if the
+conversation was on that agent; the entry stays enabled, so the next run starts
+the agent again. Where the conversation was on another route, nothing was
+stopped and the line says only that the disconnect failed. A sign-out writes
+every instance on the agent's profile, so it says the same stopped-for-this-run
+line where the conversation was on any of them, and otherwise only that the
+sign-out failed; the agent's own program is not run either way.
+
 Connecting an agent moves the conversation onto it at once, whatever provider
 it was asking, in a new session bound to it with nothing carried over, and the line it
 ends on names the agent and says the conversation starts fresh there; the

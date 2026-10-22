@@ -24,7 +24,8 @@
 //! | --- | --- | --- |
 //! | disconnect | disconnect | [`LogoutOutcome::Disconnected`] |
 //! | disconnect, its run not confirmed stopped | disconnect | [`LogoutOutcome::NewWorkDisabledWorkNotConfirmedStopped`] |
-//! | disconnect, the file not written | disconnect | [`LogoutOutcome::StoppedForThisRunOnly`] |
+//! | disconnect, the file not written, the conversation on it | disconnect | [`LogoutOutcome::StoppedForThisRunOnly`] |
+//! | disconnect, the file not written, the conversation not on it | disconnect | [`ErrorCode::Failed`] |
 //! | remove, a provider reached through it | nothing | [`LogoutOutcome::StillReferenced`] |
 //! | remove | remove | [`LogoutOutcome::IntegrationRemoved`] |
 //! | remove, the file not written, the conversation on it | remove | [`LogoutOutcome::StoppedForThisRunOnly`] |
@@ -33,7 +34,8 @@
 //! | remove, an instance the user file does not name | nothing | [`ErrorCode::InvalidArgument`] |
 //! | sign out | sign out | [`LogoutOutcome::AgentSignedOut`] |
 //! | sign out, not shown signed out afterwards | sign out | [`LogoutOutcome::SignOutUnverified`] |
-//! | sign out, the file not written | sign out | [`LogoutOutcome::StoppedForThisRunOnly`] |
+//! | sign out, the file not written, the conversation on one of the instances sharing the scope | sign out | [`LogoutOutcome::StoppedForThisRunOnly`] |
+//! | sign out, the file not written, the conversation on none of them | sign out | [`ErrorCode::Failed`] |
 //! | sign out | sign out, its agent's route unanswered, declined | [`LogoutOutcome::Undecided`] |
 //! | sign out | sign out, its agent's route unanswered, the yes not written | [`ErrorCode::Failed`] |
 //! | sign out, its agent's route unanswered, the agent cannot be started | sign out | [`LogoutOutcome::Undecided`], the route not asked |
@@ -56,7 +58,11 @@
 //! settings are still in the file, so the next run starts the agent as before,
 //! and a client told only that it failed would not know the conversation can
 //! no longer use it. Where the conversation was not on the instance, nothing
-//! was stopped, and it is told only that the removal failed.
+//! was stopped, and it is told only that the removal failed. A disconnect
+//! whose write fails is told the same way, and a sign-out, which takes every
+//! instance sharing the credential scope out of use, is told that the
+//! instances are stopped for this run only where the conversation was on any
+//! of them, and otherwise only that it failed.
 //!
 //! A sign-out runs the agent's own program, so once it is chosen it puts the
 //! agent's content-use route to the client where that has no yes, before
@@ -147,8 +153,10 @@ pub enum Account {
     StillReferenced(String),
     /// Nothing of the conversation's was stopped, because what had to be
     /// written first could not be: for a removal, the file could not be read
-    /// or the conversation was not on the instance; for a sign-out, the yes to
-    /// the agent's content-use route.
+    /// or the conversation was not on the instance; for a disconnect, the
+    /// conversation was not on the instance; for a sign-out, the conversation
+    /// was on none of the instances sharing the credential scope, or the yes
+    /// to the agent's content-use route could not be written.
     Unremoved(RememberError),
     /// The instance's run in this conversation was stopped and it takes no new
     /// work, and its settings could not be taken out of the file, so they are
@@ -668,8 +676,11 @@ async fn sign_out(
     }
     // Whether each run stopped is not what a sign-out reports: the agent's
     // sign-in is what it changes, and every instance on it is disabled first.
+    // Whether there was a run to stop is: where the write fails, only a
+    // conversation that was on one of them has been stopped.
+    let mut on_one = false;
     for one in sharing {
-        let _ = conversation.disconnect(one.name()).await;
+        on_one |= conversation.disconnect(one.name()).await.is_some();
     }
     if let Err(contended) = slot.advance(Stage::Quiesced) {
         return Account::Contended(contended);
@@ -680,7 +691,11 @@ async fn sign_out(
         .recorded(remember::disabling_every(desk.switching.choosing, &names))
     {
         let _ = slot.finish(Ending::Failed);
-        return Account::ThisRunOnly(problem);
+        return if on_one {
+            Account::ThisRunOnly(problem)
+        } else {
+            Account::Unremoved(problem)
+        };
     }
     // The instances are out of use from here on, so a journal that cannot be
     // kept no longer refuses the request: it leaves the sign-out unverified.
@@ -1231,7 +1246,11 @@ async fn disconnect(
     if let Err(contended) = slot.advance(Stage::Closed) {
         return Account::Contended(contended);
     }
-    let stopped = conversation.disconnect(agent.name()).await.unwrap_or(true);
+    // Where the conversation was not on the instance there was no run to stop,
+    // which counts as stopped; and where the write fails, only a conversation
+    // that was on it has been stopped.
+    let was_on = conversation.disconnect(agent.name()).await;
+    let (on_it, stopped) = (was_on.is_some(), was_on.unwrap_or(true));
     for stage in [Stage::Quiesced, Stage::Committing] {
         if let Err(contended) = slot.advance(stage) {
             return Account::Contended(contended);
@@ -1250,7 +1269,11 @@ async fn disconnect(
             // left open for the next operation to find; either way the file
             // still enables the instance.
             let _ = slot.finish(Ending::Failed);
-            Account::ThisRunOnly(problem)
+            if on_it {
+                Account::ThisRunOnly(problem)
+            } else {
+                Account::Unremoved(problem)
+            }
         }
     }
 }
