@@ -176,6 +176,39 @@ fn a_same_size_program_with_its_time_restored_is_not_the_one_selected() {
     assert!(program.unchanged().is_ok());
 }
 
+/// A program whose permissions were changed after it was selected, without a
+/// byte or its modification time moving, is refused, and the refusal says that
+/// a change to permissions, owner or links counts, so it does not read as an
+/// unexplained change to a file nobody touched.
+#[cfg(unix)]
+#[test]
+fn a_program_whose_permissions_changed_is_refused_in_words_that_say_what_counts() {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let at = super::Owned::new("chmodded");
+    let path = at.0.join("agent");
+    fs::write(&path, [1_u8; 4096]).expect("written");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("executable");
+    let Discovery::Found(program) = Discovery::of(Some(&path)) else {
+        panic!("a program");
+    };
+
+    // The change time moves only once the clock that stamps it has ticked.
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o750)).expect("chmodded");
+
+    let Err(refusal @ Refusal::Changed(_)) = program.unchanged() else {
+        panic!("a program whose permissions changed is not the one selected");
+    };
+    let said = refusal.to_string();
+    for counts in ["contents", "permissions", "owner", "links"] {
+        assert!(said.contains(counts), "{counts:?} in {said:?}");
+    }
+    assert!(said.contains(&path.display().to_string()), "{said:?}");
+    assert!(said.ends_with("choose Check again to use it"), "{said:?}");
+}
+
 /// Selecting a program and checking it again before each start look at its
 /// metadata and never read its bytes: a program that may be run and not read
 /// is found, and is still the one found.
