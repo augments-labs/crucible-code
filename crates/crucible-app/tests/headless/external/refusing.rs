@@ -12,7 +12,7 @@ use crucible_app::client;
 use crucible_client_api::{
     Capabilities as Asking, Command, LoginOutcome, LogoutOutcome, Name, Outcome, Pending,
 };
-use crucible_external_harnesses::fake_peer::{self, scripts::claude};
+use crucible_external_harnesses::fake_peer::scripts::claude;
 
 use super::{Asked, Outside, Picking, accounting, connected};
 use crate::{Failed, Tree};
