@@ -624,24 +624,22 @@ fn signing_out(agent: &ExternalAgent, sharing: &[ExternalAgent], on: Option<&str
     }
 }
 
-/// Puts `agent`'s route to `front` where it has no yes, before a sign-out
-/// changes anything, since the agent's own program is run for it. A launch
-/// the launcher would refuse, the program not installed or the row withheld,
-/// is said to be so first and the route is not put: nobody agrees to what
-/// cannot happen. Answers the account to end the sign-out with where the
-/// launch is so refused and the client goes no further, where the route did
-/// not get its yes, or the yes could not be written down, and `None` where the
-/// sign-out may go on.
+/// Settles, before a sign-out changes anything, that the agent's own program
+/// can be run for it, and puts the agent's route to `front` where it has no
+/// yes. A launch the launcher would refuse, the program not installed or the
+/// row withheld, is said to be so first, whatever state the route is in, and
+/// the route is not put: nobody agrees to what cannot happen, and nothing is
+/// written for a sign-out that cannot run. Answers the account to end the
+/// sign-out with where the launch is so refused and the client goes no
+/// further, where the route did not get its yes, or the yes could not be
+/// written down, and `None` where the sign-out may go on.
 async fn launch_asked(
     conversation: &Conversation,
     request: &Request,
     front: &mut dyn Front,
     agent: &ExternalAgent,
 ) -> Option<Account> {
-    let consent = conversation.consent()?;
     let row = crate::backends::REGISTRY.row(agent.driver())?;
-    let warned = consent.asks(row.route).copied()?;
-    // A launch that is refused whatever the answer is not asked about.
     let capabilities = request.capabilities();
     if found(
         conversation,
@@ -655,6 +653,8 @@ async fn launch_asked(
     {
         return Some(Account::Undecided);
     }
+    let consent = conversation.consent()?;
+    let warned = consent.asks(row.route).copied()?;
     if !super::deciding::warned(capabilities, front, &warned).await {
         return Some(Account::Undecided);
     }
