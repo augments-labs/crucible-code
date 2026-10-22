@@ -206,7 +206,7 @@ fn a_program_whose_permissions_changed_is_refused_in_words_that_say_what_counts(
         assert!(said.contains(counts), "{counts:?} in {said:?}");
     }
     assert!(said.contains(&path.display().to_string()), "{said:?}");
-    assert!(said.ends_with("choose Check again to use it"), "{said:?}");
+    assert!(said.ends_with("restart crucible to use it"), "{said:?}");
 }
 
 /// Selecting a program and checking it again before each start look at its

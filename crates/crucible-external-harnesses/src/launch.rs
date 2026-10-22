@@ -416,7 +416,7 @@ pub enum Refusal {
     /// of them moves the change time the selection kept.
     #[error(
         "{} changed after it was selected, in its contents or, on Unix, its permissions, \
-         owner or links; choose Check again to use it",
+         owner or links; restart crucible to use it",
         .0.display()
     )]
     Changed(PathBuf),
