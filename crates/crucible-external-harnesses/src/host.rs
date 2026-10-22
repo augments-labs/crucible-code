@@ -378,6 +378,14 @@ impl Control {
         self.shared.interrupted.store(false, Ordering::SeqCst);
     }
 
+    /// Whether a run on this control could not be confirmed to have stopped,
+    /// so that its process may still be running and no run is launched on
+    /// this control again.
+    #[must_use]
+    pub fn unstopped(&self) -> bool {
+        self.shared.unstopped.load(Ordering::SeqCst)
+    }
+
     /// What is open, oldest first.
     #[must_use]
     pub fn open(&self) -> Vec<PendingRef> {
