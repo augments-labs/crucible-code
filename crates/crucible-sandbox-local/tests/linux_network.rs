@@ -16,7 +16,7 @@ use std::fs;
 use std::io::{Read as _, Write as _};
 use std::net::TcpListener;
 use std::os::unix::net::UnixListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crucible_sandbox::{
@@ -46,11 +46,22 @@ fn service() -> LocalSandbox {
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
+        Self::below(&std::env::temp_dir())
+    }
+
+    /// A fixture a Unix socket can be bound in. A socket path must fit the 108
+    /// bytes Linux gives `sun_path`, and `TMPDIR` is as long as its owner made
+    /// it, so this one is made under `/tmp` instead.
+    fn socket() -> Self {
+        Self::below(Path::new("/tmp"))
+    }
+
+    fn below(temporary: &Path) -> Self {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let root = temporary.join(format!(
             "crucible-linux-network-{}-{unique}",
             std::process::id()
         ));
@@ -318,8 +329,8 @@ fn linux_local_binding_is_explicit_and_never_opens_direct_host_egress() {
 
 #[test]
 fn linux_projects_only_the_explicit_unix_socket_from_a_writable_workspace() {
-    let fixture = Fixture::new();
-    let outside = Fixture::new();
+    let fixture = Fixture::socket();
+    let outside = Fixture::socket();
     let path = fixture.0.join("granted.sock");
     let denied_path = outside.0.join("denied.sock");
     let host = UnixListener::bind(&path).expect("granted socket");
