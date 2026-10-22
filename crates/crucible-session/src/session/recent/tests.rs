@@ -158,7 +158,7 @@ fn a_log_from_a_build_that_spelled_things_differently_is_left_out() {
     sample.plant(
         &id,
         &[
-            sample.header(wire::FORMAT + 1, &id),
+            sample.header(wire::SESSION_GONE + 1, &id),
             serde_json::json!({"user": "from another build"}).to_string(),
         ],
     );
@@ -786,7 +786,7 @@ fn a_log_whose_first_line_does_not_read_is_counted_and_said_nothing_of() {
     sample.plant(
         &nth(3),
         &[serde_json::json!({
-            "format": wire::FORMAT + 1,
+            "format": wire::SESSION_GONE + 1,
             "session": nth(3),
             "workspace": sample.workspace().root().display().to_string(),
         })

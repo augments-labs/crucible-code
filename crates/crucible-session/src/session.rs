@@ -301,7 +301,7 @@ pub struct Session {
     /// it was opened. `None` for a session a provider's model runs.
     route: Option<RouteBinding>,
     /// What that agent last called the session, as the log said when it was
-    /// opened.
+    /// opened: `None` where the agent said it had no session by that name.
     external: Option<ExternalRef>,
     /// The turn the log ended on without the agent saying whether what it set
     /// out to do was done. `None` where any message came after it.
@@ -879,6 +879,28 @@ impl Session {
         ours
     }
 
+    /// Records that the installed agent running this session has no session
+    /// by `named`, the name it last gave.
+    ///
+    /// Read back, the log then names no agent session until the agent names
+    /// another, so a resume starts the agent on a new one rather than asking
+    /// again for the one it said was gone. Nothing else goes: the transcript
+    /// and a turn left unsettled stay.
+    ///
+    /// Whether it was kept: as with [`Session::external`], only for the
+    /// instance the session was opened on.
+    #[must_use]
+    pub fn gone(&self, named: &ExternalRef) -> bool {
+        let ours = self
+            .route
+            .as_ref()
+            .is_some_and(|route| route.instance() == named.instance());
+        if let (true, Some(to)) = (ours, &self.to) {
+            drop(to.send(LogRequest::Line(gone_line(named))));
+        }
+        ours
+    }
+
     /// Records that a turn ended without the agent saying whether what it set
     /// out to do was done.
     ///
@@ -905,7 +927,8 @@ impl Session {
     }
 
     /// What the agent running this session last called it, as the log said
-    /// when it was opened.
+    /// when it was opened. `None` where the agent never named it, and where it
+    /// last said it had no session by that name.
     #[must_use]
     pub const fn external_ref(&self) -> Option<&ExternalRef> {
         self.external.as_ref()
@@ -1183,6 +1206,22 @@ fn restricted_line(freed: usize, results: &[crucible_types::ToolId], notice: &st
 /// lines partway down; one request so no other append can split the pair.
 fn guarded(line: &str) -> Box<str> {
     format!("{{\"requires_format\":{}}}\n{line}", wire::FORMAT).into()
+}
+
+/// The line saying the agent has no session by `named`.
+///
+/// Behind its own guard rather than [`guarded`]'s, so the header a session an
+/// agent runs is written with stays one the release before this line reads,
+/// and only a log that holds the line is refused there: read past, the agent
+/// would be resumed on the session it said was gone. One request so no other
+/// append can split the pair.
+fn gone_line(named: &ExternalRef) -> Box<str> {
+    format!(
+        "{{\"requires_format\":{}}}\n{}",
+        wire::SESSION_GONE,
+        wire::gone(named)
+    )
+    .into()
 }
 
 /// Whether one persisted transcript entry belongs in the picker-facing count.
