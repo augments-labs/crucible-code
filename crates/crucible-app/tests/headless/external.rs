@@ -54,6 +54,8 @@ mod routing;
 mod session;
 #[path = "external/stopping.rs"]
 mod stopping;
+#[path = "external/unlaunchable.rs"]
+mod unlaunchable;
 
 /// The runtime an agent's turns run on: its pipes are read on it, so it
 /// drives input and output as the application's own does.
@@ -92,8 +94,7 @@ fn row() -> Result<&'static Row, Failed> {
     })))
 }
 
-/// What a launch was asked for: the mode, and the agent's own session it
-/// resumed.
+/// What a launch was asked for: the mode, and the agent's own session it resumed.
 type Launched = (Mode, Option<String>);
 
 /// Launches Claude Code's runs from the peer installed in a tree, and keeps
@@ -131,6 +132,10 @@ impl Relaunch for Launching {
 
     fn effort(&self) -> Option<Effort> {
         self.agent.effort()
+    }
+
+    fn refusal(&self) -> Option<Failure> {
+        (self.agent.program(&self.consent).err()).map(|why| Failure::new(&why.to_string()))
     }
 
     fn launch<'a>(
@@ -339,8 +344,7 @@ impl Outside {
         ))
     }
 
-    /// Takes back the yes the agent's route was given, as though it had
-    /// never been answered.
+    /// Takes back the yes the agent's route was given, as though it had never been answered.
     fn unanswer(&self) {
         if let Some(consent) = self.conversation.consent() {
             consent.withdraw("agent:claude");

@@ -47,6 +47,10 @@ pub enum Ended {
 ///
 /// Where [`Conversation::missing`] says there is no model to ask, neither is
 /// taken: the answer is [`Ended::Unasked`], and the session records nothing.
+/// Where a prompt would start an installed agent whose route has no yes, and
+/// [`Conversation::unlaunchable`] says the turn would be refused whatever the
+/// answer, that refusal is the answer, as [`Ended::Turn`], and the route is
+/// not put.
 ///
 /// Every permission question the turn raises is put to `front` under an
 /// identity the application mints, which no caller supplies or can start
@@ -77,6 +81,15 @@ pub async fn turn(
     // written into the user's own file before the turn goes. So is an
     // installed agent's route, where the prompt would start the agent.
     //
+    // A prompt that would start an installed agent, and would be refused
+    // before it started whatever the answer, is refused first: nobody is
+    // asked to agree to a launch that cannot happen, and no yes is written.
+    if let Command::Prompt(_) = request.command()
+        && held(conversation, request.command()).is_some()
+        && let Err(problem) = conversation.unlaunchable(&attached)
+    {
+        return Ended::Turn(Err(problem));
+    }
     // Every route that holds the send is put in turn: two warned routes at
     // one origin each keep the request back until each has its yes. A yes is
     // written down before the next is put, so none comes back.

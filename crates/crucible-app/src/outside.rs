@@ -80,7 +80,10 @@
 //! **Launched by its first turn.** A conversation moved onto the route with
 //! no run in hand launches one at its first turn, the same way a spent run is
 //! replaced, so a run that started on the route has asked nothing of the agent
-//! before somebody asks it something.
+//! before somebody asks it something. A turn that would launch one and be
+//! refused whatever is answered about the route, for something attached to
+//! it or for what [`Relaunch::refusal`] says, is refused before the route is
+//! asked about, in the words it would be refused in after a yes.
 
 use std::collections::VecDeque;
 use std::future::poll_fn;
@@ -130,6 +133,12 @@ pub trait Relaunch: Send + Sync {
     /// The effort the agent is first started at; `None` leaves the agent its
     /// own.
     fn effort(&self) -> Option<Effort>;
+
+    /// Why a launch would be refused before anything is started, whatever
+    /// is answered about the agent's route, in the words the launch would be
+    /// refused in: its program not found, say. `None` where nothing refuses
+    /// it yet, which the launch itself may still do.
+    fn refusal(&self) -> Option<Failure>;
 
     /// A new run of the agent under `mode` on `model` at `effort`, each the
     /// agent's own where it is `None`, resuming the agent's own session
@@ -425,6 +434,26 @@ impl Outside {
     /// held is spent, and the agent was not disconnected.
     pub(crate) const fn launches(&self) -> bool {
         !self.disconnected && (self.backend.is_none() || self.spent)
+    }
+
+    /// Why the next turn, with `attached`, would be refused before it starts
+    /// the agent, whatever is answered about the agent's route: something
+    /// attached, as [`unattached`] says, else what [`Relaunch::refusal`]
+    /// says, told as that launch's failure would be. Nothing where the turn
+    /// starts no agent.
+    ///
+    /// # Errors
+    ///
+    /// [`TurnError`] saying why the turn would be refused.
+    pub(crate) fn unlaunchable(&self, attached: &[Attachment]) -> Result<(), TurnError> {
+        if !self.launches() {
+            return Ok(());
+        }
+        unattached(attached)?;
+        match self.relaunch.refusal() {
+            Some(failure) => Err(transport(self.driver, failure.reason().as_str().into())),
+            None => Ok(()),
+        }
     }
 
     /// What a person sees of the conversation.
