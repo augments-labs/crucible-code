@@ -535,7 +535,9 @@ pub enum LogoutOutcome {
         problem: Problem,
     },
     /// Nobody chose a way to go on, so nothing changed: the client could not
-    /// be asked, or it cancelled.
+    /// be asked, or it cancelled, or the operation was refused before it
+    /// started, and the pending action put to the client just before it said
+    /// why.
     Undecided,
 }
 

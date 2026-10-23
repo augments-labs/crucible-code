@@ -39,6 +39,7 @@
 //! | sign out | sign out, its agent's route unanswered, declined | [`LogoutOutcome::Undecided`] |
 //! | sign out | sign out, its agent's route unanswered, the yes not written | [`LogoutOutcome::HoldUnkept`] |
 //! | sign out, its agent's route unanswered, the agent cannot be started | sign out | [`LogoutOutcome::Undecided`], the route not asked |
+//! | sign out, a run of an instance sharing the scope not confirmed stopped | sign out | [`LogoutOutcome::Undecided`], the route not asked |
 //! | sign out | disconnect instead | as disconnect |
 //! | any | cancel, back, or nobody | [`LogoutOutcome::Undecided`] |
 //! | connect, signed in, already on the instance | the agent's route accepted | [`LoginOutcome::AgentConnected`] |
@@ -70,7 +71,10 @@
 //! every instance, its run and the files as they were. An agent that would be
 //! refused before any process, as the launcher decides it, is said to be so
 //! first and the route is not asked: nobody agrees to a launch that cannot
-//! happen. Choosing to disconnect
+//! happen. So is a sign-out while any instance sharing the scope has a run
+//! that could not be confirmed stopped, since the agent's program would run
+//! beside it: that is said before the route is asked, and nothing is
+//! disconnected, written or started. Choosing to disconnect
 //! instead starts nothing of the agent's and asks nothing.
 //!
 //! A sign-out takes every instance sharing the credential scope out of use
@@ -432,6 +436,10 @@ pub async fn account(
             let confirmation = signing_out(&agent, &sharing, conversation.instance());
             match confirmed(request.capabilities(), front, &confirmation).await {
                 Some(0) => {
+                    if let Some(held) = still_running(conversation, request, front, &sharing).await
+                    {
+                        return Performed::Account(held);
+                    }
                     if let Some(unasked) = launch_asked(conversation, request, front, &agent).await
                     {
                         return Performed::Account(unasked);
@@ -624,6 +632,36 @@ fn signing_out(agent: &ExternalAgent, sharing: &[ExternalAgent], on: Option<&str
     }
 }
 
+/// Settles, before a sign-out changes anything, that no instance in `sharing`
+/// has a run that could not be confirmed stopped, since the agent's program
+/// signs the whole credential scope out and would run beside it. Says so to
+/// `front`, with what to do about it, and answers the account to end the
+/// sign-out with where one has, so that nothing is disconnected, written or
+/// started; `None` where the sign-out may go on. It is asked before the
+/// agent's route, since nobody agrees to what cannot happen.
+async fn still_running(
+    conversation: &Conversation,
+    request: &Request,
+    front: &mut dyn Front,
+    sharing: &[ExternalAgent],
+) -> Option<Account> {
+    let held = conversation.steps()?.unstopped(sharing);
+    if held.is_empty() {
+        return None;
+    }
+    let held = Confirmation {
+        asks: "This agent cannot be signed out yet.".to_owned(),
+        facts: vec![
+            format!("Run not confirmed stopped: {}.", held.join(", ")),
+            crucible_external_harnesses::Refusal::Unstopped.to_string(),
+        ],
+        choices: vec![("Go back".to_owned(), "Change nothing.".to_owned())],
+    };
+    // Whether it was seen changes nothing: the sign-out is refused either way.
+    let _seen = confirmed(request.capabilities(), front, &held).await;
+    Some(Account::Undecided)
+}
+
 /// Settles, before a sign-out changes anything, that the agent's own program
 /// can be run for it, and puts the agent's route to `front` where it has no
 /// yes. A launch the launcher would refuse, the program not installed or the
@@ -665,7 +703,8 @@ async fn launch_asked(
 }
 
 /// Takes every instance in `sharing` out of use from Crucible, durably, and
-/// only then signs `agent`'s credential scope out through its own program.
+/// only then signs `agent`'s credential scope out through its own program;
+/// called only once [`still_running`] and [`launch_asked`] let it go on.
 async fn sign_out(
     conversation: &mut Conversation,
     desk: &Desk<'_>,
@@ -685,6 +724,8 @@ async fn sign_out(
     }
     // Whether each run stopped is not what a sign-out reports: the agent's
     // sign-in is what it changes, and every instance on it is disabled first.
+    // A run that could not be confirmed stopped is not met here: the sign-out
+    // was refused for it before this was called.
     // Whether there was a run to stop is: where the write fails, only a
     // conversation that was on one of them has been stopped.
     let mut on_one = false;

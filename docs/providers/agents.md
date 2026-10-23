@@ -87,6 +87,14 @@ every instance on the agent's profile, so it says the same stopped-for-this-run
 line where the conversation was on any of them, and otherwise only that the
 sign-out failed; the agent's own program is not run either way.
 
+A sign-out is refused before anything changes where a run of any instance on the
+agent's profile could not be confirmed to have stopped, since the agent's own
+program signs the whole profile out and would run beside it. Crucible names the
+instances and says to restart crucible; nothing is disconnected or written, the
+agent's program is not run, and the agent's route is not asked about.
+Disconnecting the instance instead is offered by the sign-out question, before
+this refusal.
+
 Connecting an agent moves the conversation onto it at once, whatever provider
 it was asking, in a new session bound to it with nothing carried over, and the line it
 ends on names the agent and says the conversation starts fresh there; the
