@@ -64,7 +64,7 @@
 //! entry's runs, and a status check beside a live run is never refused as busy.
 //! Of the control those runs share it reads one thing, whether a run could not
 //! be confirmed stopped, and where one could not it is refused, before any
-//! process, as a run launched beside that one would be; [`Steps::unstopped`]
+//! process, as a run launched beside that one would be; `Steps::unstopped`
 //! says which of a set of entries are so held, for an operation that would take
 //! a step for all of them. A step whose own stop could not be confirmed holds
 //! back none of the entry's runs. What it read is all it returns: a step that
