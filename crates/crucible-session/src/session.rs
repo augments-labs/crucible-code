@@ -864,7 +864,15 @@ impl Session {
         // not made durable, so the writer having taken every line is enough,
         // and the name is opened once, by the ordinary-file opener: anything
         // that can write the directory can swap a link or a pipe in under it.
-        if !self.caught_up() || self.trouble().is_some() {
+        //
+        // Refused with what stopped the log where something did, so a start
+        // whose index could not be written behind the first frame is refused
+        // here with the reason it would have been refused with before it.
+        let caught_up = self.caught_up();
+        if let Some(problem) = self.trouble() {
+            return Err(trouble(io::Error::other(String::from(problem))));
+        }
+        if !caught_up {
             return Err(trouble(io::Error::other(
                 "could not flush session display history",
             )));

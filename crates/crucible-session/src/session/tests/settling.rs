@@ -380,10 +380,13 @@ fn an_index_that_cannot_be_written_behind_the_first_frame_is_the_sessions_troubl
     let problem = session.finish().expect("the session's trouble");
 
     assert!(problem.contains("recent.sessions"), "{problem}");
-    assert!(
-        session.display_history().is_err(),
-        "a history read past its trouble"
-    );
+    // The history the opening screen reads next is refused with that reason,
+    // which is the message the start would have been refused with.
+    let read = session
+        .display_history()
+        .expect_err("a history read past its trouble")
+        .to_string();
+    assert!(read.contains(&*problem), "{read}");
     drop(session);
     assert_eq!(
         logged(&sample.logs()),
