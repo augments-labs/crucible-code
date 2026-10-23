@@ -45,11 +45,14 @@
 //! moment, confined or not as the sandbox is then, so a run started after the
 //! sandbox was turned off or on is held to the same choice a command would be.
 //! Every run of one [`Runs`] is launched on one control, so none starts beside
-//! another still held or one that could not be confirmed stopped. The [`Runs`]
-//! that [`Steps`] hands out for one `externalAgents` entry share one control
-//! between them, so a route rebuilt for that entry, by a resume, a move onto
-//! the agent or a connect, starts no run beside one the route it replaces
-//! left held. A [`Runs`] made by [`Runs::new`] has a control of its own.
+//! another still held or one that could not be confirmed stopped. The controls
+//! are kept by [`Controls`], one per `externalAgents` entry, and every [`Runs`]
+//! is made on them: the one for the route a conversation is opened on at
+//! startup, by [`Runs::new`], and those [`Steps`] hands out. They share one
+//! control between them for one entry, so a route rebuilt for that entry, by a
+//! resume, a move onto the agent or a connect, starts no run beside one the
+//! route it replaces left held. Startup makes the [`Controls`] once, before
+//! the first route and whether or not [`Steps`] can be built.
 //!
 //! An account step on any instance the configuration names, the
 //! conversation's route or not, is taken through [`Steps`], under the same
@@ -720,6 +723,43 @@ fn claims() -> Capabilities {
         .declared(Capability::Resume, true)
 }
 
+/// The control each `externalAgents` entry's runs are launched on, made when
+/// the entry's first is asked for. An entry is one the configuration names, so
+/// there are no more than it has. Clones share the controls.
+#[derive(Clone, Default)]
+pub struct Controls(Arc<Mutex<HashMap<Box<str>, Control>>>);
+
+impl std::fmt::Debug for Controls {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.debug_struct("Controls").finish_non_exhaustive()
+    }
+}
+
+impl Controls {
+    /// What every run of the entry `instance` is launched on; none once this
+    /// process has numbered every control it can.
+    fn of(&self, instance: &str) -> Option<Control> {
+        let mut kept = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(control) = kept.get(instance) {
+            return Some(control.clone());
+        }
+        let control = Control::new()?;
+        kept.insert(instance.into(), control.clone());
+        Some(control)
+    }
+
+    /// Whether a run of the entry `instance` could not be confirmed stopped;
+    /// an entry no run has been asked for yet has no control, and no such
+    /// run.
+    fn unstopped(&self, instance: &str) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(instance)
+            .is_some_and(Control::unstopped)
+    }
+}
+
 /// What launches an installed agent's runs for a conversation on its route.
 pub struct Runs {
     /// The sandbox every run is prepared by.
@@ -752,13 +792,15 @@ impl std::fmt::Debug for Runs {
 
 impl Runs {
     /// Runs of `agent`, the entry `instance`, each started as `launcher`
-    /// starts one, under its policy confining as `enablement` then says.
+    /// starts one, under its policy confining as `enablement` then says, and
+    /// on the control `controls` keeps for the entry.
     #[must_use]
     pub fn new(
         launcher: Launcher<'_>,
         enablement: Arc<SandboxEnablement>,
         agent: Agent,
         instance: &str,
+        controls: &Controls,
     ) -> Self {
         Self {
             service: launcher.service,
@@ -768,7 +810,7 @@ impl Runs {
             consent: launcher.consent.clone(),
             agent,
             instance: instance.into(),
-            control: Control::new(),
+            control: controls.of(instance),
         }
     }
 }
@@ -847,11 +889,9 @@ pub struct Steps {
     /// The `PATH` an agent's program is looked for on.
     path: Option<OsString>,
     /// What every [`Runs`] this hands out for an `externalAgents` entry is
-    /// launched on, by the entry's name, made when the entry's first is asked
-    /// for, and what an account step of the entry reads whether one of them
-    /// could not be confirmed stopped from. An entry is one the configuration
-    /// names, so there are no more than it has.
-    controls: Mutex<HashMap<Box<str>, Control>>,
+    /// launched on, and what an account step of the entry reads whether one of
+    /// them could not be confirmed stopped from.
+    controls: Controls,
 }
 
 impl std::fmt::Debug for Steps {
@@ -879,31 +919,17 @@ impl Steps {
             consent: launcher.consent.clone(),
             registry,
             path,
-            controls: Mutex::default(),
+            controls: Controls::default(),
         }
     }
 
-    /// What every run of the entry `instance` is launched on; none once this
-    /// process has numbered every control it can.
-    fn control(&self, instance: &str) -> Option<Control> {
-        let mut kept = self.controls.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(control) = kept.get(instance) {
-            return Some(control.clone());
-        }
-        let control = Control::new()?;
-        kept.insert(instance.into(), control.clone());
-        Some(control)
-    }
-
-    /// Whether a run of the entry `instance` could not be confirmed stopped;
-    /// an entry no run has been asked for yet has no control, and no such
-    /// run.
-    fn unstopped(&self, instance: &str) -> bool {
-        self.controls
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(instance)
-            .is_some_and(Control::unstopped)
+    /// These steps with their runs launched on `controls` rather than on
+    /// controls of their own, as the runs of the route a conversation is
+    /// opened on are.
+    #[must_use]
+    pub(crate) fn sharing(mut self, controls: Controls) -> Self {
+        self.controls = controls;
+        self
     }
 
     /// What is installed as `executable`, looked for on the `PATH` every step
@@ -970,7 +996,7 @@ impl Steps {
             consent: self.consent.clone(),
             agent,
             instance: instance.into(),
-            control: self.control(instance),
+            control: self.controls.of(instance),
         }
     }
 
@@ -1006,7 +1032,7 @@ impl Steps {
             Ok(dialect) => dialect,
             Err(refused) => return Reading::Unreadable(refused),
         };
-        if self.unstopped(agent.name()) {
+        if self.controls.unstopped(agent.name()) {
             return unreadable(&Refusal::Unstopped.to_string());
         }
         let Some(control) = Control::new() else {
@@ -1023,6 +1049,34 @@ impl Steps {
         .await
         .unwrap_or_else(|refused| unreadable(&refused.to_string()))
     }
+}
+
+/// The runs of the route a conversation is opened on at startup, where it is
+/// opened on an agent's, and the steps beside it, where `stepping` lets them
+/// be built: the launcher, registry and `PATH` they take. Both are made on one
+/// [`Controls`], made here whether or not the steps can be, so a run of the
+/// route and a run the steps hand out for its entry are held against each
+/// other.
+#[must_use]
+pub(crate) fn first_runs(
+    route: Option<(Launcher<'_>, Agent, &str)>,
+    stepping: Option<(Launcher<'_>, &'static Registry, Option<OsString>)>,
+    enablement: Arc<SandboxEnablement>,
+) -> (Option<Runs>, Option<Steps>) {
+    let controls = Controls::default();
+    let runs = route.map(|(launcher, agent, instance)| {
+        Runs::new(
+            launcher,
+            Arc::clone(&enablement),
+            agent,
+            instance,
+            &controls,
+        )
+    });
+    let steps = stepping.map(|(launcher, registry, path)| {
+        Steps::new(launcher, enablement, registry, path).sharing(controls)
+    });
+    (runs, steps)
 }
 
 #[cfg(test)]
