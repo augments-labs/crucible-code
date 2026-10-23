@@ -1279,7 +1279,7 @@ removable=(
     # The install of an agent's pinned release and the command that runs it.
     crates/crucible-app/src/installing.rs src/cli.rs src/cli/agents.rs
     crates/crucible-app/tests/headless.rs crates/crucible-app/tests/headless/external.rs
-    crates/crucible-app/tests/headless/external/{refusing,routing,session,stopping}.rs
+    crates/crucible-app/tests/headless/external/{refusing,routing,session,stopping,unlaunchable}.rs
     crates/crucible-app/Cargo.toml
     # The configuration's access variant and block, their rows and checks.
     crates/crucible-config/src/{lib,shape,remember,error,settings}.rs

@@ -154,7 +154,10 @@ message is sent, with the same added line: `Use it anyway` writes the yes and
 starts the agent with the message, and anything else leaves the message in the
 prompt box. A run with no terminal to ask on ends there, as on any route asked
 about, with the same added sentence after the vendor's. A client that declines
-the question is told the same words.
+the question is told the same words. A message with an attachment, or one to an
+agent whose program is not found, cannot start the agent whatever the answer:
+it is refused with its reason before anything is asked, and nothing is written
+or started.
 
 ## A `baseUrl` crucible recognises
 

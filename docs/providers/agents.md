@@ -131,7 +131,9 @@ A conversation moved onto an agent by `/resume` of a session it ran, or by a
 model taken as above, starts the agent with its next message. Where the agent's
 route has no yes, that message asks about it first, as
 [content use](content-use.md#an-installed-agent) says, and nothing is started
-or sent before the yes.
+or sent before the yes. A message with an attachment, or one to an agent whose
+program is not found, is refused with its reason before anything is asked, and
+nothing is written or started.
 
 The line above the box reads how much of the model's window the agent's
 context holds, such as `41k/1.0M · 95% window left`: the window is the one
