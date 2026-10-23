@@ -3,7 +3,8 @@
 use std::path::Path;
 
 use crucible_execution::{
-    About, Cost, Decision, Detail, Event, Lasting, Lookup, Outcome, Pending, TurnRequest, Usage,
+    About, Cost, Decision, Detail, Event, Lasting, Lookup, Outcome, Pending, SessionFate,
+    TurnRequest, Usage,
 };
 use crucible_types::{Change, Compacting, Diff, TurnId};
 use serde_json::{Value, json};
@@ -563,6 +564,82 @@ fn each_end_is_read_as_what_it_is() {
         end(false, &result("success", true, 1, 0.0)),
         Some(Act::Fail(failure)) if failure.reason().as_str().contains("done")
     ));
+}
+
+/// What claude 2.1.308 wrote when started with `--resume` of an unknown
+/// session, and the status it exited with: see `fixtures/SOURCES.md`.
+const RESUMED_UNKNOWN: &str = include_str!("../fixtures/resume-unknown-session.txt");
+
+/// The id the recorded run was asked to resume.
+const UNKNOWN: &str = "00000000-0000-4000-8000-000000000000";
+
+/// The frames of the recorded run, in the order it wrote them.
+fn recorded() -> Vec<&'static str> {
+    let (stdout, _exit) = RESUMED_UNKNOWN
+        .strip_prefix("== stdout\n")
+        .and_then(|rest| rest.split_once("== exit\n"))
+        .unwrap();
+    stdout.lines().collect()
+}
+
+/// How the turn of a run resuming `resume` ends on `frames`.
+fn ending(resume: Option<&str>, frames: &[&str]) -> Option<Act> {
+    let mut agent = turning(resume);
+    let mut acts = Vec::new();
+    for frame in frames {
+        acts.extend(agent.heard(frame).unwrap());
+    }
+    acts.pop()
+}
+
+/// The program started to resume a session it no longer has says so, and
+/// the turn fails saying the session is gone, so the next run starts a new
+/// one rather than asking for it again.
+#[test]
+fn a_resumed_session_the_agent_has_no_conversation_for_is_gone() {
+    let ended = ending(Some(UNKNOWN), &recorded());
+
+    assert!(
+        matches!(&ended, Some(Act::Fail(failure)) if failure.fate() == SessionFate::Gone),
+        "{ended:?}"
+    );
+}
+
+/// The same end naming another session, saying something else, or ending a
+/// run that resumed nothing, fails as it always did and leaves the session
+/// to be asked for again.
+#[test]
+fn any_other_failure_of_that_shape_keeps_the_session() {
+    let frames = recorded();
+    let &[frame] = frames.as_slice() else {
+        panic!("{frames:?}")
+    };
+    let said = |errors: Value| {
+        let mut frame: Value = serde_json::from_str(frame).unwrap();
+        let _ = frame
+            .as_object_mut()
+            .unwrap()
+            .insert("errors".to_owned(), errors);
+        frame.to_string()
+    };
+    let another = said(json!([
+        "No conversation found with session ID: 11111111-1111-4111-8111-111111111111"
+    ]));
+    let otherwise = said(json!(["Something went wrong while it ran."]));
+    let none = said(json!([]));
+
+    for (resume, frame) in [
+        (Some(UNKNOWN), another.as_str()),
+        (Some(UNKNOWN), otherwise.as_str()),
+        (Some(UNKNOWN), none.as_str()),
+        (None, frame),
+    ] {
+        let ended = ending(resume, &[frame]);
+        assert!(
+            matches!(&ended, Some(Act::Fail(failure)) if failure.fate() == SessionFate::Kept),
+            "{resume:?} {frame} {ended:?}"
+        );
+    }
 }
 
 /// The agent saying it is not signed in fails the turn saying how to sign
