@@ -156,7 +156,7 @@ fn a_newer_required_reader_is_refused_without_truncating_even_at_eof() {
         // One past what this build writes, so the case stays "newer than this
         // reader" rather than becoming "what this reader writes" at the next
         // format.
-        format!(r#"{{"requires_format":{}}}"#, wire::FORMAT + 1),
+        format!(r#"{{"requires_format":{}}}"#, wire::SESSION_GONE + 1),
         r#"{"requires_format":"invalid"}"#.to_owned(),
     ] {
         let sample = Sample::new("continuation-new-reader");
@@ -949,10 +949,10 @@ fn a_log_written_under_a_format_this_build_does_not_know_is_refused() {
     // had no word for looks exactly like a session that is complete.
     let sample = Sample::new("session-format-newer");
     let id = "0198abcd-0000-7000-8000-000000000001";
-    sample.plant(id, &[sample.header(wire::FORMAT + 1, id)]);
+    sample.plant(id, &[sample.header(wire::SESSION_GONE + 1, id)]);
 
     assert!(
-        !wire::readable(wire::FORMAT + 1),
+        !wire::readable(wire::SESSION_GONE + 1),
         "a format past this one is claimed as readable"
     );
     assert!(
@@ -1631,6 +1631,10 @@ mod latest;
 
 /// What a resume answers a call with that was started and never finished.
 mod started;
+
+/// What a crash part-way through starting a session leaves, and what the
+/// next start makes of it.
+mod settling;
 
 /// Which names in the sessions directory are read, and what a link or a pipe
 /// under one costs.

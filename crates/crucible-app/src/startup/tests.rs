@@ -673,6 +673,10 @@ fn the_run_after_a_login_on_an_agent_s_route_asks_the_provider_by_its_credential
 
         assert_eq!(next.serving(), Some(provider));
         assert!(next.session().route().is_none(), "{provider}");
+        // A welcome start's header and index entry are its writer's, behind
+        // the first frame, so the log is read back once the writer has caught
+        // up, as the prompt waits for it.
+        drop(next.session().display_history().expect("the run's history"));
         let newest = crucible_session::pick_routed(&sample.logs(), &sample.workspace(), None)
             .expect("the run's log");
         assert!(

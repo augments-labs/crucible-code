@@ -23,7 +23,7 @@ use crucible_session::{RouteBinding, Session};
 use crucible_tools::Mode;
 use crucible_types::Transcript;
 
-use super::{Launching, Outside, runtime, turn};
+use super::{Launching, Outside, answered, runtime, turn};
 use crate::{Failed, Script, Tree};
 
 /// Antigravity's own row, reaching no host, as [`row`] is Claude Code's.
@@ -102,7 +102,9 @@ fn on_antigravity(tree: &Tree, script: &Peer) -> Result<Outside, Failed> {
 
 /// An agent that says the session a run was launched to resume is not there
 /// fails that turn, and the next turn starts the agent on a new session
-/// rather than asking it again for the one it said was gone.
+/// rather than asking it again for the one it said was gone. The session log
+/// keeps that too: reopened after such a turn, it names no agent session, so
+/// the first turn of the session picked back up opens a new one.
 #[test]
 fn a_session_the_agent_says_is_gone_is_opened_anew_by_the_next_turn() -> Result<(), Failed> {
     use crucible_external_harnesses::antigravity::Manifest;
@@ -130,7 +132,13 @@ fn a_session_the_agent_says_is_gone_is_opened_anew_by_the_next_turn() -> Result<
         .say(acp::session_gone(1))
         .hear_out();
     let tree = Tree::new("external-session-gone")?;
-    let script = Peer::of([answering("one"), gone, answering("three")]);
+    let script = Peer::of([
+        answering("one"),
+        gone.clone(),
+        answering("three"),
+        gone,
+        answering("five"),
+    ]);
     let mut outside = on_antigravity(&tree, &script)?;
 
     let (first, _) = turn(&mut outside, "one", false)?;
@@ -161,6 +169,44 @@ fn a_session_the_agent_says_is_gone_is_opened_anew_by_the_next_turn() -> Result<
         "the next turn asked the agent again for the session it said was gone"
     );
     assert!(matches!(third, Ok(Turned::Ran(_))), "{third:?}");
+
+    // The agent names its new session, and says that one is gone too when
+    // the next run asks for it; the session is then picked back up from its
+    // log.
+    assert_eq!(outside.conversation.switch(Mode::Ask), Mode::Ask);
+    let (fourth, _) = turn(&mut outside, "four", false)?;
+    assert!(matches!(fourth, Err(TurnError::Provider(_))), "{fourth:?}");
+    let id = outside
+        .conversation
+        .session()
+        .id()
+        .cloned()
+        .ok_or("an id")?;
+    let (sessions, workspace) = (tree.sessions(), tree.workspace()?);
+    let left = runtime()?.block_on(outside.conversation.clear(&sessions, &workspace, None))?;
+    drop(left);
+    let (reopened, _) = Session::reopen_routed(&sessions, &workspace, &id, &outside.route)?;
+    assert_eq!(
+        reopened.external_ref(),
+        None,
+        "the log still names the session the agent said was gone"
+    );
+    drop(reopened);
+    let _cleared =
+        runtime()?.block_on(outside.conversation.resume(&sessions, &workspace, &id, &[]))?;
+    let (fifth, _) = turn(&mut outside, "five", false)?;
+
+    assert!(matches!(fifth, Ok(Turned::Ran(_))), "{fifth:?}");
+    assert_eq!(
+        outside.launched().get(3..),
+        Some(
+            &[
+                (Mode::Ask, Some(acp::SESSION.to_owned())),
+                (Mode::Ask, None)
+            ][..]
+        ),
+        "the session picked back up asked the agent for the session it said was gone"
+    );
     Ok(())
 }
 
@@ -221,5 +267,46 @@ fn a_session_refused_for_another_reason_is_resumed_by_the_next_turn() -> Result<
         "a refusal that says nothing of the session let it go"
     );
     assert!(matches!(third, Ok(Turned::Ran(_))), "{third:?}");
+    Ok(())
+}
+
+/// On a route whose agent chooses its own model, a model of the provider that
+/// agent itself reaches is still refused: the agent is not started with a
+/// model from here, so no provider is reachable by choosing one. The refusal
+/// says the model is not chosen from here, and the conversation stays on its
+/// route in the session it was in, with nothing written.
+#[test]
+fn a_model_of_the_agent_s_own_provider_is_refused_where_it_chooses_its_own() -> Result<(), Failed> {
+    use crucible_client_api::{Command, Execution, ModelOutcome, Name, Outcome};
+
+    let tree = Tree::new("external-model-own-provider")?;
+    let mut outside = on_antigravity(&tree, &Peer::of([]))?;
+    let left = outside.conversation.session().id().cloned();
+    let standing = crucible_app::client::snapshot(&outside.conversation).execution;
+    assert!(matches!(standing, Execution::Instance(_)), "{standing:?}");
+
+    let refused = answered(
+        &tree,
+        &mut outside,
+        Command::SelectModel {
+            provider: Name::new(Driver::Antigravity.provider())?,
+            model: Name::new("gemini-3.8-flash")?,
+            effort: None,
+        },
+    )?;
+
+    let Outcome::Model(ModelOutcome::Unreachable(problem)) = &refused else {
+        return Err(format!("{refused:?}").into());
+    };
+    assert_eq!(
+        problem.message.as_str(),
+        "this conversation is on antigravity, whose model is not chosen from here"
+    );
+    assert_eq!(
+        crucible_app::client::snapshot(&outside.conversation).execution,
+        standing
+    );
+    assert_eq!(outside.conversation.session().id().cloned(), left);
+    assert!(!crucible_config::user(&tree.home()?).exists());
     Ok(())
 }

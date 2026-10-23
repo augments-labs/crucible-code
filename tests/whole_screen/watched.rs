@@ -35,11 +35,12 @@ use std::io::{Read as _, Write as _};
 use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
 use crucible_external_harnesses::fake_peer::{self, Script};
-use rustix::fs::{Mode, OFlags};
 use rustix::pty::{self, OpenptFlags};
 use rustix::termios::{self, OptionalActions, Winsize};
 
@@ -323,11 +324,9 @@ pub(crate) struct Watched {
     bytes: Receiver<Vec<u8>>,
     /// What it has drawn.
     screen: Screen,
-    /// A size the window took whose mark has not come back off the terminal.
-    marked: Option<(u16, u16)>,
-    /// Bytes read off the terminal that may begin the mark, held until the
-    /// rest of it, or something else, arrives.
-    carry: Vec<u8>,
+    /// How many bytes the reading thread has taken off the terminal, counted
+    /// as each read returns and before it is sent to be drawn.
+    read: Arc<AtomicUsize>,
     /// Whether fixed palette proofs crossed the PTY. Payloads do not survive.
     light_seen: bool,
     dark_seen: bool,
@@ -886,7 +885,9 @@ impl Watched {
         }
         let (sender, bytes) = mpsc::channel();
         let reading = near.try_clone().expect("a second handle on the terminal");
-        std::thread::spawn(move || read(reading, &sender));
+        let read_so_far = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&read_so_far);
+        std::thread::spawn(move || read(reading, &sender, &counted));
 
         let (columns, rows) = (terminal.columns as usize, terminal.rows as usize);
         let screen = if terminal.native {
@@ -899,8 +900,7 @@ impl Watched {
             child,
             bytes,
             screen,
-            marked: None,
-            carry: Vec::new(),
+            read: read_so_far,
             light_seen: false,
             dark_seen: false,
             scratch,
@@ -1289,33 +1289,32 @@ impl Watched {
     /// Changes the size of the window, the way dragging its corner would.
     ///
     /// The kernel is what tells crucible: setting the size on the near side of
-    /// the pair raises `SIGWINCH` in the session on the far side of it. The
-    /// screen is told at the point in crucible's output where the size took
-    /// effect, since a frame on its way was drawn for the old one and what it
-    /// lets through at the old size is counted from there. That point is
-    /// marked by writing [`MARK`] to the far side of the pair once the size is
-    /// set: the mark joins crucible's output in the order the kernel took the
-    /// two, so everything before it was written before the mark and everything
-    /// after it was written after the size was set. It errs only by what
-    /// crucible wrote between the two calls, a few microseconds apart, and
-    /// only toward counting that as written before — never toward charging
-    /// the new size for a byte written before it. A settled screen is one
-    /// crucible has drawn for, which [`Self::settle_for`] holds it to.
+    /// the pair raises `SIGWINCH` in the session on the far side of it, inside
+    /// the call that sets it. The screen is told at the point in crucible's
+    /// output where the size took effect, since a frame on its way was drawn
+    /// for the old one and what it lets through at the old size is counted
+    /// from there. That point is where crucible's output stood just before
+    /// the call: what the reading thread has taken off the terminal and what
+    /// is still waiting there to be read. Nothing crucible wrote before it
+    /// could have known the new size. It is taken before the call rather than
+    /// after because the call is not instant: on a loaded machine it can take
+    /// most of a millisecond, long enough for crucible to be signalled, draw
+    /// for the new size and have that read before the call returns, and a
+    /// point taken then would charge that frame to the old size. It errs only
+    /// by a read that returned and was not yet counted, and only toward
+    /// telling the screen early, which the frame [`Screen`] still lets
+    /// through at the old size absorbs; a resize follows a settled screen, so
+    /// there is normally nothing to read. A settled screen is one crucible has
+    /// drawn for, which [`Self::settle_for`] holds it to.
     pub(crate) fn resize(&mut self, columns: u16, rows: u16) {
+        let read = self.read.load(Ordering::SeqCst);
+        let waiting = rustix::io::ioctl_fionread(&self.terminal)
+            .expect("the terminal says how much is waiting to be read");
+        let at = read + usize::try_from(waiting).expect("what is waiting fits in memory");
+
         termios::tcsetwinsize(&self.terminal, size(columns, rows)).expect("a new window size");
 
-        let named = pty::ptsname(&self.terminal, Vec::new()).expect("the far side has a name");
-        let far = rustix::fs::open(
-            OsStr::from_bytes(named.as_bytes()),
-            OFlags::WRONLY | OFlags::NOCTTY | OFlags::CLOEXEC,
-            Mode::empty(),
-        )
-        .expect("the far side opens again");
-        File::from(far)
-            .write_all(MARK)
-            .expect("the mark goes in behind what crucible wrote");
-
-        self.marked = Some((columns, rows));
+        self.screen.resize_at(columns as usize, rows as usize, at);
         self.settle(&format!("the window became {columns}x{rows}"), None);
     }
 
@@ -1478,45 +1477,18 @@ impl Watched {
     }
 
     /// Turns the two fixed palette proofs into booleans, then draws the bytes.
-    /// No extra copy of any terminal payload survives this call, beyond the
-    /// few bytes held while a mark is awaited.
+    /// No extra copy of any terminal payload survives this call.
     ///
-    /// While a size the window took has not come back as its mark, the bytes
-    /// are read for the mark first: what precedes it is drawn, the screen is
-    /// told the size, and what follows is drawn after. A read ends wherever
-    /// the kernel filled the buffer, so a tail that could begin the mark is
-    /// held until the next read says whether it did.
+    /// Every byte the reading thread counted comes through here, in order, so
+    /// the screen's count of what it was fed is the same count a resize took
+    /// its point from, and a size due at a byte among these is told there.
     fn feed(&mut self, bytes: &[u8]) {
         const LIGHT: &[u8] = b"\x1b[38;2;13;107;98m";
         const DARK: &[u8] = b"\x1b[38;2;18;137;127m";
         self.light_seen |= bytes.windows(LIGHT.len()).any(|window| window == LIGHT);
         self.dark_seen |= bytes.windows(DARK.len()).any(|window| window == DARK);
 
-        let Some((columns, rows)) = self.marked else {
-            self.screen.feed(bytes);
-            return;
-        };
-
-        let mut data = std::mem::take(&mut self.carry);
-        data.extend_from_slice(bytes);
-
-        if let Some(at) = data.windows(MARK.len()).position(|window| window == MARK) {
-            self.marked = None;
-            self.screen.feed(data.get(..at).unwrap_or_default());
-            self.screen.resize(columns as usize, rows as usize);
-            self.screen
-                .feed(data.get(at + MARK.len()..).unwrap_or_default());
-        } else {
-            let held = (1..MARK.len())
-                .rev()
-                .find(|length| {
-                    MARK.get(..*length)
-                        .is_some_and(|opening| data.ends_with(opening))
-                })
-                .unwrap_or(0);
-            self.carry = data.split_off(data.len() - held);
-            self.screen.feed(&data);
-        }
+        self.screen.feed(bytes);
     }
 
     /// Reads until the screen settles, and fails plainly when it never does.
@@ -1592,13 +1564,13 @@ impl Watched {
         );
 
         // And one that has drawn for the window it has: a size the window
-        // took reaches the screen as its mark, and is held back from there
-        // until crucible draws a frame for it, so a quiet screen still
-        // waiting for one is a resize crucible never drew for — which no
+        // took reaches the screen at the byte it took it at, and is held back
+        // from there until crucible draws a frame for it, so a quiet screen
+        // still waiting for one is a resize crucible never drew for — which no
         // picture shows, since the picture is still the old window.
         assert!(
-            self.marked.is_none(),
-            "the mark of the window's new size never came back off the terminal, {step}\n{}",
+            self.screen.due().is_none(),
+            "the point where the window took its new size never came off the terminal, {step}\n{}",
             self.picture()
         );
         if let Some((columns, rows)) = self.screen.awaiting() {
@@ -1851,13 +1823,17 @@ fn setsid() -> PathBuf {
 /// and a timeout is what makes "the screen has settled" something a test can
 /// decide. The read ends when the last handle on the far side is closed, so
 /// this ends with the process rather than outliving it.
-fn read(mut terminal: File, sender: &Sender<Vec<u8>>) {
+///
+/// Each read is counted in `counted` before it is sent, which is what a
+/// resize takes the point the window changed at from.
+fn read(mut terminal: File, sender: &Sender<Vec<u8>>, counted: &AtomicUsize) {
     let mut buffer = [0_u8; 8192];
 
     while let Ok(read) = terminal.read(&mut buffer) {
         if read == 0 {
             break;
         }
+        counted.fetch_add(read, Ordering::SeqCst);
         if sender
             .send(buffer.get(..read).unwrap_or_default().to_vec())
             .is_err()
@@ -1866,13 +1842,6 @@ fn read(mut terminal: File, sender: &Sender<Vec<u8>>) {
         }
     }
 }
-
-/// What is written to the far side of the pair to mark, in crucible's
-/// output, the point where the window took a new size.
-///
-/// An application program command, which crucible never writes and the screen
-/// never sees: [`Watched::feed`] takes it out before drawing.
-const MARK: &[u8] = b"\x1b_window\x1b\\";
 
 /// A window size, in the shape the terminal takes one.
 fn size(columns: u16, rows: u16) -> Winsize {

@@ -45,7 +45,7 @@ use crate::access::{self, AccessError, KeySource, Route, Settled};
 use crate::backends::Registry;
 use crate::content_use::{self, Consent, Serving};
 use crate::following::Following;
-use crate::launching::{self, Launcher, Runs, Steps, Unresumable};
+use crate::launching::{self, Launcher, Unresumable};
 use crate::outside::Installed;
 use crate::providers::{self, Providers, Served};
 use crate::selecting;
@@ -309,8 +309,10 @@ fn assembled(startup: &Startup<'_>, agents: &'static Registry) -> Result<Convers
         (session, Some(transcript))
     } else {
         let branch = crate::branching::current(workspace.root());
+        // The welcome is drawn after this returns, so the index and header
+        // writes, each made durable, are left to the session's writer.
         (
-            Session::start(sessions, workspace, branch.as_deref())?,
+            Session::start_deferred(sessions, workspace, branch.as_deref())?,
             None,
         )
     };
@@ -376,25 +378,42 @@ fn assembled(startup: &Startup<'_>, agents: &'static Registry) -> Result<Convers
         }
     });
     recorded(&mut conversation, &runtime);
-    if let Some((session, transcript, agent)) = outside {
+    // The runs of the route the conversation opens on, and the steps on every
+    // other agent, are made together: a step on an agent the conversation is
+    // not on runs under the same policy its own commands would, and where that
+    // cannot be built, no step runs.
+    let stepping = settings.sandbox().enforcing_policy(workspace).ok();
+    let (runs, steps) = launching::first_runs(
+        outside.as_ref().map(|(_, _, on)| {
+            (
+                Launcher::new(
+                    agents_sandbox,
+                    runtime.clone(),
+                    &on.policy,
+                    startup.services.consent(),
+                ),
+                on.agent.clone(),
+                &*on.instance,
+            )
+        }),
+        stepping.as_ref().map(|policy| {
+            (
+                Launcher::new(
+                    steps_sandbox,
+                    runtime.clone(),
+                    policy,
+                    startup.services.consent(),
+                ),
+                agents,
+                (startup.from)("PATH").map(OsString::from),
+            )
+        }),
+        settings.sandbox().enablement(),
+    );
+    if let Some(((session, transcript, agent), runs)) = outside.zip(runs) {
         let OnAgent {
-            agent,
-            instance,
-            route,
-            policy,
-            ..
+            instance, route, ..
         } = agent;
-        let runs = Runs::new(
-            Launcher::new(
-                agents_sandbox,
-                runtime.clone(),
-                &policy,
-                startup.services.consent(),
-            ),
-            settings.sandbox().enablement(),
-            agent,
-            &instance,
-        );
         let installed = Installed {
             backend: None,
             relaunch: Box::new(runs),
@@ -418,21 +437,8 @@ fn assembled(startup: &Startup<'_>, agents: &'static Registry) -> Result<Convers
     if let Some(file) = startup.services.consent().file() {
         conversation.hastened_as_kept(file);
     }
-    // A step on an agent the conversation is not on runs under the same
-    // policy its own commands would; where that cannot be built, no step runs.
-    if let Ok(policy) = settings.sandbox().enforcing_policy(workspace) {
-        let launcher = Launcher::new(
-            Arc::clone(&steps_sandbox),
-            runtime.clone(),
-            &policy,
-            startup.services.consent(),
-        );
-        conversation = conversation.stepping(Steps::new(
-            launcher,
-            settings.sandbox().enablement(),
-            agents,
-            (startup.from)("PATH").map(OsString::from),
-        ));
+    if let Some(steps) = steps {
+        conversation = conversation.stepping(steps);
     }
     Ok(conversation
         .consenting(startup.services.consent().clone())

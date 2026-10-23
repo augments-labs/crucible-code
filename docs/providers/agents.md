@@ -13,6 +13,15 @@ any other provider is refused at start. A disconnected agent, or one whose
 program cannot be run, is refused before anything is recorded. The sections
 below say how each agent is run.
 
+The agent's program is looked at when it is selected, and again before each
+start, without reading it. On Unix crucible compares its length,
+modification time, device, inode and change time, so a rewrite, a replacement,
+a `chmod`, a `chown` or a new hard link to it each count as a change. On
+Windows it compares length and modification time alone, which a program
+allowed to write the file can restore. A program that is no longer the one
+selected is refused with a sentence naming it, and is selected anew when
+crucible is started again.
+
 `/login` in a conversation running on an agent offers all three choices. For
 the provider the agent reaches, a subscription or key is stored, the
 provider's `access` is rewritten from `externalAgent` to `subscription` or
@@ -69,6 +78,15 @@ only and its settings could not be removed, and the entry stays, so the next
 run starts the agent again. Where the conversation was on another route,
 nothing was stopped and the line says only that the removal failed.
 
+Where the file cannot be written for a disconnect, the line says the agent is
+stopped for this run only and the disconnect could not be saved, if the
+conversation was on that agent; the entry stays enabled, so the next run starts
+the agent again. Where the conversation was on another route, nothing was
+stopped and the line says only that the disconnect failed. A sign-out writes
+every instance on the agent's profile, so it says the same stopped-for-this-run
+line where the conversation was on any of them, and otherwise only that the
+sign-out failed; the agent's own program is not run either way.
+
 Connecting an agent moves the conversation onto it at once, whatever provider
 it was asking, in a new session bound to it with nothing carried over, and the line it
 ends on names the agent and says the conversation starts fresh there; the
@@ -113,7 +131,9 @@ A conversation moved onto an agent by `/resume` of a session it ran, or by a
 model taken as above, starts the agent with its next message. Where the agent's
 route has no yes, that message asks about it first, as
 [content use](content-use.md#an-installed-agent) says, and nothing is started
-or sent before the yes.
+or sent before the yes. A message with an attachment, or one to an agent whose
+program is not found, is refused with its reason before anything is asked, and
+nothing is written or started.
 
 The line above the box reads how much of the model's window the agent's
 context holds, such as `41k/1.0M · 95% window left`: the window is the one
@@ -193,12 +213,21 @@ names the agent that would act and how far what it runs is held in, such as
 `execution: work · confinement: enforced`; a no refuses that action alone, and
 the agent's turn goes on without it. Allowing for
 the rest of the session keeps, for that session alone and never in its settings
-files, only the agent's rules for the command you were asked about: the command
-itself, or every command that begins with the words a rule names, such as every
-`git` command for `git:*`. A rule with a wildcard, a rule for any other tool,
-and a rule for the commands that begin with words holding shell syntax, such as
-`;`, `|`, `$`, a quote or `=`, are not kept; the command itself is kept even
-when it holds shell syntax. Where the agent offers no such rule, or says its
+files, only the agent's rules for the command you were asked about. A rule
+without `:*` is kept only when it is that command itself. A rule ending in
+`:*` is kept only when that command is the words before the `:*`, or begins
+with them followed by a space, such as `git` or every `git` command for
+`git:*`, but not `gitx status`. A rule is not kept for any tool other than
+`Bash`. Apart from a final `:*`, a rule is not kept when the words it
+names have a wildcard (`*`, `?`, `[` or `{`), no letter or digit, a space at
+the start or end, or
+any other whitespace, such as a tab (U+0009) or a no-break space (U+00A0): a
+rule with a no-break space between `ls` and `-la` is dropped. A rule whose
+words hold a byte-order mark (U+FEFF) is not kept either.
+Shell syntax (``; & | < > ( ) $ ` " ' \ =``) is checked only in the
+words before `:*`, so a rule for the commands that begin with words holding any
+of it is not kept; the command itself is kept even when it holds shell syntax,
+if it passes the checks above. Where the agent offers no such rule, or says its
 rule would allow more than you were asked, the allow is for that call alone.
 Once a turn is stopped, every question it asked is answered no, whatever was
 chosen.

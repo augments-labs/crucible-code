@@ -5,7 +5,7 @@ use std::io::Cursor;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use crucible_app::content_use::{Consent, Routes, Serving, WARNED};
+use crucible_app::content_use::{Consent, LAUNCHING, Routes, Serving, WARNED, agent_route};
 use crucible_runner::Tools;
 use crucible_session::Session;
 use crucible_tui::{Recording, Renderer};
@@ -13,6 +13,8 @@ use crucible_tui::{Recording, Renderer};
 use crate::cli::Fatal;
 use crate::cli::converse::{First, Terms, converse};
 use crate::cli::fake::Script;
+
+use crate::cli::converse::warning::unanswered;
 
 use super::{opening, paired, plain, saying, scripted};
 
@@ -150,4 +152,136 @@ fn compact_with_no_model_to_ask_is_answered_before_the_route_is_asked_about() {
     assert!(ended.is_ok(), "{ended:?}");
     let written = renderer.terminal().written();
     assert!(written.contains("No model selected"), "{written}");
+}
+
+#[test]
+fn an_installed_agent_with_no_yes_is_unanswered_with_what_starting_it_runs() {
+    // The question shown on a terminal says what starting the agent runs
+    // after the vendor's sentence; a run with no terminal to ask on says it
+    // in the same place, and still ends on where to answer.
+    let route = agent_route("claude");
+    let claude = WARNED
+        .iter()
+        .find(|warned| warned.route == route)
+        .expect("Claude Code's route is warned");
+
+    let said = unanswered(claude);
+
+    let launched = format!("{} {LAUNCHING}", claude.warning.sentence);
+    assert!(said.contains(&launched), "{said}");
+    assert!(said.ends_with("answer it once in a terminal."), "{said}");
+}
+
+#[test]
+fn a_route_that_launches_nothing_is_unanswered_without_that_sentence() {
+    let google = WARNED
+        .iter()
+        .find(|warned| warned.route == "key:google")
+        .expect("the Google key row is warned");
+
+    assert!(!unanswered(google).contains(LAUNCHING));
+}
+
+#[test]
+fn a_missing_agent_program_is_refused_before_the_warning_is_put() {
+    // A prompt on an installed agent's route, whose turn would start an agent
+    // whose program is nowhere, is refused with what the launch would say,
+    // drawn as a failed turn is, rather than put to anybody first: nobody is
+    // asked to agree to a launch that cannot happen, and the route is left
+    // unanswered. Down a pipe, where the question ends the run, the run goes
+    // on past it.
+    use crucible_app::access::Route;
+    use crucible_app::backends::REGISTRY;
+    use crucible_app::launching::{Agent, Controls, Launcher, Runs};
+    use crucible_app::outside::Installed;
+    use crucible_config::Driver;
+    use crucible_sandbox::{SandboxEnablement, SandboxPolicy, SandboxService};
+    use crucible_sandbox_local::LocalSandbox;
+    use crucible_session::RouteBinding;
+    use crucible_types::Transcript;
+    use crucible_workspace::Workspace;
+
+    let consent = Consent::new(Routes::production());
+    let route = Route::External {
+        provider: "anthropic",
+        instance: "work".into(),
+        driver: Driver::Claude,
+        executable: std::env::temp_dir()
+            .join("crucible-no-such-claude-program")
+            .to_string_lossy()
+            .into(),
+        profile: None,
+        model: None,
+        effort: None,
+        enabled: true,
+    };
+    let agent = Agent::routed(&route, &REGISTRY, |_| None).expect("Claude Code's route");
+    let reason = agent
+        .program(&consent)
+        .expect_err("the program is not there")
+        .to_string();
+    let runtime = crate::cli::fake::runtime();
+    let workspace = Workspace::open(std::env::temp_dir()).expect("a temporary directory");
+    let policy = SandboxPolicy::standard(&workspace)
+        .expect("a policy")
+        .with_enabled(false);
+    let sandbox: Arc<dyn SandboxService> = Arc::new(LocalSandbox::new());
+    let runs = Runs::new(
+        Launcher::new(sandbox, runtime.clone(), &policy, &consent),
+        Arc::new(SandboxEnablement::new(false, false)),
+        agent,
+        "work",
+        &Controls::default(),
+    );
+    let script = Script::new(vec![saying("answered")]);
+    let asked = script.asked();
+    let mut conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(script, Tools::new(), session)
+    })
+    .consenting(consent.clone());
+    let installed = Installed {
+        backend: None,
+        relaunch: Box::new(runs),
+        route: RouteBinding::new("claude", "work", None).expect("a route"),
+    };
+    drop(
+        runtime
+            .block_on(conversation.external(
+                Arc::new(Session::nowhere()),
+                Transcript::new(),
+                installed,
+            ))
+            .expect("moved onto the agent's route"),
+    );
+    let terms = Terms {
+        consent: consent.clone(),
+        ..plain()
+    };
+    // Wide enough that the sentence is drawn on one row.
+    let mut renderer = Renderer::new(Recording::new(240, 24));
+    let mut input = Cursor::new(b"hello\n".to_vec());
+
+    let ended = converse(
+        conversation,
+        &mut renderer,
+        &terms,
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .map(|_| ());
+
+    assert!(ended.is_ok(), "the route was put first: {ended:?}");
+    let written = renderer.terminal().written().to_string();
+    assert!(
+        written.contains(&reason),
+        "{reason:?} is not in {written:?}"
+    );
+    assert!(
+        consent.asks(&agent_route("claude")).is_some(),
+        "the route was answered"
+    );
+    assert_eq!(asked.load(Ordering::SeqCst), 0, "a request was sent");
 }

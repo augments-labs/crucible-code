@@ -108,6 +108,10 @@ impl Relaunch for Again {
         None
     }
 
+    fn refusal(&self) -> Option<Failure> {
+        None
+    }
+
     fn launch<'a>(
         &'a self,
         _: Mode,

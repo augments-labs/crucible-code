@@ -4,16 +4,18 @@
 //! Asked on the drawing thread, before the work is handed to a worker, so
 //! the message is still this side's to give back; a message that would start
 //! an installed agent is asked about on that agent's own route, and says
-//! what starting it runs. Put before an installed agent is first started any
-//! other way, it is the application's question, answered on the drawing
-//! thread while the operation that asked it waits: it says the same, and the
-//! application writes down its yes. What stands is a panel with the vendor's
-//! sentence and the page it comes from; `Use it anyway` writes the yes into
-//! the user's own file and lets the work go, and anything else sends
-//! nothing. Behind it, every client the run sends through holds the route's
-//! origins until the yes is given, and a web source built for a warned model
-//! asks that model's route before each request, so a path that reached a
-//! send without passing here still sends nothing.
+//! what starting it runs, unless the start would be refused whatever the
+//! answer: that message is not asked about, and goes on to be refused as a
+//! failed turn, before anything starts. Put before an installed agent is
+//! first started any other way, it is the application's question, answered
+//! on the drawing thread while the operation that asked it waits: it says the
+//! same, and the application writes down its yes. What stands is a panel
+//! with the vendor's sentence and the page it comes from; `Use it anyway`
+//! writes the yes into the user's own file and lets the work go, and
+//! anything else sends nothing. Behind it, every client the run sends through
+//! holds the route's origins until the yes is given, and a web source built
+//! for a warned model asks that model's route before each request, so a path
+//! that reached a send without passing here still sends nothing.
 //!
 //! A key pressed before the panel was drawn does not answer it: whatever is
 //! waiting to be read when it is about to stand is dropped, so the Enter that
@@ -194,7 +196,8 @@ pub(super) fn recorded(terms: &Terms, warned: &Warned) -> Result<(), String> {
 
 /// Whether `work` is held back rather than sent: asked about first where the
 /// route it would go on has no yes, and handed back whole where the answer
-/// was anything but yes.
+/// was anything but yes. A turn [`Conversation::unlaunchable`] refuses is not
+/// held: it goes on to that refusal unasked.
 ///
 /// # Errors
 ///
@@ -215,12 +218,18 @@ pub(super) fn held<T: Terminal>(
         let Some(warned) = unsent(conversation, terms, work) else {
             return Ok(false);
         };
+        // A turn that would be refused before it started the agent, whatever
+        // the answer, is not asked about: it goes on to be refused as it
+        // would be after a yes, drawn as a failed turn is, and nothing starts.
+        if let Work::Turn(_, attached) = work
+            && conversation.unlaunchable(attached).is_err()
+        {
+            return Ok(false);
+        }
         // A loop reading lines rather than keys has nobody to put a panel
         // to, and neither has one whose raw mode never came up.
         if !held.answers.keys {
-            return Err(Fatal::Unanswered(
-                format!("{}: {} {ELSEWHERE}", warned.shown, warned.warning.sentence).into(),
-            ));
+            return Err(Fatal::Unanswered(unanswered(&warned)));
         }
         break match ask(renderer, terms.style(), &warned, Put::Send)? {
             Answer::Yes => match recorded(terms, &warned) {
@@ -239,6 +248,18 @@ pub(super) fn held<T: Terminal>(
     }
     renderer.commit(&said)?;
     Ok(true)
+}
+
+/// What a run with no terminal says when `warned` has no yes: the route's
+/// name, the vendor's sentence with what starting an installed agent runs
+/// after it where the route is one, and where to answer.
+pub(super) fn unanswered(warned: &Warned) -> Box<str> {
+    format!(
+        "{}: {} {ELSEWHERE}",
+        warned.shown,
+        content_use::full_sentence(warned)
+    )
+    .into()
 }
 
 /// The warned route `work` would go on with no yes: the one a send to the

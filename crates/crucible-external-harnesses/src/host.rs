@@ -378,6 +378,14 @@ impl Control {
         self.shared.interrupted.store(false, Ordering::SeqCst);
     }
 
+    /// Whether a run on this control could not be confirmed to have stopped,
+    /// so that its process may still be running and no run is launched on
+    /// this control again.
+    #[must_use]
+    pub fn unstopped(&self) -> bool {
+        self.shared.unstopped.load(Ordering::SeqCst)
+    }
+
     /// What is open, oldest first.
     #[must_use]
     pub fn open(&self) -> Vec<PendingRef> {
@@ -410,8 +418,9 @@ impl Drop for Asking<'_> {
 }
 
 /// The agent's place while a launch is under way: released when the launch
-/// ends in a refusal or its future is dropped, unless a stop it abandoned
-/// left a process that was not confirmed ended, as a host's drop does.
+/// ends in a refusal or its future is dropped, unless a process was left that
+/// was not confirmed ended, as a host's drop does. That is a stop it abandoned,
+/// or a stop of a process it could not speak to that failed or never answered.
 struct Launching<'s>(Option<&'s Shared>);
 
 impl Launching<'_> {
@@ -541,7 +550,8 @@ impl Host {
     /// # Errors
     ///
     /// [`Refusal`] for each reason the launch did not start a process, or
-    /// started one and stopped it again.
+    /// started one and stopped it again, or could not confirm that it had,
+    /// which refuses the launches after it as well.
     pub async fn launch(
         service: Arc<dyn SandboxService>,
         runtime: Handle,
@@ -660,7 +670,16 @@ impl Host {
         let stopping = Unconfirmed(Some(&control.shared));
         let pipes = Pipes::taken(process.as_mut(), patience, runtime).await;
         stopping.confirmed();
-        let pipes = pipes.map_err(|_| Refusal::Unspoken)?;
+        let pipes = pipes.map_err(|unspoken| {
+            // A stop that was not confirmed leaves a process that may still be
+            // running, which keeps the agent's place as an abandoned one does.
+            if unspoken.cleanup.is_some() {
+                control.shared.unstopped.store(true, Ordering::SeqCst);
+            }
+            Refusal::Unspoken {
+                cleanup: unspoken.cleanup,
+            }
+        })?;
         Ok(Self {
             process,
             frames: Frames::new(pipes.heard),

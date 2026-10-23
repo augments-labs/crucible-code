@@ -642,12 +642,18 @@ fn remember(directory: &Path, file: &str, line: &[u8]) {
         .and_then(|mut file| file.write_all(line));
 }
 
-/// Beats into `directory` until stopped, or until [`LINGER`] has passed.
+/// Beats into `directory` until stopped, or until [`LINGER`] has passed. Each
+/// beat is written beside the file and renamed over it, so a reader sees the
+/// last beat whole and never a file that is being truncated or half written.
 fn linger(directory: &Path) -> ExitCode {
     let path = directory.join(LINGERING);
+    let writing = directory.join(format!("{LINGERING}.writing"));
     let beats = LINGER.as_millis() / BEAT.as_millis();
     for beat in 0..beats {
-        if fs::write(&path, beat.to_string()).is_err() {
+        if fs::write(&writing, beat.to_string())
+            .and_then(|()| fs::rename(&writing, &path))
+            .is_err()
+        {
             return ExitCode::FAILURE;
         }
         std::thread::sleep(BEAT);

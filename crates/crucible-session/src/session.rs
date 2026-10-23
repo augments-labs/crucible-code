@@ -25,6 +25,12 @@
 //! the line and goes on. Either way the lines reach the file in the order they
 //! were queued, and the thread ends once the session is dropped and the queue
 //! it left is drained.
+//!
+//! A session started behind the first frame hands that thread what its log
+//! owes before any line — the index put in order, the session named in it, the
+//! header — and the thread pays it first, in the order [`Session::start`] pays
+//! it before returning. A wait on the thread, a drop among them, is a wait on
+//! that too.
 
 use std::fs::File;
 use std::io::{self, Write as _};
@@ -301,7 +307,7 @@ pub struct Session {
     /// it was opened. `None` for a session a provider's model runs.
     route: Option<RouteBinding>,
     /// What that agent last called the session, as the log said when it was
-    /// opened.
+    /// opened: `None` where the agent said it had no session by that name.
     external: Option<ExternalRef>,
     /// The turn the log ended on without the agent saying whether what it set
     /// out to do was done. `None` where any message came after it.
@@ -331,11 +337,62 @@ impl Session {
             source,
         })?;
 
-        // A legacy scan happens here, after the first frame, and once. The
+        // A legacy scan happens here, once, before the start returns; the
+        // start the welcome opens on leaves it to the session's writer. The
         // welcome itself reads only the fixed index this makes.
         index::ensure(directory)?;
 
-        Self::naming(directory, workspace, branch, None, SessionId::new)
+        Self::naming(
+            directory,
+            workspace,
+            branch,
+            None,
+            Settling::Now,
+            SessionId::new,
+        )
+    }
+
+    /// [`Session::start`] for a start the first frame waits on.
+    ///
+    /// Putting the index in order, naming the session in it and writing the
+    /// header each end in a write made durable, and none of them is anything
+    /// the first frame shows. So the name is taken here, and the rest is the
+    /// first thing the session's writer does, in the order [`Session::start`]
+    /// does it and ahead of every line queued for the log. What can still be
+    /// refused before the start returns is: the directory, the name, and an
+    /// index that will not read, which is read here without the lock and
+    /// without a write. Whatever waits for the writer — [`Session::finish`],
+    /// [`Session::display_history`], the drop — waits for this as well.
+    ///
+    /// What the writer is refused after that is the session's
+    /// [`Session::trouble`], and the log the index never named is removed, as
+    /// it is when [`Session::start`] refuses. A session dropped at once still
+    /// has its header and its index entry: the drop waits for the writer.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionError`] when the directory or the file cannot be made or the
+    /// index cannot be read, and [`SessionError::Taken`] where every name it
+    /// minted was already spoken for.
+    pub fn start_deferred(
+        directory: &Path,
+        workspace: &Workspace,
+        branch: Option<&str>,
+    ) -> Result<Self, SessionError> {
+        privacy::directory(directory).map_err(|source| SessionError::Directory {
+            at: directory.display().to_string().into(),
+            source,
+        })?;
+        index::written(directory, index::ENTRIES)?;
+
+        Self::naming(
+            directory,
+            workspace,
+            branch,
+            None,
+            Settling::Deferred,
+            SessionId::new,
+        )
     }
 
     /// Begins recording a new session in `directory` that the installed agent
@@ -362,7 +419,14 @@ impl Session {
         })?;
         index::ensure(directory)?;
 
-        let mut session = Self::naming(directory, workspace, branch, Some(route), SessionId::new)?;
+        let mut session = Self::naming(
+            directory,
+            workspace,
+            branch,
+            Some(route),
+            Settling::Now,
+            SessionId::new,
+        )?;
         session.route = Some(route.clone());
         Ok(session)
     }
@@ -373,11 +437,15 @@ impl Session {
     /// already taken. A collision needs two of seventy-four random bits in one
     /// millisecond, so this is the path no ordinary run reaches — and code
     /// nothing has ever run is code nobody knows the behaviour of.
+    // Each is an input of its own to the header or to when it is written, and
+    // a value gathering them would be built at each caller and taken apart here.
+    #[allow(clippy::too_many_arguments)]
     fn naming(
         directory: &Path,
         workspace: &Workspace,
         branch: Option<&str>,
         route: Option<&RouteBinding>,
+        settling: Settling,
         mut name: impl FnMut() -> SessionId,
     ) -> Result<Self, SessionError> {
         for _ in 0..NAMES {
@@ -387,24 +455,55 @@ impl Session {
             let Some((mut file, held)) = taking(&path)? else {
                 continue;
             };
-
-            // Before the header: a crash between these steps leaves a name the
-            // index reader validates and skips. The opposite order could leave
-            // a complete session no bounded lookup could discover.
-            if let Err(problem) = index::record(directory, &id) {
-                drop(file);
-                drop(held);
-                let _ = std::fs::remove_file(&path);
-                return Err(problem);
-            }
-
             let header = wire::header(&id, workspace.root(), branch, route);
-            writeln!(file, "{header}").map_err(|source| SessionError::Log {
-                at: path.display().to_string().into(),
-                source,
-            })?;
 
-            let mut session = Self::writing(path, file);
+            let mut session = match settling {
+                Settling::Now => {
+                    // Before the header: a crash between these steps leaves a
+                    // name the index reader validates and skips. The opposite
+                    // order could leave a complete session no bounded lookup
+                    // could discover.
+                    if let Err(problem) = index::record(directory, &id) {
+                        drop(file);
+                        drop(held);
+                        let _ = std::fs::remove_file(&path);
+                        return Err(problem);
+                    }
+
+                    writeln!(file, "{header}").map_err(|source| SessionError::Log {
+                        at: path.display().to_string().into(),
+                        source,
+                    })?;
+
+                    Self::writing(path, file)
+                }
+                Settling::Deferred => {
+                    let directory = directory.to_path_buf();
+                    let log = path.clone();
+                    Self::writing_after(path, file, move |mut file| {
+                        // The order `Settling::Now` keeps, for the same
+                        // reason, with the index put in order first.
+                        let paid = index::ensure(&directory)
+                            .and_then(|()| index::record(&directory, &id))
+                            .and_then(|()| {
+                                writeln!(file, "{header}").map_err(|source| SessionError::Log {
+                                    at: log.display().to_string().into(),
+                                    source,
+                                })
+                            });
+                        match paid {
+                            Ok(()) => Ok(file),
+                            Err(problem) => {
+                                // Removed while the claim is still held, so no
+                                // other start can be handed the name between.
+                                drop(file);
+                                let _ = std::fs::remove_file(&log);
+                                Err(problem)
+                            }
+                        }
+                    })
+                }
+            };
             session.claim = held;
 
             return Ok(session);
@@ -765,7 +864,15 @@ impl Session {
         // not made durable, so the writer having taken every line is enough,
         // and the name is opened once, by the ordinary-file opener: anything
         // that can write the directory can swap a link or a pipe in under it.
-        if !self.caught_up() || self.trouble().is_some() {
+        //
+        // Refused with what stopped the log where something did, so a start
+        // whose index could not be written behind the first frame is refused
+        // here with the reason it would have been refused with before it.
+        let caught_up = self.caught_up();
+        if let Some(problem) = self.trouble() {
+            return Err(trouble(io::Error::other(String::from(problem))));
+        }
+        if !caught_up {
             return Err(trouble(io::Error::other(
                 "could not flush session display history",
             )));
@@ -879,6 +986,28 @@ impl Session {
         ours
     }
 
+    /// Records that the installed agent running this session has no session
+    /// by `named`, the name it last gave.
+    ///
+    /// Read back, the log then names no agent session until the agent names
+    /// another, so a resume starts the agent on a new one rather than asking
+    /// again for the one it said was gone. Nothing else goes: the transcript
+    /// and a turn left unsettled stay.
+    ///
+    /// Whether it was kept: as with [`Session::external`], only for the
+    /// instance the session was opened on.
+    #[must_use]
+    pub fn gone(&self, named: &ExternalRef) -> bool {
+        let ours = self
+            .route
+            .as_ref()
+            .is_some_and(|route| route.instance() == named.instance());
+        if let (true, Some(to)) = (ours, &self.to) {
+            drop(to.send(LogRequest::Line(gone_line(named))));
+        }
+        ours
+    }
+
     /// Records that a turn ended without the agent saying whether what it set
     /// out to do was done.
     ///
@@ -905,7 +1034,8 @@ impl Session {
     }
 
     /// What the agent running this session last called it, as the log said
-    /// when it was opened.
+    /// when it was opened. `None` where the agent never named it, and where it
+    /// last said it had no session by that name.
     #[must_use]
     pub const fn external_ref(&self) -> Option<&ExternalRef> {
         self.external.as_ref()
@@ -1080,29 +1210,58 @@ impl Session {
     /// is what happens *after* a write fails, and a real file on a real disk
     /// will not fail on request.
     fn writing<W: io::Write + Send + 'static>(path: PathBuf, sink: W) -> Self {
+        Self::writing_after(path, sink, Ok)
+    }
+
+    /// [`Session::writing`], with `owed` done to `sink` on the writer before
+    /// any line queued for it.
+    ///
+    /// Where `owed` is refused, what it said is the session's trouble, and
+    /// every line queued after is answered as refused rather than written.
+    fn writing_after<W, P>(path: PathBuf, sink: W, owed: P) -> Self
+    where
+        W: io::Write + Send + 'static,
+        P: FnOnce(W) -> Result<W, SessionError> + Send + 'static,
+    {
         let (to, lines) = sync_channel(QUEUE);
         let trouble = Trouble::default();
         let mine = Arc::clone(&trouble);
         let room = Arc::new(Notify::new());
         let told = Arc::clone(&room);
 
-        // Where the next line lands: the file as it stands, header and all,
-        // which is what the writer counts every byte on from. Unknown where
-        // the file cannot be asked, and then nothing is placed.
-        let start = std::fs::metadata(&path).ok().map(|held| held.len());
         let placed = Placed::default();
         let places_for_writer = Arc::clone(&placed);
         let still = Placing::new(true.into());
         let still_for_writer = Arc::clone(&still);
+        let at = path.clone();
 
-        let writer = thread::spawn(move || {
-            log::write(
-                sink,
-                lines,
-                &mine,
-                told,
-                (start, places_for_writer, still_for_writer),
-            );
+        let writer = thread::spawn(move || match owed(sink) {
+            Ok(sink) => {
+                // Where the next line lands: the file as it stands, header and
+                // all, which is what the writer counts every byte on from.
+                // Unknown where the file cannot be asked, and then nothing is
+                // placed.
+                let start = std::fs::metadata(&at).ok().map(|held| held.len());
+                log::write(
+                    sink,
+                    lines,
+                    &mine,
+                    told,
+                    (start, places_for_writer, still_for_writer),
+                );
+            }
+            Err(problem) => {
+                if let Ok(mut held) = mine.lock() {
+                    held.get_or_insert_with(|| problem.to_string().into());
+                }
+                log::write(
+                    Unbegun,
+                    lines,
+                    &mine,
+                    told,
+                    (None, places_for_writer, still_for_writer),
+                );
+            }
         });
 
         // Read back from the name rather than carried in, so that the two ways
@@ -1132,6 +1291,30 @@ impl Session {
             external: None,
             uncertain: None,
         }
+    }
+}
+
+/// How a new session pays what its log owes before its first line.
+#[derive(Debug, Clone, Copy)]
+enum Settling {
+    /// Before the start returns, so a start that cannot pay is refused.
+    Now,
+    /// On the session's writer, ahead of every line, so the first frame does
+    /// not wait on a durable write it does not show.
+    Deferred,
+}
+
+/// Where a session's lines go once what its log owed before them was refused:
+/// nowhere, each write refused, so the refusal already kept stays the first.
+struct Unbegun;
+
+impl io::Write for Unbegun {
+    fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+        Err(io::Error::other("the session log was never begun"))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Err(io::Error::other("the session log was never begun"))
     }
 }
 
@@ -1183,6 +1366,22 @@ fn restricted_line(freed: usize, results: &[crucible_types::ToolId], notice: &st
 /// lines partway down; one request so no other append can split the pair.
 fn guarded(line: &str) -> Box<str> {
     format!("{{\"requires_format\":{}}}\n{line}", wire::FORMAT).into()
+}
+
+/// The line saying the agent has no session by `named`.
+///
+/// Behind its own guard rather than [`guarded`]'s, so the header a session an
+/// agent runs is written with stays one the release before this line reads,
+/// and only a log that holds the line is refused there: read past, the agent
+/// would be resumed on the session it said was gone. One request so no other
+/// append can split the pair.
+fn gone_line(named: &ExternalRef) -> Box<str> {
+    format!(
+        "{{\"requires_format\":{}}}\n{}",
+        wire::SESSION_GONE,
+        wire::gone(named)
+    )
+    .into()
 }
 
 /// Whether one persisted transcript entry belongs in the picker-facing count.

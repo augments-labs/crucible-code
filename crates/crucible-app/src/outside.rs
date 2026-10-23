@@ -54,9 +54,10 @@
 //! no further turn: it is closed, and the next turn launches another through
 //! the [`Relaunch`] the conversation holds, resuming the agent's own session
 //! by the name the agent last gave it. A failure the backend says left the
-//! agent with no session by that name lets the name go, so the launch after
-//! it starts a new session rather than fail again asking for that one; no
-//! other failure does. Where the one closed could not be
+//! agent with no session by that name lets the name go, here and in the
+//! session's log, so the launch after it, or after the session is picked
+//! back up, starts a new session rather than fail again asking for that one;
+//! no other failure does. Where the one closed could not be
 //! confirmed stopped, that launch is refused instead, so no second run is
 //! started beside it. A run that ended in a turn that finished, as one whose
 //! stop was not heeded does, is found out by the next prompt: the backend
@@ -79,7 +80,10 @@
 //! **Launched by its first turn.** A conversation moved onto the route with
 //! no run in hand launches one at its first turn, the same way a spent run is
 //! replaced, so a run that started on the route has asked nothing of the agent
-//! before somebody asks it something.
+//! before somebody asks it something. A turn that would launch one and be
+//! refused whatever is answered about the route, for something attached to
+//! it or for what [`Relaunch::refusal`] says, is refused before the route is
+//! asked about, in the words it would be refused in after a yes.
 
 use std::collections::VecDeque;
 use std::future::poll_fn;
@@ -129,6 +133,12 @@ pub trait Relaunch: Send + Sync {
     /// The effort the agent is first started at; `None` leaves the agent its
     /// own.
     fn effort(&self) -> Option<Effort>;
+
+    /// Why a launch would be refused before anything is started, whatever
+    /// is answered about the agent's route, in the words the launch would be
+    /// refused in: its program not found, say. `None` where nothing refuses
+    /// it yet, which the launch itself may still do.
+    fn refusal(&self) -> Option<Failure>;
 
     /// A new run of the agent under `mode` on `model` at `effort`, each the
     /// agent's own where it is `None`, resuming the agent's own session
@@ -348,7 +358,8 @@ pub(crate) struct Outside {
     /// The effort the agent is launched at; `None` leaves it its own.
     effort: Option<Effort>,
     /// The agent's own name for its session, as last given, until a turn's
-    /// failure says the agent has no session by it.
+    /// failure says the agent has no session by it, which the session's log
+    /// is told too.
     named: Option<ExternalRef>,
     /// The next turn.
     turn: TurnId,
@@ -423,6 +434,26 @@ impl Outside {
     /// held is spent, and the agent was not disconnected.
     pub(crate) const fn launches(&self) -> bool {
         !self.disconnected && (self.backend.is_none() || self.spent)
+    }
+
+    /// Why the next turn, with `attached`, would be refused before it starts
+    /// the agent, whatever is answered about the agent's route: something
+    /// attached, as [`unattached`] says, else what [`Relaunch::refusal`]
+    /// says, told as that launch's failure would be. Nothing where the turn
+    /// starts no agent.
+    ///
+    /// # Errors
+    ///
+    /// [`TurnError`] saying why the turn would be refused.
+    pub(crate) fn unlaunchable(&self, attached: &[Attachment]) -> Result<(), TurnError> {
+        if !self.launches() {
+            return Ok(());
+        }
+        unattached(attached)?;
+        match self.relaunch.refusal() {
+            Some(failure) => Err(transport(self.driver, failure.reason().as_str().into())),
+            None => Ok(()),
+        }
     }
 
     /// What a person sees of the conversation.
@@ -715,9 +746,14 @@ impl Outside {
         if let Err(Error::Failed(failure)) = &ended {
             match failure.fate() {
                 SessionFate::Kept => {}
-                // Resumed again it would fail again, so the next launch
-                // starts the agent on a session of its own.
-                SessionFate::Gone => self.named = None,
+                // Resumed again it would fail again, so the next launch, and
+                // the first after the session is picked back up, starts the
+                // agent on a session of its own.
+                SessionFate::Gone => {
+                    if let Some(gone) = self.named.take() {
+                        let _kept = session.gone(&gone);
+                    }
+                }
             }
         }
         let turned = match ended {

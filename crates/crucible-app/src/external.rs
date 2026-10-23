@@ -35,7 +35,7 @@ use std::time::Duration;
 
 use crucible_execution::{
     Backend, Capabilities, Capability, Confined, Decision, Description, Error, Event, Failure,
-    Lasting, Outcome, PendingRef, Scope, SessionRef, Sink, TurnRequest, Unsupported,
+    Lasting, Outcome, PendingRef, Scope, SessionRef, Sink, TEXT_BYTES, TurnRequest, Unsupported,
 };
 use crucible_external_harnesses::{
     CANCEL_GRACE, Control, Dialect, Host, STOP_GRACE, Undecided, Unstopped,
@@ -149,9 +149,20 @@ fn gate(capabilities: &Capabilities, capability: Capability) -> Result<(), Error
     }
 }
 
-/// A stop that could not be confirmed, as the contract's failure.
+/// A stop that could not be confirmed, as the contract's failure: the
+/// sentence, then why the stop was not confirmed, each cause in the chain
+/// after the one it came from. The failure's reason has no slot for a source,
+/// so the chain is said in its text, and stops being read once the text holds
+/// all that reason keeps.
 fn unstopped(unstopped: &Unstopped) -> Error {
-    Failure::new(&unstopped.to_string()).into()
+    let mut said = unstopped.to_string();
+    let mut cause = std::error::Error::source(unstopped);
+    while let Some(next) = cause.filter(|_| said.len() < TEXT_BYTES) {
+        said.push_str(": ");
+        said.push_str(&next.to_string());
+        cause = next.source();
+    }
+    Failure::new(&said).into()
 }
 
 /// The run, taken away for one turn or to be stopped, and given back however

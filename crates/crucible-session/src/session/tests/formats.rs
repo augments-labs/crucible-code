@@ -133,7 +133,11 @@ fn a_log_an_agent_ran_is_refused_by_its_number_where_that_number_is_not_read() {
     // this build meets the one after it: by the number on the header, before
     // any line it has no word for.
     let sample = Sample::new("format-14-unread");
-    planted(&sample, &fixture("format-14.jsonl"), Some(wire::FORMAT + 1));
+    planted(
+        &sample,
+        &fixture("format-14.jsonl"),
+        Some(wire::SESSION_GONE + 1),
+    );
 
     let refused = Session::resume(&sample.logs(), &sample.workspace()).expect_err("refused");
 

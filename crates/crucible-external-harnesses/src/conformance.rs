@@ -376,9 +376,9 @@ impl Suite<'_> {
                 // its first exchange, so the program waits on no more.
                 let first = set.opening.first().map_or(0, |(heard, _)| *heard);
                 let reply = Reply::new().hear(first).linger().pause(ASLEEP);
-                // A beat is a truncate and then a write, so a stop landing
-                // between the two leaves nothing to read afterwards: whether
-                // the grandchild began is seen while the turn runs.
+                // A beat is written beside the file and renamed over it, so a
+                // read never lands on half of one: whether the grandchild
+                // began is seen while the turn runs.
                 let playing = self.one(&here, reply, React::Interrupt, None);
                 tokio::pin!(playing);
                 let mut began = false;
@@ -598,8 +598,9 @@ mod tests {
     #[derive(Clone)]
     enum Stop {
         /// The local stop, after which the grandchild's beat is left as a
-        /// stop landing between a beat's truncating open and its write leaves
-        /// it: empty, for good.
+        /// beat written in place, truncated and then written, would be torn by
+        /// a stop between the two: empty, for good. The peer writes its beats
+        /// whole, so this stands in for the tear.
         Tears,
         /// Nothing, as a stop that never reaches the process group does: the
         /// agent and its grandchild run on, kept until the test stops them.
@@ -778,8 +779,9 @@ mod tests {
         }
     }
 
-    /// Opens `beat` truncating, as a beat does, and writes nothing, as a beat
-    /// stopped before its write does. Where there is no beat, makes none.
+    /// Opens `beat` truncating and writes nothing, as a beat written in place
+    /// and stopped before its write would leave it, which the peer itself no
+    /// longer does. Where there is no beat, makes none.
     ///
     /// It first waits for the beat to hold still: on Linux the local stop
     /// returns once the group is sent its kill and the leader reaped, not once
@@ -837,8 +839,9 @@ mod tests {
         (index, at.0.join(format!("case-{index}")))
     }
 
-    /// A stop that lands between a beat's truncating open and its write leaves
-    /// nothing to read afterwards, and the agent it ended had still begun.
+    /// A stop that tears the last beat, as one written in place and stopped
+    /// before its write would be, leaves nothing to read afterwards, and the
+    /// agent it ended had still begun.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_stop_that_tears_the_last_beat_still_finds_the_agent_began() {
         let at = Owned::new("torn-beat");

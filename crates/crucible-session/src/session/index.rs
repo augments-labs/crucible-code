@@ -3,8 +3,9 @@
 //! Reading a directory is not bounded by the number of names retained from it.
 //! The welcome runs before the first frame, so it reads this one small file and
 //! opens only the logs named there. A session start or `--continue` on an older
-//! installation builds the index after that frame by scanning the flat log
-//! directory once; every later startup performs fixed work.
+//! installation builds the index by scanning the flat log directory once; the
+//! start the welcome opens on leaves that to its session's writer, so the first
+//! frame does not wait for it, and every later startup performs fixed work.
 //!
 //! Entries are kept newest first by the start time each name carries, the
 //! order [`super::replay::logs`] puts a directory in. Builds before this one
@@ -29,7 +30,11 @@
 //! is synced before its rename and the directory is synced afterwards, so a
 //! crash leaves either complete version. A newly minted identifier is indexed
 //! before its header is written: a crash in between leaves a candidate readers
-//! validate and skip, rather than a complete log discovery can never find.
+//! validate and skip, rather than a complete log discovery can never find. A
+//! start the first frame does not wait on keeps the same order on its session's
+//! writer, ahead of every line queued there, so a crash after it returned and
+//! before the index was written leaves a log with no header, which every reader
+//! passes over.
 //!
 //! Both files are read as one ordinary file each, through
 //! [`super::privacy::opened`]: an index under a link or a pipe is one that
@@ -112,8 +117,9 @@ pub(super) fn ensure(directory: &Path) -> Result<(), SessionError> {
         None => None,
     };
 
-    // The one unbounded read this module makes: once per directory, after the
-    // first frame, and through the same name listing `--continue` uses. Every
+    // The one unbounded read this module makes: once per directory, where the
+    // first frame does not wait on it, and through the same name listing
+    // `--continue` uses. Every
     // startup after it reads only the fixed index written here. Message counts
     // start at zero — counting would mean reading every log — and are repaired
     // the next time each session is continued, when replay knows the number.

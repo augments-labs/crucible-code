@@ -54,6 +54,8 @@ mod routing;
 mod session;
 #[path = "external/stopping.rs"]
 mod stopping;
+#[path = "external/unlaunchable.rs"]
+mod unlaunchable;
 
 /// The runtime an agent's turns run on: its pipes are read on it, so it
 /// drives input and output as the application's own does.
@@ -92,8 +94,7 @@ fn row() -> Result<&'static Row, Failed> {
     })))
 }
 
-/// What a launch was asked for: the mode, and the agent's own session it
-/// resumed.
+/// What a launch was asked for: the mode, and the agent's own session it resumed.
 type Launched = (Mode, Option<String>);
 
 /// Launches Claude Code's runs from the peer installed in a tree, and keeps
@@ -131,6 +132,10 @@ impl Relaunch for Launching {
 
     fn effort(&self) -> Option<Effort> {
         self.agent.effort()
+    }
+
+    fn refusal(&self) -> Option<Failure> {
+        (self.agent.program(&self.consent).err()).map(|why| Failure::new(&why.to_string()))
     }
 
     fn launch<'a>(
@@ -339,8 +344,7 @@ impl Outside {
         ))
     }
 
-    /// Takes back the yes the agent's route was given, as though it had
-    /// never been answered.
+    /// Takes back the yes the agent's route was given, as though it had never been answered.
     fn unanswer(&self) {
         if let Some(consent) = self.conversation.consent() {
             consent.withdraw("agent:claude");
@@ -2537,12 +2541,13 @@ fn a_removal_of_an_instance_the_user_file_does_not_hold_is_refused_unasked() -> 
     Ok(())
 }
 
-/// A client that chooses `REMOVE`, and as it does leaves the user file holding
+/// A client that picks `choice`, and as it does leaves the user file holding
 /// `unusable`, as though another program had been writing it between the
 /// check and the write.
 struct Spoiling {
     file: PathBuf,
     unusable: &'static str,
+    choice: &'static str,
     put: usize,
 }
 
@@ -2557,7 +2562,7 @@ impl Front for Spoiling {
             std::fs::write(&self.file, self.unusable).ok()?;
             Some(Ruled::Picked {
                 id: pending.id(),
-                choice: crucible_client_api::Said::new(client::accounts::REMOVE).ok()?,
+                choice: crucible_client_api::Said::new(self.choice).ok()?,
             })
         })
     }
@@ -2582,6 +2587,7 @@ fn a_removal_whose_write_fails_says_the_agent_was_stopped_and_its_settings_remai
     let mut spoiling = Spoiling {
         file: desk.choosing.clone(),
         unusable,
+        choice: client::accounts::REMOVE,
         put: 0,
     };
     let asked = Asked {
@@ -2631,6 +2637,7 @@ fn a_removal_whose_write_fails_off_the_route_says_only_that_it_failed() -> Resul
     let mut spoiling = Spoiling {
         file: desk.choosing.clone(),
         unusable,
+        choice: client::accounts::REMOVE,
         put: 0,
     };
     let asked = Asked {
@@ -2674,7 +2681,82 @@ const SHARED: &str = r#"{
 }
 "#;
 
-/// Asks to sign the instance `work` of the user file `installed` out, of a
+/// Asks to disconnect `instance` of the user file `SHARED`, of a client that
+/// leaves the file unusable as it picks the disconnect, and answers what it
+/// was told, what the file then held, and how often it was asked.
+fn disconnecting_unwritably(
+    tree: &Tree,
+    outside: &mut Outside,
+    instance: &str,
+) -> Result<(Outcome, String, usize), Failed> {
+    // Still names the instance, and is not a configuration that can be edited.
+    let unusable = r#"{"externalAgents": {"work": {"driver": "claude""#;
+    let desk = super::Desk::new(tree, &[])?;
+    let mut spoiling = Spoiling {
+        file: desk.choosing.clone(),
+        unusable,
+        choice: client::accounts::DISCONNECT,
+        put: 0,
+    };
+    let asked = Asked {
+        installed: (SHARED, instance),
+        command: &|instance| Command::Disconnect { instance },
+        asking: Asking::every(),
+        after: None,
+    };
+    let (outcome, file) =
+        accounting_at(desk, tree, &mut outside.conversation, &asked, &mut spoiling)?;
+    assert_eq!(file, unusable, "nothing was written");
+    Ok((outcome, file, spoiling.put))
+}
+
+/// A disconnect whose write fails once the conversation's run on the instance
+/// was stopped tells the client the instance is stopped for this run only,
+/// since the file still enables it.
+#[test]
+fn a_disconnect_whose_write_fails_says_the_agent_was_stopped_for_this_run_only()
+-> Result<(), Failed> {
+    use crucible_client_api::LogoutOutcome;
+
+    let tree = Tree::new("external-disconnect-unwritten")?;
+    let mut outside = Outside::new(&tree, &connected([claude::clean()]))?;
+
+    let (outcome, _file, put) = disconnecting_unwritably(&tree, &mut outside, "work")?;
+
+    assert_eq!(put, 1, "the disconnect was asked about once");
+    assert!(
+        matches!(
+            outcome,
+            Outcome::Logout(LogoutOutcome::StoppedForThisRunOnly { .. })
+        ),
+        "{outcome:?}"
+    );
+    let (turned, _events) = turn(&mut outside, "again", false)?;
+    assert!(turned.is_err(), "a stopped agent took a turn");
+    Ok(())
+}
+
+/// A disconnect of an instance the conversation is not on stops nothing, so
+/// where its write fails the client is told only that it failed, not that
+/// anything was stopped for this run.
+#[test]
+fn a_disconnect_whose_write_fails_off_the_route_says_only_that_it_failed() -> Result<(), Failed> {
+    let tree = Tree::new("external-disconnect-unwritten-off-route")?;
+    let mut outside = Outside::new(&tree, &connected([claude::clean()]))?;
+
+    let (outcome, _file, put) = disconnecting_unwritably(&tree, &mut outside, "spare")?;
+
+    assert_eq!(put, 1, "the disconnect was asked about once");
+    assert_eq!(
+        outcome,
+        Outcome::Refused(crucible_client_api::ErrorCode::Failed.into())
+    );
+    let (turned, _events) = turn(&mut outside, "again", false)?;
+    assert!(turned.is_ok(), "the agent in use was stopped: {turned:?}");
+    Ok(())
+}
+
+/// Asks to sign the instance `instance` of the user file `installed` out, of a
 /// client that answers `choice`, the file holding `after` once the settings
 /// were read, where that is something else; and answers what the client was
 /// told, what the file then held, and how many times the agent's program was
@@ -2682,12 +2764,12 @@ const SHARED: &str = r#"{
 fn signing_out(
     tree: &Tree,
     outside: &mut Outside,
-    installed: &str,
+    (installed, instance): (&str, &str),
     after: Option<&str>,
     choice: Option<&'static str>,
 ) -> Result<(Outcome, String, usize), Failed> {
     let asked = Asked {
-        installed: (installed, "work"),
+        installed: (installed, instance),
         command: &|instance| Command::SignOut { instance },
         asking: Asking::every(),
         after,
@@ -2724,7 +2806,7 @@ fn a_sign_out_disables_every_instance_on_the_profile_then_signs_the_agent_out() 
     let (outcome, file, started) = signing_out(
         &tree,
         &mut outside,
-        SHARED,
+        (SHARED, "work"),
         None,
         Some(client::accounts::SIGN_OUT),
     )?;
@@ -2761,7 +2843,7 @@ fn a_sign_out_the_agent_does_not_confirm_is_unverified() -> Result<(), Failed> {
     let (outcome, file, started) = signing_out(
         &tree,
         &mut outside,
-        SHARED,
+        (SHARED, "work"),
         None,
         Some(client::accounts::SIGN_OUT),
     )?;
@@ -2798,7 +2880,7 @@ fn a_sign_out_whose_write_fails_starts_no_agent_program() -> Result<(), Failed> 
     let (outcome, file, started) = signing_out(
         &tree,
         &mut outside,
-        SHARED,
+        (SHARED, "work"),
         Some(elsewhere),
         Some(client::accounts::SIGN_OUT),
     )?;
@@ -2812,6 +2894,52 @@ fn a_sign_out_whose_write_fails_starts_no_agent_program() -> Result<(), Failed> 
     );
     assert_eq!(file, elsewhere);
     assert_eq!(started, 0, "the agent's program was started");
+    Ok(())
+}
+
+/// A sign-out takes every instance on the profile out of use, so where its
+/// write fails the client is told the stop holds for this run only if the
+/// conversation was on any of them, and only that it failed if it was on none.
+#[test]
+fn a_sign_out_whose_write_fails_says_this_run_only_only_where_the_run_was_stopped()
+-> Result<(), Failed> {
+    use crucible_client_api::LogoutOutcome;
+
+    let elsewhere = r#"{"updates": {"check": "auto"}}
+"#;
+    for (instance, stopped) in [("spare", true), ("apart", false)] {
+        let tree = Tree::new(&format!("external-sign-out-unwritten-{instance}"))?;
+        let script = connected([claude::clean(), Reply::new(), claude::signed_out()]);
+        let mut outside = Outside::new(&tree, &script)?;
+
+        let (outcome, file, started) = signing_out(
+            &tree,
+            &mut outside,
+            (SHARED, instance),
+            Some(elsewhere),
+            Some(client::accounts::SIGN_OUT),
+        )?;
+
+        if stopped {
+            assert!(
+                matches!(
+                    outcome,
+                    Outcome::Logout(LogoutOutcome::StoppedForThisRunOnly { .. })
+                ),
+                "{instance}: {outcome:?}"
+            );
+        } else {
+            assert_eq!(
+                outcome,
+                Outcome::Refused(crucible_client_api::ErrorCode::Failed.into()),
+                "{instance}"
+            );
+        }
+        assert_eq!(file, elsewhere, "{instance}");
+        assert_eq!(started, 0, "{instance}: the agent's program was started");
+        let (turned, _events) = turn(&mut outside, "again", false)?;
+        assert_eq!(turned.is_err(), stopped, "{instance}: {turned:?}");
+    }
     Ok(())
 }
 
@@ -2852,7 +2980,8 @@ fn a_sign_out_not_chosen_signs_nothing_out() -> Result<(), Failed> {
         let tree = Tree::new(&format!("external-sign-out-kept-{case}"))?;
         let mut outside = Outside::new(&tree, &connected([claude::clean()]))?;
 
-        let (outcome, file, started) = signing_out(&tree, &mut outside, SHARED, None, choice)?;
+        let (outcome, file, started) =
+            signing_out(&tree, &mut outside, (SHARED, "work"), None, choice)?;
 
         assert_eq!(outcome, expected, "{case}");
         assert_eq!(file, kept, "{case}");
@@ -4347,8 +4476,17 @@ fn a_prompt_that_would_start_an_unanswered_agent_asks_its_route_first() -> Resul
                 assert!(resumed_as(&peer, EARLIER), "{:?}", fake_peer::argued(&peer));
                 assert_eq!(users(conversation.settled()), ["before", "after"]);
             }
-            (None, Outcome::Turn(TurnOutcome::Warned { route, .. })) => {
+            (
+                None,
+                Outcome::Turn(TurnOutcome::Warned {
+                    route, sentence, ..
+                }),
+            ) => {
                 assert_eq!(route.as_str(), "agent:claude");
+                assert!(
+                    sentence.as_str().ends_with(LAUNCHING),
+                    "the refusal does not say what starting the agent runs: {sentence:?}"
+                );
                 assert!(!written.contains("agent:claude"), "{written}");
                 assert_eq!(
                     fake_peer::argued(&peer).len(),

@@ -249,6 +249,20 @@ async fn a_program_changed_since_it_was_selected_is_not_started() {
     assert_eq!(fake_peer::played(&at.0), 0);
 }
 
+/// Waits until the peer installed in `here` has kept its counter at `want`,
+/// which a slow process start may not have done when the host's launch
+/// returns, and fails the test if it has not within a bound.
+async fn played_reaches(here: &Path, want: usize) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    while fake_peer::played(here) < want {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the peer's counter never reached {want}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_second_run_of_one_agent_is_refused_while_the_first_lives() {
     let at = Owned::new("busy");
@@ -277,6 +291,7 @@ async fn a_second_run_of_one_agent_is_refused_while_the_first_lives() {
     .expect_err("one at a time");
 
     assert!(matches!(second, Refusal::Busy), "{second}");
+    played_reaches(&at.0, 1).await;
     first.stop(STOP_GRACE).await.expect("stopped");
     assert_eq!(fake_peer::played(&at.0), 1);
 }
@@ -305,6 +320,9 @@ async fn a_stop_abandoned_in_its_grace_leaves_a_relaunch_refused() {
     .await
     .expect("started");
 
+    // The stop is given up on only once the child has started and kept its
+    // counter, so that counter reads the one start whatever the start cost.
+    played_reaches(&at.0, 1).await;
     let abandoned = tokio::time::timeout(Duration::from_millis(200), host.stop(STOP_GRACE)).await;
     let relaunched = Host::launch(
         local(),
@@ -322,9 +340,21 @@ async fn a_stop_abandoned_in_its_grace_leaves_a_relaunch_refused() {
     assert_eq!(fake_peer::played(&at.0), 1);
 }
 
-/// A sandbox whose processes run as the local one's do, but whose stop of one
-/// always fails, so that no stop can be confirmed.
-struct Stubborn(Arc<dyn SandboxService>);
+/// How a stubborn sandbox hands its processes over, and what stopping one does.
+#[derive(Debug, Clone, Copy)]
+enum Mode {
+    /// With its pipes, and a stop that always fails.
+    Stuck,
+    /// Without its input, and a stop that always fails.
+    DeafAndStuck,
+    /// Without its input, and a stop that works as the local one's does.
+    Deaf,
+}
+
+/// A sandbox whose processes run as the local one's do, but are handed over as
+/// its [`Mode`] says, so that a stop can be made to fail and so that no stop
+/// can be confirmed.
+struct Stubborn(Arc<dyn SandboxService>, Mode);
 
 impl SandboxService for Stubborn {
     fn probe(
@@ -339,14 +369,14 @@ impl SandboxService for Stubborn {
     ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
         Box::pin(async move {
             let session: Box<dyn SandboxSession> =
-                Box::new(StubbornSession(self.0.prepare(request).await?));
+                Box::new(StubbornSession(self.0.prepare(request).await?, self.1));
             Ok(session)
         })
     }
 }
 
 /// Its session.
-struct StubbornSession(Box<dyn SandboxSession>);
+struct StubbornSession(Box<dyn SandboxSession>, Mode);
 
 impl SandboxSession for StubbornSession {
     fn inspection(&self) -> &SandboxInspection {
@@ -366,14 +396,14 @@ impl SandboxSession for StubbornSession {
     {
         Box::pin(async move {
             let launch: Box<dyn SandboxLaunch> =
-                Box::new(StubbornLaunch(self.0.stage(command).await?));
+                Box::new(StubbornLaunch(self.0.stage(command).await?, self.1));
             Ok(launch)
         })
     }
 }
 
 /// Its staged launch.
-struct StubbornLaunch(Box<dyn SandboxLaunch>);
+struct StubbornLaunch(Box<dyn SandboxLaunch>, Mode);
 
 impl SandboxLaunch for StubbornLaunch {
     fn inspection(&self) -> &SandboxInspection {
@@ -386,14 +416,15 @@ impl SandboxLaunch for StubbornLaunch {
     {
         Box::pin(async move {
             let process: Box<dyn SandboxProcess> =
-                Box::new(StubbornProcess(self.0.release().await?));
+                Box::new(StubbornProcess(self.0.release().await?, self.1));
             Ok(process)
         })
     }
 }
 
-/// Its process, which never reads as ended and whose stop always fails.
-struct StubbornProcess(Box<dyn SandboxProcess>);
+/// Its process, which never reads as ended and, unless its mode lets the stop
+/// work, whose stop always fails.
+struct StubbornProcess(Box<dyn SandboxProcess>, Mode);
 
 impl SandboxProcess for StubbornProcess {
     fn take_stdin(&mut self) -> Option<Box<dyn std::io::Write + Send>> {
@@ -401,7 +432,10 @@ impl SandboxProcess for StubbornProcess {
     }
 
     fn take_async_stdin(&mut self) -> Option<Box<dyn SandboxInput>> {
-        self.0.take_async_stdin()
+        match self.1 {
+            Mode::Stuck => self.0.take_async_stdin(),
+            Mode::DeafAndStuck | Mode::Deaf => None,
+        }
     }
 
     fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
@@ -417,7 +451,12 @@ impl SandboxProcess for StubbornProcess {
     }
 
     fn stop(&mut self) -> BoxFuture<'_, std::io::Result<()>> {
-        Box::pin(async { Err(std::io::Error::other(STUCK)) })
+        match self.1 {
+            Mode::Stuck | Mode::DeafAndStuck => {
+                Box::pin(async { Err(std::io::Error::other(STUCK)) })
+            }
+            Mode::Deaf => self.0.stop(),
+        }
     }
 
     fn inspection(&self) -> &SandboxInspection {
@@ -445,7 +484,7 @@ async fn an_unstopped_run_keeps_the_error_that_left_it_unconfirmed() {
     let program = found(&at.0, "plain", &Script::of([Reply::new().hear_out()]));
     let control = Control::new().expect("a control");
     let host = Host::launch(
-        Arc::new(Stubborn(local())),
+        Arc::new(Stubborn(local(), Mode::Stuck)),
         Handle::current(),
         &control,
         launch(program, &at.0, Request::default()),
@@ -463,6 +502,77 @@ async fn an_unstopped_run_keeps_the_error_that_left_it_unconfirmed() {
         .downcast_ref::<std::io::Error>()
         .expect("an I/O error");
     assert_eq!(cause.to_string(), STUCK);
+}
+
+/// A process handed over without a pipe to speak to it over, whose stop could
+/// not be confirmed, has not been shown to have ended, so the launch is
+/// refused with the error that left it unconfirmed and no second run is
+/// started beside what may still be running.
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::expect_used)]
+async fn an_unspoken_agent_whose_stop_failed_holds_the_next_launch() {
+    let at = Owned::new("unspoken-unconfirmed");
+    let program = found(&at.0, "plain", &Script::of([Reply::lines(["one"])]));
+    let control = Control::new().expect("a control");
+
+    let first = Host::launch(
+        Arc::new(Stubborn(local(), Mode::DeafAndStuck)),
+        Handle::current(),
+        &control,
+        launch(program.clone(), &at.0, Request::default()),
+    )
+    .await
+    .expect_err("an agent with no pipe to speak to it over is refused");
+    let next = Host::launch(
+        local(),
+        Handle::current(),
+        &control,
+        launch(program, &at.0, Request::default()),
+    )
+    .await;
+
+    assert!(matches!(first, Refusal::Unspoken { .. }), "{first:?}");
+    assert!(matches!(next, Err(Refusal::Unstopped)), "{next:?}");
+    let cause = std::error::Error::source(&first).expect("the error that left it unconfirmed");
+    let cause = cause
+        .downcast_ref::<std::io::Error>()
+        .expect("an I/O error");
+    assert_eq!(cause.to_string(), STUCK);
+    assert!(
+        !first.to_string().contains(STUCK),
+        "the error is reached through its source, not repeated in the words: {first}"
+    );
+}
+
+/// A process handed over without a pipe whose stop was confirmed is gone, so
+/// the refusal names no error and the next launch runs.
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::expect_used)]
+async fn an_unspoken_agent_whose_stop_was_confirmed_leaves_the_next_launch_free() {
+    let at = Owned::new("unspoken-confirmed");
+    let program = found(&at.0, "plain", &Script::of([Reply::lines(["one"])]));
+    let control = Control::new().expect("a control");
+
+    let first = Host::launch(
+        Arc::new(Stubborn(local(), Mode::Deaf)),
+        Handle::current(),
+        &control,
+        launch(program.clone(), &at.0, Request::default()),
+    )
+    .await
+    .expect_err("an agent with no pipe to speak to it over is refused");
+    let next = Host::launch(
+        local(),
+        Handle::current(),
+        &control,
+        launch(program, &at.0, Request::default()),
+    )
+    .await;
+
+    assert!(matches!(first, Refusal::Unspoken { .. }), "{first:?}");
+    assert!(std::error::Error::source(&first).is_none());
+    let host = next.expect("the agent's place is free");
+    host.stop(STOP_GRACE).await.expect("stopped");
 }
 
 /// A stop that never finished says so, rather than naming an error it never

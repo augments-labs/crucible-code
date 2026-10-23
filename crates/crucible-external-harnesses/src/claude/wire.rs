@@ -154,6 +154,10 @@ pub(crate) struct Ended {
     pub(crate) tokens: [Option<u64>; 4],
     /// The session's running cost, where the frame gives one.
     pub(crate) cost: Option<Cost>,
+    /// What the program says went wrong, a sentence to an entry, where the
+    /// frame gives any: as long as the frame it came in at most, which the
+    /// transport bounds.
+    pub(crate) errors: Vec<String>,
 }
 
 /// What kind of end a `result` frame reports.
@@ -419,6 +423,14 @@ fn ended(frame: &Value) -> Result<Ended, Failure> {
             figure("output_tokens"),
         ],
         cost: frame.get("total_cost_usd").and_then(dollars),
+        errors: frame
+            .get("errors")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect(),
     })
 }
 

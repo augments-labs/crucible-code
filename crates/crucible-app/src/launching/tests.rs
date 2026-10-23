@@ -10,11 +10,14 @@ use crucible_execution::{
 };
 use crucible_external_harnesses::fake_peer::{self, Plain, Reply, Script};
 use crucible_external_harnesses::{
-    Account, Act, Control, Dialect, Discovery, Ran, Reading, Request, Shape, Told,
+    Account, Act, Control, Dialect, Discovery, Ran, Reading, Refusal, Request, Shape, Told,
 };
+use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
-    SandboxFilesystemAccess, SandboxNetworkPolicy, SandboxPolicy, SandboxResourceLimits,
-    SandboxService,
+    SandboxBackendIdentity, SandboxCapabilities, SandboxCommand, SandboxError,
+    SandboxFilesystemAccess, SandboxInput, SandboxInspection, SandboxLaunch, SandboxNetworkPolicy,
+    SandboxOutput, SandboxPolicy, SandboxProcess, SandboxRequest, SandboxResourceLimits,
+    SandboxService, SandboxSession, SandboxUsage, SandboxViolation,
 };
 use crucible_sandbox_local::LocalSandbox;
 use crucible_types::TurnId;
@@ -864,6 +867,117 @@ fn an_agent_from_its_entry_is_started_with_the_model_it_names() {
     assert_eq!(agent.shape(None, Path::new("/work")).model, Some("opus"));
 }
 
+/// What the account steps of the agents [`SHIPPED`] holds are taken against.
+static STEPPED: Registry = Registry::new(&SHIPPED);
+
+/// The `externalAgents` entry `work`, Claude Code's program at `executable`.
+fn entry(sample: &Sample, executable: &Path) -> ExternalAgent {
+    let document = serde_json::json!({
+        "externalAgents": {
+            "work": {"driver": "claude", "executable": executable.to_string_lossy()},
+        },
+    });
+    let settings = sample.user(&document.to_string());
+    settings.external_agents().pop().expect("the entry")
+}
+
+/// The steps of the agents [`STEPPED`] holds, each started under `sandbox`.
+fn steps(sandbox: Arc<dyn SandboxService>, policy: &SandboxPolicy, consent: &Consent) -> Steps {
+    Steps::new(
+        Launcher::new(sandbox, Handle::current(), policy, consent),
+        Arc::new(SandboxEnablement::new(false, false)),
+        &STEPPED,
+        None,
+    )
+}
+
+/// Waits until the peer installed beside `peer` has claimed `want` starts,
+/// which a slow process start may not have done when its launch returns, and
+/// fails the test if it has not within a bound. A start claims the next reply
+/// as its process reads the counter, so a step started before then could take
+/// the run's.
+async fn played_reaches(peer: &Path, want: usize) {
+    let here = peer.parent().expect("a directory");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    while fake_peer::played(here) < want {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the peer's counter never reached {want}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// A run that could not be confirmed stopped may still be running, so no
+/// account step of its entry is started beside it either: the step reads as
+/// unreadable, saying what a run launched beside it is refused with, and the
+/// agent's program is not started again.
+#[tokio::test(flavor = "multi_thread")]
+async fn no_account_step_starts_beside_a_run_not_confirmed_stopped() {
+    let sample = Sample::new("launch-step-beside-unstopped");
+    let peer = installed(
+        &sample,
+        &Script::of([Reply::new().hear_out(), Reply::lines(["in"])]),
+    );
+    let consent = granted();
+    let policy = conversation(&sample);
+    let steps = steps(Arc::new(Stubborn(local())), &policy, &consent);
+    let entry = entry(&sample, &peer);
+    let (agent, _) = steps.onto(&entry, Mode::Ask).expect("startable");
+    let runs = steps.runs(agent, entry.name());
+    let run = runs
+        .launch(Mode::Ask, None, None, None)
+        .await
+        .expect("started");
+    played_reaches(&peer, 1).await;
+    assert!(run.close().await.is_err(), "the stop was confirmed");
+    let beside = match runs.launch(Mode::Ask, None, None, None).await {
+        Ok(second) => {
+            let _closed = second.close().await;
+            None
+        }
+        Err(failure) => Some(failure.reason().as_str().to_owned()),
+    };
+
+    let read = steps.account(&entry, Account::Status).await;
+
+    assert_eq!(beside, Some(Refusal::Unstopped.to_string()));
+    assert_eq!(
+        read,
+        Reading::Unreadable(Failure::new(&Refusal::Unstopped.to_string()))
+    );
+    assert_eq!(fake_peer::played(peer.parent().expect("a directory")), 1);
+}
+
+/// An account step takes no part in the one-at-a-time bound of its entry's
+/// runs, so a status check beside a live run whose stop is not in doubt runs
+/// and reads what the program says, rather than finding the agent busy.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_account_step_runs_beside_a_live_run_of_its_entry() {
+    let sample = Sample::new("launch-step-beside-live");
+    let peer = installed(
+        &sample,
+        &Script::of([Reply::new().hear(1), Reply::lines(["in"])]),
+    );
+    let consent = granted();
+    let policy = conversation(&sample);
+    let steps = steps(local(), &policy, &consent);
+    let entry = entry(&sample, &peer);
+    let (agent, _) = steps.onto(&entry, Mode::Ask).expect("startable");
+    let run = steps
+        .runs(agent, entry.name())
+        .launch(Mode::Ask, None, None, None)
+        .await
+        .expect("started");
+    played_reaches(&peer, 1).await;
+
+    let read = steps.account(&entry, Account::Status).await;
+    run.close().await.expect("closed");
+
+    assert_eq!(read, Reading::Signed(Authentication::SignedIn));
+    assert_eq!(fake_peer::played(peer.parent().expect("a directory")), 2);
+}
+
 /// The runs of one route are one agent's: none is started beside another
 /// still held, which is what keeps one that could not be confirmed stopped
 /// from having another started beside it.
@@ -882,6 +996,7 @@ async fn a_route_starts_no_run_beside_one_it_still_holds() {
         Arc::new(SandboxEnablement::new(false, false)),
         agent(&registry, &peer),
         "work",
+        &Controls::default(),
     );
 
     let first = runs
@@ -899,4 +1014,180 @@ async fn a_route_starts_no_run_beside_one_it_still_holds() {
 
     assert_eq!(refused.as_deref(), Some("this agent is already running"));
     assert_eq!(fake_peer::played(peer.parent().expect("a directory")), 1);
+}
+
+/// The route a conversation is opened on at startup and the steps beside it
+/// are one instance's: a run of that route whose stop could not be confirmed
+/// is held against a run launched later through [`Steps::runs`], as a resume
+/// onto or back to the instance launches one, so no second process starts
+/// beside the one that may still be running.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_route_opened_at_startup_holds_against_a_later_run_of_its_instance() {
+    let sample = Sample::new("launch-startup-route-shares");
+    let peer = installed(
+        &sample,
+        &Script::of([Reply::new().hear_out(), Reply::lines(["in"])]),
+    );
+    let consent = granted();
+    let policy = conversation(&sample);
+    let registry = Registry::new(&SHIPPED);
+    let entry = entry(&sample, &peer);
+    let (runs, steps) = first_runs(
+        Some((
+            Launcher::new(
+                Arc::new(Stubborn(local())),
+                Handle::current(),
+                &policy,
+                &consent,
+            ),
+            agent(&registry, &peer),
+            entry.name(),
+        )),
+        Some((
+            Launcher::new(
+                Arc::new(Stubborn(local())),
+                Handle::current(),
+                &policy,
+                &consent,
+            ),
+            &STEPPED,
+            None,
+        )),
+        Arc::new(SandboxEnablement::new(false, false)),
+    );
+    let runs = runs.expect("the route's runs");
+    let steps = steps.expect("the steps");
+    let run = runs
+        .launch(Mode::Ask, None, None, None)
+        .await
+        .expect("started");
+    played_reaches(&peer, 1).await;
+    assert!(run.close().await.is_err(), "the stop was confirmed");
+    let (agent, _) = steps.onto(&entry, Mode::Ask).expect("startable");
+
+    let later = match steps
+        .runs(agent, entry.name())
+        .launch(Mode::Ask, None, None, None)
+        .await
+    {
+        Ok(second) => {
+            let _closed = second.close().await;
+            None
+        }
+        Err(failure) => Some(failure.reason().as_str().to_owned()),
+    };
+
+    assert_eq!(fake_peer::played(peer.parent().expect("a directory")), 1);
+    assert_eq!(later, Some(Refusal::Unstopped.to_string()));
+}
+
+/// A sandbox whose processes run as the local one's do, but which can never
+/// confirm that one of them stopped.
+pub(crate) struct Stubborn(pub(crate) Arc<dyn SandboxService>);
+
+impl SandboxService for Stubborn {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        self.0.probe()
+    }
+
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            let session: Box<dyn SandboxSession> =
+                Box::new(StubbornSession(self.0.prepare(request).await?));
+            Ok(session)
+        })
+    }
+}
+
+/// Its session.
+struct StubbornSession(Box<dyn SandboxSession>);
+
+impl SandboxSession for StubbornSession {
+    fn inspection(&self) -> &SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn materialize(&mut self) -> BoxFuture<'_, Result<(), SandboxError>> {
+        self.0.materialize()
+    }
+
+    fn stage<'a>(
+        self: Box<Self>,
+        command: SandboxCommand,
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxLaunch>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let launch: Box<dyn SandboxLaunch> =
+                Box::new(StubbornLaunch(self.0.stage(command).await?));
+            Ok(launch)
+        })
+    }
+}
+
+/// Its staged launch.
+struct StubbornLaunch(Box<dyn SandboxLaunch>);
+
+impl SandboxLaunch for StubbornLaunch {
+    fn inspection(&self) -> &SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn release<'a>(self: Box<Self>) -> BoxFuture<'a, Result<Box<dyn SandboxProcess>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let process: Box<dyn SandboxProcess> =
+                Box::new(StubbornProcess(self.0.release().await?));
+            Ok(process)
+        })
+    }
+}
+
+/// Its process, which never reads as ended and whose stop always fails.
+struct StubbornProcess(Box<dyn SandboxProcess>);
+
+impl SandboxProcess for StubbornProcess {
+    fn take_stdin(&mut self) -> Option<Box<dyn std::io::Write + Send>> {
+        self.0.take_stdin()
+    }
+
+    fn take_async_stdin(&mut self) -> Option<Box<dyn SandboxInput>> {
+        self.0.take_async_stdin()
+    }
+
+    fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.0.take_stdout()
+    }
+
+    fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.0.take_stderr()
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        Ok(None)
+    }
+
+    fn stop(&mut self) -> BoxFuture<'_, std::io::Result<()>> {
+        Box::pin(async { Err(std::io::Error::other("the scope did not answer")) })
+    }
+
+    fn inspection(&self) -> &SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn usage(&self) -> SandboxUsage {
+        self.0.usage()
+    }
+
+    fn violation(&self) -> Option<SandboxViolation> {
+        self.0.violation()
+    }
 }
