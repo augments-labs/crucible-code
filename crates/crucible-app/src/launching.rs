@@ -56,20 +56,20 @@
 //! route it replaces left held. Startup makes the [`Controls`] once, before
 //! the first route and whether or not [`Steps`] can be built.
 //!
-//! An account step on any instance the configuration names, the
-//! conversation's route or not, is taken through [`Steps`], under the same
-//! policy at that moment and the same gates, and so is the run of a session
-//! an agent ran, picked back up on that agent from elsewhere. An account step
-//! runs on a control of its own, so it takes no part in the one-at-a-time
-//! bound of its entry's runs, and a status check beside a live run is never
-//! refused as busy. Of the control those runs share it reads one thing,
-//! whether a run could not be confirmed stopped, and where one could not it is
-//! refused, before any process, as a run launched beside that one would be;
-//! [`Steps::unstopped`] says which of a set of entries are so held, for an
-//! operation that would take a step for all of them. A step whose own stop
-//! could not be confirmed holds back none of the entry's runs. What it read is all it returns: a step that could not be started
-//! reads as unreadable, saying why, so a caller claims nothing the step did not
-//! establish.
+//! An account step on any instance the configuration names, the conversation's
+//! route or not, is taken through [`Steps`], under the same policy at that
+//! moment and the same gates, and so is the run of a session an agent ran,
+//! picked back up on that agent from elsewhere. An account step runs on a
+//! control of its own, so it takes no part in the one-at-a-time bound of its
+//! entry's runs, and a status check beside a live run is never refused as busy.
+//! Of the control those runs share it reads one thing, whether a run could not
+//! be confirmed stopped, and where one could not it is refused, before any
+//! process, as a run launched beside that one would be; [`Steps::unstopped`]
+//! says which of a set of entries are so held, for an operation that would take
+//! a step for all of them. A step whose own stop could not be confirmed holds
+//! back none of the entry's runs. What it read is all it returns: a step that
+//! could not be started reads as unreadable, saying why, so a caller claims
+//! nothing the step did not establish.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
