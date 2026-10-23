@@ -11,9 +11,10 @@ authors.workspace = true
 
 # The scripted peer and the suite every dialect runs against it. Off by default,
 # so a shipped build compiles neither; another package's tests turn it on to
-# reach the peer and the script sets.
+# reach the peer and the script sets. It also compiles the signer a test signs
+# its agent catalog with, and the three crates that signer is made of.
 [features]
-proof = []
+proof = ["dep:base64", "dep:blake2", "dep:ring"]
 
 # The scripted peer the tests launch in place of a vendor's agent. A binary of
 # its own, so that what it writes to standard output is protocol and nothing
@@ -41,6 +42,16 @@ crucible-sandbox.workspace = true
 crucible-transport.workspace = true
 # The identities a sandbox request is made under.
 crucible-types.workspace = true
+# The agent catalog is believed only once its minisign signature verifies
+# under a compiled key, and verifying one is cryptography this crate does not
+# write.
+minisign-verify.workspace = true
+# Under `proof` alone, the test signer: `ring` signs with a key minted once per
+# test process, `blake2` takes the digest a minisign signature signs, and
+# `base64` writes the signature and public key as minisign's text.
+base64 = { workspace = true, optional = true }
+blake2 = { workspace = true, optional = true }
+ring = { workspace = true, optional = true }
 # The journal's records and the fake peer's script are JSON, and a hand-written
 # reader for a file somebody could edit is a parser this crate would then own.
 serde_json.workspace = true

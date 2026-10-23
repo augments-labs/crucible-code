@@ -238,6 +238,23 @@ uuid = { version = "=1.28.0", features = ["v7"] }
 # crate has no runtime or platform dependencies.
 sha2 = { version = "=0.11.1", default-features = false }
 
+# The detached minisign signature the agent catalog is published with, checked
+# against the public keys compiled into the binary before a byte of the catalog
+# is read. `std` has neither Ed25519 nor the BLAKE2b digest a minisign
+# signature is made over, and a verifier written here would be cryptography
+# this repository owns. This one is written by minisign's own author and has no
+# dependencies of its own.
+minisign-verify = "=0.3.0"
+
+# Signing a catalog for a test, which only the harness crate's `proof` feature
+# compiles, and only `[dev-dependencies]` turn that on, so nothing that ships
+# carries a signer. `ring` is the Ed25519 signer and its random source, already
+# in the tree under rustls at this version, so it adds no crate; `blake2` is the
+# BLAKE2b-512 digest a minisign signature signs, over the `digest` line `sha2`
+# already brings.
+ring = { version = "=0.17.14", default-features = false }
+blake2 = { version = "=0.11.0", default-features = false }
+
 # A release archive is a gzip-compressed tar, and `std` reads neither format. A
 # hand-written reader of either is the unsafe archive parser the update design
 # rules out, so `tar` reads the members' headers and data and `flate2`
