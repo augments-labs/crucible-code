@@ -44,10 +44,6 @@ const IMPATIENT: Duration = Duration::from_millis(500);
 /// How long a peer that ignores a stop is left asleep: far past any grace.
 const ASLEEP: Duration = Duration::from_mins(1);
 
-/// How long the beat of a grandchild that should have been stopped is
-/// watched.
-const WATCHED: Duration = Duration::from_millis(400);
-
 /// How often the beat of a grandchild is looked for while its turn runs.
 const LOOKED_FOR: Duration = Duration::from_millis(20);
 
@@ -394,14 +390,9 @@ impl Suite<'_> {
                 if !began {
                     return Err("the agent's own process never began".to_owned());
                 }
-                let first = fake_peer::lingering(&here);
-                tokio::time::sleep(WATCHED).await;
-                match fake_peer::lingering(&here) {
-                    last if last == first => Ok(()),
-                    last => Err(format!(
-                        "the agent's own process still beats ({first:?} then {last:?})"
-                    )),
-                }
+                fake_peer::ceased(&here)
+                    .await
+                    .map_err(|beating| format!("the agent's own process still beats ({beating})"))
             }
             _ => Err("no such case".to_owned()),
         }
@@ -591,8 +582,15 @@ mod tests {
     /// The longest a tear waits for the beat to hold still.
     const SETTLING: Duration = Duration::from_secs(5);
 
+    /// How long after the stop the last beat lands: one of the fake peer's
+    /// beats, by when the case has first looked at the beat.
+    const LATE: Duration = Duration::from_millis(50);
+
     /// Processes a stop left running, kept here once the host lets them go.
     type Kept = Arc<Mutex<Vec<Box<dyn SandboxProcess>>>>;
+
+    /// The beat a stop let land late, kept here once it has.
+    type Landed = Arc<Mutex<Option<u64>>>;
 
     /// What a stop of the process the local sandbox starts does instead.
     #[derive(Clone)]
@@ -602,6 +600,10 @@ mod tests {
         /// a stop between the two: empty, for good. The peer writes its beats
         /// whole, so this stands in for the tear.
         Tears,
+        /// The local stop, after which one more beat lands, [`LATE`] after the
+        /// stop has returned, as the last beat of a grandchild the kill
+        /// reached inside its write or rename would.
+        Lands(Landed),
         /// Nothing, as a stop that never reaches the process group does: the
         /// agent and its grandchild run on, kept until the test stops them.
         Spares(Kept),
@@ -732,10 +734,15 @@ mod tests {
 
         fn stop(&mut self) -> BoxFuture<'_, io::Result<()>> {
             Box::pin(async move {
-                match self.stop {
+                match self.stop.clone() {
                     Stop::Tears => {
                         let stopped = self.inner_mut().stop().await;
                         torn(&self.beat);
+                        stopped
+                    }
+                    Stop::Lands(landed) => {
+                        let stopped = self.inner_mut().stop().await;
+                        late(&self.beat, &landed);
                         stopped
                     }
                     Stop::Spares(_) => Ok(()),
@@ -744,10 +751,15 @@ mod tests {
         }
 
         fn stop_sync(&mut self) -> io::Result<()> {
-            match self.stop {
+            match self.stop.clone() {
                 Stop::Tears => {
                     let stopped = self.inner_mut().stop_sync();
                     torn(&self.beat);
+                    stopped
+                }
+                Stop::Lands(landed) => {
+                    let stopped = self.inner_mut().stop_sync();
+                    late(&self.beat, &landed);
                     stopped
                 }
                 Stop::Spares(_) => Ok(()),
@@ -787,17 +799,52 @@ mod tests {
     /// returns once the group is sent its kill and the leader reaped, not once
     /// the grandchild is gone, so a beat already under way can still land.
     fn torn(beat: &Path) {
+        still(beat);
+        let _ = OpenOptions::new().write(true).truncate(true).open(beat);
+    }
+
+    /// Lands one more beat in `beat`, [`LATE`] from now on the runtime, once
+    /// the beat has held still, and keeps it in `landed`. Where there is no
+    /// beat or no runtime, lands none.
+    fn late(beat: &Path, landed: &Landed) {
+        let Some(last) = still(beat).and_then(|last| String::from_utf8(last).ok()) else {
+            return;
+        };
+        let (Ok(next), Ok(runtime)) = (
+            last.trim().parse::<u64>().map(|last| last + 1),
+            Handle::try_current(),
+        ) else {
+            return;
+        };
+        let beat = beat.to_owned();
+        let landed = Arc::clone(landed);
+        runtime.spawn(async move {
+            tokio::time::sleep(LATE).await;
+            // Written beside the file and renamed over it, as the peer beats.
+            let landing = beat.with_extension("landing");
+            if fs::write(&landing, next.to_string())
+                .and_then(|()| fs::rename(&landing, &beat))
+                .is_ok()
+                && let Ok(mut landed) = landed.lock()
+            {
+                *landed = Some(next);
+            }
+        });
+    }
+
+    /// Waits for `beat` to hold still for [`STILL`], for at most
+    /// [`SETTLING`], and says what it held.
+    fn still(beat: &Path) -> Option<Vec<u8>> {
         let deadline = Instant::now() + SETTLING;
         let mut was = fs::read(beat).ok();
         loop {
             thread::sleep(STILL);
             let now = fs::read(beat).ok();
             if now == was || Instant::now() >= deadline {
-                break;
+                return now;
             }
             was = now;
         }
-        let _ = OpenOptions::new().write(true).truncate(true).open(beat);
     }
 
     /// The lines of the fake peer's own plain dialect.
@@ -853,6 +900,27 @@ mod tests {
         assert!(
             here.join("lingering").is_file() && fake_peer::lingering(&here).is_none(),
             "the stop tore the beat"
+        );
+        assert_eq!(judged, Ok(()));
+    }
+
+    /// A stop that ends the group, whose grandchild's last beat lands only
+    /// after the stop has returned, still ends what the agent started.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_stop_whose_last_beat_lands_late_still_ends_the_grandchild() {
+        let at = Owned::new("late-beat");
+        let set = plain();
+        let (index, here) = played(&at);
+        let landed = Landed::default();
+
+        let judged = suite(Stop::Lands(Arc::clone(&landed)), &set, &at)
+            .case(index)
+            .await;
+
+        let landed = *landed.lock().expect("nothing panicked holding it");
+        assert!(
+            landed.is_some() && fake_peer::lingering(&here) == landed,
+            "the last beat landed after the stop {landed:?}"
         );
         assert_eq!(judged, Ok(()));
     }
