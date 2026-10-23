@@ -235,9 +235,7 @@ async fn closing_during_a_turn_returns_once_the_program_has_stopped() {
     .expect("closed in time");
 
     assert!(closed.is_ok(), "{closed:?}");
-    let first = fake_peer::lingering(&root);
-    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
-    assert_eq!(fake_peer::lingering(&root), first, "it still runs");
+    assert_eq!(fake_peer::ceased(&root).await, Ok(()), "it still runs");
     let again = backend.prompt(turn("again"), &kept).await;
     assert!(again.is_err(), "{again:?}");
 }

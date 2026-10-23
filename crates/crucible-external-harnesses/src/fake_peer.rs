@@ -23,13 +23,14 @@
 //! of each start in one named `argued`, so a test can say what reached it; a
 //! reply can also start a grandchild that beats into a file named `lingering`
 //! until it is stopped, so a test can see whether stopping the peer reached
-//! the process it started.
+//! the process it started, which [`ceased`] judges for every test alike.
 //!
 //! A peer built from other sources than the ones calling it would play a
 //! script by rules the caller does not know. Both carry a digest of those
 //! sources, the peer answers `--stamp` with its own, and [`install`] refuses a
 //! peer whose answer differs, naming the command that rebuilds it.
 
+use std::fmt;
 use std::fs;
 use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
@@ -82,6 +83,20 @@ const LINGER: Duration = Duration::from_mins(1);
 
 /// How often a lingering grandchild beats.
 const BEAT: Duration = Duration::from_millis(50);
+
+/// How long the beat of a grandchild that should have ended is watched.
+const WATCHED: Duration = Duration::from_millis(400);
+
+/// How long the beat of a grandchild that should have ended must hold still
+/// before it is watched: three of the peer's [`BEAT`]s, longer than one still
+/// beating goes without a beat.
+const HELD: Duration = Duration::from_millis(150);
+
+/// The longest the beat of a grandchild that should have ended is waited on to
+/// hold still: a last beat under way is one write and a rename, which land
+/// within a slice of a loaded machine's scheduler, while one still beating has
+/// beaten twenty times by then.
+const SETTLE: Duration = Duration::from_secs(1);
 
 /// The script format this peer reads.
 const FORMAT: u64 = 1;
@@ -468,6 +483,69 @@ pub fn lingering(directory: &Path) -> Option<u64> {
         .trim()
         .parse()
         .ok()
+}
+
+/// The beats a grandchild that should have ended was seen at: the one it had
+/// settled at, and the one it had beaten to after [`WATCHED`] more. Where it
+/// never settled, the first beat seen and the last.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Beating {
+    /// The beat first seen to hold still, or first seen.
+    pub first: Option<u64>,
+    /// The beat last seen.
+    pub last: Option<u64>,
+}
+
+impl fmt::Display for Beating {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(out, "{:?} then {:?}", self.first, self.last)
+    }
+}
+
+/// Whether the grandchild a reply in `directory` started has ended, after its
+/// owner was stopped: its beat is waited on to hold still for [`HELD`], and
+/// then watched for [`WATCHED`], and a grandchild that beat in between is
+/// [`Beating`].
+///
+/// A stop can return once the kill is sent and before the grandchild is gone,
+/// and a grandchild the kill reached inside its write or rename finishes that
+/// one call, so exactly one beat can land after the stop. A beat taken
+/// straight after the stop and compared with a later one reads that beat as a
+/// process still running, so every test that judges a stop by the beat does
+/// it here.
+///
+/// # Errors
+///
+/// [`Beating`] where the beat did not hold still within [`SETTLE`], or beat
+/// again while it was watched.
+pub async fn ceased(directory: &Path) -> Result<(), Beating> {
+    let first = settled(directory).await?;
+    tokio::time::sleep(WATCHED).await;
+    match lingering(directory) {
+        last if last == first => Ok(()),
+        last => Err(Beating { first, last }),
+    }
+}
+
+/// The beat of the grandchild a reply in `directory` started, once it has held
+/// still for [`HELD`], or the first and last beats seen where it has not
+/// within [`SETTLE`].
+async fn settled(directory: &Path) -> Result<Option<u64>, Beating> {
+    let began = tokio::time::Instant::now();
+    let first = lingering(directory);
+    let mut was = first;
+    loop {
+        tokio::time::sleep(HELD).await;
+        // Beats only ever count up, so two looks that agree saw none between.
+        let now = lingering(directory);
+        if now == was {
+            return Ok(now);
+        }
+        if began.elapsed() >= SETTLE {
+            return Err(Beating { first, last: now });
+        }
+        was = now;
+    }
 }
 
 /// The number kept in `directory`'s counter: none where there is no counter.

@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use super::Owned;
 use crate::fake_peer::{
-    BUILD, Reply, SCRIPT_FILES, Script, Unbuilt, install, installed, lingering,
+    BUILD, Reply, SCRIPT_FILES, Script, Unbuilt, ceased, install, installed, lingering,
 };
 
 /// A script set added without its file in the stamp would let a stale peer
@@ -115,4 +115,61 @@ fn a_heartbeat_once_read_is_never_read_empty_while_the_grandchild_beats() {
             "the heartbeat read as none after it was read, on read {reads}"
         );
     }
+}
+
+/// A beat written beside the file and renamed over it, as the peer writes it.
+fn beat(directory: &Path, number: u64) {
+    let landing = directory.join("lingering.landing");
+    fs::write(&landing, number.to_string()).expect("written");
+    fs::rename(&landing, directory.join("lingering")).expect("renamed");
+}
+
+/// A stop can return before the grandchild's last beat lands, so a beat that
+/// lands after the first look and then holds still is a grandchild that
+/// ended.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_last_beat_that_lands_late_and_holds_still_is_a_grandchild_that_ended() {
+    let at = Owned::new("ceased-late");
+    beat(&at.0, 7);
+    let directory = at.0.clone();
+    let landing = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(50));
+        beat(&directory, 8);
+    });
+
+    let judged = ceased(&at.0).await;
+
+    landing.join().expect("landed");
+    assert_eq!(lingering(&at.0), Some(8));
+    assert_eq!(judged, Ok(()));
+}
+
+/// A grandchild that goes on beating is found beating, and the beats seen
+/// are the ones the refusal reports.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_grandchild_that_goes_on_beating_has_not_ceased() {
+    let at = Owned::new("ceased-beating");
+    let peer = install(&at.0, "claude", &Script::of([])).expect("built");
+    let _beating = Beating(
+        Command::new(&peer)
+            .arg("--linger")
+            .arg(&at.0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("started"),
+    );
+    let started = Instant::now();
+    while lingering(&at.0).is_none() {
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the grandchild never beat"
+        );
+    }
+
+    let judged = ceased(&at.0).await;
+
+    let beating = judged.expect_err("it goes on beating");
+    assert!(beating.first < beating.last, "{beating:?}");
 }

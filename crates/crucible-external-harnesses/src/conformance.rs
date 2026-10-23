@@ -44,25 +44,6 @@ const IMPATIENT: Duration = Duration::from_millis(500);
 /// How long a peer that ignores a stop is left asleep: far past any grace.
 const ASLEEP: Duration = Duration::from_mins(1);
 
-/// How long the beat of a grandchild that should have been stopped is
-/// watched.
-const WATCHED: Duration = Duration::from_millis(400);
-
-/// How long the beat of a grandchild that should have been stopped must hold
-/// still before it is watched: three of the fake peer's beats, longer than
-/// one still beating goes without a beat.
-///
-/// A stop can return once the kill is sent and before the grandchild is
-/// gone, and a grandchild the kill reached inside its write or rename
-/// finishes that one call, so its last beat can land after the stop.
-const HELD: Duration = Duration::from_millis(150);
-
-/// The longest the beat of a grandchild that should have been stopped is
-/// waited on to hold still: a last beat under way is one write and a rename,
-/// which land within a slice of a loaded machine's scheduler, while one still
-/// beating has beaten twenty times by then.
-const SETTLE: Duration = Duration::from_secs(1);
-
 /// How often the beat of a grandchild is looked for while its turn runs.
 const LOOKED_FOR: Duration = Duration::from_millis(20);
 
@@ -409,15 +390,9 @@ impl Suite<'_> {
                 if !began {
                     return Err("the agent's own process never began".to_owned());
                 }
-                let beating = |(first, last)| {
-                    format!("the agent's own process still beats ({first:?} then {last:?})")
-                };
-                let first = settled(&here).await.map_err(beating)?;
-                tokio::time::sleep(WATCHED).await;
-                match fake_peer::lingering(&here) {
-                    last if last == first => Ok(()),
-                    last => Err(beating((first, last))),
-                }
+                fake_peer::ceased(&here)
+                    .await
+                    .map_err(|beating| format!("the agent's own process still beats ({beating})"))
             }
             _ => Err("no such case".to_owned()),
         }
@@ -507,27 +482,6 @@ impl Suite<'_> {
             .await
             .map_err(|unstopped| unstopped.to_string())?;
         Ok(Played { result, sink })
-    }
-}
-
-/// The beat of the grandchild a reply in `here` started, once it has held
-/// still for [`HELD`], or the first and last beats seen where it has not
-/// within [`SETTLE`].
-async fn settled(here: &Path) -> Result<Option<u64>, (Option<u64>, Option<u64>)> {
-    let began = tokio::time::Instant::now();
-    let first = fake_peer::lingering(here);
-    let mut was = first;
-    loop {
-        tokio::time::sleep(HELD).await;
-        // Beats only ever count up, so two looks that agree saw none between.
-        let now = fake_peer::lingering(here);
-        if now == was {
-            return Ok(now);
-        }
-        if began.elapsed() >= SETTLE {
-            return Err((first, now));
-        }
-        was = now;
     }
 }
 

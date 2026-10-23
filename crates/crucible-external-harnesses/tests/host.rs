@@ -998,11 +998,9 @@ async fn stopping_an_unheeding_turn_ends_what_the_agent_started() {
     let outcome = turning.await.expect("joined");
 
     assert_eq!(outcome, Ok(Outcome::Cancelled));
-    let first = fake_peer::lingering(&at.0);
-    tokio::time::sleep(Duration::from_millis(400)).await;
     assert_eq!(
-        fake_peer::lingering(&at.0),
-        first,
+        fake_peer::ceased(&at.0).await,
+        Ok(()),
         "the grandchild still beats"
     );
 }
