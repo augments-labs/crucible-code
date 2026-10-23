@@ -8,6 +8,34 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.48.2] - 2026-10-23
+
+**Crucible 0.48.2 fixes how installed coding agents stop, sign out and resume,
+and draws the first frame sooner on a disk filesystem.**
+A run crucible cannot confirm stopped now holds every later launch, connect,
+sign-out and resume of that agent until crucible restarts, and says why. A
+Claude Code session the agent no longer has starts a new one instead of failing
+on every message, and a sign-out or prompt that cannot go ahead is refused
+before anything is written or started. A new session's index is now written
+just after the welcome screen rather than before it.
+
+### Fixed
+
+- **Account steps wait out a run that may still be running.** If a run of an installed agent could not be confirmed to have stopped, connect, sign-out and `/login`'s status check on that agent are now refused with the same restart-crucible message a new run gets. Before, they started another copy of the agent beside it.
+- **Signing out of an agent whose program is missing no longer disables anything.** Where the agent's program could not be found, a sign-out of an already-allowed agent used to turn off every instance on its profile and then report the sign-out as unverified. It now says the agent cannot be started and changes nothing, as it already did for an agent not yet allowed.
+- **A Claude Code conversation whose session the agent no longer has starts a new one.** Before, when Claude Code answered a resume with "No conversation found", every later message asked for the same missing session again and failed. Now that message fails once, saying the session is gone, and the next message starts Claude Code on a new session.
+- **An agent question that goes unanswered or is declined now says what starting the agent runs.** On an installed agent's route, a run with no terminal and a client that declines are told the same launch sentence the question shows, after the vendor's words. Before, they were told only the vendor's sentence.
+- **Startup no longer waits on the session index's disk syncs.** A new session wrote and synced its recent-sessions index before the welcome screen, which on a disk filesystem pushed the first frame past its 20 ms budget. Those writes now happen on the session's writer right after the first frame, in the same order, so a crash leaves the session and its index as recoverable as before.
+- **A session an agent said was gone no longer fails again when picked back up.** After a turn failed because the installed agent said it had no session by that name, `--continue` and `/resume` now start the agent on a new session instead of asking for the gone one again. The session log records this with a line guarded as format 15 while its header stays 14, so a rollback to 0.48.1 refuses only a log in which an agent said its session was gone.
+- **A disconnect or sign-out that could not be saved no longer claims it stopped a run it did not.** When the settings file cannot be written, the terminal said "Stopped for this run only" even for an agent the conversation was not using. It now says that only when this conversation's run was stopped, and otherwise says only that the disconnect or sign-out failed.
+- **A launch that cannot be spoken to no longer starts a second agent beside it.** When an agent started without a pipe and crucible could not confirm that stopping it worked, the refusal now says so and keeps the cause, and the next launch is refused until crucible is restarted. Before, it said the agent was stopped and started another.
+- **A changed agent program is refused in words that say what counted.** The refusal names a change to the program's contents or, on Unix, its permissions, owner or links, and says to restart crucible instead of pointing to a *Check again* choice it never offered. The agents page says what is compared on each platform.
+- **The agents page names every rule a session allow drops.** It now says which rule is kept for which command, and that a rule is also dropped for whitespace other than a plain space, a byte-order mark, or words with no letter or digit, with the exact wildcard and shell-syntax characters checked.
+- **A sign-out whose yes cannot be written now says nothing changed.** When you sign out an installed agent and crucible cannot write down your yes to its route, it now says so, gives the reason, and confirms nothing was changed, as connecting does. Clients receive a new `hold_unkept` logout outcome instead of a bare failure.
+- **An agent you start crucible on no longer gets a second process after a stop crucible could not confirm.** A run opened at startup now uses the same run control as every later run of that agent. A later `/resume` onto the agent, or moving back to it, is refused next to a run not confirmed stopped, as it already was for a route opened after startup.
+- **A failed turn or close after an unconfirmed stop now says why.** When crucible could not confirm that an installed agent's run had stopped, the failure named only that the run may still be running; it now also gives the error the stop left.
+- **A prompt an installed agent could never take is refused before its route is asked about.** On an agent route with no yes, a prompt carrying an attachment, or one to an agent whose program is not found, put the content-use question and wrote your yes before it was refused. It is now refused at once with its reason, and nothing is written or started.
+
 ## [0.48.1] - 2026-10-22
 
 **Crucible 0.48.1 starts installed coding agents faster and fixes how they
@@ -5425,7 +5453,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.48.1...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.48.2...HEAD
+[0.48.2]: https://github.com/augments-labs/crucible-code/compare/v0.48.1...v0.48.2
 [0.48.1]: https://github.com/augments-labs/crucible-code/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/augments-labs/crucible-code/compare/v0.47.1...v0.48.0
 [0.47.1]: https://github.com/augments-labs/crucible-code/compare/v0.47.0...v0.47.1
