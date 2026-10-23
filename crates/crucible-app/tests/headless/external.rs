@@ -54,6 +54,8 @@ mod routing;
 mod session;
 #[path = "external/stopping.rs"]
 mod stopping;
+#[path = "external/unlaunchable.rs"]
+mod unlaunchable;
 
 /// The runtime an agent's turns run on: its pipes are read on it, so it
 /// drives input and output as the application's own does.
