@@ -309,8 +309,10 @@ fn assembled(startup: &Startup<'_>, agents: &'static Registry) -> Result<Convers
         (session, Some(transcript))
     } else {
         let branch = crate::branching::current(workspace.root());
+        // The welcome is drawn after this returns, so the index and header
+        // writes, each made durable, are left to the session's writer.
         (
-            Session::start(sessions, workspace, branch.as_deref())?,
+            Session::start_deferred(sessions, workspace, branch.as_deref())?,
             None,
         )
     };

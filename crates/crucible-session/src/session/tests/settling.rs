@@ -229,3 +229,165 @@ fn every_state_a_crash_can_leave_a_start_in_is_one_the_next_start_recovers() {
         }
     }
 }
+
+/// Runs `starting` on a thread of its own, so a start that waits on the index
+/// fails the test rather than holding it.
+fn within_a_bound<T: Send + 'static>(starting: impl FnOnce() -> T + Send + 'static) -> T {
+    let (send, came) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = send.send(starting());
+    });
+    came.recv_timeout(std::time::Duration::from_secs(10))
+        .expect("a start that came back without waiting for the index")
+}
+
+/// The index's lock, held the way another start holds it while it writes.
+fn holding_the_index(sample: &Sample) -> super::super::claim::Claim {
+    super::super::claim::exclusive(&sample.logs().join("recent.sessions"))
+        .expect("the index's lock")
+}
+
+/// Every log in the directory, by name.
+fn logged(logs: &Path) -> Vec<String> {
+    let mut found: Vec<String> = fs::read_dir(logs)
+        .expect("the sessions directory")
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            (path.extension()?.to_str()? == SUFFIX)
+                .then(|| path.file_stem()?.to_str().map(str::to_owned))?
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+#[test]
+fn a_start_behind_the_first_frame_does_not_wait_for_the_index() {
+    let sample = Sample::new("settling-unwaited");
+    earlier(&sample, Before::Vouched);
+    let held = holding_the_index(&sample);
+    let (logs, workspace) = (sample.logs(), sample.workspace());
+
+    let session = within_a_bound(move || Session::start_deferred(&logs, &workspace, None))
+        .expect("a session");
+    let id = session.id().expect("a recorded session").clone();
+    session.append(&said("queued behind the index"));
+
+    // Nothing queued behind the index reaches the log while another start holds
+    // it: not the prompt, and not the header, which a crash could otherwise
+    // leave with no entry naming it. Watched for a while, since a writer that
+    // got this wrong would write at once and then wait; and let go of before
+    // anything is asserted, since a session dropped by a failing assertion
+    // waits for its writer, and its writer for the lock.
+    let mut early = Vec::new();
+    for _ in 0..20 {
+        early = fs::read(session.path()).expect("the log");
+        if !early.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let named_early = indexed(&sample.logs()).contains(&id);
+    drop(held);
+    assert_eq!(
+        String::from_utf8_lossy(&early),
+        "",
+        "written before the index"
+    );
+    assert!(!named_early, "indexed under a held lock");
+
+    assert_eq!(session.finish(), None);
+    assert!(indexed(&sample.logs()).contains(&id), "never indexed");
+    let written = fs::read_to_string(session.path()).expect("the log");
+    let lines: Vec<&str> = written.lines().collect();
+    assert_eq!(lines.len(), 2, "a header and one prompt: {written}");
+    assert!(
+        lines.first().is_some_and(|line| line.contains(id.as_str())),
+        "{written}"
+    );
+}
+
+#[test]
+fn a_start_behind_the_first_frame_ended_at_once_still_leaves_its_session_whole() {
+    // An exit straight after the first frame: dropping the session is what
+    // waits for its writer, and the writer pays the index before any line.
+    let sample = Sample::new("settling-exit");
+    earlier(&sample, Before::Unindexed);
+
+    let session =
+        Session::start_deferred(&sample.logs(), &sample.workspace(), None).expect("a session");
+    let id = session.id().expect("a recorded session").clone();
+    let path = session.path().to_owned();
+    session.append(&said("said and gone"));
+    drop(session);
+
+    let entries = index::entries(&sample.logs(), index::ENTRIES).expect("the index");
+    let entry = entries
+        .iter()
+        .find(|entry| entry.id == id)
+        .expect("the session indexed");
+    assert_eq!(entry.messages, 1, "the count its drop leaves");
+    assert!(listed(&sample).contains(&id), "not listed");
+    let transcript = replay(&path).expect("the log replays").transcript;
+    assert_eq!(transcript.messages(), &[said("said and gone")]);
+}
+
+#[test]
+fn an_index_that_will_not_read_refuses_a_start_behind_the_first_frame_before_it_returns() {
+    for deferred in [true, false] {
+        let sample = Sample::new("settling-unreadable");
+        earlier(&sample, Before::Vouched);
+        fs::write(sample.logs().join("recent.sessions"), "not an index\n")
+            .expect("a writable temporary directory");
+
+        let problem = if deferred {
+            Session::start_deferred(&sample.logs(), &sample.workspace(), None)
+        } else {
+            Session::start(&sample.logs(), &sample.workspace(), None)
+        }
+        .expect_err("a start over an index that will not read");
+
+        assert!(
+            matches!(problem, SessionError::Index { .. }),
+            "deferred {deferred}: {problem}"
+        );
+        assert_eq!(
+            logged(&sample.logs()),
+            [EARLIER],
+            "deferred {deferred}: a log was left behind"
+        );
+    }
+}
+
+#[test]
+fn an_index_that_cannot_be_written_behind_the_first_frame_is_the_sessions_trouble() {
+    // Behind the first frame the start has already returned, so what it would
+    // have refused with is what the session reports instead; the log the index
+    // never named goes, as it would have before the start returned.
+    let sample = Sample::new("settling-unwritable");
+    earlier(&sample, Before::Vouched);
+    let lock = sample.logs().join("recent.sessions.lock");
+    let _ = fs::remove_file(&lock);
+    fs::create_dir(&lock).expect("a directory in the way");
+
+    let refused = Session::start(&sample.logs(), &sample.workspace(), None)
+        .expect_err("an index that cannot be locked");
+    assert!(matches!(refused, SessionError::Index { .. }), "{refused}");
+
+    let session = Session::start_deferred(&sample.logs(), &sample.workspace(), None)
+        .expect("a start that returns before the index is asked");
+    session.append(&said("nowhere to go"));
+    let problem = session.finish().expect("the session's trouble");
+
+    assert!(problem.contains("recent.sessions"), "{problem}");
+    assert!(
+        session.display_history().is_err(),
+        "a history read past its trouble"
+    );
+    drop(session);
+    assert_eq!(
+        logged(&sample.logs()),
+        [EARLIER],
+        "a log the index never named was left"
+    );
+}

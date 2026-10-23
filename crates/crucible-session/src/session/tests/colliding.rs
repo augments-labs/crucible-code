@@ -6,6 +6,7 @@
 //! session. The name is handed in rather than minted, because a minted one
 //! cannot be made to collide on purpose.
 
+use super::super::Settling;
 use super::*;
 
 /// The name a running session is recording under.
@@ -34,9 +35,14 @@ fn a_name_another_session_is_recording_under_is_refused_rather_than_written_into
     let path = running.path().to_owned();
     running.append(&said("what the first session said"));
 
-    let problem = Session::naming(&sample.logs(), &sample.workspace(), None, None, || {
-        taken.clone()
-    })
+    let problem = Session::naming(
+        &sample.logs(),
+        &sample.workspace(),
+        None,
+        None,
+        Settling::Now,
+        || taken.clone(),
+    )
     .expect_err("every name it tried was taken");
 
     assert!(matches!(problem, SessionError::Taken { .. }), "{problem}");
@@ -69,6 +75,7 @@ fn a_name_that_is_taken_is_passed_over_for_the_next_one_minted() {
         &sample.workspace(),
         None,
         None,
+        Settling::Now,
         minting(&[taken, free.clone()]),
     )
     .expect("the session under the second name");
@@ -103,6 +110,7 @@ fn a_mark_another_crucible_holds_is_a_name_in_use_even_with_no_log_beside_it() {
         &sample.workspace(),
         None,
         None,
+        Settling::Now,
         minting(&[named("0000000000001-000001"), named("0000000000002-000002")]),
     )
     .expect("the session under the second name");
