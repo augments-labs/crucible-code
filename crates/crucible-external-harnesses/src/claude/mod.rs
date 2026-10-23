@@ -7,7 +7,11 @@
 //! prompts sent to this side as questions, and with the model and effort
 //! it is handed, as `--model` and `--effort`, else its own defaults. Each turn
 //! is a user frame on the same input, and ends at the `result` frame that answers it; a
-//! run for a session the program kept starts by resuming it. The program is
+//! run for a session the program kept starts by resuming it. Where the
+//! program answers that resume with a failed `result` frame saying it found
+//! no conversation by that very id, the turn fails saying the session is gone,
+//! so the next run starts a new one; any other failure leaves the session to
+//! be resumed again. The program is
 //! started with only the environment its profile builds, so no key or cloud
 //! account the shell holds reaches it, and whether it is signed in is read
 //! from its own account commands in that profile.
@@ -71,6 +75,10 @@ const PROGRAM: &str = "claude";
 /// The id of the one request this side makes: stopping the turn.
 const INTERRUPT: &str = "crucible-interrupt";
 
+/// What the program says, followed by the id, when it is asked to resume a
+/// session it has no conversation for.
+const NO_CONVERSATION: &str = "No conversation found with session ID: ";
+
 /// Where the agent may say its key comes from when it sends requests as the
 /// account its profile is signed in to; any other source, such as the
 /// environment a project's settings set or a helper command, is refused.
@@ -92,6 +100,8 @@ pub struct Claude {
     permission: Permission,
     /// The directory the conversation works in, where it was named.
     workspace: Option<PathBuf>,
+    /// The session the run was started to resume, where it was.
+    resume: Option<String>,
     /// The running turn.
     turn: Option<TurnId>,
     /// Whether the running turn was asked to stop.
@@ -122,6 +132,7 @@ impl Claude {
         Self {
             permission,
             workspace: None,
+            resume: None,
             turn: None,
             stopping: false,
             signed_out: false,
@@ -206,6 +217,14 @@ impl Claude {
         acts.push(match ended.subtype {
             Subtype::Success if !ended.failed => Act::End(Outcome::Answered),
             Subtype::DuringExecution if self.stopping => Act::End(Outcome::Cancelled),
+            // Resumed again it would say the same, so the session is said to
+            // be gone.
+            Subtype::DuringExecution if ended.failed && self.forgotten(ended) => {
+                Act::Fail(Failure::gone(
+                    "The agent has no session by the name it was asked to resume, so the \
+                     next message starts it on a new session.",
+                ))
+            }
             Subtype::Limit => Act::End(Outcome::CutShort),
             Subtype::Success | Subtype::DuringExecution if self.signed_out => Act::Fail(
                 Failure::new("The agent is not signed in. Sign in with /login, then try again."),
@@ -220,6 +239,18 @@ impl Claude {
         });
         self.turn = None;
         acts
+    }
+
+    /// Whether `ended` says the program has no conversation by the id the run
+    /// was started to resume.
+    fn forgotten(&self, ended: &Result_) -> bool {
+        self.resume.as_deref().is_some_and(|resume| {
+            ended.errors.iter().any(|error| {
+                error
+                    .strip_prefix(NO_CONVERSATION)
+                    .is_some_and(|id| id == resume)
+            })
+        })
     }
 
     /// The turn's figures, where the frame gives any.
@@ -300,6 +331,7 @@ impl Dialect for Claude {
 
     fn request(&mut self, shape: Shape<'_>) -> Request {
         self.workspace = shape.workspace.map(Into::into);
+        self.resume = shape.resume.map(str::to_owned);
         self.spent = if shape.resume.is_some() {
             Spent::Unknown
         } else {
