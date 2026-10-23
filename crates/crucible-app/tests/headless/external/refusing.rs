@@ -335,10 +335,14 @@ fn left_running(tree: &Tree, outside: Outside, instance: &str) -> Result<Outside
 /// whatever it is asked next, and holds it to having changed nothing: the
 /// user file as it was, the agent's program not started, the conversation's
 /// own run still taking a turn, and the person told what to do about the run
-/// without being asked to agree to the agent's route.
+/// without being asked to agree to the agent's route. Where the route is
+/// `answered` it is the case that was shipped: nothing to ask, so only the
+/// refusal keeps the instances from being written off; where it is not, the
+/// route must not be put either.
 fn refused_beside_an_unconfirmed_run(
     name: &str,
     (signing, unconfirmed): (&str, &str),
+    answered: bool,
 ) -> Result<(), Failed> {
     let tree = Tree::new(name)?;
     let script = connected([
@@ -348,7 +352,9 @@ fn refused_beside_an_unconfirmed_run(
         claude::signed_out(),
     ]);
     let mut outside = left_running(&tree, Outside::new(&tree, &script)?, unconfirmed)?;
-    outside.unanswer();
+    if !answered {
+        outside.unanswer();
+    }
     let asked = Asked {
         installed: (SHARED, signing),
         command: &|instance| Command::SignOut { instance },
@@ -388,10 +394,16 @@ fn refused_beside_an_unconfirmed_run(
 
 /// A sign-out of an instance whose own run could not be confirmed stopped is
 /// refused before it disconnects or writes anything, and starts no agent
-/// program beside that run.
+/// program beside that run, whether or not the agent's route has a yes.
 #[test]
 fn a_sign_out_whose_own_run_is_not_confirmed_stopped_changes_nothing() -> Result<(), Failed> {
-    refused_beside_an_unconfirmed_run("external-sign-out-own-unstopped", ("work", "work"))
+    for (name, answered) in [
+        ("external-sign-out-own-unstopped-answered", true),
+        ("external-sign-out-own-unstopped", false),
+    ] {
+        refused_beside_an_unconfirmed_run(name, ("work", "work"), answered)?;
+    }
+    Ok(())
 }
 
 /// So is one where another instance on the same profile is the one whose run
@@ -400,7 +412,13 @@ fn a_sign_out_whose_own_run_is_not_confirmed_stopped_changes_nothing() -> Result
 #[test]
 fn a_sign_out_beside_a_sharing_instance_not_confirmed_stopped_changes_nothing() -> Result<(), Failed>
 {
-    refused_beside_an_unconfirmed_run("external-sign-out-sharing-unstopped", ("work", "spare"))
+    for (name, answered) in [
+        ("external-sign-out-sharing-unstopped-answered", true),
+        ("external-sign-out-sharing-unstopped", false),
+    ] {
+        refused_beside_an_unconfirmed_run(name, ("work", "spare"), answered)?;
+    }
+    Ok(())
 }
 
 /// A run on another profile is no reason to hold the sign-out of this one: the

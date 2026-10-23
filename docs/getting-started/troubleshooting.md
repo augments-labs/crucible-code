@@ -442,9 +442,9 @@ agent's process has ended, then restart crucible; `--continue` picks the
 session back up.
 
 The same hold applies to an account step of the agent. *Sign out of the agent*
-is refused with this line, naming the instance, when a run of any instance on
-the same profile could not be confirmed stopped, since the agent's logout would
-run beside it. Nothing is disconnected or written and the agent's program is not
+is refused when a run of any instance on the same profile could not be
+confirmed stopped, since the agent's logout would run beside it: the screen
+names the instances in one of its fact lines and ends with this line. Nothing is disconnected or written and the agent's program is not
 started, so the sign-out can be chosen again after the restart.
 
 ## Permissions and the sandbox
