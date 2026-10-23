@@ -72,9 +72,9 @@ fn a_script_reads_back_as_it_was_written() {
 }
 
 /// A grandchild that beats, ended when the test is, however it ends.
-struct Beating(Child);
+struct Killed(Child);
 
-impl Drop for Beating {
+impl Drop for Killed {
     fn drop(&mut self) {
         let _ = self.0.kill();
         let _ = self.0.wait();
@@ -88,7 +88,7 @@ impl Drop for Beating {
 fn a_heartbeat_once_read_is_never_read_empty_while_the_grandchild_beats() {
     let at = Owned::new("heartbeat");
     let peer = install(&at.0, "claude", &Script::of([])).expect("built");
-    let _beating = Beating(
+    let _killed = Killed(
         Command::new(&peer)
             .arg("--linger")
             .arg(&at.0)
@@ -125,21 +125,22 @@ fn beat(directory: &Path, number: u64) {
 }
 
 /// A stop can return before the grandchild's last beat lands, so a beat that
-/// lands after the first look and then holds still is a grandchild that
-/// ended.
-#[tokio::test(flavor = "multi_thread")]
+/// lands after the first look and then holds still is a grandchild that ended.
+/// The clock is paused, so the beat lands at the same moment between the
+/// helper's looks however loaded the machine is.
+#[tokio::test(start_paused = true)]
 async fn a_last_beat_that_lands_late_and_holds_still_is_a_grandchild_that_ended() {
     let at = Owned::new("ceased-late");
     beat(&at.0, 7);
     let directory = at.0.clone();
-    let landing = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(50));
+    let landing = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
         beat(&directory, 8);
     });
 
     let judged = ceased(&at.0).await;
 
-    landing.join().expect("landed");
+    landing.await.expect("landed");
     assert_eq!(lingering(&at.0), Some(8));
     assert_eq!(judged, Ok(()));
 }
@@ -150,7 +151,7 @@ async fn a_last_beat_that_lands_late_and_holds_still_is_a_grandchild_that_ended(
 async fn a_grandchild_that_goes_on_beating_has_not_ceased() {
     let at = Owned::new("ceased-beating");
     let peer = install(&at.0, "claude", &Script::of([])).expect("built");
-    let _beating = Beating(
+    let _killed = Killed(
         Command::new(&peer)
             .arg("--linger")
             .arg(&at.0)

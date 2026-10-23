@@ -486,14 +486,14 @@ pub fn lingering(directory: &Path) -> Option<u64> {
 }
 
 /// The beats a grandchild that should have ended was seen at: the one it had
-/// settled at, and the one it had beaten to after [`WATCHED`] more. Where it
-/// never settled, the first beat seen and the last.
+/// settled at, and the one it had beaten to while it was watched after. Where
+/// it never settled, the first beat seen and the last.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Beating {
     /// The beat first seen to hold still, or first seen.
-    pub first: Option<u64>,
+    pub(crate) first: Option<u64>,
     /// The beat last seen.
-    pub last: Option<u64>,
+    pub(crate) last: Option<u64>,
 }
 
 impl fmt::Display for Beating {
@@ -503,8 +503,8 @@ impl fmt::Display for Beating {
 }
 
 /// Whether the grandchild a reply in `directory` started has ended, after its
-/// owner was stopped: its beat is waited on to hold still for [`HELD`], and
-/// then watched for [`WATCHED`], and a grandchild that beat in between is
+/// owner was stopped: its beat is waited on to hold still for 150 ms, and
+/// then watched for 400 ms, and a grandchild that beat in between is
 /// [`Beating`].
 ///
 /// A stop can return once the kill is sent and before the grandchild is gone,
@@ -516,7 +516,7 @@ impl fmt::Display for Beating {
 ///
 /// # Errors
 ///
-/// [`Beating`] where the beat did not hold still within [`SETTLE`], or beat
+/// [`Beating`] where the beat did not hold still within a second, or beat
 /// again while it was watched.
 pub async fn ceased(directory: &Path) -> Result<(), Beating> {
     let first = settled(directory).await?;
