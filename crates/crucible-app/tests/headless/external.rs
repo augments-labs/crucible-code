@@ -94,8 +94,7 @@ fn row() -> Result<&'static Row, Failed> {
     })))
 }
 
-/// What a launch was asked for: the mode, and the agent's own session it
-/// resumed.
+/// What a launch was asked for: the mode, and the agent's own session it resumed.
 type Launched = (Mode, Option<String>);
 
 /// Launches Claude Code's runs from the peer installed in a tree, and keeps
@@ -136,8 +135,7 @@ impl Relaunch for Launching {
     }
 
     fn refusal(&self) -> Option<Failure> {
-        let refused = self.agent.program(&self.consent).err()?;
-        Some(Failure::new(&refused.to_string()))
+        (self.agent.program(&self.consent).err()).map(|why| Failure::new(&why.to_string()))
     }
 
     fn launch<'a>(
@@ -346,8 +344,7 @@ impl Outside {
         ))
     }
 
-    /// Takes back the yes the agent's route was given, as though it had
-    /// never been answered.
+    /// Takes back the yes the agent's route was given, as though it had never been answered.
     fn unanswer(&self) {
         if let Some(consent) = self.conversation.consent() {
             consent.withdraw("agent:claude");
