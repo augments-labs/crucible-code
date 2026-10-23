@@ -1632,6 +1632,10 @@ mod latest;
 /// What a resume answers a call with that was started and never finished.
 mod started;
 
+/// What a crash part-way through starting a session leaves, and what the
+/// next start makes of it.
+mod settling;
+
 /// Which names in the sessions directory are read, and what a link or a pipe
 /// under one costs.
 mod ordinary;
