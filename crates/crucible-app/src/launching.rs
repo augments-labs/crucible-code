@@ -14,8 +14,10 @@
 //! `content_use`, the child's sandbox policy built, and the process started.
 //! The first two are decided in one place, [`Agent::program`], which an
 //! operation that would ask about a route before starting the agent consults
-//! first through [`Steps::refusal`], so nobody is asked to agree to a launch
-//! that is refused whatever the answer.
+//! first, through [`Steps::refusal`], or for a conversation's next turn
+//! through the [`Relaunch::refusal`] of its [`Runs`], in the words the launch
+//! would be refused in, so nobody is asked to agree to a launch that is
+//! refused whatever the answer.
 //! A probe and an account step are starts like a turn's and go through the
 //! same gates, each under a hold of its own. An account step the dialect
 //! speaks over the program's own wire is bounded: a version or status within
@@ -828,6 +830,13 @@ impl Relaunch for Runs {
         self.agent.effort()
     }
 
+    fn refusal(&self) -> Option<Failure> {
+        self.agent
+            .program(&self.consent)
+            .err()
+            .map(|why| refused(&why))
+    }
+
     fn launch<'a>(
         &'a self,
         mode: Mode,
@@ -858,7 +867,7 @@ impl Relaunch for Runs {
                 resume.map(ExternalRef::reference),
             )
             .await
-            .map_err(|refused| Failure::new(&refused.to_string()))?;
+            .map_err(|why| refused(&why))?;
             let backend: Box<dyn Backend> = Box::new(External::new(
                 host,
                 dialect,
@@ -869,6 +878,13 @@ impl Relaunch for Runs {
             Ok(backend)
         })
     }
+}
+
+/// A launch refused for `why`, in the words a run's failure is told in: the
+/// same whether [`Relaunch::refusal`] says it before the route is asked about
+/// or the launch says it after.
+fn refused(why: &Unlaunched) -> Failure {
+    Failure::new(&why.to_string())
 }
 
 /// What takes an account step of any installed agent the configuration

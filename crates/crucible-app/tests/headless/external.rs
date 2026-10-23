@@ -135,6 +135,11 @@ impl Relaunch for Launching {
         self.agent.effort()
     }
 
+    fn refusal(&self) -> Option<Failure> {
+        let refused = self.agent.program(&self.consent).err()?;
+        Some(Failure::new(&refused.to_string()))
+    }
+
     fn launch<'a>(
         &'a self,
         mode: Mode,

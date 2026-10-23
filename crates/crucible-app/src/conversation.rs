@@ -237,6 +237,22 @@ impl Conversation {
         self.consent()?.asks(&self.launching()?).copied()
     }
 
+    /// Why a prompt with `attached` would be refused before it starts an
+    /// installed agent, whatever is answered about the agent's route: what is
+    /// attached, which no agent is handed, else what refuses the launch
+    /// before any process, its program not found, say. Asked before the
+    /// route is, so that nobody is asked to agree to a launch that cannot
+    /// happen. Nothing off such a route, or where the turn starts no agent.
+    ///
+    /// # Errors
+    ///
+    /// [`TurnError`] saying why, as the turn would be refused after a yes.
+    pub fn unlaunchable(&self, attached: &[Attachment]) -> Result<(), TurnError> {
+        self.outside
+            .as_deref()
+            .map_or(Ok(()), |outside| outside.unlaunchable(attached))
+    }
+
     /// The same conversation, remembering the persistent prompt-cache
     /// resources it is authorized to make in a file under `home`.
     ///

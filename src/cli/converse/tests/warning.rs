@@ -218,8 +218,7 @@ fn a_missing_agent_program_is_refused_before_the_warning_is_put() {
     let agent = Agent::routed(&route, &REGISTRY, |_| None).expect("Claude Code's route");
     let reason = agent
         .program(&consent)
-        .err()
-        .expect("the program is not there")
+        .expect_err("the program is not there")
         .to_string();
     let runtime = crate::cli::fake::runtime();
     let workspace = Workspace::open(std::env::temp_dir()).expect("a temporary directory");
@@ -258,7 +257,8 @@ fn a_missing_agent_program_is_refused_before_the_warning_is_put() {
         consent: consent.clone(),
         ..plain()
     };
-    let mut renderer = Renderer::new(Recording::new(80, 24));
+    // Wide enough that the sentence is drawn on one row.
+    let mut renderer = Renderer::new(Recording::new(240, 24));
     let mut input = Cursor::new(b"hello\n".to_vec());
 
     let ended = converse(
@@ -275,8 +275,10 @@ fn a_missing_agent_program_is_refused_before_the_warning_is_put() {
 
     assert!(ended.is_ok(), "the route was put first: {ended:?}");
     let written = renderer.terminal().written().to_string();
-    let flat = written.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(flat.contains(&reason), "{written}");
+    assert!(
+        written.contains(&reason),
+        "{reason:?} is not in {written:?}"
+    );
     assert!(
         consent.asks(&agent_route("claude")).is_some(),
         "the route was answered"
