@@ -64,7 +64,9 @@
 //! bound of its entry's runs, and a status check beside a live run is never
 //! refused as busy. Of the control those runs share it reads one thing,
 //! whether a run could not be confirmed stopped, and where one could not it is
-//! refused, before any process, as a run launched beside that one would be. A
+//! refused, before any process, as a run launched beside that one would be;
+//! [`Steps::unstopped`] says which of a set of entries are so held, for an
+//! operation that would take a step for all of them. A
 //! step whose own stop could not be confirmed holds back none of the entry's
 //! runs. What it read is all it returns: a step that could not be started
 //! reads as unreadable, saying why, so a caller claims nothing the step did not
@@ -1014,6 +1016,18 @@ impl Steps {
             instance: instance.into(),
             control: self.controls.of(instance),
         }
+    }
+
+    /// The names among `entries` of those with a run that could not be
+    /// confirmed stopped, which an account step of any of them is refused
+    /// beside; none where no run of theirs has been asked for yet.
+    #[must_use]
+    pub fn unstopped<'a>(&self, entries: &'a [ExternalAgent]) -> Vec<&'a str> {
+        entries
+            .iter()
+            .map(ExternalAgent::name)
+            .filter(|name| self.controls.unstopped(name))
+            .collect()
     }
 
     /// Why a start of the configured `agent`, whose registry row is `row`,
