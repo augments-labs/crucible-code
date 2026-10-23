@@ -8,7 +8,8 @@ use serde_json::{Value, json};
 use super::fixture::{Signed, signed};
 use super::{
     Admits, AssetRef, AuthMethod, Catalog, CatalogError, ContentUse, Disposition, FileKind, Files,
-    Format, GRACE, Held, INDEX_BYTES, KEYS, Kind, Launch, Lock, Method, Route, Script, Variable,
+    Format, GRACE, Held, INDEX_BYTES, KEYS, Kind, Launch, Lock, Method, Route, SCHEMA_SHOWN,
+    Script, VERSION_BYTES, Variable,
 };
 
 const DAY: Duration = Duration::from_hours(24);
@@ -219,6 +220,37 @@ fn with(pointer: &str, to: Value) -> Value {
     let mut catalog = catalog();
     set(&mut catalog, pointer, to);
     catalog
+}
+
+/// The catalog without the field `pointer` names.
+// A test that removes a field its catalog does not have has nothing to report.
+#[allow(clippy::panic)]
+fn without(pointer: &str) -> Value {
+    let mut catalog = catalog();
+    let (parent, key) = pointer.rsplit_once('/').unwrap_or_default();
+    let removed = catalog
+        .pointer_mut(parent)
+        .and_then(Value::as_object_mut)
+        .and_then(|object| object.remove(key));
+    assert!(removed.is_some(), "{pointer} is in the catalog");
+    catalog
+}
+
+/// Each case, a field and the pointer set to a value, that is not refused
+/// naming that field, and saying `why` where one is given.
+fn misnamed(cases: Vec<(&str, String, Value)>, why: Option<&str>) -> Vec<String> {
+    cases
+        .into_iter()
+        .filter_map(|(field, pointer, to)| {
+            let refused = fetched(&with(&pointer, to));
+            let named = matches!(
+                &refused,
+                Err(CatalogError::Field { field: named, why: said })
+                    if **named == *field && why.is_none_or(|why| *said == why)
+            );
+            (!named).then(|| format!("{field}: {:?}", refused.map(|_| "believed")))
+        })
+        .collect()
 }
 
 fn sign(catalog: &Value) -> Signed {
@@ -633,8 +665,13 @@ fn a_catalog_larger_than_the_cap_is_refused_before_it_is_read() {
 
 #[test]
 fn a_catalog_in_an_unknown_schema_is_refused() {
-    for schema in [json!(2), json!(0), json!("1")] {
-        let signed = sign(&with("/schema", schema));
+    for later in [
+        with("/schema", json!(2)),
+        with("/schema", json!(0)),
+        with("/schema", json!("1")),
+        without("/schema"),
+    ] {
+        let signed = sign(&later);
 
         let fetched = Catalog::verify(
             &signed.index,
@@ -815,12 +852,208 @@ fn a_field_that_is_not_what_it_must_be_is_refused_by_its_name() {
             json!((4 << 20) + 1),
         ),
     ];
-    for (field, pointer, to) in cases {
-        let refused = fetched(&with(&pointer, to));
+    let failures = misnamed(cases.into(), None);
+
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+#[test]
+fn every_path_address_digest_and_word_is_checked_where_it_is_read() {
+    let goose = "/entries/0/targets/0/artifacts/0";
+    let size = format!("{goose}/size");
+    let above = serde_json::from_str("18446744073709551616").unwrap_or(Value::Null);
+    let cases = vec![
+        (
+            "entries[0].targets[0].artifacts[0].kept[0]",
+            format!("{goose}/kept/0"),
+            json!("../x"),
+        ),
+        (
+            "entries[2].targets[0].bin",
+            "/entries/2/targets/0/bin".into(),
+            json!("../x"),
+        ),
+        (
+            "entries[2].targets[0].scripts[0].package",
+            "/entries/2/targets/0/scripts/0/package".into(),
+            json!("../x"),
+        ),
+        (
+            "entries[0].auth_methods[2].command",
+            "/entries/0/auth_methods/2/command".into(),
+            json!("../x"),
+        ),
+        (
+            "entries[0].targets[0].artifacts[0].files[2].target",
+            format!("{goose}/files/2/target"),
+            json!("/etc/passwd"),
+        ),
+        (
+            "entries[0].terms",
+            "/entries/0/terms".into(),
+            json!("http://example.com/terms"),
+        ),
+        (
+            "entries[0].review",
+            "/entries/0/review".into(),
+            json!("http://example.com/pull/1"),
+        ),
+        (
+            "entries[0].content_use.source",
+            "/entries/0/content_use/source".into(),
+            json!("http://example.com/privacy"),
+        ),
+        (
+            "entries[1].targets[0].entry_point",
+            "/entries/1/targets/0/entry_point".into(),
+            json!("fast_agent.acp"),
+        ),
+        (
+            "entries[0].auth_methods[2].route",
+            "/entries/0/auth_methods/2/route".into(),
+            json!("pty"),
+        ),
+        (
+            "entries[2].targets[0].scripts[0].disposition",
+            "/entries/2/targets/0/scripts/0/disposition".into(),
+            json!("ran"),
+        ),
+        (
+            "entries[0].auth_methods[0].kind",
+            "/entries/0/auth_methods/0/kind".into(),
+            json!("oauth"),
+        ),
+        (
+            "entries[0].targets[0].artifacts[0].size",
+            size.clone(),
+            json!(-1),
+        ),
+        (
+            "entries[0].targets[0].artifacts[0].size",
+            size.clone(),
+            json!(1.5),
+        ),
+        ("entries[0].targets[0].artifacts[0].size", size, above),
+        (
+            "entries[0].targets[0].artifacts[0].files[0].sha256",
+            format!("{goose}/files/0/sha256"),
+            json!(hash('A')),
+        ),
+    ];
+
+    let failures = misnamed(cases, None);
+
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+#[test]
+fn a_version_that_cannot_name_one_directory_is_refused() {
+    let long = "1".repeat(VERSION_BYTES + 1);
+    let mut cases = Vec::new();
+    for version in [
+        "..",
+        ".",
+        "1.0/x",
+        "1.0\\x",
+        "1:0",
+        "1.0\0",
+        "1.0\u{7}",
+        "1.0\n",
+        long.as_str(),
+    ] {
+        cases.push((
+            "entries[0].version",
+            "/entries/0/version".to_owned(),
+            json!(version),
+        ));
+        cases.push((
+            "revoked[0].version",
+            "/revoked/0/version".to_owned(),
+            json!(version),
+        ));
+    }
+
+    let failures = misnamed(cases, Some("is not a version that can name one directory"));
+
+    assert!(failures.is_empty(), "{failures:#?}");
+    for version in [
+        "1".repeat(VERSION_BYTES),
+        "1.4.1+2".to_owned(),
+        "2.0.0-rc.1".to_owned(),
+    ] {
+        let kept = fetched(&with("/entries/0/version", json!(version)));
+        assert!(kept.is_ok(), "{version}: {kept:?}");
+    }
+}
+
+#[test]
+fn an_artifact_without_its_file_list_is_refused() {
+    let files = "/entries/0/targets/0/artifacts/0/files";
+    for catalog in [without(files), with(files, Value::Null)] {
+        let refused = fetched(&catalog);
 
         assert!(
-            matches!(&refused, Err(CatalogError::Field { field: named, .. }) if **named == *field),
-            "{field}: {refused:?}"
+            matches!(
+                &refused,
+                Err(CatalogError::Field { field, why: "is missing, so nothing would be pinned" })
+                    if &**field == "entries[0].targets[0].artifacts[0].files"
+            ),
+            "{:?}",
+            refused.map(|_| "believed")
+        );
+    }
+}
+
+#[test]
+fn a_refusal_names_the_value_at_fault_and_says_truly_what_is_wrong() {
+    let empty = vec![
+        (
+            "entries[0].caution",
+            "/entries/0/caution".to_owned(),
+            json!(""),
+        ),
+        (
+            "entries[0].profile_env",
+            "/entries/0/profile_env".to_owned(),
+            json!(""),
+        ),
+        (
+            "entries[0].reach[0]",
+            "/entries/0/reach/0".to_owned(),
+            json!(""),
+        ),
+    ];
+    let value = vec![(
+        "entries[0].targets[0].env.GOOSE_MODE",
+        "/entries/0/targets/0/env/GOOSE_MODE".to_owned(),
+        json!(1),
+    )];
+
+    let mut failures = misnamed(empty, Some("is empty"));
+    failures.extend(misnamed(value, Some("is not text")));
+    let root = sign(&json!(["not", "a", "catalog"]));
+    let root = Catalog::compiled(&root.index, &root.signature, &root.keys);
+    if !matches!(&root, Err(CatalogError::Field { field, .. }) if &**field == "the catalog") {
+        failures.push(format!("the catalog: {:?}", root.map(|_| "believed")));
+    }
+
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+#[test]
+fn an_unknown_schema_is_repeated_only_in_part() {
+    for schema in [
+        json!("x".repeat(100_000)),
+        json!({"version": "y".repeat(100_000)}),
+    ] {
+        let signed = sign(&with("/schema", schema));
+
+        let refused = Catalog::compiled(&signed.index, &signed.signature, &signed.keys);
+
+        assert!(
+            matches!(&refused, Err(CatalogError::Schema(shown)) if shown.chars().count() <= SCHEMA_SHOWN),
+            "{:?}",
+            refused.map_err(|error| error.to_string().len())
         );
     }
 }

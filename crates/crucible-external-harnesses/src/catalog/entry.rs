@@ -4,10 +4,27 @@
 //! An entry is one version of one agent. Everything here was recorded by the
 //! intake and passed by a reviewer, so it is what is offered, shown in a
 //! confirmation and checked against once a download arrives; nothing in it is
-//! looked up again from the registry. Every path it gives is relative and
-//! stays inside the version's own directory, every download address is
-//! `https`, every digest is a SHA-256 in lowercase hexadecimal, and no
-//! variable it sets is one a loader reads to choose what code runs.
+//! looked up again from the registry.
+//!
+//! What this reader checks is the shape of each value, once:
+//!
+//! - every path it gives is relative, with no root, drive, colon, backslash or
+//!   NUL and no empty, `.` or `..` component, so it names something under the
+//!   directory it is relative to;
+//! - a link's target is relative, with no backslash, colon or NUL, and may
+//!   climb with `..`; whether it resolves inside the version is left to
+//!   whatever creates the link to check;
+//! - a version is one directory name, at most [`VERSION_BYTES`];
+//! - every address begins `https://`, and whether its host is one the target
+//!   lists is left to whoever downloads it to check;
+//! - every digest is a SHA-256 in lowercase hexadecimal, and every artifact
+//!   lists the files it unpacks to;
+//! - no variable it sets is one a loader reads to choose what code runs.
+//!
+//! Nothing more is checked here. Control characters, names a platform
+//! reserves and names that differ only in case are the unpacker's to refuse,
+//! since it writes the files, and the sizes are the unpacker's and the store's
+//! to reconcile, with checked arithmetic.
 
 use crucible_types::AgentKey;
 use serde_json::{Map, Value};
@@ -24,6 +41,9 @@ pub const LISTED_FILES: usize = 256;
 
 /// The one rule set for unpacking a package tree this reader knows.
 pub const UNPACK_RULES: u64 = 1;
+
+/// The longest version, in bytes; a version names one directory in the store.
+pub const VERSION_BYTES: usize = 64;
 
 /// One reviewed version of one agent.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -378,7 +398,7 @@ impl Entry {
         Ok(Self {
             key: fields.key("key")?,
             registry_id: fields.text("registry_id")?,
-            version: fields.text("version")?,
+            version: fields.version("version")?,
             lock_revision: fields.optional_number("lock_revision")?,
             kind,
             license: fields.text("license")?,
@@ -532,17 +552,21 @@ impl Artifact {
             "wheel" => Format::Wheel,
             _ => return Err(fields.wrong("format", "is not zip, tar.gz, bare or wheel")),
         };
-        let files = if let Some(Value::Object(_)) = fields.field("files") {
-            Files::Asset(fields.object("files")?.asset(Some(ASSET_BYTES))?)
-        } else {
-            let listed = fields.list("files")?;
-            if listed.len() > LISTED_FILES {
-                return Err(fields.wrong(
-                    "files",
-                    "lists more than 256 files, and a longer list is a catalog asset",
-                ));
+        let files = match fields.field("files") {
+            None => return Err(fields.wrong("files", "is missing, so nothing would be pinned")),
+            Some(Value::Object(_)) => {
+                Files::Asset(fields.object("files")?.asset(Some(ASSET_BYTES))?)
             }
-            Files::Listed(listed.iter().map(File::read).collect::<Result<_, _>>()?)
+            Some(_) => {
+                let listed = fields.list("files")?;
+                if listed.len() > LISTED_FILES {
+                    return Err(fields.wrong(
+                        "files",
+                        "lists more than 256 files, and a longer list is a catalog asset",
+                    ));
+                }
+                Files::Listed(listed.iter().map(File::read).collect::<Result<_, _>>()?)
+            }
         };
         Ok(Self {
             url: fields.https("url")?,
@@ -592,7 +616,7 @@ impl Revoked {
     pub(super) fn read(fields: &Fields<'_>) -> Result<Self, CatalogError> {
         Ok(Self {
             key: fields.key("key")?,
-            version: fields.text("version")?,
+            version: fields.version("version")?,
             lock_revision: fields.optional_number("lock_revision")?,
             reason: fields.text("reason")?,
         })
@@ -631,7 +655,11 @@ impl<'a> Fields<'a> {
         match value {
             Value::Object(object) => Ok(Self { object, at }),
             _ => Err(CatalogError::Field {
-                field: at.into(),
+                field: if at.is_empty() {
+                    "the catalog".into()
+                } else {
+                    at.into()
+                },
                 why: "is not an object",
             }),
         }
@@ -662,7 +690,8 @@ impl<'a> Fields<'a> {
     pub(super) fn optional_text(&self, name: &str) -> Result<Option<Box<str>>, CatalogError> {
         match self.field(name) {
             None => Ok(None),
-            Some(Value::String(text)) if !text.is_empty() => Ok(Some(text.as_str().into())),
+            Some(Value::String(text)) if text.is_empty() => Err(self.wrong(name, "is empty")),
+            Some(Value::String(text)) => Ok(Some(text.as_str().into())),
             Some(_) => Err(self.wrong(name, "is not text")),
         }
     }
@@ -702,6 +731,21 @@ impl<'a> Fields<'a> {
             None => Ok(false),
             Some(Value::Bool(flag)) => Ok(*flag),
             Some(_) => Err(self.wrong(name, "is not true or false")),
+        }
+    }
+
+    /// A version, which names one directory in the store.
+    fn version(&self, name: &str) -> Result<Box<str>, CatalogError> {
+        let version = self.text(name)?;
+        let one = version.len() <= VERSION_BYTES
+            && !matches!(&*version, "." | "..")
+            && !version
+                .chars()
+                .any(|c| matches!(c, '/' | '\\' | ':') || c.is_control());
+        if one {
+            Ok(version)
+        } else {
+            Err(self.wrong(name, "is not a version that can name one directory"))
         }
     }
 
@@ -807,18 +851,16 @@ impl<'a> Fields<'a> {
         self.array(name)?
             .iter()
             .enumerate()
-            .map(|(index, value)| {
-                value
-                    .as_str()
-                    .filter(|text| kept(text))
-                    .map(Box::from)
-                    .ok_or_else(|| self.wrong(&format!("{name}[{index}]"), why))
+            .map(|(index, value)| match value.as_str() {
+                Some(text) if kept(text) => Ok(text.into()),
+                Some(_) => Err(self.wrong(&format!("{name}[{index}]"), why)),
+                None => Err(self.wrong(&format!("{name}[{index}]"), "is not text")),
             })
             .collect()
     }
 
     fn texts(&self, name: &str) -> Result<Vec<Box<str>>, CatalogError> {
-        self.each(name, |text| !text.is_empty(), "is not text")
+        self.each(name, |text| !text.is_empty(), "is empty")
     }
 
     /// Arguments, any of which may be empty.
@@ -849,7 +891,7 @@ impl<'a> Fields<'a> {
                         name: variable.as_str().into(),
                         value: value.as_str().into(),
                     }),
-                    _ => Err(self.wrong(name, "sets a variable to something other than text")),
+                    _ => Err(self.wrong(&format!("{name}.{variable}"), "is not text")),
                 }
             })
             .collect()

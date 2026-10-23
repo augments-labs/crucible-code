@@ -39,7 +39,7 @@ use entry::Fields;
 pub use entry::{
     ASSET_BYTES, Admits, Artifact, AssetRef, AuthMethod, ContentUse, Disposition, Entry, File,
     FileKind, Files, Format, Kind, LISTED_FILES, Launch, Lock, Method, Revoked, Route, Script,
-    Target, UNPACK_RULES, Variable,
+    Target, UNPACK_RULES, VERSION_BYTES, Variable,
 };
 
 /// The largest catalog read, in bytes.
@@ -50,6 +50,9 @@ pub const SIGNATURE_BYTES: usize = 4096;
 
 /// The one catalog schema this reader knows.
 pub const SCHEMA: u64 = 1;
+
+/// The most of an unknown schema a refusal repeats, in characters.
+const SCHEMA_SHOWN: usize = 32;
 
 /// How long after its `expires` a fetched catalog is still believed.
 pub const GRACE: Duration = Duration::from_hours(7 * 24);
@@ -100,7 +103,7 @@ pub enum CatalogError {
     /// It is not JSON.
     #[error("the catalog is not JSON")]
     Json(#[from] serde_json::Error),
-    /// It is written in a schema this reader does not know.
+    /// It is written in a schema this reader does not know, given cut short.
     #[error("the catalog is in schema {0}, and this crucible reads schema {SCHEMA}")]
     Schema(Box<str>),
     /// Its serial is below the one already held.
@@ -255,7 +258,9 @@ fn header(document: &Value) -> Result<Fields<'_>, CatalogError> {
     let fields = Fields::new(document, String::new())?;
     match fields.field("schema") {
         Some(schema) if schema.as_u64() == Some(SCHEMA) => Ok(fields),
-        Some(schema) => Err(CatalogError::Schema(schema.to_string().into())),
+        Some(schema) => Err(CatalogError::Schema(
+            schema.to_string().chars().take(SCHEMA_SHOWN).collect(),
+        )),
         None => Err(CatalogError::Schema("none".into())),
     }
 }
