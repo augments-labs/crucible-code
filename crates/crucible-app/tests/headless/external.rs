@@ -48,6 +48,8 @@ use crucible_types::{
 
 use super::{Failed, Nobody, Script, Tree, saying};
 
+#[path = "external/catalog_hold.rs"]
+mod catalog_hold;
 #[path = "external/refusing.rs"]
 mod refusing;
 #[path = "external/routing.rs"]

@@ -1236,10 +1236,13 @@ fn a_warned_row_keeps_its_caution_at_forty_columns() {
             let under = picture.get(at + 1).cloned().unwrap_or_default();
             match terms.consent.routes().warned(&route) {
                 Some(warned) => {
-                    assert!(under.contains(warned.warning.caution), "{route}: {under}");
+                    assert!(
+                        under.contains(warned.warning.caution.as_ref()),
+                        "{route}: {under}"
+                    );
                     let signed = under.find("signed in").unwrap_or(0);
                     assert!(
-                        under.find(warned.warning.caution) >= Some(signed),
+                        under.find(warned.warning.caution.as_ref()) >= Some(signed),
                         "{under}"
                     );
                 }

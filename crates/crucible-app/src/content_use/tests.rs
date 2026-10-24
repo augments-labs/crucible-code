@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use crucible_auth::{KimiSite, Kind};
+use crucible_external_harnesses::catalog::Entry;
 use crucible_http::{Hold, Origin};
 use crucible_provider::{Google, Moonshot, MoonshotWeb, OpenAi};
 
@@ -152,12 +153,12 @@ fn every_warned_route_names_its_row_and_every_origin_it_is_sent_to() {
         .snapshot();
     let mut spelled = BTreeSet::new();
     for warned in routes.all() {
-        assert!(spelled.insert(warned.route), "{} twice", warned.route);
+        assert!(spelled.insert(&*warned.route), "{} twice", warned.route);
         if warned.route.starts_with("api.moonshot.") {
             assert_eq!(warned.origins, [format!("https://{}", warned.route)]);
             continue;
         }
-        if launches(warned.route) {
+        if launches(&warned.route) {
             assert!(warned.origins.is_empty(), "{}", warned.route);
             continue;
         }
@@ -225,7 +226,7 @@ fn every_warned_route_names_its_row_and_every_origin_it_is_sent_to() {
 /// are not asked about.
 #[test]
 fn the_routes_warned_are_those_whose_vendor_says_so() {
-    let warned: BTreeSet<&str> = WARNED.iter().map(|warned| warned.route).collect();
+    let warned: BTreeSet<&str> = WARNED.iter().map(|warned| &*warned.route).collect();
     let expected = BTreeSet::from([
         "subscription:openai",
         "subscription:moonshot@kimi.ai",
@@ -255,6 +256,14 @@ fn the_routes_warned_are_those_whose_vendor_says_so() {
         let asked = WARNED.iter().any(|warned| warned.route == route);
         assert_eq!(asked, expected.contains(route.as_str()), "{route}");
     }
+
+    // A catalog agent adds exactly its own route to what a build warns about,
+    // and no catalog statement moves a built-in route.
+    let listed = Routes::production().cataloging([hold("goose"), hold("claude")]);
+    let all: BTreeSet<&str> = listed.all().iter().map(|warned| &*warned.route).collect();
+    let mut with_goose = expected;
+    with_goose.insert("agent:goose");
+    assert_eq!(all, with_goose);
 }
 
 /// A contributor model is asked about before its first send, and its
@@ -269,7 +278,10 @@ fn a_contributor_model_is_asked_about_and_its_standard_twin_is_not() {
     for model in ["muse-spark-1.3-contributor", "muse-spark-1.2-contributor"] {
         let route = model_route("meta", model);
         assert_eq!(
-            consent.unanswered("meta", model).map(|one| one.route),
+            consent
+                .unanswered("meta", model)
+                .as_ref()
+                .map(|one| &*one.route),
             Some(route.as_str())
         );
     }
@@ -299,7 +311,10 @@ fn the_aliyun_token_plan_states_its_edition_first() {
     let token = routes
         .warned("subscription:qwen@token-plan.aliyun.com")
         .expect("warned");
-    assert_eq!(token.warning.condition, Some("On the Personal edition"));
+    assert_eq!(
+        token.warning.condition.as_deref(),
+        Some("On the Personal edition")
+    );
     assert_eq!(
         token.origins,
         ["https://token-plan.cn-beijing.maas.aliyuncs.com"]
@@ -308,10 +323,15 @@ fn the_aliyun_token_plan_states_its_edition_first() {
 
 #[test]
 fn a_condition_opens_its_sentence_and_every_warning_cites_its_page() {
-    for warned in WARNED {
-        let warning = warned.warning;
-        if let Some(condition) = warning.condition {
-            assert!(warning.sentence.starts_with(condition), "{}", warned.route);
+    let catalog = [hold("goose")];
+    for warned in WARNED.iter().chain(&catalog) {
+        let warning = &warned.warning;
+        if let Some(condition) = &warning.condition {
+            assert!(
+                warning.sentence.starts_with(condition.as_ref()),
+                "{}",
+                warned.route
+            );
         }
         assert!(warning.link.starts_with("https://"), "{}", warned.route);
         assert!(!warning.sentence.contains('\u{2014}'), "{}", warned.route);
@@ -542,8 +562,8 @@ fn the_yes_read_at_the_start_is_read_once() {
 #[test]
 fn a_send_asks_about_the_route_its_provider_is_served_on() {
     let model = Warned {
-        route: "model:moonshot/k3",
-        shown: "K3",
+        route: "model:moonshot/k3".into(),
+        shown: "K3".into(),
         warning: KIMI_AI,
         origins: &[],
     };
@@ -559,12 +579,18 @@ fn a_send_asks_about_the_route_its_provider_is_served_on() {
     consent.served("moonshot", Some(serving("key:moonshot")));
     consent.served("anthropic", Some(serving("key:anthropic")));
     assert_eq!(
-        consent.unanswered("moonshot", "k3").map(|one| one.route),
+        consent
+            .unanswered("moonshot", "k3")
+            .as_ref()
+            .map(|one| &*one.route),
         Some("model:moonshot/k3")
     );
     consent.record("model:moonshot/k3");
     assert_eq!(
-        consent.unanswered("moonshot", "k3").map(|one| one.route),
+        consent
+            .unanswered("moonshot", "k3")
+            .as_ref()
+            .map(|one| &*one.route),
         Some("key:moonshot")
     );
     consent.record("key:moonshot");
@@ -621,22 +647,22 @@ fn every_warning_is_its_row_of_the_docs_table() {
             .iter()
             .find(|row| row.get(1) == Some(&spelled))
             .unwrap_or_else(|| panic!("{} has no row", warned.route));
-        let warning = warned.warning;
+        let warning = &warned.warning;
         assert_eq!(
             row.get(2).map(String::as_str),
-            Some(warning.condition.unwrap_or("")),
+            Some(warning.condition.as_deref().unwrap_or("")),
             "{}",
             warned.route
         );
         assert_eq!(
             row.get(3).map(String::as_str),
-            Some(warning.sentence),
+            Some(&*warning.sentence),
             "{}",
             warned.route
         );
         assert_eq!(
             row.get(4).map(String::as_str),
-            Some(warning.caution),
+            Some(&*warning.caution),
             "{}",
             warned.route
         );
@@ -648,7 +674,7 @@ fn every_warning_is_its_row_of_the_docs_table() {
         );
         assert_eq!(
             row.get(8).map(String::as_str),
-            Some(warning.read),
+            Some(&*warning.read),
             "{}",
             warned.route
         );
@@ -731,7 +757,8 @@ fn a_base_url_changed_and_changed_back_moves_no_yes() {
     assert_eq!(
         consent
             .unanswered("moonshot", "kimi-k2")
-            .map(|one| one.route),
+            .as_ref()
+            .map(|one| &*one.route),
         Some("api.moonshot.cn")
     );
 }
@@ -779,7 +806,8 @@ fn a_credential_taken_out_has_its_provider_read_again_when_next_asked() {
     assert_eq!(
         consent
             .unanswered("google", "gemini-3.8-flash")
-            .map(|one| one.route),
+            .as_ref()
+            .map(|one| &*one.route),
         Some("key:google")
     );
 }
@@ -900,7 +928,7 @@ fn a_provider_the_store_cannot_be_read_for_stays_stale_until_it_can() {
     let read = consent.unanswered("google", "gemini-3.8-flash");
     let settled = consent.unanswered("google", "gemini-3.8-flash");
 
-    assert_eq!(unread.map(|one| one.route), Some("key:google"));
+    assert_eq!(unread.as_ref().map(|one| &*one.route), Some("key:google"));
     assert_eq!(read, None);
     assert_eq!(settled, None);
     assert_eq!(reads.load(Ordering::SeqCst), 2);
@@ -954,7 +982,10 @@ fn a_send_asks_about_whatever_holds_its_origin() {
     let held = consent.held(&origin);
     assert_eq!(held.as_deref(), Some("key:moonshot@kimi.ai"));
     assert_eq!(
-        consent.unanswered("moonshot", "k3").map(|one| one.route),
+        consent
+            .unanswered("moonshot", "k3")
+            .as_ref()
+            .map(|one| &*one.route),
         held.as_deref()
     );
 
@@ -1086,7 +1117,7 @@ fn the_launch_sentence_is_documented() {
 fn only_an_agent_s_sentence_has_the_launch_sentence_after_the_vendor_s() {
     for warned in &WARNED {
         let said = full_sentence(warned);
-        if launches(warned.route) {
+        if launches(&warned.route) {
             assert_eq!(said, format!("{} {LAUNCHING}", warned.warning.sentence));
         } else {
             assert_eq!(said, warned.warning.sentence, "{}", warned.route);
@@ -1097,4 +1128,236 @@ fn only_an_agent_s_sentence_has_the_launch_sentence_after_the_vendor_s() {
             warned.route
         );
     }
+}
+
+/// The entry a signed catalog gives the agent keyed `key`, carrying
+/// `statement` as its statement of content use where one is given.
+fn entry_of(key: &str, statement: Option<serde_json::Value>) -> Entry {
+    use crucible_external_harnesses::catalog::{Catalog, Held, fixture};
+
+    let file = serde_json::json!({"path": key, "size": 1, "sha256": "b".repeat(64), "exec": true});
+    let mut entry = serde_json::json!({
+        "key": key,
+        "registry_id": key,
+        "version": "1.4.1",
+        "kind": "binary",
+        "license": "Apache-2.0",
+        "review": "https://example.com/review/1",
+        "admits": {"name": key, "version": "1.4.1"},
+        "targets": [{
+            "platform": "any",
+            "cmd": key,
+            "artifacts": [{
+                "url": "https://example.com/agent.zip",
+                "sha256": "a".repeat(64),
+                "size": 1,
+                "format": "zip",
+                "unpacked": 1,
+                "decompressed": 1,
+                "files": [file],
+            }],
+        }],
+    });
+    if let Some(statement) = statement {
+        entry
+            .as_object_mut()
+            .expect("an entry is an object")
+            .insert("content_use".into(), statement);
+    }
+    let catalog = serde_json::json!({
+        "schema": 1,
+        "serial": 1,
+        "revoked": [],
+        "entries": [entry],
+    });
+    let signed = fixture::signed(catalog.to_string().as_bytes());
+    let catalog = Catalog::verify(
+        &signed.index,
+        &signed.signature,
+        &signed.keys,
+        Held(0),
+        std::time::SystemTime::now(),
+    )
+    .expect("the catalog is believed");
+    catalog.entries().first().expect("an entry").clone()
+}
+
+/// A statement of content use of `text`, covering `origins`.
+fn statement(text: &str, origins: &[&str]) -> serde_json::Value {
+    serde_json::json!({
+        "text": text,
+        "source": "https://vendor.example/terms/data?v=2",
+        "date": "24 Oct 2026",
+        "origins": origins,
+    })
+}
+
+/// The hold the agent keyed `key` has, from a statement of its own.
+fn hold(key: &str) -> Warned {
+    let entry = entry_of(
+        key,
+        Some(statement(
+            "The vendor may use what you send to improve its products.",
+            &["https://api.vendor.example"],
+        )),
+    );
+    stated(&entry).expect("a hold")
+}
+
+/// An entry's statement of content use is the hold its agent's route is asked
+/// under: the vendor's words, the page and the day, owned, with the origins it
+/// covers said in the words and never held at; and the route is asked about
+/// until it has a yes.
+#[test]
+fn a_statement_is_the_hold_of_its_agents_route() {
+    let warned = hold("goose");
+
+    assert_eq!(warned.route, "agent:goose");
+    assert_eq!(warned.shown, "goose");
+    assert!(
+        warned
+            .warning
+            .sentence
+            .starts_with("The vendor may use what you send to improve its products.")
+    );
+    assert!(
+        warned
+            .warning
+            .sentence
+            .contains("https://api.vendor.example")
+    );
+    assert_eq!(warned.warning.condition, None);
+    assert_eq!(warned.warning.link, "https://vendor.example/terms/data?v=2");
+    assert_eq!(warned.warning.source, "vendor.example");
+    assert_eq!(warned.warning.read, "24 Oct 2026");
+    assert!(
+        warned.origins.is_empty(),
+        "an agent's route names no origin"
+    );
+    assert!(launches(&warned.route));
+
+    let consent = Consent::new(Routes::production().cataloging([warned.clone()]));
+    assert_eq!(consent.routes().warned("agent:goose"), Some(&warned));
+    assert!(consent.routes().warned("agent:claude").is_some());
+    assert!(matches!(
+        held(&consent, "agent:goose"),
+        Err(Unheld::Asks(asked)) if *asked == warned
+    ));
+    assert_eq!(
+        consent.held(&origin("https://api.vendor.example/v1")),
+        None,
+        "crucible's own requests are not held on the agent's route"
+    );
+    consent.give("agent:goose");
+    assert_eq!(
+        held(&consent, "agent:goose").map(|granted| granted.route().to_owned()),
+        Ok("agent:goose".to_owned())
+    );
+    // Another catalog agent's yes is not this one's.
+    assert!(matches!(
+        held(&consent, "agent:other"),
+        Err(Unheld::Unknown)
+    ));
+}
+
+/// An entry with no statement, or one that cannot be shown whole, gives no
+/// hold, and says why; one a byte short of the ceiling gives one.
+#[test]
+fn an_entry_without_a_usable_statement_gives_no_hold() {
+    assert_eq!(
+        stated(&entry_of("goose", None)).map(|_| ()),
+        Err(Unstated::Missing)
+    );
+    let at = |text: String, origins: &[&str]| {
+        stated(&entry_of("goose", Some(statement(&text, origins))))
+    };
+    assert!(at("w".repeat(STATEMENT_BYTES), &[]).is_ok());
+    assert_eq!(
+        at("w".repeat(STATEMENT_BYTES + 1), &[]).map(|_| ()),
+        Err(Unstated::TooLong {
+            bytes: STATEMENT_BYTES + 1
+        })
+    );
+    // The origins it covers are said with it, so they count.
+    assert!(matches!(
+        at("w".repeat(STATEMENT_BYTES), &["https://api.vendor.example"]),
+        Err(Unstated::TooLong { .. })
+    ));
+    let mut hostless = statement("The vendor may use what you send.", &[]);
+    hostless
+        .as_object_mut()
+        .expect("a statement is an object")
+        .insert("source".into(), "https:///terms".into());
+    assert_eq!(
+        stated(&entry_of("goose", Some(hostless))).map(|_| ()),
+        Err(Unstated::Source)
+    );
+    for refused in [
+        Unstated::Missing,
+        Unstated::Source,
+        Unstated::TooLong { bytes: 5000 },
+    ] {
+        assert!(!refused.to_string().is_empty());
+    }
+}
+
+/// A build's catalog routes are bounded, may not shadow or restate a built-in
+/// route, and name only agents; a statement that would is not asked about, so
+/// its agent is not launched.
+#[test]
+fn the_catalog_adds_only_its_own_bounded_agent_routes() {
+    let mut imposter = hold("claude");
+    imposter.warning.sentence = "Nothing is used.".to_owned().into();
+    let mut stray = hold("goose");
+    stray.route = "key:google".to_owned().into();
+    let mut sending = hold("goose");
+    sending.origins = &["https://api.vendor.example"];
+    let routes = Routes::production().cataloging([imposter, stray, sending]);
+    assert_eq!(routes.all().len(), WARNED.len());
+    assert!(
+        routes
+            .warned("agent:claude")
+            .is_some_and(|claude| claude.warning.sentence != "Nothing is used.")
+    );
+
+    let many = (0..CATALOGED + 5).map(|at| {
+        let mut warned = hold("goose");
+        warned.route = format!("agent:goose-{at}").into();
+        warned
+    });
+    let routes = Routes::production().cataloging(many);
+    assert_eq!(routes.all().len(), WARNED.len() + CATALOGED);
+    assert!(
+        routes
+            .warned(&format!("agent:goose-{}", CATALOGED - 1))
+            .is_some()
+    );
+    assert!(routes.warned(&format!("agent:goose-{CATALOGED}")).is_none());
+
+    // The same route given twice is asked about once.
+    let twice = Routes::production().cataloging([hold("goose"), hold("goose")]);
+    assert_eq!(twice.all().len(), WARNED.len() + 1);
+}
+
+/// Whatever a statement says, the whole of the hold fits what a client is
+/// put and what a `/login` row has room for.
+#[test]
+fn the_longest_statement_still_fits_what_a_client_is_put() {
+    let text = "é".repeat(STATEMENT_BYTES / 2);
+    let entry = entry_of("goose", Some(statement(&text, &[])));
+    let warned = stated(&entry).expect("a statement at the ceiling");
+    let said = full_sentence(&warned);
+    assert!(said.ends_with(LAUNCHING));
+    assert!(!crucible_client_api::Text::cut(&said).truncated());
+    let row = format!("signed in · {}…", warned.warning.caution);
+    assert!(row.chars().count() <= 38, "{row}");
+}
+
+/// The page says what a catalog agent is held on and how much of a statement
+/// it takes.
+#[test]
+fn the_catalog_hold_is_documented() {
+    assert!(DOCUMENTED.contains("## An agent from the catalog"));
+    assert!(DOCUMENTED.contains(&format!("{STATEMENT_BYTES} bytes")));
+    assert!(DOCUMENTED.contains(&format!("{CATALOGED} catalog agents")));
 }

@@ -703,20 +703,17 @@ async fn launch_asked(
     agent: &ExternalAgent,
 ) -> Option<Account> {
     let capabilities = request.capabilities();
-    let Some(row) = crate::backends::REGISTRY.row(agent.driver(), agent.agent()) else {
-        let unrun = Confirmation {
-            asks: format!("{} cannot be signed out.", agent.name()),
-            facts: vec![
+    let Some(row) = conversation.agents().row(agent.driver(), agent.agent()) else {
+        return Some(
+            unrun(
+                capabilities,
+                front,
+                agent,
                 "This release has no launch for its driver, so the agent's own sign-out \
-                 cannot run, and nothing is changed."
-                    .to_owned(),
-                format!("Agent: {}, run as {}.", agent.name(), agent.executable()),
-            ],
-            choices: vec![("Go back".to_owned(), "Change nothing.".to_owned())],
-        };
-        // Whether it was seen changes nothing: the sign-out is refused either way.
-        let _seen = confirmed(capabilities, front, &unrun).await;
-        return Some(Account::Undecided);
+                 cannot run, and nothing is changed.",
+            )
+            .await,
+        );
     };
     if found(
         conversation,
@@ -732,7 +729,21 @@ async fn launch_asked(
         return Some(Account::Undecided);
     }
     let consent = conversation.consent()?;
-    let warned = consent.asks(row.route()).copied()?;
+    // A route nothing warns about has no yes to wait for and none to ask, and
+    // is not one a sign-out may start the agent on.
+    if consent.routes().warned(row.route()).is_none() {
+        return Some(
+            unrun(
+                capabilities,
+                front,
+                agent,
+                "Its route has no hold on what it sends, so the agent's own sign-out cannot \
+                 be started, and nothing is changed.",
+            )
+            .await,
+        );
+    }
+    let warned = consent.asks(row.route()).cloned()?;
     if !super::deciding::warned(capabilities, front, &warned).await {
         return Some(Account::Undecided);
     }
@@ -740,6 +751,27 @@ async fn launch_asked(
         .accept(&warned)
         .err()
         .map(Account::SignOutHoldUnkept)
+}
+
+/// Tells `front` that the sign-out of `agent` cannot run for `why`, and that
+/// nothing is changed, and answers the account to end it with. Whether it was
+/// seen changes nothing: the sign-out is refused either way.
+async fn unrun(
+    capabilities: crucible_client_api::Capabilities,
+    front: &mut dyn Front,
+    agent: &ExternalAgent,
+    why: &str,
+) -> Account {
+    let unrun = Confirmation {
+        asks: format!("{} cannot be signed out.", agent.name()),
+        facts: vec![
+            why.to_owned(),
+            format!("Agent: {}, run as {}.", agent.name(), agent.executable()),
+        ],
+        choices: vec![("Go back".to_owned(), "Change nothing.".to_owned())],
+    };
+    let _seen = confirmed(capabilities, front, &unrun).await;
+    Account::Undecided
 }
 
 /// Takes every instance in `sharing` out of use from Crucible, durably, and
@@ -986,7 +1018,7 @@ fn shown_as(conversation: &Conversation, row: &AgentRow) -> String {
     conversation
         .consent()
         .and_then(|consent| consent.routes().warned(row.route()))
-        .map_or(row.named(), |warned| warned.shown)
+        .map_or(row.named(), |warned| &*warned.shown)
         .to_owned()
 }
 
@@ -1086,7 +1118,7 @@ async fn connect(
     // Nothing of the agent's is started before its route has a yes, and a yes
     // is written down before anything is.
     if let Some(consent) = conversation.consent()
-        && let Some(warned) = consent.asks(row.route).copied()
+        && let Some(warned) = consent.asks(row.route).cloned()
     {
         // A launch that is refused whatever the answer is not asked about.
         if found(

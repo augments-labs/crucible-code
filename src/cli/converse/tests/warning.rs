@@ -71,7 +71,7 @@ fn down_a_pipe_a_warned_route_with_no_yes_ends_the_run_and_sends_nothing() {
         .iter()
         .find(|warned| warned.route == "key:google")
         .expect("the Google key row is warned");
-    assert!(said.contains(google.warning.sentence), "{said}");
+    assert!(said.contains(google.warning.sentence.as_ref()), "{said}");
     assert!(said.ends_with("answer it once in a terminal."), "{said}");
     assert!(
         crate::cli::Fatal::Unanswered(said.clone())

@@ -590,7 +590,7 @@ impl Desk {
         let consent = services.consent();
         Self::agreed(consent, &self.home, settings);
         let route = content_use::row_route(&way.0);
-        if let Some(warned) = consent.asks(&route).copied() {
+        if let Some(warned) = consent.asks(&route).cloned() {
             if !signer.agrees(&warned) {
                 return Ok(Signed::Declined);
             }
@@ -599,7 +599,7 @@ impl Desk {
         let mut outcome = self.signed(services, way, settings, signer);
         if let Ok(Signed::In(kept)) = &mut outcome
             && consent.given(&route)
-            && let Some(warned) = consent.routes().warned(&route).copied()
+            && let Some(warned) = consent.routes().warned(&route).cloned()
             && let Err(problem) = consent.accept(&warned)
         {
             // The credential is stored; the yes was not written down, so the

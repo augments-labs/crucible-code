@@ -234,7 +234,7 @@ impl Conversation {
     /// [`Conversation::launching`] is, and once the yes is given.
     #[must_use]
     pub fn unlaunched(&self) -> Option<crate::content_use::Warned> {
-        self.consent()?.asks(&self.launching()?).copied()
+        self.consent()?.asks(&self.launching()?).cloned()
     }
 
     /// Why a prompt with `attached` would be refused before it starts an

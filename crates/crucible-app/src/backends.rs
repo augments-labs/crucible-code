@@ -24,9 +24,11 @@
 //! from, and held under the agent route of its key. It is spoken to over the
 //! Agent Client Protocol as its entry's profile says, reaches only the hosts
 //! that profile grants, and always ships, since a registry lists one only for
-//! an entry the catalog reviewed. [`Registry::row`] answers a built-in driver
-//! with its row and a catalog instance with the row listed for its key, each
-//! as an [`AgentRow`]. The registry this build ships lists no catalog row, so
+//! an entry the catalog reviewed. It also holds the warning its entry's
+//! statement of content use gives its route, or why the entry gives none, in
+//! which case the agent is listed and never launched. [`Registry::row`]
+//! answers a built-in driver with its row and a catalog instance with the row
+//! listed for its key, each as an [`AgentRow`]. The registry this build ships lists no catalog row, so
 //! a catalog instance has none to run until one is listed.
 //!
 //! The rows agree with the configuration's driver list and with the
@@ -48,7 +50,7 @@ use crucible_sandbox::SandboxDomainPattern;
 use crucible_tools::Mode;
 use crucible_types::AgentKey;
 
-use crate::content_use::agent_route;
+use crate::content_use::{Unstated, Warned, agent_route, stated};
 
 /// A row's wire as it is made for a run, or why the agent does not run in the
 /// mode asked for.
@@ -122,6 +124,9 @@ pub struct CatalogRow {
     route: String,
     /// How it is run, as its entry reviewed it.
     profile: CatalogProfile,
+    /// The warning a launch of it is held under, built from its entry's
+    /// statement of content use, or why the entry gives none.
+    warned: Result<Box<Warned>, Unstated>,
 }
 
 impl CatalogRow {
@@ -135,7 +140,20 @@ impl CatalogRow {
             key: entry.key.clone(),
             route: agent_route(entry.key.as_str()),
             profile: CatalogProfile::from_entry(entry, target)?,
+            warned: stated(entry).map(Box::new),
         })
+    }
+
+    /// The warning a launch of it is held under, which the build gives its
+    /// [`Routes`](crate::content_use::Routes) so the route is asked about; or
+    /// why its entry gives none, in which case it is never launched.
+    ///
+    /// # Errors
+    ///
+    /// [`Unstated`] where its entry gives no statement a launch can be asked
+    /// under.
+    pub fn warned(&self) -> Result<&Warned, &Unstated> {
+        self.warned.as_ref().map(|warned| &**warned)
     }
 
     /// The content-use route a launch of it is held under.

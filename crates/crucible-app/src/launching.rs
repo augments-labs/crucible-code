@@ -15,12 +15,13 @@
 //!
 //! A start is refused, before any process exists, in this order: a row this
 //! release does not ship, with the sentence naming its documentation; a
-//! program not found or not executable, with the sentences saying what to do;
-//! and a route with no yes, with what to ask. A catalog row always ships,
-//! since it is listed only for an entry the catalog reviewed. Only then is
-//! the hold taken from `content_use`, the child's sandbox policy built, and
-//! the process started.
-//! The first two are decided in one place, [`Agent::program`], which an
+//! catalog agent whose entry gives no statement of content use, with the
+//! reason, since nothing installed could change that; a program not found or
+//! not executable, with the sentences saying what to do; and a route with no
+//! yes, with what to ask. A catalog row always ships, since it is listed only
+//! for an entry the catalog reviewed. Only then is the hold taken from
+//! `content_use`, the child's sandbox policy built, and the process started.
+//! The first three are decided in one place, [`Agent::program`], which an
 //! operation that would ask about a route before starting the agent consults
 //! first, through [`Steps::refusal`], or for a conversation's next turn
 //! through the [`Relaunch::refusal`] of its [`Runs`], in the words the launch
@@ -116,7 +117,7 @@ use tokio::runtime::Handle;
 
 use crate::access::Route;
 use crate::backends::{AgentRow, Registry};
-use crate::content_use::{self, Consent, Unheld, Warned};
+use crate::content_use::{self, Consent, Unheld, Unstated, Warned};
 use crate::external::External;
 use crate::installing;
 use crate::outside::Relaunch;
@@ -139,6 +140,15 @@ pub enum Unlaunched {
     /// Its route has no yes, and this is what to ask.
     #[error("{} needs an answer about content use before it is started.", .0.shown)]
     Asks(Box<Warned>),
+    /// Its catalog entry gives no statement of content use a launch can be
+    /// asked under.
+    #[error("{agent} cannot be launched: {why}.")]
+    Unstated {
+        /// The agent, as its entry names it.
+        agent: String,
+        /// Why its entry gives none.
+        why: Unstated,
+    },
     /// Its route is not one this build warns about.
     #[error("{0} is not an agent route this build knows, so nothing is started on it.")]
     Unknown(String),
@@ -335,29 +345,39 @@ impl Agent {
     }
 
     /// Its program, where nothing refuses a start before any process: its row
-    /// is shipped, and its program was found. This is the one place those two
-    /// are decided, in that order, so that a question put before a start and
-    /// the start itself refuse the same launch for the same reason. What the
-    /// refusal says to do about a program not found is what `trust` offers.
+    /// is shipped, a catalog agent's entry gives a statement of content use,
+    /// and its program was found. This is the one place those are decided, in
+    /// that order, so that a question put before a start and the start itself
+    /// refuse the same launch for the same reason. What the refusal says to do
+    /// about a program not found is what `trust` offers.
     ///
     /// # Errors
     ///
     /// [`Unlaunched::Withheld`] for a row this release does not ship, else
-    /// [`Unlaunched::NotInstalled`] for a program not found or not
-    /// executable, else [`Unlaunched::Unknown`] where its route has no
-    /// sentences to say what to do.
+    /// [`Unlaunched::Unstated`] for a catalog agent whose entry gives no
+    /// statement of content use, else [`Unlaunched::NotInstalled`] for a
+    /// program not found or not executable, else [`Unlaunched::Unknown`] where
+    /// its route has no sentences to say what to do.
     pub fn program(&self, consent: &Consent, trust: &Trust) -> Result<&Program, Unlaunched> {
         let row = &self.row;
         let shown = consent
             .routes()
             .warned(row.route())
-            .map_or(row.named(), |warned| warned.shown);
+            .map_or(row.named(), |warned| &*warned.shown);
         if let AgentRow::Built(built) = row
             && !built.shipping
         {
             return Err(Unlaunched::Withheld {
                 agent: shown.to_owned(),
                 documented: built.documented(),
+            });
+        }
+        if let AgentRow::Catalog(catalog) = row
+            && let Err(why) = catalog.warned()
+        {
+            return Err(Unlaunched::Unstated {
+                agent: row.named().to_owned(),
+                why: why.clone(),
             });
         }
         match &self.discovery {

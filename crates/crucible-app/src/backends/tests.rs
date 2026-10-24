@@ -151,7 +151,7 @@ fn every_host_a_row_reaches_is_named_whole() {
 /// asked about that nothing could launch.
 #[test]
 fn every_agent_route_warned_is_a_drivers() {
-    for warned in WARNED.iter().filter(|warned| launches(warned.route)) {
+    for warned in WARNED.iter().filter(|warned| launches(&warned.route)) {
         assert!(
             Driver::ALL
                 .iter()

@@ -211,7 +211,7 @@ impl Front for Answering {
         Box::pin(async move {
             let question = match shown {
                 Shown::Account(confirmation) => Question::Account(confirmation.clone()),
-                Shown::Warning(warned) => Question::Warning(*warned),
+                Shown::Warning(warned) => Question::Warning(warned.clone()),
                 Shown::Call { .. } | Shown::Questions(_) | Shown::External(_) => return None,
             };
 
