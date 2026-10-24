@@ -283,7 +283,9 @@ pub fn installing(
 }
 
 /// Writes into `file` that each installed agent `moved` names is started as
-/// the program beside it, in one update, and changes nothing else in it.
+/// the last program beside it, where it still names the first, in one update,
+/// and changes nothing else in it; gives the instances left as they are
+/// because they name something else by now.
 ///
 /// # Errors
 ///
@@ -291,11 +293,8 @@ pub fn installing(
 /// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
 /// [`RememberError::Unusable`] when what it already says is not configuration
 /// or names no such instance.
-pub fn pointing(
-    file: &Path,
-    moved: &[(&str, &str)],
-) -> Result<crucible_config::Routes, RememberError> {
-    routing(file, |text, named| {
+pub fn pointing(file: &Path, moved: &[(&str, &str, &str)]) -> Result<Vec<String>, RememberError> {
+    answered(file, |text, named| {
         crucible_config::pointing(text, named, moved)
     })
 }

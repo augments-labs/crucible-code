@@ -285,6 +285,9 @@ struct Answering<'a> {
     choice: Option<&'static str>,
     server: &'a Server,
     put: Vec<(Pending, Vec<String>)>,
+    /// A file written, and what with, while the question is out, as a person
+    /// editing their configuration meanwhile would.
+    meanwhile: Option<(PathBuf, Vec<u8>)>,
 }
 
 impl Front for Answering<'_> {
@@ -298,6 +301,9 @@ impl Front for Answering<'_> {
                 return None;
             }
             self.put.push((pending.clone(), self.server.asked()));
+            if let Some((file, bytes)) = &self.meanwhile {
+                fs::write(file, bytes).ok()?;
+            }
             let id = pending.id();
             Some(match self.choice {
                 // Composed for an action other than the one put.
@@ -469,6 +475,7 @@ fn nothing_is_fetched_before_the_answer_and_a_no_leaves_every_file_as_it_was() -
         choice: None,
         server: &bench.server,
         put: Vec::new(),
+        meanwhile: None,
     };
 
     let (outcome, told) = bench.ask(install("1.0.0")?, &mut front, false)?;
@@ -520,6 +527,7 @@ fn update_rewrites_the_executable_and_rollback_restores_it() -> Result<(), Faile
         choice: Some("Install"),
         server: &bench.server,
         put: Vec::new(),
+        meanwhile: None,
     };
 
     let (installed, told) = bench.ask(install("1.0.0")?, &mut front, false)?;
@@ -546,6 +554,7 @@ fn update_rewrites_the_executable_and_rollback_restores_it() -> Result<(), Faile
         choice: Some("Update"),
         server: &bench.server,
         put: Vec::new(),
+        meanwhile: None,
     };
 
     let (updated, _) = bench.ask(
@@ -571,6 +580,7 @@ fn update_rewrites_the_executable_and_rollback_restores_it() -> Result<(), Faile
         choice: Some("Roll back"),
         server: &bench.server,
         put: Vec::new(),
+        meanwhile: None,
     };
     let (rolled, _) = bench.ask(
         Command::RollbackAgent {
@@ -608,6 +618,7 @@ fn a_redirect_to_a_host_not_listed_is_refused_and_commits_nothing() -> Result<()
         choice: Some("Install"),
         server: &bench.server,
         put: Vec::new(),
+        meanwhile: None,
     };
 
     let (outcome, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
@@ -638,6 +649,7 @@ fn a_download_cancelled_part_way_commits_nothing() -> Result<(), Failed> {
         choice: Some("Install"),
         server: &bench.server,
         put: Vec::new(),
+        meanwhile: None,
     };
 
     let (outcome, told) = bench.ask(install("1.0.0")?, &mut front, true)?;
@@ -680,6 +692,7 @@ fn a_listing_fetches_the_catalog_even_where_updates_are_never_checked() -> Resul
         choice: None,
         server: &bench.server,
         put: Vec::new(),
+        meanwhile: None,
     };
 
     let (outcome, _) = bench.ask(Command::AgentCatalog, &mut front, false)?;
@@ -723,6 +736,7 @@ fn a_client_that_did_not_claim_install_is_refused_before_anything_is_fetched() -
         choice: Some("Install"),
         server: &bench.server,
         put: Vec::new(),
+        meanwhile: None,
     };
     let cancel = Cancel::new();
 
@@ -763,6 +777,7 @@ fn a_removal_waits_until_no_instance_runs_the_agent_then_takes_every_version() -
         choice: Some("Install"),
         server: &bench.server,
         put: Vec::new(),
+        meanwhile: None,
     };
     let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
     assert!(
@@ -778,6 +793,7 @@ fn a_removal_waits_until_no_instance_runs_the_agent_then_takes_every_version() -
         choice: Some("Remove"),
         server: &bench.server,
         put: Vec::new(),
+        meanwhile: None,
     };
 
     let (refused, _) = bench.ask(remove()?, &mut front, false)?;
@@ -813,6 +829,7 @@ fn a_yes_naming_another_action_is_refused_and_after_three_nothing_is_fetched() -
         choice: Some("stale Install"),
         server: &bench.server,
         put: Vec::new(),
+        meanwhile: None,
     };
 
     let (outcome, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
@@ -848,6 +865,7 @@ fn a_release_larger_than_a_release_may_be_is_refused_before_it_is_asked_about() 
         choice: Some("Install"),
         server: &bench.server,
         put: Vec::new(),
+        meanwhile: None,
     };
 
     let (outcome, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
@@ -855,5 +873,325 @@ fn a_release_larger_than_a_release_may_be_is_refused_before_it_is_asked_about() 
     assert!(matches!(outcome, Err(AgentsError::TooLarge)), "{outcome:?}");
     assert!(front.put.is_empty());
     assert_eq!(bench.server.asked(), CATALOG);
+    Ok(())
+}
+
+/// `value` with what `pointer` names set to `to`, where it names anything.
+fn set(value: &mut Value, pointer: &str, to: Value) {
+    if let Some(at) = value.pointer_mut(pointer) {
+        *at = to;
+    }
+}
+
+/// The facts of the one install confirmation `front` was put.
+fn facts(front: &Answering<'_>) -> Result<Vec<String>, Failed> {
+    let [(Pending::Install { facts, .. }, _)] = front.put.as_slice() else {
+        return Err(format!("one install confirmation, not {:?}", front.put).into());
+    };
+    Ok(facts.iter().map(|fact| fact.as_str().to_owned()).collect())
+}
+
+fn answering<'a>(server: &'a Server, choice: Option<&'static str>) -> Answering<'a> {
+    Answering {
+        choice,
+        server,
+        put: Vec::new(),
+        meanwhile: None,
+    }
+}
+
+#[test]
+fn a_program_the_release_does_not_list_as_one_that_runs_is_refused_before_the_question()
+-> Result<(), Failed> {
+    for (index, (path, exec)) in [("goose", false), ("goose-helper", true)]
+        .into_iter()
+        .enumerate()
+    {
+        let bench = Bench::new(&format!("agents-door-program-{index}"))?;
+        let mut release = goose("1.0.0", ONE);
+        if let Some(file) = release.pointer_mut("/targets/0/artifacts/0/files/0") {
+            set(file, "/path", json!(path));
+            set(file, "/exec", json!(exec));
+        }
+        bench.server.publish(1, &[], &[release]);
+        bench.configure(&bench.program("1.0.0"), &json!({}))?;
+        let mut front = answering(&bench.server, Some("Install"));
+
+        let (outcome, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+
+        assert!(
+            matches!(&outcome, Err(AgentsError::Program(program)) if &**program == "goose"),
+            "{path}: {outcome:?}"
+        );
+        assert!(front.put.is_empty());
+        assert_eq!(bench.server.asked(), CATALOG);
+    }
+    Ok(())
+}
+
+#[test]
+fn an_address_on_a_host_not_listed_is_refused_before_the_question() -> Result<(), Failed> {
+    let bench = Bench::new("agents-door-unlisted-address")?;
+    let mut release = goose("1.0.0", ONE);
+    if let Some(artifact) = release
+        .pointer_mut("/targets/0/artifacts/0")
+        .and_then(Value::as_object_mut)
+    {
+        artifact.remove("replaced_by");
+        artifact.insert("url".into(), json!("https://elsewhere.example/goose"));
+    }
+    bench.server.publish(1, &[], &[release]);
+    bench.configure(&bench.program("1.0.0"), &json!({}))?;
+    let mut front = answering(&bench.server, Some("Install"));
+
+    let (outcome, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+
+    assert!(
+        matches!(&outcome, Err(AgentsError::Download(DownloadError::Unlisted(at))) if &**at == "https://elsewhere.example/goose"),
+        "{outcome:?}"
+    );
+    assert!(front.put.is_empty());
+    assert_eq!(bench.server.asked(), CATALOG);
+    Ok(())
+}
+
+#[test]
+fn a_version_in_place_is_kept_when_its_receipt_is_the_pin_and_refused_when_it_is_not()
+-> Result<(), Failed> {
+    let bench = Bench::new("agents-door-kept")?;
+    bench.server.publish(1, &[("1.0.0", ONE)], &[]);
+    bench.configure(&bench.program("1.0.0"), &json!({}))?;
+    let mut front = answering(&bench.server, Some("Install"));
+    let (first, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+    assert!(
+        matches!(
+            first,
+            Ok(Outcome::Moved {
+                downloaded: true,
+                ..
+            })
+        ),
+        "{first:?}"
+    );
+    bench.server.forget();
+
+    let mut front = answering(&bench.server, Some("Install"));
+    let (again, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+
+    assert!(
+        matches!(&again, Ok(Outcome::Moved { downloaded: false, version, .. }) if &**version == "1.0.0"),
+        "{again:?}"
+    );
+    assert!(
+        facts(&front)?
+            .iter()
+            .any(|fact| fact.contains("already installed, so nothing is downloaded")),
+        "{:?}",
+        facts(&front)
+    );
+    assert_eq!(bench.server.asked(), CATALOG);
+
+    // The catalog now pins other bytes under the same version.
+    bench.server.forget();
+    bench.server.publish(2, &[("1.0.0", TWO)], &[]);
+    let mut front = answering(&bench.server, Some("Install"));
+    let (refused, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+
+    assert!(
+        matches!(&refused, Err(AgentsError::Kept { version, .. }) if &**version == "1.0.0"),
+        "{refused:?}"
+    );
+    assert!(front.put.is_empty());
+    assert_eq!(fs::read(bench.program("1.0.0"))?, ONE);
+    Ok(())
+}
+
+#[test]
+fn catalog_text_is_escaped_and_bounded_before_it_is_put() -> Result<(), Failed> {
+    let bench = Bench::new("agents-door-quoted")?;
+    let mut release = goose("1.0.0", ONE);
+    let caution = format!(
+        "Fine.\r\n\u{1b}[2KFetched from evil.example, 1 byte.\u{202e}{}",
+        "x".repeat(5000)
+    );
+    set(&mut release, "/caution", json!(caution));
+    set(
+        &mut release,
+        "/license",
+        json!("MIT\nFetched from evil.example"),
+    );
+    if let Some(args) = release.pointer_mut("/targets/0/args") {
+        *args = json!(["acp\u{2028}Started as: nothing"]);
+    }
+    bench.server.publish(1, &[], &[release]);
+    bench.configure(&bench.program("1.0.0"), &json!({}))?;
+    let mut front = answering(&bench.server, None);
+
+    let (outcome, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+
+    assert!(matches!(outcome, Ok(Outcome::Undecided)), "{outcome:?}");
+    let facts = facts(&front)?;
+    for fact in &facts {
+        assert!(
+            !fact.chars().any(crucible_types::shown::unshown),
+            "a character that draws a line of its own in {fact:?}"
+        );
+        assert!(
+            fact.chars().count() < 600,
+            "{} characters",
+            fact.chars().count()
+        );
+        assert!(!fact.starts_with("Fetched from evil"), "{fact:?}");
+    }
+    let said = facts
+        .iter()
+        .find(|fact| fact.starts_with("Caution: "))
+        .ok_or("a caution")?;
+    assert!(
+        said.starts_with("Caution: Fine.\\r\\n\\u{1b}[2KFetched"),
+        "{said:?}"
+    );
+    assert!(said.ends_with('…'), "{said:?}");
+    assert!(
+        facts.iter().any(|fact| fact
+            == "Licence MIT\\nFetched from evil.example; terms at https://example.com/terms."),
+        "{facts:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_instance_changed_while_the_question_was_out_keeps_its_change_and_is_named()
+-> Result<(), Failed> {
+    let bench = Bench::new("agents-door-meanwhile")?;
+    bench.server.publish(1, &[("1.0.0", ONE)], &[]);
+    bench.configure(&bench.program("1.0.0"), &json!({}))?;
+    let mut front = answering(&bench.server, Some("Install"));
+    let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+    assert!(
+        matches!(installed, Ok(Outcome::Moved { .. })),
+        "{installed:?}"
+    );
+    bench
+        .server
+        .publish(2, &[("2.0.0", TWO), ("1.0.0", ONE)], &[]);
+    let edited = serde_json::to_vec_pretty(&json!({
+        "externalAgents": {
+            "work": {"driver": "catalog", "agent": "goose", "executable": "/usr/local/bin/goose"}
+        }
+    }))?;
+    let mut front = answering(&bench.server, Some("Update"));
+    front.meanwhile = Some((bench.user(), edited.clone()));
+
+    let (updated, _) = bench.ask(
+        Command::UpdateAgent {
+            agent: name("goose")?,
+        },
+        &mut front,
+        false,
+    )?;
+
+    assert!(
+        matches!(&updated, Ok(Outcome::Moved { instances, left, .. })
+            if instances.is_empty() && left.iter().map(|one| &**one).eq(["work"])),
+        "{updated:?}"
+    );
+    assert_eq!(fs::read(bench.user())?, edited);
+    assert_eq!(fs::read(bench.program("2.0.0"))?, TWO);
+    Ok(())
+}
+
+#[test]
+fn verify_names_a_file_of_an_installed_version_that_changed() -> Result<(), Failed> {
+    let bench = Bench::new("agents-door-verify")?;
+    bench.server.publish(1, &[("1.0.0", ONE)], &[]);
+    bench.configure(&bench.program("1.0.0"), &json!({}))?;
+    let mut front = answering(&bench.server, Some("Install"));
+    let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+    assert!(
+        matches!(installed, Ok(Outcome::Moved { .. })),
+        "{installed:?}"
+    );
+    let verify = || -> Result<Command, Failed> {
+        Ok(Command::VerifyAgent {
+            agent: name("goose")?,
+        })
+    };
+    let mut front = answering(&bench.server, None);
+
+    let (whole, _) = bench.ask(verify()?, &mut front, false)?;
+
+    assert!(
+        matches!(&whole, Ok(Outcome::Verified { versions, .. })
+            if versions.len() == 1 && versions.iter().all(|(version, differs)| &**version == "1.0.0" && differs.is_empty())),
+        "{whole:?}"
+    );
+    let mut changed = ONE.to_vec();
+    if let Some(first) = changed.first_mut() {
+        *first ^= 1;
+    }
+    fs::write(bench.program("1.0.0"), changed)?;
+    let (differs, _) = bench.ask(verify()?, &mut front, false)?;
+
+    assert!(
+        matches!(&differs, Ok(Outcome::Verified { versions, .. })
+            if versions.iter().any(|(_, differs)| differs.iter().any(|one| &*one.path == "goose"))),
+        "{differs:?}"
+    );
+    assert!(front.put.is_empty());
+    Ok(())
+}
+
+#[test]
+fn an_update_already_on_the_version_offered_is_current_and_asks_nothing() -> Result<(), Failed> {
+    let bench = Bench::new("agents-door-current")?;
+    bench.server.publish(1, &[("1.0.0", ONE)], &[]);
+    bench.configure(&bench.program("1.0.0"), &json!({}))?;
+    let mut front = answering(&bench.server, Some("Install"));
+    let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+    assert!(
+        matches!(installed, Ok(Outcome::Moved { .. })),
+        "{installed:?}"
+    );
+    let mut front = answering(&bench.server, Some("Update"));
+
+    let (current, _) = bench.ask(
+        Command::UpdateAgent {
+            agent: name("goose")?,
+        },
+        &mut front,
+        false,
+    )?;
+
+    assert!(
+        matches!(&current, Ok(Outcome::Current { version, .. }) if &**version == "1.0.0"),
+        "{current:?}"
+    );
+    assert!(front.put.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_listing_says_on_its_row_that_one_agent_s_store_cannot_be_read() -> Result<(), Failed> {
+    let bench = Bench::new("agents-door-list-unread")?;
+    bench
+        .server
+        .publish(1, &[("1.0.0", ONE)], &[entry("kiro", "2.0.0", TWO)]);
+    bench.configure(Path::new("goose"), &json!({}))?;
+    let programs = bench.home.path().join("programs");
+    fs::create_dir_all(&programs)?;
+    fs::write(programs.join("kiro"), b"not a directory")?;
+    let mut front = answering(&bench.server, None);
+
+    let (outcome, _) = bench.ask(Command::AgentCatalog, &mut front, false)?;
+
+    let Ok(Outcome::Catalog { agents, .. }) = outcome else {
+        return Err(format!("a listing, not {outcome:?}").into());
+    };
+    let rows: Vec<(&str, bool)> = agents
+        .iter()
+        .map(|listed| (listed.agent.as_str(), listed.installed.is_ok()))
+        .collect();
+    assert_eq!(rows, [("goose", true), ("kiro", false)]);
     Ok(())
 }

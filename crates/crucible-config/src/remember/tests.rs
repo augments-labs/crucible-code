@@ -1305,9 +1305,12 @@ fn an_agents_effort_is_written_beside_its_model_or_taken_out() {
 #[test]
 fn pointing_instances_at_a_new_program_writes_each_executable_and_nothing_else() {
     let text = "{\n  \"externalAgents\": {\n    \"work\": {\n      \"driver\": \"catalog\",\n      \"agent\": \"goose\",\n      \"executable\": \"/h/programs/goose/1.0.0/goose\"\n    },\n    \"home\": {\"driver\": \"catalog\", \"agent\": \"goose\", \"executable\": \"/h/programs/goose/1.0.0/goose\"},\n    \"mine\": {\"driver\": \"catalog\", \"agent\": \"goose\", \"executable\": \"/usr/bin/goose\"}\n  }\n}\n";
+    let was = "/h/programs/goose/1.0.0/goose";
     let to = "/h/programs/goose/2.0.0/goose";
 
-    let written = pointing(text, FILE, &[("work", to), ("home", to)]).unwrap();
+    let (written, left) = pointing(text, FILE, &[("work", was, to), ("home", was, to)]).unwrap();
+
+    assert!(left.is_empty(), "{left:?}");
 
     assert_eq!(
         written,
@@ -1329,9 +1332,12 @@ fn pointing_instances_at_a_new_program_writes_each_executable_and_nothing_else()
         ]
     );
     // Written again, it is already so.
-    assert_eq!(pointing(&written, FILE, &[("work", to)]).unwrap(), written);
+    assert_eq!(
+        pointing(&written, FILE, &[("work", was, to)]).unwrap(),
+        (written.clone(), Vec::new())
+    );
     // A path is written as JSON spells it.
-    let windows = pointing(text, FILE, &[("work", "C:\\h\\goose \"2\".exe")]).unwrap();
+    let (windows, _) = pointing(text, FILE, &[("work", was, "C:\\h\\goose \"2\".exe")]).unwrap();
     assert!(
         windows.contains(r#""executable": "C:\\h\\goose \"2\".exe""#),
         "{windows}"
@@ -1343,10 +1349,33 @@ fn pointing_an_instance_the_file_does_not_name_is_refused_and_writes_nothing() {
     let text =
         "{\"externalAgents\": {\"work\": {\"driver\": \"claude\", \"executable\": \"claude\"}}}";
 
-    let refused = pointing(text, FILE, &[("work", "/a"), ("gone", "/b")]);
+    let refused = pointing(
+        text,
+        FILE,
+        &[("work", "claude", "/a"), ("gone", "/b", "/c")],
+    );
 
     assert!(
         matches!(refused, Err(ConfigError::Unspliceable { .. })),
         "{refused:?}"
     );
+}
+
+#[test]
+fn pointing_leaves_an_instance_whose_program_changed_since_it_was_shown_and_names_it() {
+    let text = "{\"externalAgents\": {\"work\": {\"driver\": \"catalog\", \"agent\": \"goose\", \"executable\": \"/usr/local/bin/goose\"}, \"home\": {\"driver\": \"catalog\", \"agent\": \"goose\", \"executable\": \"/h/1/goose\"}}}";
+
+    let (written, left) = pointing(
+        text,
+        FILE,
+        &[
+            ("work", "/h/1/goose", "/h/2/goose"),
+            ("home", "/h/1/goose", "/h/2/goose"),
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(left, ["work".to_owned()]);
+    assert_eq!(written, text.replace("\"/h/1/goose\"", "\"/h/2/goose\""));
+    assert!(written.contains("/usr/local/bin/goose"));
 }

@@ -14,7 +14,8 @@
 //! `.receipt` and `.receipt.writing`.
 //!
 //! A version is made in a staging directory under `.staging/`, which the
-//! unpackers write into. Its receipt is written into that directory too, as
+//! unpackers write into, each artifact downloaded first into a file beside
+//! it that goes with it. Its receipt is written into that directory too, as
 //! `.receipt`, and the directory is then committed by one rename into place,
 //! so a version is in place with its receipt or not in place at all. A
 //! version already there is replaced only when no process holds it: it is
@@ -142,6 +143,10 @@ const LOCK_POLL: Duration = Duration::from_millis(10);
 /// on, and the suffix of the file beside each staging directory whose lock
 /// says it is live.
 const LOCK: &str = ".lock";
+
+/// The suffix of the file beside each staging directory that an artifact is
+/// downloaded into, live while the staging is.
+const DOWNLOAD: &str = ".download";
 
 /// The directory in an agent's directory where versions are made and removed.
 const STAGING: &str = ".staging";
@@ -574,6 +579,41 @@ impl Staging {
     pub fn replacing_unreadable(&mut self) {
         self.unreadable = true;
     }
+
+    /// A file of this staging's own beside its directory, only its owner may
+    /// read, that an artifact is downloaded into before it is unpacked: made
+    /// empty, in place of the one an earlier artifact of the release was
+    /// downloaded into. It is live while the staging is, and removed with it.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Io`] where it could not be made.
+    pub fn download(&self) -> Result<Handle, StoreError> {
+        let path = self.download_path();
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(source) => return Err(at(&path, source)),
+        }
+        crucible_privacy::create_write(&path).map_err(privacy(&path))
+    }
+
+    /// The file [`Staging::download`] made, opened to be read.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Io`] where it could not be opened.
+    pub fn downloaded(&self) -> Result<Handle, StoreError> {
+        let path = self.download_path();
+        crucible_privacy::open_read(&path).map_err(privacy(&path))
+    }
+
+    /// Where the download is kept: beside the directory, under its name.
+    fn download_path(&self) -> PathBuf {
+        let mut name = self.directory.file_name().unwrap_or_default().to_owned();
+        name.push(DOWNLOAD);
+        self.directory.with_file_name(name)
+    }
 }
 
 impl Drop for Staging {
@@ -581,6 +621,7 @@ impl Drop for Staging {
         if !self.committed {
             let _ = fs::remove_dir_all(&self.directory);
         }
+        let _ = fs::remove_file(self.download_path());
         if let Some(lock) = self.lock.take() {
             // The lock goes with the handle whatever this says.
             let _ = crucible_privacy::unlock_identity(&lock);
@@ -1718,7 +1759,11 @@ impl Store {
             let mut removed = 0_usize;
             for name in &names {
                 let text = name.to_string_lossy();
-                if live.contains(text.strip_suffix(LOCK).unwrap_or(&text)) {
+                let stem = text
+                    .strip_suffix(LOCK)
+                    .or_else(|| text.strip_suffix(DOWNLOAD))
+                    .unwrap_or(&text);
+                if live.contains(stem) {
                     continue;
                 }
                 let path = area.join(name);

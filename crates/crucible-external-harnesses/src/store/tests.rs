@@ -1536,3 +1536,36 @@ fn the_versions_installed_are_listed_with_their_receipts() {
 
     assert_eq!(installed, [first, second]);
 }
+
+#[test]
+fn a_download_beside_a_live_staging_is_kept_by_another_change_and_goes_with_it() {
+    use std::io::{Read as _, Write as _};
+
+    let owned = Owned::new("store-download");
+    let root = programs(&owned);
+    let store = Store::new(root.clone());
+    let goose = key("goose");
+    let staging = store.stage(&goose).expect("a staging directory");
+    let mut written = staging.download().expect("a download file");
+    written.write_all(b"the first artifact").expect("written");
+    drop(written);
+    let mut again = staging.download().expect("the download file again");
+    again.write_all(b"the second").expect("written");
+    drop(again);
+
+    // Another change cleans staging, and this one is live.
+    let other = store.stage(&goose).expect("another staging directory");
+    drop(other);
+    let mut read = String::new();
+    staging
+        .downloaded()
+        .expect("the download opened")
+        .read_to_string(&mut read)
+        .expect("read");
+
+    assert_eq!(read, "the second");
+    let area = root.join("goose").join(".staging");
+    assert_eq!(names(&area).len(), 3, "{:?}", names(&area));
+    drop(staging);
+    assert!(names(&area).is_empty(), "{:?}", names(&area));
+}

@@ -720,8 +720,11 @@ pub fn installing(
 }
 
 /// The text of a configuration file where each installed agent `moved` names
-/// is started as the program beside it: its block's `executable` written
-/// over, and every other byte where it was.
+/// is started as the last program beside it, where its block's `executable`
+/// still names the first, the one it was shown naming: written over, and every
+/// other byte where it was. Handed back beside the text are the instances
+/// whose `executable` names something else by now, which are left as they
+/// are; one that already names the new program is not among them.
 ///
 /// Only the user file names installed agents, so `text` is that file's. Every
 /// instance is written in the one text handed back, or none is, and the text
@@ -732,9 +735,14 @@ pub fn installing(
 /// Refuses malformed or invalid configuration, either as it is or as it would
 /// be, and [`ConfigError::Unspliceable`] where `externalAgents.<instance>` is
 /// not an object the file holds with an `executable` in it.
-pub fn pointing(text: &str, file: &str, moved: &[(&str, &str)]) -> Result<String, ConfigError> {
+pub fn pointing(
+    text: &str,
+    file: &str,
+    moved: &[(&str, &str, &str)],
+) -> Result<(String, Vec<String>), ConfigError> {
+    let mut left: Vec<String> = Vec::new();
     let mut written = text.to_owned();
-    for (instance, executable) in moved {
+    for (instance, shown, executable) in moved {
         let answer = Value::from(*executable).to_string();
         let refused = || ConfigError::Unspliceable {
             file: file.into(),
@@ -759,6 +767,11 @@ pub fn pointing(text: &str, file: &str, moved: &[(&str, &str)]) -> Result<String
         if was.as_str() == Some(*executable) {
             continue;
         }
+        // Changed since it was shown: the person's own edit stands.
+        if was.as_str() != Some(*shown) {
+            left.push((*instance).to_owned());
+            continue;
+        }
         let root = splice::root(&written).ok_or_else(refused)?;
         let agents = splice::member(&written, root, "externalAgents").ok_or_else(refused)?;
         let block = splice::member(&written, agents, instance).ok_or_else(refused)?;
@@ -766,7 +779,7 @@ pub fn pointing(text: &str, file: &str, moved: &[(&str, &str)]) -> Result<String
         written = splice::over(&written, at, &answer);
     }
     crate::document::Document::parse(&written, file, crate::document::Origin::User)?;
-    Ok(written)
+    Ok((written, left))
 }
 
 /// The text of a configuration file without the installed agent `instance`.

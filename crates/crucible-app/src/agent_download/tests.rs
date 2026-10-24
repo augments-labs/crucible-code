@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crucible_external_harnesses::catalog::{Artifact, Files, Format};
+use crucible_external_harnesses::store::Fetched;
 use crucible_http::ProxyEnv;
 use crucible_runtime::Cancel;
 use sha2::{Digest as _, Sha256};
@@ -27,6 +28,8 @@ enum Reply {
     /// A 200 promising twice these bytes, of which it sends these, then holds
     /// the connection open.
     Half(Vec<u8>),
+    /// A 200 promising twice these bytes, of which it sends these and closes.
+    Short(Vec<u8>),
 }
 
 /// A host on this machine answering by path, remembering what it was asked.
@@ -129,6 +132,10 @@ fn answer(
             ("200 OK", String::new(), body, promised)
         }
         Some(Reply::Redirect(to)) => ("302 Found", format!("location: {to}\r\n"), Vec::new(), 0),
+        Some(Reply::Short(body)) => {
+            let promised = body.len() * 2;
+            ("200 OK", String::new(), body, promised)
+        }
         Some(Reply::Half(body)) => {
             let promised = body.len() * 2;
             let _ = write!(
@@ -189,16 +196,65 @@ fn hosts() -> Vec<Box<str>> {
     vec!["downloads.example.com".into()]
 }
 
-fn fetched(server: &Server, artifact: &Artifact) -> Result<Downloaded, DownloadError> {
+/// A file a download lands in, in a directory of its own removed with it.
+struct Landed(std::path::PathBuf);
+
+impl Landed {
+    fn new() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let directory = std::env::temp_dir().join(format!(
+            "crucible-download-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).expect("a directory");
+        Self(directory)
+    }
+
+    fn file(&self) -> std::fs::File {
+        std::fs::File::create(self.0.join("download")).expect("a download file")
+    }
+
+    fn bytes(&self) -> Vec<u8> {
+        std::fs::read(self.0.join("download")).unwrap_or_default()
+    }
+}
+
+impl Drop for Landed {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// `artifact` downloaded under `server`'s catalog with `hosts` listed, told of
+/// progress through `progress`, and what landed.
+fn downloading(
+    server: &Server,
+    hosts: &[Box<str>],
+    artifact: &Artifact,
+    progress: &mut (dyn FnMut(u64, u64) + Send),
+    cancel: &Cancel,
+) -> (Result<Fetched, DownloadError>, Vec<u8>) {
     let source = server.source();
-    let cancel = Cancel::new();
-    run(super::artifact(
+    let landed = Landed::new();
+    let mut file = landed.file();
+    let fetched = run(super::artifact(
         &source,
-        &hosts(),
+        hosts,
         artifact,
-        &mut |_, _| {},
-        &cancel,
-    ))
+        Landing {
+            file: &mut file,
+            progress,
+        },
+        cancel,
+    ));
+    drop(file);
+    (fetched, landed.bytes())
+}
+
+fn fetched(server: &Server, artifact: &Artifact) -> (Result<Fetched, DownloadError>, Vec<u8>) {
+    downloading(server, &hosts(), artifact, &mut |_, _| {}, &Cancel::new())
 }
 
 #[test]
@@ -211,11 +267,12 @@ fn a_vendor_that_answers_404_is_stood_in_for_by_the_mirror_with_the_same_bytes()
         Some(server.at("/mirror/agent")),
     );
 
-    let downloaded = fetched(&server, &artifact).expect("the mirror's copy");
+    let (fetched, landed) = fetched(&server, &artifact);
+    let fetched = fetched.expect("the mirror's copy");
 
-    assert_eq!(downloaded.bytes, PROGRAM);
-    assert_eq!(&*downloaded.fetched.url, server.at("/mirror/agent"));
-    assert_eq!(&*downloaded.fetched.sha256, &*artifact.sha256);
+    assert_eq!(landed, PROGRAM);
+    assert_eq!(&*fetched.url, server.at("/mirror/agent"));
+    assert_eq!(&*fetched.sha256, &*artifact.sha256);
     assert_eq!(server.asked(), ["/vendor/agent", "/mirror/agent"]);
 }
 
@@ -234,7 +291,7 @@ fn a_vendor_that_answers_other_bytes_is_refused_and_the_mirror_is_not_asked() {
         Some(server.at("/mirror/agent")),
     );
 
-    let refused = fetched(&server, &artifact);
+    let (refused, _) = fetched(&server, &artifact);
 
     assert!(matches!(refused, Err(DownloadError::Digest)), "{refused:?}");
     assert_eq!(server.asked(), ["/vendor/agent"]);
@@ -243,7 +300,7 @@ fn a_vendor_that_answers_other_bytes_is_refused_and_the_mirror_is_not_asked() {
     let mut longer = PROGRAM.to_vec();
     longer.push(b'!');
     server.serve("/vendor/agent", Reply::Body(longer));
-    let refused = fetched(&server, &artifact);
+    let (refused, _) = fetched(&server, &artifact);
     assert!(
         matches!(refused, Err(DownloadError::Size { .. })),
         "{refused:?}"
@@ -259,7 +316,7 @@ fn a_redirect_to_a_place_not_listed_is_refused_and_nothing_is_sent_there() {
     server.serve("/vendor/agent", Reply::Redirect(elsewhere.at("/agent")));
     let artifact = bare(PROGRAM, server.at("/vendor/agent"), None);
 
-    let refused = fetched(&server, &artifact);
+    let (refused, _) = fetched(&server, &artifact);
 
     assert!(
         matches!(refused, Err(DownloadError::Redirect)),
@@ -267,15 +324,21 @@ fn a_redirect_to_a_place_not_listed_is_refused_and_nothing_is_sent_there() {
     );
     assert!(elsewhere.asked().is_empty());
 
-    // A listed place is followed.
+    // A listed place is followed, and the receipt keeps the pinned address
+    // with the hosts it came through.
     server.serve(
         "/vendor/agent",
-        Reply::Redirect(server.at("/storage/agent")),
+        Reply::Redirect(server.at("/storage/agent?signature=short-lived")),
     );
-    server.serve("/storage/agent", Reply::Body(PROGRAM.to_vec()));
-    let downloaded = fetched(&server, &artifact).expect("followed");
-    assert_eq!(downloaded.bytes, PROGRAM);
-    assert_eq!(&*downloaded.fetched.url, server.at("/storage/agent"));
+    server.serve(
+        "/storage/agent?signature=short-lived",
+        Reply::Body(PROGRAM.to_vec()),
+    );
+    let (fetched, landed) = fetched(&server, &artifact);
+    let fetched = fetched.expect("followed");
+    assert_eq!(landed, PROGRAM);
+    assert_eq!(&*fetched.url, server.at("/vendor/agent"));
+    assert_eq!(fetched.hosts, [Box::<str>::from("127.0.0.1")]);
 }
 
 #[test]
@@ -283,7 +346,6 @@ fn a_download_host_that_is_an_address_or_every_host_is_refused_before_a_request(
     let server = Server::start();
     server.serve("/vendor/agent", Reply::Body(PROGRAM.to_vec()));
     let artifact = bare(PROGRAM, server.at("/vendor/agent"), None);
-    let source = server.source();
 
     for listed in [
         "10.0.0.1",
@@ -293,13 +355,13 @@ fn a_download_host_that_is_an_address_or_every_host_is_refused_before_a_request(
         "*.com",
         "user@example.com:x",
     ] {
-        let refused = run(super::artifact(
-            &source,
+        let (refused, _) = downloading(
+            &server,
             &[listed.into()],
             &artifact,
             &mut |_, _| {},
             &Cancel::new(),
-        ));
+        );
 
         assert!(
             matches!(refused, Err(DownloadError::Host(ref host)) if &**host == listed),
@@ -307,6 +369,42 @@ fn a_download_host_that_is_an_address_or_every_host_is_refused_before_a_request(
         );
     }
     assert!(server.asked().is_empty());
+}
+
+#[test]
+fn an_address_or_mirror_on_a_host_not_listed_is_refused_before_a_request() {
+    let server = Server::start();
+    server.serve("/vendor/agent", Reply::Body(PROGRAM.to_vec()));
+    let unlisted = format!("http://localhost:{}/vendor/agent", server.port);
+    let source = server.source();
+
+    for artifact in [
+        bare(PROGRAM, unlisted.clone(), None),
+        bare(PROGRAM, server.at("/vendor/agent"), Some(unlisted.clone())),
+    ] {
+        let refused = reachable(&source, &hosts(), &artifact);
+        assert!(
+            matches!(&refused, Err(DownloadError::Unlisted(at)) if **at == *unlisted),
+            "{refused:?}"
+        );
+        let (refused, _) = fetched(&server, &artifact);
+        assert!(
+            matches!(&refused, Err(DownloadError::Unlisted(_))),
+            "{refused:?}"
+        );
+    }
+    assert!(server.asked().is_empty());
+
+    // What may be reached is every listed host and the catalog's.
+    let artifact = bare(PROGRAM, server.at("/vendor/agent"), None);
+    let reached = reachable(&source, &hosts(), &artifact).expect("reachable");
+    assert_eq!(
+        reached,
+        [
+            "downloads.example.com".to_owned(),
+            format!("127.0.0.1:{}", server.port)
+        ]
+    );
 }
 
 #[test]
@@ -321,12 +419,11 @@ fn progress_is_told_and_a_cancel_mid_download_gives_up_without_the_mirror() {
         server.at("/vendor/agent"),
         Some(server.at("/mirror/agent")),
     );
-    let source = server.source();
     let cancel = Cancel::new();
     let mut told = Vec::new();
 
-    let refused = run(super::artifact(
-        &source,
+    let (refused, _) = downloading(
+        &server,
         &hosts(),
         &artifact,
         &mut |done, total| {
@@ -334,7 +431,7 @@ fn progress_is_told_and_a_cancel_mid_download_gives_up_without_the_mirror() {
             cancel.request();
         },
         &cancel,
-    ));
+    );
 
     assert!(
         matches!(refused, Err(DownloadError::Cancelled)),
@@ -343,6 +440,26 @@ fn progress_is_told_and_a_cancel_mid_download_gives_up_without_the_mirror() {
     let half = u64::try_from(PROGRAM.len()).expect("a size");
     assert_eq!(told, [(half, half * 2)]);
     assert_eq!(server.asked(), ["/vendor/agent"]);
+}
+
+#[test]
+fn a_mirror_after_a_failed_vendor_lands_its_bytes_alone() {
+    let server = Server::start();
+    // The vendor sends half and closes: a failure that is not a mismatch.
+    let mut doubled = PROGRAM.to_vec();
+    doubled.extend_from_slice(PROGRAM);
+    server.serve("/vendor/agent", Reply::Short(PROGRAM.to_vec()));
+    server.serve("/mirror/agent", Reply::Body(doubled.clone()));
+    let artifact = bare(
+        &doubled,
+        server.at("/vendor/agent"),
+        Some(server.at("/mirror/agent")),
+    );
+
+    let (fetched, landed) = fetched(&server, &artifact);
+
+    assert!(fetched.is_ok(), "{fetched:?}");
+    assert_eq!(landed, doubled);
 }
 
 #[test]
@@ -359,8 +476,9 @@ fn an_asset_built_at_review_comes_from_the_catalog_by_its_digest() {
         Reply::Body(built.to_vec()),
     );
 
-    let downloaded = fetched(&server, &artifact).expect("the asset");
+    let (fetched, landed) = fetched(&server, &artifact);
 
-    assert_eq!(downloaded.bytes, built);
+    assert!(fetched.is_ok(), "{fetched:?}");
+    assert_eq!(landed, built);
     assert_eq!(server.asked(), [format!("/catalog/{}", digest(built))]);
 }

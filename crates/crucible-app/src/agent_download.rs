@@ -27,11 +27,20 @@
 //!
 //! What arrives is bounded before a byte of it is kept: no more than the
 //! pinned size, which is never more than [`RELEASE_BYTES`], within a bound on
-//! the whole download and one on a silence in it. A body that ends short or
-//! runs long, or hashes to anything but the pin, is refused whole, and
-//! nothing of it is handed on. The bytes are held in memory, as the
-//! unpacker reads them, and progress is told after every piece that arrives.
+//! the whole download and one on a silence in it. It is written into a file
+//! its caller lends, hashed as it is, and never held in memory whole; a body
+//! that ends short or runs long, or hashes to anything but the pin, is
+//! refused whole, and the file is begun again for the next place asked.
+//! Progress is told after every piece that arrives. What the receipt records
+//! is the address the artifact is pinned at, and every host the download came
+//! through, never an address a redirect gave.
+//!
+//! Every place a download may contact is known before anything is asked
+//! ([`reachable`]): an artifact or a mirror pinned on no listed place is
+//! refused then, so the question the user answers names them all.
 
+use std::fs;
+use std::io::{Seek as _, SeekFrom, Write as _};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -56,16 +65,6 @@ const STALL: Duration = Duration::from_mins(1);
 /// The most redirects followed for one address.
 const HOPS: usize = 4;
 
-/// One artifact, as it arrived: its bytes, which are the pin's, and how it
-/// was fetched, as its receipt records it.
-#[derive(Debug)]
-pub struct Downloaded {
-    /// The bytes.
-    pub bytes: Vec<u8>,
-    /// Where they came from and through which hosts.
-    pub fetched: Fetched,
-}
-
 /// Why an artifact did not arrive as its pin.
 #[derive(Debug, thiserror::Error)]
 pub enum DownloadError {
@@ -73,6 +72,13 @@ pub enum DownloadError {
     /// a name, so nothing is fetched under its list.
     #[error("the catalog lists {0:?} as a download host, which is not a host name")]
     Host(Box<str>),
+    /// The address or mirror an artifact is pinned at is on no host the
+    /// download may reach.
+    #[error("{0} is on no host the catalog lists for this download")]
+    Unlisted(Box<str>),
+    /// The download could not be written where it lands.
+    #[error("the download could not be written: {0}")]
+    Write(#[source] std::io::Error),
     /// An address is not one a download can be made from.
     #[error("{0} is not an address a download can be made from")]
     Address(Box<str>),
@@ -125,9 +131,26 @@ impl DownloadError {
     }
 }
 
+/// Where a download lands, and who is told how far it has got.
+pub struct Landing<'a> {
+    /// The file the bytes are written into, from its start, which holds them
+    /// whole once the download returns, and only then.
+    pub file: &'a mut fs::File,
+    /// Told how many of how many bytes have arrived, after every piece.
+    pub progress: &'a mut (dyn FnMut(u64, u64) + Send),
+}
+
+impl std::fmt::Debug for Landing<'_> {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.debug_struct("Landing").finish_non_exhaustive()
+    }
+}
+
 /// `artifact` of a target whose download hosts are `hosts`, fetched under
-/// `source` as the module says, telling `progress` how many of how many bytes
-/// have arrived, and given up as soon as `cancel` is requested.
+/// `source` as the module says into `landing`'s file, telling its progress how
+/// many of how many bytes have arrived, and given up as soon as `cancel` is
+/// requested. What it gives is the artifact as its receipt records it: the
+/// address it is pinned at, and every host the download came through.
 ///
 /// # Errors
 ///
@@ -137,34 +160,27 @@ pub async fn artifact(
     source: &Source,
     hosts: &[Box<str>],
     artifact: &Artifact,
-    progress: &mut (dyn FnMut(u64, u64) + Send),
+    mut landing: Landing<'_>,
     cancel: &Cancel,
-) -> Result<Downloaded, DownloadError> {
+) -> Result<Fetched, DownloadError> {
+    let places = reachable(source, hosts, artifact)?;
+    let listed: Vec<&str> = places.iter().map(String::as_str).collect();
     if let Some(asset) = &artifact.replaced_by {
-        let origin = Origin::of(&source.base)
-            .ok_or_else(|| DownloadError::Address(source.base.as_str().into()))?;
-        let base = format!("{}:{}", origin.host(), origin.port());
-        let mut places: Vec<&str> = vec![base.as_str()];
-        places.extend(source.hosts.iter().copied());
         let address = format!("{}/{}", source.base.trim_end_matches('/'), asset.sha256);
         let pin = Pinned {
             address: &address,
             size: asset.size,
             sha256: &asset.sha256,
         };
-        return fetch(source, &places, pin, progress, cancel).await;
+        return fetch(source, &listed, pin, &mut landing, cancel).await;
     }
-    named(hosts)?;
-    let mut places: Vec<&str> = Vec::with_capacity(hosts.len() + source.hosts.len());
-    places.extend(hosts.iter().map(|host| &**host));
-    places.extend(source.hosts.iter().copied());
     let pin = Pinned {
         address: &artifact.url,
         size: artifact.size,
         sha256: &artifact.sha256,
     };
-    match fetch(source, &places, pin, progress, cancel).await {
-        Ok(downloaded) => Ok(downloaded),
+    match fetch(source, &listed, pin, &mut landing, cancel).await {
+        Ok(fetched) => Ok(fetched),
         Err(failed) if failed.mismatched() || matches!(failed, DownloadError::Cancelled) => {
             Err(failed)
         }
@@ -174,11 +190,60 @@ pub async fn artifact(
                     address: mirror,
                     ..pin
                 };
-                fetch(source, &places, pin, progress, cancel).await
+                fetch(source, &listed, pin, &mut landing, cancel).await
             }
             None => Err(failed),
         },
     }
+}
+
+/// Every place a download of `artifact` may contact, each a host, or a host
+/// and port, as it is listed: the hosts its target lists and those the catalog
+/// is published through, or for an asset built at review the catalog's own
+/// host and those; refused where a listed host is not a name, or the address
+/// or mirror the artifact is pinned at is on none of them. Asked before
+/// anything is downloaded, so what a question names is what the hold lets
+/// through.
+///
+/// # Errors
+///
+/// [`DownloadError::Host`] for a listed host that is not a name,
+/// [`DownloadError::Address`] for an address that cannot be read and
+/// [`DownloadError::Unlisted`] for one on no listed place.
+pub fn reachable(
+    source: &Source,
+    hosts: &[Box<str>],
+    artifact: &Artifact,
+) -> Result<Vec<String>, DownloadError> {
+    let mut places: Vec<String> = Vec::new();
+    if artifact.replaced_by.is_some() {
+        let origin = Origin::of(&source.base)
+            .ok_or_else(|| DownloadError::Address(source.base.as_str().into()))?;
+        places.push(format!("{}:{}", origin.host(), origin.port()));
+    } else {
+        named(hosts)?;
+        places.extend(hosts.iter().map(ToString::to_string));
+    }
+    for host in source.hosts {
+        if !places.iter().any(|place| place == host) {
+            places.push((*host).to_owned());
+        }
+    }
+    if artifact.replaced_by.is_none() {
+        for address in std::iter::once(&artifact.url).chain(artifact.mirror.as_ref()) {
+            let origin =
+                Origin::of(address).ok_or_else(|| DownloadError::Address(address.clone()))?;
+            let default = default_port(origin.scheme());
+            let listed = places
+                .iter()
+                .filter_map(|entry| place(entry, default))
+                .any(|(host, port)| host == origin.host() && port == origin.port());
+            if !listed {
+                return Err(DownloadError::Unlisted(address.clone()));
+            }
+        }
+    }
+    Ok(places)
 }
 
 /// Whether every host of `hosts`, a target's download hosts as the catalog
@@ -211,9 +276,9 @@ async fn fetch(
     source: &Source,
     listed: &[&str],
     pin: Pinned<'_>,
-    progress: &mut (dyn FnMut(u64, u64) + Send),
+    landing: &mut Landing<'_>,
     cancel: &Cancel,
-) -> Result<Downloaded, DownloadError> {
+) -> Result<Fetched, DownloadError> {
     if pin.size > RELEASE_BYTES {
         return Err(DownloadError::TooLarge(pin.size));
     }
@@ -221,7 +286,7 @@ async fn fetch(
         Origin::of(pin.address).ok_or_else(|| DownloadError::Address(pin.address.into()))?;
     let client = client(source, &origin, listed)?;
     let fetching = async {
-        timeout(LIFETIME, followed(&client, &origin, listed, pin, progress))
+        timeout(LIFETIME, followed(&client, &origin, listed, pin, landing))
             .await
             .map_err(|_| DownloadError::Late)?
     };
@@ -277,8 +342,14 @@ async fn followed(
     origin: &Origin,
     listed: &[&str],
     pin: Pinned<'_>,
-    progress: &mut (dyn FnMut(u64, u64) + Send),
-) -> Result<Downloaded, DownloadError> {
+    landing: &mut Landing<'_>,
+) -> Result<Fetched, DownloadError> {
+    // What an earlier place left is not this place's.
+    landing.file.set_len(0).map_err(DownloadError::Write)?;
+    landing
+        .file
+        .seek(SeekFrom::Start(0))
+        .map_err(DownloadError::Write)?;
     let mut address = pin.address.to_owned();
     let mut through: Vec<Box<str>> = Vec::new();
     for _ in 0..=HOPS {
@@ -290,15 +361,14 @@ async fn followed(
         let response = client.get(&address).await?;
         match response.status().as_u16() {
             200 => {
-                let bytes = body(Chunks::new(response.into_body()), pin, progress).await?;
-                return Ok(Downloaded {
-                    bytes,
-                    fetched: Fetched {
-                        url: address.into(),
-                        hosts: through,
-                        size: pin.size,
-                        sha256: pin.sha256.into(),
-                    },
+                body(Chunks::new(response.into_body()), pin, landing).await?;
+                // The address it is pinned at, not one a redirect gave, which
+                // may carry a signature that lapses.
+                return Ok(Fetched {
+                    url: pin.address.into(),
+                    hosts: through,
+                    size: pin.size,
+                    sha256: pin.sha256.into(),
                 });
             }
             301 | 302 | 303 | 307 | 308 => {
@@ -315,42 +385,47 @@ async fn followed(
     Err(DownloadError::Redirects)
 }
 
-/// What `chunks` hold, refused where that is not exactly `pin`'s bytes.
+/// What `chunks` hold, written into `landing`'s file as it arrives and
+/// hashed as it is, refused where that is not exactly `pin`'s bytes.
 async fn body(
     mut chunks: Chunks,
     pin: Pinned<'_>,
-    progress: &mut (dyn FnMut(u64, u64) + Send),
-) -> Result<Vec<u8>, DownloadError> {
+    landing: &mut Landing<'_>,
+) -> Result<(), DownloadError> {
     let mismatched = DownloadError::Size { pinned: pin.size };
-    let mut held: Vec<u8> = Vec::new();
+    let mut held: u64 = 0;
     let mut digest = Sha256::new();
     let mut heard = Instant::now();
     while let Some(next) = chunks.next().await {
         match next? {
             Chunk::Data(bytes) => {
-                let total = u64::try_from(held.len())
+                let total = u64::try_from(bytes.len())
                     .ok()
-                    .and_then(|so_far| so_far.checked_add(u64::try_from(bytes.len()).ok()?))
+                    .and_then(|arrived| held.checked_add(arrived))
                     .ok_or(DownloadError::Size { pinned: pin.size })?;
                 if total > pin.size {
                     return Err(mismatched);
                 }
                 digest.update(&bytes);
-                held.extend_from_slice(&bytes);
+                landing
+                    .file
+                    .write_all(&bytes)
+                    .map_err(DownloadError::Write)?;
+                held = total;
                 heard = Instant::now();
-                progress(total, pin.size);
+                (landing.progress)(total, pin.size);
             }
             Chunk::Quiet if heard.elapsed() >= STALL => return Err(DownloadError::Stalled),
             Chunk::Quiet => {}
         }
     }
-    if u64::try_from(held.len()).ok() != Some(pin.size) {
+    if held != pin.size {
         return Err(mismatched);
     }
     if hex(&digest.finalize()) != pin.sha256 {
         return Err(DownloadError::Digest);
     }
-    Ok(held)
+    landing.file.flush().map_err(DownloadError::Write)
 }
 
 /// `bytes` as lower case hexadecimal.

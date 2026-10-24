@@ -23,24 +23,32 @@
 //!
 //! An install, update, rollback or removal changes nothing before it is
 //! answered. It is put to the client as [`Pending::Install`], whose facts are
-//! the release's version and size, the hosts it would be fetched from, its
+//! the release's version and size, every host the download may contact, its
 //! licence, terms and caution, what it is started with, the instances whose
 //! `executable` it moves, and that it is not smoke-tested and why; the
 //! identity is the process's one count, and the answer is held against the
-//! action put. A sentence that would be cut is not put to a client that does
-//! not draw the whole value, and a no, a cancel, or nobody, leaves every file
-//! as it was. What is checked before that question is put is everything that
-//! can refuse the release without a byte fetched: its kind, its file lists,
-//! its download hosts, and its size, summed with checked arithmetic, against
-//! the most a release may be and the room the install store has.
+//! action put. Every string the catalog or the configuration gave is quoted
+//! with its control and format characters escaped and its length bounded, so
+//! none can draw a line of its own in the question. A sentence that would be
+//! cut is not put to a client that does not draw the whole value, and a no, a
+//! cancel, or nobody, leaves every file as it was. What is checked before that
+//! question is put is everything that can refuse the release without a byte
+//! fetched: its kind and its file lists; that the program it is started as is
+//! one of its files and runs; its download hosts, and that every address and
+//! mirror it is pinned at is on one of them; its size, summed with checked
+//! arithmetic, against the most a release may be and the room the install
+//! store has; and, for a version already in place, that its receipt is of the
+//! artifacts and the files the catalog pins, refused otherwise.
 //!
 //! After a yes, the release the question named is the one installed: each
-//! artifact is downloaded within its pin by [`crate::agent_download`],
-//! unpacked into one staging directory against its file list, and committed
-//! to the store with its receipt; only then is every instance whose
-//! `executable` lies in the agent's directory in the store written to the new
-//! program, in one update of the user file, and the store pruned to what the
-//! instances name and one version before. A cancel, or a download or unpack
+//! artifact is downloaded within its pin by [`crate::agent_download`] into a
+//! file beside the staging directory, unpacked from it into that directory
+//! against its file list, and committed to the store with its receipt; only
+//! then is every instance whose `executable` lies in the agent's directory in
+//! the store written to the new program, in one update of the user file, each
+//! only where its `executable` still names what the question showed, so an
+//! instance edited meanwhile keeps the edit and is said to; and the store is
+//! pruned to what the user file names then and one version before. A cancel, or a download or unpack
 //! that fails, removes the staging and leaves the version named before. A
 //! rollback names the newest other version the store holds that no
 //! revocation names, the same program in it, and fetches nothing; a removal
@@ -58,17 +66,19 @@ use crucible_client_api::{
     Request, Text,
 };
 use crucible_config::{ConfigError, Driver, ExternalAgent, Home, Settings};
-use crucible_external_harnesses::catalog::{Files, Kind, Launch, Offer, Trust};
+use crucible_external_harnesses::catalog::{
+    File, FileKind, Files, Kind, Launch, Offer, Target, Trust,
+};
 use crucible_external_harnesses::release::{RELEASE_BYTES, UnpackError, Unpacker};
 use crucible_external_harnesses::store::{
-    Listing, Mismatch, Provenance, Store, StoreError, Version,
+    Listing, Mismatch, Provenance, Receipt, Store, StoreError, Version,
 };
 use crucible_http::Origin;
 use crucible_runtime::Cancel;
 use crucible_types::AgentKey;
 
 use super::deciding::{Confirmation, Front, Shown, mint, turned_away};
-use crate::agent_download::{self, DownloadError};
+use crate::agent_download::{self, DownloadError, Landing};
 use crate::catalog_fetch::{self, FetchError, Source, Trigger};
 use crate::launching::Launcher;
 use crate::remember::{self, RememberError};
@@ -116,8 +126,9 @@ pub struct Listed {
     pub terms: Option<Box<str>>,
     /// What the reviewer wants a user to know first, where anything.
     pub caution: Option<Box<str>>,
-    /// The versions the install store holds with a receipt.
-    pub installed: Vec<Box<str>>,
+    /// The versions the install store holds with a receipt, or why the
+    /// agent's directory in the store could not be read.
+    pub installed: Result<Vec<Box<str>>, Box<str>>,
 }
 
 /// Which move a confirmed switch was.
@@ -158,10 +169,14 @@ pub enum Outcome {
         version: Box<str>,
         /// The instances whose `executable` now names it.
         instances: Vec<Box<str>>,
+        /// The instances that would have moved and were left as they are,
+        /// because their `executable` named something else by the time it
+        /// was written.
+        left: Vec<Box<str>>,
         /// Whether anything was downloaded for it.
         downloaded: bool,
         /// Why the store was not pruned afterwards, where it was not.
-        unpruned: Option<StoreError>,
+        unpruned: Option<Box<AgentsError>>,
     },
     /// An update found the instances already on the version offered.
     Current {
@@ -221,6 +236,21 @@ pub enum AgentsError {
     /// The release is of a kind this door does not install yet.
     #[error("{0}, which this build does not install through the agents door")]
     Unsupported(&'static str),
+    /// The release would be started as a program it does not list as one
+    /// that runs.
+    #[error("the release lists no runnable {0}, which it would be started as")]
+    Program(Box<str>),
+    /// The version is installed, and not as the catalog pins it.
+    #[error(
+        "{agent} {version} is installed, and not as the catalog pins it now; remove it before \
+         installing it again"
+    )]
+    Kept {
+        /// The agent.
+        agent: AgentKey,
+        /// The version.
+        version: Box<str>,
+    },
     /// The release is larger than a release may be.
     #[error("the release is larger than the {RELEASE_BYTES} bytes a release may be")]
     TooLarge,
@@ -286,7 +316,7 @@ pub async fn run(
         instances: Settings::read_home(shelf.home)?.external_agents(),
     };
     let Some(agent) = agent else {
-        return door.listing(unrefreshed);
+        return Ok(door.listing(unrefreshed));
     };
     match command {
         Command::InstallAgent { version, .. } => {
@@ -344,7 +374,7 @@ impl Door<'_> {
     /// The agents offered, but those whose key is a word a built-in driver is
     /// spelled with: the entry that backs a built-in is that driver's, and is
     /// no catalog row.
-    fn listing(&self, unrefreshed: Option<FetchError>) -> Result<Outcome, AgentsError> {
+    fn listing(&self, unrefreshed: Option<FetchError>) -> Outcome {
         let mut agents: Vec<Listed> = Vec::new();
         let mut more = false;
         for offer in self.trust.offers(None) {
@@ -363,12 +393,18 @@ impl Door<'_> {
                 more = true;
                 continue;
             }
+            // One agent's store that cannot be read is said on its row, and
+            // the rest are listed as they are.
             let installed = self
                 .store
-                .installed(key)?
-                .into_iter()
-                .map(|receipt| receipt.version)
-                .collect();
+                .installed(key)
+                .map(|receipts| {
+                    receipts
+                        .into_iter()
+                        .map(|receipt| receipt.version)
+                        .collect()
+                })
+                .map_err(|unread| unread.to_string().into());
             agents.push(Listed {
                 agent: key.clone(),
                 offered: vec![offer.pin.version],
@@ -378,11 +414,11 @@ impl Door<'_> {
                 installed,
             });
         }
-        Ok(Outcome::Catalog {
+        Outcome::Catalog {
             agents,
             more,
             unrefreshed,
-        })
+        }
     }
 
     /// Every instance whose `executable` lies in the store's directory of
@@ -432,15 +468,34 @@ impl Door<'_> {
                 "the release's file list is kept as a catalog asset",
             ));
         }
-        agent_download::named(&target.hosts)?;
+        let mut reached: Vec<String> = Vec::new();
+        for artifact in &target.artifacts {
+            for place in agent_download::reachable(&self.shelf.catalog, &target.hosts, artifact)? {
+                if !reached.contains(&place) {
+                    reached.push(place);
+                }
+            }
+        }
+        let listed = listed(target);
+        runnable(&listed, &target.cmd)?;
         let total = sized(offer)?;
         self.store.fits(target)?;
         let version = Version::new(&offer.pin.version, offer.pin.lock_revision)?;
-        let kept = self.store.receipt(agent, &version)?.is_some();
+        let kept = match self.store.receipt(agent, &version)? {
+            Some(receipt) if same(&receipt, target, &listed) => true,
+            Some(_) => {
+                return Err(AgentsError::Kept {
+                    agent: agent.clone(),
+                    version: offer.pin.version.clone(),
+                });
+            }
+            None => false,
+        };
         let moving = self.moving(agent);
         let program = self.store.directory(agent, &version).join(&*target.cmd);
 
-        let confirmation = self.installing(offer, how, kept, &moving);
+        let plan = Plan { kept, reached };
+        let confirmation = self.installing(offer, how, &plan, &moving);
         if confirmed(self.request, front, &confirmation).await != Some(0) {
             return Ok(Outcome::Undecided);
         }
@@ -462,18 +517,24 @@ impl Door<'_> {
                         progress(said);
                     }
                 };
-                let downloaded = agent_download::artifact(
+                let mut landing = staging.download()?;
+                let arrived = agent_download::artifact(
                     &self.shelf.catalog,
                     &target.hosts,
                     artifact,
-                    &mut told,
+                    Landing {
+                        file: &mut landing,
+                        progress: &mut told,
+                    },
                     watching.cancel,
                 )
                 .await?;
-                before = before.saturating_add(downloaded.fetched.size);
-                let staged = Unpacker::unpack(&downloaded.bytes, artifact, staging.directory())?;
+                drop(landing);
+                before = before.saturating_add(arrived.size);
+                let mut reading = staging.downloaded()?;
+                let staged = Unpacker::unpack_from(&mut reading, artifact, staging.directory())?;
                 files.extend_from_slice(staged.files());
-                fetched.push(downloaded.fetched);
+                fetched.push(arrived);
             }
             let provenance = Provenance {
                 listing: Listing {
@@ -486,14 +547,15 @@ impl Door<'_> {
             };
             self.store.commit(staging, &version, &files, provenance)?;
         }
-        let instances = self.point(&moving, &program)?;
+        let (instances, left) = self.point(&moving, &program)?;
         Ok(Outcome::Moved {
             agent: agent.clone(),
             how,
             version: offer.pin.version.clone(),
             instances,
+            left,
             downloaded: !kept,
-            unpruned: self.prune(agent, &moving, &program).err(),
+            unpruned: self.prune(agent).err().map(Box::new),
         })
     }
 
@@ -502,71 +564,59 @@ impl Door<'_> {
         &self,
         offer: &Offer,
         how: How,
-        kept: bool,
+        plan: &Plan,
         moving: &[(&ExternalAgent, Version)],
     ) -> Confirmation {
+        let kept = plan.kept;
         let target = &offer.pin.target;
         let entry = &offer.entry;
         // Summed before the question is put, which a size past the bound
         // never reaches.
         let total = sized(offer).unwrap_or(0);
+        let (key, version) = (entry.key.as_str(), quoted(&offer.pin.version));
         let (asks, choice) = match how {
-            How::Updated => (
-                format!("Update {} to {}?", entry.key, offer.pin.version),
-                "Update",
-            ),
-            How::Installed | How::RolledBack => (
-                format!("Install {} {}?", entry.key, offer.pin.version),
-                "Install",
-            ),
+            How::Updated => (format!("Update {key} to {version}?"), "Update"),
+            How::Installed | How::RolledBack => (format!("Install {key} {version}?"), "Install"),
         };
         let mut facts = vec![if kept {
-            format!(
-                "{} {} is already installed, so nothing is downloaded.",
-                entry.key, offer.pin.version
-            )
+            format!("{key} {version} is already installed, so nothing is downloaded.")
         } else {
-            format!(
-                "{} {}, {total} bytes to download.",
-                entry.key, offer.pin.version
-            )
+            format!("{key} {version}, {total} bytes to download.")
         }];
-        let mut from: Vec<String> = Vec::new();
-        let mut mirrors: Vec<String> = Vec::new();
-        for artifact in &target.artifacts {
-            if artifact.replaced_by.is_some() {
-                if let Some(origin) = Origin::of(&self.shelf.catalog.base) {
-                    from.push(origin.host().to_owned());
-                }
-                continue;
-            }
-            from.extend(target.hosts.iter().map(ToString::to_string));
-            if let Some(origin) = artifact.mirror.as_deref().and_then(Origin::of) {
-                mirrors.push(origin.host().to_owned());
-            }
-        }
-        dedup(&mut from);
-        dedup(&mut mirrors);
         if !kept {
+            let reached: Vec<String> = plan.reached.iter().map(|place| quoted(place)).collect();
+            let mut mirrors: Vec<String> = target
+                .artifacts
+                .iter()
+                .filter(|artifact| artifact.replaced_by.is_none())
+                .filter_map(|artifact| artifact.mirror.as_deref().and_then(Origin::of))
+                .map(|origin| quoted(origin.host()))
+                .collect();
+            dedup(&mut mirrors);
             facts.push(if mirrors.is_empty() {
-                format!("Fetched from {}.", from.join(", "))
+                format!(
+                    "Fetched from {}, the only hosts it may reach.",
+                    reached.join(", ")
+                )
             } else {
                 format!(
-                    "Fetched from {}, or from the catalog's copy at {} if that fails.",
-                    from.join(", "),
+                    "Fetched from {}, the only hosts it may reach, the catalog's copy at {} \
+                     if the vendor's address fails.",
+                    reached.join(", "),
                     mirrors.join(", ")
                 )
             });
         }
+        let license = quoted(&entry.license);
         facts.push(match &entry.terms {
-            Some(terms) => format!("Licence {}; terms at {terms}.", entry.license),
-            None => format!("Licence {}.", entry.license),
+            Some(terms) => format!("Licence {license}; terms at {}.", quoted(terms)),
+            None => format!("Licence {license}."),
         });
         if let Some(caution) = &entry.caution {
-            facts.push(format!("Caution: {caution}"));
+            facts.push(format!("Caution: {}", quoted(caution)));
         }
-        let mut started = vec![target.cmd.to_string()];
-        started.extend(target.args.iter().map(ToString::to_string));
+        let mut started = vec![quoted(&target.cmd)];
+        started.extend(target.args.iter().map(|argument| quoted(argument)));
         facts.push(format!("Started as: {}", started.join(" ")));
         facts.push(if target.env.is_empty() {
             "Started with no environment of its own.".to_owned()
@@ -574,7 +624,7 @@ impl Door<'_> {
             let set: Vec<String> = target
                 .env
                 .iter()
-                .map(|variable| format!("{}={}", variable.name, variable.value))
+                .map(|variable| format!("{}={}", quoted(&variable.name), quoted(&variable.value)))
                 .collect();
             format!("Started with the environment {}.", set.join(", "))
         });
@@ -586,10 +636,7 @@ impl Door<'_> {
             choices: vec![
                 (
                     choice.to_owned(),
-                    format!(
-                        "Put {} in place and move the instances named onto it",
-                        offer.pin.version
-                    ),
+                    format!("Put {version} in place and move the instances named onto it"),
                 ),
                 ("Cancel".to_owned(), "Leave everything as it is".to_owned()),
             ],
@@ -597,45 +644,43 @@ impl Door<'_> {
     }
 
     /// Writes each of `moving` onto `program`, in one update of the user
-    /// file, and gives the instances written.
+    /// file, where its `executable` still names what the question showed;
+    /// gives the instances written, and those left because they name
+    /// something else by now.
     fn point(
         &self,
         moving: &[(&ExternalAgent, Version)],
         program: &Path,
-    ) -> Result<Vec<Box<str>>, AgentsError> {
+    ) -> Result<Written, AgentsError> {
         if moving.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
         let program = program.to_string_lossy();
-        let pairs: Vec<(&str, &str)> = moving
+        let moved: Vec<(&str, &str, &str)> = moving
             .iter()
-            .map(|(instance, _)| (instance.name(), &*program))
+            .map(|(instance, _)| (instance.name(), instance.executable(), &*program))
             .collect();
-        remember::pointing(&self.user, &pairs)?;
-        Ok(moving
+        let left = remember::pointing(&self.user, &moved)?;
+        let written = moving
             .iter()
-            .map(|(instance, _)| instance.name().into())
-            .collect())
+            .map(|(instance, _)| instance.name())
+            .filter(|name| !left.iter().any(|kept| kept == name))
+            .map(Into::into)
+            .collect();
+        Ok((written, left.into_iter().map(Into::into).collect()))
     }
 
-    /// Prunes the store of `agent` to what the instances name now: those in
-    /// `moving` naming `program`, and every other as it was.
-    fn prune(
-        &self,
-        agent: &AgentKey,
-        moving: &[(&ExternalAgent, Version)],
-        program: &Path,
-    ) -> Result<(), StoreError> {
-        let mut named: Vec<&Path> = vec![program];
-        for instance in &self.instances {
-            if !moving
-                .iter()
-                .any(|(moved, _)| moved.name() == instance.name())
-            {
-                named.push(Path::new(instance.executable()));
-            }
-        }
-        self.store.prune(agent, &named).map(|_| ())
+    /// Prunes the store of `agent` to what the instances name now, read again
+    /// from the user file, so an instance changed since the question keeps
+    /// the version it names.
+    fn prune(&self, agent: &AgentKey) -> Result<(), AgentsError> {
+        let instances = Settings::read_home(self.shelf.home)?.external_agents();
+        let named: Vec<&Path> = instances
+            .iter()
+            .map(|instance| Path::new(instance.executable()))
+            .collect();
+        self.store.prune(agent, &named)?;
+        Ok(())
     }
 
     /// Names the version before again, after a yes.
@@ -689,10 +734,13 @@ impl Door<'_> {
             .ok_or_else(|| AgentsError::NoPrevious(agent.clone()))?;
         let mut facts = vec![format!(
             "{agent} {} is installed, so nothing is downloaded.",
-            previous.version
+            quoted(&previous.version)
         )];
         facts.push(match &previous.listing.terms {
-            Some(terms) => format!("Its terms, accepted when it was installed: {terms}."),
+            Some(terms) => format!(
+                "Its terms, accepted when it was installed: {}.",
+                quoted(terms)
+            ),
             None => "It was installed with no terms to accept.".to_owned(),
         });
         facts.push(moves(agent, &previous.version, &moving));
@@ -711,14 +759,15 @@ impl Door<'_> {
         if confirmed(self.request, front, &confirmation).await != Some(0) {
             return Ok(Outcome::Undecided);
         }
-        let instances = self.point(&moving, &program)?;
+        let (instances, left) = self.point(&moving, &program)?;
         Ok(Outcome::Moved {
             agent: agent.clone(),
             how: How::RolledBack,
             version: previous.version,
             instances,
+            left,
             downloaded: false,
-            unpruned: self.prune(agent, &moving, &program).err(),
+            unpruned: self.prune(agent).err().map(Box::new),
         })
     }
 
@@ -751,7 +800,14 @@ impl Door<'_> {
         let confirmation = Confirmation {
             asks: format!("Remove {agent} from this machine?"),
             facts: vec![
-                format!("Removes {agent} {}.", installed.join(", ")),
+                format!(
+                    "Removes {agent} {}.",
+                    installed
+                        .iter()
+                        .map(|version| quoted(version))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
                 "No configured instance runs it from crucible's install store.".to_owned(),
             ],
             choices: vec![
@@ -762,8 +818,9 @@ impl Door<'_> {
         if confirmed(self.request, front, &confirmation).await != Some(0) {
             return Ok(Outcome::Undecided);
         }
-        let executables: Vec<&Path> = self
-            .instances
+        // Read again: an instance set to run it since the question keeps it.
+        let instances = Settings::read_home(self.shelf.home)?.external_agents();
+        let executables: Vec<&Path> = instances
             .iter()
             .map(|instance| Path::new(instance.executable()))
             .collect();
@@ -814,6 +871,84 @@ fn sized(offer: &Offer) -> Result<u64, AgentsError> {
     Ok(downloaded)
 }
 
+/// The instances a switch wrote onto the new program, and those it left as
+/// they are because they named something else by then.
+type Written = (Vec<Box<str>>, Vec<Box<str>>);
+
+/// What a switch found before it asked: whether the version is already in
+/// place, and every host its download may contact.
+struct Plan {
+    kept: bool,
+    reached: Vec<String>,
+}
+
+/// The most of one string the catalog or the configuration gave that a fact
+/// quotes, in characters.
+const QUOTED: usize = 256;
+
+/// `text`, a string the catalog or the configuration gave, as a fact quotes
+/// it: every control and format character written as its escape, so no line
+/// of its own can be drawn from it, and cut at [`QUOTED`] characters with an
+/// ellipsis, so no fact is made long enough to push the others out of sight.
+fn quoted(text: &str) -> String {
+    let escaped = crucible_types::shown::escaped(text);
+    if escaped.chars().count() <= QUOTED {
+        return escaped;
+    }
+    let mut cut: String = escaped.chars().take(QUOTED).collect();
+    cut.push('…');
+    cut
+}
+
+/// Every file the target's artifacts list, as they would be committed.
+fn listed(target: &Target) -> Vec<File> {
+    target
+        .artifacts
+        .iter()
+        .filter_map(|artifact| match &artifact.files {
+            Files::Listed(files) => Some(files.iter().cloned()),
+            Files::Asset(_) => None,
+        })
+        .flatten()
+        .collect()
+}
+
+/// Refused unless `listed` holds `cmd` as a file that runs.
+fn runnable(listed: &[File], cmd: &str) -> Result<(), AgentsError> {
+    let runs = listed
+        .iter()
+        .any(|file| *file.path == *cmd && matches!(file.kind, FileKind::File { exec: true, .. }));
+    if runs {
+        Ok(())
+    } else {
+        Err(AgentsError::Program(quoted(cmd).into()))
+    }
+}
+
+/// Whether `receipt`, of a version already in place, is the release `target`
+/// pins: the same artifacts, by size and SHA-256 as pinned, and the same files.
+fn same(receipt: &Receipt, target: &Target, listed: &[File]) -> bool {
+    let pinned = target
+        .artifacts
+        .iter()
+        .map(|artifact| match &artifact.replaced_by {
+            Some(asset) => (asset.size, &*asset.sha256),
+            None => (artifact.size, &*artifact.sha256),
+        });
+    let fetched = receipt
+        .artifacts
+        .iter()
+        .map(|fetched| (fetched.size, &*fetched.sha256));
+    let by_path = |files: &[File]| {
+        let mut files = files.to_vec();
+        files.sort_by(|one, other| one.path.cmp(&other.path));
+        files
+    };
+    receipt.artifacts.len() == target.artifacts.len()
+        && pinned.eq(fetched)
+        && by_path(&receipt.files) == by_path(listed)
+}
+
 /// The sentence saying which instances move onto `version` of `agent`.
 fn moves(agent: &AgentKey, version: &str, moving: &[(&ExternalAgent, Version)]) -> String {
     if moving.is_empty() {
@@ -823,9 +958,15 @@ fn moves(agent: &AgentKey, version: &str, moving: &[(&ExternalAgent, Version)]) 
     }
     let named: Vec<String> = moving
         .iter()
-        .map(|(instance, from)| format!("{} from {}", instance.name(), from.version()))
+        .map(|(instance, from)| {
+            format!(
+                "{} from {}",
+                quoted(instance.name()),
+                quoted(from.version())
+            )
+        })
         .collect();
-    format!("Moves {} onto {version}.", named.join(", "))
+    format!("Moves {} onto {}.", named.join(", "), quoted(version))
 }
 
 /// `names` with each kept once, in the order first given.
