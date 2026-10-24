@@ -20,6 +20,12 @@
 //! parsed into owned values once, here, and every refusal names the field it
 //! is about. This module does no network work and decides no consent.
 //!
+//! What a user is offered of it is [`Trust`]'s to decide, from the highest
+//! serial believed, every revocation taken in, the catalog most lately
+//! believed and the snapshot [`SNAPSHOT`] holds. The snapshot is checked by
+//! [`Catalog::compiled`] once there are keys to check it under; until then it
+//! is built in from the one release 0.48 shipped with, and not signed.
+//!
 //! No key a test verifies under is written anywhere: a test signs its catalog
 //! with [`fixture`], whose key is minted in memory once per process, and which
 //! is compiled only under the `proof` feature that `[dev-dependencies]` alone
@@ -28,6 +34,8 @@
 mod entry;
 #[cfg(feature = "proof")]
 pub mod fixture;
+mod snapshot;
+mod trust;
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -35,6 +43,9 @@ use minisign_verify::{PublicKey, Signature};
 use serde_json::Value;
 
 use entry::Fields;
+
+pub use snapshot::SNAPSHOT;
+pub use trust::{OwnedPin, Trust, TrustError, Unusable};
 
 pub use entry::{
     ASSET_BYTES, Admits, Artifact, AssetRef, AuthMethod, ContentUse, Disposition, Entry, File,

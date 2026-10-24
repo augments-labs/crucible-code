@@ -1,16 +1,27 @@
 //! A catalog is believed only signed, bounded, current and in a known schema,
-//! and is parsed into every field an entry carries.
+//! and is parsed into every field an entry carries. What a user is offered
+//! from it is decided by the trust state and the snapshot, whatever the
+//! catalogs a machine has seen since.
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::fs;
+use std::path::PathBuf;
+use std::sync::Barrier;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crucible_types::AgentKey;
 use serde_json::{Value, json};
 
 use super::fixture::{Signed, signed};
+use super::trust::{
+    DIRECTORY, FILE, LOCK, REVOKED_CAP, STATE_BYTES, State, decode, here, merge, platform,
+};
 use super::{
     Admits, AssetRef, AuthMethod, Catalog, CatalogError, ContentUse, Disposition, FileKind, Files,
-    Format, GRACE, Held, INDEX_BYTES, KEYS, Kind, Launch, Lock, Method, Route, SCHEMA_SHOWN,
-    Script, VERSION_BYTES, Variable,
+    Format, GRACE, Held, INDEX_BYTES, KEYS, Keys, Kind, Launch, Lock, Method, Revoked, Route,
+    SCHEMA_SHOWN, SNAPSHOT, Script, Trust, TrustError, Unusable, VERSION_BYTES, Variable,
 };
+use crate::antigravity::Manifest;
+use crate::tests::Owned;
 
 const DAY: Duration = Duration::from_hours(24);
 
@@ -1056,4 +1067,1205 @@ fn an_unknown_schema_is_repeated_only_in_part() {
             refused.map_err(|error| error.to_string().len())
         );
     }
+}
+
+/// A day after the catalogs above were signed, when the tests below take them
+/// in.
+fn taken() -> SystemTime {
+    at(SIGNED_AT) + DAY
+}
+
+/// The agent `name`.
+// A test naming a key that is not one has nothing to report.
+#[allow(clippy::panic)]
+fn agent(name: &str) -> AgentKey {
+    let Ok(key) = AgentKey::new(name) else {
+        panic!("{name} is an agent key");
+    };
+    key
+}
+
+/// `version` of the agent `name`, published for the platform the tests run on.
+fn release(name: &str, version: &str, lock_revision: Option<u64>) -> Value {
+    let mut entry = binary();
+    set(&mut entry, "/key", json!(name));
+    set(&mut entry, "/version", json!(version));
+    set(&mut entry, "/admits/version", json!(version));
+    set(&mut entry, "/targets/0/platform", json!(here()));
+    if let Some(revision) = lock_revision {
+        set(&mut entry, "/lock_revision", json!(revision));
+    }
+    entry
+}
+
+/// The withdrawal of `version` of `name`, of one lock revision where one is
+/// given.
+fn withdrawn(name: &str, version: &str, lock_revision: Option<u64>) -> Value {
+    let mut revoked = json!({"key": name, "version": version, "reason": "It was withdrawn."});
+    if let Some(revision) = lock_revision {
+        set(&mut revoked, "/lock_revision", json!(revision));
+    }
+    revoked
+}
+
+/// A catalog at `serial` that lists `entries` and withdraws `revoked`, dated
+/// as the ones above are.
+fn listing(
+    serial: u64,
+    entries: impl IntoIterator<Item = Value>,
+    revoked: impl IntoIterator<Item = Value>,
+) -> Value {
+    let entries: Vec<Value> = entries.into_iter().collect();
+    let revoked: Vec<Value> = revoked.into_iter().collect();
+    dated(json!({"schema": 1, "serial": serial, "entries": entries, "revoked": revoked}))
+}
+
+/// The keys the tests' catalogs verify under.
+fn keys() -> Keys {
+    sign(&listing(1, Vec::new(), Vec::new())).keys
+}
+
+/// The one key `keys` holds.
+fn the_key(keys: &Keys) -> &'static str {
+    keys.0.first().copied().unwrap_or_default()
+}
+
+/// The keys of a later build: the same signer among others, so the same
+/// catalogs verify, but not the set an earlier state was taken in under.
+fn replacement_keys() -> Keys {
+    let own = keys();
+    let replacement: &'static [&'static str] = Box::leak(Box::new(["another key", the_key(&own)]));
+    Keys::new(replacement)
+}
+
+/// The state file in `owned`.
+fn state_file(owned: &Owned) -> PathBuf {
+    owned.0.join(DIRECTORY).join(FILE)
+}
+
+/// The trust state kept in `owned`, read as of `now`.
+fn trust(owned: &Owned, now: SystemTime) -> Trust {
+    Trust::load(&owned.0, now)
+}
+
+/// `catalog`, signed, taken into `trust` as of `now`.
+fn take_in(trust: &mut Trust, catalog: &Value, now: SystemTime) -> Result<(), TrustError> {
+    let signed = sign(catalog);
+    trust.take_in(&signed.index, &signed.signature, &signed.keys, now)
+}
+
+/// `catalog` taken into `trust`, which must believe it.
+// A test whose good catalog is refused has nothing else to report.
+#[allow(clippy::panic)]
+fn believe(trust: &mut Trust, catalog: &Value, now: SystemTime) {
+    if let Err(refused) = take_in(trust, catalog, now) {
+        panic!("a good catalog is taken in: {refused}");
+    }
+}
+
+/// The versions of the agent `name` that `trust` offers, newest source first,
+/// each with its lock revision where it has one.
+fn offered(trust: &Trust, name: &str) -> Vec<String> {
+    trust
+        .offered(&agent(name))
+        .iter()
+        .map(|pin| match pin.lock_revision {
+            Some(revision) => format!("{}+{revision}", pin.version),
+            None => pin.version.to_string(),
+        })
+        .collect()
+}
+
+/// `listed`, then what the snapshot offers of Antigravity on this platform.
+fn then_the_snapshot(listed: &[&str]) -> Vec<String> {
+    listed
+        .iter()
+        .copied()
+        .chain(Manifest::REVIEWED.here().map(|pin| pin.version))
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn a_platform_is_spelled_as_the_catalog_spells_it() {
+    for (os, arch, spelled) in [
+        ("macos", "aarch64", "darwin-aarch64"),
+        ("macos", "x86_64", "darwin-x86_64"),
+        ("linux", "x86_64", "linux-x86_64"),
+        ("linux", "aarch64", "linux-aarch64"),
+        ("windows", "x86_64", "windows-x86_64"),
+        ("windows", "aarch64", "windows-aarch64"),
+    ] {
+        assert_eq!(platform(os, arch), spelled);
+    }
+}
+
+#[test]
+fn the_interim_snapshot_agrees_with_the_reviewed_manifest_field_for_field() {
+    let [entry] = SNAPSHOT.entries() else {
+        panic!("one entry");
+    };
+
+    assert_eq!(Manifest::REVIEWED.versions, [&*entry.version]);
+    assert!(SNAPSHOT.serial() >= 1, "a serial below it can be refused");
+    assert!(SNAPSHOT.revoked().is_empty());
+    assert_eq!(entry.key.as_str(), "antigravity");
+    assert_eq!(&*entry.version, "1.3.0");
+    assert_eq!(entry.lock_revision, None);
+    assert_eq!(entry.kind, Kind::Binary);
+    assert_eq!(&*entry.admits.name, Manifest::REVIEWED.name);
+    assert_eq!(&*entry.admits.version, "1.3.0");
+    assert_eq!(entry.targets.len(), Manifest::REVIEWED.platforms.len());
+    for (os, arch, pin) in Manifest::REVIEWED.platforms {
+        let spelled = platform(os, arch);
+        let Some(target) = entry.targets.iter().find(|t| *t.platform == *spelled) else {
+            panic!("a target for {spelled}");
+        };
+        assert_eq!(&*target.cmd, pin.executable.name, "{spelled}");
+        // 0.48 starts the agent on Linux with an empty user id, and with no
+        // arguments of its own elsewhere.
+        let arguments: Vec<&str> = target.args.iter().map(|argument| &**argument).collect();
+        let started_with: &[&str] = if *os == "linux" { &["--uid="] } else { &[] };
+        assert_eq!(arguments, started_with, "{spelled}");
+        assert_eq!(target.launch, Launch::Binary, "{spelled}");
+        let [archive] = target.artifacts.as_slice() else {
+            panic!("one archive for {spelled}");
+        };
+        assert_eq!(&*archive.url, pin.url, "{spelled}");
+        assert_eq!(&*archive.sha256, pin.sha256, "{spelled}");
+        assert_eq!(archive.size, pin.archive, "{spelled}");
+        assert_eq!(archive.format, Format::Zip, "{spelled}");
+        assert_eq!(archive.mirror, None, "{spelled}");
+        assert_eq!(archive.replaced_by, None, "{spelled}");
+        assert_eq!(
+            archive.unpacked,
+            pin.executable.bytes + pin.companion.bytes,
+            "{spelled}"
+        );
+        let Files::Listed(files) = &archive.files else {
+            panic!("a listed file list for {spelled}");
+        };
+        let listed: Vec<(&str, Option<(u64, bool)>)> = files
+            .iter()
+            .map(|file| match file.kind {
+                FileKind::File { size, exec, .. } => (&*file.path, Some((size, exec))),
+                FileKind::Dir | FileKind::Link { .. } => (&*file.path, None),
+            })
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                (pin.executable.name, Some((pin.executable.bytes, true))),
+                (pin.companion.name, Some((pin.companion.bytes, true))),
+            ],
+            "{spelled}"
+        );
+    }
+}
+
+#[test]
+fn nothing_taken_in_offers_the_snapshots_release_and_touches_no_disk() {
+    let owned = Owned::new("trust-fresh");
+
+    let trust = Trust::load(&owned.0, taken());
+
+    let pins = trust.offered(&agent("antigravity"));
+    let reviewed = Manifest::REVIEWED.here();
+    assert_eq!(pins.len(), usize::from(reviewed.is_some()));
+    if let (Some(pin), Some(offered)) = (reviewed, pins.first()) {
+        assert_eq!(offered.key.as_str(), "antigravity");
+        assert_eq!(&*offered.version, pin.version);
+        assert_eq!(offered.lock_revision, None);
+        assert_eq!(&*offered.target.cmd, pin.executable.name);
+        let [archive] = offered.target.artifacts.as_slice() else {
+            panic!("one archive");
+        };
+        assert_eq!(
+            (&*archive.url, &*archive.sha256, archive.size),
+            (pin.url, pin.sha256, pin.archive)
+        );
+    }
+    assert!(offered(&trust, "goose").is_empty());
+    assert_eq!(trust.unusable(), None);
+    assert!(!owned.0.join(DIRECTORY).exists());
+}
+
+#[test]
+fn a_taken_in_catalog_adds_its_releases_to_the_snapshots_and_keeps_them() {
+    let owned = Owned::new("trust-adds");
+    let mut held = trust(&owned, taken());
+    let catalog = listing(
+        5,
+        vec![
+            release("antigravity", "1.4.1", None),
+            release("goose", "1.4.1", None),
+        ],
+        Vec::new(),
+    );
+
+    believe(&mut held, &catalog, taken());
+
+    assert_eq!(offered(&held, "antigravity"), then_the_snapshot(&["1.4.1"]));
+    assert_eq!(offered(&held, "goose"), ["1.4.1"]);
+    let restarted = trust(&owned, taken());
+    assert_eq!(
+        offered(&restarted, "antigravity"),
+        then_the_snapshot(&["1.4.1"])
+    );
+    assert_eq!(offered(&restarted, "goose"), ["1.4.1"]);
+}
+
+#[test]
+fn an_older_serial_after_a_newer_one_is_refused() {
+    let owned = Owned::new("trust-serial");
+    let mut held = trust(&owned, taken());
+    believe(&mut held, &listing(9, Vec::new(), Vec::new()), taken());
+
+    let refused = take_in(&mut held, &listing(8, Vec::new(), Vec::new()), taken());
+
+    assert!(
+        matches!(
+            refused,
+            Err(TrustError::Catalog(CatalogError::Serial {
+                offered: 8,
+                held: 9
+            }))
+        ),
+        "{refused:?}"
+    );
+    // The serial is kept, not remembered: a restart refuses it too, and the
+    // serial held is still believed.
+    let mut restarted = trust(&owned, taken());
+    assert!(matches!(
+        take_in(&mut restarted, &listing(8, Vec::new(), Vec::new()), taken()),
+        Err(TrustError::Catalog(CatalogError::Serial {
+            offered: 8,
+            held: 9
+        }))
+    ));
+    believe(&mut restarted, &listing(9, Vec::new(), Vec::new()), taken());
+}
+
+#[test]
+fn a_revocation_survives_the_next_catalog_that_omits_it() {
+    let owned = Owned::new("trust-revoked");
+    let mut held = trust(&owned, taken());
+    let both = || {
+        vec![
+            release("goose", "1.4.1", None),
+            release("goose", "1.5.0", None),
+        ]
+    };
+
+    believe(
+        &mut held,
+        &listing(5, both(), vec![withdrawn("goose", "1.4.1", None)]),
+        taken(),
+    );
+    assert_eq!(offered(&held, "goose"), ["1.5.0"]);
+    believe(&mut held, &listing(6, both(), Vec::new()), taken());
+
+    assert_eq!(offered(&held, "goose"), ["1.5.0"]);
+    assert_eq!(offered(&trust(&owned, taken()), "goose"), ["1.5.0"]);
+}
+
+#[test]
+fn a_revocation_withdraws_what_the_snapshot_lists_too() {
+    let owned = Owned::new("trust-revoked-snapshot");
+    let mut held = trust(&owned, taken());
+    assert_eq!(offered(&held, "antigravity"), then_the_snapshot(&[]));
+
+    believe(
+        &mut held,
+        &listing(5, Vec::new(), vec![withdrawn("antigravity", "1.3.0", None)]),
+        taken(),
+    );
+
+    assert!(offered(&held, "antigravity").is_empty());
+    assert!(offered(&trust(&owned, taken()), "antigravity").is_empty());
+}
+
+#[test]
+fn a_revocation_names_a_lock_revision_only_when_it_sets_one() {
+    let owned = Owned::new("trust-revision");
+    let mut held = trust(&owned, taken());
+    let revisions = || {
+        vec![
+            release("gemini", "0.9.0", Some(1)),
+            release("gemini", "0.9.0", Some(2)),
+            release("gemini", "0.8.0", None),
+        ]
+    };
+    believe(&mut held, &listing(5, revisions(), Vec::new()), taken());
+    assert_eq!(offered(&held, "gemini"), ["0.9.0+1", "0.9.0+2", "0.8.0"]);
+
+    believe(
+        &mut held,
+        &listing(6, revisions(), vec![withdrawn("gemini", "0.9.0", Some(1))]),
+        taken(),
+    );
+    assert_eq!(offered(&held, "gemini"), ["0.9.0+2", "0.8.0"]);
+
+    believe(
+        &mut held,
+        &listing(7, revisions(), vec![withdrawn("gemini", "0.9.0", None)]),
+        taken(),
+    );
+    assert_eq!(offered(&held, "gemini"), ["0.8.0"]);
+    // A revocation of a revision does not reach a release with none.
+    believe(
+        &mut held,
+        &listing(8, revisions(), vec![withdrawn("gemini", "0.8.0", Some(3))]),
+        taken(),
+    );
+    assert_eq!(offered(&trust(&owned, taken()), "gemini"), ["0.8.0"]);
+}
+
+#[test]
+fn the_4097th_revocation_refuses_the_catalog() {
+    let owned = Owned::new("trust-cap");
+    let mut held = trust(&owned, taken());
+    let withdrawals = |count: usize| -> Vec<Value> {
+        (0..count)
+            .map(|n| withdrawn("goose", &format!("v{n}"), None))
+            .collect()
+    };
+    believe(
+        &mut held,
+        &listing(5, Vec::new(), withdrawals(REVOKED_CAP)),
+        taken(),
+    );
+    // The same revocations again are not new ones.
+    believe(
+        &mut held,
+        &listing(6, Vec::new(), withdrawals(REVOKED_CAP)),
+        taken(),
+    );
+
+    let mut over = withdrawals(REVOKED_CAP);
+    over.push(withdrawn("goose", "one-more", None));
+    let refused = take_in(
+        &mut held,
+        &listing(7, vec![release("goose", "fine", None)], over),
+        taken(),
+    );
+
+    assert!(
+        matches!(refused, Err(TrustError::Revocations)),
+        "{refused:?}"
+    );
+    // Nothing of the refused catalog was kept: not its serial, not its entry.
+    assert!(offered(&held, "goose").is_empty());
+    let mut restarted = trust(&owned, taken());
+    assert!(offered(&restarted, "goose").is_empty());
+    believe(&mut restarted, &listing(6, Vec::new(), Vec::new()), taken());
+    // Nor does it take a catalog that brings the 4097th to a state with none.
+    let alone = Owned::new("trust-cap-alone");
+    let mut fresh = trust(&alone, taken());
+    let mut all = withdrawals(REVOKED_CAP);
+    all.push(withdrawn("goose", "one-more", None));
+    assert!(matches!(
+        take_in(&mut fresh, &listing(5, Vec::new(), all), taken()),
+        Err(TrustError::Revocations)
+    ));
+}
+
+#[test]
+fn deleting_the_state_falls_back_to_the_snapshot_floor() {
+    let owned = Owned::new("trust-deleted");
+    let mut held = trust(&owned, taken());
+    let goose = || vec![release("goose", "1.4.1", None)];
+    believe(
+        &mut held,
+        &listing(9, goose(), vec![withdrawn("goose", "1.4.1", None)]),
+        taken(),
+    );
+    assert!(offered(&held, "goose").is_empty());
+
+    fs::remove_dir_all(owned.0.join(DIRECTORY)).unwrap_or_default();
+
+    // The floor is the snapshot's serial, so a catalog below the one that was
+    // held is believed again, and the revocation that was lost returns with
+    // the catalog that repeats it, not before.
+    let mut rebuilt = trust(&owned, taken());
+    let floor = SNAPSHOT.serial();
+    believe(
+        &mut rebuilt,
+        &listing(floor + 1, goose(), Vec::new()),
+        taken(),
+    );
+    assert_eq!(offered(&rebuilt, "goose"), ["1.4.1"]);
+    // And no lower: the floor is not nothing.
+    let alone = Owned::new("trust-floor");
+    let mut fresh = trust(&alone, taken());
+    let refused = take_in(
+        &mut fresh,
+        &listing(floor - 1, Vec::new(), Vec::new()),
+        taken(),
+    );
+    assert!(
+        matches!(
+            refused,
+            Err(TrustError::Catalog(CatalogError::Serial { offered, held }))
+                if offered == floor - 1 && held == floor
+        ),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn a_held_catalog_eight_days_past_its_expiry_offers_only_the_snapshots_releases() {
+    let owned = Owned::new("trust-expired");
+    let mut held = trust(&owned, taken());
+    believe(
+        &mut held,
+        &listing(5, vec![release("antigravity", "1.4.1", None)], Vec::new()),
+        at(EXPIRES) - DAY,
+    );
+
+    for (days_past, listed) in [(0, true), (6, true), (7, true), (8, false), (400, false)] {
+        let later = trust(&owned, at(EXPIRES) + DAY * days_past);
+        let wanted = if listed {
+            then_the_snapshot(&["1.4.1"])
+        } else {
+            then_the_snapshot(&[])
+        };
+        assert_eq!(offered(&later, "antigravity"), wanted, "{days_past} days");
+    }
+    // The next fetch, signed to expire later, brings the catalog's releases
+    // back; what was held before it was not forgotten, only not believed.
+    let mut later = trust(&owned, at(EXPIRES) + DAY * 8);
+    let mut renewed = listing(6, vec![release("antigravity", "1.4.2", None)], Vec::new());
+    set(&mut renewed, "/expires", json!(EXPIRES + 30 * 24 * 60 * 60));
+    believe(&mut later, &renewed, at(EXPIRES) + DAY * 8);
+    assert_eq!(
+        offered(&later, "antigravity"),
+        then_the_snapshot(&["1.4.2"])
+    );
+}
+
+#[test]
+fn a_revocation_outlives_the_catalog_that_gave_it() {
+    let owned = Owned::new("trust-revoked-expired");
+    let mut held = trust(&owned, taken());
+    let nothing = Owned::new("trust-revoked-expired-none");
+    let late = at(EXPIRES) + DAY * 400;
+    assert_eq!(
+        offered(&trust(&nothing, late), "antigravity"),
+        then_the_snapshot(&[])
+    );
+    believe(
+        &mut held,
+        &listing(5, Vec::new(), vec![withdrawn("antigravity", "1.3.0", None)]),
+        at(EXPIRES) - DAY,
+    );
+
+    let later = trust(&owned, late);
+
+    assert!(offered(&later, "antigravity").is_empty());
+}
+
+#[test]
+fn a_catalog_that_does_not_verify_leaves_the_state_as_it_was() {
+    let owned = Owned::new("trust-refused");
+    let mut held = trust(&owned, taken());
+    let good = listing(5, vec![release("goose", "1.4.1", None)], Vec::new());
+    believe(&mut held, &good, taken());
+    let before = fs::read(owned.0.join(DIRECTORY).join(FILE)).unwrap_or_default();
+    assert!(!before.is_empty());
+
+    let mut tampered = sign(&listing(
+        6,
+        vec![release("goose", "9.9.9", None)],
+        Vec::new(),
+    ));
+    tampered.index.push(b' ');
+    let bad_signature = held.take_in(
+        &tampered.index,
+        &tampered.signature,
+        &tampered.keys,
+        taken(),
+    );
+    let past_grace = take_in(
+        &mut held,
+        &listing(7, vec![release("goose", "9.9.9", None)], Vec::new()),
+        at(EXPIRES) + DAY * 8,
+    );
+
+    assert!(
+        matches!(
+            bad_signature,
+            Err(TrustError::Catalog(CatalogError::Signature))
+        ),
+        "{bad_signature:?}"
+    );
+    assert!(
+        matches!(past_grace, Err(TrustError::Catalog(CatalogError::Expired))),
+        "{past_grace:?}"
+    );
+    assert_eq!(offered(&held, "goose"), ["1.4.1"]);
+    let after = fs::read(owned.0.join(DIRECTORY).join(FILE)).unwrap_or_default();
+    assert_eq!(before, after);
+    // And none is written where nothing was ever believed.
+    let nothing = Owned::new("trust-nothing");
+    let mut empty = trust(&nothing, taken());
+    let refused = empty.take_in(
+        &tampered.index,
+        &tampered.signature,
+        &tampered.keys,
+        taken(),
+    );
+    assert!(refused.is_err());
+    assert!(!nothing.0.join(DIRECTORY).exists());
+}
+
+#[test]
+fn a_catalog_listing_one_release_twice_is_refused_by_its_own_error() {
+    let owned = Owned::new("trust-repeated");
+    let mut held = trust(&owned, taken());
+    let twice = listing(
+        5,
+        vec![
+            release("goose", "1.4.1", None),
+            release("goose", "1.4.1", None),
+        ],
+        Vec::new(),
+    );
+
+    let refused = take_in(&mut held, &twice, taken());
+
+    assert!(
+        matches!(refused, Err(TrustError::Repeated { .. })),
+        "{refused:?}"
+    );
+    assert!(offered(&held, "goose").is_empty());
+    // A version listed under two lock revisions is two releases, not one twice.
+    let revisions = listing(
+        5,
+        vec![
+            release("goose", "1.4.1", Some(1)),
+            release("goose", "1.4.1", Some(2)),
+            release("goose", "1.4.1", None),
+        ],
+        Vec::new(),
+    );
+    believe(&mut held, &revisions, taken());
+    assert_eq!(offered(&held, "goose"), ["1.4.1+1", "1.4.1+2", "1.4.1"]);
+}
+
+#[test]
+fn a_release_the_snapshot_and_the_catalog_both_list_is_offered_once_from_the_catalog() {
+    let owned = Owned::new("trust-both");
+    let mut held = trust(&owned, taken());
+    believe(
+        &mut held,
+        &listing(5, vec![release("antigravity", "1.3.0", None)], Vec::new()),
+        taken(),
+    );
+
+    let pins = held.offered(&agent("antigravity"));
+
+    let [pin] = pins.as_slice() else {
+        panic!("one pin, not {}", pins.len());
+    };
+    assert_eq!(&*pin.version, "1.3.0");
+    let url = pin.target.artifacts.first().map(|archive| &*archive.url);
+    assert!(url.is_some_and(|url| url.starts_with("https://github.com/example/")));
+}
+
+#[test]
+fn the_most_the_state_can_hold_is_kept_whole_within_its_ceiling() {
+    let owned = Owned::new("trust-worst");
+    let mut held = trust(&owned, taken());
+    // The longest key and version, with quotes the file has to escape, and the
+    // largest revision.
+    let quoted = |n: usize| format!("{n:04}{}", "\"".repeat(VERSION_BYTES - 4));
+    let longest = "a".repeat(32);
+    let withdrawals: Vec<Value> = (0..REVOKED_CAP)
+        .map(|n| {
+            json!({
+                "key": longest, "version": quoted(n),
+                "lock_revision": u64::MAX, "reason": "x"
+            })
+        })
+        .collect();
+    believe(&mut held, &listing(5, Vec::new(), withdrawals), taken());
+    // A catalog of the largest size, whose every byte the file has to escape.
+    let mut padded = release("goose", "1.4.1", None);
+    set(
+        &mut padded,
+        "/caution",
+        json!("\"".repeat(INDEX_BYTES / 2 - 4096)),
+    );
+    let big = listing(6, vec![padded], Vec::new());
+    assert!(serde_json::to_vec(&big).map_or(0, |bytes| bytes.len()) <= INDEX_BYTES);
+    believe(&mut held, &big, taken());
+
+    let length = fs::metadata(owned.0.join(DIRECTORY).join(FILE)).map_or(0, |meta| meta.len());
+
+    assert!(length > 2_000_000, "{length} is the worst case");
+    assert!(
+        length <= u64::try_from(STATE_BYTES).unwrap_or(u64::MAX),
+        "{length} bytes"
+    );
+    let mut restarted = trust(&owned, taken());
+    assert_eq!(offered(&restarted, "goose"), ["1.4.1"]);
+    let refused = take_in(
+        &mut restarted,
+        &listing(7, Vec::new(), vec![withdrawn("goose", "the 4097th", None)]),
+        taken(),
+    );
+    assert!(
+        matches!(refused, Err(TrustError::Revocations)),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn keys_that_replace_the_old_ones_are_not_held_to_the_serial_the_old_ones_reached() {
+    let owned = Owned::new("trust-replaced");
+    let mut old = trust(&owned, taken());
+    believe(
+        &mut old,
+        &listing(
+            u64::MAX,
+            vec![
+                release("antigravity", "1.4.1", None),
+                release("goose", "1.4.1", None),
+            ],
+            vec![withdrawn("goose", "1.4.1", None)],
+        ),
+        taken(),
+    );
+    // A launch reads the state with no key to check it under: what the old
+    // keys made held is offered, and what they revoked is not.
+    let mut reloaded = trust(&owned, taken());
+    assert_eq!(
+        offered(&reloaded, "antigravity"),
+        then_the_snapshot(&["1.4.1"])
+    );
+    assert!(offered(&reloaded, "goose").is_empty());
+    // A later build's keys: the same signer among others, so the same catalog
+    // verifies, but it is not the set the state was taken in under.
+    let replacement = replacement_keys();
+    let signed = sign(&listing(
+        3,
+        vec![release("goose", "1.4.1", None)],
+        Vec::new(),
+    ));
+
+    let taken_in = reloaded.take_in(&signed.index, &signed.signature, &replacement, taken());
+
+    assert!(taken_in.is_ok(), "{taken_in:?}");
+    // What the old keys made held is not kept, so not the release they
+    // listed; what they revoked stays revoked, so the replacement's catalog
+    // listing it does not offer it.
+    assert_eq!(offered(&reloaded, "antigravity"), then_the_snapshot(&[]));
+    assert!(offered(&reloaded, "goose").is_empty());
+    assert!(offered(&trust(&owned, taken()), "goose").is_empty());
+    // And the replacement keys are held to what they reached.
+    let again = sign(&listing(2, Vec::new(), Vec::new()));
+    let refused = reloaded.take_in(&again.index, &again.signature, &replacement, taken());
+    assert!(
+        matches!(
+            refused,
+            Err(TrustError::Catalog(CatalogError::Serial {
+                offered: 2,
+                held: 3
+            }))
+        ),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn two_processes_that_loaded_before_either_took_in_lose_nothing() {
+    let owned = Owned::new("trust-two");
+    let mut first = trust(&owned, taken());
+    let mut second = trust(&owned, taken());
+    believe(
+        &mut first,
+        &listing(9, Vec::new(), vec![withdrawn("goose", "1.4.1", None)]),
+        taken(),
+    );
+
+    // The second still holds what it loaded. A catalog older than the file's
+    // serial is refused against the file, not against its memory.
+    let stale = take_in(
+        &mut second,
+        &listing(5, vec![release("goose", "1.4.1", None)], Vec::new()),
+        taken(),
+    );
+
+    assert!(
+        matches!(
+            stale,
+            Err(TrustError::Catalog(CatalogError::Serial {
+                offered: 5,
+                held: 9
+            }))
+        ),
+        "{stale:?}"
+    );
+    let mut restarted = trust(&owned, taken());
+    assert!(offered(&restarted, "goose").is_empty());
+    assert!(matches!(
+        take_in(&mut restarted, &listing(6, Vec::new(), Vec::new()), taken()),
+        Err(TrustError::Catalog(CatalogError::Serial {
+            offered: 6,
+            held: 9
+        }))
+    ));
+    // One at or above the file's serial is merged with the file: the
+    // revocation the first process took in is still there.
+    let both = vec![
+        release("goose", "1.4.1", None),
+        release("goose", "1.5.0", None),
+    ];
+    believe(&mut second, &listing(10, both, Vec::new()), taken());
+    assert_eq!(offered(&second, "goose"), ["1.5.0"]);
+    assert_eq!(offered(&trust(&owned, taken()), "goose"), ["1.5.0"]);
+}
+
+#[test]
+fn processes_taking_in_at_once_keep_every_revocation() {
+    let owned = Owned::new("trust-threads");
+    let processes = 8_usize;
+    let releases = || -> Vec<Value> {
+        (0..processes)
+            .map(|n| release("goose", &format!("v{n}"), None))
+            .collect()
+    };
+    let catalogs: Vec<Signed> = (0..processes)
+        .map(|n| {
+            sign(&listing(
+                5,
+                releases(),
+                vec![withdrawn("goose", &format!("v{n}"), None)],
+            ))
+        })
+        .collect();
+    let loaded = Barrier::new(processes);
+
+    // Every one loads before any takes in, so each holds a view that none of
+    // the others' catalogs are in.
+    let results: Vec<Result<(), TrustError>> = std::thread::scope(|scope| {
+        let threads: Vec<_> = catalogs
+            .iter()
+            .map(|signed| {
+                let (owned, loaded) = (&owned, &loaded);
+                scope.spawn(move || {
+                    let mut held = trust(owned, taken());
+                    loaded.wait();
+                    held.take_in(&signed.index, &signed.signature, &signed.keys, taken())
+                })
+            })
+            .collect();
+        threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap_or(Err(TrustError::Contended)))
+            .collect()
+    });
+
+    assert!(results.iter().all(Result::is_ok), "{results:?}");
+    assert!(offered(&trust(&owned, taken()), "goose").is_empty());
+}
+
+#[test]
+fn a_state_that_is_there_and_cannot_be_used_is_refused_and_not_overwritten() {
+    let owned = Owned::new("trust-unusable");
+    let mut held = trust(&owned, taken());
+    believe(
+        &mut held,
+        &listing(
+            5,
+            vec![release("goose", "1.4.1", None)],
+            vec![withdrawn("antigravity", "1.3.0", None)],
+        ),
+        taken(),
+    );
+    let file = state_file(&owned);
+    let good = fs::read(&file).unwrap_or_default();
+    let other_format = String::from_utf8_lossy(&good).replacen(r#""format":1"#, r#""format":2"#, 1);
+    assert_ne!(other_format.as_bytes(), good, "the format is written");
+
+    for (what, garbage, why) in [
+        (
+            "another format",
+            other_format.into_bytes(),
+            Unusable::Format(2),
+        ),
+        ("not json", b"not json".to_vec(), Unusable::Corrupt),
+        ("a list", b"[]".to_vec(), Unusable::Corrupt),
+        ("no format", b"{}".to_vec(), Unusable::Corrupt),
+        (
+            "cut short",
+            good.get(..good.len() / 2).unwrap_or_default().to_vec(),
+            Unusable::Corrupt,
+        ),
+        ("too large", vec![b' '; STATE_BYTES + 1], Unusable::Oversize),
+    ] {
+        fs::write(&file, &garbage).unwrap_or_default();
+
+        let mut read = trust(&owned, taken());
+
+        assert_eq!(read.unusable(), Some(why), "{what}");
+        // Its revocations cannot be known, so nothing is offered, not even the
+        // snapshot's release.
+        assert!(offered(&read, "goose").is_empty(), "{what}");
+        assert!(offered(&read, "antigravity").is_empty(), "{what}");
+        let refused = take_in(
+            &mut read,
+            &listing(6, vec![release("goose", "1.4.1", None)], Vec::new()),
+            taken(),
+        );
+        assert!(
+            matches!(&refused, Err(TrustError::Unusable(said)) if *said == why),
+            "{what}: {refused:?}"
+        );
+        assert_eq!(fs::read(&file).unwrap_or_default(), garbage, "{what}");
+    }
+    // Only taking the file away makes it a state of nothing believed.
+    fs::remove_file(&file).unwrap_or_default();
+    let mut repaired = trust(&owned, taken());
+    assert_eq!(repaired.unusable(), None);
+    assert_eq!(offered(&repaired, "antigravity"), then_the_snapshot(&[]));
+    believe(
+        &mut repaired,
+        &listing(2, vec![release("goose", "1.4.1", None)], Vec::new()),
+        taken(),
+    );
+    assert_eq!(offered(&repaired, "goose"), ["1.4.1"]);
+}
+
+#[test]
+fn a_state_another_name_reaches_is_unusable_until_the_name_is_gone() {
+    let owned = Owned::new("trust-linked");
+    let mut held = trust(&owned, taken());
+    believe(
+        &mut held,
+        &listing(5, Vec::new(), vec![withdrawn("antigravity", "1.3.0", None)]),
+        taken(),
+    );
+    let backup = owned.0.join("backup");
+    fs::hard_link(state_file(&owned), &backup).unwrap_or_default();
+
+    let mut linked = trust(&owned, taken());
+
+    assert!(
+        matches!(linked.unusable(), Some(Unusable::Unreadable(_))),
+        "{:?}",
+        linked.unusable()
+    );
+    assert!(offered(&linked, "antigravity").is_empty());
+    let refused = take_in(&mut linked, &listing(6, Vec::new(), Vec::new()), taken());
+    assert!(
+        matches!(refused, Err(TrustError::Unusable(Unusable::Unreadable(_)))),
+        "{refused:?}"
+    );
+    fs::remove_file(&backup).unwrap_or_default();
+    let unlinked = trust(&owned, taken());
+    assert_eq!(unlinked.unusable(), None);
+    // Its revocation was there all along.
+    assert!(offered(&unlinked, "antigravity").is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_state_its_owner_cannot_read_is_unusable_and_not_deleted() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let owned = Owned::new("trust-mode");
+    let mut held = trust(&owned, taken());
+    believe(
+        &mut held,
+        &listing(5, Vec::new(), vec![withdrawn("antigravity", "1.3.0", None)]),
+        taken(),
+    );
+    let file = state_file(&owned);
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o000)).unwrap_or_default();
+    // A process that can read a file whatever its mode, as root can, has no
+    // unreadable state to refuse.
+    if fs::File::open(&file).is_ok() {
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap_or_default();
+        return;
+    }
+
+    let mut unreadable = trust(&owned, taken());
+
+    assert!(
+        matches!(unreadable.unusable(), Some(Unusable::Unreadable(_))),
+        "{:?}",
+        unreadable.unusable()
+    );
+    assert!(offered(&unreadable, "antigravity").is_empty());
+    assert!(
+        take_in(
+            &mut unreadable,
+            &listing(6, Vec::new(), Vec::new()),
+            taken()
+        )
+        .is_err()
+    );
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap_or_default();
+    assert!(offered(&trust(&owned, taken()), "antigravity").is_empty());
+}
+
+#[test]
+fn a_catalog_that_cannot_be_kept_still_narrows_what_this_process_offers() {
+    let owned = Owned::new("trust-unkept");
+    let mut held = trust(&owned, taken());
+    let goose = || vec![release("goose", "1.4.1", None)];
+    believe(&mut held, &listing(2, goose(), Vec::new()), taken());
+    assert_eq!(offered(&held, "goose"), ["1.4.1"]);
+    // The lock cannot be taken: its name is a directory.
+    let lock = owned.0.join(DIRECTORY).join(LOCK);
+    fs::remove_file(&lock).unwrap_or_default();
+    fs::create_dir(&lock).unwrap_or_default();
+    let revoking = listing(3, goose(), vec![withdrawn("goose", "1.4.1", None)]);
+
+    let refused = take_in(&mut held, &revoking, taken());
+
+    assert!(matches!(refused, Err(TrustError::Io(_))), "{refused:?}");
+    // Revocations only narrow what is offered, so this process applies them
+    // though they could not be kept.
+    assert!(offered(&held, "goose").is_empty());
+    // What was kept is as it was.
+    assert_eq!(offered(&trust(&owned, taken()), "goose"), ["1.4.1"]);
+    // And the catalog is believed once it can be kept.
+    fs::remove_dir(&lock).unwrap_or_default();
+    believe(&mut held, &revoking, taken());
+    assert!(offered(&trust(&owned, taken()), "goose").is_empty());
+}
+
+#[test]
+fn a_trust_state_another_process_holds_is_waited_for_a_while_and_then_refused() {
+    let owned = Owned::new("trust-held");
+    let wait = Duration::from_millis(200);
+    let mut held = trust(&owned, taken()).waiting(wait);
+    let goose = || vec![release("goose", "1.4.1", None)];
+    believe(&mut held, &listing(2, goose(), Vec::new()), taken());
+    let lock = crucible_privacy::lock(&owned.0.join(DIRECTORY).join(LOCK));
+    assert!(
+        lock.as_ref()
+            .is_ok_and(|file| crucible_privacy::try_lock_identity(file).unwrap_or(false)),
+        "the lock is taken"
+    );
+    let revoking = sign(&listing(
+        3,
+        goose(),
+        vec![withdrawn("goose", "1.4.1", None)],
+    ));
+
+    let started = Instant::now();
+    let refused = held.take_in(
+        &revoking.index,
+        &revoking.signature,
+        &revoking.keys,
+        taken(),
+    );
+
+    assert!(matches!(refused, Err(TrustError::Contended)), "{refused:?}");
+    assert!(started.elapsed() >= wait, "{:?}", started.elapsed());
+    assert!(started.elapsed() < Duration::from_secs(10));
+    assert!(offered(&held, "goose").is_empty());
+    // Let go, and the same catalog is kept.
+    drop(lock);
+    held.take_in(
+        &revoking.index,
+        &revoking.signature,
+        &revoking.keys,
+        taken(),
+    )
+    .unwrap_or_default();
+    assert!(offered(&trust(&owned, taken()), "goose").is_empty());
+}
+
+#[test]
+fn a_key_set_change_keeps_the_revocations_and_lowers_only_the_floor() {
+    let owned = Owned::new("trust-reset");
+    let mut old = trust(&owned, taken());
+    believe(
+        &mut old,
+        &listing(
+            9,
+            vec![release("goose", "1.4.1", None)],
+            vec![withdrawn("goose", "1.4.1", None)],
+        ),
+        taken(),
+    );
+    let replacement = replacement_keys();
+    // A catalog from before the revocation, still signed by a key the new set
+    // keeps.
+    let stale = sign(&listing(
+        2,
+        vec![release("goose", "1.4.1", None)],
+        Vec::new(),
+    ));
+    let mut launch = trust(&owned, taken());
+
+    let taken_in = launch.take_in(&stale.index, &stale.signature, &replacement, taken());
+
+    assert!(taken_in.is_ok(), "{taken_in:?}");
+    assert!(offered(&launch, "goose").is_empty());
+    assert!(offered(&trust(&owned, taken()), "goose").is_empty());
+}
+
+#[test]
+fn a_key_set_change_drops_the_revocations_only_when_keeping_them_would_pass_the_cap() {
+    let owned = Owned::new("trust-reset-cap");
+    let mut old = trust(&owned, taken());
+    let many: Vec<Value> = (0..REVOKED_CAP)
+        .map(|n| withdrawn("goose", &format!("v{n}"), None))
+        .collect();
+    believe(&mut old, &listing(9, Vec::new(), many), taken());
+    let replacement = replacement_keys();
+    let fresh = sign(&listing(
+        2,
+        vec![
+            release("goose", "v0", None),
+            release("goose", "extra", None),
+        ],
+        vec![withdrawn("goose", "extra", None)],
+    ));
+    let mut launch = trust(&owned, taken());
+
+    let taken_in = launch.take_in(&fresh.index, &fresh.signature, &replacement, taken());
+
+    assert!(taken_in.is_ok(), "{taken_in:?}");
+    // The old keys' revocations were more than fit beside the new one, so
+    // they are gone and the new one stands.
+    assert_eq!(offered(&launch, "goose"), ["v0"]);
+    assert_eq!(offered(&trust(&owned, taken()), "goose"), ["v0"]);
+}
+
+/// A snapshot that withdraws `version` of `name`, as a built-in one could.
+fn snapshot_withdrawing(name: &str, version: &str) -> Catalog {
+    Catalog {
+        serial: 1,
+        signed_at: UNIX_EPOCH,
+        expires: UNIX_EPOCH,
+        entries: Vec::new(),
+        revoked: vec![Revoked {
+            key: agent(name),
+            version: version.into(),
+            lock_revision: None,
+            reason: "It was withdrawn.".into(),
+        }],
+    }
+}
+
+#[test]
+fn the_snapshots_own_revocations_are_in_every_base_state_and_count() {
+    let snapshot = snapshot_withdrawing("antigravity", "1.3.0");
+    let [reviewed] = SNAPSHOT.entries() else {
+        panic!("one entry");
+    };
+    // A machine with nothing believed.
+    assert!(State::rebuilt(&snapshot).withdraws(reviewed));
+    assert!(!State::rebuilt(&SNAPSHOT).withdraws(reviewed));
+    // A state written before the snapshot withdrew it.
+    let owned = Owned::new("trust-snapshot-revoked");
+    let mut held = trust(&owned, taken());
+    believe(&mut held, &listing(5, Vec::new(), Vec::new()), taken());
+    let kept = fs::read(state_file(&owned)).unwrap_or_default();
+    assert!(matches!(decode(&kept, &snapshot), Ok(state) if state.withdraws(reviewed)));
+    assert!(matches!(decode(&kept, &SNAPSHOT), Ok(state) if !state.withdraws(reviewed)));
+    // And they take their place under the cap: a snapshot that withdraws as
+    // many as are kept leaves no room for one more.
+    let full = Catalog {
+        revoked: (0..REVOKED_CAP)
+            .map(|n| Revoked {
+                key: agent("goose"),
+                version: format!("v{n}").into(),
+                lock_revision: None,
+                reason: "It was withdrawn.".into(),
+            })
+            .collect(),
+        ..snapshot
+    };
+    let one_more = fetched(&listing(
+        5,
+        Vec::new(),
+        vec![withdrawn("goose", "one-more", None)],
+    ));
+    let Ok(one_more) = one_more else {
+        panic!("a good catalog is believed");
+    };
+    let merged = merge(State::rebuilt(&full), &one_more, "keys", &full);
+    assert!(matches!(merged, Err(TrustError::Revocations)));
+}
+
+#[test]
+fn leftover_drafts_of_a_crashed_writer_are_removed_and_do_not_block_the_next() {
+    let owned = Owned::new("trust-drafts");
+    let mut held = trust(&owned, taken());
+    believe(
+        &mut held,
+        &listing(2, vec![release("goose", "1.4.1", None)], Vec::new()),
+        taken(),
+    );
+    // Every name this process could draw, left by a process that had the same
+    // id and died before it renamed.
+    let directory = owned.0.join(DIRECTORY);
+    for n in 0..5_000_u32 {
+        fs::write(
+            directory.join(format!(".trust.{}.{n}.writing", std::process::id())),
+            b"x",
+        )
+        .unwrap_or_default();
+    }
+
+    let kept = take_in(
+        &mut held,
+        &listing(3, Vec::new(), vec![withdrawn("goose", "1.4.1", None)]),
+        taken(),
+    );
+
+    assert!(kept.is_ok(), "{kept:?}");
+    let left: Vec<String> = fs::read_dir(&directory)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".writing"))
+        .collect();
+    assert!(left.is_empty(), "{} drafts left", left.len());
+    assert!(offered(&trust(&owned, taken()), "goose").is_empty());
+}
+
+#[test]
+fn a_release_published_only_for_another_platform_is_not_offered_here() {
+    let owned = Owned::new("trust-platform");
+    let mut held = trust(&owned, taken());
+    let mut elsewhere = release("goose", "1.4.1", None);
+    set(
+        &mut elsewhere,
+        "/targets/0/platform",
+        json!("plan9-riscv64"),
+    );
+    // One listing a target for another platform ahead of this one's.
+    let mut both = release("gemini", "0.9.0", None);
+    let mut other = both.pointer("/targets/0").cloned().unwrap_or_default();
+    set(&mut other, "/platform", json!("plan9-riscv64"));
+    let mut targets = vec![other];
+    targets.extend(
+        both.pointer("/targets")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default(),
+    );
+    set(&mut both, "/targets", json!(targets));
+
+    believe(
+        &mut held,
+        &listing(2, vec![elsewhere, both], Vec::new()),
+        taken(),
+    );
+
+    assert!(offered(&held, "goose").is_empty());
+    let pins = held.offered(&agent("gemini"));
+    let [pin] = pins.as_slice() else {
+        panic!("one pin, not {}", pins.len());
+    };
+    assert_eq!(*pin.target.platform, *here());
 }
