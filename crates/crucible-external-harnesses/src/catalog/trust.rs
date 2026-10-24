@@ -8,7 +8,10 @@
 //! the next catalog that omits it and the expiry of the one that carried it, and
 //! the snapshot's own are among them. At most [`REVOKED_CAP`] are kept, so a
 //! catalog that would take the count past that is refused whole. A release is
-//! offered once, however many sources list it, from the newest source.
+//! offered once, however many sources list it, from the newest source. The
+//! reason a revocation gives is not kept with it: [`Trust::reason`] reads it
+//! from the catalog held and the snapshot, so a revocation that only the kept
+//! set still names refuses its release with no reason to give.
 //!
 //! The memory is one owner-only file in `agent-catalog` under the state
 //! directory, never in a cache, so clearing caches touches none of it. It holds
@@ -425,6 +428,35 @@ impl Trust {
             })
         };
         named(None) || lock_revision.is_some_and(|revision| named(Some(revision)))
+    }
+
+    /// Why `version` of the agent `key` at `lock_revision` was revoked, as the
+    /// catalog held, expired or not, or the snapshot says, for the user who is
+    /// told; nothing where neither carries a revocation naming it, as one taken
+    /// in from a catalog since replaced is kept without its reason.
+    #[must_use]
+    pub fn reason(
+        &self,
+        key: &AgentKey,
+        version: &str,
+        lock_revision: Option<u64>,
+    ) -> Option<&str> {
+        let Memory::Usable(state) = &self.memory else {
+            return None;
+        };
+        state
+            .held
+            .iter()
+            .chain(std::iter::once(&*SNAPSHOT))
+            .flat_map(Catalog::revoked)
+            .find(|revoked| {
+                revoked.key == *key
+                    && *revoked.version == *version
+                    && revoked
+                        .lock_revision
+                        .is_none_or(|revision| Some(revision) == lock_revision)
+            })
+            .map(|revoked| &*revoked.reason)
     }
 }
 

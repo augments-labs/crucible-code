@@ -1,7 +1,16 @@
 //! The agents door, driven with no terminal and no conversation: nothing is
 //! fetched before the answer, a no changes nothing, a download goes only where
 //! it is listed and a cancelled one commits nothing, and an update and a
-//! rollback move the instances' `executable` between versions.
+//! rollback move the instances' `executable` between versions. A version
+//! the catalog revoked is refused at launch with its reason, an agent started
+//! from the store cannot write into its version, and a switch is smoke-tested
+//! only where a launcher's sandbox is on with the network closed and the
+//! agent's route has its yes, keeping every instance where it was when the
+//! smoke fails.
+//!
+//! The cases that start the fake peer in the sandbox pass over nothing on a
+//! machine whose sandbox cannot enforce, and fail there on a job that sets
+//! `CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX`.
 //!
 //! Each release here is a program published bare and built at review in its
 //! vendor's place, so it is downloaded from the catalog's own host: the fake
@@ -15,20 +24,32 @@ use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use crucible_app::agent_download::DownloadError;
-use crucible_app::catalog_fetch::Source;
+use crucible_app::backends::{AgentRow, CatalogRow, Registry};
+use crucible_app::catalog_fetch::{self, Source};
 use crucible_app::client::agents::{AgentsError, How, Outcome, Shelf, Watching, run};
 use crucible_app::client::{Front, Shown};
+use crucible_app::content_use::{Consent, Routes};
+use crucible_app::launching::{Agent, Launcher, Steps, Unlaunched};
 use crucible_client_api::{
     Capabilities, Capability, Command, Correlation, Decision, ErrorCode, InstallProgress, Name,
     Pending, PendingId, Refusal, Request, Said,
 };
-use crucible_external_harnesses::catalog::SNAPSHOT;
+use crucible_config::{Driver, ExternalAgent};
 use crucible_external_harnesses::catalog::fixture::signed;
+use crucible_external_harnesses::catalog::{Catalog, Held, SNAPSHOT};
+use crucible_external_harnesses::fake_peer::{self, Reply as Played, Script as Peer, scripts::acp};
+use crucible_external_harnesses::{Account, Control, Reading};
 use crucible_http::ProxyEnv;
 use crucible_runtime::{BoxFuture, Cancel};
+use crucible_sandbox::{
+    SandboxCapability, SandboxEnablement, SandboxFeature, SandboxPolicy, SandboxService,
+};
+use crucible_sandbox_local::LocalSandbox;
+use crucible_tools::Mode;
+use crucible_types::AgentKey;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 
@@ -1217,5 +1238,561 @@ fn an_install_no_instance_runs_keeps_the_version_before_it_for_a_rollback() -> R
 
     assert_eq!(fs::read(bench.program("2.0.0"))?, TWO);
     assert_eq!(fs::read(bench.program("1.0.0"))?, ONE);
+    Ok(())
+}
+
+/// What a vendor says of what it is sent, so the route of an entry carrying
+/// it can be asked about and given a yes.
+fn statement() -> Value {
+    json!({
+        "text": "The vendor may use what you send to improve goose.",
+        "source": "https://vendor.example/terms/data",
+        "date": "24 Oct 2026",
+        "origins": ["https://api.vendor.example"],
+    })
+}
+
+/// `entry` carrying the vendor's statement of content use.
+fn stating(mut entry: Value) -> Value {
+    if let Some(object) = entry.as_object_mut() {
+        object.insert("content_use".into(), statement());
+    }
+    entry
+}
+
+/// The row `entry` gives its agent, as a signed catalog carries it.
+fn row_of(entry: &Value) -> Result<CatalogRow, Failed> {
+    let catalog = json!({"schema": 1, "serial": 1, "entries": [entry], "revoked": []});
+    let signed = signed(&serde_json::to_vec(&catalog)?);
+    let catalog = Catalog::verify(
+        &signed.index,
+        &signed.signature,
+        &signed.keys,
+        Held(0),
+        SystemTime::now(),
+    )?;
+    let entry = catalog.entries().first().ok_or("an entry")?;
+    Ok(CatalogRow::new(
+        entry,
+        entry.targets.first().ok_or("a target")?,
+    )?)
+}
+
+impl Server {
+    /// Publishes a catalog of `entries`, revoking what `revoked` names.
+    fn catalog(&self, serial: u64, entries: &[Value], revoked: &Value) -> Result<(), Failed> {
+        let catalog = json!({
+            "schema": 1,
+            "serial": SNAPSHOT.serial() + serial,
+            "entries": entries,
+            "revoked": revoked,
+        });
+        let signed = signed(&serde_json::to_vec(&catalog)?);
+        self.serve("/catalog/index.json", Reply::Body(signed.index));
+        self.serve("/catalog/index.json.minisig", Reply::Body(signed.signature));
+        Ok(())
+    }
+}
+
+fn runtime() -> Result<tokio::runtime::Runtime, Failed> {
+    Ok(tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()?)
+}
+
+/// How a start of `work`, an instance of goose run as `executable`, from the
+/// row `row`, ended with the trust state `bench` keeps, and what the steps
+/// would say of it before any question about its route.
+fn launched(
+    bench: &Bench,
+    row: CatalogRow,
+    executable: &Path,
+) -> Result<(Result<(), Unlaunched>, Option<Unlaunched>), Failed> {
+    let consent = Consent::new(Routes::production().cataloging(row.warned().ok().cloned()));
+    consent.give("agent:goose");
+    let registry: &'static Registry = Box::leak(Box::new(
+        Registry::new(&[]).cataloging(Box::leak(Box::new([row.clone()]))),
+    ));
+    let key = AgentKey::new("goose")?;
+    let instance = ExternalAgent::unwritten(
+        "work",
+        Driver::Catalog,
+        &executable.to_string_lossy(),
+        None,
+        Some(&key),
+    )
+    .ok_or("a catalog instance naming its agent")?;
+    let agent = Agent::configured(&instance, registry, |_| None).ok_or("its catalog row")?;
+    let runtime = runtime()?;
+    let handle = runtime.handle().clone();
+    let policy = SandboxPolicy::standard(&bench.tree.workspace()?)?.with_enabled(false);
+    let sandbox: Arc<dyn SandboxService> =
+        Arc::new(LocalSandbox::new().watching_on(handle.clone()));
+    let state = catalog_fetch::state_in(bench.home.path());
+    let launcher = Launcher::new(
+        Arc::clone(&sandbox),
+        handle.clone(),
+        &policy,
+        &consent,
+        &state,
+    );
+    let control = Control::new().ok_or("a control")?;
+    let mut dialect = agent.row().dialect(Mode::Ask, None, None)?;
+    let ended = runtime
+        .block_on(launcher.launch(&agent, &control, dialect.as_mut(), None))
+        .map(drop);
+    let steps = Steps::new(
+        Launcher::new(sandbox, handle, &policy, &consent, &state),
+        Arc::new(SandboxEnablement::new(false, false)),
+        registry,
+        None,
+    );
+    let before = steps.refusal(&AgentRow::Catalog(row), &instance);
+    Ok((ended, before))
+}
+
+#[test]
+fn a_revoked_version_is_refused_at_launch_with_its_reason_and_offers_rollback_or_update()
+-> Result<(), Failed> {
+    let bench = Bench::new("agents-door-revoked")?;
+    bench.server.publish(1, &[("1.0.0", ONE)], &[]);
+    bench.configure(&bench.program("1.0.0"), &json!({}))?;
+    let mut front = answering(&bench.server, Some("Install"));
+    let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+    assert!(
+        matches!(installed, Ok(Outcome::Moved { .. })),
+        "{installed:?}"
+    );
+    bench
+        .server
+        .serve(&asset_path(TWO), Reply::Body(TWO.to_vec()));
+    bench.server.catalog(
+        2,
+        &[goose("2.0.0", TWO)],
+        &json!([{"key": "goose", "version": "1.0.0", "reason": "It wrote outside its directory."}]),
+    )?;
+    // Any command at the door takes the catalog in.
+    let (listed, _) = bench.ask(
+        Command::AgentCatalog,
+        &mut answering(&bench.server, None),
+        false,
+    )?;
+    assert!(
+        matches!(
+            listed,
+            Ok(Outcome::Catalog {
+                unrefreshed: None,
+                ..
+            })
+        ),
+        "{listed:?}"
+    );
+
+    let row = row_of(&stating(goose("1.0.0", ONE)))?;
+    let (ended, before) = launched(&bench, row, &bench.program("1.0.0"))?;
+
+    let refused = ended.err().ok_or("the revoked version was started")?;
+    let said = refused.to_string();
+    for part in [
+        "1.0.0",
+        "revoked",
+        "It wrote outside its directory.",
+        "roll",
+        "update",
+    ] {
+        assert!(said.contains(part), "{part:?} in {said:?}");
+    }
+    assert_eq!(before.map(|why| why.to_string()), Some(said));
+    Ok(())
+}
+
+#[test]
+fn a_version_in_the_store_is_refused_at_launch_while_the_trust_state_cannot_be_used()
+-> Result<(), Failed> {
+    let bench = Bench::new("agents-door-untrusted")?;
+    bench.server.publish(1, &[("1.0.0", ONE)], &[]);
+    bench.configure(&bench.program("1.0.0"), &json!({}))?;
+    let mut front = answering(&bench.server, Some("Install"));
+    let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+    assert!(
+        matches!(installed, Ok(Outcome::Moved { .. })),
+        "{installed:?}"
+    );
+    let file = catalog_fetch::trust_in(bench.home.path()).file();
+    fs::write(&file, b"not a trust state")?;
+
+    let row = row_of(&stating(goose("1.0.0", ONE)))?;
+    let (ended, _) = launched(&bench, row, &bench.program("1.0.0"))?;
+
+    let said = ended
+        .err()
+        .ok_or("a version was started whose revocations are not known")?
+        .to_string();
+    assert!(said.contains(&file.display().to_string()), "{said:?}");
+    Ok(())
+}
+
+/// The program `command` of a release goose is published as, and the script
+/// beside it, as the bytes of a fake peer playing `script`.
+fn peer(script: &Peer) -> Result<(Vec<u8>, Vec<u8>), Failed> {
+    let made = Tree::new(&format!(
+        "agents-door-peer-{}",
+        PEERS.fetch_add(1, Ordering::Relaxed)
+    ))?;
+    let program = fake_peer::install(&made.0, "goose", script)?;
+    Ok((fs::read(&program)?, fs::read(made.0.join("script"))?))
+}
+
+static PEERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// The command goose's peer is started as on this platform.
+fn command() -> String {
+    format!("goose{}", std::env::consts::EXE_SUFFIX)
+}
+
+/// One file of a release, built at review and kept on the catalog's host.
+fn artifact(path: &str, bytes: &[u8]) -> Value {
+    json!({
+        "url": format!("https://downloads.example.com/{path}"),
+        "sha256": "a".repeat(64),
+        "size": 1000,
+        "format": "bare",
+        "unpacked": bytes.len(),
+        "decompressed": bytes.len(),
+        "files": [{"path": path, "size": bytes.len(), "sha256": digest(bytes), "exec": true}],
+        "replaced_by": {"sha256": digest(bytes), "size": bytes.len()}
+    })
+}
+
+impl Server {
+    /// `goose` at `version`, released as the fake peer `played` is: its
+    /// program and its script, each kept on this host.
+    fn peer_release(&self, version: &str, played: &(Vec<u8>, Vec<u8>)) -> Value {
+        let (program, script) = played;
+        for bytes in [program, script] {
+            self.serve(&asset_path(bytes), Reply::Body(bytes.clone()));
+        }
+        let mut release = stating(goose(version, program));
+        set(&mut release, "/targets/0/cmd", json!(command()));
+        set(&mut release, "/targets/0/args", json!([]));
+        set(
+            &mut release,
+            "/targets/0/artifacts",
+            json!([artifact(&command(), program), artifact("script", script)]),
+        );
+        release
+    }
+}
+
+/// Whether this machine's sandbox holds a program to a closed network and to
+/// its filesystem rules. Where it does not, a smoke test can run nowhere here,
+/// which is a failure on a job that requires the sandbox and a pass over
+/// nothing elsewhere.
+fn enforcing(runtime: &tokio::runtime::Runtime) -> Result<bool, Failed> {
+    let service = LocalSandbox::new().watching_on(runtime.handle().clone());
+    let enforced = match runtime.block_on(service.probe()) {
+        Ok((_, capabilities)) => [SandboxFeature::NetworkDeny, SandboxFeature::Filesystem]
+            .into_iter()
+            .all(|feature| capabilities.claim(feature) == SandboxCapability::Enforced),
+        Err(_) => false,
+    };
+    if !enforced && std::env::var_os("CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX").is_some() {
+        return Err("this job requires the enforcing sandbox, and it is unavailable".into());
+    }
+    Ok(enforced)
+}
+
+impl Bench {
+    /// `command` asked of the door on `runtime`, lent a launcher whose sandbox
+    /// is on where `confined`, whose network is closed, and whose route
+    /// `agent:goose` has its yes where `yes`, as `release` states its content
+    /// use.
+    fn ask_smoking(
+        &self,
+        (command, front): (Command, &mut Answering<'_>),
+        (confined, yes): (bool, bool),
+        release: &Value,
+        runtime: &tokio::runtime::Runtime,
+    ) -> Result<Result<Outcome, AgentsError>, Failed> {
+        let row = row_of(release)?;
+        let consent = Consent::new(Routes::production().cataloging(row.warned().ok().cloned()));
+        if yes {
+            consent.give("agent:goose");
+        }
+        let policy = SandboxPolicy::standard(&self.tree.workspace()?)?.with_enabled(confined);
+        let handle = runtime.handle().clone();
+        let sandbox: Arc<dyn SandboxService> =
+            Arc::new(LocalSandbox::new().watching_on(handle.clone()));
+        let state = catalog_fetch::state_in(self.home.path());
+        let launcher = Launcher::new(sandbox, handle, &policy, &consent, &state);
+        let lent = Shelf {
+            catalog: self.server.source(),
+            home: &self.home,
+            smoke: Some(&launcher),
+        };
+        let request = request(command);
+        let cancel = Cancel::new();
+        Ok(runtime.block_on(run(
+            &request,
+            &lent,
+            front,
+            Watching {
+                progress: &mut |_| {},
+                cancel: &cancel,
+            },
+        )))
+    }
+
+    /// Installs goose 1.0.0 for `work`, as an earlier install left it.
+    fn installed_before(&self) -> Result<(), Failed> {
+        self.server.publish(1, &[("1.0.0", ONE)], &[]);
+        self.configure(&self.program("1.0.0"), &json!({}))?;
+        let (installed, _) = self.ask(
+            install("1.0.0")?,
+            &mut answering(&self.server, Some("Install")),
+            false,
+        )?;
+        match installed {
+            Ok(Outcome::Moved { .. }) => Ok(()),
+            other => Err(format!("installed before: {other:?}").into()),
+        }
+    }
+}
+
+fn update() -> Result<Command, Failed> {
+    Ok(Command::UpdateAgent {
+        agent: name("goose")?,
+    })
+}
+
+/// What the agent answers initializing with, once and at every start, writing
+/// nothing beside itself.
+fn answers(version: &str) -> Peer {
+    Peer::once(
+        Played::new()
+            .hear(1)
+            .say(acp::initialized("goose", version, "agent-login")),
+    )
+}
+
+#[test]
+fn a_switch_is_smoke_tested_where_the_route_has_its_yes_and_the_sandbox_closes_the_network()
+-> Result<(), Failed> {
+    let runtime = runtime()?;
+    if !enforcing(&runtime)? {
+        return Ok(());
+    }
+    let bench = Bench::new("agents-door-smoked")?;
+    bench.installed_before()?;
+    let release = bench
+        .server
+        .peer_release("2.0.0", &peer(&answers("2.0.0"))?);
+    bench
+        .server
+        .catalog(2, &[release.clone(), goose("1.0.0", ONE)], &json!([]))?;
+    let mut front = answering(&bench.server, Some("Update"));
+
+    let updated = bench.ask_smoking((update()?, &mut front), (true, true), &release, &runtime)?;
+
+    assert!(
+        matches!(&updated, Ok(Outcome::Moved { version, .. }) if &**version == "2.0.0"),
+        "{updated:?}"
+    );
+    assert!(
+        facts(&front)?
+            .iter()
+            .any(|fact| fact.starts_with("Smoke-tested")),
+        "{:?}",
+        facts(&front)
+    );
+    assert_eq!(
+        bench.executable()?,
+        bench.program("2.0.0").to_string_lossy()
+    );
+    Ok(())
+}
+
+#[test]
+fn a_smoke_with_a_wrong_agent_info_keeps_the_old_executable() -> Result<(), Failed> {
+    let runtime = runtime()?;
+    if !enforcing(&runtime)? {
+        return Ok(());
+    }
+    let bench = Bench::new("agents-door-smoke-wrong")?;
+    bench.installed_before()?;
+    let release = bench
+        .server
+        .peer_release("2.0.0", &peer(&answers("9.9.9"))?);
+    bench
+        .server
+        .catalog(2, &[release.clone(), goose("1.0.0", ONE)], &json!([]))?;
+    let mut front = answering(&bench.server, Some("Update"));
+
+    let updated = bench.ask_smoking((update()?, &mut front), (true, true), &release, &runtime)?;
+
+    let failed = updated.err().ok_or("the switch went ahead")?.to_string();
+    assert!(failed.contains("9.9.9"), "{failed:?}");
+    assert_eq!(
+        bench.executable()?,
+        bench.program("1.0.0").to_string_lossy()
+    );
+    Ok(())
+}
+
+#[test]
+fn the_fake_peer_writing_into_its_root_fails_its_smoke_and_keeps_the_old_executable()
+-> Result<(), Failed> {
+    let runtime = runtime()?;
+    if !enforcing(&runtime)? {
+        return Ok(());
+    }
+    let bench = Bench::new("agents-door-smoke-writes")?;
+    bench.installed_before()?;
+    // It keeps its place in the script in a file beside itself.
+    let writing =
+        Peer::of([Played::new()
+            .hear(1)
+            .say(acp::initialized("goose", "2.0.0", "agent-login"))]);
+    let release = bench.server.peer_release("2.0.0", &peer(&writing)?);
+    bench
+        .server
+        .catalog(2, &[release.clone(), goose("1.0.0", ONE)], &json!([]))?;
+    let mut front = answering(&bench.server, Some("Update"));
+
+    let updated = bench.ask_smoking((update()?, &mut front), (true, true), &release, &runtime)?;
+
+    assert!(updated.is_err(), "{updated:?}");
+    let root = bench.programs().join("2.0.0");
+    assert!(
+        root.join("script").is_file(),
+        "the release was not put in place"
+    );
+    assert!(!root.join("played").exists(), "it wrote into its root");
+    assert_eq!(
+        bench.executable()?,
+        bench.program("1.0.0").to_string_lossy()
+    );
+    Ok(())
+}
+
+#[test]
+fn a_switch_says_why_it_is_not_smoke_tested_where_the_sandbox_is_off_or_the_route_has_no_yes()
+-> Result<(), Failed> {
+    let runtime = runtime()?;
+    for (index, (confined, yes, why)) in [
+        (false, true, "the sandbox is off"),
+        (true, false, "has no yes"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let bench = Bench::new(&format!("agents-door-unsmoked-{index}"))?;
+        bench.installed_before()?;
+        let release = stating(goose("2.0.0", TWO));
+        bench
+            .server
+            .serve(&asset_path(TWO), Reply::Body(TWO.to_vec()));
+        bench
+            .server
+            .catalog(2, &[release.clone(), goose("1.0.0", ONE)], &json!([]))?;
+        let mut front = answering(&bench.server, Some("Update"));
+
+        let updated =
+            bench.ask_smoking((update()?, &mut front), (confined, yes), &release, &runtime)?;
+
+        assert!(
+            matches!(&updated, Ok(Outcome::Moved { version, .. }) if &**version == "2.0.0"),
+            "{updated:?}"
+        );
+        assert!(
+            facts(&front)?
+                .iter()
+                .any(|fact| fact.starts_with("Not smoke-tested") && fact.contains(why)),
+            "{why:?} in {:?}",
+            facts(&front)
+        );
+    }
+    Ok(())
+}
+
+/// What goose 1.0.0, installed through the door as the fake peer playing
+/// `script`, says when its version is asked, started from the store with the
+/// sandbox on.
+fn asked_from_the_store(name: &str, script: &Peer) -> Result<Reading, Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new(name)?;
+    let release = bench.server.peer_release("1.0.0", &peer(script)?);
+    bench
+        .server
+        .catalog(1, std::slice::from_ref(&release), &json!([]))?;
+    let program = bench.programs().join("1.0.0").join(command());
+    bench.configure(&program, &json!({}))?;
+    let (installed, _) = bench.ask(
+        install("1.0.0")?,
+        &mut answering(&bench.server, Some("Install")),
+        false,
+    )?;
+    if !matches!(installed, Ok(Outcome::Moved { .. })) {
+        return Err(format!("installed: {installed:?}").into());
+    }
+    let row = row_of(&release)?;
+    let consent = Consent::new(Routes::production().cataloging(row.warned().ok().cloned()));
+    consent.give("agent:goose");
+    let registry: &'static Registry = Box::leak(Box::new(
+        Registry::new(&[]).cataloging(Box::leak(Box::new([row]))),
+    ));
+    let key = AgentKey::new("goose")?;
+    let instance = ExternalAgent::unwritten(
+        "work",
+        Driver::Catalog,
+        &program.to_string_lossy(),
+        None,
+        Some(&key),
+    )
+    .ok_or("a catalog instance naming its agent")?;
+    let agent = Agent::configured(&instance, registry, |_| None).ok_or("its catalog row")?;
+    let handle = runtime.handle().clone();
+    let policy = SandboxPolicy::standard(&bench.tree.workspace()?)?;
+    let sandbox: Arc<dyn SandboxService> =
+        Arc::new(LocalSandbox::new().watching_on(handle.clone()));
+    let state = catalog_fetch::state_in(bench.home.path());
+    let launcher = Launcher::new(sandbox, handle, &policy, &consent, &state);
+    let control = Control::new().ok_or("a control")?;
+    let mut dialect = agent.row().dialect(Mode::Ask, None, None)?;
+    let read = runtime.block_on(launcher.account(
+        &agent,
+        &control,
+        dialect.as_mut(),
+        Account::Version,
+        &|_| {},
+    ))?;
+    assert!(
+        !bench.programs().join("1.0.0").join("played").exists(),
+        "it wrote into its root"
+    );
+    Ok(read)
+}
+
+#[test]
+fn an_agent_started_from_the_store_reads_its_version_and_cannot_write_into_it() -> Result<(), Failed>
+{
+    if !enforcing(&runtime()?)? {
+        return Ok(());
+    }
+
+    let reading = asked_from_the_store("agents-door-root-read", &answers("1.0.0"))?;
+    let writing = asked_from_the_store(
+        "agents-door-root-write",
+        &Peer::of([Played::new()
+            .hear(1)
+            .say(acp::initialized("goose", "1.0.0", "agent-login"))]),
+    )?;
+
+    assert!(
+        matches!(&reading, Reading::Version(version) if version.as_str() == "1.0.0"),
+        "{reading:?}"
+    );
+    assert!(matches!(writing, Reading::Unreadable(_)), "{writing:?}");
     Ok(())
 }

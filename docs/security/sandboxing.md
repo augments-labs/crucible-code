@@ -435,6 +435,36 @@ capability is explicitly unsupported; unlike the enforcing PID-namespace
 backend, it cannot promise containment of a hostile process that deliberately
 escapes the owned process group.
 
+## Installed agents' releases
+
+An installed coding agent whose program lies in a version crucible installed
+for it, under `programs/<agent>/<version>/` in crucible's home, is started
+with that version's directory read-only, whatever writable root it lies in. It
+can read and run the files that were reviewed and change none of them, so a
+rollback goes back to the bytes it ran before and verifying an installed agent
+checks the bytes that run. A profile directory configured inside that
+directory is refused rather than made writable. The agent is also started with
+the variable its catalog entry names to turn its own updater off, where the
+entry names one.
+
+A version the agent catalog has revoked is not started: the refusal names the
+version and the catalog's reason, and says to roll back to the version
+installed before it or update to the one offered now. Where the catalog's
+trust state cannot be read, a version in `programs` is not started either,
+because whether it was revoked cannot be known; the refusal names the file to
+repair or remove. A program configured outside `programs` is the user's own,
+and neither rule applies to it.
+
+A switch to another version is smoke-tested before any instance is moved onto
+it only where the sandbox is on, the network is closed for commands and the
+agent's route already has its yes about content use; the yes to the switch
+does not count as that yes. The new version is started once in the sandbox,
+with the network closed, no host to reach, its version's directory read-only
+and nothing else of the user's readable, and is sent `initialize` and nothing
+more. Unless it answers as its catalog entry reviewed it, nothing is moved
+onto it. Where any of those conditions does not hold, the confirmation says
+the switch is not smoke-tested, and why.
+
 ## Environment and credentials
 
 The command environment is an explicit, bounded map rather than a copy of the

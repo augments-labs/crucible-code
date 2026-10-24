@@ -17,16 +17,23 @@
 //! release does not ship, with the sentence naming its documentation; a
 //! catalog agent whose entry gives no statement of content use, with the
 //! reason, since nothing installed could change that; a program not found or
-//! not executable, with the sentences saying what to do; and a route with no
-//! yes, with what to ask. A catalog row always ships, since it is listed only
-//! for an entry the catalog reviewed. Only then is the hold taken from
+//! not executable, with the sentences saying what to do; a program that lies
+//! in a version in crucible's install store, `programs` beside the state
+//! directory, whose release a revocation the trust state holds names, with
+//! the catalog's reason where a catalog still held gives it and the offer to
+//! roll back or update, or while the trust state cannot be used, naming its
+//! file, since then no revocation can be known; and a route with no yes, with
+//! what to ask. A catalog row always ships, since it is listed only for an
+//! entry the catalog reviewed. Only then is the hold taken from
 //! `content_use`, the child's sandbox policy built, and the process started.
-//! The first three are decided in one place, [`Agent::program`], which an
-//! operation that would ask about a route before starting the agent consults
-//! first, through [`Steps::refusal`], or for a conversation's next turn
-//! through the [`Relaunch::refusal`] of its [`Runs`], in the words the launch
-//! would be refused in, so nobody is asked to agree to a launch that is
-//! refused whatever the answer.
+//! The first four are decided in one place, [`Agent::release`], after
+//! [`Agent::program`] has decided the first three, which an operation that
+//! would ask about a route before starting the agent consults first, through
+//! [`Steps::refusal`], or for a conversation's next turn through the
+//! [`Relaunch::refusal`] of its [`Runs`], in the words the launch would be
+//! refused in, so nobody is asked to agree to a launch that is refused
+//! whatever the answer. Stopping a revoked agent that already runs needs no
+//! one's consent, and none is asked.
 //!
 //! The releases of a built-in agent that the catalog offers are the trust
 //! state's as it is at the time of a start: a [`Launcher`], and the [`Steps`]
@@ -63,7 +70,21 @@
 //! conversation's commands are confined, since an unconfined child reaches the
 //! host's network already. Every other rule, the protected metadata included,
 //! stays as the conversation has it, so a profile directory inside one, named
-//! directly or through a link, is refused rather than opened.
+//! directly or through a link, is refused rather than opened. A program in a
+//! version of the install store is started with that version's directory
+//! read-only, at and beneath it, whatever writable root it lies in, so it can
+//! change none of the bytes that were reviewed, and a profile directory inside
+//! it is refused; and with the variable its catalog entry turns the agent's
+//! own updater off with, where the catalog still lists the release with one.
+//!
+//! A switch the agents door makes is smoke-tested through [`Launcher::smoke`]
+//! only where the sandbox is on, the network it leaves commands is closed and
+//! the agent's route already has its yes, which [`Launcher::unsmokable`]
+//! decides, the yes to the install standing in for none of it. The program is
+//! started once, under that route's hold, reaching no host, with its version's
+//! directory read-only and nothing else of the user's readable, and is sent
+//! `initialize` and nothing more: the agent's wire reads and admits the answer,
+//! and the step that would go on to open a session is ended there.
 //!
 //! A run that answers the conversation's turns is held to none of the ceilings
 //! that measure one command's life, its wall time, its processor time and its
@@ -107,12 +128,17 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
 
 use crucible_config::{Driver, ExternalAgent, Serves};
-use crucible_execution::{Backend, Capabilities, Capability, Failure, SessionRef, Text};
+use crucible_execution::{
+    Backend, Capabilities, Capability, Failure, SessionRef, Text, TurnRequest,
+};
 use crucible_external_harnesses::acp::{Acp, Allowing};
-use crucible_external_harnesses::catalog::{CatalogProfile, Entry, Trust, Unprofiled};
+use crucible_external_harnesses::catalog::{
+    CatalogProfile, Entry, Target, Trust, Unprofiled, Unusable, Variable,
+};
+use crucible_external_harnesses::store::Store;
 use crucible_external_harnesses::{
-    Account, Control, Dialect, Discovery, Held, Host, Launch, PREPARING, Program, Reading, Refusal,
-    Request, Shape,
+    Account, Act, Control, Dialect, Discovery, Held, Host, Launch, PREPARING, Program, Ran,
+    Reading, Refusal, Request, Shape, Told,
 };
 use crucible_models::Effort;
 use crucible_runtime::BoxFuture;
@@ -129,7 +155,7 @@ use tokio::runtime::Handle;
 
 use crate::access::Route;
 use crate::backends::{AgentRow, Registry};
-use crate::content_use::{self, Consent, Unheld, Unstated, Warned};
+use crate::content_use::{self, Consent, Unheld, Unstated, Warned, agent_route};
 use crate::external::External;
 use crate::installing;
 use crate::outside::Relaunch;
@@ -164,6 +190,37 @@ pub enum Unlaunched {
     /// Its route is not one this build warns about.
     #[error("{0} is not an agent route this build knows, so nothing is started on it.")]
     Unknown(String),
+    /// The release its program is in was revoked by the catalog.
+    #[error(
+        "{agent} {version} was revoked by the agent catalog{}, so it is not started; roll it \
+         back to the version installed before it, or update it to the release the catalog \
+         offers now.",
+        .reason.as_deref().map_or_else(String::new, |reason| format!(" ({reason})"))
+    )]
+    Revoked {
+        /// The agent, as its row names it.
+        agent: String,
+        /// The version revoked.
+        version: Box<str>,
+        /// Why, as the catalog said it and quoted, where a catalog still held
+        /// says.
+        reason: Option<Box<str>>,
+    },
+    /// Its program is in crucible's install store, and the trust state that
+    /// says whether its release was revoked cannot be used.
+    #[error(
+        "The catalog trust state at {} cannot be used ({why}), so whether {agent}'s release \
+         was revoked is not known and it is not started. Repair or remove that file.",
+        .file.display()
+    )]
+    Untrusted {
+        /// The agent, as its row names it.
+        agent: String,
+        /// The file the trust state is kept in.
+        file: PathBuf,
+        /// Why it cannot be used.
+        why: Unusable,
+    },
     /// Its profile directory could not be made private to the user.
     #[error("the profile directory could not be made private to you: {0}")]
     Profile(std::io::Error),
@@ -403,6 +460,62 @@ impl Agent {
         }
     }
 
+    /// Its program, as [`Agent::program`] decides, and where that program
+    /// lies in a version in crucible's install store under `programs`, that
+    /// release: refused before any process where a revocation `trust` holds
+    /// names it, with the reason and what to do, or where `trust` cannot be
+    /// used, so its revocations cannot be known. A program outside the store
+    /// is the user's own, and no release of the catalog's.
+    ///
+    /// # Errors
+    ///
+    /// As [`Agent::program`], else [`Unlaunched::Untrusted`] or
+    /// [`Unlaunched::Revoked`].
+    pub fn release(
+        &self,
+        consent: &Consent,
+        trust: &Trust,
+        programs: &Path,
+    ) -> Result<(&Program, Option<Stored>), Unlaunched> {
+        let program = self.program(consent, trust)?;
+        let Ok(key) = AgentKey::new(self.row.named()) else {
+            return Ok((program, None));
+        };
+        let store = Store::new(programs.to_path_buf());
+        let Some(version) = store.version_of(&key, program.path()) else {
+            return Ok((program, None));
+        };
+        if let Some(why) = trust.unusable() {
+            return Err(Unlaunched::Untrusted {
+                agent: key.to_string(),
+                file: trust.file(),
+                why,
+            });
+        }
+        let (named, revision) = (version.version(), version.lock_revision());
+        if trust.revoked(&key, named, revision) {
+            return Err(Unlaunched::Revoked {
+                agent: key.to_string(),
+                version: crucible_types::shown::escaped(named).into(),
+                reason: trust
+                    .reason(&key, named, revision)
+                    .map(|reason| crucible_types::shown::escaped(reason).into()),
+            });
+        }
+        let updater_off = trust
+            .offers(Some(&key))
+            .into_iter()
+            .find(|offer| *offer.pin.version == *named && offer.pin.lock_revision == revision)
+            .and_then(|offer| offer.entry.updater_off);
+        Ok((
+            program,
+            Some(Stored {
+                root: store.directory(&key, &version),
+                updater_off,
+            }),
+        ))
+    }
+
     /// The shape every start of it in `workspace` is given.
     fn shape<'a>(&'a self, resume: Option<&'a str>, workspace: &'a Path) -> Shape<'a> {
         Shape {
@@ -413,6 +526,88 @@ impl Agent {
             effort: self.effort.map(Effort::as_str),
         }
     }
+}
+
+/// A release of the catalog's in crucible's install store, as a start of its
+/// program is held to it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stored {
+    /// The directory of its version, which the program is started with
+    /// read-only.
+    root: PathBuf,
+    /// The variable its entry turns the agent's own updater off with, where
+    /// the catalog still lists it with one.
+    updater_off: Option<Variable>,
+}
+
+/// Crucible's install store: `programs` in crucible's home, beside the
+/// directory `state` the trust state is kept under.
+fn programs_beside(state: &Path) -> PathBuf {
+    state.parent().unwrap_or(state).join("programs")
+}
+
+/// `request` with `variable` set where there is one, in place of any value of
+/// the same name, so the agent's own updater stays off whatever else it is
+/// started with.
+pub(crate) fn updating_off(mut request: Request, variable: Option<&Variable>) -> Request {
+    if let Some(variable) = variable {
+        request.environment.retain(|(name, _)| {
+            if cfg!(windows) {
+                !name.eq_ignore_ascii_case(&variable.name)
+            } else {
+                *name != *variable.name
+            }
+        });
+        request
+            .environment
+            .push((variable.name.to_string(), variable.value.to_string()));
+    }
+    request
+}
+
+/// `policy` with `root`, where its links lead, read-only at and beneath it: a
+/// rule that would let anything there be written is dropped, so the program
+/// started from it can change none of the reviewed bytes it runs, and a
+/// profile directory inside it is refused as one the child may not write.
+///
+/// # Errors
+///
+/// A [`SandboxPolicyError`] where `root` cannot be followed or the policy
+/// left is not a valid one, as under a path the policy keeps unreadable.
+pub(crate) fn read_only(
+    policy: &SandboxPolicy,
+    root: &Path,
+) -> Result<SandboxPolicy, SandboxPolicyError> {
+    let root = resolved(root)?;
+    let mut filesystem: Vec<SandboxFilesystemRule> = policy
+        .filesystem()
+        .iter()
+        .filter(|rule| {
+            !(rule.path().starts_with(&root) && rule.access() == SandboxFilesystemAccess::ReadWrite)
+        })
+        .cloned()
+        .collect();
+    // A rule left at the root itself already grants no more than reading.
+    if !filesystem.iter().any(|rule| rule.path() == root) {
+        filesystem.push(SandboxFilesystemRule::new(
+            &root,
+            SandboxFilesystemAccess::ReadOnly,
+            SandboxFilesystemProvenance::Runtime,
+        )?);
+    }
+    SandboxPolicy::new(
+        policy.enabled(),
+        filesystem,
+        policy.working_directory(),
+        policy.network().clone(),
+        policy.limits(),
+    )?
+    .with_unreadable_patterns(policy.unreadable_patterns().iter().cloned())
+    .map(|narrowed| {
+        narrowed
+            .with_command_policy(policy.commands().clone())
+            .with_session_state(policy.persistent(), policy.snapshots())
+    })
 }
 
 /// What a refusal over `discovery` says of `row`'s agent called `shown`, as the
@@ -800,17 +995,24 @@ impl<'a> Launcher<'a> {
     ) -> Result<Host, Unlaunched> {
         let row = &agent.row;
         let trust = Trust::load(self.state, SystemTime::now());
-        let program = agent.program(self.consent, &trust)?.clone();
+        let (program, stored) =
+            agent.release(self.consent, &trust, &programs_beside(self.state))?;
+        let program = program.clone();
         let held = content_use::held(self.consent, row.route()).map_err(|unheld| match unheld {
             Unheld::Asks(warned) => Unlaunched::Asks(warned),
             Unheld::Unknown => Unlaunched::Unknown(row.route().to_owned()),
         })?;
-        let policy = policy(
+        let mut policy = policy(
             self.conversation,
             agent.profile.as_deref(),
             &row.reaches(),
             life.limits(self.conversation.limits()),
         )?;
+        let mut request = request;
+        if let Some(stored) = &stored {
+            policy = read_only(&policy, &stored.root)?;
+            request = updating_off(request, stored.updater_off.as_ref());
+        }
         let resume = match life {
             Life::Conversation { resume } => resume,
             Life::Step => None,
@@ -1002,6 +1204,215 @@ async fn unclosable(service: &dyn SandboxService) -> Option<String> {
     }
 }
 
+/// Why a release is not smoke-tested before it is used, or why its smoke
+/// test failed.
+#[derive(Debug, thiserror::Error)]
+pub enum Unsmoked {
+    /// The sandbox is off.
+    #[error("the sandbox is off, and a smoke test runs only inside it")]
+    Unconfined,
+    /// The sandbox lets the conversation's commands reach the network.
+    #[error(
+        "the sandbox lets commands reach the network, and a smoke test runs only with it closed"
+    )]
+    Open,
+    /// The agent's route has not been agreed to.
+    #[error("its route {0} has no yes about content use yet")]
+    Unasked(String),
+    /// The agent's route is not one this build asks about.
+    #[error("its route {0} is not one this build asks about content use on")]
+    Unknown(String),
+    /// Its entry gives no profile to run it under.
+    #[error(transparent)]
+    Profile(#[from] Unprofiled),
+    /// Its program is not one that runs.
+    #[error("its program {0} is not an executable")]
+    Program(String),
+    /// The sandbox policy is not a valid one.
+    #[error("its sandbox policy could not be built: {0}")]
+    Policy(#[from] SandboxPolicyError),
+    /// This process cannot number another start.
+    #[error("no control for the agent's program")]
+    Control,
+    /// The host refused the launch.
+    #[error(transparent)]
+    Refused(#[from] Refusal),
+    /// It did not answer initializing as its entry reviewed it.
+    #[error("it did not answer initialize as its catalog entry reviewed it: {0}")]
+    Answered(String),
+}
+
+/// How long a smoke test waits for the agent's answer to `initialize`.
+const SMOKING: Duration = crate::probing::BOUND;
+
+impl Launcher<'_> {
+    /// Why a release of the agent `key` would not be smoke-tested here; nothing
+    /// where it would be, which is only where the sandbox is on, the network
+    /// it leaves the conversation's commands is closed, and the agent's route
+    /// already has its yes. A yes to installing it is not that yes.
+    #[must_use]
+    pub fn unsmokable(&self, key: &AgentKey) -> Option<Unsmoked> {
+        if !self.conversation.enabled() {
+            return Some(Unsmoked::Unconfined);
+        }
+        if !matches!(self.conversation.network(), SandboxNetworkPolicy::Closed) {
+            return Some(Unsmoked::Open);
+        }
+        let route = agent_route(key.as_str());
+        content_use::held(self.consent, &route)
+            .err()
+            .map(|unheld| unsmoked(&unheld, route))
+    }
+
+    /// Starts `program`, the release `entry` lists as `target`, unpacked into
+    /// `root`, once, and sends it `initialize`, where [`Launcher::unsmokable`]
+    /// finds nothing against it: in the sandbox, under the route's hold, with
+    /// the network closed, no host to reach, `root` read-only and nothing else
+    /// readable of the user's, and its updater off. Nothing is sent past
+    /// `initialize`: the wire reads the answer and admits it, and the step
+    /// that would go on to open a session is stopped there.
+    ///
+    /// # Errors
+    ///
+    /// [`Unsmoked`] for why it was not started, or did not answer as its
+    /// entry reviewed it.
+    pub async fn smoke(
+        &self,
+        entry: &Entry,
+        target: &Target,
+        root: &Path,
+        program: &Path,
+    ) -> Result<(), Unsmoked> {
+        if let Some(why) = self.unsmokable(&entry.key) {
+            return Err(why);
+        }
+        let route = agent_route(entry.key.as_str());
+        let held = content_use::held(self.consent, &route)
+            .map_err(|unheld| unsmoked(&unheld, route.clone()))?;
+        let profile = CatalogProfile::from_entry(entry, target)?;
+        let Discovery::Found(found) = Discovery::of(Some(program)) else {
+            return Err(Unsmoked::Program(program.display().to_string()));
+        };
+        let root = resolved(root)?;
+        let readable = SandboxFilesystemRule::new(
+            &root,
+            SandboxFilesystemAccess::ReadOnly,
+            SandboxFilesystemProvenance::Runtime,
+        )?;
+        let policy = SandboxPolicy::new(
+            true,
+            [readable],
+            &root,
+            SandboxNetworkPolicy::Closed,
+            // Bounded by the wait for its answer, not by a ceiling on one
+            // command.
+            SandboxResourceLimits {
+                command_time: None,
+                cpu_seconds: None,
+                output_bytes: None,
+                ..SandboxResourceLimits::confining()
+            },
+        )?;
+        let mut dialect = Smoking(Acp::cataloged(profile, Allowing::Nothing));
+        let request = updating_off(
+            dialect.request(Shape {
+                workspace: Some(&root),
+                ..Shape::default()
+            }),
+            entry.updater_off.as_ref(),
+        );
+        let control = Control::new().ok_or(Unsmoked::Control)?;
+        let launch = Launch::new(found, policy, held).asking(request);
+        let host = Host::launch(
+            Arc::clone(&self.service),
+            self.runtime.clone(),
+            &control,
+            launch,
+        )
+        .await?;
+        let Some(frames) = dialect.spoken(Account::Status) else {
+            return Err(Unsmoked::Answered("it speaks no initialize".to_owned()));
+        };
+        match host
+            .speak(&mut dialect, Account::Status, &frames, &|_| {}, SMOKING)
+            .await
+        {
+            Reading::Version(_) => Ok(()),
+            Reading::Unreadable(failure) => {
+                Err(Unsmoked::Answered(failure.reason().as_str().to_owned()))
+            }
+            Reading::Signed(_) => Err(Unsmoked::Answered(
+                "it answered as though it had been asked more".to_owned(),
+            )),
+        }
+    }
+}
+
+/// Why a smoke test of the agent on `route` is not run, where its hold is
+/// not had.
+fn unsmoked(unheld: &Unheld, route: String) -> Unsmoked {
+    match unheld {
+        Unheld::Asks(_) => Unsmoked::Unasked(route),
+        Unheld::Unknown => Unsmoked::Unknown(route),
+    }
+}
+
+/// An agent's wire for a smoke test: the step that checks whether a session
+/// can be opened, ended the moment its answer to `initialize` is admitted, so
+/// what reads and admits that answer is the wire's own, and the frame it
+/// would send next is never sent.
+struct Smoking(Acp);
+
+impl Dialect for Smoking {
+    fn program(&self) -> &str {
+        self.0.program()
+    }
+
+    fn request(&mut self, shape: Shape<'_>) -> Request {
+        self.0.request(shape)
+    }
+
+    fn open(&mut self, turn: &TurnRequest) -> Result<Vec<String>, Failure> {
+        self.0.open(turn)
+    }
+
+    fn heard(&mut self, frame: &str) -> Result<Vec<Act>, Failure> {
+        self.0.heard(frame)
+    }
+
+    fn answer(
+        &mut self,
+        native: &str,
+        decision: &crucible_execution::Decision,
+    ) -> Result<String, Failure> {
+        self.0.answer(native, decision)
+    }
+
+    fn cancel(&mut self) -> Option<String> {
+        self.0.cancel()
+    }
+
+    fn account(&mut self, step: Account, shape: Shape<'_>) -> Option<Request> {
+        self.0.account(step, shape)
+    }
+
+    fn read(&self, step: Account, ran: &Ran) -> Reading {
+        self.0.read(step, ran)
+    }
+
+    fn spoken(&mut self, step: Account) -> Option<Vec<String>> {
+        self.0.spoken(step)
+    }
+
+    fn told(&mut self, step: Account, frame: &str) -> Result<Told, Failure> {
+        Ok(match self.0.told(step, frame)? {
+            // Admitted: what it would send next is past `initialize`.
+            Told::Send(_) => Told::Done(Reading::Version(Text::new("initialized"))),
+            told @ (Told::Link(_) | Told::Nothing | Told::Done(_)) => told,
+        })
+    }
+}
+
 /// What each shipping dialect lets a run of its agent do: stop a turn,
 /// answer a request for leave once or for the session, and resume the agent's
 /// own session. Neither answers a question the agent asks with words, so that
@@ -1137,7 +1548,7 @@ impl Relaunch for Runs {
     fn refusal(&self) -> Option<Failure> {
         let trust = Trust::load(&self.state, SystemTime::now());
         self.agent
-            .program(&self.consent, &trust)
+            .release(&self.consent, &trust, &programs_beside(&self.state))
             .err()
             .map(|why| refused(&why))
     }
@@ -1343,7 +1754,7 @@ impl Steps {
     }
 
     /// Why a start of the configured `agent`, whose registry row is `row`,
-    /// would be refused before any process, as [`Agent::program`] decides it;
+    /// would be refused before any process, as [`Agent::release`] decides it;
     /// nothing where it would not be.
     #[must_use]
     pub fn refusal(&self, row: &AgentRow, agent: &ExternalAgent) -> Option<Unlaunched> {
@@ -1356,7 +1767,11 @@ impl Steps {
             model: None,
             effort: None,
         }
-        .program(&self.consent, &Trust::load(&self.state, SystemTime::now()))
+        .release(
+            &self.consent,
+            &Trust::load(&self.state, SystemTime::now()),
+            &programs_beside(&self.state),
+        )
         .err()
     }
 
