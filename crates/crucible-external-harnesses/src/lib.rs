@@ -15,6 +15,7 @@ mod launch;
 mod lifecycle;
 mod pending;
 pub mod release;
+pub mod store;
 
 pub use antigravity::Ended;
 pub use host::{
