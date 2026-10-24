@@ -74,6 +74,9 @@ serde_core.workspace = true
 # A hosted tool's schema is a JSON document, read once for the sentence it
 # describes itself with; this is the parser the configuration crate compiles.
 serde_json.workspace = true
+# The digest a catalog asset is held to, taken of what was fetched before any
+# of it is believed.
+sha2.workspace = true
 # `AppError`, which the command line turns into the sentence a user reads.
 thiserror.workspace = true
 # The one runtime the application owns and lends a handle to. `rt-multi-thread`

@@ -35,5 +35,5 @@ pub use install::{
     LayoutError, Receipt, ReceiptClaim, ReceiptError, ReceiptLayout, RecoverableActivation,
     StageError, StagePart, StagedUnit, Target, UnitRole,
 };
-pub use release::{Newer, SHUTDOWN, Unjoined, UpdateCrateReleaseCheck, newer};
+pub use release::{ASK_AFTER, Newer, SHUTDOWN, Unjoined, UpdateCrateReleaseCheck, newer};
 pub use version::Version;

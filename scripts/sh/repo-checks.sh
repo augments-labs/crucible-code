@@ -431,13 +431,17 @@ section "every vendor client is built where its hold was decided"
 # client sign-ins and renewals go through, handed the application's hold;
 # release.rs lends the client provider turns and web posts share only under a
 # hold its caller hands in, and builds the release check's own, which reaches
-# GitHub alone; command.rs
+# GitHub alone; catalog_fetch.rs builds the one the agent catalog is fetched
+# through, which carries nothing from a session and is held to the host the
+# catalog is published on and the hosts a redirect from it may name, so it
+# reaches no vendor; command.rs
 # builds the one `crucible update` asks a loopback release source through,
 # which reaches this machine alone and carries nothing from a session;
 # transport/http.rs builds one only inside its test module. One more file is
 # one more decision to take. A line is a use wherever it names one, called or
 # not, and a `Held` under another name still mints through `::granted`.
-decided="crates/crucible-app/src/content_use.rs
+decided="crates/crucible-app/src/catalog_fetch.rs
+crates/crucible-app/src/content_use.rs
 crates/crucible-app/src/launching.rs
 crates/crucible-auth/src/oauth/renewal.rs
 crates/crucible-external-harnesses/src/conformance.rs
@@ -1333,6 +1337,8 @@ removable=(
     crates/crucible-app/src/doctor.rs crates/crucible-app/src/providers/tests.rs
     # The install of an agent's pinned release and the command that runs it.
     crates/crucible-app/src/installing.rs src/cli.rs src/cli/agents.rs
+    # The fetch of the catalog of agents a release may be installed from.
+    crates/crucible-app/src/catalog_fetch.rs
     crates/crucible-app/tests/headless.rs crates/crucible-app/tests/headless/external.rs
     crates/crucible-app/tests/headless/external/{refusing,routing,session,stopping,unlaunchable}.rs
     crates/crucible-app/Cargo.toml

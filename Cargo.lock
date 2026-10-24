@@ -414,6 +414,7 @@ dependencies = [
  "crucible-workspace",
  "serde_core",
  "serde_json",
+ "sha2",
  "thiserror",
  "tokio",
 ]
