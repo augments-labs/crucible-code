@@ -1,0 +1,166 @@
+{
+  "version": "1.0.0",
+  "agents": [
+    {
+      "id": "fake-agent",
+      "name": "Fake Agent",
+      "version": "1.0.0",
+      "description": "Every way a binary target is kept or dropped.",
+      "license": "MIT",
+      "distribution": {
+        "binary": {
+          "linux-x86_64": {
+            "archive": "https://downloads.fake.example/fake-1.0.0-linux-x86_64.tar.gz",
+            "sha256": "c7e21ddbb8a8103f2becf67dbbf1394fd0e4ea6f592930f1306a705a94aa71dc",
+            "cmd": "./agent",
+            "args": ["acp", "--no-color"],
+            "env": {"FAKE_NO_UPDATE": "1"}
+          },
+          "darwin-aarch64": {
+            "archive": "https://downloads.fake.example/fake-1.0.0-darwin-aarch64.zip",
+            "cmd": "./agent",
+            "args": ["acp"]
+          },
+          "freebsd-x86_64": {
+            "archive": "https://downloads.fake.example/fake-1.0.0-freebsd-x86_64.tar.gz",
+            "cmd": "./agent",
+            "args": ["acp"]
+          },
+          "windows-x86_64": {
+            "archive": "https://downloads.fake.example/fake-1.0.0-windows-x86_64.zip",
+            "cmd": "agent.exe",
+            "args": ["acp"]
+          },
+          "linux-aarch64": {
+            "archive": "https://downloads.fake.example/fake-1.0.0-linux-aarch64.tar.gz",
+            "cmd": "./agent",
+            "args": ["acp"],
+            "env": {"LD_PRELOAD": "/tmp/hook.so"}
+          },
+          "windows-aarch64": {
+            "archive": "https://downloads.fake.example/fake-1.0.0-windows-aarch64.zip",
+            "cmd": "agent.exe",
+            "args": ["acp"]
+          }
+        }
+      }
+    },
+    {
+      "id": "big-agent",
+      "name": "Big Agent",
+      "version": "2.1.0",
+      "license": "LicenseRef-Proprietary",
+      "distribution": {
+        "binary": {
+          "linux-x86_64": {
+            "archive": "https://downloads.big.example/big-2.1.0-linux-x86_64.tar.gz",
+            "sha256": "0e7dbe26d0c28351bb84d9a58ab76cca0b3b6cbf7936f863fc97cd6be9cf0d85",
+            "cmd": "./agent"
+          },
+          "darwin-aarch64": {
+            "archive": "https://downloads.big.example/big-2.1.0-darwin-aarch64.tar.gz",
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "cmd": "./agent"
+          }
+        }
+      }
+    },
+    {
+      "id": "linky-agent",
+      "name": "Linky Agent",
+      "version": "0.3.0",
+      "license": "MIT",
+      "distribution": {
+        "binary": {
+          "linux-x86_64": {
+            "archive": "https://downloads.linky.example/linky-0.3.0-linux-x86_64.tar.gz",
+            "cmd": "./agent"
+          }
+        }
+      }
+    },
+    {
+      "id": "unprobed-agent",
+      "name": "Unprobed Agent",
+      "version": "0.1.0",
+      "license": "MIT",
+      "distribution": {
+        "binary": {
+          "linux-x86_64": {
+            "archive": "https://downloads.unprobed.example/unprobed-linux-x86_64.tar.gz",
+            "cmd": "./agent"
+          },
+          "darwin-aarch64": {
+            "archive": "https://downloads.unprobed.example/unprobed-darwin-aarch64.tar.gz",
+            "cmd": "./agent"
+          }
+        }
+      }
+    },
+    {
+      "id": "leaky-agent",
+      "name": "Leaky Agent",
+      "version": "0.2.0",
+      "license": "MIT",
+      "distribution": {
+        "binary": {
+          "linux-x86_64": {
+            "archive": "https://downloads.leaky.example/leaky-linux-x86_64.tar.gz",
+            "cmd": "./agent"
+          }
+        }
+      }
+    },
+    {
+      "id": "reachy-agent",
+      "name": "Reachy Agent",
+      "version": "0.4.0",
+      "license": "MIT",
+      "distribution": {
+        "binary": {
+          "linux-x86_64": {
+            "archive": "https://downloads.reachy.example/reachy-linux-x86_64.tar.gz",
+            "cmd": "./agent"
+          }
+        }
+      }
+    },
+    {
+      "id": "npx-agent",
+      "name": "Npx Agent",
+      "version": "3.0.0",
+      "license": "MIT",
+      "distribution": {
+        "npx": {"package": "npx-agent@3.0.0", "args": ["--acp"]}
+      }
+    },
+    {
+      "id": "unkeyed-agent",
+      "name": "Unkeyed Agent",
+      "version": "1.0.0",
+      "license": "MIT",
+      "distribution": {
+        "binary": {
+          "linux-x86_64": {
+            "archive": "https://downloads.unkeyed.example/unkeyed-linux-x86_64.tar.gz",
+            "cmd": "./agent"
+          }
+        }
+      }
+    },
+    {
+      "id": "x`` <b>@here",
+      "name": "Hostile id",
+      "version": "1.0.0",
+      "license": "MIT",
+      "distribution": {
+        "binary": {
+          "linux-x86_64": {
+            "archive": "https://downloads.hostile.example/hostile.tar.gz",
+            "cmd": "./agent"
+          }
+        }
+      }
+    }
+  ]
+}
