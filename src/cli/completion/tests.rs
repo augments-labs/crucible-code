@@ -42,6 +42,7 @@ const COMMANDS: &[&[&str]] = &[
     &["agents"],
     &["agents", "install"],
     &["agents", "unpack-check"],
+    &["agents", "probe"],
     &["completion"],
 ];
 

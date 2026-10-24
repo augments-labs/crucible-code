@@ -52,6 +52,7 @@ pub mod mcp;
 mod models;
 pub mod native;
 pub mod outside;
+pub mod probing;
 #[cfg(feature = "proof")]
 pub mod proof;
 pub mod providers;

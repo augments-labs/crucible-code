@@ -35,6 +35,17 @@
 //! since the agent was selected is the one the start is held to. What an agent
 //! built in is admitted as, and started with, is what those releases say; with
 //! the trust state unusable it is admitted as none.
+//! The catalog intake starts an agent's program too, with `probing`: from
+//! the directory its release was unpacked into and the entry that describes it,
+//! under a policy that requires the sandbox, closes the network and leaves that
+//! directory read-only. No route was asked about content use, since all the
+//! program is sent is one fixed `initialize` that carries nothing a user wrote.
+//! Confined, the sandbox closes the network, so nothing it is sent can be
+//! passed on. Where this machine's sandbox cannot close the network the start
+//! is refused, unless the caller says the run is on a disposable machine, which
+//! [`crate::probing`] allows only to a process that says so, and then the
+//! program is started unconfined, with the network the machine has and nothing
+//! of a user's on it, and the output says so.
 //! A probe and an account step are starts like a turn's and go through the
 //! same gates, each under a hold of its own. An account step the dialect
 //! speaks over the program's own wire is bounded: a version or status within
@@ -97,18 +108,19 @@ use std::time::{Duration, SystemTime};
 
 use crucible_config::{Driver, ExternalAgent, Serves};
 use crucible_execution::{Backend, Capabilities, Capability, Failure, SessionRef, Text};
-use crucible_external_harnesses::catalog::Trust;
+use crucible_external_harnesses::acp::{Acp, Allowing};
+use crucible_external_harnesses::catalog::{CatalogProfile, Entry, Trust, Unprofiled};
 use crucible_external_harnesses::{
-    Account, Control, Dialect, Discovery, Host, Launch, PREPARING, Program, Reading, Refusal,
+    Account, Control, Dialect, Discovery, Held, Host, Launch, PREPARING, Program, Reading, Refusal,
     Request, Shape,
 };
 use crucible_models::Effort;
 use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
-    SandboxDomainPattern, SandboxDomainPolicy, SandboxEnablement, SandboxFilesystemAccess,
-    SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxNetworkPolicy,
-    SandboxNetworkProvenance, SandboxPolicy, SandboxPolicyError, SandboxResourceLimits,
-    SandboxService,
+    SandboxCapability, SandboxDomainPattern, SandboxDomainPolicy, SandboxEnablement,
+    SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
+    SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy, SandboxPolicyError,
+    SandboxResourceLimits, SandboxService,
 };
 use crucible_session::{ExternalRef, RouteBinding};
 use crucible_tools::Mode;
@@ -826,6 +838,167 @@ impl<'a> Launcher<'a> {
             launch,
         )
         .await?)
+    }
+}
+
+/// The route the intake's probe is started under. No user is asked: what a
+/// probe sends the program is one fixed `initialize` that carries no content,
+/// the sandbox closes the network when it can, and when it cannot the probe is
+/// run only on a disposable runner with nothing of a user's on it.
+const PROBING: &str = "catalog-probe";
+
+/// How far the sandbox held a probe in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Sandbox {
+    /// The sandbox was required, enforced, and had the network closed.
+    Closed,
+    /// The sandbox here could not close the network, for this reason, and the
+    /// program was started unconfined at the caller's word.
+    Unavailable(String),
+}
+
+/// A program started for the intake's probe.
+#[derive(Debug)]
+pub(crate) struct Probe {
+    /// The running program.
+    pub(crate) host: Host,
+    /// The wire it is spoken to over.
+    pub(crate) dialect: Acp,
+    /// How far it is held in.
+    pub(crate) sandbox: Sandbox,
+}
+
+/// Why nothing was started for a probe.
+#[derive(Debug, thiserror::Error)]
+pub enum Unprobeable {
+    /// The entry lists no target for the platform this build runs on.
+    #[error("the entry lists no target for {0}")]
+    Platform(String),
+    /// The entry gives no profile to run.
+    #[error(transparent)]
+    Profile(#[from] Unprofiled),
+    /// The directory it was unpacked into cannot be reached.
+    #[error("{} cannot be reached", .0.display())]
+    Root(PathBuf, #[source] std::io::Error),
+    /// Its program is not in that directory, or does not lie inside it once
+    /// its links are followed.
+    #[error("the program {} is not an executable inside {}", .program, .root.display())]
+    Program {
+        /// The program, as the entry spells it.
+        program: Box<str>,
+        /// The directory.
+        root: PathBuf,
+    },
+    /// The sandbox here cannot close the network, and no run without it was
+    /// asked for.
+    #[error(
+        "the sandbox here cannot close the network ({0}), so the program is not started; on a \
+         disposable machine, run again with `--unconfined` to run `initialize` alone"
+    )]
+    Unclosable(String),
+    /// The sandbox policy is not a valid one.
+    #[error("the sandbox policy for the probe could not be built: {0}")]
+    Policy(#[from] SandboxPolicyError),
+    /// This process cannot number another start.
+    #[error("no control for the agent's program")]
+    Control,
+    /// The host refused the launch.
+    #[error(transparent)]
+    Refused(#[from] Refusal),
+}
+
+/// Starts the program the `entry` lists for this platform, found under the
+/// unpacked directory `root`, so that `initialize` can be sent to it.
+///
+/// The sandbox is required, the network closed and `root` read-only. Where
+/// `service` cannot enforce that, the start is refused, or with `unconfined`
+/// the program is started without the sandbox and the start says why.
+///
+/// # Errors
+///
+/// [`Unprobeable`] for each reason nothing was started.
+pub(crate) async fn probing(
+    service: Arc<dyn SandboxService>,
+    runtime: Handle,
+    root: &Path,
+    entry: &Entry,
+    unconfined: bool,
+) -> Result<Probe, Unprobeable> {
+    let target = entry.here().ok_or_else(|| {
+        Unprobeable::Platform(format!(
+            "{}-{}",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        ))
+    })?;
+    let profile = CatalogProfile::from_entry(entry, target)?;
+    let root =
+        std::fs::canonicalize(root).map_err(|why| Unprobeable::Root(root.to_owned(), why))?;
+    let unfound = || Unprobeable::Program {
+        program: target.cmd.clone(),
+        root: root.clone(),
+    };
+    // Followed, so a link the unpacked tree holds cannot lead out of it.
+    let found = std::fs::canonicalize(root.join(&*target.cmd)).map_err(|_| unfound())?;
+    if !found.starts_with(&root) {
+        return Err(unfound());
+    }
+    let Discovery::Found(program) = Discovery::of(Some(&found)) else {
+        return Err(unfound());
+    };
+    let unclosable = unclosable(service.as_ref()).await;
+    if let (Some(reason), false) = (&unclosable, unconfined) {
+        return Err(Unprobeable::Unclosable(reason.clone()));
+    }
+    let readable = SandboxFilesystemRule::new(
+        &root,
+        SandboxFilesystemAccess::ReadOnly,
+        SandboxFilesystemProvenance::Workspace,
+    )?;
+    let policy = SandboxPolicy::new(
+        true,
+        [readable],
+        &root,
+        SandboxNetworkPolicy::Closed,
+        // The program lives as long as the probe waits for it, which is
+        // bounded by the caller, not by a ceiling on one command.
+        SandboxResourceLimits {
+            command_time: None,
+            cpu_seconds: None,
+            output_bytes: None,
+            ..SandboxResourceLimits::confining()
+        },
+    )?
+    // Without the sandbox its limits go with it, as for a command.
+    .with_enabled(unclosable.is_none());
+    let mut dialect = Acp::cataloged(profile, Allowing::Nothing);
+    let request = dialect.request(Shape {
+        workspace: Some(&root),
+        ..Shape::default()
+    });
+    let control = Control::new().ok_or(Unprobeable::Control)?;
+    let launch = Launch::new(program, policy, Held::granted(PROBING)).asking(request);
+    let host = Host::launch(service, runtime, &control, launch).await?;
+    Ok(Probe {
+        host,
+        dialect,
+        sandbox: unclosable.map_or(Sandbox::Closed, Sandbox::Unavailable),
+    })
+}
+
+/// Why `service` cannot hold a program in with its network closed and its
+/// filesystem enforced, where it cannot; nothing where it can.
+async fn unclosable(service: &dyn SandboxService) -> Option<String> {
+    match tokio::time::timeout(PREPARING, service.probe()).await {
+        Ok(Ok((_, capabilities))) => {
+            let enforced = [SandboxFeature::NetworkDeny, SandboxFeature::Filesystem]
+                .into_iter()
+                .all(|feature| capabilities.claim(feature) == SandboxCapability::Enforced);
+            (!enforced)
+                .then(|| "it does not enforce both a closed network and the filesystem".to_owned())
+        }
+        Ok(Err(problem)) => Some(problem.to_string()),
+        Err(_) => Some("it did not answer in time".to_owned()),
     }
 }
 

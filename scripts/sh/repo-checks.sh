@@ -426,8 +426,10 @@ section "every vendor client is built where its hold was decided"
 # client, mints a `Held` or launches an agent outside a tests file, and each
 # was decided about: content_use.rs mints a `Held` only for a route the user
 # said yes to, and launching.rs is the one place an installed agent is started,
-# under that hold; conformance.rs launches the fake peer, which reaches no
-# vendor, and compiles only under the proof feature; renewal.rs builds the
+# under that hold, or for the catalog intake's probe under a hold of its own: a
+# probe sends one fixed `initialize` with no user content, the sandbox closes the
+# network, and only a disposable runner may run it without the sandbox;
+# conformance.rs launches the fake peer, which reaches no vendor, and compiles only under the proof feature; renewal.rs builds the
 # client sign-ins and renewals go through, handed the application's hold;
 # release.rs lends the client provider turns and web posts share only under a
 # hold its caller hands in, and builds the release check's own, which reaches
@@ -1329,7 +1331,7 @@ removable=(
     # The application's route: the backends, the launch, the turn and its
     # translation, the accounts, the test build's registry, the `agent:` rows,
     # the writes, the start-up arm, the switch, and the refusals they raise.
-    crates/crucible-app/src/{access,backends,launching,external,outside}.rs
+    crates/crucible-app/src/{access,backends,launching,external,outside,probing}.rs
     crates/crucible-app/src/{proof,content_use,remember,startup,switching}.rs
     crates/crucible-app/src/{conversation,error,lib,client}.rs
     crates/crucible-app/src/client/{accounts,performing,reading}.rs
