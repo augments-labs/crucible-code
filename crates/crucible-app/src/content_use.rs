@@ -20,13 +20,13 @@
 //! execution and not only a request. An agent the catalog reviewed is held
 //! under the statement its own entry carries ([`stated`]): the vendor's words,
 //! the page and the day, owned, built for the route of its key and given to
-//! [`Routes::cataloging`] beside [`WARNED`], which keeps the built-in agents. An
-//! entry with no statement, or one too long to be shown whole
+//! [`Routes::cataloging`] beside [`WARNED`], which keeps the built-in agents.
+//! An entry with no statement, or one too long to be shown whole
 //! ([`STATEMENT_BYTES`]), gives no hold and its agent is never launched. A
-//! client with no terminal is put the
-//! same words, closing the warning's sentence, and so is a run with no
-//! terminal that ends unanswered and a client whose question was declined;
-//! [`full_sentence`] is the one place they are joined.
+//! client with no terminal is put the same words, closing the warning's
+//! sentence, and so is a run with no terminal that ends unanswered and a
+//! client whose question was declined; [`full_sentence`] is the one place
+//! they are joined.
 //!
 //! **The hold.** Every HTTP client built outside tests that can reach a vendor
 //! is handed a [`Consent`], asked before each request leaves; the release
@@ -98,8 +98,9 @@ pub struct Warned {
     pub warning: Warning,
     /// Every origin a request of this route is sent to: its model and web tool
     /// address, and for a sign-in the host that issues and renews its tokens.
-    /// None for an agent's route, catalog or built in, and for a warned model: its host serves its provider's other models
-    /// too, so it is asked about at the send rather than held at the host.
+    /// None for an agent's route, catalog or built in, and for a warned
+    /// model: its host serves its provider's other models too, so it is asked
+    /// about at the send rather than held at the host.
     pub origins: &'static [&'static str],
 }
 

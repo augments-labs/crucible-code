@@ -1340,7 +1340,7 @@ removable=(
     # The fetch of the catalog of agents a release may be installed from.
     crates/crucible-app/src/catalog_fetch.rs
     crates/crucible-app/tests/headless.rs crates/crucible-app/tests/headless/external.rs
-    crates/crucible-app/tests/headless/external/{refusing,routing,session,stopping,unlaunchable}.rs
+    crates/crucible-app/tests/headless/external/{catalog_hold,refusing,routing,session,stopping,unlaunchable}.rs
     crates/crucible-app/Cargo.toml
     # The configuration's access variant and block, their rows and checks.
     crates/crucible-config/src/{lib,shape,remember,error,settings}.rs

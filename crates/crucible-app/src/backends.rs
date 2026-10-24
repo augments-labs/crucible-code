@@ -26,9 +26,9 @@
 //! that profile grants, and always ships, since a registry lists one only for
 //! an entry the catalog reviewed. It also holds the warning its entry's
 //! statement of content use gives its route, or why the entry gives none, in
-//! which case the agent is listed and never launched. [`Registry::row`] answers a built-in driver
-//! with its row and a catalog instance with the row listed for its key, each
-//! as an [`AgentRow`]. The registry this build ships lists no catalog row, so
+//! which case the agent is listed and never launched. [`Registry::row`]
+//! answers a built-in driver with its row and a catalog instance with the row
+//! listed for its key, each as an [`AgentRow`]. The registry this build ships lists no catalog row, so
 //! a catalog instance has none to run until one is listed.
 //!
 //! The rows agree with the configuration's driver list and with the

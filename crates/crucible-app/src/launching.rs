@@ -18,11 +18,10 @@
 //! catalog agent whose entry gives no statement of content use, with the
 //! reason, since nothing installed could change that; a program not found or
 //! not executable, with the sentences saying what to do; and a route with no
-//! yes, with what to ask. A catalog row always
-//! ships, since it is listed only for an entry the catalog reviewed. Only then is
-//! the hold taken from `content_use`, the child's sandbox policy built, and
-//! the process started.
-//! The first two are decided in one place, [`Agent::program`], which an
+//! yes, with what to ask. A catalog row always ships, since it is listed only
+//! for an entry the catalog reviewed. Only then is the hold taken from
+//! `content_use`, the child's sandbox policy built, and the process started.
+//! The first three are decided in one place, [`Agent::program`], which an
 //! operation that would ask about a route before starting the agent consults
 //! first, through [`Steps::refusal`], or for a conversation's next turn
 //! through the [`Relaunch::refusal`] of its [`Runs`], in the words the launch
@@ -348,17 +347,17 @@ impl Agent {
     /// Its program, where nothing refuses a start before any process: its row
     /// is shipped, a catalog agent's entry gives a statement of content use,
     /// and its program was found. This is the one place those are decided, in
-    /// that order, so that a question put before a start and
-    /// the start itself refuse the same launch for the same reason. What the
-    /// refusal says to do about a program not found is what `trust` offers.
+    /// that order, so that a question put before a start and the start itself
+    /// refuse the same launch for the same reason. What the refusal says to do
+    /// about a program not found is what `trust` offers.
     ///
     /// # Errors
     ///
     /// [`Unlaunched::Withheld`] for a row this release does not ship, else
     /// [`Unlaunched::Unstated`] for a catalog agent whose entry gives no
-    /// statement of content use, else [`Unlaunched::NotInstalled`] for a program not found or not
-    /// executable, else [`Unlaunched::Unknown`] where its route has no
-    /// sentences to say what to do.
+    /// statement of content use, else [`Unlaunched::NotInstalled`] for a
+    /// program not found or not executable, else [`Unlaunched::Unknown`] where
+    /// its route has no sentences to say what to do.
     pub fn program(&self, consent: &Consent, trust: &Trust) -> Result<&Program, Unlaunched> {
         let row = &self.row;
         let shown = consent
