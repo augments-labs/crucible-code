@@ -65,9 +65,10 @@ use crate::runtime::{BLOCKING, RuntimeOwner, Unstarted, Unstopped};
 // their own, `CATALOG_LOOKUPS` at a time, and that place takes the thread the
 // assertion below leaves to spare when it runs beside every other owner at its
 // most. The second assertion checks that the counted owners and that place
-// still fit within `BLOCKING`, so a second place built for another fetch
-// fails to compile instead of queueing a counted owner's job. The sentence on
-// `BLOCKING` about a thread to spare is about the counted owners alone.
+// still fit within `BLOCKING`. It sums that one constant and nothing else, so
+// a lookup place built for another client goes uncounted unless whoever builds
+// it adds its size to the sum. The sentence on `BLOCKING` about a thread to
+// spare is about the counted owners alone.
 //
 // That is the reach of the assertion below, and three of those owners are
 // there because the owner decided to widen `BLOCKING` for them rather than let

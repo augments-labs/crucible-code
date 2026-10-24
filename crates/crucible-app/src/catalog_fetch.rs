@@ -669,8 +669,9 @@ impl Refresher {
     ///
     /// The fetch runs on the runtime given to [`Self::runs_on`], and nothing
     /// is done before one is given. One is held at a time; a fetch already
-    /// running is left alone. A fetch that fails is not reported: the next
-    /// trigger asks again.
+    /// running is left alone. A fetch that fails is not reported. The next
+    /// background trigger waits out the release check's interval from this
+    /// attempt, and an opening trigger asks again at once.
     pub fn refresh(&self, state: &Path, source: Source) {
         let Some(runtime) = self.0.runtime.get() else {
             return;
