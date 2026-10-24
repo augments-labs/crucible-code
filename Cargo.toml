@@ -270,7 +270,7 @@ tar = { version = "=0.4.46", default-features = false }
 # parser. Only its reader is used, over stored and deflated members, which
 # `flate2` above inflates in pure Rust; nothing is extracted by the crate's own
 # extraction, so each member is checked before a byte of it is written.
-zip = { version = "=9.0.4", default-features = false, features = ["deflate-flate2"] }
+zip = { version = "=9.0.5", default-features = false, features = ["deflate-flate2"] }
 
 # Search, and the directory walk that feeds it. These are ripgrep's own crates.
 # The budget is "grep within 1.25x of the rg binary", and the way to hold it is
