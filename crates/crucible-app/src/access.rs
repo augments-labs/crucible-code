@@ -3,8 +3,9 @@
 //!
 //! A provider is reached by a subscription `/login` signed in, by an API key,
 //! or through an installed agent, which reaches only the provider its driver
-//! names, since it signs in to that vendor and asks no other.
-//! `providers.<name>.access` may say which, and
+//! names, since it signs in to that vendor and asks no other. An agent the
+//! catalog reviewed reaches no provider at all: it serves its own key, so no
+//! provider is reached through it. `providers.<name>.access` may say which, and
 //! then nothing falls back from it: a key exported in the shell does not
 //! answer for a provider whose access says subscription, and an account held
 //! in the store does not answer for one whose access says apiKey. Left off, the
@@ -29,7 +30,7 @@ use std::borrow::Cow;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crucible_auth::{Held, Kind};
-use crucible_config::{Access, Driver, ExternalAgent, Routes, Settings};
+use crucible_config::{Access, Driver, ExternalAgent, Routes, Serves, Settings};
 use crucible_credentials::{ApiKey, CredentialError};
 use crucible_models::Effort;
 
@@ -59,8 +60,9 @@ pub enum Route {
     },
     /// An installed agent, started with its own sign-in.
     External {
-        /// The provider whose turns it runs.
-        provider: &'static str,
+        /// What it serves: the provider whose turns it runs, or the catalog
+        /// agent it is.
+        serves: Serves,
         /// The `externalAgents` entry it is.
         instance: Box<str>,
         /// Which agent.
@@ -207,19 +209,35 @@ pub enum AccessError {
     },
 
     /// An agent access through an instance of an agent that signs in to
-    /// another vendor and asks only it.
-    #[error(
-        "providers.{provider}.access names the instance {instance}, whose agent reaches only \
-         {serves}; remove providers.{provider}.access, or write it under providers.{serves}"
-    )]
+    /// another vendor and asks only it, or of a catalog agent, which reaches
+    /// no provider.
+    #[error("{}", foreign(provider, instance, serves))]
     ForeignAgent {
         /// The provider.
         provider: Box<str>,
         /// The name it gave.
         instance: Box<str>,
-        /// The one provider that instance's agent reaches.
-        serves: &'static str,
+        /// What that instance's agent serves in its place.
+        serves: Serves,
     },
+}
+
+/// Why `provider` is not reached through `instance`, whose agent serves
+/// `serves`: the provider it does reach, and where to write the access, or
+/// that a catalog agent reaches none, with nowhere else to write it.
+fn foreign(provider: &str, instance: &str, serves: &Serves) -> String {
+    match serves {
+        Serves::Provider(serves) => format!(
+            "providers.{provider}.access names the instance {instance}, whose agent reaches \
+             only {serves}; remove providers.{provider}.access, or write it under \
+             providers.{serves}"
+        ),
+        Serves::Agent(agent) => format!(
+            "providers.{provider}.access names the instance {instance}, which runs the catalog \
+             agent {agent}, and a catalog agent reaches no provider: it chooses its own model; \
+             remove providers.{provider}.access"
+        ),
+    }
 }
 
 /// The variable `one`'s key is read from: the one the configuration names, or
@@ -377,7 +395,7 @@ fn settled(
         Some(Access::ExternalAgent { instance }) => {
             let agent = agent(provider, instance, settings)?;
             Ok(routed(Route::External {
-                provider,
+                serves: agent.serves(),
                 instance: agent.name().into(),
                 driver: agent.driver(),
                 executable: agent.executable().into(),
@@ -392,15 +410,15 @@ fn settled(
 
 /// The installed agent `instance` that `settings` reach `provider` through,
 /// where it is a route to `provider`: nothing beside the route says how
-/// `provider` is reached, the instance is configured, and its driver reaches
+/// `provider` is reached, the instance is configured, and it serves
 /// `provider`.
 ///
 /// # Errors
 ///
 /// [`AccessError::AgentConflict`] where `provider` is also given an address or
 /// a key's variable, [`AccessError::UnknownInstance`] where no instance goes by
-/// that name, and [`AccessError::ForeignAgent`] where it reaches another
-/// provider.
+/// that name, and [`AccessError::ForeignAgent`] where it serves another
+/// provider or is a catalog agent's.
 pub(crate) fn agent(
     provider: &str,
     instance: Box<str>,
@@ -427,8 +445,8 @@ pub(crate) fn agent(
             provider: provider.into(),
             instance: instance.clone(),
         })?;
-    let serves = agent.driver().provider();
-    if serves != provider {
+    let serves = agent.serves();
+    if serves.provider() != Some(provider) {
         return Err(AccessError::ForeignAgent {
             provider: provider.into(),
             instance,

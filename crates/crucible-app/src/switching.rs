@@ -45,7 +45,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crucible_auth::{AuthError, Store, StoredCredentials};
-use crucible_config::Settings;
+use crucible_config::{Driver, Settings};
 use crucible_models::Effort;
 use crucible_provider::Unavailable;
 use crucible_runtime::Cancel;
@@ -509,9 +509,7 @@ impl Conversation {
         with: &Switching<'_>,
         (sessions, workspace): (&Path, &Workspace),
     ) -> Switched {
-        let reached = self
-            .agent_driver()
-            .is_some_and(|driver| driver.provider() == selected.name);
+        let reached = self.agent_reaches() == Some(selected.name);
         if !reached && let Some(instance) = through(with.settings, selected) {
             return self
                 .onto_the_agent(
@@ -597,7 +595,10 @@ impl Conversation {
             });
         }
         if !entry.enabled() {
-            return unstartable(crate::launching::disconnected(entry.name(), provider));
+            return unstartable(crate::launching::disconnected(
+                entry.name(),
+                &entry.serves(),
+            ));
         }
         // Held to the known ladder, for the reason `ask_agent_for` holds a
         // rung to it.
@@ -683,9 +684,8 @@ impl Conversation {
         rung: Option<Effort>,
         with: &Switching<'_>,
     ) -> Switched {
-        let reaches = self
-            .agent_driver()
-            .is_some_and(|driver| driver.takes_model() && driver.provider() == provider);
+        let reaches = self.agent_driver().is_some_and(Driver::takes_model)
+            && self.agent_reaches() == Some(provider);
         let Some(instance) = self.instance().filter(|_| reaches).map(Box::<str>::from) else {
             return Switched::Unreachable(AppError::Installed {
                 driver: self.settled().serving(),
@@ -729,7 +729,11 @@ impl Conversation {
     /// started on a model, and that model's known ladder holds it, for the
     /// reason [`Self::ask_agent_for`] holds a rung to it.
     fn think_agent(&mut self, effort: Effort, with: &Switching<'_>) -> Rung {
-        let Some(driver) = self.agent_driver().filter(|driver| driver.takes_model()) else {
+        let Some(provider) = self
+            .agent_driver()
+            .filter(|driver| driver.takes_model())
+            .and_then(|_| self.agent_reaches())
+        else {
             return Rung::Unasked;
         };
         let settled = self.settled();
@@ -737,7 +741,7 @@ impl Conversation {
         if model.is_empty() {
             return Rung::Unasked;
         }
-        if !rungs(with.providers, driver.provider(), model).contains(&effort) {
+        if !rungs(with.providers, provider, model).contains(&effort) {
             return Rung::Unsupported;
         }
         let Some(instance) = self.instance().map(Box::<str>::from) else {

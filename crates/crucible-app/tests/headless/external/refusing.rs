@@ -300,7 +300,8 @@ fn left_running(tree: &Tree, outside: Outside, instance: &str) -> Result<Outside
         Box::leak(Box::new(Registry::new(std::slice::from_ref(row()?)))),
         Some(Path::to_path_buf(&peer).into_os_string()),
     );
-    let entry = ExternalAgent::unwritten(instance, Driver::Claude, "claude", None);
+    let entry = ExternalAgent::unwritten(instance, Driver::Claude, "claude", None, None)
+        .ok_or("an instance of a built-in driver")?;
     let (agent, _) = steps.onto(&entry, Mode::Ask)?;
     let runs = steps.runs(agent, instance);
     // The conversation's own run is counted once the peer has read its script:

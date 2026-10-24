@@ -734,7 +734,8 @@ the file is and where it belongs:
 ```
 
 A session an installed agent ran is numbered 14 and has a second line, written
-with the first, saying which one: its driver, its configured name, the profile it was given,
+with the first, saying which one: its driver (for an agent the catalog reviewed,
+`catalog:` and the agent's key), its configured name, the profile it was given,
 a digest of where its program was found rather than the path, the version it
 reported and which run of the agent opened the session. No environment,
 command line or credential is written there.

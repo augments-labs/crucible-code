@@ -544,7 +544,7 @@ fn started_on(
     route: &Route,
 ) -> Result<Option<OnAgent>, AppError> {
     let Route::External {
-        provider,
+        serves,
         instance,
         driver,
         profile,
@@ -557,7 +557,7 @@ fn started_on(
     if !enabled {
         return Err(unstartable(
             instance,
-            launching::disconnected(instance, provider),
+            launching::disconnected(instance, serves),
         ));
     }
     let Some(agent) = launching::Agent::routed(route, agents, |name| {
@@ -569,8 +569,12 @@ fn started_on(
         ));
     };
     startable(startup, &agent, instance)?;
-    let route = RouteBinding::new(driver.name(), instance, profile.as_deref())
-        .map_err(|refused| unstartable(instance, refused.to_string()))?;
+    let route = RouteBinding::new(
+        &launching::bound(*driver, serves.agent()),
+        instance,
+        profile.as_deref(),
+    )
+    .map_err(|refused| unstartable(instance, refused.to_string()))?;
     Ok(Some(OnAgent {
         agent,
         instance: instance.clone(),
@@ -1739,10 +1743,10 @@ fn key(
             });
         }
         Route::External {
-            provider, instance, ..
+            serves, instance, ..
         } => {
             return Err(AppError::ExternalAgent {
-                provider: provider.into(),
+                provider: serves.to_string().into(),
                 instance,
             });
         }

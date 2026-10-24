@@ -27,7 +27,7 @@ use crucible_client_api::{
     Pending, PendingId, Progress, Prompt, Request, ResumeOutcome, Ruling, Stop, SummaryKind,
     TurnOutcome,
 };
-use crucible_config::Driver;
+use crucible_config::{Driver, Serves};
 use crucible_execution::{
     Backend, Capabilities, Capability, Decision, Failure, Lasting, SessionRef,
 };
@@ -198,7 +198,7 @@ fn launching_on(
     let sandbox: Arc<dyn SandboxService> =
         Arc::new(LocalSandbox::new().watching_on(runtime.clone()));
     let route = Route::External {
-        provider: "anthropic",
+        serves: Serves::Provider("anthropic"),
         instance: "work".into(),
         driver: Driver::Claude,
         executable: program.to_string_lossy().into(),

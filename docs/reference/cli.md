@@ -580,7 +580,8 @@ agent server this build of crucible runs, 1.3.0, for your platform, from the
 address Google publishes it at, and stops. `DRIVER` is the agent as an
 [`externalAgents`](../configuration/configuration.md#externalagents) entry
 names its `driver`; `claude` is refused, since Claude Code installs and updates
-itself. The configuration is not read, and nothing about your session or
+itself, and so is `catalog`, which is no one agent's release: a catalog agent is
+added by the key the catalog reviewed it under. The configuration is not read, and nothing about your session or
 directory is sent.
 
 The archive is downloaded into a file only you can read under

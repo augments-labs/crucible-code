@@ -20,6 +20,7 @@ use serde_json::ser::Serializer;
 use crate::env;
 use crate::error::{Accepted, At, ConfigError};
 use crate::settings;
+use crate::settings::access::Driver;
 use crate::shape::{Shape, whole};
 
 use super::Origin;
@@ -530,8 +531,9 @@ impl Reader<'_> {
     }
 
     /// Refuses a provider's access, or an agent instance, that writes a key
-    /// its variant does not read; and an instance whose program or profile is
-    /// named by a path that is not rooted.
+    /// its variant does not read; an instance whose program or profile is
+    /// named by a path that is not rooted; and a catalog instance whose
+    /// `agent` is missing or could not be a catalog agent's key.
     ///
     /// Not a shape rule: the shape has one declaration per block, and which of
     /// its keys apply is decided by another key in it. Here rather than in the
@@ -577,29 +579,37 @@ impl Reader<'_> {
         for (name, record) in instances.into_iter().flatten() {
             let at = At::of(name, self.text);
             let written = record.get("driver").and_then(Value::as_str);
-            let Some(driver) = settings::access::Driver::ALL
+            let Some(driver) = Driver::ALL
                 .into_iter()
                 .find(|driver| Some(driver.name()) == written)
             else {
                 continue;
             };
-            for other in settings::access::Driver::ALL {
-                let foreign = other.profile_key();
-                if other != driver && record.get(foreign).is_some() {
+            // Keys and not drivers: two drivers whose agents keep their
+            // sign-in alike read the same key.
+            let own = driver.profile_key();
+            for foreign in Driver::ALL.into_iter().filter_map(Driver::profile_key) {
+                if Some(foreign) != own && record.get(foreign).is_some() {
+                    let readers: Vec<&str> = Driver::ALL
+                        .into_iter()
+                        .filter(|other| other.profile_key() == Some(foreign))
+                        .map(Driver::name)
+                        .collect();
                     return Err(ConfigError::Variant {
                         file: self.file.into(),
                         path: format!("externalAgents.{name}.{foreign}").into(),
                         at: At::of(foreign, self.text),
                         problem: format!(
                             "{foreign} is read only for {}, and this instance's driver is {}, whose profile is {}",
-                            other.name(),
+                            readers.join(" and "),
                             driver.name(),
-                            driver.profile_key()
+                            own.unwrap_or("not named by any key")
                         )
                         .into(),
                     });
                 }
             }
+            self.agent(name, record, driver, at)?;
 
             if let Some(found) = record.get("executable").and_then(Value::as_str) {
                 let program = Path::new(found);
@@ -620,7 +630,7 @@ impl Reader<'_> {
                         path: format!("externalAgents.{name}.{key}").into(),
                         at: At::of(key, self.text),
                         problem: format!(
-                            "an {} agent chooses its own model, so {key} is not read for it",
+                            "an agent of the {} driver chooses its own model, so {key} is not read for it",
                             driver.name()
                         )
                         .into(),
@@ -638,7 +648,9 @@ impl Reader<'_> {
                 });
             }
 
-            let key = driver.profile_key();
+            let Some(key) = own else {
+                continue;
+            };
             if driver.profile_needed() && record.get(key).is_none() {
                 return Err(ConfigError::Needed {
                     file: self.file.into(),
@@ -664,6 +676,38 @@ impl Reader<'_> {
             }
         }
         Ok(())
+    }
+
+    /// Refuses an instance `name`, written as `record` for `driver`, whose
+    /// `agent` is not as its driver needs: a catalog instance names the
+    /// agent it runs by a key that could be one, and no other instance
+    /// names an agent.
+    fn agent(&self, name: &str, record: &Value, driver: Driver, at: At) -> Result<(), ConfigError> {
+        let variant = |problem: String| ConfigError::Variant {
+            file: self.file.into(),
+            path: format!("externalAgents.{name}.agent").into(),
+            at: At::of("agent", self.text),
+            problem: problem.into(),
+        };
+        match (driver, record.get("agent")) {
+            (Driver::Catalog, None) => Err(ConfigError::Needed {
+                file: self.file.into(),
+                path: format!("externalAgents.{name}").into(),
+                name: "agent".into(),
+                said: "a catalog instance runs the agent the catalog reviewed under that key"
+                    .into(),
+                at,
+            }),
+            (Driver::Catalog, Some(found)) => {
+                settings::access::unkeyed(found.as_str().unwrap_or_default())
+                    .map_or(Ok(()), |problem| Err(variant(problem)))
+            }
+            (Driver::Claude | Driver::Antigravity, Some(_)) => Err(variant(format!(
+                "agent names the agent a catalog instance runs, and this instance's driver is {}",
+                driver.name()
+            ))),
+            (Driver::Claude | Driver::Antigravity, None) => Ok(()),
+        }
     }
 
     /// The same refusal from three places, built once.

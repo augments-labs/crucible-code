@@ -194,7 +194,7 @@ fn a_missing_agent_program_is_refused_before_the_warning_is_put() {
     use crucible_app::backends::REGISTRY;
     use crucible_app::launching::{Agent, Controls, Launcher, Runs};
     use crucible_app::outside::Installed;
-    use crucible_config::Driver;
+    use crucible_config::{Driver, Serves};
     use crucible_sandbox::{SandboxEnablement, SandboxPolicy, SandboxService};
     use crucible_sandbox_local::LocalSandbox;
     use crucible_session::RouteBinding;
@@ -203,7 +203,7 @@ fn a_missing_agent_program_is_refused_before_the_warning_is_put() {
 
     let consent = Consent::new(Routes::production());
     let route = Route::External {
-        provider: "anthropic",
+        serves: Serves::Provider("anthropic"),
         instance: "work".into(),
         driver: Driver::Claude,
         executable: std::env::temp_dir()

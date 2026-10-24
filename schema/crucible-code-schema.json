@@ -188,6 +188,11 @@
           "$schema": {
             "type": "string"
           },
+          "agent": {
+            "description": "For a catalog agent, and required for one: the key the catalog reviewed it under, 1 to 32 lowercase letters, digits and hyphens, never a driver's word. Read only from the configuration file in your home directory",
+            "pattern": "^[a-z0-9-]{1,32}$",
+            "type": "string"
+          },
           "authentication": {
             "default": "account",
             "description": "How the agent signs in: account, its own account login, with no API key from crucible's environment. Read only from the configuration file in your home directory",
@@ -204,7 +209,8 @@
             "description": "Which agent this is, and so how crucible speaks to it. Read only from the configuration file in your home directory",
             "enum": [
               "claude",
-              "antigravity"
+              "antigravity",
+              "catalog"
             ],
             "examples": [
               "claude"
@@ -239,7 +245,7 @@
             "type": "string"
           },
           "profileDir": {
-            "description": "For an antigravity agent, and required for one: an absolute path to the profile directory it signs in and keeps its state under. Read only from the configuration file in your home directory",
+            "description": "For an antigravity agent, and required for one, or a catalog agent: an absolute path to the profile directory it signs in and keeps its state under. Read only from the configuration file in your home directory",
             "type": "string"
           }
         },

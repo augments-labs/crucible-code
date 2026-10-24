@@ -396,11 +396,8 @@ impl Outside {
             relaunch,
             route,
         } = installed;
-        let driver = crucible_config::Driver::ALL
-            .iter()
-            .map(|driver| driver.name())
-            .find(|name| *name == route.driver())
-            .unwrap_or("agent");
+        let driver = crate::launching::bound_driver(route.driver())
+            .map_or("agent", crucible_config::Driver::name);
         let turn = transcript
             .messages()
             .iter()
@@ -476,12 +473,12 @@ impl Outside {
     /// records a window for the model the agent is started on.
     pub(crate) fn window(&self) -> Option<u32> {
         let driver = crucible_config::Driver::ALL
-            .iter()
+            .into_iter()
             .find(|driver| driver.name() == self.driver)?;
         if !driver.takes_model() {
             return None;
         }
-        providers::agent_window(driver.provider(), self.model()?)
+        providers::agent_window(driver.serves(None)?.provider()?, self.model()?)
     }
 
     /// The permission mode the agent is launched in.

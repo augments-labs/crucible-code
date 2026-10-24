@@ -606,6 +606,151 @@ fn a_model_or_effort_for_an_agent_that_chooses_its_own_is_refused() {
     }
 }
 
+/// A catalog instance with `agent` set to `agent`, `beside` written after it.
+fn catalog(agent: &serde_json::Value, beside: &str) -> String {
+    format!(
+        r#"{{"externalAgents": {{"mine": {{"driver": "catalog", "executable": "goose", "agent": {agent}{beside}}}}}}}"#
+    )
+}
+
+/// A catalog instance is the agent its key names, so one that names none is
+/// no agent at all.
+#[test]
+fn a_catalog_instance_needs_the_agent_it_runs() {
+    let err = mine(r#"{"externalAgents": {"mine": {"driver": "catalog", "executable": "goose"}}}"#)
+        .unwrap_err();
+    let said = err.to_string();
+    assert!(matches!(err, ConfigError::Needed { .. }), "got {err:?}");
+    assert!(
+        said.contains("externalAgents.mine needs agent"),
+        "got {said}"
+    );
+    assert!(
+        mine(&catalog(&"goose".into(), "")).is_ok(),
+        "a catalog instance naming its agent"
+    );
+}
+
+/// Only a catalog instance runs an agent its key names; on any other the key
+/// would be one nothing reads.
+#[test]
+fn only_a_catalog_instance_names_an_agent() {
+    for (driver, beside) in [
+        ("claude", ""),
+        ("antigravity", r#", "profileDir": "/home/me/agy""#),
+    ] {
+        let err = mine(&format!(
+            r#"{{"externalAgents": {{"mine": {{"driver": "{driver}", "executable": "agent", "agent": "goose"{beside}}}}}}}"#
+        ))
+        .unwrap_err();
+        let said = err.to_string();
+        assert!(
+            matches!(err, ConfigError::Variant { .. }),
+            "{driver}: got {err:?}"
+        );
+        assert!(said.contains("externalAgents.mine.agent"), "got {said}");
+        assert!(
+            said.contains("catalog") && said.contains(driver),
+            "got {said}"
+        );
+    }
+}
+
+/// An agent's key is spelled as the catalog spells keys, so a key that could
+/// never be one is refused where it is written, saying why.
+#[test]
+fn an_agent_key_is_lowercase_letters_digits_and_hyphens() {
+    for (written, says) in [
+        ("Goose", "'G'"),
+        ("fast_agent", "'_'"),
+        ("an agent", "' '"),
+        ("", "not 0"),
+        (&"a".repeat(33), "not 33"),
+    ] {
+        let err = mine(&catalog(&written.into(), "")).unwrap_err();
+        let said = err.to_string();
+        assert!(
+            matches!(err, ConfigError::Variant { .. }),
+            "{written:?}: got {err:?}"
+        );
+        assert!(said.contains("externalAgents.mine.agent"), "got {said}");
+        assert!(said.contains(says), "{written:?}: got {said}");
+    }
+    for written in ["fast-agent", "a", "claude-acp", &"a".repeat(32)] {
+        assert!(mine(&catalog(&written.into(), "")).is_ok(), "{written}");
+    }
+}
+
+/// A key never takes a word a built-in driver or the native runner is spelled
+/// with, which a route, a session and a credential are already named by, nor
+/// a name Windows keeps for a device, since the key names a directory.
+#[test]
+fn an_agent_key_is_never_a_reserved_word() {
+    let mut words: Vec<&str> = settings::access::Driver::ALL
+        .iter()
+        .map(|driver| driver.name())
+        .collect();
+    words.extend([
+        "native", "con", "prn", "aux", "nul", "com1", "com5", "com9", "lpt1", "lpt5", "lpt9",
+    ]);
+    for word in words {
+        let err = mine(&catalog(&word.into(), "")).unwrap_err();
+        let said = err.to_string();
+        assert!(
+            matches!(err, ConfigError::Variant { .. }),
+            "{word}: got {err:?}"
+        );
+        assert!(said.contains("externalAgents.mine.agent"), "got {said}");
+        assert!(said.contains(&format!("{word:?}")), "{word}: got {said}");
+    }
+    for near in ["claudes", "com0", "com10", "lpt", "nativ", "console"] {
+        assert!(mine(&catalog(&near.into(), "")).is_ok(), "{near}");
+    }
+}
+
+/// A catalog agent keeps its sign-in under `profileDir`, the key an
+/// antigravity agent's is under too, so the two are read alike; Claude Code's
+/// key is still refused for it.
+#[test]
+fn an_antigravity_and_a_catalog_instance_both_take_profile_dir() {
+    let (agy, goose) = (
+        crate::sample::rooted("home/me/agy"),
+        crate::sample::rooted("home/me/goose"),
+    );
+    let both = serde_json::json!({"externalAgents": {
+        "space": {"driver": "antigravity", "executable": "agy", "profileDir": agy},
+        "mine": {"driver": "catalog", "executable": "goose", "agent": "goose", "profileDir": goose}
+    }})
+    .to_string();
+    assert!(mine(&both).is_ok(), "{:?}", mine(&both).err());
+
+    let err = mine(&catalog(&"goose".into(), r#", "configDir": "/home/me/p""#)).unwrap_err();
+    let said = err.to_string();
+    assert!(matches!(err, ConfigError::Variant { .. }), "got {err:?}");
+    assert!(said.contains("externalAgents.mine.configDir"), "got {said}");
+    assert!(said.contains("catalog"), "got {said}");
+}
+
+/// A catalog agent chooses its own model, so neither a model nor an effort
+/// is read for it.
+#[test]
+fn a_catalog_agent_takes_no_model_or_effort() {
+    for (key, value) in [("model", "opus"), ("effort", "high")] {
+        let err = mine(&catalog(
+            &"goose".into(),
+            &format!(r#", "{key}": "{value}""#),
+        ))
+        .unwrap_err();
+        let said = err.to_string();
+        assert!(matches!(err, ConfigError::Variant { .. }), "got {err:?}");
+        assert!(
+            said.contains(&format!("externalAgents.mine.{key}")),
+            "got {said}"
+        );
+        assert!(said.contains("catalog"), "got {said}");
+    }
+}
+
 #[test]
 fn a_driver_crucible_does_not_know_is_refused() {
     let err = mine(r#"{"externalAgents": {"mine": {"driver": "codex", "executable": "codex"}}}"#)

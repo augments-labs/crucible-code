@@ -1473,8 +1473,19 @@ const EXTERNAL_AGENT: Shape = Shape::Fields(&[
     },
     Field {
         name: "profileDir",
-        about: "For an antigravity agent, and required for one: an absolute path to the profile directory it signs in and keeps its state under. Read only from the configuration file in your home directory",
+        about: "For an antigravity agent, and required for one, or a catalog agent: an absolute path to the profile directory it signs in and keeps its state under. Read only from the configuration file in your home directory",
         shape: Shape::Text,
+        examples: &[],
+        usual: None,
+        needed: false,
+        widens: true,
+    },
+    Field {
+        name: "agent",
+        about: "For a catalog agent, and required for one: the key the catalog reviewed it under, 1 to 32 lowercase letters, digits and hyphens, never a driver's word. Read only from the configuration file in your home directory",
+        shape: Shape::Pattern(access::AGENT),
+        // No example: an example is checked written beside the example
+        // driver, and an agent beside a claude instance is refused.
         examples: &[],
         usual: None,
         needed: false,

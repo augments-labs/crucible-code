@@ -358,9 +358,11 @@ fn a_route_named_as_long_as_a_session_may_keep_it_is_listed_and_not_refused() {
 fn the_native_backend_is_one_name_for_the_contract_the_runner_and_the_store() {
     // The listing reads a session with no route as the contract's native
     // backend, and a route can never name it only because the store refuses
-    // the same spelling.
+    // the same spelling, and configuration refuses it as a catalog agent's
+    // key, which a route would be bound to.
     assert_eq!(super::NATIVE, crucible_session::NATIVE_DRIVER);
     assert_eq!(super::NATIVE, crate::native::DRIVER);
+    assert_eq!(super::NATIVE, crucible_config::NATIVE_RUNNER);
 }
 
 #[test]

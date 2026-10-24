@@ -77,7 +77,9 @@
 //! disconnected, written or started. Choosing to disconnect
 //! instead starts nothing of the agent's and asks nothing.
 //!
-//! A sign-out takes every instance sharing the credential scope out of use
+//! Instances share a credential scope where they run one agent on one profile
+//! directory; two catalog instances run one agent only where they name one
+//! key. A sign-out takes every instance sharing the credential scope out of use
 //! before the agent's own program is run: their runs in this conversation are
 //! stopped, and `enabled: false` is written for each in one update of the
 //! user file, with the `access` of every provider reached through any of
@@ -430,7 +432,7 @@ pub async fn account(
             let sharing: Vec<ExternalAgent> = agents
                 .into_iter()
                 .filter(|other| {
-                    other.driver() == agent.driver() && other.profile() == agent.profile()
+                    other.serves() == agent.serves() && other.profile() == agent.profile()
                 })
                 .collect();
             let confirmation = signing_out(&agent, &sharing, conversation.instance());
@@ -783,7 +785,7 @@ async fn sign_out(
 
 /// The provider `row`'s agent signs in to, where this build offers it.
 fn served(desk: &Desk<'_>, row: &crate::backends::Row) -> Option<&'static str> {
-    let provider = row.driver.provider();
+    let provider = row.driver.serves(None)?.provider()?;
     crate::providers::offered(desk.switching.providers)
         .any(|served| served.name == provider)
         .then_some(provider)
@@ -829,10 +831,11 @@ async fn choose(
             .iter()
             .map(|row| {
                 let agent = shown(row);
-                (
-                    agent.to_owned(),
-                    format!("Reach {} through {agent}.", row.driver.provider()),
-                )
+                let said = row.driver.serves(None).map_or_else(
+                    || format!("Run {agent}."),
+                    |serves| format!("Reach {serves} through {agent}."),
+                );
+                (agent.to_owned(), said)
             })
             .collect();
         choices.push(("Cancel".to_owned(), "Change nothing.".to_owned()));
@@ -923,10 +926,9 @@ async fn instance(
         .as_deref()
         .and_then(std::path::Path::to_str)
         .unwrap_or_else(|| command(row));
-    Some(Some((
-        ExternalAgent::unwritten(name, row.driver, executable, profile.as_deref()),
-        false,
-    )))
+    // A row is a built-in driver's, so its instance names no catalog agent.
+    let agent = ExternalAgent::unwritten(name, row.driver, executable, profile.as_deref(), None)?;
+    Some(Some((agent, false)))
 }
 
 /// How `row`'s agent is named to a person: as its route is warned about,
@@ -1337,7 +1339,7 @@ fn coordinating(choosing: &Path, agent: &ExternalAgent) -> Result<Coordinator, C
         .join("accounts");
     let scope = format!(
         "{}:{}",
-        agent.driver().name(),
+        crate::launching::bound(agent.driver(), agent.agent()),
         agent.profile().unwrap_or("default")
     );
     let journal = Journal::of(directory, &scope)?;

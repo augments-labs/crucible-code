@@ -14,6 +14,16 @@ fn a_driver_is_named_as_externalagents_names_it() {
     );
 }
 
+/// A catalog agent is not installed by its driver, which names no agent of
+/// its own, so `catalog` is refused with the command that adds one, and only
+/// the built-in drivers are listed.
+#[test]
+fn a_catalog_agent_is_added_rather_than_installed() {
+    let refused = driver("catalog").expect_err("catalog is not installed by its driver");
+    assert!(refused.contains("crucible agents add"), "{refused}");
+    assert!(refused.contains("claude, antigravity"), "{refused}");
+}
+
 #[test]
 fn an_install_says_where_the_release_is_and_how_to_use_it() {
     let installed = Installed {

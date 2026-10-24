@@ -7,6 +7,11 @@
 //! to a workspace. Nothing is run to find it, and nothing found is run until a
 //! [`Launcher`] starts it.
 //!
+//! A session on an agent's route is bound to the agent as `bound` names
+//! it: its driver's word, or for a catalog agent `catalog:<key>`, so the
+//! session goes on only on the agent that ran it and never on another agent
+//! its instance was pointed at since.
+//!
 //! A start is refused, before any process exists, in this order: a row this
 //! release does not ship, with the sentence naming its documentation; a
 //! program not found or not executable, with the sentences saying what to do;
@@ -71,13 +76,14 @@
 //! could not be started reads as unreadable, saying why, so a caller claims
 //! nothing the step did not establish.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use crucible_config::{Driver, ExternalAgent};
+use crucible_config::{Driver, ExternalAgent, Serves};
 use crucible_execution::{Backend, Capabilities, Capability, Failure, SessionRef, Text};
 use crucible_external_harnesses::{
     Account, Control, Dialect, Discovery, Host, Launch, PREPARING, Program, Reading, Refusal,
@@ -93,6 +99,7 @@ use crucible_sandbox::{
 };
 use crucible_session::{ExternalRef, RouteBinding};
 use crucible_tools::Mode;
+use crucible_types::AgentKey;
 use tokio::runtime::Handle;
 
 use crate::access::Route;
@@ -152,19 +159,44 @@ pub struct Agent {
     effort: Option<Effort>,
 }
 
-/// The model and effort an agent of `driver` is started on, from what its
-/// entry names: none where the driver chooses its own model.
+/// The model and effort an agent of `driver`, serving `serves`, is started
+/// on, from what its entry names: none where the driver chooses its own
+/// model, as a catalog agent does.
 fn started(
     driver: Driver,
+    serves: &Serves,
     model: Option<&str>,
     effort: Option<Effort>,
 ) -> (Option<Box<str>>, Option<Effort>) {
-    if !driver.takes_model() {
+    let Some(provider) = serves.provider().filter(|_| driver.takes_model()) else {
         return (None, None);
-    }
-    match providers::agent_started(driver.provider(), model, effort) {
+    };
+    match providers::agent_started(provider, model, effort) {
         Some((model, effort)) => (Some(model), effort),
         None => (model.map(Into::into), effort),
+    }
+}
+
+/// The driver a session run by an instance of `driver` is bound to, as its
+/// route names it: the driver's word, and for a catalog agent
+/// `catalog:<key>`, so a session one catalog agent ran never goes on on
+/// another its instance was pointed at since.
+#[must_use]
+pub(crate) fn bound(driver: Driver, agent: Option<&AgentKey>) -> Cow<'static, str> {
+    match (driver, agent) {
+        (Driver::Catalog, Some(agent)) => Cow::Owned(format!("{}:{agent}", driver.name())),
+        (Driver::Claude | Driver::Antigravity | Driver::Catalog, _) => Cow::Borrowed(driver.name()),
+    }
+}
+
+/// The driver of the agent a route names `written`, as [`bound`] spells it,
+/// where it is one this build has.
+#[must_use]
+pub(crate) fn bound_driver(written: &str) -> Option<Driver> {
+    match written.split_once(':') {
+        Some((driver, agent)) => (driver == Driver::Catalog.name() && AgentKey::new(agent).is_ok())
+            .then_some(Driver::Catalog),
+        None => Driver::ALL.into_iter().find(|one| one.name() == written),
     }
 }
 
@@ -179,6 +211,7 @@ impl Agent {
         lookup: impl Fn(&str) -> Option<OsString>,
     ) -> Option<Self> {
         let Route::External {
+            serves,
             driver,
             executable,
             profile,
@@ -189,7 +222,7 @@ impl Agent {
         else {
             return None;
         };
-        let (model, effort) = started(*driver, model.as_deref(), *effort);
+        let (model, effort) = started(*driver, serves, model.as_deref(), *effort);
         Some(Self {
             row: registry.row(*driver)?,
             discovery: discover(executable, lookup),
@@ -208,7 +241,12 @@ impl Agent {
         registry: &Registry,
         lookup: impl Fn(&str) -> Option<OsString>,
     ) -> Option<Self> {
-        let (model, effort) = started(agent.driver(), agent.model(), agent.effort());
+        let (model, effort) = started(
+            agent.driver(),
+            &agent.serves(),
+            agent.model(),
+            agent.effort(),
+        );
         Some(Self {
             row: registry.row(agent.driver())?,
             discovery: discover(agent.executable(), lookup),
@@ -355,10 +393,14 @@ pub fn reopening(
         .iter()
         .find(|entry| entry.name() == opened.instance())
         .ok_or(Unresumable::Rerouted)?;
-    let route = RouteBinding::new(entry.driver().name(), entry.name(), entry.profile())
-        .ok()
-        .filter(|route| route.same_route(opened))
-        .ok_or(Unresumable::Rerouted)?;
+    let route = RouteBinding::new(
+        &bound(entry.driver(), entry.agent()),
+        entry.name(),
+        entry.profile(),
+    )
+    .ok()
+    .filter(|route| route.same_route(opened))
+    .ok_or(Unresumable::Rerouted)?;
     if !entry.enabled() {
         return Err(Unresumable::Unstartable(format!(
             "it is disconnected: set externalAgents.{}.enabled to true in the user \
@@ -370,14 +412,21 @@ pub fn reopening(
     Ok((agent, route))
 }
 
-/// Why the installed agent `instance`, which `provider` is reached through,
-/// is not started: it is disconnected, and the two ways back.
-pub(crate) fn disconnected(instance: &str, provider: &str) -> String {
-    format!(
-        "it is disconnected: set externalAgents.{instance}.enabled to true in the user \
-         configuration file, or remove providers.{provider}.access there to reach \
-         {provider} directly"
-    )
+/// Why the installed agent `instance`, which serves `serves`, is not
+/// started: it is disconnected, and the ways back, one of them reaching the
+/// provider it serves directly where it serves one.
+pub(crate) fn disconnected(instance: &str, serves: &Serves) -> String {
+    match serves {
+        Serves::Provider(provider) => format!(
+            "it is disconnected: set externalAgents.{instance}.enabled to true in the user \
+             configuration file, or remove providers.{provider}.access there to reach \
+             {provider} directly"
+        ),
+        Serves::Agent(_) => format!(
+            "it is disconnected: set externalAgents.{instance}.enabled to true in the user \
+             configuration file"
+        ),
+    }
 }
 
 /// The agent the configuration's `entry` is, as `registry` knows its driver,
@@ -989,8 +1038,12 @@ impl Steps {
     /// What to say where the entry cannot be started in `mode`, or its route
     /// cannot be written down.
     pub fn onto(&self, entry: &ExternalAgent, mode: Mode) -> Result<(Agent, RouteBinding), String> {
-        let route = RouteBinding::new(entry.driver().name(), entry.name(), entry.profile())
-            .map_err(|refused| refused.to_string())?;
+        let route = RouteBinding::new(
+            &bound(entry.driver(), entry.agent()),
+            entry.name(),
+            entry.profile(),
+        )
+        .map_err(|refused| refused.to_string())?;
         let agent = startable(
             entry,
             self.registry,

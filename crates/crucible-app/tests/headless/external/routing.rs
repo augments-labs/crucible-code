@@ -7,12 +7,19 @@
 //! the commands before it wrote, as it is for someone typing them one after
 //! another. A sign-out of an agent whose route has no yes is asked about
 //! first, and a no leaves the same files and runs it found.
+//!
+//! The last cases are an instance of a catalog agent, which serves its own
+//! key: no provider is reached through it and no model is offered on its
+//! route, a session it ran goes on only on the agent it was bound to, and a
+//! sign-out of it takes no other catalog agent out of use.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use crucible_app::Conversation;
 use crucible_app::access::Rewritten;
 use crucible_app::client::{self, Front};
+use crucible_app::outside::Installed;
 use crucible_client_api::{
     Capabilities as Asking, Command, Correlation, LoginOutcome, LogoutOutcome, ModelOutcome, Name,
     Outcome, Pending, Request, ResumeOutcome, Retained, Standing, Text,
@@ -20,12 +27,13 @@ use crucible_client_api::{
 use crucible_config::{Access, Settings};
 use crucible_external_harnesses::fake_peer::{self, Reply, scripts::claude};
 use crucible_runner::Turned;
-use crucible_session::Session;
-use crucible_types::{Message, SessionId};
+use crucible_session::{RouteBinding, Session};
+use crucible_types::{Message, SessionId, Transcript};
 
 use super::{
     Asked, CONNECTED_FILE, Choosing, INSTALLED, Outside, Picking, SHARED, UNCONNECTED, UNINSTALLED,
-    accounting, connected, recorded_on, runtime, started_native, stepped, turn,
+    accounting, accounting_on, answered_off, connected, launching, recorded_on, resuming_at,
+    runtime, started_native, stepped, turn,
 };
 use crate::{Failed, Script, Tree};
 
@@ -734,5 +742,167 @@ fn a_sign_out_whose_yes_cannot_be_written_says_nothing_changed() -> Result<(), F
     assert_eq!(started, 0, "the agent's program was started");
     let (turned, _events) = turn(&mut outside, "again", false)?;
     assert!(turned.is_ok(), "the run was stopped: {turned:?}");
+    Ok(())
+}
+
+/// The user file holding the one instance `work`, of the catalog agent
+/// `agent`.
+fn catalog_instance(agent: &str) -> String {
+    serde_json::json!({"externalAgents": {
+        "work": {"driver": "catalog", "agent": agent, "executable": "goose"}
+    }})
+    .to_string()
+}
+
+/// A session a catalog agent ran is bound to that agent's key, so once its
+/// instance names another agent the session is refused as run by an agent
+/// this run is not using, while an instance still naming the same agent is
+/// its route; nothing is started or opened either way.
+#[test]
+fn a_session_a_catalog_agent_ran_does_not_resume_on_another_agent() -> Result<(), Failed> {
+    let tree = Tree::new("external-resume-catalog-repointed")?;
+    let opened = RouteBinding::new("catalog:goose", "work", None)?;
+    let session = Session::start_routed(&tree.sessions(), &tree.workspace()?, None, &opened)?;
+    let id = session.id().cloned().ok_or("an id")?;
+    session.append(&Message::User {
+        text: "before".into(),
+        attachments: Box::new([]),
+    });
+    drop(session);
+    let native = started_native(&tree, Script::new(Vec::new()))?;
+    let current = native.session().id().cloned();
+    let (mut conversation, peer) = stepped(&tree, native, &connected([]))?;
+    let started = fake_peer::played(&peer);
+
+    for (agent, says) in [
+        ("codex", "run by the installed agent work"),
+        ("goose", "work cannot be started"),
+    ] {
+        let outcome = resuming_at(
+            &tree,
+            &mut conversation,
+            &catalog_instance(agent),
+            id.clone(),
+        )?;
+        let told = match &outcome {
+            Outcome::Resumed(ResumeOutcome::Failed(problem)) => problem.message.as_str().to_owned(),
+            other => format!("{other:?}"),
+        };
+        assert!(told.contains(says), "{agent}: {told}");
+    }
+
+    assert_eq!(conversation.session().id(), current.as_ref());
+    assert_eq!(
+        fake_peer::played(&peer),
+        started,
+        "the agent's program was started"
+    );
+    Ok(())
+}
+
+/// A provider whose access names an instance of a catalog agent is refused
+/// naming the agent and no provider to write it under, since a catalog agent
+/// reaches no provider; and a conversation on a catalog agent's route offers
+/// no models, since the agent chooses its own.
+#[test]
+fn a_catalog_agent_reaches_no_provider_and_offers_no_model() -> Result<(), Failed> {
+    let tree = Tree::new("external-catalog-reaches-none")?;
+    let mut native = started_native(&tree, Script::new(Vec::new()))?;
+    let through = serde_json::json!({
+        "externalAgents": {"work": {"driver": "catalog", "agent": "goose", "executable": "goose"}},
+        "providers": {"anthropic": {"access": {"type": "externalAgent", "instance": "work"}}}
+    })
+    .to_string();
+
+    let refused = answered_off(
+        &tree,
+        &mut native,
+        &through,
+        Command::SelectModel {
+            provider: Name::new("anthropic")?,
+            model: Name::new("claude-sonnet-5-5")?,
+            effort: None,
+        },
+    )?;
+
+    let Outcome::Model(ModelOutcome::Unreachable(problem)) = &refused else {
+        return Err(format!("{refused:?}").into());
+    };
+    let said = problem.message.as_str();
+    assert!(
+        said.contains("providers.anthropic.access names the instance work")
+            && said.contains("catalog agent goose"),
+        "{said}"
+    );
+    assert!(!said.contains("write it under"), "{said}");
+
+    let route = RouteBinding::new("catalog:goose", "work", None)?;
+    let (launching, _peer) = launching(&tree, &connected([]))?;
+    let session = Arc::new(Session::start_routed(
+        &tree.sessions(),
+        &tree.workspace()?,
+        None,
+        &route,
+    )?);
+    let mut conversation = crate::conversation(&tree, Script::new(Vec::new()), false)?;
+    let installed = Installed {
+        backend: None,
+        relaunch: Box::new(launching),
+        route,
+    };
+    runtime()?.block_on(async {
+        conversation
+            .external(session, Transcript::new(), installed)
+            .await
+            .map_err(|refused| refused.reason().as_str().to_owned())
+    })?;
+
+    assert_eq!(
+        client::snapshot(&conversation).execution,
+        crucible_client_api::Execution::Instance(Name::new("work")?)
+    );
+    assert_eq!(client::reaching(&conversation), None);
+    Ok(())
+}
+
+/// Two catalog instances naming two keys run two agents, so a sign-out of
+/// one takes only the instances of its own agent out of use, though neither
+/// names a profile directory.
+#[test]
+fn a_sign_out_of_one_catalog_agent_leaves_another_in_use() -> Result<(), Failed> {
+    const TWO_AGENTS: &str = r#"{
+  "externalAgents": {
+    "goose": {"driver": "catalog", "agent": "goose", "executable": "goose"},
+    "codex": {"driver": "catalog", "agent": "codex", "executable": "codex"}
+  }
+}
+"#;
+    let tree = Tree::new("external-sign-out-catalog")?;
+    let native = started_native(&tree, Script::new(Vec::new()))?;
+    let (mut conversation, _peer) = stepped(&tree, native, &connected([]))?;
+    let asked = Asked {
+        installed: (TWO_AGENTS, "goose"),
+        command: &|instance| Command::SignOut { instance },
+        asking: Asking::every(),
+        after: None,
+    };
+    let mut choosing = Choosing {
+        choice: Some(client::accounts::SIGN_OUT),
+        put: Vec::new(),
+    };
+
+    let (outcome, file) = accounting_on(&tree, &mut conversation, &asked, &mut choosing)?;
+
+    let written: serde_json::Value = serde_json::from_str(&file)?;
+    assert_eq!(
+        written.pointer("/externalAgents/goose/enabled"),
+        Some(&serde_json::json!(false)),
+        "{outcome:?}: {file}"
+    );
+    assert_eq!(
+        written.pointer("/externalAgents/codex/enabled"),
+        None,
+        "{outcome:?}: {file}"
+    );
     Ok(())
 }
