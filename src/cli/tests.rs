@@ -822,7 +822,8 @@ fn published_at(port: u16) -> crucible_app::catalog_fetch::Source {
     crucible_app::catalog_fetch::Source {
         base: format!("http://127.0.0.1:{port}/catalog/"),
         keys: crucible_external_harnesses::catalog::KEYS,
-        hosts: &["127.0.0.1"],
+        hosts: &[],
+        ..crucible_app::catalog_fetch::Source::published(&|_| None)
     }
 }
 

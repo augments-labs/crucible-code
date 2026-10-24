@@ -1290,7 +1290,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         asking,
         services,
         home.path(),
-        crucible_app::catalog_fetch::Source::published(),
+        crucible_app::catalog_fetch::Source::published(&from),
     )?;
 
     // The generation the launch above read its provider out of, taken once so

@@ -59,12 +59,15 @@ use crate::runtime::{BLOCKING, RuntimeOwner, Unstarted, Unstopped};
 // goes on polling: its turn's, and a question put through the tool that asks,
 // which runs alone. An owner added to the blocking threads is added here.
 //
-// The catalog fetch is not counted, and takes two things from outside this
-// count. The trust state it changes is changed on a thread of its own, since
-// the change waits up to five seconds for another process's. Its client's
-// hostname lookup runs in one place of its own, one thread at a time, which
-// takes the thread this count leaves to spare when it runs beside every other
-// owner at its most.
+// The catalog fetch is counted apart from them. The trust state it changes is
+// changed on a thread of its own, since the change waits up to five seconds
+// for another process's. Its client's hostname lookups run in one place of
+// their own, `CATALOG_LOOKUPS` at a time, and that place takes the thread the
+// assertion below leaves to spare when it runs beside every other owner at its
+// most. The second assertion checks that the counted owners and that place
+// still fit within `BLOCKING`, so a second place built for another fetch
+// fails to compile instead of queueing a counted owner's job. The sentence on
+// `BLOCKING` about a thread to spare is about the counted owners alone.
 //
 // That is the reach of the assertion below, and three of those owners are
 // there because the owner decided to widen `BLOCKING` for them rather than let
@@ -88,6 +91,7 @@ const HTTP_LOOKUPS: usize = 2;
 const RELEASE_WRITE: usize = 1;
 const FOREGROUND_STOPS: usize = 2;
 const TERMINAL_WAITS: usize = 2;
+const CATALOG_LOOKUPS: usize = crate::catalog_fetch::LOOKUPS.get();
 const _: () = assert!(
     ToolWorker::CAPACITY
         + HTTP_LOOKUPS
@@ -100,6 +104,19 @@ const _: () = assert!(
     "the tool worker, shared HTTP lookups, account requests, the release cache write, the \
      commands left running, the foreground stops and a terminal's waits together would \
      take every blocking thread the runtime has"
+);
+const _: () = assert!(
+    ToolWorker::CAPACITY
+        + HTTP_LOOKUPS
+        + Renewals::BLOCKING
+        + crucible_builtins::MOST
+        + RELEASE_WRITE
+        + FOREGROUND_STOPS
+        + TERMINAL_WAITS
+        + CATALOG_LOOKUPS
+        <= BLOCKING,
+    "the owners above and the catalog fetch's hostname lookups together would take more \
+     blocking threads than the runtime has"
 );
 
 /// How long a renewal still in flight when the run is over is given to

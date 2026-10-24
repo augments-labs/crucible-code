@@ -13,15 +13,22 @@ use std::time::{Duration, Instant, SystemTime};
 
 use crucible_external_harnesses::catalog::fixture::{Signed, signed};
 use crucible_external_harnesses::catalog::{
-    CatalogError, INDEX_BYTES, SNAPSHOT, Trust, TrustError,
+    ASSET_BYTES, AssetRef, CatalogError, INDEX_BYTES, SNAPSHOT, Trust, TrustError,
 };
-use crucible_http::{BodyError, Origin};
+use crucible_http::{BodyError, Origin, ProxyEnv};
 use crucible_types::AgentKey;
 use serde_json::{Value, json};
+use sha2::{Digest as _, Sha256};
 
 use super::*;
 use crate::sample::Sample;
 use crate::services::serving;
+
+/// The file the trust state is kept in, under the state directory.
+const TRUST_FILE: &str = "agent-catalog/trust.json";
+
+/// The file the time of the last background attempt is kept in, beside it.
+const STAMP: &str = "agent-catalog/asked";
 
 /// How long a test waits for something another thread does before it says
 /// what it was waiting for.
@@ -249,8 +256,18 @@ fn source(server: &Server) -> Source {
     Source {
         base: server.base(),
         keys: signed(b"{}").keys,
-        hosts: &["127.0.0.1"],
+        hosts: listing(&[format!("127.0.0.1:{}", server.port)]),
+        proxy: ProxyEnv::default(),
     }
+}
+
+/// `hosts`, kept for the rest of the process, as a source lists them.
+fn listing(hosts: &[String]) -> &'static [&'static str] {
+    let kept: Vec<&'static str> = hosts
+        .iter()
+        .map(|host| &*Box::leak(host.clone().into_boxed_str()))
+        .collect();
+    Box::leak(kept.into_boxed_slice())
 }
 
 /// Runs `work` to its end on a runtime of its own.
@@ -348,20 +365,6 @@ fn a_refresh_hands_the_catalog_to_the_trust_state() {
     run(refresh(&state, &source(&server), Trigger::Opening)).expect("a kept catalog");
 
     assert_eq!(offered(&state), ["1.0.0"]);
-}
-
-#[test]
-fn the_cadence_reads_the_file_the_trust_state_writes() {
-    // One name is spelled in two places, the trust state's and the cadence's;
-    // this is what holds them to each other.
-    let sample = Sample::new("catalog-fetch-file");
-    let state = state(&sample);
-    let server = Server::start();
-    server.publish(&sign(&catalog(5, "1.0.0")));
-
-    run(refresh(&state, &source(&server), Trigger::Opening)).expect("a kept catalog");
-
-    assert!(state.join(TRUST_FILE).is_file());
 }
 
 #[test]
@@ -627,14 +630,19 @@ fn a_redirect_that_leads_back_to_itself_is_followed_only_so_far() {
 }
 
 #[test]
-fn a_redirect_is_followed_only_to_an_exact_listed_host_over_the_scheme_asked_for() {
-    let listed = ["github.com", "objects.githubusercontent.com"];
+fn a_redirect_is_followed_only_to_an_exact_listed_host_and_port_over_the_scheme_asked_for() {
+    let listed = [
+        "github.com",
+        "objects.githubusercontent.com",
+        "example.org:8443",
+    ];
     let follows = |location: &str| redirect_to(location, "https", &listed);
 
     assert!(follows("https://github.com/a/b").is_some());
     assert!(follows("https://objects.githubusercontent.com/a?b=c").is_some());
     assert!(follows("https://GitHub.com./a").is_some());
-    assert!(follows("https://github.com:8443/a").is_some());
+    assert!(follows("https://github.com:443/a").is_some());
+    assert!(follows("https://example.org:8443/a").is_some());
 
     for refused in [
         "http://github.com/a",
@@ -656,50 +664,91 @@ fn a_redirect_is_followed_only_to_an_exact_listed_host_over_the_scheme_asked_for
         "https://github.com\\@example.com/a",
         "https://[::1]/a",
         "https://git\u{2024}hub.com/a",
+        "https://github.com:8443/a",
+        "https://github.com:22/a",
+        "https://github.com:0/a",
+        "https://objects.githubusercontent.com:8443/a",
+        "https://example.org/a",
+        "https://example.org:443/a",
+        "https://example.org:8444/a",
         "",
     ] {
         assert_eq!(follows(refused), None, "{refused:?} was followed");
     }
+
+    let plain = |location: &str| redirect_to(location, "http", &["localhost", "127.0.0.1:9"]);
+    assert!(plain("http://localhost/a").is_some());
+    assert!(plain("http://localhost:80/a").is_some());
+    assert!(plain("http://127.0.0.1:9/a").is_some());
+    assert_eq!(plain("http://localhost:81/a"), None);
+    assert_eq!(plain("http://127.0.0.1/a"), None);
+    assert_eq!(plain("https://localhost/a"), None);
 }
 
 #[test]
-fn the_client_is_held_to_the_listed_hosts_and_the_one_it_was_pointed_at() {
-    let held = Limited::to("github.com", &["objects.githubusercontent.com"]);
-    let origin = |url: &str| Origin::of(url).expect("an origin");
+fn a_redirect_to_a_listed_host_on_another_port_is_refused_before_anything_is_sent_there() {
+    let server = Server::start();
+    let mut source = source(&server);
+    source.hosts = listing(&[format!("127.0.0.1:{}", server.port.wrapping_add(1))]);
+    server.serve(
+        "/catalog/index.json",
+        Reply::Redirect(server.at("/storage/index.json")),
+    );
 
-    assert!(held.held(&origin("https://github.com/a")).is_none());
-    assert!(
-        held.held(&origin("https://objects.githubusercontent.com/a"))
-            .is_none()
-    );
-    assert!(held.held(&origin("https://example.com/a")).is_some());
-    assert!(
-        held.held(&origin("https://github.com.example.com/a"))
-            .is_some()
-    );
+    let refused = run(fetch(&source, Trigger::Opening));
+
+    assert!(matches!(refused, Err(FetchError::Redirect)), "{refused:?}");
+    assert_eq!(server.asked(), ["/catalog/index.json"]);
 }
 
-/// A refresh of the catalog a server publishes at serial 5, triggered as
-/// `trigger` says, with the trust state last written `kept` seconds ago, if it
-/// has been written at all: the paths the server was asked for.
-fn asked_when(trigger: Trigger, kept: Option<i64>) -> Vec<String> {
-    let sample = Sample::new("catalog-fetch-cadence");
-    let state = state(&sample);
-    let server = Server::start();
-    let source = source(&server);
-    server.publish(&sign(&catalog(5, "1.0.0")));
-    if let Some(kept) = kept {
-        run(refresh(&state, &source, Trigger::Opening)).expect("a first catalog");
-        let file = std::fs::File::options()
-            .write(true)
-            .open(state.join(TRUST_FILE))
-            .expect("the trust state");
-        file.set_modified(ago(kept)).expect("a modified time");
-        server.forget();
-    }
+#[test]
+fn the_client_is_held_to_the_listed_places_and_the_one_it_was_pointed_at() {
+    let origin = |url: &str| Origin::of(url).expect("an origin");
+    let held = Limited::to(
+        &origin("https://github.com/a/"),
+        &["objects.githubusercontent.com", "example.org:8443"],
+    );
 
-    run(refresh(&state, &source, trigger)).expect("a refresh");
-    server.asked()
+    for allowed in [
+        "https://github.com/a",
+        "https://github.com:443/a",
+        "https://objects.githubusercontent.com/a",
+        "https://example.org:8443/a",
+    ] {
+        assert!(held.held(&origin(allowed)).is_none(), "{allowed}");
+    }
+    for kept_back in [
+        "https://example.com/a",
+        "https://github.com.example.com/a",
+        "https://github.com:8443/a",
+        "https://example.org/a",
+        "https://objects.githubusercontent.com:8443/a",
+    ] {
+        assert!(held.held(&origin(kept_back)).is_some(), "{kept_back}");
+    }
+}
+
+#[test]
+fn a_source_goes_out_under_the_proxy_it_names_and_not_the_one_the_process_has() {
+    let server = Server::start();
+    server.publish(&sign(&catalog(5, "1.0.0")));
+    // A port nothing listens on, named as the proxy.
+    let closed = TcpListener::bind("127.0.0.1:0")
+        .expect("a port")
+        .local_addr()
+        .expect("an address")
+        .port();
+    let mut source = source(&server);
+    source.proxy =
+        ProxyEnv::read(|name| (name == "HTTP_PROXY").then(|| format!("http://127.0.0.1:{closed}")));
+
+    let refused = run(fetch(&source, Trigger::Opening));
+
+    assert!(
+        matches!(refused, Err(FetchError::Request(_))),
+        "{refused:?}"
+    );
+    assert!(server.asked().is_empty(), "{:?}", server.asked());
 }
 
 /// The instant `seconds` before now, or after it where they are negative.
@@ -714,50 +763,265 @@ fn ago(seconds: i64) -> SystemTime {
     .expect("a time")
 }
 
-#[test]
-fn the_background_fetch_waits_out_the_release_checks_interval_after_a_catalog_was_kept() {
-    let recently = i64::try_from(crucible_update::ASK_AFTER.as_secs()).expect("seconds") - 60;
+/// The seconds in the release check's interval.
+fn interval() -> i64 {
+    i64::try_from(crucible_update::ASK_AFTER.as_secs()).expect("seconds")
+}
 
-    assert_eq!(
-        asked_when(Trigger::Background, Some(recently)),
-        [] as [&str; 0]
+/// Makes the stamp under `state` say the last background attempt was
+/// `seconds` ago.
+fn stamp_at(state: &Path, seconds: i64) {
+    let file = state.join(STAMP);
+    std::fs::create_dir_all(file.parent().expect("a directory")).expect("a directory");
+    let at = ago(seconds)
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("a time after 1970")
+        .as_secs();
+    std::fs::write(file, format!("{at}\n")).expect("a stamp");
+}
+
+/// A refresh as each of `triggers` says, one after another, and what each
+/// came to.
+fn refreshes(state: &Path, source: &Source, triggers: &[Trigger]) -> Vec<Result<(), FetchError>> {
+    triggers
+        .iter()
+        .map(|trigger| run(refresh(state, source, *trigger)))
+        .collect()
+}
+
+/// The two paths one fetch of the catalog asks for.
+const BOTH: [&str; 2] = ["/catalog/index.json", "/catalog/index.json.minisig"];
+
+#[test]
+fn a_background_attempt_that_fails_is_not_made_again_within_the_interval() {
+    let sample = Sample::new("catalog-fetch-failing");
+    let state = state(&sample);
+    // Nothing is published, so each request is answered 404.
+    let server = Server::start();
+
+    let results = refreshes(
+        &state,
+        &source(&server),
+        &[Trigger::Background, Trigger::Background],
+    );
+
+    assert!(
+        matches!(results.as_slice(), [Err(FetchError::Status(404)), Ok(())]),
+        "{results:?}"
+    );
+    assert_eq!(server.asked(), ["/catalog/index.json"]);
+}
+
+#[test]
+fn a_background_attempt_that_is_not_believed_is_not_made_again_within_the_interval() {
+    // As every build asks until the keys are compiled in: a catalog is fetched
+    // and cannot be believed under none.
+    let sample = Sample::new("catalog-fetch-unbelieved");
+    let state = state(&sample);
+    let server = Server::start();
+    server.publish(&sign(&catalog(5, "1.0.0")));
+    let mut source = source(&server);
+    source.keys = crucible_external_harnesses::catalog::KEYS;
+
+    let results = refreshes(&state, &source, &[Trigger::Background, Trigger::Background]);
+
+    assert!(
+        matches!(
+            results.as_slice(),
+            [
+                Err(FetchError::Trust(TrustError::Catalog(
+                    CatalogError::Signature
+                ))),
+                Ok(())
+            ]
+        ),
+        "{results:?}"
+    );
+    assert_eq!(server.asked(), BOTH);
+    assert!(
+        !state.join("agent-catalog/trust.json").exists(),
+        "a catalog that was not believed was kept"
     );
 }
 
 #[test]
-fn the_background_fetch_asks_again_once_that_interval_has_passed() {
-    let long_ago = i64::try_from(crucible_update::ASK_AFTER.as_secs()).expect("seconds") + 60;
+fn an_explicit_request_fetches_whatever_a_background_attempt_stamped() {
+    let sample = Sample::new("catalog-fetch-opening");
+    let state = state(&sample);
+    let server = Server::start();
 
+    let results = refreshes(
+        &state,
+        &source(&server),
+        &[Trigger::Background, Trigger::Opening],
+    );
+
+    assert!(
+        matches!(results.as_slice(), [Err(_), Err(_)]),
+        "{results:?}"
+    );
     assert_eq!(
-        asked_when(Trigger::Background, Some(long_ago)),
-        ["/catalog/index.json", "/catalog/index.json.minisig"]
+        server.asked(),
+        ["/catalog/index.json", "/catalog/index.json"]
     );
 }
 
 #[test]
-fn the_background_fetch_asks_when_nothing_was_ever_kept() {
-    assert_eq!(
-        asked_when(Trigger::Background, None),
-        ["/catalog/index.json", "/catalog/index.json.minisig"]
-    );
+fn an_explicit_request_leaves_no_stamp_and_a_background_attempt_after_it_asks() {
+    let sample = Sample::new("catalog-fetch-opening-first");
+    let state = state(&sample);
+    let server = Server::start();
+    server.publish(&sign(&catalog(5, "1.0.0")));
+
+    let opened = refreshes(&state, &source(&server), &[Trigger::Opening]);
+    assert!(matches!(opened.as_slice(), [Ok(())]), "{opened:?}");
+    assert!(!state.join(STAMP).exists(), "an explicit request stamped");
+    let background = refreshes(&state, &source(&server), &[Trigger::Background]);
+
+    assert!(matches!(background.as_slice(), [Ok(())]), "{background:?}");
+    assert_eq!(server.asked(), [BOTH, BOTH].concat());
 }
 
 #[test]
-fn the_background_fetch_asks_when_the_state_claims_to_be_written_in_the_future() {
+fn a_fresh_trust_state_does_not_hold_a_background_fetch_back_and_only_the_stamp_does() {
+    // What the cadence reads is the stamp. The trust state's own file, however
+    // lately it was written, says nothing about when a background attempt was
+    // last made.
+    let sample = Sample::new("catalog-fetch-trust-fresh");
+    let state = state(&sample);
+    let server = Server::start();
+    server.publish(&sign(&catalog(5, "1.0.0")));
+    let source = source(&server);
+    run(refresh(&state, &source, Trigger::Opening)).expect("a kept catalog");
+    assert!(state.join("agent-catalog/trust.json").is_file());
+    server.forget();
+
+    let results = refreshes(&state, &source, &[Trigger::Background, Trigger::Background]);
+
+    assert!(
+        matches!(results.as_slice(), [Ok(()), Ok(())]),
+        "{results:?}"
+    );
+    assert_eq!(server.asked(), BOTH);
+}
+
+#[test]
+fn a_background_attempt_a_day_old_is_made_again() {
+    let sample = Sample::new("catalog-fetch-due");
+    let state = state(&sample);
+    let server = Server::start();
+    server.publish(&sign(&catalog(5, "1.0.0")));
+    stamp_at(&state, interval() + 60);
+
+    let results = refreshes(
+        &state,
+        &source(&server),
+        &[Trigger::Background, Trigger::Background],
+    );
+
+    assert!(
+        matches!(results.as_slice(), [Ok(()), Ok(())]),
+        "{results:?}"
+    );
+    assert_eq!(server.asked(), BOTH);
+}
+
+#[test]
+fn a_background_attempt_inside_the_interval_is_not_made() {
+    let sample = Sample::new("catalog-fetch-not-due");
+    let state = state(&sample);
+    let server = Server::start();
+    server.publish(&sign(&catalog(5, "1.0.0")));
+    stamp_at(&state, interval() - 60);
+
+    let results = refreshes(&state, &source(&server), &[Trigger::Background]);
+
+    assert!(matches!(results.as_slice(), [Ok(())]), "{results:?}");
+    assert!(server.asked().is_empty(), "{:?}", server.asked());
+}
+
+#[test]
+fn a_stamp_dated_in_the_future_does_not_hold_a_fetch_back() {
     // A clock that ran ahead must not hold revocations back for as long as it
     // ran ahead by.
-    assert_eq!(
-        asked_when(Trigger::Background, Some(-DAY)),
-        ["/catalog/index.json", "/catalog/index.json.minisig"]
-    );
+    let sample = Sample::new("catalog-fetch-future");
+    let state = state(&sample);
+    let server = Server::start();
+    server.publish(&sign(&catalog(5, "1.0.0")));
+    stamp_at(&state, -DAY);
+
+    let results = refreshes(&state, &source(&server), &[Trigger::Background]);
+
+    assert!(matches!(results.as_slice(), [Ok(())]), "{results:?}");
+    assert_eq!(server.asked(), BOTH);
 }
 
 #[test]
-fn an_explicit_request_fetches_however_recently_a_catalog_was_kept() {
-    assert_eq!(
-        asked_when(Trigger::Opening, Some(60)),
-        ["/catalog/index.json", "/catalog/index.json.minisig"]
+fn a_stamp_that_is_not_one_is_replaced_by_one_and_is_read_within_a_bound() {
+    let sample = Sample::new("catalog-fetch-garbled");
+    let state = state(&sample);
+    let server = Server::start();
+    server.publish(&sign(&catalog(5, "1.0.0")));
+    for garbled in [
+        b"not a time".to_vec(),
+        vec![b'7'; 1 << 20],
+        b"-5\n".to_vec(),
+        Vec::new(),
+    ] {
+        std::fs::create_dir_all(state.join("agent-catalog")).expect("a directory");
+        std::fs::write(state.join(STAMP), &garbled).expect("a stamp");
+        server.forget();
+
+        let results = refreshes(&state, &source(&server), &[Trigger::Background]);
+
+        assert!(matches!(results.as_slice(), [Ok(())]), "{results:?}");
+        assert_eq!(server.asked(), BOTH, "a stamp of {} bytes", garbled.len());
+        let kept = std::fs::metadata(state.join(STAMP)).expect("a stamp").len();
+        assert!(kept < 64, "the stamp is {kept} bytes");
+    }
+}
+
+#[test]
+fn an_attempt_that_cannot_be_recorded_is_not_made() {
+    let sample = Sample::new("catalog-fetch-unrecorded");
+    // A file where the state directory would be.
+    let state = sample.root().join("state-is-a-file");
+    std::fs::write(&state, b"").expect("a file");
+    let server = Server::start();
+    server.publish(&sign(&catalog(5, "1.0.0")));
+
+    let results = refreshes(&state, &source(&server), &[Trigger::Background]);
+
+    assert!(
+        matches!(results.as_slice(), [Err(FetchError::Stamp(_))]),
+        "{results:?}"
     );
+    assert!(server.asked().is_empty(), "{:?}", server.asked());
+}
+
+#[test]
+fn the_stamp_sits_beside_the_trust_state_and_is_private_to_the_user() {
+    let sample = Sample::new("catalog-fetch-stamp");
+    let state = state(&sample);
+    let server = Server::start();
+    server.publish(&sign(&catalog(5, "1.0.0")));
+
+    run(refresh(&state, &source(&server), Trigger::Background)).expect("a kept catalog");
+
+    assert!(state.join(STAMP).is_file());
+    assert_eq!(
+        state.join(STAMP).parent(),
+        state.join("agent-catalog/trust.json").parent()
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = std::fs::metadata(state.join(STAMP))
+            .expect("a stamp")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600, "mode {mode:o}");
+    }
 }
 
 #[test]
@@ -844,7 +1108,7 @@ fn a_run_is_not_held_up_at_its_end_by_a_catalog_fetch_still_waiting() {
 
 #[test]
 fn the_published_source_names_the_catalog_release_and_the_keys_compiled_in() {
-    let published = Source::published();
+    let published = Source::published(&|_| None);
 
     assert_eq!(
         published.base,
@@ -854,4 +1118,150 @@ fn the_published_source_names_the_catalog_release_and_the_keys_compiled_in() {
     assert_eq!(published.hosts, HOSTS);
     assert!(published.hosts.contains(&"github.com"));
     assert!(published.base.ends_with('/'));
+}
+
+/// An asset of `bytes`, as the catalog lists it.
+fn asset_of(bytes: &[u8]) -> AssetRef {
+    AssetRef {
+        sha256: hex(&Sha256::digest(bytes)).into(),
+        size: u64::try_from(bytes.len()).expect("a size"),
+    }
+}
+
+/// The path an asset is fetched from on a fake host.
+fn named(asset: &AssetRef) -> String {
+    format!("/catalog/{}", asset.sha256)
+}
+
+#[test]
+fn an_asset_is_fetched_by_its_hash_and_held_to_its_size_and_hash() {
+    let server = Server::start();
+    let bytes = b"the files an interpreter unpacks to".to_vec();
+    let listed = asset_of(&bytes);
+    server.serve(&named(&listed), Reply::Body(bytes.clone()));
+
+    let fetched = run(asset(&source(&server), &listed));
+
+    assert_eq!(fetched.expect("an asset"), bytes);
+    assert_eq!(server.asked(), [named(&listed)]);
+}
+
+#[test]
+fn an_asset_with_another_hash_than_the_one_listed_is_refused() {
+    let server = Server::start();
+    let listed = asset_of(b"the files an interpreter unpacks to");
+    // The same length, other bytes.
+    server.serve(
+        &named(&listed),
+        Reply::Body(b"the files an interpreter unpacks TO".to_vec()),
+    );
+
+    let refused = run(asset(&source(&server), &listed));
+
+    assert!(matches!(refused, Err(FetchError::AssetHash)), "{refused:?}");
+}
+
+#[test]
+fn an_asset_longer_than_listed_is_refused_by_its_size() {
+    let server = Server::start();
+    let listed = asset_of(b"ten bytes!");
+    server.serve(&named(&listed), Reply::Body(vec![b'x'; 1 << 20]));
+
+    let refused = run(asset(&source(&server), &listed));
+
+    assert!(matches!(refused, Err(FetchError::AssetSize)), "{refused:?}");
+}
+
+#[test]
+fn an_asset_shorter_than_listed_is_refused_by_its_size() {
+    let server = Server::start();
+    let listed = asset_of(b"ten bytes!");
+    server.serve(&named(&listed), Reply::Body(b"nine byte".to_vec()));
+
+    let refused = run(asset(&source(&server), &listed));
+
+    assert!(matches!(refused, Err(FetchError::AssetSize)), "{refused:?}");
+}
+
+#[test]
+fn an_asset_listed_larger_than_any_asset_may_be_is_refused_before_a_request_is_made() {
+    let server = Server::start();
+    let listed = AssetRef {
+        sha256: "a".repeat(64).into(),
+        size: ASSET_BYTES + 1,
+    };
+
+    let refused = run(asset(&source(&server), &listed));
+
+    assert!(matches!(refused, Err(FetchError::AssetSize)), "{refused:?}");
+    assert!(server.asked().is_empty());
+}
+
+#[test]
+fn an_asset_not_named_by_a_sha256_is_refused_before_a_request_is_made() {
+    let server = Server::start();
+    for name in [
+        "../index.json",
+        "short",
+        &"A".repeat(64),
+        &"g".repeat(64),
+        &format!("{}/x", "a".repeat(62)),
+        "",
+    ] {
+        let listed = AssetRef {
+            sha256: name.into(),
+            size: 10,
+        };
+
+        let refused = run(asset(&source(&server), &listed));
+
+        assert!(
+            matches!(refused, Err(FetchError::AssetName)),
+            "{name:?}: {refused:?}"
+        );
+    }
+    assert!(server.asked().is_empty());
+}
+
+#[test]
+fn an_asset_redirected_to_a_listed_host_is_followed_and_to_another_is_refused() {
+    let server = Server::start();
+    let bytes = b"kept in the catalog's storage".to_vec();
+    let listed = asset_of(&bytes);
+    server.serve(
+        &named(&listed),
+        Reply::Redirect(server.at(&format!("/storage/{}", listed.sha256))),
+    );
+    server.serve(
+        &format!("/storage/{}", listed.sha256),
+        Reply::Body(bytes.clone()),
+    );
+
+    let fetched = run(asset(&source(&server), &listed));
+    assert_eq!(fetched.expect("an asset"), bytes);
+
+    server.forget();
+    server.serve(
+        &named(&listed),
+        Reply::Redirect(format!(
+            "http://localhost:{}/storage/{}",
+            server.port, listed.sha256
+        )),
+    );
+    let refused = run(asset(&source(&server), &listed));
+    assert!(matches!(refused, Err(FetchError::Redirect)), "{refused:?}");
+    assert_eq!(server.asked(), [named(&listed)]);
+}
+
+#[test]
+fn an_asset_the_host_does_not_have_is_a_failure_with_its_status() {
+    let server = Server::start();
+    let listed = asset_of(b"not published");
+
+    let refused = run(asset(&source(&server), &listed));
+
+    assert!(
+        matches!(refused, Err(FetchError::Status(404))),
+        "{refused:?}"
+    );
 }

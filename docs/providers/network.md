@@ -24,12 +24,16 @@ crucible makes requests of its own for five things, and nothing else:
   ([`updates`](../configuration/configuration.md#updates)).
 - **`github.com`**, for the catalog of agents crucible's own review admitted.
   It is asked once crucible has started, no sooner than a day after the last
-  catalog was kept, and is given thirty seconds for the two files it is made of;
-  GitHub answers with a redirect to its asset storage, and crucible follows a
-  redirect only to `github.com` or one of GitHub's release-asset hosts, over
-  `https`. A catalog is believed only if its signature verifies under a key
-  built into crucible. `{ "updates": { "check": "never" } }` turns it off
-  ([`updates`](../configuration/configuration.md#updates)).
+  time it was asked, whether or not that got a catalog crucible believes, and is
+  given thirty seconds for the two files it is made of; GitHub answers with a
+  redirect to its asset storage, and crucible follows a redirect only to
+  `github.com` or one of GitHub's release-asset hosts, over `https` on the
+  ordinary port. A catalog is believed only if its signature verifies under a
+  key built into crucible. `{ "updates": { "check": "never" } }` turns off the
+  asking crucible does on its own
+  ([`updates`](../configuration/configuration.md#updates)); opening `/agents`
+  or `/login`'s agent choice, or running a `crucible agents` command, asks for
+  the catalog whatever it says.
 - **`api.github.com`, `github.com` and `githubusercontent.com`**, when you run
   [`crucible update`](../reference/cli.md#update---check----dry-run). It asks
   `api.github.com` which release is the newest whatever `updates.check` says,

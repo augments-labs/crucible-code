@@ -787,8 +787,13 @@ catalog is believed only if its signature verifies under a key built into
 crucible. It is kept under `state` in crucible's home directory, and a catalog
 that is signed wrongly, has a lower serial than the one kept, has expired or is
 in a schema crucible does not read changes nothing. The request is a plain GET
-and sends nothing of your session, your directory or your configuration. The
-catalog is asked for again no sooner than a day after the last one was kept.
+and sends nothing of your session, your directory or your configuration. It is
+made no sooner than a day after the last time crucible made it, whether or not
+that attempt got a catalog crucible believes, so one that could not be fetched
+is not asked for again at the next start. Opening `/agents` or `/login`'s agent
+choice, or running any `crucible agents` command, asks for the catalog
+whatever this is set to, since you asked; only the asking crucible does on its
+own obeys it.
 
 `never` stops the asking. crucible then never contacts GitHub on its own, for a
 release or for the catalog, and never says anything about releases. Running
