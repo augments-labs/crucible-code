@@ -22,12 +22,18 @@
 //! any failure before the new one is in place and durable. A commit that dies
 //! between the two renames leaves it there, and the next process to change or
 //! hold the agent's store puts it back before anything else, so a crash leaves
-//! either the program named before or the new one whole. Nothing names a new
+//! either the program named before or the new one whole. A set-aside version
+//! is removed only once it is back in place, or a version is there instead;
+//! one that cannot be put back is kept, and the change refused, until a later
+//! one can. A version whose receipt cannot be read is replaced only when the
+//! staging is marked as asked to replace it. Nothing names a new
 //! version before its commit returns, since the instance's `executable` is
 //! written after it. A commit is refused unless the staging directory holds
 //! exactly the files given for it, of the kinds and sizes given, and every
 //! path given stays inside the version, with each component one a directory
-//! the store makes may have, and every link's target within it.
+//! the store makes may have, and every link listed resolves, through listed or
+//! implied directories alone and at most eight links, to a file listed, as the
+//! unpacker makes a link only when it does.
 //!
 //! The receipt is the truth about what is installed, whatever a catalog says
 //! later. It records the catalog serial and the review the release was taken
@@ -91,7 +97,7 @@
 //! agent's lock, so two agents committed at once by two processes can pass it
 //! by one release.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File as Handle};
 use std::io::{self, Read as _, Write as _};
 use std::path::{Component, Path, PathBuf};
@@ -150,6 +156,10 @@ const OWN: [&str; 3] = [IN_USE, RECEIPT, DRAFT];
 /// one agent's versions, a version's holders or what staging was left.
 const ENTRIES: usize = 4096;
 
+/// The most links a listed link's target is followed through, itself
+/// included, as the unpacker follows them.
+const LINK_STEPS: usize = 8;
+
 /// How many readings of staging a change makes before it says that what is
 /// there is more than it removes.
 const PASSES: usize = 16;
@@ -206,6 +216,10 @@ pub struct Store {
     /// such a failure leaves.
     #[cfg(all(test, feature = "proof"))]
     failing: bool,
+    /// Whether putting a set-aside version back fails, so a test can see
+    /// that the only copy is kept.
+    #[cfg(all(test, feature = "proof"))]
+    unrestorable: bool,
 }
 
 /// A point in a commit a test can have it stop at.
@@ -241,6 +255,8 @@ pub struct Staging {
     lock_path: PathBuf,
     /// Whether the directory was renamed into place.
     committed: bool,
+    /// Whether it may replace a version whose receipt cannot be read.
+    unreadable: bool,
 }
 
 /// What the catalog said of the release a receipt is for.
@@ -451,6 +467,10 @@ pub enum StoreError {
         /// What is wrong with it.
         why: &'static str,
     },
+    /// The version a commit would replace has a receipt this crucible cannot
+    /// read, so it is for the user to check, and is not replaced unasked.
+    #[error("the version in place has a receipt this crucible cannot read; check it first")]
+    Unreadable,
     /// An executable lies in the agent's directory and names no version
     /// the store can tell, so nothing is pruned on a guess.
     #[error("{} lies in the install store and names no version of it", .path.display())]
@@ -538,6 +558,12 @@ impl Staging {
     #[must_use]
     pub fn directory(&self) -> &Path {
         &self.directory
+    }
+
+    /// Lets the commit of this staging replace a version whose receipt this
+    /// crucible cannot read, as a reinstall the user asked for does.
+    pub fn replacing_unreadable(&mut self) {
+        self.unreadable = true;
     }
 }
 
@@ -675,6 +701,8 @@ impl Store {
             pause: None,
             #[cfg(all(test, feature = "proof"))]
             failing: false,
+            #[cfg(all(test, feature = "proof"))]
+            unrestorable: false,
         }
     }
 
@@ -697,6 +725,15 @@ impl Store {
     pub(crate) fn pausing(self, ready: PathBuf, at: Pause) -> Self {
         Self {
             pause: Some((ready, at)),
+            ..self
+        }
+    }
+
+    /// This store, which fails to put a set-aside version back.
+    #[cfg(all(test, feature = "proof"))]
+    pub(crate) fn unrestorable(self) -> Self {
+        Self {
+            unrestorable: true,
             ..self
         }
     }
@@ -828,6 +865,7 @@ impl Store {
                 lock: Some(lock),
                 lock_path,
                 committed: false,
+                unreadable: false,
             };
             let held = staging
                 .lock
@@ -902,6 +940,16 @@ impl Store {
             files: files.to_vec(),
         };
         let bytes = receipt.encoded()?;
+        let destination = change.directory.join(version.name());
+        if !staging.unreadable
+            && is_directory(&destination)
+            && matches!(
+                self.receipt(&receipt.key, version),
+                Err(StoreError::Format(_) | StoreError::Corrupt | StoreError::Oversize)
+            )
+        {
+            return Err(StoreError::Unreadable);
+        }
         // The receipt goes into staging, so the one rename below puts the
         // version in place whole, receipt and all.
         #[cfg(all(test, feature = "proof"))]
@@ -912,12 +960,11 @@ impl Store {
             ));
         }
         recorded(&staging.directory, &bytes)?;
-        let destination = change.directory.join(version.name());
         let aside = set_aside(&change.area, &destination)?;
         #[cfg(all(test, feature = "proof"))]
         self.paused(Pause::SetAside);
         if let Err(source) = fs::rename(&staging.directory, &destination) {
-            restored(aside.as_ref(), &destination);
+            self.restored(aside.as_ref(), &destination)?;
             return Err(at(&destination, source));
         }
         staging.committed = true;
@@ -926,7 +973,7 @@ impl Store {
             // made, and give the new tree up.
             let failed = change.area.join(scratch("failed"));
             if fs::rename(&destination, &failed).is_ok() {
-                restored(aside.as_ref(), &destination);
+                self.restored(aside.as_ref(), &destination)?;
                 let _ = fs::remove_dir_all(&failed);
             }
             return Err(privacy(&destination)(problem));
@@ -1182,6 +1229,65 @@ impl Store {
         }
     }
 
+    /// Puts the version `aside` holds back at `destination`, where nothing
+    /// has taken its place, and removes what is left of `aside` once that is
+    /// confirmed: put back, or a version already in its place.
+    ///
+    /// # Errors
+    ///
+    /// Why it could not be put back; `aside` is then kept, the only copy, for
+    /// the next change to put back.
+    fn restored(&self, aside: Option<&PathBuf>, destination: &Path) -> Result<(), StoreError> {
+        let Some(aside) = aside else {
+            return Ok(());
+        };
+        let name = destination.file_name().unwrap_or_default();
+        self.put(&aside.join(name), destination)?;
+        let _ = fs::remove_dir_all(aside);
+        Ok(())
+    }
+
+    /// Renames each version in the set-aside directory `aside` back into the
+    /// agent's directory `agent`, where nothing has taken its place.
+    ///
+    /// # Errors
+    ///
+    /// Why one could not be put back, which leaves `aside` to be kept.
+    fn put_back(&self, agent: &Path, aside: &Path) -> Result<(), StoreError> {
+        let entries = fs::read_dir(aside).map_err(|source| at(aside, source))?;
+        for entry in entries.take(ENTRIES) {
+            let entry = entry.map_err(|source| at(aside, source))?;
+            let name = entry.file_name();
+            let Some(version) = name.to_str().and_then(Version::parse) else {
+                continue;
+            };
+            self.put(&entry.path(), &agent.join(version.name()))?;
+        }
+        Ok(())
+    }
+
+    /// Renames the version at `from` to `destination`, unless a version is
+    /// there already; refused where something else is there, or the rename
+    /// fails.
+    // The store is asked only by a test that makes the rename fail.
+    #[cfg_attr(not(all(test, feature = "proof")), allow(clippy::unused_self))]
+    fn put(&self, from: &Path, destination: &Path) -> Result<(), StoreError> {
+        if exists(destination) {
+            return if is_directory(destination) {
+                Ok(())
+            } else {
+                Err(StoreError::InTheWay {
+                    path: destination.to_owned(),
+                })
+            };
+        }
+        #[cfg(all(test, feature = "proof"))]
+        if self.unrestorable {
+            return Err(at(destination, io::ErrorKind::PermissionDenied.into()));
+        }
+        fs::rename(from, destination).map_err(|source| at(destination, source))
+    }
+
     /// A change to the agent `key`'s store: its lock, once the directory is
     /// one the store can make and what a dead process left in staging is
     /// removed.
@@ -1192,7 +1298,7 @@ impl Store {
         let lock = self.locked(&directory)?;
         let area = directory.join(STAGING);
         crucible_privacy::directory(&area).map_err(privacy(&area))?;
-        cleaned(&directory, &area)?;
+        self.cleaned(&directory, &area)?;
         Ok(Change {
             directory,
             area,
@@ -1429,19 +1535,6 @@ fn set_aside(area: &Path, destination: &Path) -> Result<Option<PathBuf>, StoreEr
     }
 }
 
-/// Puts the version `aside` holds back at `destination`, where nothing has
-/// taken its place, and removes what is left of `aside`.
-fn restored(aside: Option<&PathBuf>, destination: &Path) {
-    let Some(aside) = aside else {
-        return;
-    };
-    let name = destination.file_name().unwrap_or_default();
-    if !exists(destination) {
-        let _ = fs::rename(aside.join(name), destination);
-    }
-    let _ = fs::remove_dir_all(aside);
-}
-
 /// A name for a directory of a change's own in staging, beginning `what`.
 fn scratch(what: &str) -> String {
     format!(
@@ -1524,73 +1617,58 @@ fn held(path: &Path) -> bool {
     }
 }
 
-/// Removes what a dead process left in the staging directory `area`: every
-/// entry but the live staging directories and their locks.
-fn cleaned(agent: &Path, area: &Path) -> Result<(), StoreError> {
-    for _ in 0..PASSES {
-        let Ok(entries) = fs::read_dir(area) else {
-            return Ok(());
-        };
-        let names: Vec<_> = entries
-            .take(ENTRIES)
-            .flatten()
-            .map(|entry| entry.file_name())
-            .collect();
-        let live: HashSet<String> = names
-            .iter()
-            .filter_map(|name| {
-                let stem = name.to_str()?.strip_suffix(LOCK)?;
-                held(&area.join(name)).then(|| stem.to_owned())
-            })
-            .collect();
-        let mut removed = 0_usize;
-        for name in &names {
-            let text = name.to_string_lossy();
-            if live.contains(text.strip_suffix(LOCK).unwrap_or(&text)) {
-                continue;
-            }
-            let path = area.join(name);
-            // A version a commit set aside and died before replacing is the
-            // only copy of it: back it goes, unless something took its place.
-            if text.starts_with(ASIDE) {
-                put_back(agent, &path);
-            }
-            let _ = match fs::symlink_metadata(&path) {
-                Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(&path),
-                _ => fs::remove_file(&path),
+impl Store {
+    /// Removes what a dead process left in the staging directory `area` of the
+    /// agent's directory `agent`: every entry but the live staging directories
+    /// and their locks, a version a commit set aside put back first.
+    fn cleaned(&self, agent: &Path, area: &Path) -> Result<(), StoreError> {
+        for _ in 0..PASSES {
+            let Ok(entries) = fs::read_dir(area) else {
+                return Ok(());
             };
-            removed += 1;
-        }
-        if names.len() < ENTRIES || removed == 0 {
-            return if names.len() < ENTRIES {
-                Ok(())
-            } else {
-                Err(StoreError::Crowded {
-                    path: area.to_owned(),
+            let names: Vec<_> = entries
+                .take(ENTRIES)
+                .flatten()
+                .map(|entry| entry.file_name())
+                .collect();
+            let live: HashSet<String> = names
+                .iter()
+                .filter_map(|name| {
+                    let stem = name.to_str()?.strip_suffix(LOCK)?;
+                    held(&area.join(name)).then(|| stem.to_owned())
                 })
-            };
+                .collect();
+            let mut removed = 0_usize;
+            for name in &names {
+                let text = name.to_string_lossy();
+                if live.contains(text.strip_suffix(LOCK).unwrap_or(&text)) {
+                    continue;
+                }
+                let path = area.join(name);
+                // A version a commit set aside and died before replacing is the
+                // only copy of it: back it goes, unless something took its place.
+                if text.starts_with(ASIDE) {
+                    self.put_back(agent, &path)?;
+                }
+                let _ = match fs::symlink_metadata(&path) {
+                    Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(&path),
+                    _ => fs::remove_file(&path),
+                };
+                removed += 1;
+            }
+            if names.len() < ENTRIES || removed == 0 {
+                return if names.len() < ENTRIES {
+                    Ok(())
+                } else {
+                    Err(StoreError::Crowded {
+                        path: area.to_owned(),
+                    })
+                };
+            }
         }
-    }
-    Err(StoreError::Crowded {
-        path: area.to_owned(),
-    })
-}
-
-/// Renames each version in the set-aside directory `aside` back into the
-/// agent's directory `agent`, where nothing has taken its place.
-fn put_back(agent: &Path, aside: &Path) {
-    let Ok(entries) = fs::read_dir(aside) else {
-        return;
-    };
-    for entry in entries.take(ENTRIES).flatten() {
-        let name = entry.file_name();
-        let Some(version) = name.to_str().and_then(Version::parse) else {
-            continue;
-        };
-        let destination = agent.join(version.name());
-        if !exists(&destination) {
-            let _ = fs::rename(entry.path(), destination);
-        }
+        Err(StoreError::Crowded {
+            path: area.to_owned(),
+        })
     }
 }
 
@@ -1617,7 +1695,90 @@ fn checked(files: &[File]) -> Result<(), StoreError> {
             return Err(refused("is a link whose target leaves the version"));
         }
     }
+    linked_inside(files)
+}
+
+/// Refuses `files` where a link they list does not resolve to a file they
+/// list, through directories they list or imply alone and at most
+/// [`LINK_STEPS`] links, as the unpacker makes a link only when it does.
+fn linked_inside(files: &[File]) -> Result<(), StoreError> {
+    let links: HashMap<&str, &str> = files
+        .iter()
+        .filter_map(|file| match &file.kind {
+            FileKind::Link { target } => Some((&*file.path, &**target)),
+            FileKind::File { .. } | FileKind::Dir => None,
+        })
+        .collect();
+    let regular: HashSet<&str> = files
+        .iter()
+        .filter(|file| matches!(file.kind, FileKind::File { .. }))
+        .map(|file| &*file.path)
+        .collect();
+    let mut directories: HashSet<String> = HashSet::from([String::new()]);
+    for file in files {
+        if file.kind == FileKind::Dir {
+            directories.insert(file.path.to_string());
+        }
+        let mut path: &str = &file.path;
+        while let Some((above, _)) = path.rsplit_once('/') {
+            directories.insert(above.to_owned());
+            path = above;
+        }
+    }
+    directories
+        .retain(|path| !links.contains_key(path.as_str()) && !regular.contains(path.as_str()));
+    for (name, target) in &links {
+        if !resolves(name, target, &links, &regular, &directories) {
+            return Err(StoreError::Listed {
+                name: shown(name),
+                why: "is a link that does not resolve, through directories alone, to a file the list names",
+            });
+        }
+    }
     Ok(())
+}
+
+/// Whether the link `name` to `target` resolves to one of `regular`, through
+/// `directories` alone and at most [`LINK_STEPS`] of `links`.
+fn resolves(
+    name: &str,
+    target: &str,
+    links: &HashMap<&str, &str>,
+    regular: &HashSet<&str>,
+    directories: &HashSet<String>,
+) -> bool {
+    let mut from = name.to_owned();
+    let mut target = target.to_owned();
+    for _ in 0..LINK_STEPS {
+        let mut at: Vec<&str> = from.split('/').collect();
+        at.pop();
+        let parts: Vec<&str> = target.split('/').collect();
+        for (index, part) in parts.iter().enumerate() {
+            match *part {
+                "" | "." => {}
+                ".." => {
+                    if at.pop().is_none() {
+                        return false;
+                    }
+                }
+                part => at.push(part),
+            }
+            if index + 1 < parts.len() && !directories.contains(&at.join("/")) {
+                return false;
+            }
+        }
+        let resolved = at.join("/");
+        if regular.contains(resolved.as_str()) {
+            return true;
+        }
+        let Some(next) = links.get(resolved.as_str()) else {
+            return false;
+        };
+        target.clear();
+        target.push_str(next);
+        from = resolved;
+    }
+    false
 }
 
 /// Whether the link at `path` to `target` resolves, by its components alone,

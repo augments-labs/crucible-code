@@ -1351,3 +1351,127 @@ fn a_file_list_with_a_path_or_link_that_leaves_the_version_is_refused() {
         "{refused:?}"
     );
 }
+
+#[test]
+fn a_set_aside_version_that_cannot_be_put_back_is_kept_and_said() {
+    let owned = Owned::new("store-unrestorable");
+    let root = programs(&owned);
+    let store = Store::new(root.clone());
+    let goose = key("goose");
+    let one = version("1.0.0", None);
+    let kept = install(&store, &goose, &one, 10);
+    let ready = owned.0.join("ready");
+    let mut child = started(
+        "store::tests::the_process_killed_between_its_two_renames",
+        &root,
+        &ready,
+    );
+    reached(&mut child, &ready);
+    killed(child);
+    let area = root.join("goose").join(".staging");
+
+    let refused = Store::new(root.clone()).unrestorable().stage(&goose);
+
+    assert!(matches!(refused, Err(StoreError::Io { .. })), "{refused:?}");
+    let asides: Vec<String> = names(&area)
+        .into_iter()
+        .filter(|name| name.starts_with("aside"))
+        .collect();
+    assert_eq!(asides.len(), 1, "the only copy is kept: {:?}", names(&area));
+    // The next change that can put it back does.
+    let _staging = store.stage(&goose).expect("a staging directory");
+    assert_eq!(store.receipt(&goose, &one).ok().flatten(), Some(kept));
+    assert_eq!(store.verify(&goose, &one).ok(), Some(Vec::new()));
+}
+
+#[test]
+fn a_commit_whose_rename_back_fails_keeps_the_version_it_set_aside() {
+    let owned = Owned::new("store-restore-fails");
+    let root = programs(&owned);
+    let store = Store::new(root.clone()).unrestorable();
+    let goose = key("goose");
+    let one = version("1.0.0", None);
+    install(&Store::new(root.clone()), &goose, &one, 10);
+    let destination = store.directory(&goose, &one);
+    let area = root.join("goose").join(".staging");
+    let aside = area.join("aside-test");
+    fs::create_dir(&aside).expect("an aside");
+    fs::rename(&destination, aside.join("1.0.0")).expect("set aside");
+
+    let restored = store.restored(Some(&aside), &destination);
+
+    assert!(restored.is_err(), "{restored:?}");
+    assert!(aside.join("1.0.0").join(".receipt").is_file());
+}
+
+#[test]
+fn a_link_that_leaves_the_version_through_another_link_is_refused() {
+    let owned = Owned::new("store-chained");
+    let store = Store::new(programs(&owned));
+    let goose = key("goose");
+    let one = version("1.0.0", None);
+    let (_, artifact) = release();
+    let staging = store.stage(&goose).expect("a staging directory");
+    let files = vec![
+        listed_dir("e"),
+        listed_dir("e/f"),
+        listed_file("x", b"x", false),
+        // Each is inside by its own components; through the first, the
+        // second climbs out.
+        listed_link("e/f/a", "../../x"),
+        listed_link("l", "e/f/a/../.."),
+    ];
+
+    let refused = store.commit(staging, &one, &files, provenance(&artifact, 10));
+
+    assert!(
+        matches!(refused, Err(StoreError::Listed { .. })),
+        "{refused:?}"
+    );
+    // A chain that ends on a file inside is not refused for being a chain.
+    let staging = store.stage(&goose).expect("a staging directory");
+    let files = vec![
+        listed_file("x", b"x", false),
+        listed_link("b", "x"),
+        listed_link("c", "b"),
+    ];
+    let refused = store.commit(staging, &one, &files, provenance(&artifact, 10));
+    assert!(
+        !matches!(refused, Err(StoreError::Listed { .. })),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn a_version_whose_receipt_cannot_be_read_is_replaced_only_when_asked() {
+    let owned = Owned::new("store-replace-unreadable");
+    let store = Store::new(programs(&owned));
+    let goose = key("goose");
+    let one = version("1.0.0", None);
+    install(&store, &goose, &one, 10);
+    let path = store.directory(&goose, &one).join(".receipt");
+    let later = fs::read_to_string(&path).expect("the receipt").replacen(
+        r#""format":1"#,
+        r#""format":2"#,
+        1,
+    );
+    fs::write(&path, &later).expect("a later crucible's receipt");
+    let (archive, artifact) = release();
+
+    let staging = store.stage(&goose).expect("a staging directory");
+    let staged = Unpacker::unpack(&archive, &artifact, staging.directory()).expect("unpacked");
+    let refused = store.commit(staging, &one, staged.files(), provenance(&artifact, 20));
+
+    assert!(
+        matches!(refused, Err(StoreError::Unreadable)),
+        "{refused:?}"
+    );
+    assert_eq!(fs::read_to_string(&path).ok(), Some(later));
+    let mut staging = store.stage(&goose).expect("a staging directory");
+    let staged = Unpacker::unpack(&archive, &artifact, staging.directory()).expect("unpacked");
+    staging.replacing_unreadable();
+    let receipt = store
+        .commit(staging, &one, staged.files(), provenance(&artifact, 20))
+        .expect("replaced when asked");
+    assert_eq!(receipt.fetched, at(20));
+}
