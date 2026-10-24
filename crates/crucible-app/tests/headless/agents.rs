@@ -1075,9 +1075,11 @@ fn an_instance_changed_while_the_question_was_out_keeps_its_change_and_is_named(
     bench
         .server
         .publish(2, &[("2.0.0", TWO), ("1.0.0", ONE)], &[]);
+    // A program of the person's own, absolute on this platform.
+    let own = bench.home.path().join("bin").join("goose");
     let edited = serde_json::to_vec_pretty(&json!({
         "externalAgents": {
-            "work": {"driver": "catalog", "agent": "goose", "executable": "/usr/local/bin/goose"}
+            "work": {"driver": "catalog", "agent": "goose", "executable": own.to_string_lossy()}
         }
     }))?;
     let mut front = answering(&bench.server, Some("Update"));
