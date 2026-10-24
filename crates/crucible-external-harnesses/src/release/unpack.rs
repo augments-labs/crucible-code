@@ -1320,44 +1320,17 @@ impl<'a> Walk<'a> {
         target: &str,
         links: &HashMap<&str, &str>,
     ) -> Result<(), UnpackError> {
-        let refused = |why| UnpackError::Link {
+        link_resolves(
+            name,
+            target,
+            links,
+            &|path| self.regular.contains_key(path),
+            &|path| self.names.is_directory(path),
+        )
+        .map_err(|why| UnpackError::Link {
             name: shown(name.as_bytes()),
             why,
-        };
-        let mut from = name.to_owned();
-        let mut target = target.to_owned();
-        for _ in 0..LINK_STEPS {
-            let mut at: Vec<&str> = from.split('/').collect();
-            at.pop();
-            let parts: Vec<&str> = target.split('/').collect();
-            for (index, part) in parts.iter().enumerate() {
-                match *part {
-                    "." => {}
-                    ".." => {
-                        if at.pop().is_none() {
-                            return Err(refused("climbs out of the version"));
-                        }
-                    }
-                    part => at.push(part),
-                }
-                if index + 1 < parts.len() && !self.names.is_directory(&at.join("/")) {
-                    return Err(refused(
-                        "passes through what is not a directory written here",
-                    ));
-                }
-            }
-            let resolved = at.join("/");
-            if self.regular.contains_key(&resolved) {
-                return Ok(());
-            }
-            let Some(next) = links.get(resolved.as_str()) else {
-                return Err(refused("does not resolve to a file written here"));
-            };
-            target.clear();
-            target.push_str(next);
-            from = resolved;
-        }
-        Err(refused("goes through more than eight links"))
+        })
     }
 
     /// Refuses a member the list names, or the artifact keeps, that was not
@@ -1375,6 +1348,52 @@ impl<'a> Walk<'a> {
             None => Ok(()),
         }
     }
+}
+
+/// Whether the link `name` to `target`, among `links`, resolves to what
+/// `is_file` takes for a file, inside the directory the names are relative
+/// to, through what `is_directory` takes for directories alone and at most
+/// [`LINK_STEPS`] links; and why not, where it does not. The one rule both a
+/// link unpacked and a link a version's file list names are held to.
+pub(crate) fn link_resolves(
+    name: &str,
+    target: &str,
+    links: &HashMap<&str, &str>,
+    is_file: &dyn Fn(&str) -> bool,
+    is_directory: &dyn Fn(&str) -> bool,
+) -> Result<(), &'static str> {
+    let mut from = name.to_owned();
+    let mut target = target.to_owned();
+    for _ in 0..LINK_STEPS {
+        let mut at: Vec<&str> = from.split('/').collect();
+        at.pop();
+        let parts: Vec<&str> = target.split('/').collect();
+        for (index, part) in parts.iter().enumerate() {
+            match *part {
+                "." => {}
+                ".." => {
+                    if at.pop().is_none() {
+                        return Err("climbs out of the version");
+                    }
+                }
+                part => at.push(part),
+            }
+            if index + 1 < parts.len() && !is_directory(&at.join("/")) {
+                return Err("passes through what is not a directory written here");
+            }
+        }
+        let resolved = at.join("/");
+        if is_file(&resolved) {
+            return Ok(());
+        }
+        let Some(next) = links.get(resolved.as_str()) else {
+            return Err("does not resolve to a file written here");
+        };
+        target.clear();
+        target.push_str(next);
+        from = resolved;
+    }
+    Err("goes through more than eight links")
 }
 
 /// A new file at `path`, made on Unix with the mode it keeps, which anyone may

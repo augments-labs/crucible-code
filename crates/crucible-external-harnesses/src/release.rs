@@ -36,6 +36,7 @@ use crate::catalog::{Admits, FileKind, Files, Format, Launch, Target};
 
 mod unpack;
 
+pub(crate) use unpack::link_resolves;
 pub use unpack::{Staged, UnpackError, Unpacker};
 
 /// The most a release may be: its archive, and what it unpacks to.
