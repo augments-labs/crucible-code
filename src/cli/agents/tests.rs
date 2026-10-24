@@ -1,8 +1,93 @@
-//! What `crucible agents install` writes.
+//! What `crucible agents install` and `crucible agents unpack-check` write.
 
+use std::fs;
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use crucible_external_harnesses::release::proof;
 
 use super::*;
+
+/// The file list `unpack-check` prints for the release [`proof::catalog_release`]
+/// publishes, committed for the catalog's intake to read.
+const SURVEYED: &str =
+    include_str!("../../../tests/fixtures/agent-catalog/unpack-check/binary.json");
+
+/// A directory of the test's own, removed when it is dropped.
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new(name: &str) -> Self {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |since| since.as_nanos());
+        let at = std::env::temp_dir().join(format!(
+            "crucible-cli-{name}-{unique}-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&at).expect("a directory");
+        Self(at)
+    }
+
+    /// The artifact `described` and its download `archive`, written here.
+    fn published(&self, described: &[u8], archive: &[u8]) -> (PathBuf, PathBuf) {
+        let entry = self.0.join("entry.json");
+        let download = self.0.join("agent.tar.gz");
+        fs::write(&entry, described).expect("the artifact");
+        fs::write(&download, archive).expect("the download");
+        (entry, download)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// What the intake records for a release is what `unpack-check` prints, byte
+/// for byte the committed list, and the release is left unpacked where the
+/// command was told to put it.
+#[test]
+fn unpack_check_prints_the_file_list_committed_for_the_intake() {
+    let scratch = Scratch::new("unpack-check");
+    let (archive, described) = proof::catalog_release();
+    let (entry, download) = scratch.published(&described, &archive);
+    let out = scratch.0.join("out");
+
+    let printed = checked(&entry, &download, &out);
+
+    assert_eq!(printed.as_deref(), Ok(SURVEYED));
+    assert_eq!(
+        fs::read(out.join("lib").join("harness")).ok(),
+        Some(proof::COMPANION.to_vec())
+    );
+}
+
+/// A download that is not the artifact's, and a directory already where the
+/// release would go, are each refused in one line, with nothing unpacked.
+#[test]
+fn unpack_check_refuses_in_one_line_and_leaves_nothing_unpacked() {
+    let scratch = Scratch::new("unpack-check-refused");
+    let (archive, described) = proof::catalog_release();
+    let (entry, download) = scratch.published(&described, &archive);
+    fs::write(&download, b"another release").expect("the download");
+    let out = scratch.0.join("out");
+
+    let refused = checked(&entry, &download, &out).expect_err("another release is refused");
+
+    assert!(refused.starts_with("crucible: "), "{refused}");
+    assert_eq!(refused.lines().count(), 1, "{refused}");
+    assert!(!out.exists(), "nothing is left where the release would go");
+
+    fs::write(&download, &archive).expect("the download");
+    fs::create_dir(&out).expect("a directory in the way");
+    let refused = checked(&entry, &download, &out).expect_err("a directory in the way");
+    assert!(
+        refused.contains("could not be made to unpack into"),
+        "{refused}"
+    );
+}
 
 #[test]
 fn a_driver_is_named_as_externalagents_names_it() {

@@ -7,8 +7,15 @@
 //! standard error is a terminal and as one line where it is not; the answer
 //! goes to standard output and a refusal to standard error, written
 //! [`failing`].
+//!
+//! `crucible agents unpack-check`, which the help leaves out, is the agent
+//! catalog's intake asking how a download unpacks by the rules an install
+//! holds it to; the file list it records goes to standard output as
+//! [`crucible_app::installing::unpack_check`] gives it, and a refusal to
+//! standard error, written [`failing`].
 
 use std::io::{self, IsTerminal as _, Write as _};
+use std::path::Path;
 use std::process::ExitCode;
 
 use crucible_app::backends::REGISTRY;
@@ -87,6 +94,30 @@ pub(super) fn install(driver: Driver) -> ExitCode {
         exit = ExitCode::FAILURE;
     }
     exit
+}
+
+/// Runs `crucible agents unpack-check` over the artifact the catalog spells
+/// in `entry` and its download at `artifact`, unpacking into `out`, and stops.
+// Reached once the command line parses `agents unpack-check`, which it does
+// not yet; until then nothing in the binary calls it.
+#[allow(dead_code)]
+pub(super) fn unpack_check(entry: &Path, artifact: &Path, out: &Path) -> ExitCode {
+    match checked(entry, artifact, out) {
+        Ok(listed) => {
+            let _ = io::stdout().write_all(listed.as_bytes());
+            ExitCode::SUCCESS
+        }
+        Err(refused) => {
+            let _ = io::stderr().write_all(refused.as_bytes());
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// What `crucible agents unpack-check` writes: the file list for standard
+/// output, or the refusal for standard error.
+fn checked(entry: &Path, artifact: &Path, out: &Path) -> Result<String, String> {
+    installing::unpack_check(entry, artifact, out).map_err(|refused| failing(&refused.to_string()))
 }
 
 /// The line `installed` is written as.

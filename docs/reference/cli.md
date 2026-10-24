@@ -601,6 +601,21 @@ standard output.
 [`/login`](../providers/agents.md#antigravity) then runs that release for an
 agent it sets up, and an Antigravity it cannot find says to run this command.
 
+### `agents unpack-check ENTRY ARTIFACT OUT`
+
+`crucible agents unpack-check` is how the agent catalog's intake learns what a
+download unpacks to, by the rules crucible holds it to when it installs a
+catalog agent, and `--help` leaves it out. `ENTRY` is one artifact as the
+catalog writes it, with its address, size, SHA-256, format, ceilings and the
+members it keeps, and no file list yet; `ARTIFACT` is the download. The
+download is checked against the size and SHA-256 first, then unpacked into
+`OUT`, a directory it makes and that must not already be there, refusing a
+name that is not plain relative ASCII, a device, a link that does not resolve
+to a file inside `OUT`, and anything past the ceilings. On standard output it
+writes the artifact's `unpacked` and `decompressed` sizes and its `files` as
+JSON, as the catalog records them. A refusal says why on standard error and
+removes `OUT`. It downloads nothing and reads no configuration.
+
 ## Credentials from the command line
 
 `crucible auth` says, stores and removes the credentials a launch signs
@@ -811,8 +826,8 @@ the warning is drawn there instead and the run goes on to the next line.
 
 | Status | Meaning |
 | --- | --- |
-| 0 | The run ended as asked: a session that ended, or a report that was written. `config check` on a configuration that holds, `sandbox inspect` or `--sandbox` whatever the backend answered, an `mcp list`, `mcp get`, `extensions list` or `--extensions` that was written, a `sessions list` that was written whether `complete` or `incomplete`, a `completion` script that was written, an `update` that installed a release, found none later, or said what it would install, an `update --check` that found none later, an `agents install` that installed a release or found it in place, a `doctor` with nothing to warn about, an `auth status` that settled every provider, an `auth login` that stored a credential, and an `auth logout` that took the provider's credentials out or found none to take end here. |
-| 1 | crucible could not run, or could not carry on. One line beginning `crucible: ` on standard error says why; a control character, line break, line or paragraph separator or Unicode format character other than the zero-width joiner and non-joiner in a value it quotes, such as a configuration key or a directory's name, is written as its escape, so the line stays one, and a reason longer than 16 KiB is cut there and ends `… (cut)`. `config check` on a configuration that does not hold, a `sandbox inspect` or `sessions list` that could not be made, and an `mcp get` naming a server nothing is written down under, and an `update` that was refused or rolled back, and an `agents install` that put nothing in place, end here. A `doctor` that found warnings and no failure ends here too, with its report on standard output and nothing on standard error. So does an `auth status` that could not settle a provider, found nothing for the one named, or held a name too long to show whole, with its report on standard output, and an `auth` command given a provider nobody serves. |
+| 0 | The run ended as asked: a session that ended, or a report that was written. `config check` on a configuration that holds, `sandbox inspect` or `--sandbox` whatever the backend answered, an `mcp list`, `mcp get`, `extensions list` or `--extensions` that was written, a `sessions list` that was written whether `complete` or `incomplete`, a `completion` script that was written, an `update` that installed a release, found none later, or said what it would install, an `update --check` that found none later, an `agents install` that installed a release or found it in place, an `agents unpack-check` that wrote a file list, a `doctor` with nothing to warn about, an `auth status` that settled every provider, an `auth login` that stored a credential, and an `auth logout` that took the provider's credentials out or found none to take end here. |
+| 1 | crucible could not run, or could not carry on. One line beginning `crucible: ` on standard error says why; a control character, line break, line or paragraph separator or Unicode format character other than the zero-width joiner and non-joiner in a value it quotes, such as a configuration key or a directory's name, is written as its escape, so the line stays one, and a reason longer than 16 KiB is cut there and ends `… (cut)`. `config check` on a configuration that does not hold, a `sandbox inspect` or `sessions list` that could not be made, and an `mcp get` naming a server nothing is written down under, and an `update` that was refused or rolled back, and an `agents install` that put nothing in place, and an `agents unpack-check` that refused, end here. A `doctor` that found warnings and no failure ends here too, with its report on standard output and nothing on standard error. So does an `auth status` that could not settle a provider, found nothing for the one named, or held a name too long to show whole, with its report on standard output, and an `auth` command given a provider nobody serves. |
 | 2 | A `doctor` that found a failure, with its report on standard output and nothing on standard error. Otherwise, the command line itself was refused by the parser: a flag it does not know, a value it cannot take, a subcommand missing its action, or flags that exclude each other. It says which, with the usage or the subcommand's help, on standard error; on an `auth` command line it says so without repeating the word it refused. `--help` and `--version` are the parser's too, and end 0. |
 | 3 | An `update --check` that found a later release, with what it found on standard output. |
 | 128 + signal | On Linux, macOS and FreeBSD, the process was told to stop from outside: a termination (`SIGTERM`, status 143) at any time, or a hang-up (`SIGHUP`, status 129) when it had a terminal to lose. A running turn is ended and written down first, and the prompt `auth login` hides a key at, or a wait for a key between turns at the prompt or in a panel, is put away with the terminal handed back as it was found, then the process ends by that signal, the way a shell expects. What the next `--continue` finds is under [Continuing](../sessions/sessions.md#continuing). On Windows neither is caught. |

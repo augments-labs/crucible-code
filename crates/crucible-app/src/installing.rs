@@ -11,16 +11,23 @@
 //! for it, and an agent's entry `/login` writes names it as its executable.
 //! Like [`crate::update`], this is a local command rather than a
 //! request of the client contract, and it reads no configuration.
+//!
+//! [`unpack_check`] is the catalog intake's way to the same unpacker an
+//! install of a catalog agent goes through: it reads an artifact as the
+//! catalog spells one and a download from disk, each within its bound,
+//! surveys the download into a directory of its own, and gives the file list
+//! the survey recorded. It downloads nothing and reads no configuration.
 
-use std::fs::File;
-use std::io::Write as _;
+use std::fs::{self, File};
+use std::io::{self, Read as _, Write as _};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crucible_external_harnesses::Discovery;
-use crucible_external_harnesses::release::{Pin, Unpacked, unpack};
+use crucible_external_harnesses::catalog::{Artifact, CatalogError, INDEX_BYTES};
+use crucible_external_harnesses::release::{Pin, UnpackError, Unpacked, Unpacker, unpack};
 use crucible_http::{Chunk, Chunks, Http, Lookups, Poison};
 use tokio::runtime::Handle;
 use tokio::time::timeout;
@@ -238,6 +245,116 @@ impl Drop for Download {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.0);
     }
+}
+
+/// Why `crucible agents unpack-check` gave no file list.
+#[derive(Debug, thiserror::Error)]
+pub enum Unchecked {
+    /// A file it was given could not be read.
+    #[error("{} could not be read", .path.display())]
+    Read {
+        /// The file.
+        path: PathBuf,
+        /// What the system said.
+        #[source]
+        source: io::Error,
+    },
+    /// A file it was given is larger than what it holds may be.
+    #[error("{} is larger than {ceiling} bytes", .path.display())]
+    TooLarge {
+        /// The file.
+        path: PathBuf,
+        /// The most it may hold.
+        ceiling: u64,
+    },
+    /// The artifact is not one as the catalog spells it.
+    #[error("{} is not an artifact as the catalog spells one: {source}", .path.display())]
+    Artifact {
+        /// The file.
+        path: PathBuf,
+        /// Which field is wrong.
+        #[source]
+        source: CatalogError,
+    },
+    /// The directory to unpack into could not be made, or is already there.
+    #[error("{} could not be made to unpack into", .path.display())]
+    Out {
+        /// The directory.
+        path: PathBuf,
+        /// What the system said.
+        #[source]
+        source: io::Error,
+    },
+    /// The download is not the artifact, or breaks a rule an install holds it
+    /// to.
+    #[error(transparent)]
+    Unpacked(#[from] UnpackError),
+    /// What was recorded could not be written as JSON.
+    #[error("the file list could not be written as JSON")]
+    Json(#[from] serde_json::Error),
+}
+
+/// Surveys the download at `artifact`, which the catalog artifact spelled in
+/// `entry` pins, into `out`, a directory this makes and nothing else may
+/// already be at, by the rules an install unpacks it by, and gives the file
+/// list it recorded as JSON, with its sizes, ending in a line feed.
+///
+/// `entry` is read only when it is at most [`INDEX_BYTES`], as a catalog is,
+/// and the download only up to the size the artifact pins, so neither is held
+/// past its bound. A refusal removes `out`.
+///
+/// # Errors
+///
+/// [`Unchecked`] naming what could not be read or made, or how the download
+/// is not the artifact or breaks a rule.
+pub fn unpack_check(entry: &Path, artifact: &Path, out: &Path) -> Result<String, Unchecked> {
+    let ceiling = u64::try_from(INDEX_BYTES).unwrap_or(u64::MAX);
+    let text = bounded(entry, ceiling)?;
+    let described = Artifact::unsigned(&text).map_err(|source| Unchecked::Artifact {
+        path: entry.to_owned(),
+        source,
+    })?;
+    let pinned = described
+        .replaced_by
+        .as_ref()
+        .map_or(described.size, |asset| asset.size);
+    let bytes = bounded(artifact, pinned)?;
+    fs::create_dir(out).map_err(|source| Unchecked::Out {
+        path: out.to_owned(),
+        source,
+    })?;
+    let surveyed = Unpacker::survey(&bytes, &described, out)
+        .map_err(Unchecked::from)
+        .and_then(|staged| Ok(serde_json::to_string_pretty(&staged.json())?));
+    match surveyed {
+        Ok(listed) => Ok(format!("{listed}\n")),
+        Err(refused) => {
+            let _ = fs::remove_dir_all(out);
+            Err(refused)
+        }
+    }
+}
+
+/// What the file at `path` holds, refused when that is more than `ceiling`
+/// bytes; no more than one byte past it is read.
+fn bounded(path: &Path, ceiling: u64) -> Result<Vec<u8>, Unchecked> {
+    let unread = |source| Unchecked::Read {
+        path: path.to_owned(),
+        source,
+    };
+    let mut held = Vec::new();
+    File::open(path)
+        .map_err(unread)?
+        .take(ceiling.saturating_add(1))
+        .read_to_end(&mut held)
+        .map_err(unread)?;
+    if u64::try_from(held.len()).unwrap_or(u64::MAX) > ceiling {
+        return Err(Unchecked::TooLarge {
+            path: path.to_owned(),
+            ceiling,
+        });
+    }
+    Ok(held)
 }
 
 #[cfg(test)]
