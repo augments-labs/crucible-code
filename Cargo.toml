@@ -28,7 +28,7 @@ publish = false
 # Wayland's clipboard is a separate protocol rather than an X11 compatibility
 # path, so its backend is named outright instead of leaving Linux support to
 # whichever display server happens to be in use.
-arboard = { version = "=3.6.1", features = ["wayland-data-control"] }
+arboard = { version = "=3.7.0", features = ["wayland-data-control"] }
 # Encodes the clipboard's RGBA pixels as the PNG every provider accepts. The
 # same release is already in arboard's image-data graph, so this names the API
 # without compiling a second encoder.
