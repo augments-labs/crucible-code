@@ -16,6 +16,7 @@
 //! read a session back should not have to compile them.
 
 pub mod address;
+pub mod agent_key;
 pub mod ask;
 pub mod cache;
 pub mod call;
@@ -34,6 +35,7 @@ pub mod transcript;
 pub mod usage;
 pub mod version;
 
+pub use agent_key::{AGENT_KEY_BYTES, AgentKey, AgentKeyError};
 pub use ask::{Answer, Answered, Question};
 pub use cache::{
     CostAmount, MAX_PROMPT_CACHE_HANDLE_BYTES, MAX_PROMPT_CACHE_NAMESPACE_BYTES,
