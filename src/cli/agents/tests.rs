@@ -379,8 +379,14 @@ impl Unpacked {
         within: Duration,
     ) -> Result<String, String> {
         let _ = &self.scratch;
-        probed(&self.root, &self.entry, unconfined, sandbox, within)
+        let mode = moded(unconfined, &disposable).expect("a runner to be thrown away");
+        probed(&self.root, &self.entry, mode, sandbox, within)
     }
+}
+
+/// The environment of a disposable runner: `CI` is `true`.
+fn disposable(name: &str) -> Option<std::ffi::OsString> {
+    (name == "CI").then(|| "true".into())
 }
 
 /// The fake peer answers `initialize` when it hears it.
@@ -545,4 +551,32 @@ fn probe_is_parsed_from_its_paths_and_left_out_of_the_help() {
         .expect_err("the help")
         .to_string();
     assert!(!help.contains("probe"), "{help}");
+}
+
+/// Starting an agent without the sandbox is allowed only on a process that
+/// says it is on a disposable runner: `CI` equal to `true`. Anything else is
+/// refused in one line naming that condition, and asking for the sandbox needs
+/// nothing.
+#[test]
+fn unconfined_is_allowed_only_where_the_runner_says_it_is_disposable() {
+    let says = |value: &'static str| {
+        move |name: &str| (name == "CI").then(|| std::ffi::OsString::from(value))
+    };
+
+    assert!(moded(true, &disposable).is_ok());
+    assert!(moded(false, &|_| None).is_ok(), "the sandbox needs no word");
+    for lookup in [
+        &(|_: &str| None) as &dyn Fn(&str) -> Option<std::ffi::OsString>,
+        &says("1"),
+        &says("false"),
+        &says("TRUE"),
+        &says(""),
+    ] {
+        let refused = moded(true, lookup).expect_err("not a disposable runner");
+
+        assert!(refused.starts_with("crucible: "), "{refused}");
+        assert!(refused.contains("CI is true"), "{refused}");
+        assert!(refused.contains("--unconfined"), "{refused}");
+        assert_eq!(refused.lines().count(), 1, "{refused}");
+    }
 }

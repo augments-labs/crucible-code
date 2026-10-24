@@ -38,11 +38,14 @@
 //! The catalog intake starts an agent's program too, with [`probing`]: from
 //! the directory its release was unpacked into and the entry that describes it,
 //! under a policy that requires the sandbox, closes the network and leaves that
-//! directory read-only. No route was asked about content use, since nothing a
-//! user wrote is sent and nothing leaves the machine; where this machine's
-//! sandbox cannot close the network the start is refused, unless the caller
-//! says the run is on a disposable machine, and then the program is started
-//! unconfined and the start says so.
+//! directory read-only. No route was asked about content use, since all the
+//! program is sent is one fixed `initialize` that carries nothing a user wrote.
+//! Confined, the sandbox closes the network, so nothing it is sent can be
+//! passed on. Where this machine's sandbox cannot close the network the start
+//! is refused, unless the caller says the run is on a disposable machine, which
+//! [`crate::probing`] allows only to a process that says so, and then the
+//! program is started unconfined, with the network the machine has and nothing
+//! of a user's on it, and the output says so.
 //! A probe and an account step are starts like a turn's and go through the
 //! same gates, each under a hold of its own. An account step the dialect
 //! speaks over the program's own wire is bounded: a version or status within
@@ -838,15 +841,15 @@ impl<'a> Launcher<'a> {
     }
 }
 
-/// The route the intake's probe is started under. No user is asked: a probe
-/// is run from the catalog's own intake on a machine with nothing of a user's,
-/// and what it sends the program is a fixed `initialize` that carries no
-/// content.
+/// The route the intake's probe is started under. No user is asked: what a
+/// probe sends the program is one fixed `initialize` that carries no content,
+/// the sandbox closes the network when it can, and when it cannot the probe is
+/// run only on a disposable runner with nothing of a user's on it.
 const PROBING: &str = "catalog-probe";
 
 /// How far the sandbox held a probe in.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Sandbox {
+pub(crate) enum Sandbox {
     /// The sandbox was required, enforced, and had the network closed.
     Closed,
     /// The sandbox here could not close the network, for this reason, and the
@@ -856,13 +859,13 @@ pub enum Sandbox {
 
 /// A program started for the intake's probe.
 #[derive(Debug)]
-pub struct Probe {
+pub(crate) struct Probe {
     /// The running program.
-    pub host: Host,
+    pub(crate) host: Host,
     /// The wire it is spoken to over.
-    pub dialect: Acp,
+    pub(crate) dialect: Acp,
     /// How far it is held in.
-    pub sandbox: Sandbox,
+    pub(crate) sandbox: Sandbox,
 }
 
 /// Why nothing was started for a probe.
@@ -914,7 +917,7 @@ pub enum Unprobeable {
 /// # Errors
 ///
 /// [`Unprobeable`] for each reason nothing was started.
-pub async fn probing(
+pub(crate) async fn probing(
     service: Arc<dyn SandboxService>,
     runtime: Handle,
     root: &Path,

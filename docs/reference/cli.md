@@ -641,7 +641,8 @@ turn needs an account. Every text and list is bounded, and `incomplete` is
 network, as on FreeBSD or on Windows without its broker, nothing is started and
 the run says so; with `--unconfined` the program is started without the sandbox,
 `sandbox` reads `unavailable: ` and why, and the run belongs on a machine to be
-thrown away. A refusal says why on standard error.
+thrown away: `--unconfined` is refused unless the environment variable `CI` is
+`true`, as a CI runner sets it. A refusal says why on standard error.
 
 ## Credentials from the command line
 

@@ -17,6 +17,7 @@
 //! of it was cut. The agent's reply is hostile text: it is parsed here, once,
 //! and nothing of it is passed on but what is written below.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -68,6 +69,13 @@ pub enum Unprobed {
         #[source]
         source: CatalogError,
     },
+    /// Starting the program without the sandbox was asked for on a process
+    /// that does not say it is on a disposable runner.
+    #[error(
+        "--unconfined starts the agent without a sandbox, so it is refused unless the \
+         environment variable CI is true, which says this is a disposable runner"
+    )]
+    NotDisposable,
     /// The program could not be started.
     #[error(transparent)]
     Start(#[from] Unprobeable),
@@ -86,6 +94,38 @@ pub enum Unprobed {
     Unfinished(#[from] Unfinished),
 }
 
+/// How the program is held in: by the sandbox, or, on a runner to be thrown
+/// away, not at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Mode {
+    /// Whether the program may be started where the sandbox cannot close the
+    /// network.
+    unconfined: bool,
+}
+
+impl Mode {
+    /// The sandbox is required.
+    pub const CONFINED: Self = Self { unconfined: false };
+
+    /// The mode `unconfined` asks for, as the environment `lookup` reads
+    /// allows: starting the program without the sandbox is allowed only where
+    /// `CI` is `true`, which a process running on a disposable runner says.
+    ///
+    /// # Errors
+    ///
+    /// [`Unprobed::NotDisposable`] where it is asked for and `CI` is not
+    /// `true`.
+    pub fn of(
+        unconfined: bool,
+        lookup: &dyn Fn(&str) -> Option<OsString>,
+    ) -> Result<Self, Unprobed> {
+        if unconfined && lookup("CI").as_deref() != Some(std::ffi::OsStr::new("true")) {
+            return Err(Unprobed::NotDisposable);
+        }
+        Ok(Self { unconfined })
+    }
+}
+
 /// The sandbox the application's commands run in, on `runtime`.
 #[must_use]
 pub fn local(runtime: Handle) -> Arc<dyn SandboxService> {
@@ -99,8 +139,8 @@ pub fn local(runtime: Handle) -> Arc<dyn SandboxService> {
 /// answer.
 ///
 /// Where that sandbox cannot close the network nothing is started, unless
-/// `unconfined` says the run is on a machine to be thrown away, and then the
-/// output says the sandbox was unavailable and why.
+/// `mode` is the unconfined one, which only a disposable runner is given, and
+/// then the output says the sandbox was unavailable and why.
 ///
 /// # Errors
 ///
@@ -108,7 +148,7 @@ pub fn local(runtime: Handle) -> Arc<dyn SandboxService> {
 pub fn probe(
     root: &Path,
     entry: &Path,
-    unconfined: bool,
+    mode: Mode,
     sandbox: &dyn Fn(Handle) -> Arc<dyn SandboxService>,
     within: Duration,
 ) -> Result<String, Unprobed> {
@@ -125,7 +165,7 @@ pub fn probe(
             runtime.clone(),
             root,
             &described,
-            unconfined,
+            mode.unconfined,
             within,
         ))
     });

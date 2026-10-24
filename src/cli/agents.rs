@@ -28,7 +28,7 @@ use std::time::Duration;
 use crucible_app::backends::REGISTRY;
 use crucible_app::catalog_fetch::trust_in;
 use crucible_app::installing::{self, Installed};
-use crucible_app::probing;
+use crucible_app::probing::{self, Mode};
 use crucible_config::{Driver, Home};
 use crucible_sandbox::SandboxService;
 use tokio::runtime::Handle;
@@ -118,13 +118,19 @@ pub(super) fn unpack_check(entry: &Path, artifact: &Path, out: &Path) -> ExitCod
 /// Runs `crucible agents probe` over the release unpacked into `root` and the
 /// entry at `entry`, and stops.
 pub(super) fn probe(root: &Path, entry: &Path, unconfined: bool) -> ExitCode {
-    written(probed(
-        root,
-        entry,
-        unconfined,
-        &probing::local,
-        probing::BOUND,
-    ))
+    written(
+        moded(unconfined, &|name| std::env::var_os(name))
+            .and_then(|mode| probed(root, entry, mode, &probing::local, probing::BOUND)),
+    )
+}
+
+/// The mode `--unconfined` asks for as `lookup` reads the environment, or the
+/// refusal for standard error.
+fn moded(
+    unconfined: bool,
+    lookup: &dyn Fn(&str) -> Option<std::ffi::OsString>,
+) -> Result<Mode, String> {
+    Mode::of(unconfined, lookup).map_err(|refused| failing(&caused(&refused)))
 }
 
 /// Writes `answer` to standard output where it is an answer and to standard
@@ -149,12 +155,11 @@ fn written(answer: Result<String, String>) -> ExitCode {
 fn probed(
     root: &Path,
     entry: &Path,
-    unconfined: bool,
+    mode: Mode,
     sandbox: &dyn Fn(Handle) -> Arc<dyn SandboxService>,
     within: Duration,
 ) -> Result<String, String> {
-    probing::probe(root, entry, unconfined, sandbox, within)
-        .map_err(|refused| failing(&caused(&refused)))
+    probing::probe(root, entry, mode, sandbox, within).map_err(|refused| failing(&caused(&refused)))
 }
 
 /// What `crucible agents unpack-check` writes: the file list for standard
