@@ -181,7 +181,7 @@ http = "=1.5.0"
 # HTTP/1.1 framing, the response head's size limits and the close of a
 # connection whose request was dropped; `http1` alone, so no HTTP/2 is compiled.
 # `std` has sockets and no HTTP.
-hyper = { version = "=1.11.1", default-features = false, features = ["client", "http1"] }
+hyper = { version = "=1.12.0", default-features = false, features = ["client", "http1"] }
 # The pooled client over `hyper`, and the connector that takes a custom
 # resolver: the seam where `crucible-http` applies a lookup's deadline and
 # bound. `client-legacy` is that client and connector, and the `CONNECT`
