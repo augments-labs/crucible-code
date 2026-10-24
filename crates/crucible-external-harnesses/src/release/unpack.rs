@@ -22,7 +22,9 @@
 //!   second is the staging directory.
 //! - A member is written when it is kept: every member when the artifact
 //!   names none, and otherwise only those it names. The rest are read through
-//!   and discarded, whatever kind they are, and nothing of them is written.
+//!   and discarded, whatever kind they are, and nothing of them is written;
+//!   but a sparse tar member is refused even so, since `tar` reads what comes
+//!   after its header as more of it, where this reader would see members.
 //! - What is written is an ordinary file, a directory, a symbolic link or a
 //!   copy of an earlier file that a hard link names. A zip's link, a device, a
 //!   pipe and every other kind are refused. A file is runnable exactly when
@@ -45,8 +47,9 @@
 //!   directory, through directories alone and at most [`LINK_STEPS`] links.
 //! - What is read and written is bounded: no more than the artifact's
 //!   `decompressed` is read out of the archive, the members discarded
-//!   included, no more than its `unpacked` is written, and no more members
-//!   than [`MEMBERS`] by a survey or than its list holds by an unpack. A
+//!   included, no more than its `unpacked` is written, no more names than
+//!   [`MEMBERS`], each directory a member only implies counted, and no more
+//!   members than its list holds by an unpack. A
 //!   list's sizes are summed with checked arithmetic before the archive is
 //!   opened. A tar's GNU long name or link target is held to the name's
 //!   ceiling, and its extended header to [`PAX_BYTES`], before either is
@@ -80,8 +83,9 @@ use crate::catalog::{Artifact, File, FileKind, Files, Format};
 /// The most links a link's target is followed through, itself included.
 const LINK_STEPS: usize = 8;
 
-/// The most members a survey writes; an unpack writes no more than its list
-/// holds.
+/// The most members a survey writes, and the most names either writes, each
+/// directory a member only implies counted; an unpack writes no more members
+/// than its list holds.
 pub(super) const MEMBERS: usize = 65_536;
 
 /// The longest name a member may have, and a link's target, in bytes.
@@ -187,8 +191,9 @@ pub enum UnpackError {
         /// The most it may hold.
         ceiling: u64,
     },
-    /// It would write more members than its ceiling.
-    #[error("the archive holds more than the {ceiling} members it may write")]
+    /// It would write more members, or more names with the directories they
+    /// imply, than its ceiling.
+    #[error("the archive holds more than the {ceiling} members and directories it may write")]
     Members {
         /// The most it may write.
         ceiling: usize,
@@ -566,6 +571,8 @@ enum Held {
 /// tree of their components: each component is held once as spelled and once
 /// case-folded, so what is held grows with the names' own bytes.
 struct Names {
+    /// The most names it holds.
+    ceiling: usize,
     /// Each node, by its parent's and its component case-folded.
     children: HashMap<(usize, Box<str>), usize>,
     /// Each node's component as spelled, and how it is held; the staging
@@ -574,16 +581,17 @@ struct Names {
 }
 
 impl Names {
-    fn new() -> Self {
+    fn new(ceiling: usize) -> Self {
         Self {
+            ceiling,
             children: HashMap::new(),
             nodes: vec![(Box::default(), Held::Directory)],
         }
     }
 
     /// Holds `name` as `held`, with every directory above it, refusing a name
-    /// another differs from only in case, a name taken twice and a directory
-    /// that is also something else.
+    /// another differs from only in case, a name taken twice, a directory
+    /// that is also something else, and a name past the ceiling.
     fn claim(&mut self, name: &str, held: Held) -> Result<(), UnpackError> {
         let mut node = 0;
         let mut parts = name.split('/').peekable();
@@ -609,6 +617,12 @@ impl Names {
     ) -> Result<usize, UnpackError> {
         let key = (parent, part.to_ascii_lowercase().into_boxed_str());
         let Some(&node) = self.children.get(&key) else {
+            // The first node is the staging directory, which is no name.
+            if self.nodes.len() > self.ceiling {
+                return Err(UnpackError::Members {
+                    ceiling: self.ceiling,
+                });
+            }
             let node = self.nodes.len();
             self.nodes.push((part.into(), held));
             self.children.insert(key, node);
@@ -751,13 +765,18 @@ impl Ahead {
             _ => return Ok(false),
         };
         if entry.size() > ceiling {
-            return Err(if kind == EntryType::XHeader {
-                UnpackError::Extended { ceiling }
-            } else {
-                UnpackError::Overlong {
-                    name: shown(&entry.header().path_bytes()),
-                    ceiling: NAME_BYTES,
-                }
+            if kind == EntryType::XHeader {
+                return Err(UnpackError::Extended { ceiling });
+            }
+            // How the name begins, which is all of it that is read.
+            let mut begins = Vec::new();
+            (&mut *entry)
+                .take(NAMED as u64)
+                .read_to_end(&mut begins)
+                .map_err(|error| budget.failed(error))?;
+            return Err(UnpackError::Overlong {
+                name: shown(&begins),
+                ceiling: NAME_BYTES,
             });
         }
         if held.is_some() {
@@ -865,7 +884,7 @@ impl<'a> Walk<'a> {
             list,
             kept: artifact.kept.iter().map(|kept| &**kept).collect(),
             members,
-            names: Names::new(),
+            names: Names::new(MEMBERS),
             files: Vec::new(),
             regular: HashMap::new(),
             links: Vec::new(),
@@ -956,6 +975,15 @@ impl<'a> Walk<'a> {
                 continue;
             }
             let (raw, target) = ahead.named(&entry)?;
+            // What follows a sparse member's header is read by `tar` as more
+            // of its map, so it is refused whether it is kept or not, before
+            // anything after it is read as a member.
+            if kind == EntryType::GNUSparse {
+                return Err(UnpackError::Kind {
+                    name: shown(&raw),
+                    kind: "a sparse file",
+                });
+            }
             let size = entry.size();
             let exec = entry.header().mode().map_err(UnpackError::Corrupt)? & 0o111 != 0;
             let target = target.unwrap_or_default();
@@ -973,7 +1001,6 @@ impl<'a> Walk<'a> {
                 EntryType::XGlobalHeader => continue,
                 EntryType::Char | EntryType::Block => Body::Refused("a device"),
                 EntryType::Fifo => Body::Refused("a pipe"),
-                EntryType::GNUSparse => Body::Refused("a sparse file"),
                 _ => Body::Refused("of a kind no unpacker writes"),
             };
             self.member(&raw, body, budget)?;

@@ -273,6 +273,9 @@ enum Tarred<'a> {
     Hard(&'a str, &'a str, u32),
     /// A member of another kind.
     Special(&'a str, EntryType),
+    /// An entry of `kind` holding `bytes`, such as one that describes the
+    /// member after it.
+    Data(&'a str, EntryType, &'a [u8]),
 }
 
 /// `bytes` put at the start of a header's field.
@@ -320,6 +323,7 @@ fn tarred(members: &[Tarred<'_>]) -> Vec<u8> {
             Tarred::Symlink(name, target) => (name, EntryType::Symlink, &[], 0o777, Some(target)),
             Tarred::Hard(name, target, mode) => (name, EntryType::Link, &[], mode, Some(target)),
             Tarred::Special(name, kind) => (name, kind, &[], 0o644, None),
+            Tarred::Data(name, kind, bytes) => (name, kind, bytes, 0o644, None),
         };
         let mut header = Header::new_gnu();
         put(&mut header.as_old_mut().name, name.as_bytes());
@@ -2055,4 +2059,252 @@ fn what_is_staged_is_made_owner_only_and_each_file_with_its_mode() {
         );
         assert_eq!(mode & 0o100 != 0, exec, "{file}: {mode:o}");
     }
+}
+
+/// The extended-header records `records` spell, each `<length> <key>=<value>`
+/// and a line feed, its length counting itself.
+fn pax(records: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut spelled = Vec::new();
+    for (key, value) in records {
+        let body = key.len() + value.len() + 3;
+        let mut length = body + 1;
+        loop {
+            let next = body + length.to_string().len();
+            if next == length {
+                break;
+            }
+            length = next;
+        }
+        spelled.extend_from_slice(format!("{length} {key}=").as_bytes());
+        spelled.extend_from_slice(value);
+        spelled.push(b'\n');
+    }
+    spelled
+}
+
+/// Whether `refused` is the archive refused as unreadable for a cause that
+/// says `why`.
+fn corrupt(refused: &Result<Staged, UnpackError>, why: &str) -> bool {
+    matches!(refused, Err(UnpackError::Corrupt(cause)) if cause.to_string().contains(why))
+}
+
+#[test]
+fn what_comes_before_a_tar_member_is_held_to_its_own_rules() {
+    /// A GNU long name naming the member after it `name`.
+    fn named(name: &str) -> Tarred<'_> {
+        Tarred::Data("././@LongLink", EntryType::GNULongName, name.as_bytes())
+    }
+    let owned = Owned::new("catalog-ahead");
+    let one = vec![listed("agent", b"x", false)];
+
+    let sized = pax(&[("size", b"999")]);
+    let unspelled = pax(&[("size", b"abc")]);
+    for records in [&sized, &unspelled] {
+        let archive = tar_gz(&[
+            Tarred::Data("PaxHeaders/agent", EntryType::XHeader, records),
+            Tarred::File("agent", b"x", 0o644),
+        ]);
+        let artifact = pinned_as(&archive, Format::TarGz, one.clone());
+        for refused in refused_both_ways(&owned, &archive, &artifact) {
+            assert!(corrupt(&refused, "another size"), "{refused:?}");
+        }
+    }
+
+    let comment = vec![b'c'; 70_000];
+    let long = pax(&[("comment", &comment)]);
+    let archive = tar_gz(&[
+        Tarred::Data("PaxHeaders/agent", EntryType::XHeader, &long),
+        Tarred::File("agent", b"x", 0o644),
+    ]);
+    let artifact = pinned_as(&archive, Format::TarGz, one.clone());
+    for refused in refused_both_ways(&owned, &archive, &artifact) {
+        assert!(
+            matches!(refused, Err(UnpackError::Extended { .. })),
+            "{refused:?}"
+        );
+    }
+
+    let other = pax(&[("path", b"other")]);
+    for orphan in [
+        Tarred::Data("PaxHeaders/other", EntryType::XHeader, &other),
+        named("other\0"),
+    ] {
+        let archive = tar_gz(&[Tarred::File("agent", b"x", 0o644), orphan]);
+        let artifact = pinned_as(&archive, Format::TarGz, one.clone());
+        for (refused, _) in both_ways(&owned, &archive, &artifact) {
+            assert!(corrupt(&refused, "does not hold"), "{refused:?}");
+        }
+    }
+
+    let renamed = pax(&[("path", b"agent")]);
+    for twice in [
+        [named("agent\0"), named("agent\0")],
+        [
+            Tarred::Data("PaxHeaders/agent", EntryType::XHeader, &renamed),
+            Tarred::Data("PaxHeaders/agent", EntryType::XHeader, &renamed),
+        ],
+    ] {
+        let mut members = twice.to_vec();
+        members.push(Tarred::File("short", b"x", 0o644));
+        let archive = tar_gz(&members);
+        let artifact = pinned_as(&archive, Format::TarGz, one.clone());
+        for refused in refused_both_ways(&owned, &archive, &artifact) {
+            assert!(corrupt(&refused, "twice"), "{refused:?}");
+        }
+    }
+
+    let target = "../".repeat(1700) + "agent";
+    let linked = pax(&[("linkpath", target.as_bytes())]);
+    let archive = tar_gz(&[
+        Tarred::Data("PaxHeaders/run", EntryType::XHeader, &linked),
+        Tarred::Symlink("run", "agent"),
+    ]);
+    let artifact = pinned_as(&archive, Format::TarGz, vec![listed_link("run", &target)]);
+    for refused in refused_both_ways(&owned, &archive, &artifact) {
+        assert!(
+            matches!(refused, Err(UnpackError::Overlong { .. })),
+            "{refused:?}"
+        );
+    }
+}
+
+#[test]
+fn a_tar_member_is_named_as_the_headers_before_it_say() {
+    let owned = Owned::new("catalog-ahead-read");
+    let global = pax(&[("path", b"evil"), ("comment", b"made by a tool")]);
+    let renamed = pax(&[("mtime", b"1700000000.5"), ("path", b"lib/agent")]);
+    let cases = [
+        (
+            vec![
+                Tarred::Data("pax_global_header", EntryType::XGlobalHeader, &global),
+                Tarred::File("agent", b"x", 0o644),
+            ],
+            "agent",
+        ),
+        (
+            vec![
+                Tarred::Data("PaxHeaders/short", EntryType::XHeader, &renamed),
+                Tarred::File("short", b"x", 0o644),
+            ],
+            "lib/agent",
+        ),
+        (
+            vec![
+                Tarred::Data("PaxHeaders/short", EntryType::XHeader, &renamed),
+                Tarred::Data("././@LongLink", EntryType::GNULongName, b"long/agent\0"),
+                Tarred::File("short", b"x", 0o644),
+            ],
+            "long/agent",
+        ),
+    ];
+    for (members, name) in cases {
+        let archive = tar_gz(&members);
+        let artifact = pinned_as(&archive, Format::TarGz, vec![listed(name, b"x", false)]);
+        let at = staging(&owned, "staging");
+        let staged = Unpacker::unpack(&archive, &artifact, &at);
+        let _ = fs::remove_dir_all(at);
+        assert_eq!(
+            staged.ok().map(|staged| staged.files().to_vec()),
+            Some(vec![listed(name, b"x", false)]),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn a_long_name_past_its_ceiling_is_refused_by_how_it_begins() {
+    let owned = Owned::new("catalog-long-said");
+    let archive = long_named(&("a/".repeat(2500) + "f"));
+    let artifact = pinned_as(&archive, Format::TarGz, Vec::new());
+    for refused in refused_both_ways(&owned, &archive, &artifact) {
+        assert!(
+            matches!(&refused, Err(UnpackError::Overlong { name, .. })
+                if name.starts_with("a/a/a/") && !name.contains("@LongLink")),
+            "{refused:?}"
+        );
+    }
+}
+
+#[test]
+fn a_sparse_member_is_refused_whether_it_is_kept_or_not() {
+    let owned = Owned::new("catalog-sparse");
+    let mut builder = tar::Builder::new(Vec::new());
+    let mut sparse = Header::new_gnu();
+    sparse.set_entry_type(EntryType::GNUSparse);
+    sparse.set_size(0);
+    sparse.set_mode(0o644);
+    put(&mut sparse.as_old_mut().name, b"sparse");
+    if let Some(gnu) = sparse.as_gnu_mut() {
+        gnu.isextended[0] = 1;
+    }
+    sparse.set_cksum();
+    let appended = builder.append(&sparse, &b""[..]);
+    assert!(appended.is_ok(), "{appended:?}");
+    let mut hidden = Header::new_gnu();
+    hidden.set_entry_type(EntryType::Regular);
+    hidden.set_size(4);
+    hidden.set_mode(0o755);
+    put(&mut hidden.as_old_mut().name, b"evil");
+    hidden.set_cksum();
+    let appended = builder.append(&hidden, &b"evil"[..]);
+    assert!(appended.is_ok(), "{appended:?}");
+    let archive = gzipped(&builder.into_inner().unwrap_or_default());
+    for kept in [&[][..], &["evil"][..], &["sparse"][..]] {
+        let artifact = keeping(
+            Artifact {
+                unpacked: 1 << 20,
+                ..pinned_as(&archive, Format::TarGz, vec![listed("evil", b"evil", true)])
+            },
+            kept,
+        );
+        for refused in refused_both_ways(&owned, &archive, &artifact) {
+            assert!(
+                matches!(refused, Err(UnpackError::Kind { .. })),
+                "kept {kept:?}: {refused:?}"
+            );
+        }
+    }
+}
+
+/// A tar of `members` directories, each `COMPONENTS` deep and none sharing a
+/// directory with another.
+// A test that cannot build its archive has nothing to report.
+#[allow(clippy::expect_used)]
+fn deep_directories(members: usize) -> Vec<u8> {
+    let mut builder = tar::Builder::new(Vec::new());
+    for at in 0..members {
+        let mut header = Header::new_gnu();
+        header.set_entry_type(EntryType::Directory);
+        header.set_size(0);
+        header.set_mode(0o755);
+        header.set_mtime(0);
+        let name = format!("m{at}/{}", ["a"; 63].join("/"));
+        builder
+            .append_data(&mut header, name, &b""[..])
+            .expect("a directory");
+    }
+    stored(&builder.into_inner().expect("a tar"))
+}
+
+#[test]
+fn every_directory_a_member_implies_is_charged_to_the_ceiling() {
+    let owned = Owned::new("catalog-implied");
+    // Each member names 64 directories of its own.
+    let within = super::unpack::MEMBERS / 64;
+    let over = deep_directories(within + 1);
+    let artifact = pinned_as(&over, Format::TarGz, Vec::new());
+    let refused = Unpacker::survey(&over, &artifact, &staging(&owned, "over"));
+    assert!(
+        matches!(refused, Err(UnpackError::Members { .. })),
+        "{:?}",
+        refused.map(|staged| staged.files().len())
+    );
+
+    let near = deep_directories(within);
+    let artifact = pinned_as(&near, Format::TarGz, Vec::new());
+    let surveyed = Unpacker::survey(&near, &artifact, &staging(&owned, "within"));
+    assert_eq!(
+        surveyed.map(|staged| staged.files().len()).ok(),
+        Some(within)
+    );
 }
