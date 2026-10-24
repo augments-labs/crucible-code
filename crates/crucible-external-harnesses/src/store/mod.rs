@@ -93,8 +93,9 @@
 //! What the store keeps is bounded by [`PROGRAMS_BYTES`]: an artifact whose
 //! download, or what it decompresses or unpacks to, is larger than that, or a
 //! release whose artifacts together unpack to more, is refused before it is
-//! downloaded, and a release that would take what the store holds past it is
-//! refused then and again before it is committed. What the store holds is what
+//! downloaded, and a release that would take what the store holds past it,
+//! with its largest download beside it while it is unpacked, is refused then
+//! and again before it is committed. What the store holds is what
 //! the receipts account for, and for a version with none, or none that can be
 //! read, what its files hold; a store with more agents or versions than it
 //! reads, or a version with more entries, is refused rather than counted
@@ -856,10 +857,17 @@ impl Store {
     ///
     /// [`StoreError::TooLarge`] or [`StoreError::Full`].
     pub fn fits(&self, target: &Target) -> Result<(), StoreError> {
+        self.fitting(target, false)
+    }
+
+    /// [`Store::fits`], and where `downloading`, with room for the largest
+    /// download beside what the release unpacks to.
+    fn fitting(&self, target: &Target, downloading: bool) -> Result<(), StoreError> {
         let too_large = || StoreError::TooLarge {
             ceiling: self.ceiling,
         };
         let mut wanted: u64 = 0;
+        let mut largest: u64 = 0;
         for artifact in &target.artifacts {
             let downloaded = artifact
                 .replaced_by
@@ -874,12 +882,27 @@ impl Store {
             if sizes.iter().any(|bytes| *bytes > self.ceiling) {
                 return Err(too_large());
             }
+            largest = largest.max(downloaded);
             wanted = wanted
                 .checked_add(artifact.unpacked)
                 .filter(|wanted| *wanted <= self.ceiling)
                 .ok_or_else(too_large)?;
         }
+        if downloading {
+            wanted = wanted.checked_add(largest).ok_or_else(too_large)?;
+        }
         self.room(None, wanted)
+    }
+
+    /// Whether `target` fits as [`Store::fits`] says, with room as well for
+    /// its largest download, which lies beside its staging until it is
+    /// unpacked.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TooLarge`] or [`StoreError::Full`].
+    pub fn fits_while_downloading(&self, target: &Target) -> Result<(), StoreError> {
+        self.fitting(target, true)
     }
 
     /// A new staging directory for the agent `key`, once what a dead process

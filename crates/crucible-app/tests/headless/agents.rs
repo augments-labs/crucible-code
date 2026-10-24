@@ -1195,3 +1195,25 @@ fn a_listing_says_on_its_row_that_one_agent_s_store_cannot_be_read() -> Result<(
     assert_eq!(rows, [("goose", true), ("kiro", false)]);
     Ok(())
 }
+
+#[test]
+fn an_install_no_instance_runs_keeps_the_version_before_it_for_a_rollback() -> Result<(), Failed> {
+    let bench = Bench::new("agents-door-kept-before")?;
+    bench
+        .server
+        .publish(1, &[("2.0.0", TWO), ("1.0.0", ONE)], &[]);
+    // The one instance runs a program of its own, so none moves.
+    bench.configure(Path::new("goose"), &json!({}))?;
+    for version in ["1.0.0", "2.0.0"] {
+        let mut front = answering(&bench.server, Some("Install"));
+        let (installed, _) = bench.ask(install(version)?, &mut front, false)?;
+        assert!(
+            matches!(&installed, Ok(Outcome::Moved { instances, unpruned: None, .. }) if instances.is_empty()),
+            "{version}: {installed:?}"
+        );
+    }
+
+    assert_eq!(fs::read(bench.program("2.0.0"))?, TWO);
+    assert_eq!(fs::read(bench.program("1.0.0"))?, ONE);
+    Ok(())
+}

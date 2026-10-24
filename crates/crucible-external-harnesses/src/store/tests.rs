@@ -1569,3 +1569,31 @@ fn a_download_beside_a_live_staging_is_kept_by_another_change_and_goes_with_it()
     drop(staging);
     assert!(names(&area).is_empty(), "{:?}", names(&area));
 }
+
+#[test]
+fn a_release_whose_download_would_pass_the_room_left_is_refused_before_it_is_fetched() {
+    let owned = Owned::new("store-cap-download");
+    let root = programs(&owned);
+    let (_, artifact) = release();
+    let target = Target {
+        platform: "linux-x86_64".into(),
+        cmd: "agent".into(),
+        args: Vec::new(),
+        env: Vec::new(),
+        hosts: Vec::new(),
+        artifacts: vec![artifact.clone()],
+        launch: Launch::Binary,
+    };
+    // Room for what it unpacks to, and not for the download beside it.
+    let tight = Store::new(root.clone()).bounded(artifact.unpacked + artifact.size - 1);
+    assert!(tight.fits(&target).is_ok());
+
+    let refused = tight.fits_while_downloading(&target);
+
+    assert!(
+        matches!(refused, Err(StoreError::Full { .. })),
+        "{refused:?}"
+    );
+    let roomy = Store::new(root).bounded(artifact.unpacked + artifact.size);
+    assert!(roomy.fits_while_downloading(&target).is_ok());
+}

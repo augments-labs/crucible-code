@@ -479,7 +479,6 @@ impl Door<'_> {
         let listed = listed(target);
         runnable(&listed, &target.cmd)?;
         let total = sized(offer)?;
-        self.store.fits(target)?;
         let version = Version::new(&offer.pin.version, offer.pin.lock_revision)?;
         let kept = match self.store.receipt(agent, &version)? {
             Some(receipt) if same(&receipt, target, &listed) => true,
@@ -491,6 +490,11 @@ impl Door<'_> {
             }
             None => false,
         };
+        // Room for what it unpacks to, and for the download beside it while
+        // it is unpacked; a version kept takes none.
+        if !kept {
+            self.store.fits_while_downloading(target)?;
+        }
         let moving = self.moving(agent);
         let program = self.store.directory(agent, &version).join(&*target.cmd);
 
@@ -555,7 +559,7 @@ impl Door<'_> {
             instances,
             left,
             downloaded: !kept,
-            unpruned: self.prune(agent).err().map(Box::new),
+            unpruned: self.prune(agent, &program).err().map(Box::new),
         })
     }
 
@@ -670,14 +674,19 @@ impl Door<'_> {
         Ok((written, left.into_iter().map(Into::into).collect()))
     }
 
-    /// Prunes the store of `agent` to what the instances name now, read again
-    /// from the user file, so an instance changed since the question keeps
-    /// the version it names.
-    fn prune(&self, agent: &AgentKey) -> Result<(), AgentsError> {
+    /// Prunes the store of `agent` to `program`, the one just put in place,
+    /// and what the instances name now, read again from the user file, so an
+    /// instance changed since the question keeps the version it names, and
+    /// the newest other version is kept to go back to even where no instance
+    /// runs the agent from the store.
+    fn prune(&self, agent: &AgentKey, program: &Path) -> Result<(), AgentsError> {
         let instances = Settings::read_home(self.shelf.home)?.external_agents();
-        let named: Vec<&Path> = instances
-            .iter()
-            .map(|instance| Path::new(instance.executable()))
+        let named: Vec<&Path> = std::iter::once(program)
+            .chain(
+                instances
+                    .iter()
+                    .map(|instance| Path::new(instance.executable())),
+            )
             .collect();
         self.store.prune(agent, &named)?;
         Ok(())
@@ -746,12 +755,15 @@ impl Door<'_> {
         facts.push(moves(agent, &previous.version, &moving));
         facts.push(self.unsmoked());
         let confirmation = Confirmation {
-            asks: format!("Roll {agent} back to {}?", previous.version),
+            asks: format!("Roll {agent} back to {}?", quoted(&previous.version)),
             facts,
             choices: vec![
                 (
                     "Roll back".to_owned(),
-                    format!("Move the instances named back onto {}", previous.version),
+                    format!(
+                        "Move the instances named back onto {}",
+                        quoted(&previous.version)
+                    ),
                 ),
                 ("Cancel".to_owned(), "Leave everything as it is".to_owned()),
             ],
@@ -767,7 +779,7 @@ impl Door<'_> {
             instances,
             left,
             downloaded: false,
-            unpruned: self.prune(agent).err().map(Box::new),
+            unpruned: self.prune(agent, &program).err().map(Box::new),
         })
     }
 
