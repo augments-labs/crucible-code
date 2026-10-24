@@ -63,10 +63,11 @@ pub(crate) const AGENT: &str = "^[a-z0-9-]{1,32}$";
 pub const NATIVE_RUNNER: &str = "native";
 
 /// The names Windows keeps for its devices, which no directory there can
-/// have: a key names the directory its agent's releases are kept in.
-const DEVICES: [&str; 22] = [
-    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
-    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+/// have: a key names the directory its agent's releases are kept in. The
+/// zeroth ports are among them, as current releases of Windows read them.
+const DEVICES: [&str; 24] = [
+    "con", "prn", "aux", "nul", "com0", "com1", "com2", "com3", "com4", "com5", "com6", "com7",
+    "com8", "com9", "lpt0", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
 ];
 
 /// The spellings `externalAgents.<instance>.authentication` accepts: the

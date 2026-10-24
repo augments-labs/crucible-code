@@ -691,7 +691,8 @@ fn an_agent_key_is_never_a_reserved_word() {
         .map(|driver| driver.name())
         .collect();
     words.extend([
-        "native", "con", "prn", "aux", "nul", "com1", "com5", "com9", "lpt1", "lpt5", "lpt9",
+        "native", "con", "prn", "aux", "nul", "com0", "com1", "com5", "com9", "lpt0", "lpt1",
+        "lpt5", "lpt9",
     ]);
     for word in words {
         let err = mine(&catalog(&word.into(), "")).unwrap_err();
@@ -703,7 +704,7 @@ fn an_agent_key_is_never_a_reserved_word() {
         assert!(said.contains("externalAgents.mine.agent"), "got {said}");
         assert!(said.contains(&format!("{word:?}")), "{word}: got {said}");
     }
-    for near in ["claudes", "com0", "com10", "lpt", "nativ", "console"] {
+    for near in ["claudes", "com10", "lpt", "lpt10", "nativ", "console"] {
         assert!(mine(&catalog(&near.into(), "")).is_ok(), "{near}");
     }
 }

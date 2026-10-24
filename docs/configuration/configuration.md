@@ -222,7 +222,7 @@ choosing that `providers.<name>.access.instance` uses. At most 32.
 | Key | Means |
 | --- | --- |
 | `driver` | Which agent it is: `claude`, which reaches `anthropic`; `antigravity`, which reaches `google`; or `catalog`, an agent the catalog reviewed, which `agent` names and which reaches no provider. Required. |
-| `agent` | For `catalog`, and required for it: the key the catalog reviewed the agent under, 1 to 32 lowercase letters, digits and hyphens. A driver's word, `native`, and a name Windows keeps for a device (`con`, `prn`, `aux`, `nul`, `com1` to `com9`, `lpt1` to `lpt9`) are never a key. Refused for any other driver. |
+| `agent` | For `catalog`, and required for it: the key the catalog reviewed the agent under, 1 to 32 lowercase letters, digits and hyphens. A driver's word, `native`, and a name Windows keeps for a device (`con`, `prn`, `aux`, `nul`, `com0` to `com9`, `lpt0` to `lpt9`) are never a key. Refused for any other driver. |
 | `executable` | Its program: an absolute path, or a bare name found on `PATH`. Required. |
 | `enabled` | `false` keeps the entry and sends it no new work; a provider whose `access` still names it is refused at start. Defaults to `true`. |
 | `authentication` | How it signs in: `account`, its own login, the only value. |
