@@ -791,3 +791,108 @@ fn a_cut_failure_still_shows_what_a_terminal_would_act_on_as_its_escape() {
     assert!(said.ends_with("x… (cut)"), "{said:?}");
     assert!(!said.chars().any(char::is_control), "{said:?}");
 }
+
+/// A host on this machine that answers every request with a 404 and keeps the
+/// paths it was asked for, standing where the published catalog would be.
+fn asked_of() -> (u16, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    use std::io::{Read as _, Write as _};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a free port");
+    let port = listener.local_addr().expect("an address").port();
+    let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let keeping = std::sync::Arc::clone(&asked);
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let mut head = [0_u8; 1024];
+            let read = stream.read(&mut head).unwrap_or(0);
+            let text = String::from_utf8_lossy(head.get(..read).unwrap_or_default()).into_owned();
+            if let Some(path) = text.lines().next().and_then(|line| line.split(' ').nth(1)) {
+                keeping.lock().expect("a list").push(path.to_owned());
+            }
+            let _ = stream.write_all(
+                b"HTTP/1.1 404 Not Found\r\nconnection: close\r\ncontent-length: 0\r\n\r\n",
+            );
+        }
+    });
+    (port, asked)
+}
+
+/// The catalog as that host publishes it.
+fn published_at(port: u16) -> crucible_app::catalog_fetch::Source {
+    crucible_app::catalog_fetch::Source {
+        base: format!("http://127.0.0.1:{port}/catalog/"),
+        keys: crucible_external_harnesses::catalog::KEYS,
+        hosts: &["127.0.0.1"],
+    }
+}
+
+#[test]
+fn arm_with_nothing_asking_arms_neither_the_release_check_nor_the_catalog_fetch() {
+    let sample = Sample::new("arm-nothing");
+    let (port, asked) = asked_of();
+
+    let (armed, shutdown) = crucible_app::services::serving(|services| {
+        let armed = arm(false, services, &sample.root(), published_at(port));
+        let release = format!("{:?}", services.release());
+        let catalog = format!("{:?}", services.catalog());
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        (armed.map(|armed| armed.is_none()), release, catalog)
+    });
+
+    let (armed, release, catalog) = armed;
+    assert!(matches!(armed, Ok(true)), "a closure was handed back");
+    assert!(release.contains("runtime: false"), "{release}");
+    assert!(catalog.contains("runtime: false"), "{catalog}");
+    assert!(asked.lock().expect("a list").is_empty());
+    assert!(shutdown.is_ok(), "{shutdown:?}");
+}
+
+#[test]
+fn arm_with_asking_arms_both_checks_only_when_the_closure_runs() {
+    let sample = Sample::new("arm-asking");
+    // A release answer from a moment ago is not asked for again, so the
+    // release check puts nothing on the network here.
+    std::fs::create_dir_all(sample.root()).expect("a home");
+    std::fs::write(sample.root().join("release"), "0.0.0\n").expect("a cached answer");
+    let (port, asked) = asked_of();
+
+    let (armed, shutdown) = crucible_app::services::serving(|services| {
+        let Ok(Some(arming)) = arm(true, services, &sample.root(), published_at(port)) else {
+            panic!("a closure to arm the checks with");
+        };
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let before = (
+            format!("{:?}", services.release()),
+            format!("{:?}", services.catalog()),
+            asked.lock().expect("a list").clone(),
+        );
+
+        arming();
+        let started = std::time::Instant::now();
+        while asked.lock().expect("a list").is_empty() {
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(20),
+                "the catalog was not asked for"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let after = (
+            format!("{:?}", services.release()),
+            format!("{:?}", services.catalog()),
+            asked.lock().expect("a list").clone(),
+        );
+        (before, after)
+    });
+
+    let ((release, catalog, asked), (armed_release, armed_catalog, asked_after)) = armed;
+    assert!(release.contains("runtime: false"), "{release}");
+    assert!(catalog.contains("runtime: false"), "{catalog}");
+    assert!(asked.is_empty(), "{asked:?} before the closure ran");
+    assert!(armed_release.contains("runtime: true"), "{armed_release}");
+    assert!(armed_catalog.contains("runtime: true"), "{armed_catalog}");
+    assert_eq!(
+        asked_after.first().map(String::as_str),
+        Some("/catalog/index.json")
+    );
+    assert!(shutdown.is_ok(), "{shutdown:?}");
+}

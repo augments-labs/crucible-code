@@ -778,8 +778,20 @@ your directory or your configuration is sent. The request is a plain GET for
 the repository's latest release, carrying a user agent that names crucible and
 its version.
 
-`never` stops the asking. crucible then never contacts GitHub on its own, and
-never says anything about releases. Running
+Beside it, on the same schedule, crucible asks GitHub for the catalog of
+agents that its own review admitted: the index and its signature, two files
+under the catalog repository's published release. GitHub may answer with a
+redirect to its own asset storage; crucible follows a redirect only to GitHub's
+own hosts. The files are read within a megabyte and thirty seconds, and the
+catalog is believed only if its signature verifies under a key built into
+crucible. It is kept under `state` in crucible's home directory, and a catalog
+that is signed wrongly, has a lower serial than the one kept, has expired or is
+in a schema crucible does not read changes nothing. The request is a plain GET
+and sends nothing of your session, your directory or your configuration. The
+catalog is asked for again no sooner than a day after the last one was kept.
+
+`never` stops the asking. crucible then never contacts GitHub on its own, for a
+release or for the catalog, and never says anything about releases. Running
 [`crucible update`](../reference/cli.md#update---check----dry-run) is still
 asking, so it reaches GitHub whatever this is set to.
 

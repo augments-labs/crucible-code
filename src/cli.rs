@@ -42,6 +42,7 @@ mod update;
 use std::cell::{Cell, RefCell};
 use std::ffi::OsString;
 use std::io::{self, Write as _};
+use std::path::Path;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
@@ -1284,20 +1285,13 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     //
     // Built here and armed there, because this is the last point at which the
     // services can be reached: they move into the run below, and what the
-    // conversation is handed is the closure rather than the owner. The owner it
-    // holds is the same one the shutdown joins the check through, because a
-    // clone shares the one task slot, the one client and the one cancellation.
-    let arming: Option<Box<dyn FnOnce()>> = if asking {
-        let runtime = services.runtime().handle().map_err(AppError::from)?;
-        let release = services.release().clone();
-        let home = home.path().to_owned();
-        Some(Box::new(move || {
-            release.runs_on(runtime);
-            release.refresh(&home);
-        }))
-    } else {
-        None
-    };
+    // conversation is handed is the closure rather than the owner.
+    let arming = arm(
+        asking,
+        services,
+        home.path(),
+        crucible_app::catalog_fetch::Source::published(),
+    )?;
 
     // The generation the launch above read its provider out of, taken once so
     // the arm that was resolved and the model record its limits come from are
@@ -1348,6 +1342,41 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     draw::parting(&mut renderer, &outcome?, terms.style())?;
 
     Ok(())
+}
+
+/// What is asked again once the first frame is on the screen, or nothing where
+/// nothing is asking.
+///
+/// The release check and the catalog fetch beside it are armed together, so
+/// neither is armed where the other is not: a setting that stops one stops the
+/// other, and a closure that is never returned is a socket never opened. The
+/// owners the closure holds are the ones the shutdown joins them through,
+/// because a clone shares the one task slot, the one client and the one
+/// cancellation.
+///
+/// # Errors
+///
+/// [`AppError`] where the runtime they would run on could not be started.
+fn arm(
+    asking: bool,
+    services: &Services,
+    home: &Path,
+    catalog: crucible_app::catalog_fetch::Source,
+) -> Result<Option<Box<dyn FnOnce()>>, AppError> {
+    if !asking {
+        return Ok(None);
+    }
+    let runtime = services.runtime().handle().map_err(AppError::from)?;
+    let release = services.release().clone();
+    let release_home = home.to_owned();
+    let fetching = services.catalog().clone();
+    let state = crucible_app::catalog_fetch::state_in(home);
+    Ok(Some(Box::new(move || {
+        release.runs_on(runtime.clone());
+        release.refresh(&release_home);
+        fetching.runs_on(runtime);
+        fetching.refresh(&state, catalog);
+    })))
 }
 
 /// What the launch resolved, before anything was drawn.

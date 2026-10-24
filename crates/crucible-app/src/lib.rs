@@ -37,6 +37,7 @@ pub mod access;
 pub mod auth;
 pub mod backends;
 pub mod branching;
+pub mod catalog_fetch;
 pub mod client;
 pub mod content_use;
 mod conversation;

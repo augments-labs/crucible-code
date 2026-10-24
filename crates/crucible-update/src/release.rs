@@ -41,7 +41,10 @@ const REMEMBERED: &str = "release";
 const CACHE_CEILING: u64 = 128;
 
 /// How long an answer stands before it is worth asking again.
-const ASK_AFTER: Duration = Duration::from_hours(24);
+///
+/// Public so that what is asked alongside the release check, at its cadence,
+/// keeps to this one number rather than a copy of it.
+pub const ASK_AFTER: Duration = Duration::from_hours(24);
 
 /// The absolute lifetime of release discovery, including its response body.
 const CHECK_LIFETIME: Duration = Duration::from_secs(10);

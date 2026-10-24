@@ -1,12 +1,12 @@
 //! What the application owns for the length of a run and lends to what it
 //! assembles: today the runtime, the worker tools hand their blocking work
 //! to, the shared HTTP service provider turns and web posts use, the release
-//! check and its cached answer, the owner of account renewals, and the yes
-//! given to each route whose vendor uses what is sent, which the shared client
-//! built here, and the renewals owner's client it is handed to here, ask
-//! before a request leaves (the release check's own client reaches GitHub
-//! alone and is not held), plus whatever later needs to be owned once per run
-//! the same way.
+//! check and its cached answer, the fetch of the agent catalog beside it, the
+//! owner of account renewals, and the yes given to each route whose vendor uses
+//! what is sent, which the shared client built here, and the renewals owner's
+//! client it is handed to here, ask before a request leaves (the release
+//! check's own client and the catalog fetch's reach GitHub alone and are not
+//! held), plus whatever later needs to be owned once per run the same way.
 //!
 //! One value, [`Services`], made once by [`serving`] and lent to everything the
 //! run builds. [`crate::startup::Startup`] carries it, so a factory reaches
@@ -25,9 +25,9 @@
 //! running and every command it still holds — has been dropped by then, so
 //! anything their drops hand to the runtime lands on a runtime that is still
 //! running rather than one that is draining. Only what the run returns
-//! outlives it. A release check still in flight is asked to stop and then given
-//! [`crucible_update::SHUTDOWN`], while a renewal is given [`RENEWING`] to
-//! finish and be written down. The runtime is the last thing shut down, because
+//! outlives it. A release check or a catalog fetch still in flight is asked to
+//! stop and then given [`crucible_update::SHUTDOWN`], while a renewal is given
+//! [`RENEWING`] to finish and be written down. The runtime is the last thing shut down, because
 //! everything else here may have work on it.
 
 use std::fmt;
@@ -35,6 +35,7 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use crate::catalog_fetch::{Refresher, Unjoined as CatalogUnjoined};
 use crate::content_use::{Consent, Routes};
 use crucible_auth::{Renewals, Unjoined};
 use crucible_http::{Lookups, Poison};
@@ -57,6 +58,13 @@ use crate::runtime::{BLOCKING, RuntimeOwner, Unstarted, Unstopped};
 // waits for a drawing thread that is behind, handed over so the worker waiting
 // goes on polling: its turn's, and a question put through the tool that asks,
 // which runs alone. An owner added to the blocking threads is added here.
+//
+// The catalog fetch is not counted, and takes two things from outside this
+// count. The trust state it changes is changed on a thread of its own, since
+// the change waits up to five seconds for another process's. Its client's
+// hostname lookup runs in one place of its own, one thread at a time, which
+// takes the thread this count leaves to spare when it runs beside every other
+// owner at its most.
 //
 // That is the reach of the assertion below, and three of those owners are
 // there because the owner decided to widen `BLOCKING` for them rather than let
@@ -111,6 +119,7 @@ pub struct Services {
     http: OnceLock<HttpTurns>,
     renewals: Renewals,
     release: OnceLock<UpdateCrateReleaseCheck>,
+    catalog: OnceLock<Refresher>,
     consent: Consent,
 }
 
@@ -134,6 +143,7 @@ impl Services {
             http: OnceLock::new(),
             renewals,
             release: OnceLock::new(),
+            catalog: OnceLock::new(),
             consent,
         }
     }
@@ -178,6 +188,12 @@ impl Services {
         self.release.get_or_init(UpdateCrateReleaseCheck::new)
     }
 
+    /// The owner of the background fetch of the agent catalog for this run.
+    #[must_use]
+    pub fn catalog(&self) -> &Refresher {
+        self.catalog.get_or_init(Refresher::new)
+    }
+
     /// The one asynchronous HTTP service provider turns and web posts use.
     ///
     /// It is built the first time a factory needs it, with one poisoned lookup
@@ -217,24 +233,33 @@ impl Services {
             http,
             renewals,
             release,
+            catalog,
             consent: _,
         } = self;
         let release_owner = release;
         let release = release_owner
             .get()
             .and_then(|owner| owner.join_within(RELEASE_SHUTDOWN).err());
+        let catalog_owner = catalog;
+        let catalog = catalog_owner
+            .get()
+            .and_then(|owner| owner.join_within(RELEASE_SHUTDOWN).err());
         let renewals = renewals.join_within(RENEWING).err();
         drop(release_owner);
+        drop(catalog_owner);
         drop(http);
         drop(tool_worker);
         let runtime = runtime.shutdown().err();
-        match (renewals, release, runtime) {
-            (None, None, None) => Ok(()),
-            (renewals, release, runtime) => Err(Unfinished {
-                renewals,
-                release,
-                runtime,
-            }),
+        let unfinished = Unfinished {
+            renewals,
+            release,
+            catalog,
+            runtime,
+        };
+        if unfinished.is_clean() {
+            Ok(())
+        } else {
+            Err(unfinished)
         }
     }
 }
@@ -249,23 +274,38 @@ pub struct Unfinished {
     /// A release check still in flight when its bound ran out, which was
     /// aborted.
     release: Option<ReleaseUnjoined>,
+    /// A catalog fetch still in flight when its bound ran out, which was
+    /// aborted.
+    catalog: Option<CatalogUnjoined>,
     /// Runtime threads still running when theirs did.
     runtime: Option<Unstopped>,
 }
 
+impl Unfinished {
+    /// Whether nothing was left unfinished.
+    fn is_clean(&self) -> bool {
+        self.renewals.is_none()
+            && self.release.is_none()
+            && self.catalog.is_none()
+            && self.runtime.is_none()
+    }
+}
+
 impl fmt::Display for Unfinished {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match (&self.renewals, &self.release, &self.runtime) {
-            (Some(renewals), Some(release), Some(runtime)) => {
-                write!(f, "{renewals}; {release}; {runtime}")
-            }
-            (Some(renewals), Some(release), None) => write!(f, "{renewals}; {release}"),
-            (Some(renewals), None, Some(runtime)) => write!(f, "{renewals}; {runtime}"),
-            (Some(renewals), None, None) => renewals.fmt(f),
-            (None, Some(release), Some(runtime)) => write!(f, "{release}; {runtime}"),
-            (None, Some(release), None) => release.fmt(f),
-            (None, None, Some(runtime)) => runtime.fmt(f),
-            (None, None, None) => f.write_str("the run's services were not all shut down"),
+        let said: Vec<String> = [
+            self.renewals.map(|renewals| renewals.to_string()),
+            self.release.map(|release| release.to_string()),
+            self.catalog.map(|catalog| catalog.to_string()),
+            self.runtime.map(|runtime| runtime.to_string()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        if said.is_empty() {
+            f.write_str("the run's services were not all shut down")
+        } else {
+            f.write_str(&said.join("; "))
         }
     }
 }
