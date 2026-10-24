@@ -578,6 +578,72 @@ def check_render_refuses(scratch: pathlib.Path) -> None:
     assert ran.returncode == 1 and not out.exists(), (ran.returncode, ran.stderr)
 
 
+def refused(scratch: pathlib.Path, name: str, words: str, **kept: object) -> None:
+    """A render that fails with a message naming `words`, writes nothing and
+    shows no traceback."""
+    ran, out = render(scratch, name, **kept)
+    assert ran.returncode == 1 and words in ran.stderr, f"{name}: {ran.returncode} {ran.stderr!r} lacks {words!r}"
+    assert "Traceback" not in ran.stderr and not out.exists(), f"{name}: {ran.stderr!r}"
+
+
+def check_render_previous_and_entries(scratch: pathlib.Path) -> None:
+    """A previous catalog that is not one this renderer could have written, and
+    entries every client would refuse, are refused before anything is written."""
+    def made(name: str, data: object) -> pathlib.Path:
+        path = scratch / name
+        path.write_text(json.dumps(data))
+        return path
+
+    previous = json.loads((RENDER / "previous.json").read_text())
+    without = {key: value for key, value in previous.items() if key != "revoked"}
+    refused(scratch, "no-revoked.json", "revocations", previous=made("p-no-revoked.json", without))
+    refused(scratch, "bad-revoked.json", "revocations", previous=made("p-bad-revoked.json", {**previous, "revoked": {}}))
+    refused(scratch, "schema.json", "schema", previous=made("p-schema.json", {**previous, "schema": 2}))
+    refused(scratch, "no-schema.json", "schema", previous=made("p-no-schema.json", {k: v for k, v in previous.items() if k != "schema"}))
+    refused(scratch, "floor.json", "serial", previous=made("p-floor.json", {**previous, "serial": 0}))
+    refused(scratch, "earlier.json", "earlier", previous=made("p-earlier.json", {**previous, "signed_at": SIGNED_AT + 1}))
+
+    merged = json.loads((RENDER / "merged.json").read_text())
+
+    def with_entry(name: str, change) -> pathlib.Path:
+        data = copy.deepcopy(merged)
+        change(data["entries"][0])
+        return made(name, data)
+
+    def drop(field: str):
+        return lambda entry: entry.pop(field)
+
+    for field in ("review", "sign_in_hosts", "state_paths", "reach", "auth_methods", "registry_id", "license", "kind", "admits"):
+        refused(scratch, f"no-{field}.json", field, merged=with_entry(f"m-no-{field}.json", drop(field)))
+    refused(scratch, "key.json", "key", merged=with_entry("m-key.json", lambda e: e.update(key="Bad_Key")))
+    refused(scratch, "no-targets.json", "targets", merged=with_entry("m-no-targets.json", lambda e: e.update(targets=[])))
+    refused(
+        scratch, "no-platform.json", "platform",
+        merged=with_entry("m-no-platform.json", lambda e: e["targets"][0].pop("platform")),
+    )
+    refused(
+        scratch, "no-artifacts.json", "artifacts",
+        merged=with_entry("m-no-artifacts.json", lambda e: e["targets"][0].update(artifacts=[])),
+    )
+    refused(
+        scratch, "huge.json", "whole",
+        merged=with_entry("m-huge.json", lambda e: e["targets"][0]["artifacts"][0].update(size=2**64)),
+    )
+    refused(
+        scratch, "negative.json", "whole",
+        merged=with_entry("m-negative.json", lambda e: e["targets"][0]["artifacts"][0].update(size=-1)),
+    )
+    directory = scratch / "a-directory"
+    directory.mkdir()
+    ran = intake("render", "--merged", RENDER / "merged.json", "--signed-at", str(SIGNED_AT), "--out", directory)
+    assert ran.returncode == 1 and "Traceback" not in ran.stderr and "agent-catalog-intake" in ran.stderr, ran.stderr
+    ran = intake(
+        "render", "--merged", RENDER / "merged.json", "--signed-at", str(SIGNED_AT),
+        "--out", scratch / "no-such-directory" / "out.json",
+    )
+    assert ran.returncode == 1 and "Traceback" not in ran.stderr and "agent-catalog-intake" in ran.stderr, ran.stderr
+
+
 def load_intake():
     spec = importlib.util.spec_from_file_location("agent_catalog_intake", INTAKE)
     assert spec is not None and spec.loader is not None
@@ -626,6 +692,7 @@ def main() -> int:
             ("budget", lambda: check_budget(scratch)),
             ("render", lambda: check_render(scratch)),
             ("render refuses", lambda: check_render_refuses(scratch)),
+            ("render previous and entries", lambda: check_render_previous_and_entries(scratch)),
         ]
         for name, check in checks:
             try:
