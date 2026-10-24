@@ -45,7 +45,7 @@ use serde_json::Value;
 use entry::Fields;
 
 pub use snapshot::SNAPSHOT;
-pub use trust::{OwnedPin, Trust, TrustError};
+pub use trust::{OwnedPin, Trust, TrustError, Unusable};
 
 pub use entry::{
     ASSET_BYTES, Admits, Artifact, AssetRef, AuthMethod, ContentUse, Disposition, Entry, File,

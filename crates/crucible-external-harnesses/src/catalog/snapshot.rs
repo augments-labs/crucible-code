@@ -10,12 +10,12 @@
 //! data is what 0.48's manifest of the reviewed Antigravity recorded: the
 //! release, the archive published for each platform and the two files that
 //! archive holds, by name and size, so a build offers what 0.48 offered and no
-//! more. It is a copy, not a read of that manifest, which a later change
-//! derives from this catalog; a test holds the two equal until then. It records
-//! no digest of the two files, because the manifest pins the archive and an
-//! unpack checks sizes, and it leaves empty the licence, the review, the hosts
-//! and the sign-in facts an entry carries once the owner's review fills them
-//! in, because the manifest holds none of them.
+//! more, and the argument 0.48 starts it with on Linux. It is a copy, not a read
+//! of that manifest, which a later change derives from this catalog; a test holds
+//! the two equal until then. It records no digest of the two files, because the
+//! manifest pins the archive and an unpack checks sizes, and it leaves empty the
+//! licence, the review, the hosts and the sign-in facts an entry carries once the
+//! owner's review fills them in, because the manifest holds none of them.
 
 use std::sync::LazyLock;
 use std::time::UNIX_EPOCH;
@@ -164,7 +164,13 @@ fn target(archive: &Archive) -> Target {
     Target {
         platform: archive.platform.into(),
         cmd: archive.executable.0.into(),
-        args: Vec::new(),
+        // 0.48 starts it on Linux with an empty user id, as its published
+        // integration does, and with no arguments elsewhere.
+        args: if archive.platform.starts_with("linux-") {
+            vec!["--uid=".into()]
+        } else {
+            Vec::new()
+        },
         env: Vec::new(),
         hosts: Vec::new(),
         artifacts: vec![Artifact {
