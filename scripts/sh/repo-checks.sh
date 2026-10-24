@@ -436,13 +436,17 @@ section "every vendor client is built where its hold was decided"
 # GitHub alone; catalog_fetch.rs builds the one the agent catalog is fetched
 # through, which carries nothing from a session and is held to the host the
 # catalog is published on and the hosts a redirect from it may name, so it
-# reaches no vendor; command.rs
+# reaches no vendor; agent_download.rs builds the one a catalog agent's
+# release is downloaded through, after the install's yes, which carries nothing
+# from a session, is held to the hosts the entry lists and those the catalog is
+# published through, and asks the application's hold beside them; command.rs
 # builds the one `crucible update` asks a loopback release source through,
 # which reaches this machine alone and carries nothing from a session;
 # transport/http.rs builds one only inside its test module. One more file is
 # one more decision to take. A line is a use wherever it names one, called or
 # not, and a `Held` under another name still mints through `::granted`.
-decided="crates/crucible-app/src/catalog_fetch.rs
+decided="crates/crucible-app/src/agent_download.rs
+crates/crucible-app/src/catalog_fetch.rs
 crates/crucible-app/src/content_use.rs
 crates/crucible-app/src/launching.rs
 crates/crucible-auth/src/oauth/renewal.rs
@@ -1341,6 +1345,9 @@ removable=(
     crates/crucible-app/src/installing.rs src/cli.rs src/cli/agents.rs
     # The fetch of the catalog of agents a release may be installed from.
     crates/crucible-app/src/catalog_fetch.rs
+    # The agents door and the download of the releases it installs.
+    crates/crucible-app/src/client/agents.rs crates/crucible-app/src/agent_download.rs
+    crates/crucible-app/tests/headless/agents.rs
     crates/crucible-app/tests/headless.rs crates/crucible-app/tests/headless/external.rs
     crates/crucible-app/tests/headless/external/{catalog_hold,refusing,routing,session,stopping,unlaunchable}.rs
     crates/crucible-app/Cargo.toml
@@ -1739,8 +1746,11 @@ done <<<"$decided"
 # agent's account, refuses those it does not own unperformed. A file that joins
 # them is one more place a session's mode, sandbox, account or installed program
 # can be changed from, and it is added here by somebody who looked at where its
-# commands come from.
+# commands come from. The agents door performs the catalog's commands for a
+# client that claimed the capability they need, asking it before anything is
+# fetched or changed, and refuses every other.
 naming='crates/crucible-app/src/client/accounts.rs
+crates/crucible-app/src/client/agents.rs
 crates/crucible-app/src/client/asking.rs
 crates/crucible-app/src/client/performing.rs
 crates/crucible-app/src/client/turning.rs

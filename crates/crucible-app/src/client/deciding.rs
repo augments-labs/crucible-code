@@ -91,7 +91,7 @@ use crate::content_use::{Warned, full_sentence};
 static MINTED: AtomicU64 = AtomicU64::new(0);
 
 /// The next identity: one more than however many were given out before it.
-fn mint() -> PendingId {
+pub(crate) fn mint() -> PendingId {
     PendingId::new(MINTED.fetch_add(1, Ordering::Relaxed).saturating_add(1))
 }
 
@@ -118,6 +118,9 @@ pub enum Shown<'a> {
     External(Leave<'a>),
     /// Which way an account operation on an installed agent goes on.
     Account(&'a Confirmation),
+    /// Which way an install, update, rollback or removal of a catalog agent
+    /// goes on, put by the agents door.
+    Install(&'a Confirmation),
 }
 
 /// What an installed agent asked leave to do, as the host holds it, whole,
@@ -328,7 +331,7 @@ pub(crate) fn settle(pending: &Pending, decision: Decision) -> Result<Settled, R
 pub const TRIES: usize = 3;
 
 /// Tells `front` its decision was refused, and whether that was one too many.
-fn turned_away(front: &mut dyn Front, refusal: Refusal, tries: &mut usize) -> bool {
+pub(crate) fn turned_away(front: &mut dyn Front, refusal: Refusal, tries: &mut usize) -> bool {
     front.refused(refusal);
     *tries = tries.saturating_add(1);
     if *tries < TRIES {

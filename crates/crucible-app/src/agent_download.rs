@@ -154,13 +154,9 @@ pub async fn artifact(
         };
         return fetch(source, &places, pin, progress, cancel).await;
     }
+    named(hosts)?;
     let mut places: Vec<&str> = Vec::with_capacity(hosts.len() + source.hosts.len());
-    for host in hosts {
-        if numbered(host) || place(host, default_port("https")).is_none() {
-            return Err(DownloadError::Host(host.clone()));
-        }
-        places.push(host);
-    }
+    places.extend(hosts.iter().map(|host| &**host));
     places.extend(source.hosts.iter().copied());
     let pin = Pinned {
         address: &artifact.url,
@@ -182,6 +178,23 @@ pub async fn artifact(
             }
             None => Err(failed),
         },
+    }
+}
+
+/// Whether every host of `hosts`, a target's download hosts as the catalog
+/// lists them, is a name a download may reach: never an address, in any
+/// spelling, and never a wildcard.
+///
+/// # Errors
+///
+/// [`DownloadError::Host`] naming the first that is not.
+pub fn named(hosts: &[Box<str>]) -> Result<(), DownloadError> {
+    match hosts
+        .iter()
+        .find(|host| numbered(host) || place(host, default_port("https")).is_none())
+    {
+        Some(host) => Err(DownloadError::Host(host.clone())),
+        None => Ok(()),
     }
 }
 

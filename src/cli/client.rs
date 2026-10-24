@@ -28,11 +28,14 @@ use std::task::Poll;
 use tokio::sync::{mpsc, oneshot};
 
 use crucible_app::Conversation;
+use crucible_app::catalog_fetch::Source;
+use crucible_app::client::agents::Shelf;
 use crucible_app::client::{
     Answered, Confirmation, Desk, Front, Performed, Shown, account, asked, asking, interrupt, keep,
     perform,
 };
 use crucible_app::content_use::Warned;
+use crucible_app::launching::Launcher;
 use crucible_app::providers::Providers;
 use crucible_client_api::{
     Capabilities, Command, Correlation, Decision, Name, Outcome, Pending, Refusal, Request, Said,
@@ -212,7 +215,10 @@ impl Front for Answering {
             let question = match shown {
                 Shown::Account(confirmation) => Question::Account(confirmation.clone()),
                 Shown::Warning(warned) => Question::Warning(warned.clone()),
-                Shown::Call { .. } | Shown::Questions(_) | Shown::External(_) => return None,
+                Shown::Call { .. }
+                | Shown::Questions(_)
+                | Shown::External(_)
+                | Shown::Install(_) => return None,
             };
 
             self.client.put(pending);
@@ -443,6 +449,25 @@ impl Terms {
             environment: |name| std::env::var(name).ok(),
             notes: super::converse::command::notes::answered,
         }
+    }
+}
+
+/// What the agents door is lent by every front end that asks it, for crucible's
+/// `home`: the catalog where it is published, under the keys compiled into
+/// this build and through the hosts it is served from, with the proxy settings
+/// this process was started with, and `smoke`, the launcher of the
+/// conversation asking, where there is one.
+// Waits for its first caller, the `/login` rows or the `crucible agents`
+// subcommands, which removes this allow.
+#[allow(dead_code)]
+pub(crate) fn shelf<'a>(
+    home: &'a crucible_config::Home,
+    smoke: Option<&'a Launcher<'a>>,
+) -> Shelf<'a> {
+    Shelf {
+        catalog: Source::published(&|name| std::env::var(name).ok()),
+        home,
+        smoke,
     }
 }
 

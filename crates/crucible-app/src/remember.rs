@@ -282,6 +282,24 @@ pub fn installing(
     })
 }
 
+/// Writes into `file` that each installed agent `moved` names is started as
+/// the program beside it, in one update, and changes nothing else in it.
+///
+/// # Errors
+///
+/// [`RememberError::Busy`] when another crucible holds the file,
+/// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
+/// [`RememberError::Unusable`] when what it already says is not configuration
+/// or names no such instance.
+pub fn pointing(
+    file: &Path,
+    moved: &[(&str, &str)],
+) -> Result<crucible_config::Routes, RememberError> {
+    routing(file, |text, named| {
+        crucible_config::pointing(text, named, moved)
+    })
+}
+
 /// Takes the installed agent `instance` out of `file`, and changes nothing
 /// else in it.
 ///

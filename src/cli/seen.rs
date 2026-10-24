@@ -301,7 +301,9 @@ impl Front for Asking {
                     leaving: Leaving::of(&leave),
                     reply,
                 },
-                Shown::Questions(_) | Shown::Warning(_) | Shown::Account(_) => return None,
+                Shown::Questions(_) | Shown::Warning(_) | Shown::Account(_) | Shown::Install(_) => {
+                    return None;
+                }
             };
 
             self.client.put(pending);
