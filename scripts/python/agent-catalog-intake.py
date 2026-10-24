@@ -57,6 +57,27 @@ has passed it.
 as Markdown, showing only what changed, compared on whole values. A version
 the merged data already holds is passed over only when it is the same in every
 field; otherwise it is shown, marked as a same-version change.
+
+`render` writes the catalog a client reads, from the merged data (`--merged`,
+review data a reviewer completed and merged, with the `revoked` list a
+reviewer adds to it, `{key, version, reason}` and `lock_revision` where only
+one revision of a version is withdrawn) and, where there is one, the catalog
+published before it (`--previous`). The serial is the previous one raised by
+one (1 where none), `--signed-at` is the signing time in whole seconds,
+`expires` is thirty days after it, and `revoked` holds every revocation either
+source ever made, once each, since a revocation outlives the data that made
+it. Entries pass through but for what only a reviewer reads (each target's
+`probe` record, an artifact's `mirror_licence` mark); a long file list is
+already an asset the entry names by hash and size. The bytes are sorted keys,
+no spaces, UTF-8 and no floats, so the same data and time give the same bytes.
+Nothing is written, and the run is refused, for a catalog over `INDEX_BYTES`
+or holding more than `REVOKED` revocations; for a previous catalog that is not
+in this schema, has a serial below 1, was signed after `--signed-at`, or lists
+no `revoked` (an absent list is never read as an empty one, so a revocation
+cannot be dropped unseen); for a number outside 0 to 2**53-1; and for an entry
+missing a field the client's reader requires or with a key that is not an
+agent key. Signing is not done here: the publishing job
+signs the bytes with minisign.
 """
 
 from __future__ import annotations
@@ -97,6 +118,15 @@ LISTED_ENTRIES = 1 << 20
 LINK_STEPS = 8
 VERSION_BYTES = 64
 FORMAT = 1
+# What a rendered catalog may be, as the client that reads it allows: the
+# bytes of the index, and the revocations it carries; and its life.
+INDEX_BYTES = 1 << 20
+REVOKED = 4096
+SCHEMA = 1
+LIFETIME_SECONDS = 30 * 24 * 60 * 60
+# The largest whole number a catalog's serial or time may be, one every JSON
+# reader holds exactly.
+WHOLE = (1 << 53) - 1
 # How much of one hostile text a reason quotes, its head and its tail, which
 # is more than any host is long; and how many changed files the diff names.
 REASON_CHARS = 300
@@ -859,6 +889,174 @@ def review(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def whole(value: object, what: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= WHOLE:
+        raise Refused(f"{what} is not a whole number from 0 to {WHOLE}")
+    return value
+
+
+def revocations(value: object, what: str) -> list[dict]:
+    """The revocations `value` lists, each checked as the catalog's reader will."""
+    if not isinstance(value, list) or len(value) > REVOKED:
+        raise Refused(f"{what} does not list its revocations, or lists more than {REVOKED}")
+    held = []
+    for item in value:
+        item = obj(item, "a revocation")
+        key = item.get("key")
+        if not isinstance(key, str) or not AGENT_KEY.fullmatch(key):
+            raise Refused(f"a revocation in {what} names {clipped(key)}, which is not an agent key")
+        try:
+            made = {
+                "key": key,
+                "reason": text(item.get("reason"), "a revocation's reason"),
+                "version": version(item.get("version"), "a revocation's version"),
+            }
+        except Dropped as dropped:
+            raise Refused(f"a revocation in {what}: {dropped}") from None
+        if item.get("lock_revision") is not None:
+            made["lock_revision"] = whole(item["lock_revision"], "a revocation's lock revision")
+        held.append(made)
+    return held
+
+
+def whole_numbers(value: object, what: str) -> None:
+    """Refuse a float anywhere in `value`: a catalog's numbers are whole."""
+    if isinstance(value, float) or (isinstance(value, int) and not 0 <= value <= WHOLE):
+        raise Refused(f"{what} holds a number that is not whole, or is outside 0 to {WHOLE}")
+    for inner in value.values() if isinstance(value, dict) else value if isinstance(value, list) else ():
+        whole_numbers(inner, what)
+
+
+def present(holder: dict, name: str, kind: type, where: str) -> object:
+    held = holder.get(name)
+    if not isinstance(held, kind) or isinstance(held, bool):
+        raise Refused(f"{where}: {name} is missing or is not a {kind.__name__}")
+    return held
+
+
+def checked(entry: dict) -> None:
+    """Refuse an entry the client's reader would refuse for a field a renderer
+    can see is missing or malformed, so no catalog is written that every client
+    would turn away. The reader still decides the rest."""
+    key = entry.get("key")
+    if not isinstance(key, str) or not AGENT_KEY.fullmatch(key):
+        raise Refused(f"an entry's key {clipped(key)} is not an agent key: 1 to 32 lowercase letters, digits and hyphens")
+    where = f"entry {key}"
+    try:
+        version(entry.get("version"), "the version")
+    except Dropped as dropped:
+        raise Refused(f"{where}: {dropped}") from None
+    for name in ("kind", "registry_id", "license", "review"):
+        if not present(entry, name, str, where):
+            raise Refused(f"{where}: {name} is empty")
+    admits = present(entry, "admits", dict, where)
+    for name in ("name", "version"):
+        present(admits, name, str, f"{where}: admits")
+    for name in ("reach", "sign_in_hosts", "state_paths", "auth_methods"):
+        present(entry, name, list, where)
+    targets = present(entry, "targets", list, where)
+    if not targets:
+        raise Refused(f"{where}: targets is empty, so nothing could be offered")
+    for target in targets:
+        if not isinstance(target, dict):
+            raise Refused(f"{where}: a target is not an object")
+        for name in ("platform", "cmd"):
+            present(target, name, str, f"{where}: a target")
+        present(target, "hosts", list, f"{where}: a target")
+        artifacts = present(target, "artifacts", list, f"{where}: a target")
+        if not artifacts:
+            raise Refused(f"{where}: a target's artifacts is empty, so nothing would be pinned")
+        for artifact in artifacts:
+            if not isinstance(artifact, dict):
+                raise Refused(f"{where}: an artifact is not an object")
+            for name in ("url", "sha256", "format"):
+                present(artifact, name, str, f"{where}: an artifact")
+            for name in ("size", "unpacked", "decompressed"):
+                present(artifact, name, int, f"{where}: an artifact")
+
+
+def rendered(entries: list[dict]) -> list[dict]:
+    """The entries as the catalog lists them: what only a reviewer reads is left out."""
+    listed = []
+    for entry in entries:
+        copy = dict(entry)
+        copy["targets"] = [
+            {name: value for name, value in target.items() if name != "probe"}
+            for target in copy.get("targets", [])
+        ]
+        for target in copy["targets"]:
+            target["artifacts"] = [
+                {name: value for name, value in artifact.items() if name != "mirror_licence"}
+                for artifact in target.get("artifacts", [])
+            ]
+        listed.append(copy)
+    return listed
+
+
+def render(arguments: argparse.Namespace) -> int:
+    merged = read_json(arguments.merged, DATA_BYTES, "the merged data")
+    entries = merged.get("entries") if isinstance(merged, dict) else None
+    if not isinstance(entries, list) or not all(isinstance(item, dict) for item in entries):
+        raise Refused("the merged data is not review data as the intake writes it")
+    try:
+        entries = rendered(entries)
+    except (AttributeError, TypeError):
+        raise Refused("the merged data is not review data as the intake writes it") from None
+    whole_numbers(entries, "the merged data")
+    for item in entries:
+        checked(item)
+    names = [(entry.get("key"), entry.get("version")) for entry in entries]
+    if len(set(map(str, names))) != len(names):
+        raise Refused("the merged data holds one version of an agent twice")
+    revoked = revocations(merged.get("revoked", []), "the merged data")
+    serial = 0
+    signed_at = whole(arguments.signed_at, "--signed-at")
+    if arguments.previous is not None:
+        before = obj(read_json(arguments.previous, INDEX_BYTES, "the previous catalog"), "the previous catalog")
+        if before.get("schema") != SCHEMA or isinstance(before.get("schema"), bool):
+            raise Refused(f"the previous catalog is not in schema {SCHEMA}, the one this renders")
+        serial = whole(before.get("serial"), "the previous catalog's serial")
+        if serial < 1:
+            raise Refused("the previous catalog's serial is below 1, the lowest a catalog has")
+        if signed_at < whole(before.get("signed_at"), "the previous catalog's signed_at"):
+            raise Refused("--signed-at is earlier than the previous catalog's signed_at")
+        if "revoked" not in before:
+            raise Refused("the previous catalog lists no revocations, so earlier ones could be dropped unseen")
+        revoked = revocations(before["revoked"], "the previous catalog") + revoked
+    seen: set[tuple] = set()
+    accumulated = []
+    for item in revoked:
+        identity = (item["key"], item["version"], item.get("lock_revision"))
+        if identity not in seen:
+            seen.add(identity)
+            accumulated.append(item)
+    if len(accumulated) > REVOKED:
+        raise Refused(f"the catalog would carry {len(accumulated)} revocations, more than the {REVOKED} a client keeps")
+    catalog = {
+        "entries": entries,
+        "expires": whole(signed_at + LIFETIME_SECONDS, "the expiry"),
+        "revoked": sorted(accumulated, key=lambda item: (item["key"], item["version"], item.get("lock_revision", -1))),
+        "schema": SCHEMA,
+        "serial": whole(serial + 1, "the serial"),
+        "signed_at": signed_at,
+    }
+    held = json.dumps(catalog, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+    try:
+        held_bytes = held.encode()
+    except UnicodeEncodeError:
+        raise Refused("the catalog holds text UTF-8 cannot carry") from None
+    if len(held_bytes) > INDEX_BYTES:
+        raise Refused(f"the catalog would be {len(held_bytes)} bytes, more than the {INDEX_BYTES} a client reads")
+    written = arguments.out.with_name(arguments.out.name + ".partial")
+    try:
+        written.write_bytes(held_bytes)
+        written.replace(arguments.out)
+    except OSError as failed:
+        written.unlink(missing_ok=True)
+        raise Refused(f"the catalog could not be written to {clipped(arguments.out)}: {clipped(failed.strerror)}") from None
+    return 0
+
+
 # Characters that draw nothing, or move or break the line, beyond what the
 # Unicode categories below already name: variation selectors, the combining
 # grapheme joiner, and letters that draw as blanks.
@@ -1098,9 +1296,15 @@ def main() -> int:
     differing = commands.add_parser("diff", help="the human diff of review data against merged data")
     differing.add_argument("--old", type=pathlib.Path, help="the merged data before this review")
     differing.add_argument("review", type=pathlib.Path)
+    rendering = commands.add_parser("render", help="render merged data to the catalog the publishing job signs")
+    rendering.add_argument("--merged", type=pathlib.Path, required=True)
+    rendering.add_argument("--previous", type=pathlib.Path, help="the catalog published before this one")
+    rendering.add_argument("--signed-at", type=int, required=True, help="the signing time, in whole Unix seconds")
+    rendering.add_argument("--out", type=pathlib.Path, required=True)
     arguments = parser.parse_args()
+    commands_run = {"review": review, "diff": diff, "render": render}
     try:
-        return review(arguments) if arguments.command == "review" else diff(arguments)
+        return commands_run[arguments.command](arguments)
     except Refused as refused:
         print(f"agent-catalog-intake: {refused}", file=sys.stderr)
         return 1

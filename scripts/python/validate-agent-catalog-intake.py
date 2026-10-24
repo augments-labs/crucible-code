@@ -30,6 +30,8 @@ RUNNERS = FIXTURES / "intake/runners.json"
 UNPACKED = json.loads((FIXTURES / "unpack-check/binary.json").read_text())
 PROBED = json.loads((FIXTURES / "probe/fake-peer.json").read_text())
 UNCONFINED = json.loads((FIXTURES / "probe/unconfined.json").read_text())
+RENDER = FIXTURES / "render"
+SIGNED_AT = 1_790_000_000
 
 
 def archive(agent: str, platform: str) -> bytes:
@@ -473,6 +475,175 @@ def check_escapes(scratch: pathlib.Path, data: dict) -> None:
     assert "x\\u200ey" in ran.stdout and "x\\U000e0041y" in ran.stdout, "each is shown by its code point"
 
 
+def render(
+    scratch: pathlib.Path,
+    name: str,
+    *,
+    merged: pathlib.Path = RENDER / "merged.json",
+    previous: pathlib.Path | None = RENDER / "previous.json",
+    signed_at: int = SIGNED_AT,
+) -> tuple[subprocess.CompletedProcess[str], pathlib.Path]:
+    out = scratch / name
+    extra = ["--previous", previous] if previous is not None else []
+    ran = intake("render", "--merged", merged, *extra, "--signed-at", str(signed_at), "--out", out)
+    return ran, out
+
+
+def rendered(scratch: pathlib.Path, name: str, **kept: object) -> tuple[bytes, dict]:
+    ran, out = render(scratch, name, **kept)
+    assert ran.returncode == 0, f"render failed:\n{ran.stdout}{ran.stderr}"
+    held = out.read_bytes()
+    return held, json.loads(held)
+
+
+def check_render(scratch: pathlib.Path) -> None:
+    """The catalog is rendered from merged data with a higher serial, thirty
+    days of life, every revocation ever made, and the same bytes each time."""
+    first, catalog = rendered(scratch, "catalog-1.json")
+    again, _ = rendered(scratch, "catalog-2.json")
+    assert first == again, "rendering the same data twice gave different bytes"
+    expected = json.dumps(catalog, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    assert first == expected, "the bytes are not sorted, compact UTF-8"
+    assert (RENDER / "catalog.json").read_bytes() == first, "the committed rendered catalog is not what render makes"
+
+    merged = json.loads((RENDER / "merged.json").read_text())
+    assert sorted(catalog) == ["entries", "expires", "revoked", "schema", "serial", "signed_at"], sorted(catalog)
+    assert catalog["schema"] == 1 and catalog["serial"] == 8, "the serial is the previous one raised by one"
+    assert catalog["signed_at"] == SIGNED_AT and catalog["expires"] == SIGNED_AT + 30 * 24 * 60 * 60, catalog
+    assert [entry["key"] for entry in catalog["entries"]] == [entry["key"] for entry in merged["entries"]]
+    assert [(r["key"], r["version"]) for r in catalog["revoked"]] == [
+        ("antigravity", "1.2.0"),
+        ("fake", "0.9.0"),
+    ], "revocations from the previous catalog and the merged data are kept once each"
+    for entry in catalog["entries"]:
+        for target in entry["targets"]:
+            assert "probe" not in target, "the reviewer's probe record is not part of the catalog"
+            for artifact in target["artifacts"]:
+                assert "mirror_licence" not in artifact, artifact
+    big = next(entry for entry in catalog["entries"] if entry["key"] == "big")
+    listing = big["targets"][0]["artifacts"][0]["files"]
+    assert sorted(listing) == ["sha256", "size"], "a long file list is carried as a hash and a size"
+
+    ran, out = render(scratch, "first.json", previous=None)
+    assert ran.returncode == 0, ran.stderr
+    assert json.loads(out.read_text())["serial"] == 1, "with no catalog before it the serial is 1"
+    _, next_one = rendered(scratch, "catalog-3.json", previous=scratch / "catalog-1.json", signed_at=SIGNED_AT + 1)
+    assert next_one["serial"] == catalog["serial"] + 1, "the serial strictly increases"
+    bare = scratch / "bare.json"
+    bare.write_text(json.dumps({"entries": merged["entries"], "format": 1}))
+    _, kept = rendered(scratch, "catalog-4.json", merged=bare, previous=scratch / "catalog-1.json")
+    assert len(kept["revoked"]) == 2, "a revocation outlives the data that made it"
+
+
+def check_render_refuses(scratch: pathlib.Path) -> None:
+    """A catalog a client would refuse is refused before it is written."""
+    merged = json.loads((RENDER / "merged.json").read_text())
+    many_revoked = scratch / "many-revoked.json"
+    merged["revoked"] = [
+        {"key": "fake", "reason": "withdrawn", "version": f"1.{index}.0"} for index in range(4097)
+    ]
+    many_revoked.write_text(json.dumps(merged))
+    ran, out = render(scratch, "too-many.json", merged=many_revoked)
+    assert ran.returncode == 1 and "4096" in ran.stderr and not out.exists(), (ran.returncode, ran.stderr)
+    merged["revoked"] = merged["revoked"][:4096]
+    full = scratch / "full-revoked.json"
+    full.write_text(json.dumps(merged))
+    ran, _ = render(scratch, "exactly-4096.json", merged=full, previous=None)
+    assert ran.returncode == 0, ran.stderr
+
+    merged["revoked"] = []
+    merged["entries"][0]["caution"] = "x" * (1 << 20)
+    large = scratch / "large.json"
+    large.write_text(json.dumps(merged))
+    ran, out = render(scratch, "too-large.json", merged=large)
+    assert ran.returncode == 1 and "1048576" in ran.stderr and not out.exists(), (ran.returncode, ran.stderr)
+
+    merged["entries"][0]["caution"] = "fine"
+    floaty = scratch / "floaty.json"
+    floaty.write_text(json.dumps({**merged, "entries": [{**merged["entries"][0], "extra": 1.5}]}))
+    ran, out = render(scratch, "floaty-out.json", merged=floaty)
+    assert ran.returncode == 1 and "whole" in ran.stderr and not out.exists(), (ran.returncode, ran.stderr)
+    odd = scratch / "odd.json"
+    odd.write_text(json.dumps({**merged, "revoked": [{"key": "fake", "reason": "r", "version": "1/2"}]}))
+    ran, out = render(scratch, "odd-out.json", merged=odd)
+    assert ran.returncode == 1 and "Traceback" not in ran.stderr and not out.exists(), (ran.returncode, ran.stderr)
+
+    wrong = scratch / "wrong.json"
+    wrong.write_text(json.dumps({"entries": "none", "format": 1}))
+    ran, out = render(scratch, "wrong-out.json", merged=wrong)
+    assert ran.returncode == 1 and not out.exists(), (ran.returncode, ran.stderr)
+    held = scratch / "held-back.json"
+    held.write_text(json.dumps({"serial": 2**64, "revoked": []}))
+    ran, out = render(scratch, "held-out.json", previous=held)
+    assert ran.returncode == 1 and not out.exists(), (ran.returncode, ran.stderr)
+
+
+def refused(scratch: pathlib.Path, name: str, words: str, **kept: object) -> None:
+    """A render that fails with a message naming `words`, writes nothing and
+    shows no traceback."""
+    ran, out = render(scratch, name, **kept)
+    assert ran.returncode == 1 and words in ran.stderr, f"{name}: {ran.returncode} {ran.stderr!r} lacks {words!r}"
+    assert "Traceback" not in ran.stderr and not out.exists(), f"{name}: {ran.stderr!r}"
+
+
+def check_render_previous_and_entries(scratch: pathlib.Path) -> None:
+    """A previous catalog that is not one this renderer could have written, and
+    entries every client would refuse, are refused before anything is written."""
+    def made(name: str, data: object) -> pathlib.Path:
+        path = scratch / name
+        path.write_text(json.dumps(data))
+        return path
+
+    previous = json.loads((RENDER / "previous.json").read_text())
+    without = {key: value for key, value in previous.items() if key != "revoked"}
+    refused(scratch, "no-revoked.json", "revocations", previous=made("p-no-revoked.json", without))
+    refused(scratch, "bad-revoked.json", "revocations", previous=made("p-bad-revoked.json", {**previous, "revoked": {}}))
+    refused(scratch, "schema.json", "schema", previous=made("p-schema.json", {**previous, "schema": 2}))
+    refused(scratch, "no-schema.json", "schema", previous=made("p-no-schema.json", {k: v for k, v in previous.items() if k != "schema"}))
+    refused(scratch, "floor.json", "serial", previous=made("p-floor.json", {**previous, "serial": 0}))
+    refused(scratch, "earlier.json", "earlier", previous=made("p-earlier.json", {**previous, "signed_at": SIGNED_AT + 1}))
+
+    merged = json.loads((RENDER / "merged.json").read_text())
+
+    def with_entry(name: str, change) -> pathlib.Path:
+        data = copy.deepcopy(merged)
+        change(data["entries"][0])
+        return made(name, data)
+
+    def drop(field: str):
+        return lambda entry: entry.pop(field)
+
+    for field in ("review", "sign_in_hosts", "state_paths", "reach", "auth_methods", "registry_id", "license", "kind", "admits"):
+        refused(scratch, f"no-{field}.json", field, merged=with_entry(f"m-no-{field}.json", drop(field)))
+    refused(scratch, "key.json", "key", merged=with_entry("m-key.json", lambda e: e.update(key="Bad_Key")))
+    refused(scratch, "no-targets.json", "targets", merged=with_entry("m-no-targets.json", lambda e: e.update(targets=[])))
+    refused(
+        scratch, "no-platform.json", "platform",
+        merged=with_entry("m-no-platform.json", lambda e: e["targets"][0].pop("platform")),
+    )
+    refused(
+        scratch, "no-artifacts.json", "artifacts",
+        merged=with_entry("m-no-artifacts.json", lambda e: e["targets"][0].update(artifacts=[])),
+    )
+    refused(
+        scratch, "huge.json", "whole",
+        merged=with_entry("m-huge.json", lambda e: e["targets"][0]["artifacts"][0].update(size=2**64)),
+    )
+    refused(
+        scratch, "negative.json", "whole",
+        merged=with_entry("m-negative.json", lambda e: e["targets"][0]["artifacts"][0].update(size=-1)),
+    )
+    directory = scratch / "a-directory"
+    directory.mkdir()
+    ran = intake("render", "--merged", RENDER / "merged.json", "--signed-at", str(SIGNED_AT), "--out", directory)
+    assert ran.returncode == 1 and "Traceback" not in ran.stderr and "agent-catalog-intake" in ran.stderr, ran.stderr
+    ran = intake(
+        "render", "--merged", RENDER / "merged.json", "--signed-at", str(SIGNED_AT),
+        "--out", scratch / "no-such-directory" / "out.json",
+    )
+    assert ran.returncode == 1 and "Traceback" not in ran.stderr and "agent-catalog-intake" in ran.stderr, ran.stderr
+
+
 def load_intake():
     spec = importlib.util.spec_from_file_location("agent_catalog_intake", INTAKE)
     assert spec is not None and spec.loader is not None
@@ -519,6 +690,9 @@ def main() -> int:
             ("full values", lambda: check_full_values(scratch, data)),
             ("escapes", lambda: check_escapes(scratch, data)),
             ("budget", lambda: check_budget(scratch)),
+            ("render", lambda: check_render(scratch)),
+            ("render refuses", lambda: check_render_refuses(scratch)),
+            ("render previous and entries", lambda: check_render_previous_and_entries(scratch)),
         ]
         for name, check in checks:
             try:
