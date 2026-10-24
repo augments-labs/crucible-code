@@ -78,6 +78,23 @@ cannot be dropped unseen); for a number outside 0 to 2**53-1; and for an entry
 missing a field the client's reader requires or with a key that is not an
 agent key. Signing is not done here: the publishing job
 signs the bytes with minisign.
+
+`publish-check` runs in the publishing job before anything is uploaded. It
+reads the merged data (`--merged`) and the directory of assets the job would
+upload (`--assets`), each a regular file named by its lower-case hexadecimal
+SHA-256 with no extension, and refuses the run, uploading nothing, when any
+asset is not one of these: a file whose name is not a hash, whose bytes do not
+hash to its name, whose hash the merged data does not hold, whose size is not
+the one the data records for a file-list asset, or whose hash is an artifact's
+and whose entry carries no `licence_gate` record of `{"passed": true}`. An
+artifact copy is a redistribution, so a copy of any artifact, a mirror
+included, waits for that record; a file-list asset is the catalog's own data
+and needs none. A hash the data names both ways answers to both rules. A copy
+also needs its artifact's `mirror_licence` mark. An empty directory passes,
+since nothing is then uploaded. An asset is opened without following a link,
+but the check cannot hold a directory still: the publishing job checks and
+uploads from a directory the untrusted job cannot write once the check has
+begun, or the check proves nothing about what is uploaded.
 """
 
 from __future__ import annotations
@@ -429,7 +446,15 @@ def hashed(path: pathlib.Path) -> tuple[str, int]:
         raise Dropped("could not be hashed: the download is not a regular file")
     sha = hashlib.sha256()
     size = 0
-    with open(path, "rb") as file:
+    try:
+        # Opened without following a link, so a path swapped for one after the
+        # check above reads nothing.
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        raise Dropped("could not be hashed: the download is not a regular file") from None
+    with os.fdopen(descriptor, "rb") as file:
+        if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
+            raise Dropped("could not be hashed: the download is not a regular file")
         while chunk := file.read(1 << 20):
             spend(len(chunk))
             size += len(chunk)
@@ -1057,6 +1082,70 @@ def render(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def published(merged: dict) -> tuple[dict[str, int], dict[str, bool]]:
+    """What the merged data lets the catalog release hold, by hash: each
+    file-list asset with its size, and each artifact with whether it may be
+    copied (a mirror mark and a passing licence-gate record, on every entry
+    that holds those bytes)."""
+    listings: dict[str, int] = {}
+    artifacts: dict[str, bool] = {}
+    try:
+        for entry in merged["entries"]:
+            for target in entry.get("targets", []):
+                for artifact in target.get("artifacts", []):
+                    record = artifact.get("licence_gate")
+                    sha = digest(artifact.get("sha256"), "an artifact's sha256")
+                    passed = (
+                        isinstance(record, dict)
+                        and record.get("passed") is True
+                        and isinstance(artifact.get("mirror_licence"), str)
+                    )
+                    # The same bytes under two entries pass only where both do.
+                    artifacts[sha] = passed and artifacts.get(sha, True)
+                    files = artifact.get("files")
+                    if isinstance(files, dict):
+                        listings[digest(files.get("sha256"), "a file list's sha256")] = number(
+                            files.get("size"), "a file list's size"
+                        )
+    except (KeyError, TypeError, AttributeError, Dropped):
+        raise Refused("the merged data is not review data as the intake writes it") from None
+    return listings, artifacts
+
+
+def publish_check(arguments: argparse.Namespace) -> int:
+    merged = read_json(arguments.merged, DATA_BYTES, "the merged data")
+    if not isinstance(merged, dict):
+        raise Refused("the merged data is not review data as the intake writes it")
+    listings, artifacts = published(merged)
+    try:
+        held = os.lstat(arguments.assets)
+    except OSError:
+        raise Refused("the assets directory is missing") from None
+    if not stat.S_ISDIR(held.st_mode):
+        raise Refused("the assets are not a directory")
+    for place in sorted(arguments.assets.iterdir()):
+        name = clipped(place.name)
+        if not SHA256.fullmatch(place.name):
+            raise Refused(f"asset {name} is not named by a lower-case SHA-256 with no extension")
+        try:
+            actual, size = hashed(place)
+        except Dropped as failed:
+            raise Refused(f"asset {name} {failed}") from None
+        if actual != place.name:
+            raise Refused(f"asset {name} is not the bytes its name claims")
+        if place.name not in listings and place.name not in artifacts:
+            raise Refused(f"asset {name} is not in the merged data")
+        # Independent: a hash the data names both ways answers to both.
+        if place.name in listings and size != listings[place.name]:
+            raise Refused(f"asset {name} is not the size the merged data records for it")
+        if place.name in artifacts and not artifacts[place.name]:
+            raise Refused(
+                f"asset {name} is a copy of an artifact whose entry lacks a mirror mark "
+                "or a passing licence-gate record"
+            )
+    return 0
+
+
 # Characters that draw nothing, or move or break the line, beyond what the
 # Unicode categories below already name: variation selectors, the combining
 # grapheme joiner, and letters that draw as blanks.
@@ -1301,8 +1390,11 @@ def main() -> int:
     rendering.add_argument("--previous", type=pathlib.Path, help="the catalog published before this one")
     rendering.add_argument("--signed-at", type=int, required=True, help="the signing time, in whole Unix seconds")
     rendering.add_argument("--out", type=pathlib.Path, required=True)
+    checking = commands.add_parser("publish-check", help="refuse an asset the merged data does not allow uploaded")
+    checking.add_argument("--merged", type=pathlib.Path, required=True)
+    checking.add_argument("--assets", type=pathlib.Path, required=True, help="the directory of assets to upload")
     arguments = parser.parse_args()
-    commands_run = {"review": review, "diff": diff, "render": render}
+    commands_run = {"review": review, "diff": diff, "render": render, "publish-check": publish_check}
     try:
         return commands_run[arguments.command](arguments)
     except Refused as refused:
