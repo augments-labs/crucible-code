@@ -42,7 +42,7 @@ mod update;
 use std::cell::{Cell, RefCell};
 use std::ffi::OsString;
 use std::io::{self, Write as _};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
@@ -330,6 +330,18 @@ enum AgentsAction {
         #[arg(value_parser = agents::driver)]
         driver: Driver,
     },
+    /// Unpack a download the agent catalog describes by the rules an install
+    /// holds it to, write the file list it unpacked to as JSON, and stop.
+    /// The catalog's intake runs it, so it is left out of the help.
+    #[command(hide = true)]
+    UnpackCheck {
+        /// One artifact as the catalog spells it, with no file list.
+        entry: PathBuf,
+        /// The download.
+        artifact: PathBuf,
+        /// The directory to unpack into, which must not exist.
+        out: PathBuf,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -578,6 +590,18 @@ pub(crate) fn start() -> ExitCode {
             _,
             _,
         ) => return agents::install(*driver),
+        (
+            Some(Command::Agents {
+                action:
+                    AgentsAction::UnpackCheck {
+                        entry,
+                        artifact,
+                        out,
+                    },
+            }),
+            _,
+            _,
+        ) => return agents::unpack_check(entry, artifact, out),
         (Some(Command::Mcp { action }), _, _) => declared(action),
         (
             Some(Command::Sessions {

@@ -98,9 +98,6 @@ pub(super) fn install(driver: Driver) -> ExitCode {
 
 /// Runs `crucible agents unpack-check` over the artifact the catalog spells
 /// in `entry` and its download at `artifact`, unpacking into `out`, and stops.
-// Reached once the command line parses `agents unpack-check`, which it does
-// not yet; until then nothing in the binary calls it.
-#[allow(dead_code)]
 pub(super) fn unpack_check(entry: &Path, artifact: &Path, out: &Path) -> ExitCode {
     match checked(entry, artifact, out) {
         Ok(listed) => {

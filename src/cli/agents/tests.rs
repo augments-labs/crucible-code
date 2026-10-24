@@ -4,8 +4,10 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use clap::Parser as _;
 use crucible_external_harnesses::release::proof;
 
+use super::super::{AgentsAction, Cli, Command};
 use super::*;
 
 /// The file list `unpack-check` prints for the release [`proof::catalog_release`]
@@ -106,6 +108,51 @@ fn unpack_check_says_the_cause_of_a_refusal() {
     assert!(refused.contains("past its gzip stream"), "{refused}");
     assert_eq!(refused.lines().count(), 1, "{refused}");
     assert!(!out.exists(), "nothing is left where the release would go");
+}
+
+/// The command line takes `agents unpack-check` with its three paths, as the
+/// intake runs it, and leaves it out of what `--help` lists.
+#[test]
+fn unpack_check_is_parsed_from_its_paths_and_left_out_of_the_help() {
+    let scratch = Scratch::new("unpack-check-parsed");
+    let (archive, described) = proof::catalog_release();
+    let (entry, download) = scratch.published(&described, &archive);
+    let out = scratch.0.join("out");
+    let words: Vec<std::ffi::OsString> = vec![
+        "crucible".into(),
+        "agents".into(),
+        "unpack-check".into(),
+        entry.clone().into(),
+        download.clone().into(),
+        out.clone().into(),
+    ];
+
+    let parsed = Cli::try_parse_from(words).expect("the command");
+
+    let Some(Command::Agents {
+        action:
+            AgentsAction::UnpackCheck {
+                entry: parsed_entry,
+                artifact,
+                out: parsed_out,
+            },
+    }) = parsed.command
+    else {
+        panic!("not unpack-check: {:?}", parsed.command);
+    };
+    assert_eq!(
+        (&parsed_entry, &artifact, &parsed_out),
+        (&entry, &download, &out)
+    );
+    assert_eq!(
+        checked(&parsed_entry, &artifact, &parsed_out).as_deref(),
+        Ok(SURVEYED)
+    );
+    let help = Cli::try_parse_from(["crucible", "agents", "--help"])
+        .expect_err("the help")
+        .to_string();
+    assert!(help.contains("install"), "{help}");
+    assert!(!help.contains("unpack-check"), "{help}");
 }
 
 /// A download that is not the artifact's, and a directory already where the
