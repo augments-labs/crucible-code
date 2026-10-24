@@ -676,6 +676,62 @@ def check_budget(scratch: pathlib.Path) -> None:
     assert not namespace.out.exists()
 
 
+def check_publish(scratch: pathlib.Path) -> None:
+    """The publishing job uploads only assets whose hash the merged data holds,
+    and an artifact copy only where its entry carries a passing licence-gate
+    record; an asset that is in the data passes."""
+    merged = json.loads((RENDER / "merged.json").read_text())
+    big = next(entry for entry in merged["entries"] if entry["key"] == "big")
+    artifact = big["targets"][0]["artifacts"][0]
+    copied = b"the bytes of a mirror copy"
+    copy_hash = hashlib.sha256(copied).hexdigest()
+    artifact["sha256"] = copy_hash
+
+    def checked(name: str, data: dict, *assets: tuple[str, bytes]) -> subprocess.CompletedProcess[str]:
+        held = scratch / f"publish-{name}"
+        (held / "assets").mkdir(parents=True)
+        for asset, content in assets:
+            (held / "assets" / asset).write_bytes(content)
+        (held / "merged.json").write_text(json.dumps(data))
+        return intake("publish-check", "--merged", held / "merged.json", "--assets", held / "assets")
+
+    def refuses(ran: subprocess.CompletedProcess[str], words: str) -> None:
+        assert ran.returncode == 1 and words in ran.stderr, f"{ran.returncode} {ran.stderr!r} lacks {words!r}"
+        assert "Traceback" not in ran.stderr, ran.stderr
+
+    # A file-list asset the data names by hash, with the bytes that hash.
+    bytes_of_listing = b"[]"
+    artifact["files"] = {"sha256": hashlib.sha256(bytes_of_listing).hexdigest(), "size": len(bytes_of_listing)}
+    listed = artifact["files"]["sha256"]
+    ran = checked("listing", merged, (listed, bytes_of_listing))
+    assert ran.returncode == 0, f"a listed asset was refused:\n{ran.stdout}{ran.stderr}"
+    ran = checked("none", merged)
+    assert ran.returncode == 0, f"nothing to upload was refused:\n{ran.stdout}{ran.stderr}"
+
+    # A hash the data does not hold, however well the file is named.
+    stranger = b"not in the data"
+    refuses(checked("stranger", merged, (hashlib.sha256(stranger).hexdigest(), stranger)), "not in the merged data")
+    # Bytes that are not the hash their name claims.
+    refuses(checked("forged", merged, (listed, b"other bytes")), "not the bytes")
+    # A name that is not a hash.
+    refuses(checked("named", merged, ("index.json", bytes_of_listing)), "not named by")
+
+    # An artifact copy: refused with no licence-gate record, or one that did not pass.
+    refuses(checked("ungated", merged, (copy_hash, copied)), "licence-gate")
+    for name, record in (("failed", {"passed": False}), ("loose", {"passed": "yes"}), ("empty", {})):
+        gated = copy.deepcopy(merged)
+        gated["entries"][merged["entries"].index(big)]["targets"][0]["artifacts"][0]["licence_gate"] = record
+        refuses(checked(name, gated, (copy_hash, copied)), "licence-gate")
+    gated = copy.deepcopy(merged)
+    gated["entries"][merged["entries"].index(big)]["targets"][0]["artifacts"][0]["licence_gate"] = {"passed": True}
+    ran = checked("gated", gated, (copy_hash, copied))
+    assert ran.returncode == 0, f"a gated copy was refused:\n{ran.stdout}{ran.stderr}"
+    # The record vouches for the bytes the data pins, so they must hash to it.
+    refuses(checked("gated-forged", gated, (copy_hash, b"other bytes")), "not the bytes")
+    # Merged data that is not review data is refused, not read as holding nothing.
+    refuses(checked("shapeless", {"entries": "none"}), "not review data")
+
+
 def main() -> int:
     failures = []
     with tempfile.TemporaryDirectory(prefix="intake-") as held:
@@ -693,6 +749,7 @@ def main() -> int:
             ("render", lambda: check_render(scratch)),
             ("render refuses", lambda: check_render_refuses(scratch)),
             ("render previous and entries", lambda: check_render_previous_and_entries(scratch)),
+            ("publish", lambda: check_publish(scratch)),
         ]
         for name, check in checks:
             try:
