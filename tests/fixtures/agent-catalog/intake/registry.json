@@ -149,6 +149,66 @@
       }
     },
     {
+      "id": "split-agent",
+      "name": "split-agent",
+      "version": "1.0.0",
+      "license": "MIT",
+      "distribution": {
+        "binary": {
+          "linux-x86_64": {
+            "archive": "https://downloads.split.example/split-agent-linux-x86_64.tar.gz",
+            "cmd": "./agent"
+          },
+          "darwin-aarch64": {
+            "archive": "https://downloads.split.example/split-agent-darwin-aarch64.tar.gz",
+            "cmd": "./agent"
+          }
+        }
+      }
+    },
+    {
+      "id": "tty-agent",
+      "name": "tty-agent",
+      "version": "1.0.0",
+      "license": "MIT",
+      "distribution": {
+        "binary": {
+          "linux-x86_64": {
+            "archive": "https://downloads.tty.example/tty-agent-linux-x86_64.tar.gz",
+            "cmd": "./agent"
+          }
+        }
+      }
+    },
+    {
+      "id": "failed-agent",
+      "name": "failed-agent",
+      "version": "1.0.0",
+      "license": "MIT",
+      "distribution": {
+        "binary": {
+          "linux-x86_64": {
+            "archive": "https://downloads.failed.example/failed-agent-linux-x86_64.tar.gz",
+            "cmd": "./agent"
+          }
+        }
+      }
+    },
+    {
+      "id": "linked-agent",
+      "name": "linked-agent",
+      "version": "1.0.0",
+      "license": "MIT",
+      "distribution": {
+        "binary": {
+          "linux-x86_64": {
+            "archive": "https://downloads.linked.example/linked-agent-linux-x86_64.tar.gz",
+            "cmd": "./agent"
+          }
+        }
+      }
+    },
+    {
       "id": "x`` <b>@here",
       "name": "Hostile id",
       "version": "1.0.0",

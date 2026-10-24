@@ -9,8 +9,12 @@ merges nothing, and it starts no program, `crucible` included: what
 target's runner is read from the files the untrusted job left. Everything it
 reads is hostile, so it runs in isolated mode (`-I`), reads every file within a
 ceiling before parsing it, refuses JSON with a repeated key or a non-finite
-number, and shows nothing of it in the human diff but inside a code span it
-cannot close.
+number or text UTF-8 cannot carry, and shows nothing of it in the human diff
+but whole, inside a code span it cannot close, with every character that could
+hide or reorder it written as its code point. Whatever one target or entry
+breaks drops it alone, with its reason, and the run goes on with the others;
+one run reads at most `RUN_BYTES` of observed data within `RUN_SECONDS`, and
+what is left once either is spent waits for the next run.
 
 `review` reads:
 
@@ -23,8 +27,13 @@ cannot close.
 - `--observed`: what the untrusted job left, one directory per registry id and
   platform, `<id>/<platform>/`, holding `artifact` (the download), `fetched.json`
   (`{"chain": [...]}`, every address it was fetched through, the registry's
-  first), `unpack-check.json` and `probe.json`;
-- `--deny`: `deny.toml`, whose licence list decides what may be mirrored.
+  first), `unpack-check.json` and `probe.json`; neither directory may be a
+  link;
+- `--deny`: `deny.toml`, whose licence list decides what may be mirrored;
+- `--merged`, where given: the merged data, against which a version already
+  reviewed is held. A release whose content differs from what was reviewed
+  under the same version is refused, naming what differs, since a changed
+  release is taken in only under a new version.
 
 It writes the review data to `--out`, and each file-list asset (a per-file list
 longer than 256 entries, kept as an asset named by its SHA-256) under
@@ -36,13 +45,18 @@ per-file list breaks a rule, a link that escapes its tree among them. An entry
 is dropped when no target is left, when its reach names a literal address or
 every host, or when any target left lacks complete probe output: a probe that
 ran without a sandbox is accepted only on a runner the matrix lists as
-unconfined, and is marked for the reviewer. Each drop is recorded with its
-reason. An artifact whose declared licence is on `deny.toml`'s list is marked
+unconfined, and is marked for the reviewer; a sign-in method whose `tty` is
+not `true`, `false` or `unknown`, and any conformance result but `not run`, is
+refused; and probes on different targets must agree on `agentInfo` and the
+sign-in methods, the refusal naming the field that differs. Each drop is
+recorded with its reason. An artifact whose declared licence is on `deny.toml`'s list is marked
 with that licence for mirroring; nothing is mirrored until the licence gate
 has passed it.
 
 `diff` writes the human diff of review data against the merged data before it,
-as Markdown, showing only what changed.
+as Markdown, showing only what changed, compared on whole values. A version
+the merged data already holds is passed over only when it is the same in every
+field; otherwise it is shown, marked as a same-version change.
 """
 
 from __future__ import annotations
@@ -55,7 +69,9 @@ import pathlib
 import re
 import stat
 import sys
+import time
 import tomllib
+import unicodedata
 import urllib.parse
 
 # The ceilings of what is read, each before it is parsed.
@@ -66,6 +82,10 @@ UNPACK_CHECK_BYTES = 16 << 20
 PROBE_BYTES = 1 << 20
 SMALL_BYTES = 1 << 20
 DATA_BYTES = 64 << 20
+# What one run of `review` may read in all, and how long it may take; what is
+# left once either is spent is dropped, to be reviewed at the next run.
+RUN_BYTES = 64 << 30
+RUN_SECONDS = 3 * 60 * 60
 # What one value may hold: arguments, variables, addresses, methods.
 ITEMS = 64
 TEXT_BYTES = 4096
@@ -77,9 +97,12 @@ LISTED_ENTRIES = 1 << 20
 LINK_STEPS = 8
 VERSION_BYTES = 64
 FORMAT = 1
-# How much of one hostile text, and of one file list, the diff shows.
-SHOWN_CHARS = 200
+# How much of one hostile text a reason quotes, its head and its tail, which
+# is more than any host is long; and how many changed files the diff names.
+REASON_CHARS = 300
 SHOWN_FILES = 50
+# The most differing fields a reason names.
+NAMED_FIELDS = 8
 
 PLATFORM = re.compile(r"(linux|darwin|windows|freebsd)-(x86_64|aarch64)")
 REGISTRY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
@@ -96,10 +119,86 @@ class Dropped(Exception):
     """A target or an entry that is left out, and why."""
 
 
+class Spent(Dropped):
+    """The run's budget is spent, so what is left waits for the next run."""
+
+
+class Budget:
+    """What one run has read, and since when."""
+
+    def __init__(self) -> None:
+        self.read = 0
+        self.started = time.monotonic()
+
+    def spend(self, count: int) -> None:
+        self.read += count
+        if self.read > RUN_BYTES or time.monotonic() - self.started > RUN_SECONDS:
+            raise Spent(
+                f"the run's budget of {RUN_BYTES} bytes and {RUN_SECONDS} seconds is spent; "
+                "it is reviewed at the next run"
+            )
+
+
+# The budget of the `review` running, which every read of observed data spends.
+BUDGET: Budget | None = None
+
+
+def spend(count: int) -> None:
+    if BUDGET is not None:
+        BUDGET.spend(count)
+
+
 def clipped(text: object) -> str:
-    """Hostile `text`, cut to what a reason quotes."""
+    """Hostile `text` as a reason quotes it: whole within `REASON_CHARS`, and
+    otherwise its head and its tail, so the end that names a host is kept."""
     text = str(text)
-    return text if len(text) <= SHOWN_CHARS else text[:SHOWN_CHARS] + "..."
+    if len(text) <= REASON_CHARS:
+        return text
+    half = REASON_CHARS // 2
+    return text[:half] + "..." + text[-half:]
+
+
+def differences(new: object, old: object, at: str = "") -> list[str]:
+    """Where `new` and `old` differ, as field paths; a list of targets is
+    compared by platform, and a number never equals a flag."""
+    if type(new) is not type(old):
+        return [at or "everything"]
+    if isinstance(new, dict):
+        found = []
+        for name in sorted(set(new) | set(old)):
+            place = f"{at}.{name}" if at else name
+            if name not in new or name not in old:
+                found.append(place)
+            else:
+                found += differences(new[name], old[name], place)
+        return found
+    if isinstance(new, list):
+        if all(isinstance(item, dict) and "platform" in item for item in new + old):
+            by_new = {str(item["platform"]): item for item in new}
+            by_old = {str(item["platform"]): item for item in old}
+            found = []
+            for platform in sorted(set(by_new) | set(by_old)):
+                place = f"{at}[{platform}]"
+                if platform not in by_new or platform not in by_old:
+                    found.append(place)
+                else:
+                    found += differences(by_new[platform], by_old[platform], place)
+            return found
+        found = []
+        for index in range(max(len(new), len(old))):
+            place = f"{at}[{index}]"
+            if index >= len(new) or index >= len(old):
+                found.append(place)
+            else:
+                found += differences(new[index], old[index], place)
+        return found
+    return [] if new == old else [at or "everything"]
+
+
+def named(paths: list[str]) -> str:
+    shown_paths = [clipped(path) for path in paths[:NAMED_FIELDS]]
+    more = f" and {len(paths) - NAMED_FIELDS} more" if len(paths) > NAMED_FIELDS else ""
+    return ", ".join(shown_paths) + more
 
 
 def unrepeated(pairs: list[tuple[str, object]]) -> dict:
@@ -132,6 +231,7 @@ def read(path: pathlib.Path, ceiling: int, what: str) -> bytes:
         raise Refused(f"{what} is not a regular file")
     with open(path, "rb") as file:
         text = file.read(ceiling + 1)
+    spend(len(text))
     if len(text) > ceiling:
         raise Refused(f"{what} is larger than {ceiling} bytes")
     return text
@@ -147,18 +247,27 @@ def obj(value: object, what: str) -> dict:
     return value
 
 
+def encoded(value: str, what: str) -> bytes:
+    """`value` in UTF-8, refused where it holds what UTF-8 cannot, such as a
+    lone surrogate JSON can spell."""
+    try:
+        return value.encode()
+    except UnicodeEncodeError:
+        raise Dropped(f"{what} holds text that is not Unicode a catalog can carry") from None
+
+
 def text(value: object, what: str) -> str:
     """Non-empty text of no control character, within its ceiling."""
     if not isinstance(value, str) or not value:
         raise Dropped(f"{what} is not text")
-    if len(value.encode()) > TEXT_BYTES or any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
+    if len(encoded(value, what)) > TEXT_BYTES or any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
         raise Dropped(f"{what} is not text a catalog holds")
     return value
 
 
 def argument(value: object, what: str) -> str:
     """An argument or a variable's value, which may be empty."""
-    if not isinstance(value, str) or "\0" in value or len(value.encode()) > TEXT_BYTES:
+    if not isinstance(value, str) or "\0" in value or len(encoded(value, what)) > TEXT_BYTES:
         raise Dropped(f"{what} is not an argument a catalog holds")
     return value
 
@@ -221,7 +330,7 @@ def variables(value: object, what: str) -> dict[str, str]:
         raise Dropped(f"{what} is not an object of at most {ITEMS} variables")
     held = {}
     for name, setting in value.items():
-        if not name or "=" in name or "\0" in name or len(name.encode()) > TEXT_BYTES:
+        if not name or "=" in name or "\0" in name or len(encoded(name, what)) > TEXT_BYTES:
             raise Dropped(f"{what} names a variable no environment can hold")
         if loader(name):
             raise Dropped(f"{what} sets {clipped(name)}, a variable a loader reads to choose what code runs")
@@ -259,7 +368,10 @@ def reach(value: object, what: str) -> list[str]:
 def address(value: object, what: str) -> tuple[str, str]:
     """An `https` address to a named host, with no user, password or port."""
     url = text(value, what)
-    parts = urllib.parse.urlsplit(url)
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        raise Dropped(f"{what} {clipped(url)} is not an https address on a host by name") from None
     name = parts.netloc
     if parts.scheme != "https" or not host(name):
         raise Dropped(f"{what} {clipped(url)} is not an https address on a host by name")
@@ -289,6 +401,7 @@ def hashed(path: pathlib.Path) -> tuple[str, int]:
     size = 0
     with open(path, "rb") as file:
         while chunk := file.read(1 << 20):
+            spend(len(chunk))
             size += len(chunk)
             if size > ARTIFACT_BYTES:
                 raise Dropped(f"could not be hashed: the download is larger than {ARTIFACT_BYTES} bytes")
@@ -380,6 +493,21 @@ def resolved(link: str, seen: dict[str, dict]) -> str:
     raise Dropped(f"{clipped(link)} takes more than {LINK_STEPS} links to reach a file")
 
 
+def place_of(observed: pathlib.Path, agent: str, platform: str) -> pathlib.Path:
+    """Where the untrusted job left what it observed of one target, refused
+    where a directory on the way there is a link, which could reach anywhere."""
+    place = observed
+    for part in (agent, platform):
+        place = place / part
+        try:
+            held = os.lstat(place)
+        except OSError:
+            return observed / agent / platform
+        if not stat.S_ISDIR(held.st_mode):
+            raise Dropped(f"{clipped(part)} is not a directory of the observed tree")
+    return place
+
+
 def compact(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
 
@@ -407,7 +535,7 @@ def target(
     format = format_of(url)
     if platform not in runners:
         raise Dropped("no runner in the matrix probes this platform")
-    place = observed / agent / platform
+    place = place_of(observed, agent, platform)
     sha256, size = hashed(place / "artifact")
     if pinned is not None and pinned != sha256:
         raise Dropped("the download is not the bytes the registry pinned")
@@ -478,8 +606,11 @@ def method(value: object, index: int) -> dict:
     }
     if kind == "terminal":
         tty = value.get("tty")
-        if tty not in (True, False, "unknown"):
-            raise Dropped(f"sign-in method {index} does not say whether it needs a terminal")
+        if not (isinstance(tty, bool) or (isinstance(tty, str) and tty == "unknown")):
+            raise Dropped(
+                f"sign-in method {index}'s tty is neither true, false nor unknown, "
+                "so whether it needs a terminal is not known"
+            )
         held.update(
             {
                 "args": arguments(value.get("args"), f"sign-in method {index}'s args"),
@@ -516,9 +647,15 @@ def probe(value: object, platform: str, runner: dict) -> tuple[dict, list[dict],
     capabilities = value.get("capabilities")
     if len(compact(capabilities)) > CAPABILITY_BYTES:
         raise Dropped(f"the probe's capabilities for {platform} are larger than {CAPABILITY_BYTES} bytes")
+    conformance = text(value.get("conformance"), f"the probe's conformance for {platform}")
+    if conformance != "not run":
+        raise Dropped(
+            f"the probe for {platform} reports conformance {clipped(conformance)}, and only "
+            "not run is taken in, since no conformance case runs at intake"
+        )
     record = {
         "capabilities": capabilities,
-        "conformance": text(value.get("conformance"), f"the probe's conformance for {platform}"),
+        "conformance": conformance,
         "confined": runner["confined"],
         "sandbox": sandbox,
     }
@@ -551,15 +688,15 @@ def entry(
     for platform, spec in sorted(binary.items()):
         try:
             targets.append(target(observed, agent_id, platform, spec, runners, mirrored, assets))
-        except Dropped as why:
-            dropped.append({"platform": clipped(platform), "reason": str(why), "registry_id": agent_id})
+        except Exception as failed:  # whatever one target breaks, the others go on
+            dropped.append({"platform": clipped(platform), "reason": reason(failed), "registry_id": agent_id})
     if not targets:
         raise Dropped("has no target left to offer")
     probed = []
     for listed in targets:
         platform = listed["platform"]
         try:
-            printed = read_json(observed / agent_id / platform / "probe.json", PROBE_BYTES, "probe.json")
+            printed = read_json(place_of(observed, agent_id, platform) / "probe.json", PROBE_BYTES, "probe.json")
         except Refused as refused:
             raise Dropped(f"has no probe output for {platform}: {refused}") from None
         admits, methods, record = probe(printed, platform, runners[platform])
@@ -567,8 +704,12 @@ def entry(
         probed.append((platform, admits, methods))
     first, admits, methods = probed[0]
     for platform, other_admits, other_methods in probed[1:]:
-        if (other_admits, other_methods) != (admits, methods):
-            raise Dropped(f"its probes on {first} and {platform} disagree about agentInfo or sign-in methods")
+        differing = differences(
+            {"admits": other_admits, "auth_methods": other_methods},
+            {"admits": admits, "auth_methods": methods},
+        )
+        if differing:
+            raise Dropped(f"its probes on {first} and {platform} disagree about {named(differing)}")
     return (
         {
             "admits": admits,
@@ -583,6 +724,24 @@ def entry(
         },
         assets,
     )
+
+
+def reason(failed: Exception) -> str:
+    """Why `failed` drops what it was raised over."""
+    if isinstance(failed, (Dropped, Refused)):
+        return str(failed)
+    return f"could not be read here: {type(failed).__name__}: {clipped(failed)}"
+
+
+def merged_of(path: pathlib.Path | None) -> dict[tuple[str, str], dict]:
+    """The entries the merged data holds, by key and version."""
+    if path is None:
+        return {}
+    data = read_json(path, DATA_BYTES, "the merged data")
+    entries = data.get("entries") if isinstance(data, dict) else None
+    if not isinstance(entries, list) or not all(isinstance(entry, dict) for entry in entries):
+        raise Refused("the merged data is not review data as the intake writes it")
+    return {(str(entry.get("key")), str(entry.get("version"))): entry for entry in entries}
 
 
 def choices_of(value: object) -> dict[str, dict]:
@@ -631,6 +790,8 @@ def allowed_licences(path: pathlib.Path) -> set[str]:
 
 
 def review(arguments: argparse.Namespace) -> int:
+    global BUDGET
+    BUDGET = None
     text_read = read(arguments.registry, REGISTRY_BYTES, "the registry")
     registry = parsed(text_read, "the registry")
     agents = registry.get("agents") if isinstance(registry, dict) else None
@@ -639,6 +800,8 @@ def review(arguments: argparse.Namespace) -> int:
     choices = choices_of(read_json(arguments.choices, SMALL_BYTES, "the choices"))
     runners = runners_of(read_json(arguments.runners, SMALL_BYTES, "the runner matrix"))
     allowed = allowed_licences(arguments.deny)
+    merged = merged_of(arguments.merged)
+    BUDGET = Budget()
     entries = []
     dropped: list[dict] = []
     assets: dict[str, bytes] = {}
@@ -659,11 +822,24 @@ def review(arguments: argparse.Namespace) -> int:
             continue
         try:
             made, kept = entry(arguments.observed, agent, agent_id, choice, runners, allowed, dropped)
-        except Dropped as why:
-            dropped.append({"reason": str(why), "registry_id": agent_id})
+        except Exception as failed:  # whatever one entry breaks, the others go on
+            dropped.append({"reason": reason(failed), "registry_id": agent_id})
+            continue
+        held = merged.get((made["key"], made["version"]))
+        changed = differences(made, held) if held is not None else []
+        if changed:
+            dropped.append(
+                {
+                    "reason": f"version {clipped(made['version'])} was already reviewed with other "
+                    f"content, and {named(changed)} differ; a changed release is taken in only "
+                    "under a new version",
+                    "registry_id": agent_id,
+                }
+            )
             continue
         entries.append(made)
         assets.update(kept)
+    BUDGET = None
     data = {
         "dropped": sorted(dropped, key=lambda item: (item["registry_id"], item.get("platform", ""))),
         "entries": sorted(entries, key=lambda item: item["key"]),
@@ -671,60 +847,100 @@ def review(arguments: argparse.Namespace) -> int:
         "registry": {"sha256": hashlib.sha256(text_read).hexdigest(), "size": len(text_read)},
         "runners": runners,
     }
+    held_data = (json.dumps(data, indent=2, sort_keys=True) + "\n").encode()
+    if len(held_data) > DATA_BYTES:
+        raise Refused(f"the review data would be larger than {DATA_BYTES} bytes, which diff reads")
     arguments.assets.mkdir(parents=True, exist_ok=True)
-    for named, listing in sorted(assets.items()):
-        (arguments.assets / named).write_bytes(listing)
+    for name, listing in sorted(assets.items()):
+        (arguments.assets / name).write_bytes(listing)
     written = arguments.out.with_name(arguments.out.name + ".partial")
-    written.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+    written.write_bytes(held_data)
     written.replace(arguments.out)
     return 0
 
 
+# Characters that draw nothing, or move or break the line, beyond what the
+# Unicode categories below already name: variation selectors, the combining
+# grapheme joiner, and letters that draw as blanks.
+INVISIBLE = frozenset(
+    [0x034F, 0x115F, 0x1160, 0x2800, 0x3164, 0xFFA0]
+    + list(range(0xFE00, 0xFE10))
+    + list(range(0xE0100, 0xE01F0))
+)
+
+
+def hidden(character: str) -> bool:
+    """Whether `character` could hide or reorder what the diff shows: any
+    control, format (bidi and zero-width ones among them), surrogate, private,
+    unassigned, line or paragraph separator, or space other than the ASCII one."""
+    category = unicodedata.category(character)
+    return (
+        category in ("Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp")
+        or (category == "Zs" and character != " ")
+        or ord(character) in INVISIBLE
+    )
+
+
 def shown(value: object) -> str:
-    """Hostile `value` as a code span it cannot close, on one line: no mention,
-    link or markup in it is read as one."""
-    held = clipped(value)
+    """Hostile `value`, whole, as a code span it cannot close, on one line.
+
+    No mention, link or markup in it is read as one, and every character that
+    could hide or reorder it is written as its code point, as is a backslash,
+    so the escapes cannot be imitated."""
     held = "".join(
-        f"\\u{ord(c):04x}"
-        if ord(c) < 0x20 or ord(c) == 0x7F or 0x2028 <= ord(c) <= 0x202E or 0x2066 <= ord(c) <= 0x2069
+        "\\\\"
+        if c == "\\"
+        else (f"\\u{ord(c):04x}" if ord(c) <= 0xFFFF else f"\\U{ord(c):08x}")
+        if hidden(c)
         else c
-        for c in held
+        for c in str(value)
     )
     longest = max((len(run) for run in re.findall(r"`+", held)), default=0)
     fence = "`" * (longest + 1)
     return f"{fence} {held} {fence}"
 
 
-def words(values: list, empty: str = "none") -> str:
-    return " ".join(shown(value) for value in values) if values else empty
+def words(values: object, empty: str = "none") -> str:
+    if not isinstance(values, list) or not values:
+        return empty if values in (None, [], {}) else shown(values)
+    return " ".join(shown(value) for value in values)
 
 
-def setting(env: dict) -> str:
+def setting(env: object) -> str:
+    if not isinstance(env, dict):
+        return shown(env)
     return words([f"{name}={value}" for name, value in env.items()])
 
 
-def files_of(artifact: dict) -> str:
-    files = artifact.get("files")
+def files_of(files: object) -> str:
     if isinstance(files, dict):
         return f"a file-list asset {shown(files.get('sha256'))} of {shown(files.get('size'))} bytes"
     return f"{len(files)} listed" if isinstance(files, list) else "none"
 
 
-def compared(line: str, new: str, old: str | None) -> list[str]:
-    """`line` showing `new`, with what it was where it changed, and nothing
-    where it did not."""
-    if old is None:
-        return [f"- {line}: {new}"]
-    if old == new:
+def capabilities_of(value: object) -> str:
+    return shown(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
+
+
+# What `compared` is given when there is nothing before to compare with.
+NEW = object()
+
+
+def compared(line: str, new: object, old: object, render) -> list[str]:
+    """`line` showing `new` whole, and what it was where it changed; nothing
+    where it did not. The values are compared, never what is shown of them."""
+    if old is NEW:
+        return [f"- {line}: {render(new)}"]
+    if differences(new, old) == []:
         return []
-    return [f"- {line}: {new} (was {old})"]
+    return [f"- {line}: {render(new)} (was {render(old)})"]
 
 
 def changed_files(new: object, old: object) -> list[str]:
     if not isinstance(new, list) or not isinstance(old, list):
         return []
-    before = {file.get("path"): file for file in old if isinstance(file, dict)}
-    after = {file.get("path"): file for file in new if isinstance(file, dict)}
+    before = {str(file.get("path")): file for file in old if isinstance(file, dict)}
+    after = {str(file.get("path")): file for file in new if isinstance(file, dict)}
     lines = [f"  - added {shown(path)}" for path in after if path not in before]
     lines += [f"  - removed {shown(path)}" for path in before if path not in after]
     lines += [f"  - changed {shown(path)}" for path in after if path in before and after[path] != before[path]]
@@ -733,21 +949,21 @@ def changed_files(new: object, old: object) -> list[str]:
     return lines
 
 
-def probe_line(platform: str, record: dict) -> str:
+def probe_line(platform: object, record: dict) -> str:
+    conformance = shown(record.get("conformance"))
     if record.get("sandbox") == "closed":
-        return f"- {shown(platform)} probe: sandbox closed, conformance {shown(record.get('conformance'))}"
+        return f"- {shown(platform)} probe: sandbox closed, conformance {conformance}"
     return (
         f"- {shown(platform)} probe: **probed without a sandbox**; the runner matrix lists it "
-        f"unconfined: {shown(record.get('reason'))}. The probe said {shown(record.get('sandbox'))}; "
-        f"decide whether to admit this target."
+        f"unconfined: {shown(record.get('reason'))}. The probe said {shown(record.get('sandbox'))}, "
+        f"conformance {conformance}; decide whether to admit this target."
     )
 
 
 def method_line(method: dict) -> str:
     line = f"- sign-in {shown(method.get('id'))}, {shown(method.get('kind'))}: {shown(method.get('name'))}"
     if method.get("kind") == "terminal":
-        route = method.get("route")
-        how = "piped" if route == "piped" else "on a real terminal, unconfined"
+        how = "piped" if method.get("route") == "piped" else "on a real terminal, unconfined"
         if method.get("tty") == "unknown":
             how += " (the agent did not say; piped is the default)"
         line += (
@@ -757,60 +973,81 @@ def method_line(method: dict) -> str:
     return line
 
 
-def entry_lines(entry: dict, previous: dict | None) -> list[str]:
-    was = f" (was {shown(previous.get('version'))})" if previous else " (new agent)"
+ARTIFACT_FIELDS = ("url", "format", "size", "sha256", "unpacked", "decompressed", "mirror_licence")
+
+
+def artifact_lines(artifact: dict, old: dict | None) -> list[str]:
+    if old is None:
+        return [
+            f"- artifact {shown(artifact.get('url'))}: {shown(artifact.get('format'))}, "
+            f"{shown(artifact.get('size'))} bytes, sha256 {shown(artifact.get('sha256'))}, "
+            f"unpacks {shown(artifact.get('unpacked'))} bytes, files {files_of(artifact.get('files'))}"
+            + (f", mirror licence {shown(artifact['mirror_licence'])}" if "mirror_licence" in artifact else "")
+        ]
+    lines = []
+    for field in ARTIFACT_FIELDS:
+        lines += compared(f"artifact {field}", artifact.get(field), old.get(field), shown)
+    lines += compared("artifact files", artifact.get("files"), old.get("files"), files_of)
+    return lines + changed_files(artifact.get("files"), old.get("files"))
+
+
+def entry_lines(entry: dict, previous: dict | None, same: bool) -> list[str]:
+    if same:
+        was = " (**same version, content changed**: a release already reviewed differs as below)"
+    elif previous:
+        was = f" (was {shown(previous.get('version'))})"
+    else:
+        was = " (new agent)"
     lines = [f"## {shown(entry.get('key'))} {shown(entry.get('version'))}{was}", ""]
     before = previous or {}
-    licence = entry.get("license")
+
+    def against(field: str) -> object:
+        return before.get(field) if previous is not None else NEW
+
     mirrored = any(
         "mirror_licence" in artifact
         for listed in entry.get("targets", [])
         for artifact in listed.get("artifacts", [])
     )
-    lines.append(f"- registry id: {shown(entry.get('registry_id'))}")
-    lines.append(
-        f"- licence: {shown(licence)}, "
-        + ("marked for mirroring" if mirrored else "not mirrored: not on deny.toml's list")
-    )
-    admits = entry.get("admits", {})
+    lines += compared("registry id", entry.get("registry_id"), against("registry_id"), shown)
+    lines += compared("licence", entry.get("license"), against("license"), shown)
+    lines.append("- " + ("marked for mirroring" if mirrored else "not mirrored: its licence is not on deny.toml's list"))
     lines += compared(
         "answers initialize as",
-        f"{shown(admits.get('name'))} {shown(admits.get('version'))}",
-        None if previous is None else f"{shown(before.get('admits', {}).get('name'))} {shown(before.get('admits', {}).get('version'))}",
+        entry.get("admits"),
+        against("admits"),
+        lambda admits: f"{shown(admits.get('name'))} {shown(admits.get('version'))}" if isinstance(admits, dict) else shown(admits),
     )
-    lines += compared(
-        "reach",
-        words(entry.get("reach", [])),
-        None if previous is None else words(before.get("reach", [])),
-    )
-    old_methods = before.get("auth_methods")
-    if previous is None or old_methods != entry.get("auth_methods"):
+    lines += compared("reach", entry.get("reach", []), against("reach"), words)
+    if previous is None or differences(entry.get("auth_methods"), before.get("auth_methods")):
         lines += [method_line(method) for method in entry.get("auth_methods", [])]
         if previous is not None:
             lines.append("- the sign-in methods above changed")
     old_targets = {listed.get("platform"): listed for listed in before.get("targets", [])}
     for listed in entry.get("targets", []):
         platform = listed.get("platform")
-        old = old_targets.get(platform) if previous is not None else None
+        old = old_targets.get(platform)
+        if old is not None and differences(listed, old) == []:
+            continue
         fresh = previous is not None and old is None
         lines += ["", f"### {shown(platform)}" + (" (new target)" if fresh else ""), ""]
-        lines.append(probe_line(platform, listed.get("probe", {})))
-        prior = old or {}
-        unseen = old is None
-        lines += compared("cmd", shown(listed.get("cmd")), None if unseen else shown(prior.get("cmd")))
-        lines += compared("args", words(listed.get("args", [])), None if unseen else words(prior.get("args", [])))
-        lines += compared("env", setting(listed.get("env", {})), None if unseen else setting(prior.get("env", {})))
-        lines += compared("hosts", words(listed.get("hosts", [])), None if unseen else words(prior.get("hosts", [])))
+        prior = old if old is not None else {}
+
+        def was_of(field: str) -> object:
+            return prior.get(field) if old is not None else NEW
+
+        record = listed.get("probe", {})
+        if old is None or differences(record, prior.get("probe")):
+            lines.append(probe_line(platform, record))
+        lines += compared("capabilities", record.get("capabilities"), prior.get("probe", {}).get("capabilities") if old is not None else NEW, capabilities_of)
+        lines += compared("cmd", listed.get("cmd"), was_of("cmd"), shown)
+        lines += compared("args", listed.get("args", []), was_of("args"), words)
+        lines += compared("env", listed.get("env", {}), was_of("env"), setting)
+        lines += compared("hosts", listed.get("hosts", []), was_of("hosts"), words)
         old_artifacts = prior.get("artifacts", [])
         for index, artifact in enumerate(listed.get("artifacts", [])):
             old_artifact = old_artifacts[index] if index < len(old_artifacts) else None
-            lines.append(
-                f"- artifact {shown(artifact.get('url'))}: {shown(artifact.get('format'))}, "
-                f"{shown(artifact.get('size'))} bytes, sha256 {shown(artifact.get('sha256'))}, "
-                f"unpacks {shown(artifact.get('unpacked'))} bytes, files {files_of(artifact)}"
-            )
-            if old_artifact is not None:
-                lines += changed_files(artifact.get("files"), old_artifact.get("files"))
+            lines += artifact_lines(artifact, old_artifact)
     lines.append("")
     return lines
 
@@ -820,7 +1057,7 @@ def diff(arguments: argparse.Namespace) -> int:
     old = read_json(arguments.old, DATA_BYTES, "the merged data") if arguments.old else {"entries": []}
     try:
         merged = [entry for entry in old["entries"] if isinstance(entry, dict)]
-        held = {(entry.get("key"), entry.get("version")) for entry in merged}
+        held = {(entry.get("key"), entry.get("version")): entry for entry in merged}
         lines = ["# Agent catalog review", ""]
         registry = new.get("registry", {})
         lines += [
@@ -828,20 +1065,24 @@ def diff(arguments: argparse.Namespace) -> int:
             "",
         ]
         for entry in new["entries"]:
-            if (entry.get("key"), entry.get("version")) in held:
+            reviewed = held.get((entry.get("key"), entry.get("version")))
+            if reviewed is not None:
+                if differences(entry, reviewed) == []:
+                    continue
+                lines += entry_lines(entry, reviewed, same=True)
                 continue
             previous = next(
                 (old_entry for old_entry in reversed(merged) if old_entry.get("key") == entry.get("key")),
                 None,
             )
-            lines += entry_lines(entry, previous)
+            lines += entry_lines(entry, previous, same=False)
         lines += ["## Dropped", ""]
         for item in new["dropped"]:
             where = f" on {shown(item['platform'])}" if item.get("platform") else ""
             lines.append(f"- {shown(item.get('registry_id'))}{where}: {shown(item.get('reason'))}")
     except (KeyError, TypeError, AttributeError):
         raise Refused("the review data or the merged data is not review data as the intake writes it") from None
-    sys.stdout.write("\n".join(lines) + "\n")
+    sys.stdout.buffer.write(("\n".join(lines) + "\n").encode())
     return 0
 
 
@@ -851,6 +1092,9 @@ def main() -> int:
     reviewing = commands.add_parser("review", help="turn registry binary entries into review data")
     for name in ("registry", "choices", "runners", "observed", "deny", "assets", "out"):
         reviewing.add_argument(f"--{name}", type=pathlib.Path, required=True)
+    reviewing.add_argument(
+        "--merged", type=pathlib.Path, help="the merged data, against which a version already reviewed is held"
+    )
     differing = commands.add_parser("diff", help="the human diff of review data against merged data")
     differing.add_argument("--old", type=pathlib.Path, help="the merged data before this review")
     differing.add_argument("review", type=pathlib.Path)

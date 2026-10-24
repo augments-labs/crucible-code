@@ -11,8 +11,10 @@ output, so no network is reached and `crucible` is never run.
 
 from __future__ import annotations
 
+import argparse
 import copy
 import hashlib
+import importlib.util
 import json
 import pathlib
 import subprocess
@@ -51,6 +53,18 @@ def escaping() -> dict:
     for file in out["files"]:
         if file["kind"] == "link":
             file["target"] = "../../etc/passwd"
+    return out
+
+
+def probed(**changed: object) -> dict:
+    """The probe fixture, with its terminal method changed as `changed` says,
+    or the whole output where a key is a top-level one."""
+    out = copy.deepcopy(PROBED)
+    for name, value in changed.items():
+        if name in out:
+            out[name] = value
+        else:
+            out["authMethods"][1][name] = value
     return out
 
 
@@ -123,11 +137,52 @@ OBSERVED = {
         UNPACKED,
         PROBED,
     ),
+    ("split-agent", "linux-x86_64"): (
+        True,
+        ["https://downloads.split.example/split-agent-linux-x86_64.tar.gz"],
+        UNPACKED,
+        PROBED,
+    ),
+    # The same sign-in method, spelled for another platform.
+    ("split-agent", "darwin-aarch64"): (
+        True,
+        ["https://downloads.split.example/split-agent-darwin-aarch64.tar.gz"],
+        UNPACKED,
+        probed(command="agent.exe"),
+    ),
+    # A number where a flag belongs: equal to true, and not true.
+    ("tty-agent", "linux-x86_64"): (
+        True,
+        ["https://downloads.tty.example/tty-agent-linux-x86_64.tar.gz"],
+        UNPACKED,
+        probed(tty=1),
+    ),
+    ("failed-agent", "linux-x86_64"): (
+        True,
+        ["https://downloads.failed.example/failed-agent-linux-x86_64.tar.gz"],
+        UNPACKED,
+        probed(conformance="FAILED 14 of 20"),
+    ),
+    # Laid out complete, but its directory is a link to one elsewhere.
+    ("linked-agent", "linux-x86_64"): (
+        True,
+        ["https://downloads.linked.example/linked-agent-linux-x86_64.tar.gz"],
+        UNPACKED,
+        PROBED,
+    ),
 }
+
+LINKED = "linked-agent"
 
 
 def lay_out(observed: pathlib.Path) -> None:
     for (agent, platform), (downloaded, chain, unpacked, probed) in OBSERVED.items():
+        if agent == LINKED:
+            elsewhere = observed.parent / "elsewhere" / agent
+            if not (observed / agent).is_symlink():
+                elsewhere.mkdir(parents=True, exist_ok=True)
+                (observed / agent).parent.mkdir(parents=True, exist_ok=True)
+                (observed / agent).symlink_to(elsewhere, target_is_directory=True)
         place = observed / agent / platform
         place.mkdir(parents=True)
         if downloaded:
@@ -148,20 +203,28 @@ def intake(*args: str | pathlib.Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def review(scratch: pathlib.Path) -> tuple[dict, pathlib.Path]:
+def review(
+    scratch: pathlib.Path,
+    *extra: str | pathlib.Path,
+    name: str = "review.json",
+    registry: pathlib.Path = REGISTRY,
+    choices: pathlib.Path = CHOICES,
+) -> tuple[dict, pathlib.Path]:
     observed = scratch / "observed"
-    lay_out(observed)
+    if not observed.exists():
+        lay_out(observed)
     assets = scratch / "assets"
-    out = scratch / "review.json"
+    out = scratch / name
     ran = intake(
         "review",
-        "--registry", REGISTRY,
-        "--choices", CHOICES,
+        "--registry", registry,
+        "--choices", choices,
         "--runners", RUNNERS,
         "--observed", observed,
         "--deny", ROOT / "deny.toml",
         "--assets", assets,
         "--out", out,
+        *extra,
     )
     assert ran.returncode == 0, f"review failed:\n{ran.stdout}{ran.stderr}"
     return json.loads(out.read_text()), assets
@@ -242,6 +305,10 @@ def check_review(data: dict, assets: pathlib.Path) -> None:
     dropped(data, "npx-agent", None, "binary")
     dropped(data, "unkeyed-agent", None, "no key")
     dropped(data, "x`` <b>@here", None, "registry id")
+    dropped(data, "split-agent", None, "auth_methods[1].command", "darwin-aarch64")
+    dropped(data, "tty-agent", None, "tty")
+    dropped(data, "failed-agent", None, "conformance", "not run")
+    dropped(data, "linked-agent", "linux-x86_64", "not a directory")
 
 
 def check_diff(scratch: pathlib.Path, data: dict) -> None:
@@ -255,6 +322,7 @@ def check_diff(scratch: pathlib.Path, data: dict) -> None:
     assert "``` x`` <b>@here ```" in shown, "hostile text is shown inside a code span it cannot close"
     assert "\n<b>" not in shown and " <b>@" not in shown.replace("``` x`` <b>@here ```", ""), shown
     assert "could not be hashed" in shown and "file-list asset" in shown, shown
+    assert '"loadSession":true' in shown, "the probe's capabilities are shown"
 
     old = copy.deepcopy(data)
     for entry in old["entries"]:
@@ -292,13 +360,175 @@ def check_refuses_hostile_input(scratch: pathlib.Path) -> None:
     assert not (scratch / "none.json").exists(), "a refused registry writes no review data"
 
 
+def fake_target(data: dict, platform: str = "linux-x86_64") -> dict:
+    [entry] = [entry for entry in data["entries"] if entry["key"] == "fake"]
+    [target] = [target for target in entry["targets"] if target["platform"] == platform]
+    return target
+
+
+def written(scratch: pathlib.Path, name: str, data: dict) -> pathlib.Path:
+    path = scratch / name
+    path.write_text(json.dumps(data))
+    return path
+
+
+def check_same_version(scratch: pathlib.Path, data: dict) -> None:
+    """A version already merged whose content changed is refused by `review`
+    and shown as a change by `diff`, never passed over as already seen."""
+    merged = copy.deepcopy(data)
+    target = fake_target(merged)
+    target["args"] = ["acp"]
+    target["artifacts"][0]["sha256"] = "d" * 64
+    held = written(scratch, "merged-same.json", merged)
+    again, _ = review(scratch, "--merged", held, name="again.json")
+    assert "fake" not in {entry["key"] for entry in again["entries"]}, "a changed same version is refused"
+    dropped(again, "fake-agent", None, "1.0.0", "already reviewed", "args", "sha256")
+    ran = intake("diff", "--old", held, scratch / "review.json")
+    assert ran.returncode == 0, ran.stderr
+    lines = ran.stdout.splitlines()
+    assert any("same version" in line and "fake" in line for line in lines), ran.stdout
+    assert any("args" in line and "--no-color" in line and "was" in line for line in lines), ran.stdout
+    assert any("sha256" in line and "d" * 64 in line for line in lines), ran.stdout
+
+
+def check_hostile_entries(scratch: pathlib.Path) -> None:
+    """Each entry that cannot be read is refused alone; the run goes on."""
+    registry = json.loads(REGISTRY.read_text())
+    choices = json.loads(CHOICES.read_text())
+
+    def agent(agent_id: str, key: str, **target: object) -> None:
+        spec = {"archive": f"https://downloads.{key}.example/{key}.tar.gz", "cmd": "./agent"}
+        spec.update(target)
+        registry["agents"].append(
+            {"id": agent_id, "version": target.pop("version", "1.0.0"), "license": "MIT",
+             "distribution": {"binary": {"linux-x86_64": spec}}}
+        )
+        choices[agent_id] = {"key": key}
+
+    agent("v6-agent", "v6", archive="https://[abc/a.tar.gz")
+    agent("nfkc-agent", "nfkc", archive="https://exa\u2100.com/a.tar.gz")
+    agent("surrogate-arg", "surrogate-arg", args=["\ud800"])
+    agent("hop-agent", "hop")
+    registry["agents"][-1]["distribution"]["binary"]["linux-x86_64"]["archive"] = (
+        "https://downloads.hop.example/hop.tar.gz"
+    )
+    registry["agents"].append(
+        {"id": "surrogate-version", "version": "\ud800", "license": "MIT",
+         "distribution": {"binary": {"linux-x86_64": {"archive": "https://a.example/a.tar.gz", "cmd": "./agent"}}}}
+    )
+    choices["surrogate-version"] = {"key": "surrogate-version"}
+    registry["agents"].append({"id": "\ud800-agent", "version": "1.0.0"})
+    place = scratch / "observed" / "hop-agent" / "linux-x86_64"
+    place.mkdir(parents=True, exist_ok=True)
+    (place / "artifact").write_bytes(b"hop\n")
+    (place / "fetched.json").write_text(
+        json.dumps({"chain": ["https://downloads.hop.example/hop.tar.gz", "https://[abc/x"]})
+    )
+    hostile, _ = review(
+        scratch,
+        name="hostile.json",
+        registry=written(scratch, "hostile-registry.json", registry),
+        choices=written(scratch, "hostile-choices.json", choices),
+    )
+    assert {"big", "fake"} <= {entry["key"] for entry in hostile["entries"]}, "the others are still reviewed"
+    dropped(hostile, "v6-agent", "linux-x86_64", "https address")
+    dropped(hostile, "nfkc-agent", "linux-x86_64", "https address")
+    dropped(hostile, "surrogate-arg", "linux-x86_64", "args")
+    dropped(hostile, "hop-agent", "linux-x86_64", "redirect")
+    dropped(hostile, "surrogate-version", None, "version")
+    ran = intake("diff", scratch / "hostile.json")
+    assert ran.returncode == 0, ran.stderr
+    assert "\\ud800" in ran.stdout, "a lone surrogate is shown escaped"
+
+
+def check_full_values(scratch: pathlib.Path, data: dict) -> None:
+    """A change past any length is shown, and a host is shown whole."""
+    long_host = "github.com." + ".".join(["a" * 50] * 4) + ".attacker.example"
+    new = copy.deepcopy(data)
+    target = fake_target(new)
+    target["args"] = ["acp", "A" * 210 + "--evil"]
+    target["hosts"] = [long_host]
+    old = copy.deepcopy(data)
+    for entry in old["entries"]:
+        if entry["key"] == "fake":
+            entry["version"] = "0.9.0"
+    fake_target(old)["args"] = ["acp", "A" * 210 + "safe"]
+    ran = intake("diff", "--old", written(scratch, "old-long.json", old), written(scratch, "new-long.json", new))
+    assert ran.returncode == 0, ran.stderr
+    args = [line for line in ran.stdout.splitlines() if line.startswith("- args")]
+    assert any("--evil" in line and "was" in line and "safe" in line for line in args), args
+    assert long_host in ran.stdout, "a host is never cut"
+
+
+def check_escapes(scratch: pathlib.Path, data: dict) -> None:
+    """Every invisible, format and line-breaking character is shown escaped."""
+    hidden = ["\u200e", "\u200f", "\u061c", "\u200b", "\u2060", "\ufeff", "\u00ad",
+              "\U000e0041", "\u0085", "\u00a0", "\u2028", "\u2029", "\u202e", "\ufe0f"]
+    new = copy.deepcopy(data)
+    fake_target(new)["args"] = [f"x{character}y" for character in hidden]
+    ran = intake("diff", written(scratch, "hidden.json", new))
+    assert ran.returncode == 0, ran.stderr
+    for character in hidden:
+        assert character not in ran.stdout, f"U+{ord(character):04X} is shown raw"
+    assert "x\\u200ey" in ran.stdout and "x\\U000e0041y" in ran.stdout, "each is shown by its code point"
+
+
+def load_intake():
+    spec = importlib.util.spec_from_file_location("agent_catalog_intake", INTAKE)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def check_budget(scratch: pathlib.Path) -> None:
+    """One run reads within a named budget, and writes no more review data
+    than `diff` reads back."""
+    module = load_intake()
+    namespace = argparse.Namespace(
+        registry=REGISTRY, choices=CHOICES, runners=RUNNERS, observed=scratch / "observed",
+        deny=ROOT / "deny.toml", assets=scratch / "budget-assets", out=scratch / "budget.json", merged=None,
+    )
+    module.RUN_BYTES = 3000
+    assert module.review(namespace) == 0
+    spent = json.loads((scratch / "budget.json").read_text())
+    assert any("budget" in item["reason"] for item in spent["dropped"]), spent["dropped"]
+    module.RUN_BYTES = 1 << 40
+    module.DATA_BYTES = 1000
+    namespace.out = scratch / "too-much.json"
+    try:
+        module.review(namespace)
+    except module.Refused as refused:
+        assert "larger than" in str(refused), refused
+    else:
+        raise AssertionError("review data larger than diff reads was written")
+    assert not namespace.out.exists()
+
+
 def main() -> int:
+    failures = []
     with tempfile.TemporaryDirectory(prefix="intake-") as held:
         scratch = pathlib.Path(held)
         data, assets = review(scratch)
-        check_review(data, assets)
-        check_diff(scratch, data)
-        check_refuses_hostile_input(scratch)
+        checks = [
+            ("review", lambda: check_review(data, assets)),
+            ("diff", lambda: check_diff(scratch, data)),
+            ("hostile input", lambda: check_refuses_hostile_input(scratch)),
+            ("same version", lambda: check_same_version(scratch, data)),
+            ("hostile entries", lambda: check_hostile_entries(scratch)),
+            ("full values", lambda: check_full_values(scratch, data)),
+            ("escapes", lambda: check_escapes(scratch, data)),
+            ("budget", lambda: check_budget(scratch)),
+        ]
+        for name, check in checks:
+            try:
+                check()
+            except Exception as failed:  # every check reports, not just the first
+                failures.append(f"{name}: {type(failed).__name__}: {failed}")
+    for failure in failures:
+        print(f"    {failure}"[:2000], file=sys.stderr)
+    if failures:
+        return 1
     print("agent catalog intake fixtures passed")
     return 0
 

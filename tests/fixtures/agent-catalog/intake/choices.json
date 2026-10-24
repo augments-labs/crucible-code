@@ -5,5 +5,9 @@
   "unprobed-agent": {"key": "unprobed"},
   "leaky-agent": {"key": "leaky"},
   "reachy-agent": {"key": "reachy", "reach": ["10.0.0.1"]},
-  "npx-agent": {"key": "npx"}
+  "npx-agent": {"key": "npx"},
+  "split-agent": {"key": "split"},
+  "tty-agent": {"key": "tty"},
+  "failed-agent": {"key": "failed"},
+  "linked-agent": {"key": "linked"}
 }
