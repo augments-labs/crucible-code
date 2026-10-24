@@ -249,6 +249,10 @@ pub(crate) enum Settled {
 }
 
 /// Holds `decision` against `pending`, the one action it may settle.
+///
+/// An install confirmation is put by the agents door and never by a
+/// conversation, so no decision held here fits one: each is refused as
+/// [`ErrorCode::WrongDecision`], once it names the action at all.
 pub(crate) fn settle(pending: &Pending, decision: Decision) -> Result<Settled, Refusal> {
     if decision.id() != pending.id() {
         return Err(ErrorCode::StaleDecision.into());
@@ -301,6 +305,16 @@ pub(crate) fn settle(pending: &Pending, decision: Decision) -> Result<Settled, R
         | (
             Pending::Account { .. },
             Decision::Ruled { .. } | Decision::Answered { .. } | Decision::Accepted { .. },
+        )
+        // A conversation never puts an install confirmation: the agents door
+        // does, and settles its own. So no decision fits one held here.
+        | (
+            Pending::Install { .. },
+            Decision::Ruled { .. }
+            | Decision::Answered { .. }
+            | Decision::Declined { .. }
+            | Decision::Accepted { .. }
+            | Decision::Picked { .. },
         ) => Err(ErrorCode::WrongDecision.into()),
     }
 }

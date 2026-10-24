@@ -22,7 +22,8 @@ const MARKER: &str = "hunter2-marker";
 /// Every field name a frame may hold.
 ///
 /// An allow-list, so a field added to any value is a field somebody read here.
-const KEYS: [&str; 77] = [
+const KEYS: [&str; 79] = [
+    "agent",
     "agents",
     "ambiguous",
     "billing",
@@ -63,6 +64,7 @@ const KEYS: [&str; 77] = [
     "logout",
     "message",
     "messages",
+    "method",
     "mode",
     "model",
     "name",
@@ -103,8 +105,10 @@ const KEYS: [&str; 77] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 57] = [
+const MORE_KEYS: [&str; 59] = [
     "added",
+    "done",
+    "install",
     "api_ms",
     "cache_read",
     "cache_write",
@@ -371,6 +375,34 @@ fn account() -> Pending {
     }
 }
 
+fn install() -> Pending {
+    Pending::Install {
+        id: PendingId::new(11),
+        asks: marked(),
+        facts: vec![marked(), marked()],
+        choices: vec![
+            Choice {
+                name: marked(),
+                says: marked(),
+                recommended: true,
+            },
+            Choice {
+                name: marked(),
+                says: marked(),
+                recommended: false,
+            },
+        ],
+    }
+}
+
+/// An install reporting the start of its download and the end of it.
+fn installs() -> Vec<InstallProgress> {
+    vec![
+        InstallProgress::new(name("example-agent"), 0, 4096).unwrap(),
+        InstallProgress::new(name("example-agent"), 4096, 4096).unwrap(),
+    ]
+}
+
 fn decisions() -> Vec<Decision> {
     vec![
         Decision::Ruled {
@@ -458,6 +490,27 @@ fn commands() -> Vec<Command> {
         Command::Context,
         Command::Usage,
         Command::AskLimits,
+        Command::AgentCatalog,
+        Command::InstallAgent {
+            agent: name("example-agent"),
+            version: name("1.2.3"),
+        },
+        Command::UpdateAgent {
+            agent: name("example-agent"),
+        },
+        Command::RollbackAgent {
+            agent: name("example-agent"),
+        },
+        Command::RemoveAgent {
+            agent: name("example-agent"),
+        },
+        Command::VerifyAgent {
+            agent: name("example-agent"),
+        },
+        Command::SignInAgent {
+            instance: name("work"),
+            method: name("oauth"),
+        },
         Command::Exit,
     ];
     commands.extend(decisions().into_iter().map(Command::Decide));
@@ -975,7 +1028,13 @@ fn snapshots() -> Vec<Snapshot> {
     permissions()
         .map(Some)
         .into_iter()
-        .chain([Some(questions()), Some(warning()), Some(account()), None])
+        .chain([
+            Some(questions()),
+            Some(warning()),
+            Some(account()),
+            Some(install()),
+            None,
+        ])
         .zip(Billing::EVERY.into_iter().cycle())
         .zip(Agents::EVERY.into_iter().cycle())
         .map(|((pending, billing), agents)| Snapshot {
@@ -1047,6 +1106,16 @@ fn specimens() -> Vec<Specimen> {
         assert_eq!(Progress::decode(&frame).unwrap(), one);
         all.push(Specimen {
             what: format!("progress {}", one.kind()),
+            debug: format!("{one:?}"),
+            frame,
+        });
+    }
+
+    for one in installs() {
+        let frame = one.encode().unwrap();
+        assert_eq!(InstallProgress::decode(&frame).unwrap(), one);
+        all.push(Specimen {
+            what: "install progress".to_owned(),
             debug: format!("{one:?}"),
             frame,
         });
@@ -1132,10 +1201,11 @@ const fn decision_arm(one: &Decision) -> (usize, usize) {
 
 const fn pending_arm(one: &Pending) -> (usize, usize) {
     match one {
-        Pending::Permission { .. } => (0, 4),
-        Pending::Questions { .. } => (1, 4),
-        Pending::Warning { .. } => (2, 4),
-        Pending::Account { .. } => (3, 4),
+        Pending::Permission { .. } => (0, 5),
+        Pending::Questions { .. } => (1, 5),
+        Pending::Warning { .. } => (2, 5),
+        Pending::Account { .. } => (3, 5),
+        Pending::Install { .. } => (4, 5),
     }
 }
 
@@ -1162,41 +1232,48 @@ const fn turn_arm(one: &TurnOutcome) -> (usize, usize) {
 
 const fn command_arm(one: &Command) -> (usize, usize) {
     match one {
-        Command::Prompt(_) => (0, 33),
-        Command::Compact => (1, 33),
-        Command::Cancel => (2, 33),
-        Command::Decide(_) => (3, 33),
-        Command::Clear => (4, 33),
-        Command::Resume(_) => (5, 33),
+        Command::Prompt(_) => (0, 40),
+        Command::Compact => (1, 40),
+        Command::Cancel => (2, 40),
+        Command::Decide(_) => (3, 40),
+        Command::Clear => (4, 40),
+        Command::Resume(_) => (5, 40),
         Command::SelectModel {
             effort: Some(_), ..
-        } => (6, 33),
-        Command::SelectModel { effort: None, .. } => (7, 33),
-        Command::SetEffort(_) => (8, 33),
-        Command::SetMode(_) => (9, 33),
-        Command::CycleMode => (10, 33),
-        Command::Login { .. } => (11, 33),
-        Command::Logout { .. } => (12, 33),
-        Command::InspectCache => (13, 33),
-        Command::CleanCache => (14, 33),
-        Command::Sandbox { enabled: true } => (15, 33),
-        Command::Sandbox { enabled: false } => (16, 33),
-        Command::Theme(Theme::Drawing(_)) => (17, 33),
-        Command::Theme(Theme::Syntax(_)) => (18, 33),
-        Command::Help => (19, 33),
-        Command::ReleaseNotes { version: None } => (20, 33),
-        Command::ReleaseNotes { version: Some(_) } => (21, 33),
-        Command::Exit => (22, 33),
-        Command::SetSpeed(_) => (23, 33),
-        Command::Context => (24, 33),
-        Command::Usage => (25, 33),
-        Command::Setting { .. } => (26, 33),
-        Command::AskLimits => (27, 33),
-        Command::Disconnect { .. } => (28, 33),
-        Command::RemoveIntegration { .. } => (29, 33),
-        Command::SignOut { .. } => (30, 33),
-        Command::Connect { instance: Some(_) } => (31, 33),
-        Command::Connect { instance: None } => (32, 33),
+        } => (6, 40),
+        Command::SelectModel { effort: None, .. } => (7, 40),
+        Command::SetEffort(_) => (8, 40),
+        Command::SetMode(_) => (9, 40),
+        Command::CycleMode => (10, 40),
+        Command::Login { .. } => (11, 40),
+        Command::Logout { .. } => (12, 40),
+        Command::InspectCache => (13, 40),
+        Command::CleanCache => (14, 40),
+        Command::Sandbox { enabled: true } => (15, 40),
+        Command::Sandbox { enabled: false } => (16, 40),
+        Command::Theme(Theme::Drawing(_)) => (17, 40),
+        Command::Theme(Theme::Syntax(_)) => (18, 40),
+        Command::Help => (19, 40),
+        Command::ReleaseNotes { version: None } => (20, 40),
+        Command::ReleaseNotes { version: Some(_) } => (21, 40),
+        Command::Exit => (22, 40),
+        Command::SetSpeed(_) => (23, 40),
+        Command::Context => (24, 40),
+        Command::Usage => (25, 40),
+        Command::Setting { .. } => (26, 40),
+        Command::AskLimits => (27, 40),
+        Command::Disconnect { .. } => (28, 40),
+        Command::RemoveIntegration { .. } => (29, 40),
+        Command::SignOut { .. } => (30, 40),
+        Command::Connect { instance: Some(_) } => (31, 40),
+        Command::Connect { instance: None } => (32, 40),
+        Command::AgentCatalog => (33, 40),
+        Command::InstallAgent { .. } => (34, 40),
+        Command::UpdateAgent { .. } => (35, 40),
+        Command::RollbackAgent { .. } => (36, 40),
+        Command::RemoveAgent { .. } => (37, 40),
+        Command::VerifyAgent { .. } => (38, 40),
+        Command::SignInAgent { .. } => (39, 40),
     }
 }
 
@@ -1760,7 +1837,7 @@ fn refused(bytes: &[u8]) -> (Option<u64>, ErrorCode) {
 
 #[test]
 fn a_version_this_build_does_not_speak_is_refused_by_name() {
-    for version in [0, 1, 2, 3, 5, 65_535, 65_536, u64::MAX] {
+    for version in [0, 1, 2, 3, 4, 6, 65_535, 65_536, u64::MAX] {
         let frame = with(asking(&json!({"kind": "help"})), "version", json!(version));
         assert_eq!(
             refused(&framed(&frame)),
@@ -1821,9 +1898,9 @@ fn a_frame_that_is_not_one_whole_request_is_malformed() {
         (b"not json".to_vec(), None),
         (b"[1, 2]".to_vec(), None),
         (b"{\"version\": 2".to_vec(), None),
-        (framed(&json!({"version": 4})), None),
+        (framed(&json!({"version": 5})), None),
         (
-            framed(&json!({"version": 4, "capabilities": [], "correlation": -1, "command": {}})),
+            framed(&json!({"version": 5, "capabilities": [], "correlation": -1, "command": {}})),
             None,
         ),
         (
@@ -1846,7 +1923,7 @@ fn a_frame_that_is_not_one_whole_request_is_malformed() {
             Some(41),
         ),
         (
-            framed(&json!({"version": 4, "capabilities": [], "correlation": 41,
+            framed(&json!({"version": 5, "capabilities": [], "correlation": 41,
                 "command": {"kind": "help"}, "also": true})),
             Some(41),
         ),
@@ -2121,6 +2198,7 @@ fn a_field_nobody_asked_for_refuses_the_frame_wherever_it_is_nested() {
                 "request" => Request::decode(&frame).err().map(|it| it.refusal.code()),
                 "response" => Response::decode(&frame).err().map(Refusal::code),
                 "progress" => Progress::decode(&frame).err().map(Refusal::code),
+                "install" => InstallProgress::decode(&frame).err().map(Refusal::code),
                 "snapshot" => Snapshot::decode(&frame).err().map(Refusal::code),
                 "inspection" => inspection::Inspection::decode(&frame)
                     .err()
@@ -2142,10 +2220,10 @@ fn a_field_nobody_asked_for_refuses_the_frame_wherever_it_is_nested() {
 #[test]
 fn a_key_said_twice_is_refused_rather_than_one_of_them_believed() {
     let twice = [
-        r#"{"version":4,"capabilities":[],"correlation":41,"correlation":42,"command":{"kind":"help"}}"#,
-        r#"{"version":4,"capabilities":[],"correlation":41,"command":{"kind":"interrupt","kind":"help"}}"#,
-        r#"{"version":4,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"id":8,"ruling":"allow","lasting":"once"}}}"#,
-        r#"{"version":4,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"ruling":"deny","ruling":"allow","lasting":"once"}}}"#,
+        r#"{"version":5,"capabilities":[],"correlation":41,"correlation":42,"command":{"kind":"help"}}"#,
+        r#"{"version":5,"capabilities":[],"correlation":41,"command":{"kind":"interrupt","kind":"help"}}"#,
+        r#"{"version":5,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"id":8,"ruling":"allow","lasting":"once"}}}"#,
+        r#"{"version":5,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"ruling":"deny","ruling":"allow","lasting":"once"}}}"#,
     ];
     for frame in twice {
         assert_eq!(
@@ -2155,7 +2233,7 @@ fn a_key_said_twice_is_refused_rather_than_one_of_them_believed() {
         );
     }
 
-    let once = r#"{"version":4,"capabilities":[],"correlation":41,"command":{"kind":"help"}}"#;
+    let once = r#"{"version":5,"capabilities":[],"correlation":41,"command":{"kind":"help"}}"#;
     assert!(Request::decode(once.as_bytes()).is_ok());
 }
 
@@ -2318,7 +2396,7 @@ fn progress_and_a_snapshot_say_their_version_and_another_is_refused_by_name() {
             "{frame}"
         );
 
-        for version in [0, 1, 2, 3, 5, 65_536, u64::MAX] {
+        for version in [0, 1, 2, 3, 4, 6, 65_536, u64::MAX] {
             let other = with(frame.clone(), "version", json!(version));
             assert_eq!(
                 read(&framed(&other)).unwrap_err().code(),
@@ -2522,7 +2600,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // alone moves that number and this digest, and leaves the revision.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (4, 13_428_585_615_253_225_727),
+        (5, 14_591_922_859_633_523_051),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );
@@ -2863,4 +2941,372 @@ fn limit_asking_crosses_as_a_command_of_its_own() {
         Request::decode(&request.encode().unwrap()).unwrap(),
         request
     );
+}
+
+/// The seven commands the agents door serves and no conversation does.
+fn install_commands() -> Vec<Command> {
+    commands()
+        .into_iter()
+        .filter(|command| command.needs().is_some())
+        .collect()
+}
+
+#[test]
+fn each_install_command_crosses_as_a_word_of_its_own_and_reads_back_as_it_was_written() {
+    let wanted = [
+        ("agent_catalog", json!({"kind": "agent_catalog"})),
+        (
+            "install_agent",
+            json!({"kind": "install_agent", "agent": "example-agent", "version": "1.2.3"}),
+        ),
+        (
+            "update_agent",
+            json!({"kind": "update_agent", "agent": "example-agent"}),
+        ),
+        (
+            "rollback_agent",
+            json!({"kind": "rollback_agent", "agent": "example-agent"}),
+        ),
+        (
+            "remove_agent",
+            json!({"kind": "remove_agent", "agent": "example-agent"}),
+        ),
+        (
+            "verify_agent",
+            json!({"kind": "verify_agent", "agent": "example-agent"}),
+        ),
+        (
+            "sign_in_agent",
+            json!({"kind": "sign_in_agent", "instance": "work", "method": "oauth"}),
+        ),
+    ];
+
+    let commands = install_commands();
+    assert_eq!(commands.len(), wanted.len());
+    for (command, (kind, written)) in commands.iter().zip(wanted) {
+        assert_eq!(command.kind(), kind);
+        assert!(Command::KINDS.contains(&kind), "{kind}");
+        assert_eq!(command.written(), written);
+
+        let request = Request::decode(&framed(&asking(&written))).unwrap();
+        assert_eq!(request.command(), command);
+        assert_eq!(
+            Request::decode(&request.encode().unwrap()).unwrap(),
+            request
+        );
+    }
+}
+
+#[test]
+fn an_install_command_missing_a_field_or_naming_it_wrongly_is_refused() {
+    for (command, code) in [
+        (
+            json!({"kind": "install_agent", "agent": "x"}),
+            ErrorCode::Malformed,
+        ),
+        (
+            json!({"kind": "install_agent", "version": "1"}),
+            ErrorCode::Malformed,
+        ),
+        (json!({"kind": "update_agent"}), ErrorCode::Malformed),
+        (
+            json!({"kind": "sign_in_agent", "instance": "work"}),
+            ErrorCode::Malformed,
+        ),
+        (
+            json!({"kind": "sign_in_agent", "method": "oauth"}),
+            ErrorCode::Malformed,
+        ),
+        (
+            json!({"kind": "remove_agent", "agent": 7}),
+            ErrorCode::Malformed,
+        ),
+        (
+            json!({"kind": "agent_catalog", "agent": "x"}),
+            ErrorCode::Malformed,
+        ),
+        (
+            json!({"kind": "verify_agent", "agent": ""}),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            json!({"kind": "rollback_agent", "agent": "a\nb"}),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            json!({"kind": "install_agent", "agent": "x", "version": ""}),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            json!({"kind": "sign_in_agent", "instance": "work", "method": ""}),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            json!({"kind": "update_agent", "agent": "a".repeat(NAME_BYTES + 1)}),
+            ErrorCode::TooLarge,
+        ),
+    ] {
+        assert_eq!(
+            refused(&framed(&asking(&command))),
+            (Some(41), code),
+            "{command}"
+        );
+    }
+}
+
+#[test]
+fn the_install_commands_name_the_capability_a_client_has_to_have_claimed_and_no_other_does() {
+    assert_eq!(Capability::Install.as_str(), "install");
+    assert!(Capability::EVERY.contains(&Capability::Install));
+    assert!(Capabilities::every().has(Capability::Install));
+    assert!(!Capabilities::none().has(Capability::Install));
+    for other in [
+        Capability::Permissions,
+        Capability::Questions,
+        Capability::Progress,
+        Capability::Account,
+    ] {
+        assert!(!Capabilities::none().with(other).has(Capability::Install));
+    }
+
+    let installs = install_commands();
+    assert_eq!(installs.len(), 7);
+    for command in &installs {
+        assert_eq!(command.needs(), Some(Capability::Install), "{command:?}");
+    }
+    for command in commands() {
+        if !installs.contains(&command) {
+            assert_eq!(command.needs(), None, "{command:?}");
+        }
+    }
+
+    // Said in a request, the word is believed; a build that had not heard of
+    // it would have refused it.
+    let claimed = with(
+        asking(&json!({"kind": "agent_catalog"})),
+        "capabilities",
+        json!(["install"]),
+    );
+    let request = Request::decode(&framed(&claimed)).unwrap();
+    assert!(request.capabilities().has(Capability::Install));
+    assert!(!request.capabilities().has(Capability::Account));
+    assert_eq!(
+        Request::decode(&request.encode().unwrap()).unwrap(),
+        request
+    );
+}
+
+#[test]
+fn a_client_without_the_install_capability_is_told_the_command_needs_one_by_a_code_of_its_own() {
+    assert!(ErrorCode::EVERY.contains(&ErrorCode::NeedsCapability));
+    assert_eq!(ErrorCode::NeedsCapability.as_str(), "needs_capability");
+    assert_eq!(
+        ErrorCode::named("needs_capability"),
+        Some(ErrorCode::NeedsCapability)
+    );
+    assert_eq!(
+        Refusal::new(ErrorCode::NeedsCapability).to_string(),
+        "the command needs a capability the request did not claim"
+    );
+
+    // It crosses as the outcome of any request, whatever the request said.
+    let outcome = Outcome::Refused(ErrorCode::NeedsCapability.into());
+    let response = Response {
+        correlation: Some(Correlation::new(41)),
+        outcome,
+    };
+    assert_eq!(
+        Response::decode(&response.encode().unwrap()).unwrap(),
+        response
+    );
+}
+
+#[test]
+fn a_conversation_refuses_the_install_commands_by_a_code_that_says_where_they_are_served() {
+    assert!(ErrorCode::EVERY.contains(&ErrorCode::AgentsDoor));
+    assert_eq!(ErrorCode::AgentsDoor.as_str(), "agents_door");
+    assert_eq!(ErrorCode::named("agents_door"), Some(ErrorCode::AgentsDoor));
+    assert_eq!(
+        Refusal::new(ErrorCode::AgentsDoor).to_string(),
+        "the command is served by the agents door, not by a conversation"
+    );
+
+    // Neither the code of a command this build does not ship, which these
+    // are not, nor the one of a client lacking the capability to take them.
+    for other in [ErrorCode::UnknownCommand, ErrorCode::NeedsCapability] {
+        assert_ne!(ErrorCode::AgentsDoor, other);
+        assert_ne!(ErrorCode::AgentsDoor.as_str(), other.as_str());
+        assert_ne!(
+            Refusal::new(ErrorCode::AgentsDoor).to_string(),
+            Refusal::new(other).to_string()
+        );
+    }
+    for command in install_commands() {
+        assert!(Command::KINDS.contains(&command.kind()), "{command:?}");
+    }
+
+    // It crosses as the outcome of any request.
+    let response = Response {
+        correlation: Some(Correlation::new(41)),
+        outcome: Outcome::Refused(ErrorCode::AgentsDoor.into()),
+    };
+    assert_eq!(
+        Response::decode(&response.encode().unwrap()).unwrap(),
+        response
+    );
+}
+
+#[test]
+fn an_install_confirmation_is_a_pending_action_of_its_own() {
+    let pending = install();
+    assert_eq!(pending.id(), PendingId::new(11));
+
+    let written = pending.written();
+    assert_eq!(written.pointer("/kind"), Some(&json!("install")));
+    assert_eq!(Pending::read(written.clone()).unwrap(), pending);
+
+    // The same words under the other kind are the other action.
+    let account = Pending::read(with(written.clone(), "kind", json!("account"))).unwrap();
+    assert!(matches!(account, Pending::Account { .. }));
+
+    for field in ["asks", "facts", "choices"] {
+        assert_eq!(
+            Pending::read(without(written.clone(), field))
+                .unwrap_err()
+                .code(),
+            ErrorCode::Malformed,
+            "{field}"
+        );
+    }
+    assert_eq!(
+        Pending::read(with(written.clone(), "unasked", json!(true)))
+            .unwrap_err()
+            .code(),
+        ErrorCode::Malformed
+    );
+
+    // A list of choices over the ceiling is refused while it is read.
+    let crowded = with(
+        written,
+        "choices",
+        json!(vec![
+            json!({"name": {"text": "n", "truncated": false},
+            "says": {"text": "s", "truncated": false}});
+            ITEMS + 1
+        ]),
+    );
+    assert_eq!(
+        Pending::read(crowded).unwrap_err().code(),
+        ErrorCode::TooLarge
+    );
+}
+
+#[test]
+fn an_install_report_says_how_much_is_done_of_how_much_and_never_more() {
+    let one = InstallProgress::new(name("example-agent"), 10, 40).unwrap();
+    assert_eq!(one.agent().as_str(), "example-agent");
+    assert_eq!((one.done(), one.total()), (10, 40));
+
+    let written = one.written();
+    assert_eq!(
+        written,
+        json!({"version": Version::CURRENT.number(),
+            "install": {"agent": "example-agent", "done": 10, "total": 40}})
+    );
+    assert_eq!(InstallProgress::decode(&framed(&written)).unwrap(), one);
+
+    // Everything done, and nothing to do, are both whole.
+    assert!(InstallProgress::new(name("a"), 40, 40).is_some());
+    assert!(InstallProgress::new(name("a"), 0, 0).is_some());
+    // More done than there is to do is no value, made or read.
+    assert!(InstallProgress::new(name("a"), 41, 40).is_none());
+    let over = json!({"version": Version::CURRENT.number(),
+        "install": {"agent": "a", "done": 41, "total": 40}});
+    assert_eq!(
+        InstallProgress::decode(&framed(&over)).unwrap_err().code(),
+        ErrorCode::Malformed
+    );
+}
+
+#[test]
+fn an_install_report_is_held_to_the_frame_rules_every_other_report_is() {
+    let frame = installs().remove(0).written();
+
+    for version in [0, 1, 2, 3, 4, 6, 65_536, u64::MAX] {
+        let other = with(frame.clone(), "version", json!(version));
+        assert_eq!(
+            InstallProgress::decode(&framed(&other)).unwrap_err().code(),
+            ErrorCode::UnsupportedVersion,
+            "version {version}"
+        );
+    }
+    assert_eq!(
+        InstallProgress::decode(&framed(&without(frame.clone(), "version")))
+            .unwrap_err()
+            .code(),
+        ErrorCode::Malformed
+    );
+
+    for field in ["agent", "done", "total"] {
+        let mut odd = frame.clone();
+        odd.pointer_mut("/install")
+            .and_then(Value::as_object_mut)
+            .unwrap()
+            .remove(field);
+        assert_eq!(
+            InstallProgress::decode(&framed(&odd)).unwrap_err().code(),
+            ErrorCode::Malformed,
+            "{field}"
+        );
+    }
+    for (field, wrong) in [
+        ("agent", json!(7)),
+        ("done", json!("1")),
+        ("total", json!(-1)),
+        ("done", json!(1.5)),
+    ] {
+        let mut odd = frame.clone();
+        *odd.pointer_mut(&format!("/install/{field}")).unwrap() = wrong;
+        assert_eq!(
+            InstallProgress::decode(&framed(&odd)).unwrap_err().code(),
+            ErrorCode::Malformed,
+            "{field}"
+        );
+    }
+
+    let mut long = frame.clone();
+    *long.pointer_mut("/install/agent").unwrap() = json!("a".repeat(NAME_BYTES + 1));
+    assert_eq!(
+        InstallProgress::decode(&framed(&long)).unwrap_err().code(),
+        ErrorCode::TooLarge
+    );
+    let mut empty = frame;
+    *empty.pointer_mut("/install/agent").unwrap() = json!("");
+    assert_eq!(
+        InstallProgress::decode(&framed(&empty)).unwrap_err().code(),
+        ErrorCode::InvalidArgument
+    );
+
+    let garbage = vec![b'x'; FRAME_BYTES + 1];
+    assert_eq!(
+        InstallProgress::decode(&garbage).unwrap_err().code(),
+        ErrorCode::TooLarge
+    );
+}
+
+#[test]
+fn an_install_report_cannot_be_read_as_anything_else_nor_anything_else_as_it() {
+    for one in installs() {
+        let frame = one.encode().unwrap();
+        assert!(Progress::decode(&frame).is_err());
+        assert!(Snapshot::decode(&frame).is_err());
+        assert!(Response::decode(&frame).is_err());
+        assert!(Request::decode(&frame).is_err());
+    }
+    for one in progress() {
+        assert!(InstallProgress::decode(&one.encode().unwrap()).is_err());
+    }
+    for snapshot in snapshots() {
+        assert!(InstallProgress::decode(&snapshot.encode().unwrap()).is_err());
+    }
 }

@@ -9,6 +9,18 @@
 //! handed to the application beside the request rather than named inside it. A
 //! login names a provider and never the credential: the secret is stored on
 //! the host, and the command says only that it now can be read.
+//!
+//! The commands that install, update, roll back, remove, verify and sign in an
+//! agent from the reviewed catalog, and the one that lists it, are served by a
+//! door of their own that no conversation is part of, and only of a client that
+//! claimed [`Capability::Install`]: [`Command::needs`] says which, and a
+//! conversation refuses them as [`ErrorCode::AgentsDoor`]. They name an agent by
+//! the name the catalog gives it and a sign-in by the instance and the method,
+//! and never what is fetched, where it is put or the secret a sign-in takes. The
+//! names are only names: the door checks `agent` as an agent key, and finds
+//! `version`, `instance` and `method` by equality against the catalog or the
+//! configuration, before any of them is used, and none is ever read as a path,
+//! an argument or shell text.
 
 use std::fmt;
 use std::str::FromStr;
@@ -19,6 +31,7 @@ use serde_json::Value;
 use crate::bounds::{Name, PROMPT_BYTES};
 use crate::error::{ErrorCode, Refusal};
 use crate::pending::Decision;
+use crate::request::Capability;
 use crate::wire::{Fields, Writing};
 
 /// One thing asked of the application.
@@ -72,7 +85,7 @@ pub enum Command {
     /// Stop using an installed agent's instance from Crucible, leaving the
     /// agent's own sign-in as it is. Asked for through a pending account
     /// confirmation first, and only of a client that claimed
-    /// [`Capability::Account`](crate::Capability::Account).
+    /// [`Capability::Account`].
     Disconnect {
         /// The instance, by the name the configuration gives it.
         instance: Name,
@@ -146,13 +159,70 @@ pub enum Command {
     /// the session. Otherwise nothing is sent, and the answer is what
     /// [`Command::Usage`] would have been.
     AskLimits,
+    /// List the agents the reviewed catalog offers, the versions of each, and
+    /// how each stands on this host. Changes nothing, and is answered only to
+    /// a client that claimed [`Capability::Install`].
+    AgentCatalog,
+    /// Install this version of this catalog agent. Asked for through a
+    /// pending install confirmation first, which names what would be fetched
+    /// and from where, and nothing is fetched before it is answered.
+    InstallAgent {
+        /// The agent, by the name the catalog gives it. The door checks it as
+        /// an agent key before it is used.
+        agent: Name,
+        /// The version, as the catalog spells it. The door finds it in the
+        /// catalog by equality and uses it as nothing else.
+        version: Name,
+    },
+    /// Move an installed catalog agent to the version the catalog now offers
+    /// for it. Asked for as [`Command::InstallAgent`] is.
+    UpdateAgent {
+        /// The agent, by the name the catalog gives it. The door checks it as
+        /// an agent key before it is used.
+        agent: Name,
+    },
+    /// Move an installed catalog agent back to the version it was on before.
+    /// Asked for as [`Command::InstallAgent`] is.
+    RollbackAgent {
+        /// The agent, by the name the catalog gives it. The door checks it as
+        /// an agent key before it is used.
+        agent: Name,
+    },
+    /// Remove an installed catalog agent's program from this host. Asked for
+    /// as [`Command::InstallAgent`] is.
+    RemoveAgent {
+        /// The agent, by the name the catalog gives it. The door checks it as
+        /// an agent key before it is used.
+        agent: Name,
+    },
+    /// Check an installed catalog agent's files against what was reviewed.
+    /// Changes nothing, and is answered only to a client that claimed
+    /// [`Capability::Install`].
+    VerifyAgent {
+        /// The agent, by the name the catalog gives it. The door checks it as
+        /// an agent key before it is used.
+        agent: Name,
+    },
+    /// Adopt the sign-in just stored on the host for this instance by this
+    /// method, as [`Command::Login`] adopts a provider's. The secret is typed
+    /// on the host and never crosses.
+    SignInAgent {
+        /// The instance, by the name the configuration gives it. The door
+        /// finds it in the configuration by equality and uses it as nothing
+        /// else.
+        instance: Name,
+        /// The method the agent offers, by the name it gives it. The door
+        /// finds it among the agent's methods by equality and uses it as
+        /// nothing else.
+        method: Name,
+    },
     /// Leave the conversation.
     Exit,
 }
 
 impl Command {
     /// The word each arm crosses as, in the order the arms are declared.
-    pub const KINDS: [&'static str; 28] = [
+    pub const KINDS: [&'static str; 35] = [
         "prompt",
         "compact",
         "cancel",
@@ -180,6 +250,13 @@ impl Command {
         "context",
         "usage",
         "ask_limits",
+        "agent_catalog",
+        "install_agent",
+        "update_agent",
+        "rollback_agent",
+        "remove_agent",
+        "verify_agent",
+        "sign_in_agent",
         "exit",
     ];
 
@@ -214,7 +291,63 @@ impl Command {
             Self::Context => "context",
             Self::Usage => "usage",
             Self::AskLimits => "ask_limits",
+            Self::AgentCatalog => "agent_catalog",
+            Self::InstallAgent { .. } => "install_agent",
+            Self::UpdateAgent { .. } => "update_agent",
+            Self::RollbackAgent { .. } => "rollback_agent",
+            Self::RemoveAgent { .. } => "remove_agent",
+            Self::VerifyAgent { .. } => "verify_agent",
+            Self::SignInAgent { .. } => "sign_in_agent",
             Self::Exit => "exit",
+        }
+    }
+
+    /// The capability a client has to have claimed for this command to be
+    /// taken at all, where it takes one.
+    ///
+    /// The install commands do: a client that did not claim
+    /// [`Capability::Install`] is refused them as
+    /// [`ErrorCode::NeedsCapability`] and nothing changes. Every other command
+    /// is taken whatever was claimed, and a capability only decides which
+    /// questions and reports that client is put while it runs.
+    #[must_use]
+    pub const fn needs(&self) -> Option<Capability> {
+        match self {
+            Self::AgentCatalog
+            | Self::InstallAgent { .. }
+            | Self::UpdateAgent { .. }
+            | Self::RollbackAgent { .. }
+            | Self::RemoveAgent { .. }
+            | Self::VerifyAgent { .. }
+            | Self::SignInAgent { .. } => Some(Capability::Install),
+            Self::Prompt(_)
+            | Self::Compact
+            | Self::Cancel
+            | Self::Decide(_)
+            | Self::Clear
+            | Self::Resume(_)
+            | Self::SelectModel { .. }
+            | Self::SetEffort(_)
+            | Self::SetSpeed(_)
+            | Self::SetMode(_)
+            | Self::CycleMode
+            | Self::Login { .. }
+            | Self::Logout { .. }
+            | Self::Disconnect { .. }
+            | Self::RemoveIntegration { .. }
+            | Self::SignOut { .. }
+            | Self::Connect { .. }
+            | Self::InspectCache
+            | Self::CleanCache
+            | Self::Sandbox { .. }
+            | Self::Theme(_)
+            | Self::Setting { .. }
+            | Self::Help
+            | Self::ReleaseNotes { .. }
+            | Self::Context
+            | Self::Usage
+            | Self::AskLimits
+            | Self::Exit => None,
         }
     }
 
@@ -241,6 +374,16 @@ impl Command {
             Self::Disconnect { instance }
             | Self::RemoveIntegration { instance }
             | Self::SignOut { instance } => object.with("instance", instance.as_str()),
+            Self::InstallAgent { agent, version } => object
+                .with("agent", agent.as_str())
+                .with("version", version.as_str()),
+            Self::UpdateAgent { agent }
+            | Self::RollbackAgent { agent }
+            | Self::RemoveAgent { agent }
+            | Self::VerifyAgent { agent } => object.with("agent", agent.as_str()),
+            Self::SignInAgent { instance, method } => object
+                .with("instance", instance.as_str())
+                .with("method", method.as_str()),
             Self::Connect { instance } => {
                 object.maybe("instance", instance.as_ref().map(Name::as_str))
             }
@@ -262,6 +405,7 @@ impl Command {
             | Self::Context
             | Self::Usage
             | Self::AskLimits
+            | Self::AgentCatalog
             | Self::Exit => object,
         }
         .finish()
@@ -330,6 +474,27 @@ impl Command {
             "context" => Self::Context,
             "usage" => Self::Usage,
             "ask_limits" => Self::AskLimits,
+            "agent_catalog" => Self::AgentCatalog,
+            "install_agent" => Self::InstallAgent {
+                agent: fields.name("agent")?,
+                version: fields.name("version")?,
+            },
+            "update_agent" => Self::UpdateAgent {
+                agent: fields.name("agent")?,
+            },
+            "rollback_agent" => Self::RollbackAgent {
+                agent: fields.name("agent")?,
+            },
+            "remove_agent" => Self::RemoveAgent {
+                agent: fields.name("agent")?,
+            },
+            "verify_agent" => Self::VerifyAgent {
+                agent: fields.name("agent")?,
+            },
+            "sign_in_agent" => Self::SignInAgent {
+                instance: fields.name("instance")?,
+                method: fields.name("method")?,
+            },
             "exit" => Self::Exit,
             _ => return Err(ErrorCode::UnknownCommand.into()),
         };

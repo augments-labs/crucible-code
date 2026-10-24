@@ -366,9 +366,12 @@ pub const CHECKS: usize = 5;
 /// which way to go before anything changes.
 ///
 /// Any other command is refused as [`ErrorCode::Busy`] and nothing is done:
-/// [`perform`](super::perform) and the other doors answer them. An instance
-/// the configuration does not name, or names as already disabled, is refused
-/// as [`ErrorCode::InvalidArgument`], before anything is asked.
+/// [`perform`](super::perform) and the other doors answer them. The agent
+/// catalog commands are the exception, refused as
+/// [`ErrorCode::AgentsDoor`]: the agents door serves them, and no conversation
+/// does. An instance the configuration does not name, or names as
+/// already disabled, is refused as [`ErrorCode::InvalidArgument`], before
+/// anything is asked.
 pub async fn account(
     conversation: &mut Conversation,
     request: &Request,
@@ -504,6 +507,16 @@ pub async fn account(
             };
             Performed::Account(connect(conversation, request, desk, front, &asked).await)
         }
+        // The agents door serves the install commands and no conversation is
+        // part of it, so this door will never serve them: a client is told
+        // which door does, not to come back.
+        Command::AgentCatalog
+        | Command::InstallAgent { .. }
+        | Command::UpdateAgent { .. }
+        | Command::RollbackAgent { .. }
+        | Command::RemoveAgent { .. }
+        | Command::VerifyAgent { .. }
+        | Command::SignInAgent { .. } => Performed::Refused(Refusal::from(ErrorCode::AgentsDoor)),
         Command::Prompt(_)
         | Command::Compact
         | Command::Cancel

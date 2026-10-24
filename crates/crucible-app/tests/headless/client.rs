@@ -1003,6 +1003,102 @@ fn what_cannot_be_carried_out_is_refused_by_code_and_changes_nothing() -> Result
     Ok(())
 }
 
+/// The seven commands the agents door serves and no conversation does.
+fn installing() -> Result<Vec<Command>, Failed> {
+    let agent = || Name::new("example-agent");
+    Ok(vec![
+        Command::AgentCatalog,
+        Command::InstallAgent {
+            agent: agent()?,
+            version: Name::new("1.2.3")?,
+        },
+        Command::UpdateAgent { agent: agent()? },
+        Command::RollbackAgent { agent: agent()? },
+        Command::RemoveAgent { agent: agent()? },
+        Command::VerifyAgent { agent: agent()? },
+        Command::SignInAgent {
+            instance: Name::new("work")?,
+            method: Name::new("oauth")?,
+        },
+    ])
+}
+
+#[test]
+fn the_install_commands_are_refused_at_every_door_a_conversation_has_and_nothing_changes()
+-> Result<(), Failed> {
+    let tree = Tree::new("client-install-refused")?;
+    let mut conversation = super::conversation(&tree, Script::new(Vec::new()), false)?;
+    let standing = Standing::new(&tree, &[])?;
+    let workspace = tree.workspace()?;
+    let sessions = tree.sessions();
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+        environment: unset,
+        notes,
+    };
+    let before = client::snapshot(&conversation);
+    let mut wire = Wire::default();
+    // Not a thing to come back for, and not a command this build lacks: the
+    // agents door serves these, and no conversation ever will.
+    let refused = Outcome::Refused(ErrorCode::AgentsDoor.into());
+
+    for command in installing()? {
+        let request = wire.sent(command)?;
+
+        let performed =
+            super::runtime()?.block_on(client::perform(&mut conversation, &request, &desk));
+        assert_eq!(
+            received(&performed.response(&request))?.outcome,
+            refused,
+            "perform {request:?}"
+        );
+
+        assert_eq!(
+            client::keep(&request, &desk).outcome(),
+            refused,
+            "keep {request:?}"
+        );
+        assert_eq!(
+            client::interrupt(&request, &Cancel::new()),
+            refused,
+            "interrupt {request:?}"
+        );
+
+        let mut remote = Remote::new(vec![Saying::Fitting(Ruling::Allow)]);
+        let (response, _) = turned(&mut conversation, &request, &mut remote)?;
+        assert_eq!(response.outcome, refused, "turn {request:?}");
+        assert!(remote.put.is_empty(), "turn {request:?}");
+
+        let asked = client::asking(&mut conversation, &request, Instant::now());
+        assert_eq!(
+            asked.err().map(Refusal::code),
+            Some(ErrorCode::AgentsDoor),
+            "asking {request:?}"
+        );
+
+        let mut remote = Remote::new(vec![Saying::Fitting(Ruling::Allow)]);
+        let accounted = super::runtime()?.block_on(client::account(
+            &mut conversation,
+            &request,
+            &desk,
+            &mut remote,
+        ));
+        assert_eq!(
+            received(&accounted.response(&request))?.outcome,
+            refused,
+            "account {request:?}"
+        );
+        assert!(remote.put.is_empty(), "account {request:?}");
+    }
+
+    assert_eq!(client::snapshot(&conversation), before);
+    assert!(standing.reached().is_empty());
+    Ok(())
+}
+
 #[test]
 fn only_a_cancel_interrupts_and_it_does_so_through_the_turn_s_own_control() -> Result<(), Failed> {
     let mut wire = Wire::default();

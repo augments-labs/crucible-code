@@ -234,6 +234,24 @@ pub enum Pending {
         /// The ways it may go, one of them to leave everything as it is.
         choices: Vec<Choice>,
     },
+    /// Which way an install, update, rollback or removal of a catalog agent
+    /// goes on, if at all. Nothing has been fetched or changed yet, and
+    /// choosing none changes nothing. Put by the door that serves those
+    /// commands to a client that claimed
+    /// [`Capability::Install`](crate::Capability::Install), and never by a
+    /// conversation.
+    Install {
+        /// Which pending action this is.
+        id: PendingId,
+        /// What is being asked.
+        asks: Text,
+        /// What the operation would do, a sentence each: the version and its
+        /// size, where it would be fetched from, its licence and terms, what
+        /// it would be started with, and which instances it would move.
+        facts: Vec<Text>,
+        /// The ways it may go, one of them to leave everything as it is.
+        choices: Vec<Choice>,
+    },
 }
 
 impl Pending {
@@ -244,7 +262,8 @@ impl Pending {
             Self::Permission { id, .. }
             | Self::Questions { id, .. }
             | Self::Warning { id, .. }
-            | Self::Account { id, .. } => *id,
+            | Self::Account { id, .. }
+            | Self::Install { id, .. } => *id,
         }
     }
 
@@ -287,17 +306,13 @@ impl Pending {
                 asks,
                 facts,
                 choices,
-            } => Writing::kind("account")
-                .with("id", id.number())
-                .text("asks", asks)
-                .with(
-                    "facts",
-                    facts.iter().map(crate::wire::written).collect::<Vec<_>>(),
-                )
-                .with(
-                    "choices",
-                    choices.iter().map(Choice::written).collect::<Vec<_>>(),
-                ),
+            } => confirmation("account", *id, asks, facts, choices),
+            Self::Install {
+                id,
+                asks,
+                facts,
+                choices,
+            } => confirmation("install", *id, asks, facts, choices),
         }
         .finish()
     }
@@ -334,25 +349,68 @@ impl Pending {
                 sentence: fields.text("sentence")?,
                 source: fields.text("source")?,
             },
-            "account" => Self::Account {
-                id,
-                asks: fields.text("asks")?,
-                facts: fields
-                    .list("facts")?
-                    .into_iter()
-                    .map(crate::wire::text)
-                    .collect::<Result<_, _>>()?,
-                choices: fields
-                    .list("choices")?
-                    .into_iter()
-                    .map(Choice::read)
-                    .collect::<Result<_, _>>()?,
-            },
+            "account" => {
+                let (asks, facts, choices) = confirming(&mut fields)?;
+                Self::Account {
+                    id,
+                    asks,
+                    facts,
+                    choices,
+                }
+            }
+            "install" => {
+                let (asks, facts, choices) = confirming(&mut fields)?;
+                Self::Install {
+                    id,
+                    asks,
+                    facts,
+                    choices,
+                }
+            }
             _ => return Err(ErrorCode::Malformed.into()),
         };
         fields.done()?;
         Ok(pending)
     }
+}
+
+/// A confirmation of the kind `kind`, which an account operation and an install
+/// put alike: what is asked, what it would affect and the ways it may go.
+fn confirmation(
+    kind: &str,
+    id: PendingId,
+    asks: &Text,
+    facts: &[Text],
+    choices: &[Choice],
+) -> Writing {
+    Writing::kind(kind)
+        .with("id", id.number())
+        .text("asks", asks)
+        .with(
+            "facts",
+            facts.iter().map(crate::wire::written).collect::<Vec<_>>(),
+        )
+        .with(
+            "choices",
+            choices.iter().map(Choice::written).collect::<Vec<_>>(),
+        )
+}
+
+/// What [`confirmation`] wrote, read back from `fields`.
+fn confirming(fields: &mut Fields) -> Result<(Text, Vec<Text>, Vec<Choice>), Refusal> {
+    Ok((
+        fields.text("asks")?,
+        fields
+            .list("facts")?
+            .into_iter()
+            .map(crate::wire::text)
+            .collect::<Result<_, _>>()?,
+        fields
+            .list("choices")?
+            .into_iter()
+            .map(Choice::read)
+            .collect::<Result<_, _>>()?,
+    ))
 }
 
 impl Choice {
@@ -473,7 +531,7 @@ pub enum Decision {
         /// The pending action being answered.
         id: PendingId,
     },
-    /// About an account confirmation: the way chosen, by its name.
+    /// About an account or install confirmation: the way chosen, by its name.
     Picked {
         /// The pending action being answered.
         id: PendingId,
