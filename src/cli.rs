@@ -332,7 +332,8 @@ enum AgentsAction {
     },
     /// Unpack a download the agent catalog describes by the rules an install
     /// holds it to, write the file list it unpacked to as JSON, and stop.
-    /// The catalog's intake runs it, so it is left out of the help.
+    ///
+    /// The catalog's intake runs it, so `--help` leaves it out.
     #[command(hide = true)]
     UnpackCheck {
         /// One artifact as the catalog spells it, with no file list.
