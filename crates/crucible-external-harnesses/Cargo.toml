@@ -71,11 +71,12 @@ tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 # so that each is checked against the pin before it is written, and its
 # deflated members are inflated by `flate2`'s pure-Rust backend.
 zip.workspace = true
+# A catalog agent's release may also be a gzip-compressed tar, which `std`
+# does not read either: `flate2` decompresses the gzip stream, and `tar` reads
+# each member's header and data so that it is checked against the catalog's
+# file list before a byte of it is written. Nothing is unpacked by `tar`'s own
+# extraction.
 flate2.workspace = true
-# A catalog agent's release may be a gzip-compressed tar, which `std` does not
-# read either: `tar` reads each member's header and data so that it is checked
-# against the catalog's file list before a byte of it is written, and nothing
-# is unpacked by its own extraction.
 tar.workspace = true
 
 # `answered!`, the sandbox the tests launch the peer under, and a runtime with
@@ -89,8 +90,3 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"
 
 [lints]
 workspace = true
-
-# `flate2` is named for its pure-Rust backend, which `zip` inflates through and
-# has no feature of its own to choose, so no code here calls it.
-[package.metadata.cargo-machete]
-ignored = ["flate2"]

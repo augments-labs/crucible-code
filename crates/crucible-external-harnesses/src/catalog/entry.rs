@@ -17,8 +17,9 @@
 //! - a version is one directory name, at most [`VERSION_BYTES`];
 //! - every address begins `https://`, and whether its host is one the target
 //!   lists is left to whoever downloads it to check;
-//! - every digest is a SHA-256 in lowercase hexadecimal, and every artifact
-//!   lists the files it unpacks to;
+//! - every digest is a SHA-256 in lowercase hexadecimal, and every artifact a
+//!   catalog carries lists the files it unpacks to, where one read alone for
+//!   the intake to survey may not yet;
 //! - no variable it sets is one a loader reads to choose what code runs.
 //!
 //! Nothing more is checked here. Control characters, names a platform
@@ -27,7 +28,7 @@
 //! to reconcile, with checked arithmetic.
 
 use crucible_types::AgentKey;
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::CatalogError;
 
@@ -544,7 +545,31 @@ impl Script {
 }
 
 impl Artifact {
+    /// One artifact, as an entry of a target's `artifacts` spells it, read
+    /// from `text` with no signature to believe it by.
+    ///
+    /// This is what the intake describes an artifact as before a file list is
+    /// recorded for it, so an absent `files` is read as an empty list: a
+    /// survey reads none, and an unpack, which writes only what is listed,
+    /// refuses every member of an archive against it. The caller bounds
+    /// `text` before it is read here.
+    ///
+    /// # Errors
+    ///
+    /// [`CatalogError`] naming the first field that is not what the catalog
+    /// holds there.
+    pub fn unsigned(text: &[u8]) -> Result<Self, CatalogError> {
+        let value: Value = serde_json::from_slice(text)?;
+        Self::parse(&Fields::new(&value, String::new())?, false)
+    }
+
     fn read(fields: &Fields<'_>) -> Result<Self, CatalogError> {
+        Self::parse(fields, true)
+    }
+
+    /// The artifact `fields` holds, whose `files` may be absent only where it
+    /// is not `listed`.
+    fn parse(fields: &Fields<'_>, listed: bool) -> Result<Self, CatalogError> {
         let format = match &*fields.text("format")? {
             "zip" => Format::Zip,
             "tar.gz" => Format::TarGz,
@@ -553,6 +578,7 @@ impl Artifact {
             _ => return Err(fields.wrong("format", "is not zip, tar.gz, bare or wheel")),
         };
         let files = match fields.field("files") {
+            None if !listed => Files::Listed(Vec::new()),
             None => return Err(fields.wrong("files", "is missing, so nothing would be pinned")),
             Some(Value::Object(_)) => {
                 Files::Asset(fields.object("files")?.asset(Some(ASSET_BYTES))?)
@@ -587,6 +613,28 @@ impl Artifact {
 }
 
 impl File {
+    /// This file as an artifact's `files` spells it, which the reader takes
+    /// back as it is.
+    #[must_use]
+    pub fn json(&self) -> Value {
+        let path = &*self.path;
+        match &self.kind {
+            FileKind::File { size, sha256, exec } => json!({
+                "path": path,
+                "kind": "file",
+                "size": size,
+                "sha256": &**sha256,
+                "exec": exec,
+            }),
+            FileKind::Dir => json!({"path": path, "kind": "dir"}),
+            FileKind::Link { target } => json!({
+                "path": path,
+                "kind": "link",
+                "target": &**target,
+            }),
+        }
+    }
+
     fn read(fields: &Fields<'_>) -> Result<Self, CatalogError> {
         let kind = match fields.optional_text("kind")?.as_deref() {
             None | Some("file") => FileKind::File {
