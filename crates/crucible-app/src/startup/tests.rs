@@ -554,12 +554,12 @@ fn a_provider_whose_access_names_an_agent_starts_the_run_on_the_agent_s_route() 
     assert_eq!(logs_in(&sample), 1, "a log no route is bound to was opened");
 
     let agent = crate::backends::REGISTRY
-        .row(crucible_config::Driver::Claude)
+        .row(crucible_config::Driver::Claude, None)
         .expect("Claude Code's row");
     conversation
         .consent()
         .expect("the run's consent")
-        .give(agent.route);
+        .give(agent.route());
     let (events, _seen) = std::sync::mpsc::channel();
     let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
     let turned = {
@@ -784,12 +784,12 @@ fn a_session_an_agent_ran_is_continued_on_its_route_by_the_agent_s_own_session()
     let held = Session::reopen_routed(&sample.logs(), &sample.workspace(), &id, &route).map(|_| ());
     assert!(held.is_err(), "the session was left unclaimed");
     let agent = crate::backends::REGISTRY
-        .row(crucible_config::Driver::Claude)
+        .row(crucible_config::Driver::Claude, None)
         .expect("Claude Code's row");
     resumed
         .consent()
         .expect("the run's consent")
-        .give(agent.route);
+        .give(agent.route());
     let (events, _seen) = std::sync::mpsc::channel();
     let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
     let turned = {

@@ -91,8 +91,8 @@ fn a_row_that_does_not_ship_is_not_offered() {
     }];
     let registry = Registry::new(&HELD_BACK);
     assert_eq!(registry.shipping().count(), 0);
-    assert!(registry.row(Driver::Antigravity).is_some());
-    assert!(registry.row(Driver::Claude).is_none());
+    assert!(registry.row(Driver::Antigravity, None).is_some());
+    assert!(registry.row(Driver::Claude, None).is_none());
 }
 
 /// Claude Code's own row, held back from a release, is refused at launch by
@@ -100,7 +100,7 @@ fn a_row_that_does_not_ship_is_not_offered() {
 /// process.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_claude_code_row_held_back_is_refused_by_its_section_and_starts_nothing() {
-    let shipped = REGISTRY.row(Driver::Claude).expect("Claude Code's row");
+    let shipped = REGISTRY.built(Driver::Claude).expect("Claude Code's row");
     let held_back: &'static [Row] = Box::leak(Box::new([Row {
         shipping: false,
         ..*shipped
@@ -200,13 +200,13 @@ fn claude_code_s_modes_are_the_conversation_s() {
 #[test]
 fn antigravity_is_started_the_same_way_in_every_mode() {
     let row = REGISTRY
-        .row(Driver::Antigravity)
+        .row(Driver::Antigravity, None)
         .expect("Antigravity's row");
     for mode in every_mode() {
-        let mut dialect = (row.dialect)(mode).expect("every mode");
+        let mut dialect = row.dialect(mode).expect("every mode");
         assert_eq!(
             dialect.request(Shape::default()).arguments,
-            (row.dialect)(Mode::Ask)
+            row.dialect(Mode::Ask)
                 .expect("asking")
                 .request(Shape::default())
                 .arguments,
@@ -233,13 +233,15 @@ fn every_mode() -> Vec<Mode> {
 /// prompts.
 #[test]
 fn claude_code_is_launched_in_the_permission_mode_mapped_to_each_mode() {
-    let row = REGISTRY.row(Driver::Claude).expect("Claude Code's row");
+    let row = REGISTRY
+        .row(Driver::Claude, None)
+        .expect("Claude Code's row");
     for (mode, named) in [
         (Mode::Ask, "default"),
         (Mode::AllowEdits, "acceptEdits"),
         (Mode::FullAccess, "bypassPermissions"),
     ] {
-        let mut dialect = (row.dialect)(mode).expect("every mode is launched");
+        let mut dialect = row.dialect(mode).expect("every mode is launched");
         let arguments = dialect.request(Shape::default()).arguments;
         assert!(
             arguments.windows(2).any(|pair| pair
@@ -255,9 +257,9 @@ fn claude_code_is_launched_in_the_permission_mode_mapped_to_each_mode() {
 /// allowing them, and to everything in full access.
 #[test]
 fn antigravity_answers_yes_by_itself_to_what_each_mode_allows() {
-    assert_eq!(antigravity_allowing(Mode::Ask), Allowing::Nothing);
-    assert_eq!(antigravity_allowing(Mode::AllowEdits), Allowing::Edits);
-    assert_eq!(antigravity_allowing(Mode::FullAccess), Allowing::Everything);
+    assert_eq!(allowing(Mode::Ask), Allowing::Nothing);
+    assert_eq!(allowing(Mode::AllowEdits), Allowing::Edits);
+    assert_eq!(allowing(Mode::FullAccess), Allowing::Everything);
 }
 
 /// Every driver a row is built in for: all but a catalog agent's, which is
@@ -274,13 +276,17 @@ fn built_in() -> impl Iterator<Item = Driver> {
 #[test]
 fn a_catalog_agent_has_no_built_in_row_and_serves_its_key() {
     let goose = crucible_types::AgentKey::new("goose").expect("an agent key");
-    assert!(REGISTRY.row(Driver::Catalog).is_none());
+    assert!(REGISTRY.row(Driver::Catalog, None).is_none());
+    assert!(REGISTRY.row(Driver::Catalog, Some(&goose)).is_none());
     assert_eq!(
         Driver::Catalog.serves(Some(&goose)),
         Some(Serves::Agent(goose))
     );
     for driver in built_in() {
-        assert!(REGISTRY.row(driver).is_some(), "{driver:?}");
+        assert!(
+            matches!(REGISTRY.row(driver, None), Some(AgentRow::Built(row)) if row.driver == driver),
+            "{driver:?}"
+        );
     }
 }
 
@@ -291,9 +297,9 @@ fn a_catalog_agent_has_no_built_in_row_and_serves_its_key() {
 fn a_model_is_taken_for_exactly_the_drivers_that_launch_with_it() {
     for driver in built_in() {
         let row = REGISTRY
-            .row(driver)
+            .row(driver, None)
             .expect("every built-in driver has a row");
-        let mut dialect = (row.dialect)(Mode::Ask).expect("asking");
+        let mut dialect = row.dialect(Mode::Ask).expect("asking");
         let arguments = dialect
             .request(Shape {
                 model: Some("agreed-model"),
@@ -327,4 +333,29 @@ fn every_driver_s_provider_is_one_this_build_offers() {
             "{driver:?}: {offered:?}"
         );
     }
+}
+
+/// A catalog agent's row is the one its registry lists for its key, made from
+/// the entry that reviewed it and held under the agent route of that key; no
+/// other key has it, a catalog instance naming no key has none, and a
+/// built-in driver's row is its own, whatever key is asked with.
+#[test]
+fn a_catalog_agent_s_row_is_the_one_listed_for_its_key() {
+    let peer = crucible_types::AgentKey::new("peer").expect("an agent key");
+    let goose = crucible_types::AgentKey::new("goose").expect("an agent key");
+    let registry = Registry::new(&[CLAUDE])
+        .cataloging(Box::leak(Box::new([crate::launching::tests::cataloged()])));
+
+    let Some(AgentRow::Catalog(row)) = registry.row(Driver::Catalog, Some(&peer)) else {
+        panic!("the catalog row of {peer}");
+    };
+    assert_eq!(row.key(), &peer);
+    assert_eq!(row.route(), agent_route("peer"));
+    assert!(registry.row(Driver::Catalog, Some(&goose)).is_none());
+    assert!(registry.row(Driver::Catalog, None).is_none());
+    assert!(matches!(
+        registry.row(Driver::Claude, None),
+        Some(AgentRow::Built(row)) if row.driver == Driver::Claude
+    ));
+    assert!(registry.row(Driver::Antigravity, None).is_none());
 }

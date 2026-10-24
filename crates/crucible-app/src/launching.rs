@@ -1,7 +1,8 @@
 //! Where an installed agent is started, and the one place it is.
 //!
-//! An [`Agent`] is a registry row and what its configured executable was
-//! found to be. Finding it is a look at the filesystem through
+//! An [`Agent`] is a registry row, one built in or one made from the catalog
+//! entry of the agent its instance names, and what its configured executable
+//! was found to be. Finding it is a look at the filesystem through
 //! `crucible_builtins::program`: an absolute path is taken as written, and a
 //! bare name is looked for on the absolute elements of `PATH`, never relative
 //! to a workspace. Nothing is run to find it, and nothing found is run until a
@@ -15,8 +16,10 @@
 //! A start is refused, before any process exists, in this order: a row this
 //! release does not ship, with the sentence naming its documentation; a
 //! program not found or not executable, with the sentences saying what to do;
-//! and a route with no yes, with what to ask. Only then is the hold taken from
-//! `content_use`, the child's sandbox policy built, and the process started.
+//! and a route with no yes, with what to ask. A catalog row always ships,
+//! since it is listed only for an entry the catalog reviewed. Only then is
+//! the hold taken from `content_use`, the child's sandbox policy built, and
+//! the process started.
 //! The first two are decided in one place, [`Agent::program`], which an
 //! operation that would ask about a route before starting the agent consults
 //! first, through [`Steps::refusal`], or for a conversation's next turn
@@ -35,12 +38,12 @@
 //!
 //! The child's policy is the conversation's, widened in exactly two ways: its
 //! profile directory, where one is configured, is writable but for the
-//! metadata protected beneath any writable root, and the hosts its row names
-//! are reachable where the conversation's commands are confined, since an
-//! unconfined child reaches the host's network already. Every other rule, the
-//! protected metadata included, stays as the conversation has it, so a
-//! profile directory inside one, named directly or through a link, is refused
-//! rather than opened.
+//! metadata protected beneath any writable root, and the hosts its row names,
+//! for a catalog row those its entry's profile grants, are reachable where the
+//! conversation's commands are confined, since an unconfined child reaches the
+//! host's network already. Every other rule, the protected metadata included,
+//! stays as the conversation has it, so a profile directory inside one, named
+//! directly or through a link, is refused rather than opened.
 //!
 //! A run that answers the conversation's turns is held to none of the ceilings
 //! that measure one command's life, its wall time, its processor time and its
@@ -103,7 +106,7 @@ use crucible_types::AgentKey;
 use tokio::runtime::Handle;
 
 use crate::access::Route;
-use crate::backends::{Registry, Row};
+use crate::backends::{AgentRow, Registry};
 use crate::content_use::{self, Consent, Unheld, Warned};
 use crate::external::External;
 use crate::installing;
@@ -146,7 +149,7 @@ pub enum Unlaunched {
 #[derive(Debug, Clone)]
 pub struct Agent {
     /// Its registry row.
-    row: &'static Row,
+    row: AgentRow,
     /// What looking for its program found, and what the program was then.
     discovery: Discovery,
     /// Its profile directory, where one is configured.
@@ -201,9 +204,10 @@ pub(crate) fn bound_driver(written: &str) -> Option<Driver> {
 }
 
 impl Agent {
-    /// The agent `route` names, as `registry` knows its driver, with its
-    /// program looked for through `lookup`; nothing where `route` names no
-    /// installed agent or `registry` has no row for its driver.
+    /// The agent `route` names, as `registry` knows its driver and the
+    /// catalog agent it serves, with its program looked for through `lookup`;
+    /// nothing where `route` names no installed agent or `registry` has no
+    /// row for it.
     #[must_use]
     pub fn routed(
         route: &Route,
@@ -224,7 +228,7 @@ impl Agent {
         };
         let (model, effort) = started(*driver, serves, model.as_deref(), *effort);
         Some(Self {
-            row: registry.row(*driver)?,
+            row: registry.row(*driver, serves.agent())?,
             discovery: discover(executable, lookup),
             profile: profile.as_deref().map(PathBuf::from),
             model,
@@ -233,8 +237,8 @@ impl Agent {
     }
 
     /// The agent the configuration's entry `agent` is, as `registry` knows
-    /// its driver, with its program looked for through `lookup`; nothing where
-    /// `registry` has no row for its driver.
+    /// its driver and the catalog agent it names, with its program looked for
+    /// through `lookup`; nothing where `registry` has no row for it.
     #[must_use]
     pub fn configured(
         agent: &ExternalAgent,
@@ -248,7 +252,7 @@ impl Agent {
             agent.effort(),
         );
         Some(Self {
-            row: registry.row(agent.driver())?,
+            row: registry.row(agent.driver(), agent.agent())?,
             discovery: discover(agent.executable(), lookup),
             profile: agent.profile().map(PathBuf::from),
             model,
@@ -258,8 +262,8 @@ impl Agent {
 
     /// Its registry row.
     #[must_use]
-    pub const fn row(&self) -> &'static Row {
-        self.row
+    pub const fn row(&self) -> &AgentRow {
+        &self.row
     }
 
     /// The model it is started with, where its driver takes one.
@@ -299,12 +303,14 @@ impl Agent {
     /// What to say where `mode` has no launch for it or its program cannot be
     /// run.
     pub fn startable(&self, mode: Mode, instance: &str) -> Result<(), String> {
-        let dialect = (self.row.dialect)(mode).map_err(|refused| refused.to_string())?;
+        self.row
+            .dialect(mode)
+            .map_err(|refused| refused.to_string())?;
         match &self.discovery {
             Discovery::Found(_) => Ok(()),
             Discovery::Missing => Err(format!(
                 "no {} command on PATH and none at externalAgents.{instance}.executable",
-                dialect.program()
+                self.row.command()
             )),
             Discovery::NotExecutable(path) => Err(format!("{} is not executable", path.display())),
         }
@@ -322,30 +328,26 @@ impl Agent {
     /// executable, else [`Unlaunched::Unknown`] where its route has no
     /// sentences to say what to do.
     pub fn program(&self, consent: &Consent) -> Result<&Program, Unlaunched> {
-        let row = self.row;
+        let row = &self.row;
         let shown = consent
             .routes()
-            .warned(row.route)
-            .map_or(row.driver.name(), |warned| warned.shown);
-        if !row.shipping {
+            .warned(row.route())
+            .map_or(row.named(), |warned| warned.shown);
+        if let AgentRow::Built(built) = row
+            && !built.shipping
+        {
             return Err(Unlaunched::Withheld {
                 agent: shown.to_owned(),
-                documented: row.documented(),
+                documented: built.documented(),
             });
         }
         match &self.discovery {
             Discovery::Found(program) => Ok(program),
             missing @ (Discovery::Missing | Discovery::NotExecutable(_)) => {
-                // The command is the same in every mode, and asking is a mode
-                // every row runs in.
-                let command = (row.dialect)(crucible_tools::Mode::default())
-                    .map_or(row.driver.name(), |dialect| dialect.program());
-                Err(
-                    installing::refusal(row, missing, shown, command).map_or_else(
-                        || Unlaunched::Unknown(row.route.to_owned()),
-                        Unlaunched::NotInstalled,
-                    ),
-                )
+                Err(unfound(row, missing, shown).map_or_else(
+                    || Unlaunched::Unknown(row.route().to_owned()),
+                    Unlaunched::NotInstalled,
+                ))
             }
         }
     }
@@ -359,6 +361,17 @@ impl Agent {
             model: self.model.as_deref(),
             effort: self.effort.map(Effort::as_str),
         }
+    }
+}
+
+/// What a refusal over `discovery` says of `row`'s agent called `shown`, as the
+/// sentence and what to do next: for an agent built in whose release this
+/// build installs, that what to do is to run the command that installs it.
+/// Nothing for a program that was found.
+pub(crate) fn unfound(row: &AgentRow, discovery: &Discovery, shown: &str) -> Option<[String; 2]> {
+    match row {
+        AgentRow::Built(built) => installing::refusal(built, discovery, shown, row.command()),
+        AgentRow::Catalog(_) => discovery.refusal(shown, row.command()),
     }
 }
 
@@ -721,16 +734,16 @@ impl<'a> Launcher<'a> {
         request: Request,
         life: Life<'_>,
     ) -> Result<Host, Unlaunched> {
-        let row = agent.row;
+        let row = &agent.row;
         let program = agent.program(self.consent)?.clone();
-        let held = content_use::held(self.consent, row.route).map_err(|unheld| match unheld {
+        let held = content_use::held(self.consent, row.route()).map_err(|unheld| match unheld {
             Unheld::Asks(warned) => Unlaunched::Asks(warned),
-            Unheld::Unknown => Unlaunched::Unknown(row.route.to_owned()),
+            Unheld::Unknown => Unlaunched::Unknown(row.route().to_owned()),
         })?;
         let policy = policy(
             self.conversation,
             agent.profile.as_deref(),
-            row.reaches,
+            &row.reaches(),
             life.limits(self.conversation.limits()),
         )?;
         let resume = match life {
@@ -869,7 +882,7 @@ impl Runs {
 
 impl Relaunch for Runs {
     fn admits(&self, mode: Mode) -> Result<(), Failure> {
-        (self.agent.row().dialect)(mode).map(drop)
+        self.agent.row().dialect(mode).map(drop)
     }
 
     fn model(&self) -> Option<&str> {
@@ -895,7 +908,7 @@ impl Relaunch for Runs {
         resume: Option<&'a ExternalRef>,
     ) -> BoxFuture<'a, Result<Box<dyn Backend>, Failure>> {
         Box::pin(async move {
-            let mut dialect = (self.agent.row().dialect)(mode)?;
+            let mut dialect = self.agent.row().dialect(mode)?;
             let control = self
                 .control
                 .as_ref()
@@ -1086,9 +1099,9 @@ impl Steps {
     /// would be refused before any process, as [`Agent::program`] decides it;
     /// nothing where it would not be.
     #[must_use]
-    pub fn refusal(&self, row: &'static Row, agent: &ExternalAgent) -> Option<Unlaunched> {
+    pub fn refusal(&self, row: &AgentRow, agent: &ExternalAgent) -> Option<Unlaunched> {
         Agent {
-            row,
+            row: row.clone(),
             discovery: discover(agent.executable(), |name| {
                 (name == "PATH").then(|| self.path.clone()).flatten()
             }),
@@ -1110,7 +1123,7 @@ impl Steps {
         }) else {
             return unreadable("this release has no launch for the agent's driver");
         };
-        let mut dialect = match (chosen.row.dialect)(Mode::default()) {
+        let mut dialect = match chosen.row.dialect(Mode::default()) {
             Ok(dialect) => dialect,
             Err(refused) => return Reading::Unreadable(refused),
         };

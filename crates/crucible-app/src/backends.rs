@@ -1,8 +1,8 @@
 //! The installed agents this build can run, one row each.
 //!
 //! A [`Row`] is everything the rest of the application needs to know about an
-//! agent besides what its configuration says: which driver it is, how its
-//! wire is spoken in each mode a conversation runs in, or why it is not run
+//! agent built in besides what its configuration says: which driver it is, how
+//! its wire is spoken in each mode a conversation runs in, or why it is not run
 //! in one, which key names its profile directory, the content-use
 //! route it is held under, the section of `docs/providers/agents.md` that
 //! documents it, the hosts it must reach, the command a person signs it in
@@ -12,6 +12,16 @@
 //! is listed nowhere and refused at launch with the sentence that names its
 //! section.
 //!
+//! An agent the catalog reviewed has no row built in: its row is a
+//! [`CatalogRow`], owned and made from the entry and target it was installed
+//! from, and held under the agent route of its key. It is spoken to over the
+//! Agent Client Protocol as its entry's profile says, reaches only the hosts
+//! that profile grants, and always ships, since a registry lists one only for
+//! an entry the catalog reviewed. [`Registry::row`] answers a built-in driver
+//! with its row and a catalog instance with the row listed for its key, each
+//! as an [`AgentRow`]. The registry this build ships lists no catalog row, so
+//! a catalog instance has none to run until one is listed.
+//!
 //! The rows agree with the configuration's driver list and with the
 //! content-use routes by a test, because neither can be derived from the
 //! other: a driver is a word the user writes, and its route is asked about in
@@ -20,11 +30,16 @@
 use crucible_config::Driver;
 use crucible_execution::{Failure, Text};
 use crucible_external_harnesses::Dialect;
-use crucible_external_harnesses::acp::Allowing;
+use crucible_external_harnesses::acp::{Acp, Allowing};
 use crucible_external_harnesses::antigravity::{Antigravity, Manifest};
+use crucible_external_harnesses::catalog::{CatalogProfile, Entry, Target, Unprofiled};
 use crucible_external_harnesses::claude::Claude;
 use crucible_external_harnesses::release::Pin;
+use crucible_sandbox::SandboxDomainPattern;
 use crucible_tools::Mode;
+use crucible_types::AgentKey;
+
+use crate::content_use::agent_route;
 
 /// The most rows a registry holds, which is more agents than any release has
 /// offered at once.
@@ -77,31 +92,188 @@ impl Row {
     }
 }
 
+/// The row of an agent the catalog reviewed, made from its entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogRow {
+    /// The agent, as its instance names it.
+    key: AgentKey,
+    /// The content-use route a launch of it is held under.
+    route: String,
+    /// How it is run, as its entry reviewed it.
+    profile: CatalogProfile,
+}
+
+impl CatalogRow {
+    /// The row of the agent `entry` reviewed, installed from its `target`.
+    ///
+    /// # Errors
+    ///
+    /// [`Unprofiled`] where the entry gives no profile to run it under.
+    pub fn new(entry: &Entry, target: &Target) -> Result<Self, Unprofiled> {
+        Ok(Self {
+            key: entry.key.clone(),
+            route: agent_route(entry.key.as_str()),
+            profile: CatalogProfile::from_entry(entry, target)?,
+        })
+    }
+
+    /// The agent, as its instance names it.
+    #[must_use]
+    pub const fn key(&self) -> &AgentKey {
+        &self.key
+    }
+
+    /// The content-use route a launch of it is held under.
+    #[must_use]
+    pub fn route(&self) -> &str {
+        &self.route
+    }
+
+    /// Its wire, fresh for a run, as it is spoken in the conversation's
+    /// `mode`: its entry's profile, answering yes by itself to what the mode
+    /// allows.
+    #[must_use]
+    pub fn dialect(&self, mode: Mode) -> Box<dyn Dialect> {
+        Box::new(Acp::cataloged(self.profile.clone(), allowing(mode)))
+    }
+}
+
+/// An agent's row: one built in, or one made from the catalog entry of the
+/// agent an instance names.
+#[derive(Debug, Clone)]
+pub enum AgentRow {
+    /// A row this build ships for its driver.
+    Built(&'static Row),
+    /// The row of an agent the catalog reviewed.
+    Catalog(CatalogRow),
+}
+
+impl AgentRow {
+    /// Which driver its instance names.
+    #[must_use]
+    pub const fn driver(&self) -> Driver {
+        match self {
+            Self::Built(row) => row.driver,
+            Self::Catalog(_) => Driver::Catalog,
+        }
+    }
+
+    /// The content-use route a launch of it is held under.
+    #[must_use]
+    pub fn route(&self) -> &str {
+        match self {
+            Self::Built(row) => row.route,
+            Self::Catalog(row) => row.route(),
+        }
+    }
+
+    /// Its wire, fresh for a run, as it is spoken in the conversation's
+    /// `mode`.
+    ///
+    /// # Errors
+    ///
+    /// Why the agent does not run in `mode`.
+    pub fn dialect(&self, mode: Mode) -> Result<Box<dyn Dialect>, Failure> {
+        match self {
+            Self::Built(row) => (row.dialect)(mode),
+            Self::Catalog(row) => Ok(row.dialect(mode)),
+        }
+    }
+
+    /// The hosts it must reach, which its sandbox lets it.
+    #[must_use]
+    pub fn reaches(&self) -> Vec<&str> {
+        match self {
+            Self::Built(row) => row.reaches.to_vec(),
+            Self::Catalog(row) => row
+                .profile
+                .reach()
+                .iter()
+                .map(SandboxDomainPattern::as_str)
+                .collect(),
+        }
+    }
+
+    /// What it is called where nothing warns about its route: its driver's
+    /// word, or a catalog agent's key.
+    #[must_use]
+    pub fn named(&self) -> &str {
+        match self {
+            Self::Built(row) => row.driver.name(),
+            Self::Catalog(row) => row.key.as_str(),
+        }
+    }
+
+    /// The command a refusal says it is run as: the same in every mode, and
+    /// asking is a mode every row runs in. A catalog agent is looked up as
+    /// nothing, since it runs from the path its instance names, and is called
+    /// by its key.
+    #[must_use]
+    pub fn command(&self) -> &str {
+        match self {
+            Self::Built(row) => (row.dialect)(Mode::default())
+                .map_or(row.driver.name(), |dialect| dialect.program()),
+            Self::Catalog(row) => row.key.as_str(),
+        }
+    }
+}
+
 /// The agents one build can run.
 #[derive(Debug, Clone, Copy)]
-pub struct Registry(&'static [Row]);
+pub struct Registry {
+    /// The rows built in.
+    rows: &'static [Row],
+    /// The rows of the agents the catalog reviewed that it lists.
+    catalog: &'static [CatalogRow],
+}
 
 impl Registry {
-    /// `rows`, of which at most [`ROWS`] are read.
+    /// `rows`, of which at most [`ROWS`] are read, and no catalog row.
     #[must_use]
     pub const fn new(rows: &'static [Row]) -> Self {
-        Self(rows)
+        Self { rows, catalog: &[] }
     }
 
-    /// Every row, whether or not it ships.
+    /// The same registry, listing `catalog` as the rows of the agents the
+    /// catalog reviewed.
+    #[must_use]
+    pub const fn cataloging(self, catalog: &'static [CatalogRow]) -> Self {
+        Self { catalog, ..self }
+    }
+
+    /// Every row built in, whether or not it ships.
     pub fn all(&self) -> impl Iterator<Item = &'static Row> {
-        self.0.iter().take(ROWS)
+        self.rows.iter().take(ROWS)
     }
 
-    /// The rows this release lets run, which are the ones a chooser lists.
+    /// The rows built in that this release lets run, which are the ones a
+    /// chooser lists.
     pub fn shipping(&self) -> impl Iterator<Item = &'static Row> {
         self.all().filter(|row| row.shipping)
     }
 
-    /// The row for `driver`, shipping or not.
+    /// The row built in for `driver`, shipping or not.
     #[must_use]
-    pub fn row(&self, driver: Driver) -> Option<&'static Row> {
+    pub fn built(&self, driver: Driver) -> Option<&'static Row> {
         self.all().find(|row| row.driver == driver)
+    }
+
+    /// The row of an instance of `driver` naming the catalog agent `agent`:
+    /// a built-in driver's own, shipping or not, and for a catalog instance
+    /// the row listed for its key; none for a catalog instance naming no key
+    /// or one not listed.
+    #[must_use]
+    pub fn row(&self, driver: Driver, agent: Option<&AgentKey>) -> Option<AgentRow> {
+        match (driver, agent) {
+            (Driver::Catalog, Some(agent)) => self
+                .catalog
+                .iter()
+                .find(|row| row.key == *agent)
+                .cloned()
+                .map(AgentRow::Catalog),
+            (Driver::Catalog, None) => None,
+            (Driver::Claude | Driver::Antigravity, _) => self.built(driver).map(AgentRow::Built),
+        }
     }
 }
 
@@ -136,7 +308,7 @@ pub(crate) const ANTIGRAVITY: Row = Row {
     driver: Driver::Antigravity,
     // The agent asks about every action itself, and what the
     // conversation's mode allows is answered yes without asking.
-    dialect: |mode| Ok(Box::new(Antigravity::allowing(antigravity_allowing(mode)))),
+    dialect: |mode| Ok(Box::new(Antigravity::allowing(allowing(mode)))),
     profile_key: "profileDir",
     route: "agent:antigravity",
     docs_section: "antigravity",
@@ -153,8 +325,9 @@ pub(crate) const ANTIGRAVITY: Row = Row {
     shipping: true,
 };
 
-/// What Antigravity answers yes to by itself in the conversation's `mode`.
-const fn antigravity_allowing(mode: Mode) -> Allowing {
+/// What an agent spoken to over the Agent Client Protocol, Antigravity or one
+/// the catalog reviewed, answers yes to by itself in the conversation's `mode`.
+const fn allowing(mode: Mode) -> Allowing {
     match mode {
         Mode::Ask => Allowing::Nothing,
         Mode::AllowEdits => Allowing::Edits,

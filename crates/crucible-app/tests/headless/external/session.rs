@@ -29,7 +29,7 @@ use crate::{Failed, Script, Tree};
 /// Antigravity's own row, reaching no host, as [`row`] is Claude Code's.
 fn antigravity_row() -> Result<&'static Row, Failed> {
     let shipped = REGISTRY
-        .row(Driver::Antigravity)
+        .built(Driver::Antigravity)
         .ok_or("Antigravity has no row")?;
     Ok(Box::leak(Box::new(Row {
         reaches: &[],
