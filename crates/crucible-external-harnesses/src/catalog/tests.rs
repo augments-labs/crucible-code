@@ -2606,9 +2606,13 @@ fn an_entry_is_read_unsigned_by_the_reader_that_believes_a_signed_one() {
 /// does not age.
 #[test]
 fn a_catalog_the_intake_renders_verifies_under_the_key_that_signed_it() {
-    let rendered: &[u8] = include_bytes!("../../../../tests/fixtures/agent-catalog/render/catalog.json");
+    let rendered: &[u8] =
+        include_bytes!("../../../../tests/fixtures/agent-catalog/render/catalog.json");
     let document: Value = serde_json::from_slice(rendered).expect("rendered JSON");
-    let signed_at = document["signed_at"].as_u64().expect("a signing time");
+    let signed_at = document
+        .get("signed_at")
+        .and_then(Value::as_u64)
+        .expect("a signing time");
 
     let signed = signed(rendered);
     assert_eq!(
@@ -2627,7 +2631,11 @@ fn a_catalog_the_intake_renders_verifies_under_the_key_that_signed_it() {
     assert_eq!(catalog.serial(), 8);
     assert_eq!(catalog.signed_at(), at(signed_at));
     assert_eq!(catalog.expires(), at(signed_at) + 30 * DAY);
-    let keys: Vec<&str> = catalog.entries().iter().map(|entry| entry.key.as_str()).collect();
+    let keys: Vec<&str> = catalog
+        .entries()
+        .iter()
+        .map(|entry| entry.key.as_str())
+        .collect();
     assert_eq!(keys, ["big", "fake"]);
     let revoked: Vec<(&str, &str)> = catalog
         .revoked()
@@ -2636,8 +2644,14 @@ fn a_catalog_the_intake_renders_verifies_under_the_key_that_signed_it() {
         .collect();
     assert_eq!(revoked, [("antigravity", "1.2.0"), ("fake", "0.9.0")]);
     assert!(
-        Catalog::verify(&signed.index, &signed.signature, &signed.keys, Held(9), at(signed_at))
-            .is_err(),
+        Catalog::verify(
+            &signed.index,
+            &signed.signature,
+            &signed.keys,
+            Held(9),
+            at(signed_at)
+        )
+        .is_err(),
         "a catalog older than the one held is not taken"
     );
 }
