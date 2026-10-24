@@ -320,9 +320,14 @@ pub fn unpack_check(entry: &Path, artifact: &Path, out: &Path) -> Result<String,
         .as_ref()
         .map_or(described.size, |asset| asset.size);
     let bytes = bounded(artifact, pinned)?;
-    let mut made = fs::DirBuilder::new();
+    let made = fs::DirBuilder::new();
+    // Only its owner may reach it, where the platform says who may.
     #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut made, 0o700);
+    let made = {
+        let mut made = made;
+        std::os::unix::fs::DirBuilderExt::mode(&mut made, 0o700);
+        made
+    };
     made.create(out).map_err(|source| Unchecked::Out {
         path: out.to_owned(),
         source,

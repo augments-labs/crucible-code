@@ -1393,9 +1393,13 @@ fn created(path: &Path, exec: bool) -> io::Result<fs::File> {
 /// A new directory at `path` only its owner may reach; whatever is made of the
 /// staged tree once it is committed widens that.
 fn owner_only(path: &Path) -> io::Result<()> {
-    let mut builder = fs::DirBuilder::new();
+    let builder = fs::DirBuilder::new();
     #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    let builder = {
+        let mut builder = builder;
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        builder
+    };
     builder.create(path)
 }
 
