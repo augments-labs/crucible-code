@@ -89,7 +89,12 @@ the one the data records for a file-list asset, or whose hash is an artifact's
 and whose entry carries no `licence_gate` record of `{"passed": true}`. An
 artifact copy is a redistribution, so a copy of any artifact, a mirror
 included, waits for that record; a file-list asset is the catalog's own data
-and needs none. An empty directory passes, since nothing is then uploaded.
+and needs none. A hash the data names both ways answers to both rules. A copy
+also needs its artifact's `mirror_licence` mark. An empty directory passes,
+since nothing is then uploaded. An asset is opened without following a link,
+but the check cannot hold a directory still: the publishing job checks and
+uploads from a directory the untrusted job cannot write once the check has
+begun, or the check proves nothing about what is uploaded.
 """
 
 from __future__ import annotations
@@ -441,7 +446,15 @@ def hashed(path: pathlib.Path) -> tuple[str, int]:
         raise Dropped("could not be hashed: the download is not a regular file")
     sha = hashlib.sha256()
     size = 0
-    with open(path, "rb") as file:
+    try:
+        # Opened without following a link, so a path swapped for one after the
+        # check above reads nothing.
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        raise Dropped("could not be hashed: the download is not a regular file") from None
+    with os.fdopen(descriptor, "rb") as file:
+        if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
+            raise Dropped("could not be hashed: the download is not a regular file")
         while chunk := file.read(1 << 20):
             spend(len(chunk))
             size += len(chunk)
@@ -1071,8 +1084,9 @@ def render(arguments: argparse.Namespace) -> int:
 
 def published(merged: dict) -> tuple[dict[str, int], dict[str, bool]]:
     """What the merged data lets the catalog release hold, by hash: each
-    file-list asset with its size, and each artifact with whether its
-    licence-gate record passed."""
+    file-list asset with its size, and each artifact with whether it may be
+    copied (a mirror mark and a passing licence-gate record, on every entry
+    that holds those bytes)."""
     listings: dict[str, int] = {}
     artifacts: dict[str, bool] = {}
     try:
@@ -1081,7 +1095,11 @@ def published(merged: dict) -> tuple[dict[str, int], dict[str, bool]]:
                 for artifact in target.get("artifacts", []):
                     record = artifact.get("licence_gate")
                     sha = digest(artifact.get("sha256"), "an artifact's sha256")
-                    passed = isinstance(record, dict) and record.get("passed") is True
+                    passed = (
+                        isinstance(record, dict)
+                        and record.get("passed") is True
+                        and isinstance(artifact.get("mirror_licence"), str)
+                    )
                     # The same bytes under two entries pass only where both do.
                     artifacts[sha] = passed and artifacts.get(sha, True)
                     files = artifact.get("files")
@@ -1115,14 +1133,16 @@ def publish_check(arguments: argparse.Namespace) -> int:
             raise Refused(f"asset {name} {failed}") from None
         if actual != place.name:
             raise Refused(f"asset {name} is not the bytes its name claims")
-        if place.name in listings:
-            if size != listings[place.name]:
-                raise Refused(f"asset {name} is not the size the merged data records for it")
-        elif place.name in artifacts:
-            if not artifacts[place.name]:
-                raise Refused(f"asset {name} is a copy of an artifact whose entry has no passing licence-gate record")
-        else:
+        if place.name not in listings and place.name not in artifacts:
             raise Refused(f"asset {name} is not in the merged data")
+        # Independent: a hash the data names both ways answers to both.
+        if place.name in listings and size != listings[place.name]:
+            raise Refused(f"asset {name} is not the size the merged data records for it")
+        if place.name in artifacts and not artifacts[place.name]:
+            raise Refused(
+                f"asset {name} is a copy of an artifact whose entry lacks a mirror mark "
+                "or a passing licence-gate record"
+            )
     return 0
 
 

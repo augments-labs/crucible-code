@@ -686,6 +686,7 @@ def check_publish(scratch: pathlib.Path) -> None:
     copied = b"the bytes of a mirror copy"
     copy_hash = hashlib.sha256(copied).hexdigest()
     artifact["sha256"] = copy_hash
+    artifact["mirror_licence"] = "MIT"
 
     def checked(name: str, data: dict, *assets: tuple[str, bytes]) -> subprocess.CompletedProcess[str]:
         held = scratch / f"publish-{name}"
@@ -728,6 +729,26 @@ def check_publish(scratch: pathlib.Path) -> None:
     assert ran.returncode == 0, f"a gated copy was refused:\n{ran.stdout}{ran.stderr}"
     # The record vouches for the bytes the data pins, so they must hash to it.
     refuses(checked("gated-forged", gated, (copy_hash, b"other bytes")), "not the bytes")
+    # An artifact copy needs the mirror mark as well as the record.
+    unmarked = copy.deepcopy(gated)
+    del unmarked["entries"][merged["entries"].index(big)]["targets"][0]["artifacts"][0]["mirror_licence"]
+    refuses(checked("unmarked", unmarked, (copy_hash, copied)), "mirror")
+    # One hash that is both a file list and an artifact is held to both: the
+    # file-list rule must not let it past the gate.
+    dual = copy.deepcopy(merged)
+    held = dual["entries"][merged["entries"].index(big)]["targets"][0]["artifacts"][0]
+    held["files"] = {"sha256": copy_hash, "size": len(copied)}
+    refuses(checked("dual", dual, (copy_hash, copied)), "licence-gate")
+    held["licence_gate"] = {"passed": True}
+    ran = checked("dual-gated", dual, (copy_hash, copied))
+    assert ran.returncode == 0, f"a gated dual hash was refused:\n{ran.stdout}{ran.stderr}"
+    # An asset that is a link is refused, not followed.
+    linked = scratch / "publish-linked"
+    (linked / "assets").mkdir(parents=True)
+    (linked / "elsewhere").write_bytes(bytes_of_listing)
+    (linked / "assets" / listed).symlink_to(linked / "elsewhere")
+    (linked / "merged.json").write_text(json.dumps(merged))
+    refuses(intake("publish-check", "--merged", linked / "merged.json", "--assets", linked / "assets"), "regular file")
     # Merged data that is not review data is refused, not read as holding nothing.
     refuses(checked("shapeless", {"entries": "none"}), "not review data")
 
