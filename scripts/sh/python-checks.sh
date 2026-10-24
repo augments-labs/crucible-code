@@ -29,6 +29,12 @@ if ! PYTHONDONTWRITEBYTECODE=1 scripts/python/validate-task-campaign.py; then
     printf '    FAIL task campaign reports did not preserve usage, cost and comparison facts\n'
     failed=1
 fi
+# Isolated mode, as the intake runs over downloaded data: nothing beside the
+# script or in the environment chooses what it imports.
+if ! PYTHONDONTWRITEBYTECODE=1 python3 -I scripts/python/validate-agent-catalog-intake.py; then
+    printf '    FAIL the agent catalog intake did not turn its fixtures into the review data expected\n'
+    failed=1
+fi
 if ! scripts/python/task-campaign.py validate --suite benchmarks/coding-tasks/suite.json; then
     printf '    FAIL the coding-task campaign suite is not self-contained and valid\n'
     failed=1

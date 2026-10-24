@@ -2599,6 +2599,63 @@ fn an_entry_is_read_unsigned_by_the_reader_that_believes_a_signed_one() {
     assert!(refused.to_string().contains("env"), "{refused}");
 }
 
+/// The catalog the intake renders from merged review data is signed here as
+/// the publishing job signs it, and the reader believes it: at the moment it
+/// was signed it is current, its serial is the one after the catalog before it,
+/// and it lives for thirty days. The clock is the catalog's own, so the test
+/// does not age.
+#[test]
+fn a_catalog_the_intake_renders_verifies_under_the_key_that_signed_it() {
+    let rendered: &[u8] =
+        include_bytes!("../../../../tests/fixtures/agent-catalog/render/catalog.json");
+    let document: Value = serde_json::from_slice(rendered).expect("rendered JSON");
+    let signed_at = document
+        .get("signed_at")
+        .and_then(Value::as_u64)
+        .expect("a signing time");
+
+    let signed = signed(rendered);
+    assert_eq!(
+        signed.index, rendered,
+        "dated by the intake, so the signer adds nothing"
+    );
+    let catalog = Catalog::verify(
+        &signed.index,
+        &signed.signature,
+        &signed.keys,
+        Held(7),
+        at(signed_at),
+    )
+    .expect("a rendered catalog verifies");
+
+    assert_eq!(catalog.serial(), 8);
+    assert_eq!(catalog.signed_at(), at(signed_at));
+    assert_eq!(catalog.expires(), at(signed_at) + 30 * DAY);
+    let keys: Vec<&str> = catalog
+        .entries()
+        .iter()
+        .map(|entry| entry.key.as_str())
+        .collect();
+    assert_eq!(keys, ["big", "fake"]);
+    let revoked: Vec<(&str, &str)> = catalog
+        .revoked()
+        .iter()
+        .map(|revoked| (revoked.key.as_str(), &*revoked.version))
+        .collect();
+    assert_eq!(revoked, [("antigravity", "1.2.0"), ("fake", "0.9.0")]);
+    assert!(
+        Catalog::verify(
+            &signed.index,
+            &signed.signature,
+            &signed.keys,
+            Held(9),
+            at(signed_at)
+        )
+        .is_err(),
+        "a catalog older than the one held is not taken"
+    );
+}
+
 #[test]
 fn an_offer_carries_its_entry_and_the_serial_of_the_catalog_that_listed_it() {
     let owned = Owned::new("catalog-offers");
