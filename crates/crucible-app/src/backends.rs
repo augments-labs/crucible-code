@@ -329,8 +329,16 @@ pub(crate) const ANTIGRAVITY: Row = Row {
     // The agent asks about every action itself, and what the
     // conversation's mode allows is answered yes without asking.
     dialect: |mode, trust, program| {
-        let offered =
-            antigravity::started(trust.map_or_else(Vec::new, antigravity::offered), program);
+        let offered = trust.map_or_else(Vec::new, antigravity::offered);
+        if let Some(version) = antigravity::unoffered(&offered, program) {
+            let listed: Vec<&str> = offered.iter().map(|pin| &*pin.version).collect();
+            return Err(Failure::new(&format!(
+                "Version {version} of the agent, where this program is kept, is a release the \
+                 catalog does not offer; it offers {}.",
+                listed.join(", ")
+            )));
+        }
+        let offered = antigravity::started(offered, program);
         Ok(Box::new(Antigravity::allowing(allowing(mode), &offered)))
     },
     profile_key: "profileDir",

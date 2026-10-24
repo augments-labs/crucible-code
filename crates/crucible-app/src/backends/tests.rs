@@ -414,6 +414,24 @@ fn a_row_says_its_releases_are_the_catalogs_exactly_when_it_installs_one() {
     }
 }
 
+/// A program kept in the directory of a version the catalog does not offer is
+/// refused saying so, rather than that no release is offered.
+#[test]
+fn an_antigravity_kept_as_a_version_not_offered_is_refused_naming_it() {
+    let sample = Sample::new("backends-antigravity-unoffered");
+    let trust = trusting(&sample, 2, &[antigravity("1.4.1", &[])]);
+    let program = Path::new("/home/me/.crucible/programs/antigravity/1.2.0/agy_acp_server.par");
+
+    let refused = (ANTIGRAVITY.dialect)(Mode::Ask, Some(&trust), Some(program));
+
+    let Err(failure) = refused else {
+        panic!("a dialect was made");
+    };
+    let said = failure.reason().as_str();
+    assert!(said.contains("1.2.0") && said.contains("1.4.1"), "{said}");
+    assert!(said.contains("does not offer"), "{said}");
+}
+
 /// Every mode a conversation runs in, in the order a cycle visits them.
 fn every_mode() -> Vec<Mode> {
     let mut modes = vec![Mode::default()];

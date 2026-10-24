@@ -265,7 +265,7 @@ fn an_agent_with_no_pinned_release_is_refused_by_name() {
     assert!(
         refused
             .to_string()
-            .starts_with("this build of crucible installs no release of claude on"),
+            .starts_with("the catalog offers no release of claude to install on"),
         "{refused}"
     );
     assert_eq!(executable(&sample.home(), &row, &trust_of(&sample)), None);

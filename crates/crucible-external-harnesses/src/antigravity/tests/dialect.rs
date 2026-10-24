@@ -299,3 +299,26 @@ fn the_release_started_is_the_one_its_directory_names() {
     let acts = own.heard(&answered_as("1.4.1")).unwrap();
     assert!(matches!(acts.as_slice(), [Act::Send(_)]), "{acts:?}");
 }
+
+/// A program kept in the directory of a version the catalog does not offer is
+/// told apart from nothing being offered, and named by that version.
+#[test]
+fn a_program_kept_as_a_version_not_offered_is_named() {
+    let offers = || vec![offering("1.4.1", &[]), offering("1.3.0", &[])];
+
+    let refused = crate::antigravity::unoffered(&offers(), Some(&kept_at("1.2.0")));
+
+    assert_eq!(refused.as_deref(), Some("1.2.0"));
+    assert_eq!(
+        crate::antigravity::unoffered(&offers(), Some(&kept_at("1.3.0"))),
+        None
+    );
+    assert_eq!(
+        crate::antigravity::unoffered(&offers(), Some(Path::new("/usr/bin/antigravity"))),
+        None
+    );
+    assert_eq!(
+        crate::antigravity::unoffered(&[], Some(&kept_at("1.2.0"))),
+        None
+    );
+}

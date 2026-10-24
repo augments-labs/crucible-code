@@ -65,9 +65,10 @@ pub struct Installed {
 /// Why an install put nothing in place.
 #[derive(Debug, thiserror::Error)]
 pub enum Uninstalled {
-    /// This build pins no release of the agent for this platform.
+    /// The catalog offers no release of the agent that can be installed for
+    /// this platform.
     #[error(
-        "this build of crucible installs no release of {agent} on {} for {}",
+        "the catalog offers no release of {agent} to install on {} for {}",
         std::env::consts::OS,
         std::env::consts::ARCH
     )]
