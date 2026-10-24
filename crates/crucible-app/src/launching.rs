@@ -26,6 +26,14 @@
 //! through the [`Relaunch::refusal`] of its [`Runs`], in the words the launch
 //! would be refused in, so nobody is asked to agree to a launch that is
 //! refused whatever the answer.
+//!
+//! The releases of a built-in agent that the catalog offers are the trust
+//! state's as it is at the time of a start: a [`Launcher`], and the [`Steps`]
+//! and [`Runs`] made from one, are given the directory it is kept under, and
+//! load it where a start decides, so a catalog taken in or a release revoked
+//! since the agent was selected is the one the start is held to. What an agent
+//! built in is admitted as, and started with, is what those releases say; with
+//! the trust state unusable it is admitted as none.
 //! A probe and an account step are starts like a turn's and go through the
 //! same gates, each under a hold of its own. An account step the dialect
 //! speaks over the program's own wire is bounded: a version or status within
@@ -84,10 +92,11 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use crucible_config::{Driver, ExternalAgent, Serves};
 use crucible_execution::{Backend, Capabilities, Capability, Failure, SessionRef, Text};
+use crucible_external_harnesses::catalog::Trust;
 use crucible_external_harnesses::{
     Account, Control, Dialect, Discovery, Host, Launch, PREPARING, Program, Reading, Refusal,
     Request, Shape,
@@ -304,7 +313,7 @@ impl Agent {
     /// run.
     pub fn startable(&self, mode: Mode, instance: &str) -> Result<(), String> {
         self.row
-            .dialect(mode)
+            .dialect(mode, None)
             .map_err(|refused| refused.to_string())?;
         match &self.discovery {
             Discovery::Found(_) => Ok(()),
@@ -319,7 +328,8 @@ impl Agent {
     /// Its program, where nothing refuses a start before any process: its row
     /// is shipped, and its program was found. This is the one place those two
     /// are decided, in that order, so that a question put before a start and
-    /// the start itself refuse the same launch for the same reason.
+    /// the start itself refuse the same launch for the same reason. What the
+    /// refusal says to do about a program not found is what `trust` offers.
     ///
     /// # Errors
     ///
@@ -327,7 +337,7 @@ impl Agent {
     /// [`Unlaunched::NotInstalled`] for a program not found or not
     /// executable, else [`Unlaunched::Unknown`] where its route has no
     /// sentences to say what to do.
-    pub fn program(&self, consent: &Consent) -> Result<&Program, Unlaunched> {
+    pub fn program(&self, consent: &Consent, trust: &Trust) -> Result<&Program, Unlaunched> {
         let row = &self.row;
         let shown = consent
             .routes()
@@ -344,7 +354,7 @@ impl Agent {
         match &self.discovery {
             Discovery::Found(program) => Ok(program),
             missing @ (Discovery::Missing | Discovery::NotExecutable(_)) => {
-                Err(unfound(row, missing, shown).map_or_else(
+                Err(unfound(row, missing, shown, trust).map_or_else(
                     || Unlaunched::Unknown(row.route().to_owned()),
                     Unlaunched::NotInstalled,
                 ))
@@ -365,12 +375,19 @@ impl Agent {
 }
 
 /// What a refusal over `discovery` says of `row`'s agent called `shown`, as the
-/// sentence and what to do next: for an agent built in whose release this
-/// build installs, that what to do is to run the command that installs it.
-/// Nothing for a program that was found.
-pub(crate) fn unfound(row: &AgentRow, discovery: &Discovery, shown: &str) -> Option<[String; 2]> {
+/// sentence and what to do next: for an agent built in whose release `trust`
+/// offers, that what to do is to run the command that installs it. Nothing for
+/// a program that was found.
+pub(crate) fn unfound(
+    row: &AgentRow,
+    discovery: &Discovery,
+    shown: &str,
+    trust: &Trust,
+) -> Option<[String; 2]> {
     match row {
-        AgentRow::Built(built) => installing::refusal(built, discovery, shown, &row.command()),
+        AgentRow::Built(built) => {
+            installing::refusal(built, discovery, shown, &row.command(), trust)
+        }
         AgentRow::Catalog(_) => discovery.refusal(shown, &row.command()),
     }
 }
@@ -644,6 +661,9 @@ pub struct Launcher<'a> {
     conversation: &'a SandboxPolicy,
     /// The content-use answers, which a launch is held by.
     consent: &'a Consent,
+    /// The directory the catalog's trust state is kept under, which what a
+    /// launch is told of the releases on offer is read from as it is then.
+    state: &'a Path,
 }
 
 impl std::fmt::Debug for Launcher<'_> {
@@ -654,19 +674,22 @@ impl std::fmt::Debug for Launcher<'_> {
 
 impl<'a> Launcher<'a> {
     /// Starts children under `service` on `runtime`, each under a policy
-    /// widened from `conversation` and held by `consent`.
+    /// widened from `conversation` and held by `consent`, told of the releases
+    /// on offer by the trust state kept under `state`.
     #[must_use]
     pub fn new(
         service: Arc<dyn SandboxService>,
         runtime: Handle,
         conversation: &'a SandboxPolicy,
         consent: &'a Consent,
+        state: &'a Path,
     ) -> Self {
         Self {
             service,
             runtime,
             conversation,
             consent,
+            state,
         }
     }
 
@@ -735,7 +758,8 @@ impl<'a> Launcher<'a> {
         life: Life<'_>,
     ) -> Result<Host, Unlaunched> {
         let row = &agent.row;
-        let program = agent.program(self.consent)?.clone();
+        let trust = Trust::load(self.state, SystemTime::now());
+        let program = agent.program(self.consent, &trust)?.clone();
         let held = content_use::held(self.consent, row.route()).map_err(|unheld| match unheld {
             Unheld::Asks(warned) => Unlaunched::Asks(warned),
             Unheld::Unknown => Unlaunched::Unknown(row.route().to_owned()),
@@ -837,6 +861,8 @@ pub struct Runs {
     enablement: Arc<SandboxEnablement>,
     /// The content-use answers, which every launch is held by.
     consent: Consent,
+    /// The directory the catalog's trust state is kept under.
+    state: PathBuf,
     /// The agent launched.
     agent: Agent,
     /// The `externalAgents` entry it is.
@@ -873,6 +899,7 @@ impl Runs {
             policy: launcher.conversation.clone(),
             enablement,
             consent: launcher.consent.clone(),
+            state: launcher.state.to_owned(),
             agent,
             instance: instance.into(),
             control: controls.of(instance),
@@ -880,9 +907,19 @@ impl Runs {
     }
 }
 
+impl Runs {
+    /// The agent's wire for a run in `mode`, admitting it as the releases on
+    /// offer as they are now, not as they were when the agent was selected: a
+    /// release installed since is one to be run.
+    fn dialect(&self, mode: Mode) -> Result<Box<dyn Dialect>, Failure> {
+        let trust = Trust::load(&self.state, SystemTime::now());
+        self.agent.row().dialect(mode, Some(&trust))
+    }
+}
+
 impl Relaunch for Runs {
     fn admits(&self, mode: Mode) -> Result<(), Failure> {
-        self.agent.row().dialect(mode).map(drop)
+        self.agent.row().dialect(mode, None).map(drop)
     }
 
     fn model(&self) -> Option<&str> {
@@ -894,8 +931,9 @@ impl Relaunch for Runs {
     }
 
     fn refusal(&self) -> Option<Failure> {
+        let trust = Trust::load(&self.state, SystemTime::now());
         self.agent
-            .program(&self.consent)
+            .program(&self.consent, &trust)
             .err()
             .map(|why| refused(&why))
     }
@@ -908,7 +946,7 @@ impl Relaunch for Runs {
         resume: Option<&'a ExternalRef>,
     ) -> BoxFuture<'a, Result<Box<dyn Backend>, Failure>> {
         Box::pin(async move {
-            let mut dialect = self.agent.row().dialect(mode)?;
+            let mut dialect = self.dialect(mode)?;
             let control = self
                 .control
                 .as_ref()
@@ -922,6 +960,7 @@ impl Relaunch for Runs {
                 self.runtime.clone(),
                 &policy,
                 &self.consent,
+                &self.state,
             )
             .launch(
                 &agent,
@@ -963,6 +1002,8 @@ pub struct Steps {
     enablement: Arc<SandboxEnablement>,
     /// The content-use answers, which every step is held by.
     consent: Consent,
+    /// The directory the catalog's trust state is kept under.
+    state: PathBuf,
     /// The installed agents a configured entry is read against.
     registry: &'static Registry,
     /// The `PATH` an agent's program is looked for on.
@@ -996,6 +1037,7 @@ impl Steps {
             policy: launcher.conversation.clone(),
             enablement,
             consent: launcher.consent.clone(),
+            state: launcher.state.to_owned(),
             registry,
             path,
             controls: Controls::default(),
@@ -1077,6 +1119,7 @@ impl Steps {
             policy: self.policy.clone(),
             enablement: Arc::clone(&self.enablement),
             consent: self.consent.clone(),
+            state: self.state.clone(),
             agent,
             instance: instance.into(),
             control: self.controls.of(instance),
@@ -1109,7 +1152,7 @@ impl Steps {
             model: None,
             effort: None,
         }
-        .program(&self.consent)
+        .program(&self.consent, &Trust::load(&self.state, SystemTime::now()))
         .err()
     }
 
@@ -1123,10 +1166,13 @@ impl Steps {
         }) else {
             return unreadable("this release has no launch for the agent's driver");
         };
-        let mut dialect = match chosen.row.dialect(Mode::default()) {
+        // The releases on offer as they are now, which the agent is admitted as.
+        let trust = Trust::load(&self.state, SystemTime::now());
+        let mut dialect = match chosen.row.dialect(Mode::default(), Some(&trust)) {
             Ok(dialect) => dialect,
             Err(refused) => return Reading::Unreadable(refused),
         };
+        drop(trust);
         if self.controls.unstopped(agent.name()) {
             return unreadable(&Refusal::Unstopped.to_string());
         }
@@ -1139,6 +1185,7 @@ impl Steps {
             self.runtime.clone(),
             &policy,
             &self.consent,
+            &self.state,
         )
         .account(&chosen, &control, dialect.as_mut(), step, &|_| {})
         .await

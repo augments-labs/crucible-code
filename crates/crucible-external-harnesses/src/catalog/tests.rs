@@ -23,7 +23,7 @@ use super::{
     VERSION_BYTES, Variable,
 };
 use crate::acp::SignIn;
-use crate::antigravity::Manifest;
+use crate::antigravity::AGENT;
 use crate::tests::Owned;
 
 const DAY: Duration = Duration::from_hours(24);
@@ -1179,12 +1179,84 @@ fn offered(trust: &Trust, name: &str) -> Vec<String> {
         .collect()
 }
 
+/// The release 0.48 shipped for one platform: the archive it was published
+/// in, and the two files that archive holds, each as a name and a size.
+struct Shipped {
+    platform: &'static str,
+    url: &'static str,
+    sha256: &'static str,
+    archive: u64,
+    executable: (&'static str, u64),
+    companion: (&'static str, u64),
+}
+
+/// The version 0.48 shipped.
+const SHIPPED_VERSION: &str = "1.3.0";
+
+/// What 0.48 shipped, platform by platform, as its reviewed manifest
+/// recorded it: the oracle the snapshot built into the binary is held to.
+const SHIPPED: [Shipped; 6] = [
+    Shipped {
+        platform: "darwin-aarch64",
+        url: "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.3.0-darwin-arm64.zip",
+        sha256: "7cd97045f7b4fe81175a107cdf16f9c51484e3c78a5162cae415338bb6aa5b88",
+        archive: 111_456_962,
+        executable: ("agy_acp_server.par", 278_535_456),
+        companion: ("localharness_external", 118_611_392),
+    },
+    Shipped {
+        platform: "darwin-x86_64",
+        url: "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.3.0-darwin-x86_64.zip",
+        sha256: "bb23956b89984bf5d354af2c3725e6c57f0cc1b7228e77a0e91c9c2bc1d47646",
+        archive: 117_245_544,
+        executable: ("agy_acp_server.par", 282_840_688),
+        companion: ("localharness_external", 124_175_392),
+    },
+    Shipped {
+        platform: "linux-x86_64",
+        url: "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.3.0-linux-x86_64.zip",
+        sha256: "9fb60956af0a9d76220a4db91ca9ac88e2a2372ad68f985ab5fceace6b825b96",
+        archive: 333_727_150,
+        executable: ("agy_acp_server.par", 926_533_965),
+        companion: ("localharness_external", 130_388_040),
+    },
+    Shipped {
+        platform: "linux-aarch64",
+        url: "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.3.0-linux-arm64.zip",
+        sha256: "500b0bc0fb858e88f4df404d4cedf80bf9298c178291e39e383d6c50b111cbdf",
+        archive: 321_690_363,
+        executable: ("agy_acp_server.par", 930_848_992),
+        companion: ("localharness_external", 123_224_968),
+    },
+    Shipped {
+        platform: "windows-x86_64",
+        url: "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.3.0-windows-x86_64.zip",
+        sha256: "65215e0688681fa3116e048a9eab27ef53af1bbd6f3da3f1c52bd4911d8b17f9",
+        archive: 124_509_787,
+        executable: ("agy_acp_server.exe", 81_437_336),
+        companion: ("localharness_external.exe", 145_548_952),
+    },
+    Shipped {
+        platform: "windows-aarch64",
+        url: "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.3.0-windows-arm64.zip",
+        sha256: "4a0f469720e9beb9438a979f543fdbfad5022ebe0992c052c590bd78b3144ca3",
+        archive: 124_654_803,
+        executable: ("agy_acp_server.exe", 85_893_472),
+        companion: ("localharness_external.exe", 135_640_216),
+    },
+];
+
+/// What 0.48 shipped for the platform this build runs on, where it shipped one.
+fn shipped_here() -> Option<&'static Shipped> {
+    SHIPPED.iter().find(|shipped| shipped.platform == here())
+}
+
 /// `listed`, then what the snapshot offers of Antigravity on this platform.
 fn then_the_snapshot(listed: &[&str]) -> Vec<String> {
     listed
         .iter()
         .copied()
-        .chain(Manifest::REVIEWED.here().map(|pin| pin.version))
+        .chain(shipped_here().map(|_| SHIPPED_VERSION))
         .map(str::to_owned)
         .collect()
 }
@@ -1204,45 +1276,48 @@ fn a_platform_is_spelled_as_the_catalog_spells_it() {
 }
 
 #[test]
-fn the_interim_snapshot_agrees_with_the_reviewed_manifest_field_for_field() {
+fn the_interim_snapshot_holds_what_0_48_shipped_field_for_field() {
     let [entry] = SNAPSHOT.entries() else {
         panic!("one entry");
     };
 
-    assert_eq!(Manifest::REVIEWED.versions, [&*entry.version]);
     assert!(SNAPSHOT.serial() >= 1, "a serial below it can be refused");
     assert!(SNAPSHOT.revoked().is_empty());
-    assert_eq!(entry.key.as_str(), "antigravity");
-    assert_eq!(&*entry.version, "1.3.0");
+    assert_eq!(entry.key.as_str(), AGENT);
+    assert_eq!(&*entry.version, SHIPPED_VERSION);
     assert_eq!(entry.lock_revision, None);
     assert_eq!(entry.kind, Kind::Binary);
-    assert_eq!(&*entry.admits.name, Manifest::REVIEWED.name);
-    assert_eq!(&*entry.admits.version, "1.3.0");
-    assert_eq!(entry.targets.len(), Manifest::REVIEWED.platforms.len());
-    for (os, arch, pin) in Manifest::REVIEWED.platforms {
-        let spelled = platform(os, arch);
+    assert_eq!(&*entry.admits.name, "antigravity-acp");
+    assert_eq!(&*entry.admits.version, SHIPPED_VERSION);
+    assert_eq!(entry.targets.len(), SHIPPED.len());
+    for shipped in &SHIPPED {
+        let spelled = shipped.platform;
         let Some(target) = entry.targets.iter().find(|t| *t.platform == *spelled) else {
             panic!("a target for {spelled}");
         };
-        assert_eq!(&*target.cmd, pin.executable.name, "{spelled}");
+        assert_eq!(&*target.cmd, shipped.executable.0, "{spelled}");
         // 0.48 starts the agent on Linux with an empty user id, and with no
         // arguments of its own elsewhere.
         let arguments: Vec<&str> = target.args.iter().map(|argument| &**argument).collect();
-        let started_with: &[&str] = if *os == "linux" { &["--uid="] } else { &[] };
+        let started_with: &[&str] = if spelled.starts_with("linux-") {
+            &["--uid="]
+        } else {
+            &[]
+        };
         assert_eq!(arguments, started_with, "{spelled}");
         assert_eq!(target.launch, Launch::Binary, "{spelled}");
         let [archive] = target.artifacts.as_slice() else {
             panic!("one archive for {spelled}");
         };
-        assert_eq!(&*archive.url, pin.url, "{spelled}");
-        assert_eq!(&*archive.sha256, pin.sha256, "{spelled}");
-        assert_eq!(archive.size, pin.archive, "{spelled}");
+        assert_eq!(&*archive.url, shipped.url, "{spelled}");
+        assert_eq!(&*archive.sha256, shipped.sha256, "{spelled}");
+        assert_eq!(archive.size, shipped.archive, "{spelled}");
         assert_eq!(archive.format, Format::Zip, "{spelled}");
         assert_eq!(archive.mirror, None, "{spelled}");
         assert_eq!(archive.replaced_by, None, "{spelled}");
         assert_eq!(
             archive.unpacked,
-            pin.executable.bytes + pin.companion.bytes,
+            shipped.executable.1 + shipped.companion.1,
             "{spelled}"
         );
         let Files::Listed(files) = &archive.files else {
@@ -1258,12 +1333,60 @@ fn the_interim_snapshot_agrees_with_the_reviewed_manifest_field_for_field() {
         assert_eq!(
             listed,
             [
-                (pin.executable.name, Some((pin.executable.bytes, true))),
-                (pin.companion.name, Some((pin.companion.bytes, true))),
+                (shipped.executable.0, Some((shipped.executable.1, true))),
+                (shipped.companion.0, Some((shipped.companion.1, true))),
             ],
             "{spelled}"
         );
     }
+}
+
+/// The file a front end tells the user to repair or remove is the one the
+/// state is read from, whether or not it is there.
+#[test]
+fn the_state_file_is_named_by_the_trust_that_reads_it() {
+    let owned = Owned::new("trust-file");
+
+    let trust = Trust::load(&owned.0, taken());
+
+    assert_eq!(trust.file(), state_file(&owned));
+    assert!(!trust.file().exists());
+}
+
+/// A release offered says what the agent must answer with, as its entry does,
+/// and a catalog lists only what it lists for this platform.
+#[test]
+fn an_offered_release_carries_what_its_entry_says_the_agent_answers_with() {
+    let owned = Owned::new("trust-admits");
+    let mut held = trust(&owned, taken());
+    let catalog = listing(5, vec![release("antigravity", "1.4.1", None)], Vec::new());
+    believe(&mut held, &catalog, taken());
+
+    let pins = held.offered(&agent("antigravity"));
+
+    let admitted: Vec<(&str, &str)> = pins
+        .iter()
+        .map(|pin| (&*pin.admits.name, &*pin.admits.version))
+        .collect();
+    let versions: Vec<&str> = pins.iter().map(|pin| &*pin.version).collect();
+    assert_eq!(admitted.len(), versions.len());
+    for ((_, answers), listed) in admitted.iter().zip(&versions) {
+        assert_eq!(answers, listed);
+    }
+    assert_eq!(
+        admitted.first().map(|(name, _)| *name),
+        Some("goose"),
+        "the entry's own name, not the name of an agent this build knows"
+    );
+    assert_eq!(
+        SNAPSHOT
+            .releases(&agent("antigravity"))
+            .iter()
+            .map(|pin| pin.version.to_string())
+            .collect::<Vec<_>>(),
+        then_the_snapshot(&[])
+    );
+    assert!(SNAPSHOT.releases(&agent("goose")).is_empty());
 }
 
 #[test]
@@ -1273,19 +1396,19 @@ fn nothing_taken_in_offers_the_snapshots_release_and_touches_no_disk() {
     let trust = Trust::load(&owned.0, taken());
 
     let pins = trust.offered(&agent("antigravity"));
-    let reviewed = Manifest::REVIEWED.here();
+    let reviewed = shipped_here();
     assert_eq!(pins.len(), usize::from(reviewed.is_some()));
-    if let (Some(pin), Some(offered)) = (reviewed, pins.first()) {
+    if let (Some(shipped), Some(offered)) = (reviewed, pins.first()) {
         assert_eq!(offered.key.as_str(), "antigravity");
-        assert_eq!(&*offered.version, pin.version);
+        assert_eq!(&*offered.version, SHIPPED_VERSION);
         assert_eq!(offered.lock_revision, None);
-        assert_eq!(&*offered.target.cmd, pin.executable.name);
+        assert_eq!(&*offered.target.cmd, shipped.executable.0);
         let [archive] = offered.target.artifacts.as_slice() else {
             panic!("one archive");
         };
         assert_eq!(
             (&*archive.url, &*archive.sha256, archive.size),
-            (pin.url, pin.sha256, pin.archive)
+            (shipped.url, shipped.sha256, shipped.archive)
         );
     }
     assert!(offered(&trust, "goose").is_empty());

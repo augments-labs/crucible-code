@@ -9,11 +9,12 @@ use crucible_types::TurnId;
 use serde_json::{Value, json};
 
 use crate::acp::{Acp, Allowing, Initialized, Profile, SignIn};
+use crate::catalog::Admits;
 use crate::{Account, Act, Dialect, Reading, Shape, Told};
 
 /// Admits every agent.
 #[expect(clippy::unnecessary_wraps, reason = "a profile's check has this shape")]
-const fn anyone(_: &Initialized) -> Result<(), Failure> {
+const fn anyone(_: &Initialized, _: &[Admits]) -> Result<(), Failure> {
     Ok(())
 }
 

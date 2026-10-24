@@ -34,6 +34,7 @@ fn a_credential_whose_provider_cannot_be_built_still_leaves_a_provider_to_choose
         services: &services,
         settings: &settings,
         sessions: &logs,
+        state: &sample.state(),
         workspace: &workspace,
         ledger: &Ledger::new(),
         revealed: &Revealed::new(),

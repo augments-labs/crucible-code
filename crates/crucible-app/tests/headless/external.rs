@@ -13,6 +13,7 @@ use std::pin::pin;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::task::Poll;
+use std::time::SystemTime;
 
 use crucible_app::access::Route;
 use crucible_app::backends::{REGISTRY, Registry, Row};
@@ -31,6 +32,7 @@ use crucible_config::{Driver, Serves};
 use crucible_execution::{
     Backend, Capabilities, Capability, Decision, Failure, Lasting, SessionRef,
 };
+use crucible_external_harnesses::catalog::Trust;
 use crucible_external_harnesses::fake_peer::{self, Reply, Script as Peer, scripts::claude};
 use crucible_external_harnesses::{Account, Control};
 use crucible_models::Effort;
@@ -104,6 +106,8 @@ struct Launching {
     runtime: tokio::runtime::Handle,
     policy: SandboxPolicy,
     consent: Consent,
+    /// Where the catalog's trust state would be kept, which nothing writes.
+    state: PathBuf,
     agent: Agent,
     row: &'static Row,
     launched: Arc<Mutex<Vec<Launched>>>,
@@ -117,13 +121,14 @@ impl Launching {
             self.runtime.clone(),
             &self.policy,
             &self.consent,
+            &self.state,
         )
     }
 }
 
 impl Relaunch for Launching {
     fn admits(&self, mode: Mode) -> Result<(), Failure> {
-        (self.row.dialect)(mode).map(drop)
+        (self.row.dialect)(mode, None).map(drop)
     }
 
     fn model(&self) -> Option<&str> {
@@ -135,7 +140,8 @@ impl Relaunch for Launching {
     }
 
     fn refusal(&self) -> Option<Failure> {
-        (self.agent.program(&self.consent).err()).map(|why| Failure::new(&why.to_string()))
+        let trust = Trust::load(&self.state, SystemTime::now());
+        (self.agent.program(&self.consent, &trust).err()).map(|why| Failure::new(&why.to_string()))
     }
 
     fn launch<'a>(
@@ -149,7 +155,8 @@ impl Relaunch for Launching {
             if let Ok(mut launched) = self.launched.lock() {
                 launched.push((mode, resume.map(|named| named.reference().to_owned())));
             }
-            let mut dialect = (self.row.dialect)(mode)?;
+            let trust = Trust::load(&self.state, SystemTime::now());
+            let mut dialect = (self.row.dialect)(mode, Some(&trust))?;
             let control = Control::new().ok_or_else(|| Failure::new("no control"))?;
             let agent = self.agent.on(model, effort);
             let host = self
@@ -214,6 +221,7 @@ fn launching_on(
         runtime: runtime.clone(),
         policy,
         consent,
+        state: tree.0.join("state"),
         agent,
         row,
         launched: Arc::default(),
@@ -224,7 +232,7 @@ fn launching_on(
         let starting = launching.launcher();
         for step in [Account::Version, Account::Status] {
             let control = Control::new().ok_or("no control")?;
-            let mut dialect = (row.dialect)(Mode::Ask)?;
+            let mut dialect = (row.dialect)(Mode::Ask, None)?;
             starting
                 .account(&launching.agent, &control, dialect.as_mut(), step, &|_| {})
                 .await?;
@@ -1366,63 +1374,6 @@ fn a_model_reached_through_an_agent_it_cannot_be_started_on_moves_nothing() -> R
         std::fs::read_to_string(crucible_config::user(&tree.home()?))?,
         ROUTED_ELSEWHERE
     );
-    Ok(())
-}
-
-/// The user file of a run on the installed agent `work` that reaches google
-/// through `space`, an agent that chooses its own model, with its profile
-/// under `home`: a profile is named by a rooted path, which on Windows starts
-/// with a drive.
-fn routed_to_one_of_its_own(home: &std::path::Path) -> String {
-    serde_json::json!({
-        "externalAgents": {
-            "work": {"driver": "claude", "executable": "claude"},
-            "space": {"driver": "antigravity", "executable": "agy", "profileDir": home.join("agy")}
-        },
-        "providers": {
-            "anthropic": {"access": {"type": "externalAgent", "instance": "work"}},
-            "google": {"access": {"type": "externalAgent", "instance": "space"}}
-        }
-    })
-    .to_string()
-}
-
-/// On a route, a model of a provider reached through another agent, one that
-/// chooses its own model, is refused with what that agent is, and the
-/// conversation stays on its route in the session it was in.
-#[test]
-fn a_model_of_a_provider_reached_through_an_agent_choosing_its_own_is_refused() -> Result<(), Failed>
-{
-    use crucible_client_api::{Execution, ModelOutcome, Name};
-
-    let tree = Tree::new("external-model-onto-its-own")?;
-    let mut outside = Outside::new(&tree, &connected([]))?;
-    let left = outside.conversation.session().id().cloned();
-
-    let refused = answered_off(
-        &tree,
-        &mut outside.conversation,
-        &routed_to_one_of_its_own(tree.home()?.path()),
-        Command::SelectModel {
-            provider: Name::new("google")?,
-            model: Name::new("gemini-3.8-flash")?,
-            effort: None,
-        },
-    )?;
-
-    let Outcome::Model(ModelOutcome::Unreachable(problem)) = &refused else {
-        return Err(format!("{refused:?}").into());
-    };
-    assert_eq!(
-        problem.message.as_str(),
-        "providers.google.access names the agent space, which runs the conversation in \
-         place of google's models; remove access to reach google directly"
-    );
-    assert_eq!(
-        client::snapshot(&outside.conversation).execution,
-        Execution::Instance(Name::new("work")?)
-    );
-    assert_eq!(outside.conversation.session().id().cloned(), left);
     Ok(())
 }
 

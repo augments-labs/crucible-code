@@ -1,5 +1,11 @@
-//! `crucible agents install`, which puts the release of an agent this build
-//! pinned where crucible runs it from.
+//! `crucible agents install`, which puts the release of an agent the catalog
+//! offers where crucible runs it from.
+//!
+//! Which release that is, is what the trust state a caller loaded offers for the
+//! agent's row: the newest of the catalog most lately believed and the snapshot
+//! built into the binary, none that was revoked. A trust state that cannot be
+//! used offers nothing, and is told to the user as that, naming its file, rather
+//! than as an agent with no release.
 //!
 //! The release is downloaded from where it was pinned, into a file of its own
 //! under the agent's directory in crucible's home, within the archive's pinned
@@ -26,8 +32,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crucible_external_harnesses::Discovery;
-use crucible_external_harnesses::catalog::{Artifact, CatalogError, INDEX_BYTES};
-use crucible_external_harnesses::release::{Pin, UnpackError, Unpacked, Unpacker, unpack};
+use crucible_external_harnesses::catalog::{Artifact, CatalogError, INDEX_BYTES, Trust, Unusable};
+use crucible_external_harnesses::release::{
+    OwnedPin, Pin, UnpackError, Unpacked, Unpacker, unpack,
+};
 use crucible_http::{Chunk, Chunks, Http, Lookups, Poison};
 use tokio::runtime::Handle;
 use tokio::time::timeout;
@@ -47,7 +55,7 @@ const STALL: Duration = Duration::from_mins(1);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Installed {
     /// The release's version.
-    pub version: &'static str,
+    pub version: Box<str>,
     /// The executable crucible runs.
     pub executable: PathBuf,
     /// Whether it was already in place, so nothing was downloaded.
@@ -67,6 +75,20 @@ pub enum Uninstalled {
         /// The agent, as the configuration names it.
         agent: &'static str,
     },
+    /// The catalog's trust state cannot be used, so no release is offered.
+    #[error(
+        "the catalog trust state at {} cannot be used ({why}), so no release of {agent} is \
+         offered; repair or remove that file",
+        .file.display()
+    )]
+    Untrusted {
+        /// The agent, as the configuration names it.
+        agent: &'static str,
+        /// The file the state is kept in.
+        file: PathBuf,
+        /// Why it cannot be used.
+        why: Unusable,
+    },
     /// No client could be built to download it with.
     #[error("no HTTP client could be built to download the release")]
     Unconnected,
@@ -75,7 +97,7 @@ pub enum Uninstalled {
     Unwritten(PathBuf),
     /// The download did not arrive whole.
     #[error("the release did not download whole from {0}")]
-    Download(&'static str),
+    Download(Box<str>),
     /// What was downloaded is not the release pinned, or could not be
     /// unpacked.
     #[error(transparent)]
@@ -92,37 +114,51 @@ pub fn root(home: &Path, row: &Row) -> PathBuf {
 }
 
 /// The executable crucible runs `row`'s agent as once it is installed under
-/// `home`, where this build pins a release of it for this platform.
+/// `home`, where `trust` offers a release of it for this platform.
 #[must_use]
-pub fn executable(home: &Path, row: &Row) -> Option<PathBuf> {
-    (row.pinned)().map(|pin| pin.executable(&root(home, row)))
+pub fn executable(home: &Path, row: &Row, trust: &Trust) -> Option<PathBuf> {
+    let offered = (row.pinned)(trust)?;
+    let pin = offered.pin()?;
+    Some(pin.executable(&root(home, row)))
 }
 
 /// What a refusal over `discovery` says, as the sentence and what to do next,
 /// for `row`'s agent called `agent` whose command is `command`: for an agent
-/// this build installs, that what to do is to run the command that installs
-/// it. Nothing for a program that was found.
+/// `trust` offers a release of, that what to do is to run the command that
+/// installs it; for one whose releases are the catalog's while its trust state
+/// cannot be used, that the state is to be repaired or removed. Nothing for a
+/// program that was found.
 #[must_use]
 pub fn refusal(
     row: &Row,
     discovery: &Discovery,
     agent: &str,
     command: &str,
+    trust: &Trust,
 ) -> Option<[String; 2]> {
     let [said, next] = discovery.refusal(agent, command)?;
     let next = match discovery {
-        Discovery::Missing if (row.pinned)().is_some() => format!(
+        Discovery::Missing if (row.pinned)(trust).is_some() => format!(
             "Run `crucible agents install {}` in a terminal, then choose Check again.",
             row.driver.name()
         ),
-        Discovery::Missing | Discovery::NotExecutable(_) | Discovery::Found(_) => next,
+        Discovery::Missing => match trust.unusable().filter(|_| row.catalogued) {
+            Some(why) => format!(
+                "The catalog trust state at {} cannot be used ({why}), so no release of {} is \
+                 offered. Repair or remove that file, then choose Check again.",
+                trust.file().display(),
+                row.driver.name()
+            ),
+            None => next,
+        },
+        Discovery::NotExecutable(_) | Discovery::Found(_) => next,
     };
     Some([said, next])
 }
 
-/// Installs `row`'s agent under crucible's `home`, telling `progress` how many
-/// of how many bytes have arrived as they do, then shuts the services it ran
-/// on down.
+/// Installs `row`'s agent under crucible's `home` as the release `trust`
+/// offers, telling `progress` how many of how many bytes have arrived as they
+/// do, then shuts the services it ran on down.
 ///
 /// # Errors
 ///
@@ -132,18 +168,19 @@ pub fn refusal(
 pub fn install(
     row: &Row,
     home: &Path,
+    trust: &Trust,
     progress: &mut dyn FnMut(u64, u64),
 ) -> (Result<Installed, Uninstalled>, Result<(), Unfinished>) {
-    let Some(pin) = (row.pinned)() else {
-        let agent = row.driver.name();
-        return (Err(Uninstalled::Unpinned { agent }), Ok(()));
+    let offered = (row.pinned)(trust);
+    let Some(pin) = offered.as_ref().and_then(OwnedPin::pin) else {
+        return (Err(unoffered(row, trust)), Ok(()));
     };
     let root = root(home, row);
     if pin.installed(&root) {
         let executable = pin.executable(&root);
         return (
             Ok(Installed {
-                version: pin.version,
+                version: pin.version.into(),
                 executable,
                 kept: true,
             }),
@@ -158,13 +195,28 @@ pub fn install(
             .release()
             .client(targets, Arc::new(services.consent().clone()))
             .ok_or(Uninstalled::Unconnected)?;
-        let executable = downloaded(&runtime, &http, pin, &root, progress)?;
+        let executable = downloaded(&runtime, &http, &pin, &root, progress)?;
         Ok(Installed {
-            version: pin.version,
+            version: pin.version.into(),
             executable,
             kept: false,
         })
     })
+}
+
+/// Why `row`'s agent has no release to install: its releases are the catalog's
+/// and the trust state cannot be used, or this build is offered none for it.
+fn unoffered(row: &Row, trust: &Trust) -> Uninstalled {
+    match trust.unusable().filter(|_| row.catalogued) {
+        Some(why) => Uninstalled::Untrusted {
+            agent: row.driver.name(),
+            file: trust.file(),
+            why,
+        },
+        None => Uninstalled::Unpinned {
+            agent: row.driver.name(),
+        },
+    }
 }
 
 /// Downloads `pin`'s archive through `http` into a file of its own under
@@ -172,7 +224,7 @@ pub fn install(
 fn downloaded(
     runtime: &Handle,
     http: &Http,
-    pin: &Pin,
+    pin: &Pin<'_>,
     root: &Path,
     progress: &mut dyn FnMut(u64, u64),
 ) -> Result<PathBuf, Uninstalled> {
@@ -183,7 +235,7 @@ fn downloaded(
     let arrived = runtime
         .block_on(async { timeout(DOWNLOAD_LIFETIME, fetched(http, pin, file, progress)).await });
     if !matches!(arrived, Ok(Some(()))) {
-        return Err(Uninstalled::Download(pin.url));
+        return Err(Uninstalled::Download(pin.url.into()));
     }
     Ok(unpack(pin, &download.0, root)?)
 }
@@ -192,7 +244,7 @@ fn downloaded(
 /// arrive whole within the archive's pinned size.
 async fn fetched(
     http: &Http,
-    pin: &Pin,
+    pin: &Pin<'_>,
     mut file: File,
     progress: &mut dyn FnMut(u64, u64),
 ) -> Option<()> {

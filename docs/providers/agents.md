@@ -281,21 +281,28 @@ crucible speaks to Antigravity's agent server over the Agent Client Protocol.
 }
 ```
 
-**Which release.** Only release 1.3.0 of the agent server, which calls itself
-`antigravity-acp`, is run, on macOS, Linux and Windows for `x86_64` and
-`aarch64`. [`crucible agents install
-antigravity`](../reference/cli.md#agents-install-driver) downloads it for your
-platform, checks it is that release and puts it under `programs/antigravity/1.3.0`
-in crucible's home. Where no entry names Antigravity, `/login` sets one up run
-as that release, unless an `antigravity` command is on your `PATH`, and where
-the release is not there yet it says to run that command and choose *Check
-again*. An entry you write yourself names its executable,
-`agy_acp_server.par`, or `agy_acp_server.exe` on Windows, with an absolute
-path. When a later crucible runs another release, run the command again and
-change the entry's `executable` to the path it prints. A release that describes itself otherwise
-when it starts, or no longer offers loading and resuming a session, signing out
-or its usual sign-in, is sent nothing more and refused with a sentence naming
-what differs.
+**Which release.** Antigravity's agent server, which calls itself
+`antigravity-acp`, is run only as a release the agent catalog reviewed, on
+macOS, Linux and Windows for `x86_64` and `aarch64`. The releases on offer are
+those of the catalog crucible most lately believed and of the one built into
+it, which lists 1.3.0, less any the catalog has revoked, so a version reviewed
+after your crucible was made is run without a new crucible. [`crucible agents
+install antigravity`](../reference/cli.md#agents-install-driver) downloads the
+newest of them for your platform, checks it is that release and puts it under
+`programs/antigravity/` and its version in crucible's home. Where no entry
+names Antigravity, `/login` sets one up run as that release, unless an
+`antigravity` command is on your `PATH`, and where the release is not there yet
+it says to run that command and choose *Check again*. An entry you write
+yourself names its executable, `agy_acp_server.par`, or `agy_acp_server.exe` on
+Windows, with an absolute path. When the catalog offers a newer release, run
+the command again and change the entry's `executable` to the path it prints.
+The agent is started with the arguments the catalog gives for the release. A
+release that calls itself another name, or a version the catalog does not
+offer, or no longer offers loading and resuming a session, signing out or its
+usual sign-in, is sent nothing more and refused with a sentence naming what
+differs. If the catalog's trust state in `state/agent-catalog/trust.json` under
+crucible's home cannot be read or used, no release is offered: `/login` and the
+install command say so, naming the file, which you repair or remove.
 
 **Its model.** The agent chooses its own, and a `model` or an `effort` in its
 entry is refused, since nothing would read it.

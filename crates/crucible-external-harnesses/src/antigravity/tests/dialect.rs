@@ -4,11 +4,14 @@
 use std::path::Path;
 
 use crucible_execution::{Authentication, TurnRequest};
-use crucible_types::TurnId;
-use serde_json::json;
+use crucible_types::{AgentKey, TurnId};
+use serde_json::{Value, json};
 
+use crate::acp::Allowing;
 use crate::antigravity::Antigravity;
 use crate::antigravity::account::LINK_PREFIX;
+use crate::catalog::{Admits, Artifact, File, FileKind, Files, Format, Launch, Target};
+use crate::release::OwnedPin;
 use crate::{Account, Act, Dialect, Reading, Shape, Told};
 
 /// A sign-in link as the agent prints it.
@@ -115,4 +118,136 @@ fn a_sign_in_link_during_a_sign_out_or_a_version_check_is_unreadable() {
             "{step:?}: {told:?}"
         );
     }
+}
+
+/// The release `version` of the agent as the catalog offers it, started with
+/// `args`.
+fn offering(version: &str, args: &[&str]) -> OwnedPin {
+    let file = |path: &str| File {
+        path: path.into(),
+        kind: FileKind::File {
+            size: 1,
+            sha256: Box::default(),
+            exec: true,
+        },
+    };
+    OwnedPin {
+        key: AgentKey::new("antigravity").unwrap(),
+        version: version.into(),
+        lock_revision: None,
+        admits: Admits {
+            name: "antigravity-acp".into(),
+            version: version.into(),
+        },
+        target: Target {
+            platform: "linux-x86_64".into(),
+            cmd: "agent".into(),
+            args: args.iter().map(|arg| (*arg).into()).collect(),
+            env: Vec::new(),
+            hosts: Vec::new(),
+            artifacts: vec![Artifact {
+                url: "https://example.invalid/agent.zip".into(),
+                mirror: None,
+                sha256: "ab".repeat(32).into(),
+                size: 2,
+                format: Format::Zip,
+                unpacked: 2,
+                decompressed: 2,
+                files: Files::Listed(vec![file("agent"), file("harness")]),
+                kept: Vec::new(),
+                replaced_by: None,
+            }],
+            launch: Launch::Binary,
+        },
+    }
+}
+
+/// The agent's answer to initializing as release `version`, in a frame.
+fn answered_as(version: &str) -> String {
+    let result: Value = json!({
+        "protocolVersion": 1,
+        "agentInfo": {"name": "antigravity-acp", "version": version},
+        "agentCapabilities": {
+            "loadSession": true,
+            "sessionCapabilities": {"resume": {}},
+            "auth": {"logout": {}},
+        },
+        "authMethods": [{"id": "oauth-personal"}],
+    });
+    json!({"jsonrpc": "2.0", "id": 0, "result": result}).to_string()
+}
+
+/// A turn opened on `agent`, which sends its first request.
+fn opened(mut agent: Antigravity) -> Antigravity {
+    let _ = agent.request(Shape {
+        workspace: Some(Path::new("/work")),
+        ..Shape::default()
+    });
+    let _ = agent
+        .open(&TurnRequest::new(TurnId::FIRST, "hello"))
+        .unwrap();
+    agent
+}
+
+/// What starts the agent is the target of the release the catalog offers, not
+/// a rule about the platform: the arguments it gives are the ones it was
+/// reviewed with, and none where nothing is offered.
+#[test]
+fn the_agent_is_started_with_the_arguments_of_the_release_offered() {
+    let started = |offered: &[OwnedPin]| {
+        Antigravity::allowing(Allowing::Nothing, offered)
+            .request(Shape::default())
+            .arguments
+    };
+
+    assert_eq!(
+        started(&[
+            offering("1.4.1", &["--uid=", "--quiet"]),
+            offering("1.3.0", &[])
+        ]),
+        ["--uid=", "--quiet"]
+    );
+    assert_eq!(started(&[offering("1.4.1", &[])]), Vec::<String>::new());
+    assert_eq!(started(&[]), Vec::<String>::new());
+}
+
+/// The agent is run as any release the catalog offers, newest or not, and as
+/// no other: one that answers as a version it does not offer is sent nothing
+/// more, naming the ones it does.
+#[test]
+fn the_agent_is_admitted_as_any_release_the_catalog_offers_and_no_other() {
+    let offers = [offering("1.4.1", &[]), offering("1.3.0", &[])];
+    for version in ["1.4.1", "1.3.0"] {
+        let mut agent = opened(Antigravity::allowing(Allowing::Nothing, &offers));
+
+        let acts = agent.heard(&answered_as(version)).unwrap();
+
+        assert!(
+            matches!(acts.as_slice(), [Act::Send(_)]),
+            "{version}: {acts:?}"
+        );
+    }
+    let mut agent = opened(Antigravity::allowing(Allowing::Nothing, &offers));
+
+    let refused = agent.heard(&answered_as("1.2.0")).unwrap();
+
+    let [Act::Fail(failure)] = refused.as_slice() else {
+        panic!("{refused:?}")
+    };
+    let said = failure.reason().as_str();
+    assert!(
+        said.contains("1.2.0") && said.contains("1.4.1") && said.contains("1.3.0"),
+        "{said}"
+    );
+}
+
+/// With nothing offered, as when the catalog's trust state cannot be used or
+/// every release was revoked, no release is admitted.
+#[test]
+fn nothing_is_admitted_while_nothing_is_offered() {
+    let mut agent = opened(Antigravity::allowing(Allowing::Nothing, &[]));
+
+    let refused = agent.heard(&answered_as("1.3.0")).unwrap();
+
+    assert!(matches!(refused.as_slice(), [Act::Fail(_)]), "{refused:?}");
 }

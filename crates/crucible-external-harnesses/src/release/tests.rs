@@ -12,8 +12,10 @@ use tar::{EntryType, Header};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
-use super::{Member, Pin, Staged, UnpackError, Unpacked, Unpacker, hex, unpack};
-use crate::catalog::{Artifact, AssetRef, File, FileKind, Files, Format};
+use crucible_types::AgentKey;
+
+use super::{Member, OwnedPin, Pin, Staged, UnpackError, Unpacked, Unpacker, hex, unpack};
+use crate::catalog::{Admits, Artifact, AssetRef, File, FileKind, Files, Format, Launch, Target};
 use crate::tests::Owned;
 
 const EXECUTABLE: &[u8] = b"the agent's server";
@@ -33,7 +35,7 @@ fn zipped(members: &[(&str, &[u8])]) -> Vec<u8> {
 }
 
 /// The pin `archive` was published as, naming its two members.
-fn pinned(archive: &[u8]) -> Pin {
+fn pinned(archive: &[u8]) -> Pin<'static> {
     let sha256 = hex(&Sha256::digest(archive)).leak();
     Pin {
         version: "1.0.0",
@@ -2335,4 +2337,211 @@ fn a_zip_member_made_on_dos_has_no_unix_mode_so_it_is_not_runnable() {
         Some(vec![listed("agent.exe", EXECUTABLE, false)]),
         "the mode a DOS member's high bits seem to give is not read, on any platform"
     );
+}
+
+/// A file of a release's list, executable or not.
+fn file(path: &str, size: u64, exec: bool) -> File {
+    File {
+        path: path.into(),
+        kind: FileKind::File {
+            size,
+            sha256: Box::default(),
+            exec,
+        },
+    }
+}
+
+/// A release the catalog offers as one zip of the two files [`EXECUTABLE`]
+/// and [`COMPANION`], started as `agent`.
+fn offered() -> OwnedPin {
+    OwnedPin {
+        key: AgentKey::new("agent").expect("a key"),
+        version: "2.0.0".into(),
+        lock_revision: None,
+        admits: Admits {
+            name: "agent".into(),
+            version: "2.0.0".into(),
+        },
+        target: Target {
+            platform: "linux-x86_64".into(),
+            cmd: "agent".into(),
+            args: Vec::new(),
+            env: Vec::new(),
+            hosts: Vec::new(),
+            artifacts: vec![Artifact {
+                url: "https://example.invalid/agent-2.0.0.zip".into(),
+                mirror: None,
+                sha256: "ab".repeat(32).into(),
+                size: 5000,
+                format: Format::Zip,
+                unpacked: 39,
+                decompressed: 39,
+                files: Files::Listed(vec![file("agent", 18, true), file("harness", 21, true)]),
+                kept: Vec::new(),
+                replaced_by: None,
+            }],
+            launch: Launch::Binary,
+        },
+    }
+}
+
+/// `offered`, with its one archive changed by `change`.
+fn archived(change: impl FnOnce(&mut Artifact)) -> OwnedPin {
+    let mut pin = offered();
+    if let Some(archive) = pin.target.artifacts.first_mut() {
+        change(archive);
+    }
+    pin
+}
+
+#[test]
+fn a_release_of_one_zip_of_two_files_is_lent_as_a_pin() {
+    let held = offered();
+
+    let lent = held.pin();
+
+    assert_eq!(
+        lent,
+        Some(Pin {
+            version: "2.0.0",
+            url: "https://example.invalid/agent-2.0.0.zip",
+            sha256: &"ab".repeat(32),
+            archive: 5000,
+            executable: Member {
+                name: "agent",
+                bytes: 18,
+            },
+            companion: Member {
+                name: "harness",
+                bytes: 21,
+            },
+        })
+    );
+}
+
+#[test]
+fn the_program_is_the_file_the_target_starts_whichever_the_list_gives_first() {
+    let held = archived(|archive| {
+        archive.files = Files::Listed(vec![file("harness", 21, true), file("agent", 18, true)]);
+    });
+
+    let lent = held.pin();
+
+    assert_eq!(
+        lent.map(|pin| (pin.executable.name, pin.companion.name)),
+        Some(("agent", "harness"))
+    );
+}
+
+#[test]
+fn a_release_of_any_other_shape_is_not_a_pin() {
+    let one = || file("agent", 18, true);
+    let two = || file("harness", 21, true);
+    let shapes: Vec<(&str, OwnedPin)> = vec![
+        (
+            "a tarball",
+            archived(|archive| archive.format = Format::TarGz),
+        ),
+        (
+            "a wheel",
+            archived(|archive| archive.format = Format::Wheel),
+        ),
+        (
+            "a bare program",
+            archived(|archive| archive.format = Format::Bare),
+        ),
+        (
+            "an archive built at review",
+            archived(|archive| {
+                archive.replaced_by = Some(AssetRef {
+                    sha256: "cd".repeat(32).into(),
+                    size: 9,
+                });
+            }),
+        ),
+        (
+            "a list kept as an asset",
+            archived(|archive| {
+                archive.files = Files::Asset(AssetRef {
+                    sha256: "cd".repeat(32).into(),
+                    size: 9,
+                });
+            }),
+        ),
+        (
+            "a single file",
+            archived(|archive| archive.files = Files::Listed(vec![one()])),
+        ),
+        (
+            "three files",
+            archived(|archive| {
+                archive.files = Files::Listed(vec![one(), two(), file("third", 1, false)]);
+            }),
+        ),
+        (
+            "a directory in place of the companion",
+            archived(|archive| {
+                archive.files = Files::Listed(vec![
+                    one(),
+                    File {
+                        path: "harness".into(),
+                        kind: FileKind::Dir,
+                    },
+                ]);
+            }),
+        ),
+        (
+            "a link in place of the companion",
+            archived(|archive| {
+                archive.files = Files::Listed(vec![
+                    one(),
+                    File {
+                        path: "harness".into(),
+                        kind: FileKind::Link {
+                            target: "agent".into(),
+                        },
+                    },
+                ]);
+            }),
+        ),
+        (
+            "a program the list does not name",
+            archived(|archive| {
+                archive.files = Files::Listed(vec![two(), file("third", 1, true)]);
+            }),
+        ),
+        (
+            "a file named twice",
+            archived(|archive| archive.files = Files::Listed(vec![one(), one()])),
+        ),
+        (
+            "a file below a directory",
+            archived(|archive| {
+                archive.files = Files::Listed(vec![one(), file("lib/harness", 21, true)]);
+            }),
+        ),
+        ("no archive", {
+            let mut held = offered();
+            held.target.artifacts.clear();
+            held
+        }),
+        ("two archives", {
+            let mut held = offered();
+            let again = held.target.artifacts.clone();
+            held.target.artifacts.extend(again);
+            held
+        }),
+        ("an interpreter that runs the agent", {
+            let mut held = offered();
+            held.target.launch = Launch::Uvx {
+                interpreter_args: Vec::new(),
+                entry_point: "agent:main".into(),
+            };
+            held
+        }),
+    ];
+
+    for (what, held) in shapes {
+        assert_eq!(held.pin(), None, "{what}");
+    }
 }

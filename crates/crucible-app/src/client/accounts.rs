@@ -446,7 +446,8 @@ pub async fn account(
                     {
                         return Performed::Account(held);
                     }
-                    if let Some(unasked) = launch_asked(conversation, request, front, &agent).await
+                    if let Some(unasked) =
+                        launch_asked(conversation, desk, request, front, &agent).await
                     {
                         return Performed::Account(unasked);
                     }
@@ -696,6 +697,7 @@ async fn still_running(
 /// written down, and `None` where the sign-out may go on.
 async fn launch_asked(
     conversation: &Conversation,
+    desk: &Desk<'_>,
     request: &Request,
     front: &mut dyn Front,
     agent: &ExternalAgent,
@@ -718,6 +720,7 @@ async fn launch_asked(
     };
     if found(
         conversation,
+        desk,
         front,
         capabilities,
         agent,
@@ -896,6 +899,7 @@ async fn choose(
         };
         if found(
             conversation,
+            desk,
             front,
             capabilities,
             &agent,
@@ -965,7 +969,8 @@ async fn instance(
     let command = AgentRow::Built(row).command();
     let by_hand =
         steps.is_some_and(|steps| matches!(steps.discover(&command), Discovery::Found(_)));
-    let managed = crate::installing::executable(home, row).filter(|_| !by_hand);
+    let trust = crate::catalog_fetch::trust_in(home);
+    let managed = crate::installing::executable(home, row, &trust).filter(|_| !by_hand);
     let executable = managed
         .as_deref()
         .and_then(std::path::Path::to_str)
@@ -985,14 +990,34 @@ fn shown_as(conversation: &Conversation, row: &AgentRow) -> String {
         .to_owned()
 }
 
+/// What a start of `row`'s agent, shown as `shown`, is refused with where
+/// nothing can be started, as the catalog's trust state in the directory beside
+/// the user's configuration file, as it is now, bears on it; without that
+/// directory, as a program that is not there is told with no release on offer.
+fn unfound_in(desk: &Desk<'_>, row: &AgentRow, shown: &str) -> Option<[String; 2]> {
+    match desk.switching.choosing.parent() {
+        Some(home) => crate::launching::unfound(
+            row,
+            &Discovery::Missing,
+            shown,
+            &crate::catalog_fetch::trust_in(home),
+        ),
+        None => Discovery::Missing.refusal(shown, &row.command()),
+    }
+}
+
 /// Whether the launcher would start `agent`, of the row given and shown as
 /// named: told where it would not, the program not installed, with the command
 /// that installs it for an agent whose release crucible installs, or the row
 /// withheld, the client may look again until it would or go back; nothing
 /// where it cancelled or answered nothing. It decides as a start does, so what
 /// is said here is what a start would refuse.
+// Each is an input of its own to the check, and a value gathering them would be
+// built at each caller and taken apart here.
+#[allow(clippy::too_many_arguments)]
 async fn found(
     conversation: &Conversation,
+    desk: &Desk<'_>,
     front: &mut dyn Front,
     capabilities: crucible_client_api::Capabilities,
     agent: &ExternalAgent,
@@ -1007,7 +1032,7 @@ async fn found(
                 Some(Unlaunched::NotInstalled(sentences)) => sentences,
                 Some(other) => [other.to_string(), "Choose another agent.".to_owned()],
             },
-            None => match crate::launching::unfound(row, &Discovery::Missing, shown) {
+            None => match unfound_in(desk, row, shown) {
                 Some(sentences) => sentences,
                 None => return Some(true),
             },
@@ -1066,6 +1091,7 @@ async fn connect(
         // A launch that is refused whatever the answer is not asked about.
         if found(
             conversation,
+            desk,
             front,
             capabilities,
             agent,

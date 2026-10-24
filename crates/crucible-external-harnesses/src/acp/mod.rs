@@ -8,7 +8,9 @@
 //! command the agent is found as, and the dialect that wraps the client builds
 //! what it is started with; a catalog profile names its program by the
 //! agent's key and is started with the arguments and environment its target
-//! was reviewed with.
+//! was reviewed with. A built profile's check is given the name and version
+//! the catalog says its releases answer with ([`Acp::listing`]), since which
+//! releases are reviewed is the catalog's to say and not the build's.
 //! A run's first turn initializes the agent and reads what it says of itself
 //! once, into an [`Initialized`]; nothing else is sent to an agent that answers
 //! with a version or a description its profile does not admit. The session is
@@ -61,7 +63,7 @@ use serde_json::{Value, json};
 use crate::acp::permission::Permissions;
 use crate::acp::session::Updates;
 use crate::acp::wire::{Frame, Refused};
-use crate::catalog::CatalogProfile;
+use crate::catalog::{Admits, CatalogProfile};
 use crate::{Account, Act, Dialect, Ran, Reading, Request, Shape, Told};
 
 /// The protocol version this client speaks.
@@ -127,8 +129,10 @@ pub struct Profile {
     pub program: &'static str,
     /// The protocol versions its answer to initializing may carry.
     pub versions: &'static [u64],
-    /// Whether the agent, as it described itself, is one this profile runs.
-    pub admits: fn(&Initialized) -> Result<(), Failure>,
+    /// Whether the agent, as it described itself, is one this profile runs,
+    /// given the name and version each release the catalog offers answers
+    /// with; none for a client that was given no such list.
+    pub admits: fn(&Initialized, &[Admits]) -> Result<(), Failure>,
     /// The sign-in methods it signs in with, in the order they are tried;
     /// none where it has none.
     pub sign_in: &'static [SignIn],
@@ -163,8 +167,9 @@ impl SignIn {
 /// of its own, or by the catalog, in the profile its entry gives it.
 #[derive(Debug, Clone)]
 enum Reviewed {
-    /// A profile this build gives.
-    Built(Profile),
+    /// A profile this build gives, and the releases of the agent the catalog
+    /// offers.
+    Built(Profile, Vec<Admits>),
     /// The profile a catalog entry gives.
     Catalog(CatalogProfile),
 }
@@ -173,7 +178,7 @@ impl Reviewed {
     /// The protocol versions its answer to initializing may carry.
     fn versions(&self) -> &[u64] {
         match self {
-            Self::Built(profile) => profile.versions,
+            Self::Built(profile, _) => profile.versions,
             Self::Catalog(profile) => profile.versions(),
         }
     }
@@ -181,7 +186,7 @@ impl Reviewed {
     /// Whether the agent, as it described itself, is the one reviewed.
     fn admits(&self, initialized: &Initialized) -> Result<(), Failure> {
         match self {
-            Self::Built(profile) => (profile.admits)(initialized),
+            Self::Built(profile, listed) => (profile.admits)(initialized, listed),
             Self::Catalog(profile) => profile.admits(initialized),
         }
     }
@@ -189,7 +194,7 @@ impl Reviewed {
     /// The methods it signs in with, in the order they are tried.
     fn sign_in(&self) -> &[SignIn] {
         match self {
-            Self::Built(profile) => profile.sign_in,
+            Self::Built(profile, _) => profile.sign_in,
             Self::Catalog(profile) => profile.sign_in(),
         }
     }
@@ -348,13 +353,25 @@ impl Acp {
     /// to what `allowing` names.
     #[must_use]
     pub fn allowing(profile: Profile, allowing: Allowing) -> Self {
-        Self::of(Reviewed::Built(profile), allowing)
+        Self::of(Reviewed::Built(profile, Vec::new()), allowing)
     }
 
     /// The client of the agent `profile` describes.
     #[must_use]
     pub fn new(profile: Profile) -> Self {
-        Self::of(Reviewed::Built(profile), Allowing::Nothing)
+        Self::of(Reviewed::Built(profile, Vec::new()), Allowing::Nothing)
+    }
+
+    /// This client, held to the releases `listed`: the name and version each
+    /// release of the agent the catalog offers answers initializing with. A
+    /// client of a catalog profile is held to its own entry's, and is
+    /// returned as it is.
+    #[must_use]
+    pub fn listing(mut self, listed: Vec<Admits>) -> Self {
+        if let Reviewed::Built(_, held) = &mut self.reviewed {
+            *held = listed;
+        }
+        self
     }
 
     /// The client of the agent the catalog reviewed as `profile` describes,
@@ -730,7 +747,7 @@ fn refusal(awaited: Awaited, refused: &Refused) -> Failure {
 impl Dialect for Acp {
     fn program(&self) -> &str {
         match &self.reviewed {
-            Reviewed::Built(profile) => profile.program,
+            Reviewed::Built(profile, _) => profile.program,
             // Looked up as nothing, since it is started from the path its
             // instance names, and known by its key.
             Reviewed::Catalog(profile) => profile.key().as_str(),
@@ -741,7 +758,7 @@ impl Dialect for Acp {
         self.workspace = shape.workspace.map(PathBuf::from);
         self.resume = shape.resume.map(str::to_owned);
         match &self.reviewed {
-            Reviewed::Built(_) => Request {
+            Reviewed::Built(..) => Request {
                 arguments: Vec::new(),
                 environment: Vec::new(),
                 shown: Vec::new(),

@@ -1335,6 +1335,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         mode,
         settings: &settings,
         sessions: home.sessions(),
+        state: &crucible_app::catalog_fetch::state_in(home.path()),
         workspace: &workspace,
         ledger: &ledger,
         revealed: &revealed,

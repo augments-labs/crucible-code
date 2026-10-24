@@ -207,7 +207,7 @@ fn a_catalog_agent_is_added_rather_than_installed() {
 #[test]
 fn an_install_says_where_the_release_is_and_how_to_use_it() {
     let installed = Installed {
-        version: "1.3.0",
+        version: "1.3.0".into(),
         executable: PathBuf::from("/home/me/.crucible/programs/antigravity/1.3.0/agy"),
         kept: false,
     };

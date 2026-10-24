@@ -28,7 +28,7 @@
 //! trust state, its revocations cannot be known, so [`Trust::offered`] offers
 //! nothing for any agent and [`Trust::take_in`] refuses to write over it, each
 //! saying [`why`](Unusable) and leaving a front end to tell the user to remove
-//! or repair the file.
+//! or repair the file, which [`Trust::file`] names.
 //!
 //! The keys are checked where a catalog is taken in. When the set of keys given
 //! to [`Trust::take_in`] is not the set the state was taken in under, the floor
@@ -70,9 +70,10 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest as _, Sha256};
 
 use super::{
-    Catalog, CatalogError, Entry, GRACE, Held, INDEX_BYTES, Keys, Revoked, SNAPSHOT, Target,
-    VERSION_BYTES, header,
+    Catalog, CatalogError, Entry, GRACE, Held, INDEX_BYTES, Keys, Revoked, SNAPSHOT, VERSION_BYTES,
+    header,
 };
+use crate::release::OwnedPin;
 
 /// The directory under the state directory the trust state is kept in.
 pub(super) const DIRECTORY: &str = "agent-catalog";
@@ -109,24 +110,6 @@ pub(super) const STATE_BYTES: usize = 2 * INDEX_BYTES + REVOKED_CAP * REVOCATION
 
 /// The format of the file this module writes and reads.
 const FORMAT: u64 = 1;
-
-/// One release the trust state offers, for the platform this build runs on.
-///
-/// It is owned, so it outlives the catalog it was read from, and it holds what
-/// an install needs of one entry and one of its targets: which release it is,
-/// and the target with its archives, files and launch.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OwnedPin {
-    /// The agent.
-    pub key: AgentKey,
-    /// The version.
-    pub version: Box<str>,
-    /// The revision of the version's package tree, for an agent whose tree is
-    /// resolved again under the same version.
-    pub lock_revision: Option<u64>,
-    /// The agent as published for this platform.
-    pub target: Target,
-}
 
 /// Why a state that is there cannot be used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -294,6 +277,13 @@ impl Trust {
         self
     }
 
+    /// The file the state is kept in, which is the one to repair or remove
+    /// when the state cannot be used. It may not be there.
+    #[must_use]
+    pub fn file(&self) -> PathBuf {
+        self.directory.join(FILE)
+    }
+
     /// Why the state, which is there, cannot be used, or nothing where it can.
     /// Nothing is offered while it cannot.
     #[must_use]
@@ -383,28 +373,34 @@ impl Trust {
             if entry.key != *key || state.withdraws(entry) {
                 continue;
             }
-            let Some(target) = entry
-                .targets
-                .iter()
-                .find(|target| *target.platform == *platform)
-            else {
+            let Some(pin) = release(entry, &platform) else {
                 continue;
             };
             if pins
                 .iter()
-                .any(|pin| pin.version == entry.version && pin.lock_revision == entry.lock_revision)
+                .any(|held| held.version == pin.version && held.lock_revision == pin.lock_revision)
             {
                 continue;
             }
-            pins.push(OwnedPin {
-                key: entry.key.clone(),
-                version: entry.version.clone(),
-                lock_revision: entry.lock_revision,
-                target: target.clone(),
-            });
+            pins.push(pin);
         }
         pins
     }
+}
+
+/// The release `entry` lists, as published for `platform`, where it is.
+pub(super) fn release(entry: &Entry, platform: &str) -> Option<OwnedPin> {
+    let target = entry
+        .targets
+        .iter()
+        .find(|target| *target.platform == *platform)?;
+    Some(OwnedPin {
+        key: entry.key.clone(),
+        version: entry.version.clone(),
+        lock_revision: entry.lock_revision,
+        admits: entry.admits.clone(),
+        target: target.clone(),
+    })
 }
 
 /// `catalog`, verified and unrepeated, merged into the state the file holds

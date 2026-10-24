@@ -812,18 +812,15 @@ fn space(case: &str) -> String {
 fn antigravity_signed_in() -> Reply {
     use crucible_external_harnesses::acp::SignIn;
     use crucible_external_harnesses::antigravity::Manifest;
+    use crucible_external_harnesses::catalog::SNAPSHOT;
     use crucible_external_harnesses::fake_peer::scripts::acp;
 
-    let version = Manifest::REVIEWED
-        .versions
-        .first()
-        .copied()
-        .unwrap_or_default();
+    let shipped = SNAPSHOT.entries().first().expect("the snapshot's entry");
     Reply::new()
         .hear(1)
         .say(acp::initialized(
-            Manifest::REVIEWED.name,
-            version,
+            &shipped.admits.name,
+            &shipped.admits.version,
             Manifest::REVIEWED.sign_in.first().map_or("", SignIn::id),
         ))
         .hear(1)

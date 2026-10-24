@@ -89,6 +89,13 @@ impl Sample {
         self.base.join("home")
     }
 
+    /// Where the catalog's trust state is kept for this tree's home: not
+    /// created until a catalog is taken in, so that until then nothing is
+    /// believed but the snapshot built in.
+    pub(crate) fn state(&self) -> PathBuf {
+        crate::catalog_fetch::state_in(&self.home())
+    }
+
     /// The store this tree holds, having been told `provider`'s key.
     ///
     /// Written through [`Store::keep`] and read back through [`Store::read`],

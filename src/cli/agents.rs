@@ -19,6 +19,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use crucible_app::backends::REGISTRY;
+use crucible_app::catalog_fetch::trust_in;
 use crucible_app::installing::{self, Installed};
 use crucible_config::{Driver, Home};
 
@@ -75,7 +76,9 @@ pub(super) fn install(driver: Driver) -> ExitCode {
         }
     };
     let mut shown = Progress::new(driver, io::stderr().is_terminal());
-    let (said, stopped) = installing::install(row, home.path(), &mut |held, of| {
+    // The releases on offer as the catalog's trust state says now.
+    let trust = trust_in(home.path());
+    let (said, stopped) = installing::install(row, home.path(), &trust, &mut |held, of| {
         let _ = io::stderr().write_all(shown.heard(held, of).as_bytes());
     });
     let _ = io::stderr().write_all(shown.ended().as_bytes());
@@ -143,7 +146,7 @@ fn caused(refused: &dyn std::error::Error) -> String {
 /// The line `installed` is written as.
 fn answered(driver: Driver, installed: &Installed) -> String {
     let agent = driver.name();
-    let version = installed.version;
+    let version = &installed.version;
     let at = installed.executable.display();
     if installed.kept {
         format!("{agent} {version} is already installed at {at}.\n")
