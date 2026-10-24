@@ -1126,9 +1126,9 @@ fn the_key(keys: &Keys) -> &'static str {
     keys.0.first().copied().unwrap_or_default()
 }
 
-/// The trust state kept in `owned`, read as of `now` under the test signer.
+/// The trust state kept in `owned`, read as of `now`.
 fn trust(owned: &Owned, now: SystemTime) -> Trust {
-    Trust::load_under(&owned.0, now, &keys())
+    Trust::load(&owned.0, now)
 }
 
 /// `catalog`, signed, taken into `trust` as of `now`.
@@ -1184,11 +1184,12 @@ fn a_platform_is_spelled_as_the_catalog_spells_it() {
 }
 
 #[test]
-fn the_interim_snapshot_lists_what_the_reviewed_manifest_does() {
+fn the_interim_snapshot_agrees_with_the_reviewed_manifest_field_for_field() {
     let [entry] = SNAPSHOT.entries() else {
         panic!("one entry");
     };
 
+    assert_eq!(Manifest::REVIEWED.versions, [&*entry.version]);
     assert!(SNAPSHOT.serial() >= 1, "a serial below it can be refused");
     assert!(SNAPSHOT.revoked().is_empty());
     assert_eq!(entry.key.as_str(), "antigravity");
@@ -1650,43 +1651,6 @@ fn a_release_the_snapshot_and_the_catalog_both_list_is_offered_once_from_the_cat
 }
 
 #[test]
-fn state_taken_in_under_other_keys_is_not_held_to_what_those_keys_pushed_up() {
-    let owned = Owned::new("trust-rotated");
-    let mut old = trust(&owned, taken());
-    believe(
-        &mut old,
-        &listing(
-            u64::MAX,
-            vec![release("antigravity", "1.4.1", None)],
-            vec![withdrawn("goose", "1.4.1", None)],
-        ),
-        taken(),
-    );
-    // The keys of a later build: the same signer among others, so the same
-    // catalog verifies, but not the set the state was taken in under.
-    let own = keys();
-    let rotated: &'static [&'static str] = Box::leak(Box::new([the_key(&own), "another key"]));
-    let rotated = Keys::new(rotated);
-
-    let mut later = Trust::load_under(&owned.0, taken(), &rotated);
-    let signed = sign(&listing(
-        3,
-        vec![release("goose", "1.4.1", None)],
-        Vec::new(),
-    ));
-    let taken_in = later.take_in(&signed.index, &signed.signature, &rotated, taken());
-
-    assert!(taken_in.is_ok(), "{taken_in:?}");
-    // What the old set had made held is not kept: not the release it listed,
-    // not the revocation it made.
-    assert_eq!(offered(&later, "antigravity"), then_the_snapshot(&[]));
-    assert_eq!(offered(&later, "goose"), ["1.4.1"]);
-    // And the build whose keys are compiled in reads the old state as absent.
-    let unchanged = Trust::load(&owned.0, taken());
-    assert_eq!(offered(&unchanged, "antigravity"), then_the_snapshot(&[]));
-}
-
-#[test]
 fn a_state_that_is_not_the_trust_state_is_read_as_deleted() {
     let ours = Owned::new("trust-garbage");
     let mut held = trust(&ours, taken());
@@ -1806,13 +1770,24 @@ fn keys_that_replace_the_old_ones_are_not_held_to_the_serial_the_old_ones_reache
         &mut old,
         &listing(
             u64::MAX,
-            Vec::new(),
+            vec![
+                release("antigravity", "1.4.1", None),
+                release("goose", "1.4.1", None),
+            ],
             vec![withdrawn("goose", "1.4.1", None)],
         ),
         taken(),
     );
-    // A catalog taken in by a process that still holds the old state, under
-    // keys that are not the ones that state was taken in under.
+    // A launch reads the state with no key to check it under: what the old
+    // keys made held is offered, and what they revoked is not.
+    let mut reloaded = trust(&owned, taken());
+    assert_eq!(
+        offered(&reloaded, "antigravity"),
+        then_the_snapshot(&["1.4.1"])
+    );
+    assert!(offered(&reloaded, "goose").is_empty());
+    // A later build's keys: the same signer among others, so the same catalog
+    // verifies, but it is not the set the state was taken in under.
     let own = keys();
     let replacement: &'static [&'static str] = Box::leak(Box::new(["another key", the_key(&own)]));
     let replacement = Keys::new(replacement);
@@ -1822,62 +1797,25 @@ fn keys_that_replace_the_old_ones_are_not_held_to_the_serial_the_old_ones_reache
         Vec::new(),
     ));
 
-    let taken_in = old.take_in(&signed.index, &signed.signature, &replacement, taken());
+    let taken_in = reloaded.take_in(&signed.index, &signed.signature, &replacement, taken());
 
     assert!(taken_in.is_ok(), "{taken_in:?}");
-    // The old keys' revocation is not carried over, so the release is offered.
-    assert_eq!(offered(&old, "goose"), ["1.4.1"]);
-    // The same keys again are held to what the replacement has reached.
-    let again = old.take_in(
-        &sign(&listing(2, Vec::new(), Vec::new())).index,
-        &sign(&listing(2, Vec::new(), Vec::new())).signature,
-        &replacement,
-        taken(),
-    );
+    // What the old keys made held is not kept: not the release they listed,
+    // not the revocation they made.
+    assert_eq!(offered(&reloaded, "antigravity"), then_the_snapshot(&[]));
+    assert_eq!(offered(&reloaded, "goose"), ["1.4.1"]);
+    assert_eq!(offered(&trust(&owned, taken()), "goose"), ["1.4.1"]);
+    // And the replacement keys are held to what they reached.
+    let again = sign(&listing(2, Vec::new(), Vec::new()));
+    let refused = reloaded.take_in(&again.index, &again.signature, &replacement, taken());
     assert!(
         matches!(
-            again,
+            refused,
             Err(TrustError::Catalog(CatalogError::Serial {
                 offered: 2,
                 held: 3
             }))
         ),
-        "{again:?}"
+        "{refused:?}"
     );
-}
-
-#[test]
-fn a_catalog_edited_in_the_state_file_is_not_believed() {
-    let owned = Owned::new("trust-edited");
-    let mut held = trust(&owned, taken());
-    believe(
-        &mut held,
-        &listing(
-            5,
-            vec![release("goose", "1.4.1", None)],
-            vec![withdrawn("gemini", "0.9.0", None)],
-        ),
-        taken(),
-    );
-    let file = owned.0.join(DIRECTORY).join(FILE);
-    let text = fs::read_to_string(&file).unwrap_or_default();
-    assert!(text.contains("1.4.1"), "the catalog is in the file");
-
-    // The release is renamed, the signature left as it was.
-    fs::write(
-        &file,
-        text.replace("\"version\\\":\\\"1.4.1", "\"version\\\":\\\"6.6.6"),
-    )
-    .unwrap_or_default();
-    let read = trust(&owned, taken());
-
-    assert!(offered(&read, "goose").is_empty());
-    // What the file keeps of the revocations is not lost with the catalog.
-    let mut again = trust(&owned, taken());
-    believe(
-        &mut again,
-        &listing(5, vec![release("gemini", "0.9.0", None)], Vec::new()),
-        taken(),
-    );
-    assert!(offered(&again, "gemini").is_empty());
 }

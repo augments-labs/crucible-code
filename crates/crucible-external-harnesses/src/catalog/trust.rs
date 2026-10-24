@@ -12,24 +12,32 @@
 //!
 //! The memory is one owner-only file in `agent-catalog` under the state
 //! directory, never in a cache, so clearing caches touches none of it. It holds
-//! the highest serial believed, the revocations, a digest of the set of keys it
-//! was taken in under, and the signed bytes of the catalog most lately
-//! believed. Those bytes are verified again, under those keys, every time the
-//! file is read, so a file cannot name a release the catalog's owner did not
-//! sign. The snapshot's serial is the floor: no catalog below it is believed,
-//! and none below the highest serial held. A state that is missing, cannot be
-//! read, is in another format or was taken in under another set of keys than
-//! the ones in force is read as deleted: it is rebuilt from the snapshot, with
-//! no revocations until a catalog repeats them. The last of these is why a
-//! signing key that pushed the serial to the largest number cannot make the
-//! catalogs of its replacement refused for ever.
+//! the highest serial believed, the revocations, a digest of the set of keys
+//! they were taken in under, and the text of the catalog most lately believed.
+//! That catalog was verified when it was taken in and is read back as it was
+//! kept: [`Trust::load`] has no keys to check it under, and reads without any
+//! check of them, so a launch sees the revocations whichever keys made them. The
+//! snapshot's serial is the floor: no catalog below it is believed, and none
+//! below the highest serial held. A state that is missing, cannot be read or is
+//! in another format is read as deleted: it is rebuilt from the snapshot, with
+//! no revocations until a catalog repeats them.
 //!
-//! [`Trust::load`] reads under the keys compiled into the binary and creates
-//! nothing. [`Trust::take_in`] keeps a catalog only whole: it is verified, its
-//! releases are checked for repeats, its revocations are counted, and the file
-//! is replaced, and until the file is replaced nothing the value says has
-//! changed. Two crucible processes taking a catalog in at once each replace
-//! the file whole, so the later one's view stands; neither tears it.
+//! The keys are checked where a catalog is taken in. When the set of keys given
+//! to [`Trust::take_in`] is not the set the state was taken in under, the state
+//! is discarded before the new catalog is verified, the same rebuilt-from-the-
+//! snapshot state as a deleted one: its floor, its catalog and its revocations
+//! go. That is why a signing key that pushed the serial to the largest number
+//! cannot make the catalogs of its replacement refused for ever. Until the
+//! first catalog is taken in under the new keys, what the old keys made held is
+//! still offered and what they revoked is still withheld, and the expiry of the
+//! held catalog bounds the first.
+//!
+//! [`Trust::load`] creates nothing. [`Trust::take_in`] keeps a catalog only
+//! whole: it is verified, its releases are checked for repeats, its revocations
+//! are counted, and the file is replaced, and until the file is replaced nothing
+//! the value says has changed. Two crucible processes taking a catalog in at
+//! once each replace the file whole, so the later one's view stands; neither
+//! tears it.
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -44,8 +52,8 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest as _, Sha256};
 
 use super::{
-    Catalog, CatalogError, Entry, GRACE, Held, INDEX_BYTES, KEYS, Keys, Revoked, SIGNATURE_BYTES,
-    SNAPSHOT, Target, VERSION_BYTES,
+    Catalog, CatalogError, Entry, GRACE, Held, INDEX_BYTES, Keys, Revoked, SNAPSHOT, Target,
+    VERSION_BYTES, header,
 };
 
 /// The directory under the state directory the trust state is kept in.
@@ -66,11 +74,10 @@ const REVOCATION_BYTES: usize = AGENT_KEY_BYTES
     + 20
     + "{\"key\":\"\",\"version\":\"\",\"lock_revision\":},".len();
 
-/// The largest state file read, in bytes: the signed catalog at its largest
-/// with every byte escaped, its signature likewise, the revocations at their
-/// largest, and room for the rest of the file.
-pub(super) const STATE_BYTES: usize =
-    2 * INDEX_BYTES + 2 * SIGNATURE_BYTES + REVOKED_CAP * REVOCATION_BYTES + 1024;
+/// The largest state file read, in bytes: the catalog at its largest with
+/// every byte escaped, the revocations at their largest, and room for the rest
+/// of the file.
+pub(super) const STATE_BYTES: usize = 2 * INDEX_BYTES + REVOKED_CAP * REVOCATION_BYTES + 1024;
 
 /// The format of the file this module writes and reads.
 const FORMAT: u64 = 1;
@@ -148,10 +155,11 @@ struct State {
 }
 
 impl State {
-    /// The state of a machine that has believed nothing under `keys`.
-    fn rebuilt(keys: &Keys) -> Self {
+    /// The state of a machine that has believed nothing, which no set of keys
+    /// is the one it was taken in under.
+    fn rebuilt() -> Self {
         Self {
-            keys: identity(keys),
+            keys: String::new(),
             serial: SNAPSHOT.serial(),
             withdrawn: BTreeSet::new(),
             held: None,
@@ -183,18 +191,13 @@ pub struct Trust {
 }
 
 impl Trust {
-    /// The trust state kept under `state` as of `now`, read under the keys
-    /// compiled into the binary. Creates nothing, and a state that is not
-    /// there to be read is a state of nothing believed.
+    /// The trust state kept under `state` as of `now`. Creates nothing, checks
+    /// no keys, and a state that is not there to be read is a state of nothing
+    /// believed.
     #[must_use]
     pub fn load(state: &Path, now: SystemTime) -> Self {
-        Self::load_under(state, now, &KEYS)
-    }
-
-    /// The trust state kept under `state` as of `now`, read under `keys`.
-    pub(super) fn load_under(state: &Path, now: SystemTime, keys: &Keys) -> Self {
         let directory = state.join(DIRECTORY);
-        let state = read(&directory, keys).unwrap_or_else(|| State::rebuilt(keys));
+        let state = read(&directory).unwrap_or_else(State::rebuilt);
         Self {
             directory,
             now,
@@ -218,8 +221,9 @@ impl Trust {
         now: SystemTime,
     ) -> Result<(), TrustError> {
         let identity = identity(keys);
-        // What another set of keys made held is not held to: it is the
-        // snapshot's floor again, with none of its revocations.
+        // What another set of keys made held is not held to, and is dropped
+        // when this catalog is kept: the floor is the snapshot's again, with
+        // none of those revocations.
         let same = self.state.keys == identity;
         let floor = if same {
             self.state.serial
@@ -243,7 +247,7 @@ impl Trust {
             withdrawn,
             held: Some(catalog),
         };
-        keep(&self.directory, &state, index, signature)?;
+        keep(&self.directory, &state, index)?;
         self.state = state;
         Ok(())
     }
@@ -344,9 +348,8 @@ fn identity(keys: &Keys) -> String {
 }
 
 /// The state kept in `directory`, or nothing where it is not there, cannot be
-/// read, is larger than it can be, is not in this format or was taken in under
-/// other keys than `keys`.
-fn read(directory: &Path, keys: &Keys) -> Option<State> {
+/// read, is larger than it can be or is not in this format.
+fn read(directory: &Path) -> Option<State> {
     let file = directory.join(FILE);
     crucible_privacy::tighten(&file).ok()?;
     let opened = crucible_privacy::open_read(&file).ok()?;
@@ -362,16 +365,15 @@ fn read(directory: &Path, keys: &Keys) -> Option<State> {
     if bytes.len() > STATE_BYTES {
         return None;
     }
-    decode(&bytes, keys)
+    decode(&bytes)
 }
 
 /// The state `bytes` hold, or nothing where they are not a state of this
-/// format taken in under `keys`.
-fn decode(bytes: &[u8], keys: &Keys) -> Option<State> {
+/// format.
+fn decode(bytes: &[u8]) -> Option<State> {
     let document: Value = serde_json::from_slice(bytes).ok()?;
     let document = document.as_object()?;
-    let identity = identity(keys);
-    if document.get("format")?.as_u64()? != FORMAT || document.get("keys")?.as_str()? != identity {
+    if document.get("format")?.as_u64()? != FORMAT {
         return None;
     }
     let revoked = document.get("revoked")?.as_array()?;
@@ -379,10 +381,10 @@ fn decode(bytes: &[u8], keys: &Keys) -> Option<State> {
         return None;
     }
     Some(State {
-        keys: identity,
+        keys: document.get("keys")?.as_str()?.to_owned(),
         serial: document.get("serial")?.as_u64()?.max(SNAPSHOT.serial()),
         withdrawn: revoked.iter().map(withdrawal).collect::<Option<_>>()?,
-        held: held(document, keys),
+        held: held(document),
     })
 }
 
@@ -403,17 +405,20 @@ fn withdrawal(value: &Value) -> Option<Withdrawn> {
     })
 }
 
-/// The catalog `document` holds, believed again under `keys`: no serial to
-/// meet and no expiry, which is judged when it is offered.
-fn held(document: &Map<String, Value>, keys: &Keys) -> Option<Catalog> {
+/// The catalog `document` holds, read as it was kept: it was verified when it
+/// was taken in, and no serial or expiry is judged here.
+fn held(document: &Map<String, Value>) -> Option<Catalog> {
     let index = document.get("index")?.as_str()?;
-    let signature = document.get("signature")?.as_str()?;
-    Catalog::compiled(index.as_bytes(), signature.as_bytes(), keys).ok()
+    if index.len() > INDEX_BYTES {
+        return None;
+    }
+    let parsed: Value = serde_json::from_str(index).ok()?;
+    Catalog::read(&header(&parsed).ok()?).ok()
 }
 
-/// Replaces the file in `directory` with `state` and the signed bytes of the
-/// catalog it holds, durably, or leaves it as it was.
-fn keep(directory: &Path, state: &State, index: &[u8], signature: &[u8]) -> io::Result<()> {
+/// Replaces the file in `directory` with `state` and the text of the catalog
+/// it holds, durably, or leaves it as it was.
+fn keep(directory: &Path, state: &State, index: &[u8]) -> io::Result<()> {
     let revoked: Vec<Value> = state
         .withdrawn
         .iter()
@@ -431,7 +436,6 @@ fn keep(directory: &Path, state: &State, index: &[u8], signature: &[u8]) -> io::
         "serial": state.serial,
         "revoked": revoked,
         "index": text(index)?,
-        "signature": text(signature)?,
     })
     .to_string()
     .into_bytes();
