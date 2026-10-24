@@ -180,9 +180,9 @@ pub enum Performed {
 /// nothing pending, whatever identity it names, and is refused as stale —
 /// here and at every other door, so a client reads one answer to it.
 ///
-/// The agent catalog commands are refused as [`ErrorCode::UnknownCommand`],
-/// here and at every other door: the agents door serves them, and no
-/// conversation does.
+/// The agent catalog commands are refused as [`ErrorCode::AgentsDoor`], here
+/// and at every other door: the agents door serves them, and no conversation
+/// does.
 pub async fn perform(
     conversation: &mut Conversation,
     request: &Request,
@@ -199,15 +199,15 @@ pub async fn perform(
         | Command::SignOut { .. }
         | Command::Connect { .. } => Performed::Refused(ErrorCode::Busy.into()),
         // The agents door serves the install commands and no conversation is
-        // part of it, so this door will never serve them: a client is told the
-        // command is not shipped here, not to come back.
+        // part of it, so this door will never serve them: a client is told
+        // which door does, not to come back.
         Command::AgentCatalog
         | Command::InstallAgent { .. }
         | Command::UpdateAgent { .. }
         | Command::RollbackAgent { .. }
         | Command::RemoveAgent { .. }
         | Command::VerifyAgent { .. }
-        | Command::SignInAgent { .. } => Performed::Refused(ErrorCode::UnknownCommand.into()),
+        | Command::SignInAgent { .. } => Performed::Refused(ErrorCode::AgentsDoor.into()),
         // No turn is stopped here, so there is no action this could be about.
         Command::Decide(_) => Performed::Refused(ErrorCode::StaleDecision.into()),
         Command::Clear => Performed::Cleared(clear(conversation, desk).await),
@@ -312,8 +312,8 @@ pub async fn perform(
 /// decides is answered as forced and not written, since writing it would
 /// change nothing.
 ///
-/// The agent catalog commands are refused as [`ErrorCode::UnknownCommand`], as
-/// at every door a conversation has.
+/// The agent catalog commands are refused as [`ErrorCode::AgentsDoor`], as at
+/// every door a conversation has.
 pub fn keep(request: &Request, desk: &Desk<'_>) -> Performed {
     match request.command() {
         Command::Setting { name, value } => setting(desk, name.as_str(), value.as_str()),
@@ -330,15 +330,15 @@ pub fn keep(request: &Request, desk: &Desk<'_>) -> Performed {
         // No action is pending here either, whatever a turn elsewhere waits on.
         Command::Decide(_) => Performed::Refused(ErrorCode::StaleDecision.into()),
         // The agents door serves the install commands and no conversation is
-        // part of it, so this door will never serve them: a client is told the
-        // command is not shipped here, not to come back.
+        // part of it, so this door will never serve them: a client is told
+        // which door does, not to come back.
         Command::AgentCatalog
         | Command::InstallAgent { .. }
         | Command::UpdateAgent { .. }
         | Command::RollbackAgent { .. }
         | Command::RemoveAgent { .. }
         | Command::VerifyAgent { .. }
-        | Command::SignInAgent { .. } => Performed::Refused(ErrorCode::UnknownCommand.into()),
+        | Command::SignInAgent { .. } => Performed::Refused(ErrorCode::AgentsDoor.into()),
         Command::Prompt(_)
         | Command::Compact
         | Command::Cancel

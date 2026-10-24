@@ -3122,6 +3122,41 @@ fn a_client_without_the_install_capability_is_told_the_command_needs_one_by_a_co
 }
 
 #[test]
+fn a_conversation_refuses_the_install_commands_by_a_code_that_says_where_they_are_served() {
+    assert!(ErrorCode::EVERY.contains(&ErrorCode::AgentsDoor));
+    assert_eq!(ErrorCode::AgentsDoor.as_str(), "agents_door");
+    assert_eq!(ErrorCode::named("agents_door"), Some(ErrorCode::AgentsDoor));
+    assert_eq!(
+        Refusal::new(ErrorCode::AgentsDoor).to_string(),
+        "the command is served by the agents door, not by a conversation"
+    );
+
+    // Neither the code of a command this build does not ship, which these
+    // are not, nor the one of a client lacking the capability to take them.
+    for other in [ErrorCode::UnknownCommand, ErrorCode::NeedsCapability] {
+        assert_ne!(ErrorCode::AgentsDoor, other);
+        assert_ne!(ErrorCode::AgentsDoor.as_str(), other.as_str());
+        assert_ne!(
+            Refusal::new(ErrorCode::AgentsDoor).to_string(),
+            Refusal::new(other).to_string()
+        );
+    }
+    for command in install_commands() {
+        assert!(Command::KINDS.contains(&command.kind()), "{command:?}");
+    }
+
+    // It crosses as the outcome of any request.
+    let response = Response {
+        correlation: Some(Correlation::new(41)),
+        outcome: Outcome::Refused(ErrorCode::AgentsDoor.into()),
+    };
+    assert_eq!(
+        Response::decode(&response.encode().unwrap()).unwrap(),
+        response
+    );
+}
+
+#[test]
 fn an_install_confirmation_is_a_pending_action_of_its_own() {
     let pending = install();
     assert_eq!(pending.id(), PendingId::new(11));

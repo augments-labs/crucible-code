@@ -176,7 +176,8 @@ impl SummaryKind {
 /// turn's: it belongs to no conversation, and goes only to a client that
 /// claimed [`Capability::Install`](crate::Capability::Install). Bounded in
 /// what it can say: an agent by name, and two counts of bytes that never put
-/// more done than there is to do.
+/// more done than there is to do. `total` may be 0, and `done` then is, so a
+/// consumer that draws a share of it looks for 0 before it divides.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstallProgress {
     agent: Name,

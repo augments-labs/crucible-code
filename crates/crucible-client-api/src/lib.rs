@@ -7,11 +7,10 @@
 //! [`Progress`] that is only true so far, and the [`Pending`] action a turn, or
 //! an install, stops on until a [`Decision`] naming it arrives. An install has
 //! no turn, and says how far it has got in an [`InstallProgress`] of its own.
-//! Beside them are three
-//! reports no request asks for, held to the same bounds: the [`inspection`] a
-//! script reads from `crucible sandbox inspect --json`, the [`doctor`]'s report
-//! from `crucible doctor --json`, and the [`sessions`] list from
-//! `crucible sessions list --json`.
+//! Beside them are three reports no request asks for, held to the same bounds:
+//! the [`inspection`] a script reads from `crucible sandbox inspect --json`,
+//! the [`doctor`]'s report from `crucible doctor --json`, and the [`sessions`]
+//! list from `crucible sessions list --json`.
 //!
 //! Three things are decided here and nowhere else.
 //!
@@ -30,9 +29,9 @@
 //! values than [`bounds::VALUES`] or saying a key twice is refused where the
 //! parser meets that; a version this build does not speak — in a request, a
 //! response, a snapshot or a progress report, a turn's or an install's, each of
-//! which says its own — a
-//! capability it has not heard of and a command it does not ship are each
-//! refused with their own stable code rather than guessed at.
+//! which says its own — a capability it has not heard of, a command it does not
+//! ship and a command only the agents door serves, put to a conversation, are
+//! each refused with their own stable code rather than guessed at.
 //!
 //! **What is authoritative.** [`Snapshot`] and [`Outcome`] say what the
 //! application settled; [`Progress`] says what a turn has produced so far and

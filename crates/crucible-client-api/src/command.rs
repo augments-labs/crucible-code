@@ -13,10 +13,14 @@
 //! The commands that install, update, roll back, remove, verify and sign in an
 //! agent from the reviewed catalog, and the one that lists it, are served by a
 //! door of their own that no conversation is part of, and only of a client that
-//! claimed [`Capability::Install`]:
-//! [`Command::needs`] says which. They name an agent by the name the catalog
-//! gives it and a sign-in by the instance and the method, and never what is
-//! fetched, where it is put or the secret a sign-in takes.
+//! claimed [`Capability::Install`]: [`Command::needs`] says which, and a
+//! conversation refuses them as [`ErrorCode::AgentsDoor`]. They name an agent by
+//! the name the catalog gives it and a sign-in by the instance and the method,
+//! and never what is fetched, where it is put or the secret a sign-in takes. The
+//! names are only names: the door checks `agent` as an agent key, and finds
+//! `version`, `instance` and `method` by equality against the catalog or the
+//! configuration, before any of them is used, and none is ever read as a path,
+//! an argument or shell text.
 
 use std::fmt;
 use std::str::FromStr;
@@ -163,43 +167,53 @@ pub enum Command {
     /// pending install confirmation first, which names what would be fetched
     /// and from where, and nothing is fetched before it is answered.
     InstallAgent {
-        /// The agent, by the name the catalog gives it.
+        /// The agent, by the name the catalog gives it. The door checks it as
+        /// an agent key before it is used.
         agent: Name,
-        /// The version, as the catalog spells it.
+        /// The version, as the catalog spells it. The door finds it in the
+        /// catalog by equality and uses it as nothing else.
         version: Name,
     },
     /// Move an installed catalog agent to the version the catalog now offers
     /// for it. Asked for as [`Command::InstallAgent`] is.
     UpdateAgent {
-        /// The agent, by the name the catalog gives it.
+        /// The agent, by the name the catalog gives it. The door checks it as
+        /// an agent key before it is used.
         agent: Name,
     },
     /// Move an installed catalog agent back to the version it was on before.
     /// Asked for as [`Command::InstallAgent`] is.
     RollbackAgent {
-        /// The agent, by the name the catalog gives it.
+        /// The agent, by the name the catalog gives it. The door checks it as
+        /// an agent key before it is used.
         agent: Name,
     },
     /// Remove an installed catalog agent's program from this host. Asked for
     /// as [`Command::InstallAgent`] is.
     RemoveAgent {
-        /// The agent, by the name the catalog gives it.
+        /// The agent, by the name the catalog gives it. The door checks it as
+        /// an agent key before it is used.
         agent: Name,
     },
     /// Check an installed catalog agent's files against what was reviewed.
     /// Changes nothing, and is answered only to a client that claimed
     /// [`Capability::Install`].
     VerifyAgent {
-        /// The agent, by the name the catalog gives it.
+        /// The agent, by the name the catalog gives it. The door checks it as
+        /// an agent key before it is used.
         agent: Name,
     },
     /// Adopt the sign-in just stored on the host for this instance by this
     /// method, as [`Command::Login`] adopts a provider's. The secret is typed
     /// on the host and never crosses.
     SignInAgent {
-        /// The instance, by the name the configuration gives it.
+        /// The instance, by the name the configuration gives it. The door
+        /// finds it in the configuration by equality and uses it as nothing
+        /// else.
         instance: Name,
-        /// The method the agent offers, by the name it gives it.
+        /// The method the agent offers, by the name it gives it. The door
+        /// finds it among the agent's methods by equality and uses it as
+        /// nothing else.
         method: Name,
     },
     /// Leave the conversation.

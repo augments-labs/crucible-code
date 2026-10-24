@@ -1041,9 +1041,9 @@ fn the_install_commands_are_refused_at_every_door_a_conversation_has_and_nothing
     };
     let before = client::snapshot(&conversation);
     let mut wire = Wire::default();
-    // Not a thing to come back for: the agents door serves these, and no
-    // conversation ever will.
-    let refused = Outcome::Refused(ErrorCode::UnknownCommand.into());
+    // Not a thing to come back for, and not a command this build lacks: the
+    // agents door serves these, and no conversation ever will.
+    let refused = Outcome::Refused(ErrorCode::AgentsDoor.into());
 
     for command in installing()? {
         let request = wire.sent(command)?;
@@ -1075,7 +1075,7 @@ fn the_install_commands_are_refused_at_every_door_a_conversation_has_and_nothing
         let asked = client::asking(&mut conversation, &request, Instant::now());
         assert_eq!(
             asked.err().map(Refusal::code),
-            Some(ErrorCode::UnknownCommand),
+            Some(ErrorCode::AgentsDoor),
             "asking {request:?}"
         );
 

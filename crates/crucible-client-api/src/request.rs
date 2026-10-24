@@ -25,8 +25,8 @@ impl Version {
     /// carries, the fourth the words a route to an installed agent brings and
     /// the fifth the words the install commands bring: the commands, their
     /// pending confirmation, the capability to take part in them, the report
-    /// of an install under way and the code a client without that capability
-    /// is refused with. A test holds the number and what the frames are made
+    /// of an install under way and the two codes they are refused with, one
+    /// for a client without that capability and one for a conversation. A test holds the number and what the frames are made
     /// of together, so that one cannot move without the other being looked at.
     pub const CURRENT: Self = Self(5);
 
