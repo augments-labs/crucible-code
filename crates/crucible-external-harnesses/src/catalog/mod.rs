@@ -53,9 +53,9 @@ use entry::Fields;
 #[cfg(test)]
 pub(crate) use profile::PASSED;
 pub(crate) use profile::passed;
-pub use profile::{CatalogProfile, Unprofiled};
+pub use profile::{CatalogProfile, Unprofiled, numbered};
 pub use snapshot::SNAPSHOT;
-pub use trust::{Trust, TrustError, Unusable};
+pub use trust::{Offer, Trust, TrustError, Unusable};
 
 pub use entry::{
     ASSET_BYTES, Admits, Artifact, AssetRef, AuthMethod, ContentUse, Disposition, Entry, File,

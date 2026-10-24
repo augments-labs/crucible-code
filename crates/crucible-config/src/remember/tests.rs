@@ -1301,3 +1301,52 @@ fn an_agents_effort_is_written_beside_its_model_or_taken_out() {
     let chooses = r#"{"externalAgents": {"work": {"driver": "antigravity", "executable": "agy", "profileDir": "/home/me/agy"}}}"#;
     assert!(thinking_agent(chooses, FILE, "work", Some(Effort::High)).is_err());
 }
+
+#[test]
+fn pointing_instances_at_a_new_program_writes_each_executable_and_nothing_else() {
+    let text = "{\n  \"externalAgents\": {\n    \"work\": {\n      \"driver\": \"catalog\",\n      \"agent\": \"goose\",\n      \"executable\": \"/h/programs/goose/1.0.0/goose\"\n    },\n    \"home\": {\"driver\": \"catalog\", \"agent\": \"goose\", \"executable\": \"/h/programs/goose/1.0.0/goose\"},\n    \"mine\": {\"driver\": \"catalog\", \"agent\": \"goose\", \"executable\": \"/usr/bin/goose\"}\n  }\n}\n";
+    let to = "/h/programs/goose/2.0.0/goose";
+
+    let written = pointing(text, FILE, &[("work", to), ("home", to)]).unwrap();
+
+    assert_eq!(
+        written,
+        text.replacen("/h/programs/goose/1.0.0/goose", to, 2)
+    );
+    let settings = Settings::resolve(vec![Document::sample(&written, Origin::User)]);
+    let mut executables: Vec<(String, String)> = settings
+        .external_agents()
+        .iter()
+        .map(|agent| (agent.name().to_owned(), agent.executable().to_owned()))
+        .collect();
+    executables.sort();
+    assert_eq!(
+        executables,
+        [
+            ("home".to_owned(), to.to_owned()),
+            ("mine".to_owned(), "/usr/bin/goose".to_owned()),
+            ("work".to_owned(), to.to_owned()),
+        ]
+    );
+    // Written again, it is already so.
+    assert_eq!(pointing(&written, FILE, &[("work", to)]).unwrap(), written);
+    // A path is written as JSON spells it.
+    let windows = pointing(text, FILE, &[("work", "C:\\h\\goose \"2\".exe")]).unwrap();
+    assert!(
+        windows.contains(r#""executable": "C:\\h\\goose \"2\".exe""#),
+        "{windows}"
+    );
+}
+
+#[test]
+fn pointing_an_instance_the_file_does_not_name_is_refused_and_writes_nothing() {
+    let text =
+        "{\"externalAgents\": {\"work\": {\"driver\": \"claude\", \"executable\": \"claude\"}}}";
+
+    let refused = pointing(text, FILE, &[("work", "/a"), ("gone", "/b")]);
+
+    assert!(
+        matches!(refused, Err(ConfigError::Unspliceable { .. })),
+        "{refused:?}"
+    );
+}

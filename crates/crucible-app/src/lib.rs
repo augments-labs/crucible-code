@@ -34,6 +34,7 @@
 //! agents that build's binary can start.
 
 pub mod access;
+pub mod agent_download;
 pub mod auth;
 pub mod backends;
 pub mod branching;

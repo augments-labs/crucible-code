@@ -74,6 +74,11 @@
 //! directory name, and two that a file system takes for one are not told
 //! apart here.
 //!
+//! Removing an agent takes every version it has, each renamed into
+//! `.staging/` first as a prune does, and is refused before anything is
+//! removed while an instance's `executable` lies in the agent's directory or
+//! any process holds one of its versions.
+//!
 //! An install made before the store kept receipts, as 0.48 left Antigravity in
 //! `programs/antigravity/1.3.0/`, is adopted by hashing its files against the
 //! file list the catalog gives for it, and given a receipt when they match.
@@ -472,6 +477,13 @@ pub enum StoreError {
     /// the store can tell, so nothing is pruned on a guess.
     #[error("{} lies in the install store and names no version of it", .path.display())]
     Unmatched {
+        /// The executable.
+        path: PathBuf,
+    },
+    /// An instance's `executable` lies in the agent's directory, so the agent
+    /// is not removed from under it.
+    #[error("{} is an instance's executable, so the agent is not removed", .path.display())]
+    Named {
         /// The executable.
         path: PathBuf,
     },
@@ -1150,6 +1162,74 @@ impl Store {
             }
         }
         Err(at(&holders, io::ErrorKind::AlreadyExists.into()))
+    }
+
+    /// Every version of the agent `key` that has a receipt this crucible can
+    /// read, each by its receipt, in the order of their directories' names.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] when the agent's directory holds more than is read, or
+    /// could not be read.
+    pub fn installed(&self, key: &AgentKey) -> Result<Vec<Receipt>, StoreError> {
+        holdable(key.as_str())?;
+        let directory = self.root.join(key.as_str());
+        Ok(self
+            .versions(key, &directory)?
+            .into_iter()
+            .filter_map(|(_, kept)| match kept {
+                Kept::Receipted(receipt) => Some(receipt),
+                Kept::Unreceipted | Kept::Unreadable => None,
+            })
+            .collect())
+    }
+
+    /// Removes every version of the agent `key`, and gives the versions
+    /// removed: refused, before anything is removed, while one of
+    /// `executables` lies in the agent's directory or a process holds any of
+    /// its versions.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Named`] or [`StoreError::InUse`] for what keeps the agent
+    /// in place; otherwise [`StoreError`] when the store is held past the
+    /// wait, holds more versions than are read, or a version could not be
+    /// removed, and those removed before stay removed.
+    pub fn remove(
+        &self,
+        key: &AgentKey,
+        executables: &[&Path],
+    ) -> Result<Vec<Version>, StoreError> {
+        let change = self.change(key)?;
+        for executable in executables {
+            match self.placed(key, executable) {
+                Placed::Outside => {}
+                Placed::In(_) | Placed::Doubtful => {
+                    return Err(StoreError::Named {
+                        path: executable.to_path_buf(),
+                    });
+                }
+            }
+        }
+        let versions = self.versions(key, &change.directory)?;
+        // Held under the store's lock, which a hold is made under too, so no
+        // process can come to hold a version between this look and the
+        // removal.
+        if versions
+            .iter()
+            .any(|(version, _)| swept(&change.directory.join(version.name())))
+        {
+            return Err(StoreError::InUse);
+        }
+        let mut removed = Vec::new();
+        for (version, _) in versions {
+            let directory = change.directory.join(version.name());
+            let aside = change.area.join(scratch("removed"));
+            fs::rename(&directory, &aside).map_err(|source| at(&directory, source))?;
+            let _ = fs::remove_dir_all(&aside);
+            removed.push(version);
+        }
+        Ok(removed)
     }
 
     /// Removes every version of the agent `key` that none of `executables`

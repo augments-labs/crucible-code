@@ -1479,3 +1479,60 @@ fn a_version_whose_receipt_cannot_be_read_is_replaced_only_when_asked() {
         .expect("replaced when asked");
     assert_eq!(receipt.fetched, at(20));
 }
+
+#[test]
+fn removing_an_agent_takes_every_version_unless_an_instance_names_one_or_a_process_runs_one() {
+    let owned = Owned::new("store-remove");
+    let root = programs(&owned);
+    let store = Store::new(root.clone());
+    let goose = key("goose");
+    let [one, two] = ["1.0.0", "2.0.0"].map(|text| version(text, None));
+    install(&store, &goose, &one, 10);
+    install(&store, &goose, &two, 20);
+    let named = store.directory(&goose, &two).join("agent");
+
+    let refused = store.remove(&goose, &[named.as_path()]);
+
+    assert!(
+        matches!(refused, Err(StoreError::Named { ref path }) if *path == named),
+        "{refused:?}"
+    );
+    assert!(store.directory(&goose, &one).join("agent").is_file());
+    assert!(store.directory(&goose, &two).join("agent").is_file());
+
+    let ready = owned.0.join("ready");
+    let mut child = started("store::tests::the_process_holding_a_version", &root, &ready);
+    reached(&mut child, &ready);
+    let elsewhere = owned.0.join("bin").join("goose");
+
+    let refused = store.remove(&goose, &[elsewhere.as_path()]);
+
+    assert!(matches!(refused, Err(StoreError::InUse)), "{refused:?}");
+    assert!(store.directory(&goose, &one).join("agent").is_file());
+    assert!(store.directory(&goose, &two).join("agent").is_file());
+
+    killed(child);
+    let removed = store
+        .remove(&goose, &[elsewhere.as_path()])
+        .expect("removed");
+
+    assert_eq!(removed, [one, two]);
+    assert_eq!(names(&root.join("goose")), [".lock", ".staging"]);
+    assert!(names(&root.join("goose").join(".staging")).is_empty());
+}
+
+#[test]
+fn the_versions_installed_are_listed_with_their_receipts() {
+    let owned = Owned::new("store-installed");
+    let store = Store::new(programs(&owned));
+    let goose = key("goose");
+    assert!(store.installed(&goose).expect("listed").is_empty());
+    let [one, two] = ["1.0.0", "2.0.0"].map(|text| version(text, None));
+    let first = install(&store, &goose, &one, 10);
+    let second = install(&store, &goose, &two, 20);
+    fs::create_dir_all(programs(&owned).join("goose").join("0.9.0")).expect("a version");
+
+    let installed = store.installed(&goose).expect("listed");
+
+    assert_eq!(installed, [first, second]);
+}
