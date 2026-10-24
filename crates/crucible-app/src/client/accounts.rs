@@ -39,6 +39,7 @@
 //! | sign out | sign out, its agent's route unanswered, declined | [`LogoutOutcome::Undecided`] |
 //! | sign out | sign out, its agent's route unanswered, the yes not written | [`LogoutOutcome::HoldUnkept`] |
 //! | sign out, its agent's route unanswered, the agent cannot be started | sign out | [`LogoutOutcome::Undecided`], the route not asked |
+//! | sign out, an agent this release has no launch for, as a catalog agent | sign out | [`LogoutOutcome::Undecided`], said so, the route not asked |
 //! | sign out, a run of an instance sharing the scope not confirmed stopped | sign out | [`LogoutOutcome::Undecided`], the route not asked |
 //! | sign out | disconnect instead | as disconnect |
 //! | any | cancel, back, or nobody | [`LogoutOutcome::Undecided`] |
@@ -77,7 +78,9 @@
 //! disconnected, written or started. Choosing to disconnect
 //! instead starts nothing of the agent's and asks nothing.
 //!
-//! A sign-out takes every instance sharing the credential scope out of use
+//! Instances share a credential scope where they run one agent on one profile
+//! directory; two catalog instances run one agent only where they name one
+//! key. A sign-out takes every instance sharing the credential scope out of use
 //! before the agent's own program is run: their runs in this conversation are
 //! stopped, and `enabled: false` is written for each in one update of the
 //! user file, with the `access` of every provider reached through any of
@@ -118,6 +121,7 @@
 //! it stays where it was and the next run starts on the agent. A conversation
 //! already on the instance stays where it is.
 
+use std::borrow::Cow;
 use std::path::Path;
 
 use crucible_client_api::{
@@ -429,9 +433,7 @@ pub async fn account(
             };
             let sharing: Vec<ExternalAgent> = agents
                 .into_iter()
-                .filter(|other| {
-                    other.driver() == agent.driver() && other.profile() == agent.profile()
-                })
+                .filter(|other| scope(other) == scope(&agent))
                 .collect();
             let confirmation = signing_out(&agent, &sharing, conversation.instance());
             match confirmed(request.capabilities(), front, &confirmation).await {
@@ -664,21 +666,36 @@ async fn still_running(
 
 /// Settles, before a sign-out changes anything, that the agent's own program
 /// can be run for it, and puts the agent's route to `front` where it has no
-/// yes. A launch the launcher would refuse, the program not installed or the
-/// row withheld, is said to be so first, whatever state the route is in, and
-/// the route is not put: nobody agrees to what cannot happen, and nothing is
-/// written for a sign-out that cannot run. Answers the account to end the
-/// sign-out with where the launch is so refused and the client goes no
-/// further, where the route did not get its yes, or the yes could not be
-/// written down, and `None` where the sign-out may go on.
+/// yes. A launch the launcher would refuse, the program not installed, the
+/// row withheld or no row for the agent at all, as for a catalog agent, is
+/// said to be so first, whatever state the route is in, and the route is not
+/// put: nobody agrees to what cannot happen, and nothing is written for a
+/// sign-out that cannot run. Answers the account to end the sign-out with
+/// where the launch is so refused and the client goes no further, where the
+/// route did not get its yes, or the yes could not be written down, and
+/// `None` where the sign-out may go on.
 async fn launch_asked(
     conversation: &Conversation,
     request: &Request,
     front: &mut dyn Front,
     agent: &ExternalAgent,
 ) -> Option<Account> {
-    let row = crate::backends::REGISTRY.row(agent.driver())?;
     let capabilities = request.capabilities();
+    let Some(row) = crate::backends::REGISTRY.row(agent.driver()) else {
+        let unrun = Confirmation {
+            asks: format!("{} cannot be signed out.", agent.name()),
+            facts: vec![
+                "This release has no launch for its driver, so the agent's own sign-out \
+                 cannot run, and nothing is changed."
+                    .to_owned(),
+                format!("Agent: {}, run as {}.", agent.name(), agent.executable()),
+            ],
+            choices: vec![("Go back".to_owned(), "Change nothing.".to_owned())],
+        };
+        // Whether it was seen changes nothing: the sign-out is refused either way.
+        let _seen = confirmed(capabilities, front, &unrun).await;
+        return Some(Account::Undecided);
+    };
     if found(
         conversation,
         front,
@@ -783,7 +800,7 @@ async fn sign_out(
 
 /// The provider `row`'s agent signs in to, where this build offers it.
 fn served(desk: &Desk<'_>, row: &crate::backends::Row) -> Option<&'static str> {
-    let provider = row.driver.provider();
+    let provider = row.driver.serves(None)?.provider()?;
     crate::providers::offered(desk.switching.providers)
         .any(|served| served.name == provider)
         .then_some(provider)
@@ -829,10 +846,11 @@ async fn choose(
             .iter()
             .map(|row| {
                 let agent = shown(row);
-                (
-                    agent.to_owned(),
-                    format!("Reach {} through {agent}.", row.driver.provider()),
-                )
+                let said = row.driver.serves(None).map_or_else(
+                    || format!("Run {agent}."),
+                    |serves| format!("Reach {serves} through {agent}."),
+                );
+                (agent.to_owned(), said)
             })
             .collect();
         choices.push(("Cancel".to_owned(), "Change nothing.".to_owned()));
@@ -923,10 +941,9 @@ async fn instance(
         .as_deref()
         .and_then(std::path::Path::to_str)
         .unwrap_or_else(|| command(row));
-    Some(Some((
-        ExternalAgent::unwritten(name, row.driver, executable, profile.as_deref()),
-        false,
-    )))
+    // A row is a built-in driver's, so its instance names no catalog agent.
+    let agent = ExternalAgent::unwritten(name, row.driver, executable, profile.as_deref(), None)?;
+    Some(Some((agent, false)))
 }
 
 /// How `row`'s agent is named to a person: as its route is warned about,
@@ -1328,6 +1345,17 @@ async fn disconnect(
     }
 }
 
+/// The credential scope `agent` signs in under: the agent it runs, as a
+/// session on it is bound, and its profile directory, where it names one.
+/// Instances share a scope exactly where both agree, and the journal of an
+/// account operation on one is named by it, so the two cannot differ.
+fn scope(agent: &ExternalAgent) -> (Cow<'static, str>, Option<&str>) {
+    (
+        crate::launching::bound(agent.driver(), agent.agent()),
+        agent.profile(),
+    )
+}
+
 /// The coordinator of `agent`'s credential scope, its journal kept beside the
 /// user file `choosing`.
 fn coordinating(choosing: &Path, agent: &ExternalAgent) -> Result<Coordinator, Contended> {
@@ -1335,11 +1363,8 @@ fn coordinating(choosing: &Path, agent: &ExternalAgent) -> Result<Coordinator, C
         .parent()
         .unwrap_or_else(|| Path::new(""))
         .join("accounts");
-    let scope = format!(
-        "{}:{}",
-        agent.driver().name(),
-        agent.profile().unwrap_or("default")
-    );
+    let (bound, profile) = scope(agent);
+    let scope = format!("{bound}:{}", profile.unwrap_or("default"));
     let journal = Journal::of(directory, &scope)?;
     let admission = if agent.enabled() {
         Admission::Enabled

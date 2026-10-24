@@ -21,7 +21,7 @@ use crucible_app::outside::Installed;
 use crucible_client_api::{
     Capabilities as Asking, Command, Correlation, Outcome, Pending, Prompt, Request, TurnOutcome,
 };
-use crucible_config::Driver;
+use crucible_config::{Driver, Serves};
 use crucible_external_harnesses::fake_peer::{self, scripts::claude};
 use crucible_runtime::{Aside, Cancel, Steer};
 use crucible_sandbox::{SandboxPolicy, SandboxService};
@@ -64,7 +64,7 @@ fn unlaunched(tree: &Tree, program: Option<PathBuf>) -> Result<Unlaunched, Faile
     consent.keeps_in(file.clone());
     let runtime = runtime()?;
     let route = Route::External {
-        provider: "anthropic",
+        serves: Serves::Provider("anthropic"),
         instance: "work".into(),
         driver: Driver::Claude,
         executable: executable.to_string_lossy().into(),

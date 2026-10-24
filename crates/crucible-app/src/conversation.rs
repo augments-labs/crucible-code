@@ -451,6 +451,13 @@ impl Conversation {
         Driver::ALL.into_iter().find(|one| one.name() == name)
     }
 
+    /// The one provider the installed agent the conversation is on reaches,
+    /// where it is on one that reaches any: none on a catalog agent's route,
+    /// whose agent serves its own key.
+    pub(crate) fn agent_reaches(&self) -> Option<&'static str> {
+        self.agent_driver()?.serves(None)?.provider()
+    }
+
     /// Starts the installed agent the conversation is on with `model` at
     /// `effort` from the next turn; `None` where it is on no agent's route.
     pub(crate) fn choose_agent_model(&mut self, model: &str, effort: Option<Effort>) -> Option<()> {

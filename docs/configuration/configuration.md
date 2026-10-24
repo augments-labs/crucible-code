@@ -141,7 +141,7 @@ back from it:
 | --- | --- |
 | `subscription` | The account `/login` signed in. A key exported in the shell is not read. |
 | `apiKey` | The key in the provider's variable, then the one `/login` stored. A signed-in account is not used. |
-| `externalAgent` | The installed agent `instance` names under [`externalAgents`](#externalagents), whose driver must reach this provider. |
+| `externalAgent` | The installed agent `instance` names under [`externalAgents`](#externalagents), whose driver must reach this provider. A `catalog` agent reaches none, so it is refused here. |
 
 What the chosen way is missing stops the start with a sentence naming the
 setting, and never suggests the other way: `subscription` with no account says
@@ -221,16 +221,21 @@ choosing that `providers.<name>.access.instance` uses. At most 32.
 
 | Key | Means |
 | --- | --- |
-| `driver` | Which agent it is: `claude`, which reaches `anthropic`, or `antigravity`, which reaches `google`. Required. |
+| `driver` | Which agent it is: `claude`, which reaches `anthropic`; `antigravity`, which reaches `google`; or `catalog`, an agent the catalog reviewed, which `agent` names and which reaches no provider. Required. |
+| `agent` | For `catalog`, and required for it: the key the catalog reviewed the agent under, 1 to 32 lowercase letters, digits and hyphens. A driver's word, `native`, and a name Windows keeps for a device (`con`, `prn`, `aux`, `nul`, `com0` to `com9`, `lpt0` to `lpt9`) are never a key. Refused for any other driver. |
 | `executable` | Its program: an absolute path, or a bare name found on `PATH`. Required. |
 | `enabled` | `false` keeps the entry and sends it no new work; a provider whose `access` still names it is refused at start. Defaults to `true`. |
 | `authentication` | How it signs in: `account`, its own login, the only value. |
 | `configDir` | For `claude`: the absolute directory it keeps its sign-in under. |
-| `profileDir` | For `antigravity`: the same, and required, since its usual one is the Antigravity IDE's. |
+| `profileDir` | For `antigravity`: the same, and required, since its usual one is the Antigravity IDE's. For `catalog`: the same. |
 | `model` | For `claude`: the model it is started on, such as `claude-opus-5-5`. Defaults to Anthropic's default model. |
 | `effort` | For `claude`: the rung it is started at, `low`, `medium`, `high`, `xhigh` or `max`. Defaults to the model's default rung. |
 
-A profile key belongs to its driver, and the other driver's is refused by name.
+A profile key belongs to the drivers that read it, `configDir` to `claude` and
+`profileDir` to `antigravity` and `catalog`, and any other is refused by name.
+A `catalog` agent chooses its own model, so `model` and `effort` are refused
+for it. A session one ran is bound to its key, so once the entry names
+another `agent` that session is not resumed on it.
 An entry names a program crucible would start, so the block is read only from
 the configuration file in your home directory, and `/settings` shows none of
 it. A provider whose access names an entry has its conversations run by that

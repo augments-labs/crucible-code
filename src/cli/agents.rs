@@ -20,15 +20,37 @@ use super::failure::failing;
 #[cfg(test)]
 mod tests;
 
-/// The driver `written` names, for the command line's parser.
+/// The built-in driver `written` names, for the command line's parser.
+///
+/// A catalog agent is no driver's release: which agent it is, is the key it
+/// is added under, so `catalog` is refused here with the command that adds
+/// one.
 pub(super) fn driver(written: &str) -> Result<Driver, String> {
-    Driver::ALL
+    let known: Vec<&str> = Driver::ALL
+        .into_iter()
+        .filter(|driver| built_in(*driver))
+        .map(Driver::name)
+        .collect();
+    match Driver::ALL
         .into_iter()
         .find(|driver| driver.name() == written)
-        .ok_or_else(|| {
-            let known: Vec<&str> = Driver::ALL.iter().map(|driver| driver.name()).collect();
-            format!("expected one of {}", known.join(", "))
-        })
+    {
+        Some(driver) if built_in(driver) => Ok(driver),
+        Some(_) => Err(format!(
+            "a catalog agent is added by its key with `crucible agents add`; install expects one \
+             of {}",
+            known.join(", ")
+        )),
+        None => Err(format!("expected one of {}", known.join(", "))),
+    }
+}
+
+/// Whether `driver` is one agent of its own, whose release this build pins.
+const fn built_in(driver: Driver) -> bool {
+    match driver {
+        Driver::Claude | Driver::Antigravity => true,
+        Driver::Catalog => false,
+    }
 }
 
 /// Runs `crucible agents install` for `driver`, and stops.

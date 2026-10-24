@@ -669,10 +669,11 @@ pub fn reaching(
 }
 
 /// The text of a configuration file that installs `agent` under its name,
-/// with its driver, executable and profile directory where it has one, then
-/// reaches `provider` through it and lets it take new work, as
-/// [`connecting`] does, in the one text handed back: the instance is written
-/// disabled and enabled last.
+/// with its driver, the catalog agent it runs where it is a catalog
+/// instance, its executable, and its profile directory where it has one and
+/// its driver names one, then reaches `provider` through it and lets it take
+/// new work, as [`connecting`] does, in the one text handed back: the
+/// instance is written disabled and enabled last.
 ///
 /// # Errors
 ///
@@ -694,8 +695,13 @@ pub fn installing(
         "executable": agent.executable(),
         "enabled": false,
     });
-    if let (Some(profile), Some(fields)) = (agent.profile(), block.as_object_mut()) {
-        fields.insert(driver.profile_key().to_owned(), Value::from(profile));
+    if let Some(fields) = block.as_object_mut() {
+        if let Some(key) = agent.agent() {
+            fields.insert("agent".to_owned(), Value::from(key.as_str()));
+        }
+        if let (Some(profile), Some(key)) = (agent.profile(), driver.profile_key()) {
+            fields.insert(key.to_owned(), Value::from(profile));
+        }
     }
     if document
         .value()

@@ -2,9 +2,10 @@
 
 use crucible_models::Speed;
 use crucible_tools::{Ask, Command, Mode, Remember, Sensitivity, Settled, Verdict, narrowest};
-use crucible_types::{ToolArgs, ToolCall, ToolId};
+use crucible_types::{AgentKey, ToolArgs, ToolCall, ToolId};
 
 use crate::document::{Document, Origin};
+use crate::settings::access::Serves;
 use crate::settings::{Driver, ExternalAgent, Settings};
 
 use super::*;
@@ -1045,7 +1046,8 @@ fn installing_an_agent_writes_its_block_the_provider_s_access_and_enables_it_las
             text,
             FILE,
             "anthropic",
-            &ExternalAgent::unwritten(name, driver, executable, profile),
+            &ExternalAgent::unwritten(name, driver, executable, profile, None)
+                .expect("an instance of a built-in driver"),
         )
         .unwrap_or_else(|problem| panic!("{text}: {problem}"));
         let settings = Settings::resolve(vec![Document::sample(&written, Origin::User)]);
@@ -1099,10 +1101,57 @@ fn installing_an_agent_the_file_already_names_is_refused() {
             text,
             FILE,
             "anthropic",
-            &ExternalAgent::unwritten("claude", Driver::Claude, "claude", None),
+            &ExternalAgent::unwritten("claude", Driver::Claude, "claude", None, None)
+                .expect("an instance of a built-in driver"),
         ),
         Err(ConfigError::Unspliceable { .. })
     ));
+}
+
+/// A catalog instance is written with the agent it runs beside its driver,
+/// and its profile directory under the key its driver reads, so the file
+/// read back names the same agent.
+#[test]
+fn installing_a_catalog_agent_writes_the_agent_it_runs() {
+    let profile = crate::sample::rooted("home/me/.crucible/agents/goose");
+    let executable = crate::sample::rooted("opt/goose");
+    let goose = AgentKey::new("goose").expect("an agent key");
+    for profile in [None, Some(profile.as_str())] {
+        let unwritten =
+            ExternalAgent::unwritten("goose", Driver::Catalog, &executable, profile, Some(&goose))
+                .expect("a catalog instance naming its agent");
+
+        let written = installing("", FILE, "anthropic", &unwritten)
+            .unwrap_or_else(|problem| panic!("{profile:?}: {problem}"));
+
+        let block: Value = serde_json::from_str(&written).unwrap_or_default();
+        assert_eq!(
+            block.pointer("/externalAgents/goose/agent"),
+            Some(&Value::from("goose")),
+            "{written}"
+        );
+        let settings = Settings::resolve(vec![Document::sample(&written, Origin::User)]);
+        let read = settings
+            .external_agents()
+            .into_iter()
+            .find(|agent| agent.name() == "goose")
+            .map(|agent| {
+                (
+                    agent.driver(),
+                    agent.serves(),
+                    agent.profile().map(str::to_owned),
+                )
+            });
+        assert_eq!(
+            read,
+            Some((
+                Driver::Catalog,
+                Serves::Agent(goose.clone()),
+                profile.map(str::to_owned)
+            )),
+            "{written}"
+        );
+    }
 }
 
 #[test]

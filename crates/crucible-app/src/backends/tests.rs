@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
+use crucible_config::Serves;
 use crucible_external_harnesses::fake_peer::{self, scripts};
 use crucible_external_harnesses::{Control, Shape};
 use crucible_sandbox::SandboxPolicy;
@@ -25,7 +26,7 @@ fn every_row_agrees_with_its_driver_its_route_and_its_page() {
     for row in REGISTRY.all() {
         assert!(drivers.insert(row.driver.name()), "{:?} twice", row.driver);
         assert!(Driver::ALL.contains(&row.driver), "{row:?}");
-        assert_eq!(row.profile_key, row.driver.profile_key(), "{row:?}");
+        assert_eq!(Some(row.profile_key), row.driver.profile_key(), "{row:?}");
         assert_eq!(row.route, agent_route(row.driver.name()), "{row:?}");
         assert!(
             WARNED.iter().any(|warned| warned.route == row.route),
@@ -117,7 +118,7 @@ async fn the_claude_code_row_held_back_is_refused_by_its_section_and_starts_noth
     let sandbox = Arc::new(LocalSandbox::new().watching_on(Handle::current()));
     let launcher = Launcher::new(sandbox, Handle::current(), &policy, &consent);
     let route = Route::External {
-        provider: "anthropic",
+        serves: Serves::Provider("anthropic"),
         instance: "work".into(),
         driver: Driver::Claude,
         executable: peer.to_string_lossy().into(),
@@ -259,13 +260,39 @@ fn antigravity_answers_yes_by_itself_to_what_each_mode_allows() {
     assert_eq!(antigravity_allowing(Mode::FullAccess), Allowing::Everything);
 }
 
+/// Every driver a row is built in for: all but a catalog agent's, which is
+/// whichever agent its key names.
+fn built_in() -> impl Iterator<Item = Driver> {
+    Driver::ALL.into_iter().filter(|driver| match driver {
+        Driver::Claude | Driver::Antigravity => true,
+        Driver::Catalog => false,
+    })
+}
+
+/// A catalog agent is the agent its key names, so no row built in is its, and
+/// it serves that key and no provider; every other driver has its row.
+#[test]
+fn a_catalog_agent_has_no_built_in_row_and_serves_its_key() {
+    let goose = crucible_types::AgentKey::new("goose").expect("an agent key");
+    assert!(REGISTRY.row(Driver::Catalog).is_none());
+    assert_eq!(
+        Driver::Catalog.serves(Some(&goose)),
+        Some(Serves::Agent(goose))
+    );
+    for driver in built_in() {
+        assert!(REGISTRY.row(driver).is_some(), "{driver:?}");
+    }
+}
+
 /// The configuration takes a model for exactly the drivers whose launch names
 /// it, so a model written for an agent is never one its launch drops, and no
 /// launch names one the configuration would refuse.
 #[test]
 fn a_model_is_taken_for_exactly_the_drivers_that_launch_with_it() {
-    for driver in Driver::ALL {
-        let row = REGISTRY.row(driver).expect("every driver has a row");
+    for driver in built_in() {
+        let row = REGISTRY
+            .row(driver)
+            .expect("every built-in driver has a row");
         let mut dialect = (row.dialect)(Mode::Ask).expect("asking");
         let arguments = dialect
             .request(Shape {
@@ -283,8 +310,8 @@ fn a_model_is_taken_for_exactly_the_drivers_that_launch_with_it() {
     }
 }
 
-/// Every driver reaches a provider this build offers, so connecting an agent
-/// never puts a conversation on a provider nothing here can name.
+/// Every built-in driver reaches a provider this build offers, so connecting
+/// an agent never puts a conversation on a provider nothing here can name.
 #[test]
 fn every_driver_s_provider_is_one_this_build_offers() {
     let providers = crate::providers::providers()
@@ -293,9 +320,10 @@ fn every_driver_s_provider_is_one_this_build_offers() {
     let offered: BTreeSet<&str> = crate::providers::offered(&providers)
         .map(|one| one.name)
         .collect();
-    for driver in Driver::ALL {
+    for driver in built_in() {
+        let provider = driver.serves(None).and_then(|serves| serves.provider());
         assert!(
-            offered.contains(driver.provider()),
+            provider.is_some_and(|provider| offered.contains(provider)),
             "{driver:?}: {offered:?}"
         );
     }

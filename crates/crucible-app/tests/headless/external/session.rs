@@ -14,7 +14,7 @@ use crucible_app::backends::{REGISTRY, Registry, Row};
 use crucible_app::content_use::{Consent, Routes};
 use crucible_app::launching::Agent;
 use crucible_app::outside::{Installed, Relaunch};
-use crucible_config::Driver;
+use crucible_config::{Driver, Serves};
 use crucible_external_harnesses::fake_peer::{self, Reply, Script as Peer};
 use crucible_runner::{TurnError, Turned};
 use crucible_sandbox::{SandboxPolicy, SandboxService};
@@ -50,7 +50,7 @@ fn on_antigravity(tree: &Tree, script: &Peer) -> Result<Outside, Failed> {
     let sandbox: Arc<dyn SandboxService> =
         Arc::new(LocalSandbox::new().watching_on(runtime.clone()));
     let route = Route::External {
-        provider: "google",
+        serves: Serves::Provider("google"),
         instance: "space".into(),
         driver: Driver::Antigravity,
         executable: program.to_string_lossy().into(),
@@ -289,7 +289,12 @@ fn a_model_of_the_agent_s_own_provider_is_refused_where_it_chooses_its_own() -> 
         &tree,
         &mut outside,
         Command::SelectModel {
-            provider: Name::new(Driver::Antigravity.provider())?,
+            provider: Name::new(
+                &Driver::Antigravity
+                    .serves(None)
+                    .map(|serves| serves.to_string())
+                    .ok_or("Antigravity serves a provider")?,
+            )?,
             model: Name::new("gemini-3.8-flash")?,
             effort: None,
         },

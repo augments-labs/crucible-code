@@ -2,7 +2,7 @@
 //! chooses exactly what crucible chose before the setting existed.
 
 use crucible_auth::{Held, Kind};
-use crucible_config::{Driver, Settings};
+use crucible_config::{Driver, Serves, Settings};
 
 use super::*;
 use crate::providers::Served;
@@ -418,7 +418,7 @@ fn an_agent_access_resolves_to_its_instance_as_written() {
         assert_eq!(
             route,
             Route::External {
-                provider: "anthropic",
+                serves: Serves::Provider("anthropic"),
                 instance: "mine".into(),
                 driver: Driver::Claude,
                 executable: "claude".into(),
@@ -539,6 +539,39 @@ fn an_agent_access_through_another_vendor_s_agent_is_refused() {
     );
     assert!(said.contains("providers.openai.access"), "{said}");
     assert!(said.contains("anthropic"), "{said}");
+}
+
+/// A catalog agent serves its own key and reaches no provider, so a route to
+/// one through it is refused, saying it is the catalog agent and naming no
+/// provider to write the access under.
+#[test]
+fn an_agent_access_through_a_catalog_agent_is_refused_naming_the_agent() {
+    let sample = Sample::new("access-agent-catalog");
+    let settings = sample.user(
+        r#"{
+  "externalAgents": {"work": {"driver": "catalog", "agent": "goose", "executable": "goose"}},
+  "providers": {"anthropic": {"access": {"type": "externalAgent", "instance": "work"}}}
+}"#,
+    );
+
+    let refused = resolved(
+        serving("anthropic"),
+        &settings,
+        &lookup(None),
+        None,
+        NO_SUBSCRIPTION,
+    )
+    .unwrap_err();
+
+    let goose = crucible_types::AgentKey::new("goose").expect("an agent key");
+    let said = refused.to_string();
+    assert!(
+        matches!(&refused, AccessError::ForeignAgent { serves, .. } if *serves == Serves::Agent(goose)),
+        "{refused:?}"
+    );
+    assert!(said.contains("providers.anthropic.access"), "{said}");
+    assert!(said.contains("catalog agent goose"), "{said}");
+    assert!(!said.contains("write it under"), "{said}");
 }
 
 #[test]

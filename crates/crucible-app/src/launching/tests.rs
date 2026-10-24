@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use crucible_config::Driver;
+use crucible_config::{Driver, Serves};
 use crucible_execution::{
     Authentication, Decision, Event, Failure, Outcome, SessionRef, Sink, Text, TurnRequest,
 };
@@ -85,7 +85,7 @@ fn conversation(sample: &Sample) -> SandboxPolicy {
 /// An `externalAgents` entry for Claude Code, its program at `executable`.
 fn route(executable: &Path, profile: Option<&Path>) -> Route {
     Route::External {
-        provider: "anthropic",
+        serves: Serves::Provider("anthropic"),
         instance: "work".into(),
         driver: Driver::Claude,
         executable: executable.to_string_lossy().into(),
@@ -850,6 +850,58 @@ fn an_agent_is_started_with_the_model_its_route_names() {
         let shape = agent.shape(None, Path::new("/work"));
         assert_eq!((shape.model, shape.effort), (given, Some("medium")));
     }
+}
+
+/// A session a catalog agent ran is bound to its key as well as its driver,
+/// and the route read back from the binding is the driver it was bound with;
+/// a built-in driver's binding is its word alone, as it always was.
+#[test]
+fn a_catalog_agent_s_session_is_bound_to_its_key() {
+    let goose = AgentKey::new("goose").expect("an agent key");
+    assert_eq!(bound(Driver::Catalog, Some(&goose)), "catalog:goose");
+    assert_eq!(bound(Driver::Claude, None), "claude");
+    assert_eq!(bound(Driver::Antigravity, None), "antigravity");
+    for driver in Driver::ALL {
+        let agent = (driver == Driver::Catalog).then_some(&goose);
+        assert_eq!(
+            bound_driver(&bound(driver, agent)),
+            Some(driver),
+            "{driver:?}"
+        );
+    }
+    for unbound in [
+        "catalog:",
+        "catalog:Goose",
+        "claude:goose",
+        "native",
+        "plain",
+    ] {
+        assert_eq!(bound_driver(unbound), None, "{unbound}");
+    }
+}
+
+/// A catalog agent chooses its own model, so a route of one starts it on
+/// none, whatever its entry names, and it is the catalog agent the route
+/// serves rather than a provider.
+#[test]
+fn a_catalog_agent_is_started_on_no_model() {
+    let goose = AgentKey::new("goose").expect("an agent key");
+    let catalog = Serves::Agent(goose);
+    assert_eq!(
+        started(Driver::Catalog, &catalog, Some("opus"), Some(Effort::High)),
+        (None, None)
+    );
+    assert_eq!(
+        started(
+            Driver::Claude,
+            &Serves::Provider("anthropic"),
+            Some("opus"),
+            None
+        )
+        .0
+        .as_deref(),
+        Some("opus")
+    );
 }
 
 /// An agent taken from its configuration entry, as a reopened session's is,
