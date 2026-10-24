@@ -423,7 +423,7 @@ fn sized(raw: &[u8]) -> Result<(), UnpackError> {
 /// it, held to the rules every name is: a directory's may end in one `/`, and
 /// one leading `./` is the directory the archive was made from, so it is
 /// dropped.
-fn named(raw: &[u8], directory: bool) -> Result<String, UnpackError> {
+pub(super) fn named(raw: &[u8], directory: bool) -> Result<String, UnpackError> {
     let refused = |why| UnpackError::Name {
         name: shown(raw),
         why,

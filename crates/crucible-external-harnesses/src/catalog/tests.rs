@@ -1306,6 +1306,7 @@ fn the_interim_snapshot_holds_what_0_48_shipped_field_for_field() {
         };
         assert_eq!(arguments, started_with, "{spelled}");
         assert_eq!(target.launch, Launch::Binary, "{spelled}");
+        assert_eq!(target.hosts, ["dl.google.com".into()], "{spelled}");
         let [archive] = target.artifacts.as_slice() else {
             panic!("one archive for {spelled}");
         };

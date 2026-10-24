@@ -34,6 +34,8 @@
 //! other: a driver is a word the user writes, and its route is asked about in
 //! the vendor's own terms.
 
+use std::path::Path;
+
 use crucible_config::Driver;
 use crucible_execution::{Failure, Text};
 use crucible_external_harnesses::Dialect;
@@ -67,7 +69,7 @@ pub struct Row {
     /// admitted only as one `trust` offers; given no trust state it is
     /// admitted as none, which is all that asking whether it runs in a mode,
     /// or what it is called, needs.
-    pub dialect: fn(Mode, Option<&Trust>) -> Wire,
+    pub dialect: fn(Mode, Option<&Trust>, Option<&Path>) -> Wire,
     /// The key of its `externalAgents` entry that names its profile directory.
     pub profile_key: &'static str,
     /// The content-use route a launch of it is held under.
@@ -178,9 +180,22 @@ impl AgentRow {
     /// # Errors
     ///
     /// Why the agent does not run in `mode`.
-    pub fn dialect(&self, mode: Mode, trust: Option<&Trust>) -> Result<Box<dyn Dialect>, Failure> {
+    pub fn dialect(&self, mode: Mode, trust: Option<&Trust>, program: Option<&Path>) -> Wire {
         match self {
-            Self::Built(row) => (row.dialect)(mode, trust),
+            Self::Built(row) => {
+                let unusable = trust
+                    .filter(|_| row.catalogued)
+                    .and_then(|trust| Some((trust.file(), trust.unusable()?)));
+                if let Some((file, why)) = unusable {
+                    return Err(Failure::new(&format!(
+                        "The catalog trust state at {} cannot be used ({why}), so no release of \
+                         {} is admitted. Repair or remove that file.",
+                        file.display(),
+                        row.driver.name()
+                    )));
+                }
+                (row.dialect)(mode, trust, program)
+            }
             Self::Catalog(row) => Ok(row.dialect(mode)),
         }
     }
@@ -215,7 +230,7 @@ impl AgentRow {
     /// and is called by its key.
     #[must_use]
     pub fn command(&self) -> String {
-        self.dialect(Mode::default(), None).map_or_else(
+        self.dialect(Mode::default(), None, None).map_or_else(
             |_| self.named().to_owned(),
             |dialect| dialect.program().to_owned(),
         )
@@ -289,7 +304,7 @@ pub(crate) const CLAUDE: Row = Row {
     driver: Driver::Claude,
     // Started in the permission mode the reviewed table gives the
     // conversation's mode.
-    dialect: |mode, _| Ok(Box::new(Claude::in_mode(claude_mode(mode)))),
+    dialect: |mode, _, _| Ok(Box::new(Claude::in_mode(claude_mode(mode)))),
     profile_key: "configDir",
     route: "agent:claude",
     docs_section: "claude-code",
@@ -313,8 +328,9 @@ pub(crate) const ANTIGRAVITY: Row = Row {
     driver: Driver::Antigravity,
     // The agent asks about every action itself, and what the
     // conversation's mode allows is answered yes without asking.
-    dialect: |mode, trust| {
-        let offered = trust.map_or_else(Vec::new, antigravity::offered);
+    dialect: |mode, trust, program| {
+        let offered =
+            antigravity::started(trust.map_or_else(Vec::new, antigravity::offered), program);
         Ok(Box::new(Antigravity::allowing(allowing(mode), &offered)))
     },
     profile_key: "profileDir",

@@ -38,6 +38,9 @@ mod unpack;
 
 pub use unpack::{Staged, UnpackError, Unpacker};
 
+/// The most a release may be: its archive, and what it unpacks to.
+pub const RELEASE_BYTES: u64 = 4 << 30;
+
 /// The most of a name the archive gives that a refusal repeats.
 const NAMED: usize = 64;
 
@@ -117,6 +120,15 @@ impl OwnedPin {
             (second, first)
         };
         if *executable.path != *self.target.cmd || executable.path == companion.path {
+            return None;
+        }
+        let bytes = archive
+            .size
+            .max(executable_bytes(executable)?.checked_add(executable_bytes(companion)?)?);
+        if bytes > RELEASE_BYTES
+            || !listed_host(&archive.url, &self.target.hosts)
+            || executable.path.eq_ignore_ascii_case(&companion.path)
+        {
             return None;
         }
         Some(Pin {
@@ -211,15 +223,38 @@ impl<'a> Pin<'a> {
 }
 
 /// `file` as a member of a pinned archive, where it is an ordinary file named
-/// by a file name alone.
+/// by a file name alone, which the unpacker would take as written, and of a
+/// size a release may have.
 fn member(file: &crate::catalog::File) -> Option<Member<'_>> {
     let FileKind::File { size, .. } = file.kind else {
         return None;
     };
-    (!file.path.contains('/')).then_some(Member {
+    let plain = !file.path.contains('/')
+        && unpack::named(file.path.as_bytes(), false).is_ok_and(|name| name == *file.path);
+    (plain && size <= RELEASE_BYTES).then_some(Member {
         name: &file.path,
         bytes: size,
     })
+}
+
+/// The size of the ordinary file `file` is.
+fn executable_bytes(file: &crate::catalog::File) -> Option<u64> {
+    match file.kind {
+        FileKind::File { size, .. } => Some(size),
+        FileKind::Dir | FileKind::Link { .. } => None,
+    }
+}
+
+/// Whether the host of `url`, which is an `https` address with no user and no
+/// port, is one of `hosts`, compared as host names are.
+fn listed_host(url: &str, hosts: &[Box<str>]) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false;
+    };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    !host.is_empty()
+        && !host.contains(['@', ':', '[', ']'])
+        && hosts.iter().any(|listed| listed.eq_ignore_ascii_case(host))
 }
 
 /// Unpacks `archive`, the release `pin` names, into its version under `root`,

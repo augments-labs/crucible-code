@@ -1011,12 +1011,13 @@ fn an_agent_whose_program_cannot_be_run_is_not_started_and_no_log_is_written() {
 fn without_full_access(
     mode: Mode,
     _: Option<&crucible_external_harnesses::catalog::Trust>,
+    _: Option<&std::path::Path>,
 ) -> Result<Box<dyn crucible_external_harnesses::Dialect>, crucible_execution::Failure> {
     match mode {
         Mode::FullAccess => Err(crucible_execution::Failure::new(
             "full access is not offered",
         )),
-        Mode::Ask | Mode::AllowEdits => (crate::backends::CLAUDE.dialect)(mode, None),
+        Mode::Ask | Mode::AllowEdits => (crate::backends::CLAUDE.dialect)(mode, None, None),
     }
 }
 

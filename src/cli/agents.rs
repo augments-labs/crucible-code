@@ -1,5 +1,5 @@
 //! `crucible agents install`: putting the release of an installed coding agent
-//! this build pins where crucible runs it from, from a command line.
+//! the agent catalog offers where crucible runs it from, from a command line.
 //!
 //! What is downloaded, checked and kept is [`crucible_app::installing`]'s; this
 //! file finds crucible's home and writes what comes back. How far the download
@@ -53,7 +53,7 @@ pub(super) fn driver(written: &str) -> Result<Driver, String> {
     }
 }
 
-/// Whether `driver` is one agent of its own, whose release this build pins.
+/// Whether `driver` is one agent of its own, whose release the catalog offers.
 const fn built_in(driver: Driver) -> bool {
     match driver {
         Driver::Claude | Driver::Antigravity => true,

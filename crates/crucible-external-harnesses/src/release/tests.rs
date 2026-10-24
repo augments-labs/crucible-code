@@ -2367,7 +2367,7 @@ fn offered() -> OwnedPin {
             cmd: "agent".into(),
             args: Vec::new(),
             env: Vec::new(),
-            hosts: Vec::new(),
+            hosts: vec!["example.invalid".into()],
             artifacts: vec![Artifact {
                 url: "https://example.invalid/agent-2.0.0.zip".into(),
                 mirror: None,
@@ -2544,4 +2544,117 @@ fn a_release_of_any_other_shape_is_not_a_pin() {
     for (what, held) in shapes {
         assert_eq!(held.pin(), None, "{what}");
     }
+}
+
+/// `offered`, with its archive's address changed to `url`.
+fn at(url: &str) -> OwnedPin {
+    archived(|archive| archive.url = url.into())
+}
+
+/// A release is downloaded only from a host its target lists, so an address in
+/// a catalog cannot send the installer anywhere the target did not name.
+#[test]
+fn a_release_is_a_pin_only_from_an_address_on_a_host_its_target_lists() {
+    for (what, url) in [
+        ("another host", "https://elsewhere.invalid/agent.zip"),
+        (
+            "a host that only ends like it",
+            "https://notexample.invalid/agent.zip",
+        ),
+        (
+            "a user in front of the host",
+            "https://example.invalid@elsewhere.invalid/agent.zip",
+        ),
+        ("a port", "https://example.invalid:8443/agent.zip"),
+        ("the loopback", "https://127.0.0.1/agent.zip"),
+        (
+            "the metadata address",
+            "https://169.254.169.254/latest/meta-data",
+        ),
+        ("a plain address", "http://example.invalid/agent.zip"),
+        ("no host", "https:///agent.zip"),
+    ] {
+        assert_eq!(at(url).pin(), None, "{what}");
+    }
+    assert!(
+        at("https://EXAMPLE.invalid/agent.zip").pin().is_some(),
+        "case"
+    );
+    assert!(at("https://example.invalid").pin().is_some(), "no path");
+    let mut unlisted = offered();
+    unlisted.target.hosts.clear();
+    assert_eq!(unlisted.pin(), None, "a target listing no host");
+}
+
+/// Sizes are held to the ceiling a release may have before anything is
+/// downloaded or written for them.
+#[test]
+fn a_release_over_the_ceiling_is_not_a_pin() {
+    let huge = || file("agent", super::RELEASE_BYTES, true);
+    for (what, held) in [
+        ("an archive", archived(|archive| archive.size = u64::MAX)),
+        (
+            "an archive over it",
+            archived(|archive| archive.size = super::RELEASE_BYTES + 1),
+        ),
+        (
+            "a member",
+            archived(|archive| {
+                archive.files = Files::Listed(vec![
+                    file("agent", u64::MAX, true),
+                    file("harness", 1, true),
+                ]);
+            }),
+        ),
+        (
+            "members that sum over it",
+            archived(|archive| {
+                archive.files = Files::Listed(vec![huge(), file("harness", 1, true)]);
+            }),
+        ),
+    ] {
+        assert_eq!(held.pin(), None, "{what}");
+    }
+    let at_it = archived(|archive| {
+        archive.size = super::RELEASE_BYTES;
+        archive.files = Files::Listed(vec![
+            file("agent", super::RELEASE_BYTES - 1, true),
+            file("harness", 1, true),
+        ]);
+    });
+    assert!(at_it.pin().is_some());
+}
+
+/// A member's name is held to the rules the unpacker holds every name to.
+#[test]
+fn a_release_whose_member_names_break_the_unpackers_rules_is_not_a_pin() {
+    for (what, program) in [
+        ("an escape sequence", "agent\u{1b}[2J"),
+        ("a newline", "agent\nx"),
+        ("a nul", "agent\0"),
+        ("a trailing dot", "agent."),
+        ("a trailing space", "agent "),
+        ("a device name", "con"),
+        ("a device name with an extension", "NUL.txt"),
+        ("a character Windows refuses", "ag*nt"),
+        ("a non-ASCII letter", "agént"),
+        ("a dot", "."),
+        ("two dots", ".."),
+        ("an overlong name", &"a".repeat(300)),
+    ] {
+        let held = {
+            let mut held = offered();
+            held.target.cmd = program.into();
+            if let Some(archive) = held.target.artifacts.first_mut() {
+                archive.files =
+                    Files::Listed(vec![file(program, 18, true), file("harness", 21, true)]);
+            }
+            held
+        };
+        assert_eq!(held.pin(), None, "{what}");
+    }
+    let colliding = archived(|archive| {
+        archive.files = Files::Listed(vec![file("agent", 18, true), file("AGENT", 21, true)]);
+    });
+    assert_eq!(colliding.pin(), None, "names that differ only in case");
 }

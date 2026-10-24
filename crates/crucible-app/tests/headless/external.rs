@@ -128,7 +128,7 @@ impl Launching {
 
 impl Relaunch for Launching {
     fn admits(&self, mode: Mode) -> Result<(), Failure> {
-        (self.row.dialect)(mode, None).map(drop)
+        (self.row.dialect)(mode, None, None).map(drop)
     }
 
     fn model(&self) -> Option<&str> {
@@ -156,7 +156,7 @@ impl Relaunch for Launching {
                 launched.push((mode, resume.map(|named| named.reference().to_owned())));
             }
             let trust = Trust::load(&self.state, SystemTime::now());
-            let mut dialect = (self.row.dialect)(mode, Some(&trust))?;
+            let mut dialect = (self.row.dialect)(mode, Some(&trust), None)?;
             let control = Control::new().ok_or_else(|| Failure::new("no control"))?;
             let agent = self.agent.on(model, effort);
             let host = self
@@ -232,7 +232,7 @@ fn launching_on(
         let starting = launching.launcher();
         for step in [Account::Version, Account::Status] {
             let control = Control::new().ok_or("no control")?;
-            let mut dialect = (row.dialect)(Mode::Ask, None)?;
+            let mut dialect = (row.dialect)(Mode::Ask, None, None)?;
             starting
                 .account(&launching.agent, &control, dialect.as_mut(), step, &|_| {})
                 .await?;

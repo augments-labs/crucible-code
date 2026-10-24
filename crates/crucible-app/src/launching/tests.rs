@@ -35,7 +35,7 @@ use crate::sample::Sample;
 /// The plain protocol, held under Claude Code's route and shipped.
 static SHIPPED: [Row; 1] = [Row {
     driver: Driver::Claude,
-    dialect: |_, _| Ok(Box::new(Plain)),
+    dialect: |_, _, _| Ok(Box::new(Plain)),
     profile_key: "configDir",
     route: "agent:claude",
     docs_section: "claude-code",
@@ -638,7 +638,7 @@ async fn a_catalog_row_is_launched_as_its_entry_reviewed_it() {
         let policy = conversation(&sample);
         let state = sample.state();
         let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
-        let mut dialect = agent.row().dialect(Mode::Ask, None).expect("asking");
+        let mut dialect = agent.row().dialect(Mode::Ask, None, None).expect("asking");
         let control = Control::new().expect("a control");
 
         let read = launcher
@@ -1595,4 +1595,93 @@ async fn a_run_is_admitted_as_the_releases_on_offer_when_it_is_launched() {
 
     assert!(matches!(before.as_slice(), [Act::Fail(_)]), "{before:?}");
     assert!(matches!(after.as_slice(), [Act::Send(_)]), "{after:?}");
+}
+
+/// A start of an Antigravity whose trust state cannot be used says so, naming
+/// the file to repair or remove, rather than that no release is offered.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_found_antigravity_with_an_unusable_trust_state_is_refused_naming_the_file() {
+    let sample = Sample::new("launch-antigravity-untrusted");
+    let file = trust_of(&sample).file();
+    std::fs::create_dir_all(file.parent().expect("a directory")).expect("a directory");
+    std::fs::write(&file, "not a trust state").expect("the file");
+
+    let (read, heard) =
+        antigravity_status(&sample, &Script::of([antigravity_answering("1.3.0")])).await;
+
+    let Reading::Unreadable(failure) = read else {
+        panic!("{read:?}");
+    };
+    let said = failure.reason().as_str();
+    assert!(said.contains(&file.display().to_string()), "{said}");
+    assert!(said.contains("Repair or remove"), "{said}");
+    assert_eq!(heard, 0, "nothing was started");
+}
+
+/// The wire a run is made with follows the release its program is: the
+/// version directory it is kept in, not the newest one on offer.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_is_started_with_the_arguments_of_the_release_its_program_is() {
+    let sample = Sample::new("launch-antigravity-directory");
+    let release = |version: &str, args: &[&str]| {
+        release_of(
+            "antigravity",
+            version,
+            (
+                &format!("https://dl.google.com/agy-extensions/releases/linux/agy-{version}.zip"),
+                &"a".repeat(64),
+                1000,
+            ),
+            [("agy_acp_server.par", 700), ("localharness_external", 300)],
+            args,
+        )
+    };
+    trusting(
+        &sample,
+        2,
+        &[release("1.4.1", &["--new"]), release("1.3.0", &["--old"])],
+    );
+    let consent = Consent::new(Routes::production());
+    let policy = conversation(&sample);
+    let state = sample.state();
+    let arguments = |version: &str| {
+        let program = sample
+            .root()
+            .join("programs/antigravity")
+            .join(version)
+            .join("agy_acp_server.par");
+        std::fs::create_dir_all(program.parent().expect("a directory")).expect("a directory");
+        std::fs::write(&program, "#!/bin/sh\n").expect("the program");
+        #[cfg(unix)]
+        std::fs::set_permissions(
+            &program,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .expect("executable");
+        let route = Route::External {
+            serves: Serves::Provider("google"),
+            instance: "space".into(),
+            driver: Driver::Antigravity,
+            executable: program.to_string_lossy().into(),
+            profile: None,
+            model: None,
+            effort: None,
+            enabled: true,
+        };
+        let agent = Agent::routed(&route, &ANTIGRAVITY_REGISTRY, |_| None).expect("a row");
+        let runs = Runs::new(
+            Launcher::new(local(), Handle::current(), &policy, &consent, &state),
+            Arc::new(SandboxEnablement::new(false, false)),
+            agent,
+            "space",
+            &Controls::default(),
+        );
+        runs.dialect(Mode::Ask)
+            .expect("asking")
+            .request(Shape::default())
+            .arguments
+    };
+
+    assert_eq!(arguments("1.4.1"), ["--new"]);
+    assert_eq!(arguments("1.3.0"), ["--old"]);
 }

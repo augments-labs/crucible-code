@@ -66,7 +66,7 @@ sandbox inspect prints the confinement a command in this directory would run und
 
 completion SHELL writes a completion script for bash, zsh, fish, powershell or elvish, made from this command line as it is, and stops. It reads no configuration and opens no terminal.
 
-agents install DRIVER downloads the release of an installed coding agent this build pins, antigravity's agent server, checks its size and SHA-256 against the pin, unpacks it under crucible's home and stops; a release already there is kept. /login then runs that release for an agent it sets up.
+agents install DRIVER downloads the release of an installed coding agent the agent catalog offers, antigravity's agent server, checks its size and SHA-256 against the catalog's pin, unpacks it under crucible's home and stops; a release already there is kept. /login then runs that release for an agent it sets up.
 
 update says whether a release later than this one is out and, where install.sh installed crucible, downloads it, checks it against the release's SHA256SUMS, makes it the active release and stops; a release that does not then run as itself is rolled back. update --check only says, and exits 3 when a later release is out; update --dry-run says what would be installed. Asking is what updates: updates.check does not stop it, and a build cargo made, a copy put in place by hand and a Windows install are refused with the way each is updated instead.
 

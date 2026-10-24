@@ -251,3 +251,51 @@ fn nothing_is_admitted_while_nothing_is_offered() {
 
     assert!(matches!(refused.as_slice(), [Act::Fail(_)]), "{refused:?}");
 }
+
+/// The program under `programs/antigravity/<version>/`, as an install puts it.
+fn kept_at(version: &str) -> std::path::PathBuf {
+    Path::new("/home/me/.crucible/programs/antigravity")
+        .join(version)
+        .join("agy_acp_server.par")
+}
+
+/// What the agent is admitted as and started with is the release whose
+/// directory its program is in, not the newest one offered: an older install
+/// is started with its own arguments, and a version not offered is none.
+#[test]
+fn the_release_started_is_the_one_its_directory_names() {
+    let offers = || vec![offering("1.4.1", &["--new"]), offering("1.3.0", &[])];
+    let wire = |program: Option<&Path>| {
+        Antigravity::allowing(
+            Allowing::Nothing,
+            &crate::antigravity::started(offers(), program),
+        )
+    };
+
+    let older = wire(Some(&kept_at("1.3.0")))
+        .request(Shape::default())
+        .arguments;
+    let newer = wire(Some(&kept_at("1.4.1")))
+        .request(Shape::default())
+        .arguments;
+    let by_hand = wire(Some(Path::new("/usr/bin/antigravity")))
+        .request(Shape::default())
+        .arguments;
+
+    assert!(older.is_empty(), "{older:?}");
+    assert_eq!(newer, ["--new"]);
+    assert_eq!(
+        by_hand,
+        ["--new"],
+        "a program kept elsewhere is any offered release"
+    );
+    let mut other = opened(wire(Some(&kept_at("1.3.0"))));
+    let acts = other.heard(&answered_as("1.4.1")).unwrap();
+    assert!(matches!(acts.as_slice(), [Act::Fail(_)]), "{acts:?}");
+    let mut missing = opened(wire(Some(&kept_at("1.2.0"))));
+    let acts = missing.heard(&answered_as("1.2.0")).unwrap();
+    assert!(matches!(acts.as_slice(), [Act::Fail(_)]), "{acts:?}");
+    let mut own = opened(wire(Some(&kept_at("1.4.1"))));
+    let acts = own.heard(&answered_as("1.4.1")).unwrap();
+    assert!(matches!(acts.as_slice(), [Act::Send(_)]), "{acts:?}");
+}

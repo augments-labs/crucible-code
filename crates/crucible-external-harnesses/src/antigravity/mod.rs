@@ -46,6 +46,29 @@ pub fn offered(trust: &Trust) -> Vec<OwnedPin> {
     AgentKey::new(AGENT).map_or_else(|_| Vec::new(), |key| trust.offered(&key))
 }
 
+/// Of the releases `offered`, those the program at `program` can be: the one
+/// whose version names the directory it is in, where it is kept under
+/// `programs/antigravity/`, and none if that version is not offered; all of
+/// them for a program kept anywhere else, such as one installed by hand.
+#[must_use]
+pub fn started(offered: Vec<OwnedPin>, program: Option<&std::path::Path>) -> Vec<OwnedPin> {
+    let kept = program.and_then(|program| {
+        let version = program.parent()?;
+        let agent = version.parent()?;
+        let programs = agent.parent()?;
+        (agent.file_name()? == AGENT && programs.file_name()? == "programs")
+            .then(|| version.file_name().map(std::ffi::OsStr::to_os_string))
+            .flatten()
+    });
+    match kept {
+        Some(version) => offered
+            .into_iter()
+            .filter(|pin| std::ffi::OsStr::new(&*pin.version) == version)
+            .collect(),
+        None => offered,
+    }
+}
+
 /// The command it is looked up as.
 const PROGRAM: &str = "antigravity";
 

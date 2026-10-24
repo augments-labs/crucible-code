@@ -81,6 +81,7 @@ pub(crate) fn release_of(
             "platform": platform_here(),
             "cmd": files[0].0,
             "args": args,
+            "hosts": [url.trim_start_matches("https://").split('/').next()],
             "artifacts": [{
                 "url": url,
                 "sha256": sha256,
@@ -128,7 +129,7 @@ fn every_row_agrees_with_its_driver_its_route_and_its_page() {
             "{row:?}"
         );
         for mode in every_mode() {
-            if let Ok(dialect) = (row.dialect)(mode, None) {
+            if let Ok(dialect) = (row.dialect)(mode, None, None) {
                 assert_eq!(dialect.program(), row.driver.name(), "{row:?}");
             }
         }
@@ -166,7 +167,7 @@ fn every_agent_route_warned_is_a_drivers() {
 fn a_row_that_does_not_ship_is_not_offered() {
     static HELD_BACK: [Row; 1] = [Row {
         driver: Driver::Antigravity,
-        dialect: |_, _| Ok(Box::new(crucible_external_harnesses::fake_peer::Plain)),
+        dialect: |_, _, _| Ok(Box::new(crucible_external_harnesses::fake_peer::Plain)),
         profile_key: "profileDir",
         route: "agent:antigravity",
         docs_section: "antigravity",
@@ -222,7 +223,9 @@ async fn the_claude_code_row_held_back_is_refused_by_its_section_and_starts_noth
         .launch(
             &agent,
             &control,
-            (shipped.dialect)(Mode::Ask, None).expect("asking").as_mut(),
+            (shipped.dialect)(Mode::Ask, None, None)
+                .expect("asking")
+                .as_mut(),
             None,
         )
         .await
@@ -293,10 +296,10 @@ fn antigravity_is_started_the_same_way_in_every_mode() {
     let sample = Sample::new("backends-antigravity-modes");
     let trust = trust_of(&sample);
     for mode in every_mode() {
-        let mut dialect = row.dialect(mode, Some(&trust)).expect("every mode");
+        let mut dialect = row.dialect(mode, Some(&trust), None).expect("every mode");
         assert_eq!(
             dialect.request(Shape::default()).arguments,
-            row.dialect(Mode::Ask, Some(&trust))
+            row.dialect(Mode::Ask, Some(&trust), None)
                 .expect("asking")
                 .request(Shape::default())
                 .arguments,
@@ -366,7 +369,7 @@ fn the_antigravity_row_installs_only_what_the_installer_unpacks() {
 fn antigravity_is_started_with_the_arguments_of_the_release_offered() {
     let sample = Sample::new("backends-antigravity-arguments");
     let started = |trust: Option<&Trust>| {
-        (ANTIGRAVITY.dialect)(Mode::Ask, trust)
+        (ANTIGRAVITY.dialect)(Mode::Ask, trust, None)
             .expect("asking")
             .request(Shape::default())
             .arguments
@@ -384,6 +387,31 @@ fn antigravity_is_started_with_the_arguments_of_the_release_offered() {
         assert_eq!(started(Some(&trust_of(&sample))), snapshot_args);
     }
     assert!(started(None).is_empty());
+}
+
+/// A row says its releases are the catalog's exactly when the catalog offers
+/// it one: with a release listed for every built-in driver, the rows that
+/// install a release are the rows that say so.
+#[test]
+fn a_row_says_its_releases_are_the_catalogs_exactly_when_it_installs_one() {
+    let sample = Sample::new("backends-catalogued");
+    let entries: Vec<Value> = REGISTRY
+        .all()
+        .map(|row| {
+            release_of(
+                row.driver.name(),
+                "1.0.0",
+                ("https://dl.google.com/a.zip", &"a".repeat(64), 10),
+                [("agent", 5), ("harness", 5)],
+                &[],
+            )
+        })
+        .collect();
+    let trust = trusting(&sample, 2, &entries);
+
+    for row in REGISTRY.all() {
+        assert_eq!(row.catalogued, (row.pinned)(&trust).is_some(), "{row:?}");
+    }
 }
 
 /// Every mode a conversation runs in, in the order a cycle visits them.
@@ -412,7 +440,9 @@ fn claude_code_is_launched_in_the_permission_mode_mapped_to_each_mode() {
         (Mode::AllowEdits, "acceptEdits"),
         (Mode::FullAccess, "bypassPermissions"),
     ] {
-        let mut dialect = row.dialect(mode, None).expect("every mode is launched");
+        let mut dialect = row
+            .dialect(mode, None, None)
+            .expect("every mode is launched");
         let arguments = dialect.request(Shape::default()).arguments;
         assert!(
             arguments.windows(2).any(|pair| pair
@@ -470,7 +500,7 @@ fn a_model_is_taken_for_exactly_the_drivers_that_launch_with_it() {
         let row = REGISTRY
             .row(driver, None)
             .expect("every built-in driver has a row");
-        let mut dialect = row.dialect(Mode::Ask, None).expect("asking");
+        let mut dialect = row.dialect(Mode::Ask, None, None).expect("asking");
         let arguments = dialect
             .request(Shape {
                 model: Some("agreed-model"),

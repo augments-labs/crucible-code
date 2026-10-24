@@ -297,6 +297,15 @@ impl Agent {
         }
     }
 
+    /// Where its program was found, where it was.
+    #[must_use]
+    pub fn installed(&self) -> Option<&Path> {
+        match &self.discovery {
+            Discovery::Found(program) => Some(program.path()),
+            Discovery::Missing | Discovery::NotExecutable(_) => None,
+        }
+    }
+
     /// What looking for its program found.
     #[must_use]
     pub const fn discovery(&self) -> &Discovery {
@@ -313,7 +322,7 @@ impl Agent {
     /// run.
     pub fn startable(&self, mode: Mode, instance: &str) -> Result<(), String> {
         self.row
-            .dialect(mode, None)
+            .dialect(mode, None, None)
             .map_err(|refused| refused.to_string())?;
         match &self.discovery {
             Discovery::Found(_) => Ok(()),
@@ -913,13 +922,15 @@ impl Runs {
     /// release installed since is one to be run.
     fn dialect(&self, mode: Mode) -> Result<Box<dyn Dialect>, Failure> {
         let trust = Trust::load(&self.state, SystemTime::now());
-        self.agent.row().dialect(mode, Some(&trust))
+        self.agent
+            .row()
+            .dialect(mode, Some(&trust), self.agent.installed())
     }
 }
 
 impl Relaunch for Runs {
     fn admits(&self, mode: Mode) -> Result<(), Failure> {
-        self.agent.row().dialect(mode, None).map(drop)
+        self.agent.row().dialect(mode, None, None).map(drop)
     }
 
     fn model(&self) -> Option<&str> {
@@ -1168,10 +1179,14 @@ impl Steps {
         };
         // The releases on offer as they are now, which the agent is admitted as.
         let trust = Trust::load(&self.state, SystemTime::now());
-        let mut dialect = match chosen.row.dialect(Mode::default(), Some(&trust)) {
-            Ok(dialect) => dialect,
-            Err(refused) => return Reading::Unreadable(refused),
-        };
+        let mut dialect =
+            match chosen
+                .row
+                .dialect(Mode::default(), Some(&trust), chosen.installed())
+            {
+                Ok(dialect) => dialect,
+                Err(refused) => return Reading::Unreadable(refused),
+            };
         drop(trust);
         if self.controls.unstopped(agent.name()) {
             return unreadable(&Refusal::Unstopped.to_string());
