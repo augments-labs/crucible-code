@@ -14,16 +14,20 @@
 //! `.receipt` and `.receipt.writing`.
 //!
 //! A version is made in a staging directory under `.staging/`, which the
-//! unpackers write into, and committed by renaming that directory into place;
-//! only then is its receipt written into it, as `.receipt`. A version is
-//! installed once its receipt is there. One that a process renamed into place
-//! and died before recording is not, and the next commit of that version
-//! replaces it. Nothing names a version before its commit returns, since the
-//! instance's `executable` is written after it, so a crash leaves either the
-//! program named before or the new one whole. A commit is refused unless the
-//! staging directory holds exactly the files given for it, of the kinds and
-//! sizes given, and it replaces a version already there only when no process
-//! holds that version.
+//! unpackers write into. Its receipt is written into that directory too, as
+//! `.receipt`, and the directory is then committed by one rename into place,
+//! so a version is in place with its receipt or not in place at all. A
+//! version already there is replaced only when no process holds it: it is
+//! first renamed into a directory of its own in staging, and renamed back on
+//! any failure before the new one is in place and durable. A commit that dies
+//! between the two renames leaves it there, and the next process to change or
+//! hold the agent's store puts it back before anything else, so a crash leaves
+//! either the program named before or the new one whole. Nothing names a new
+//! version before its commit returns, since the instance's `executable` is
+//! written after it. A commit is refused unless the staging directory holds
+//! exactly the files given for it, of the kinds and sizes given, and every
+//! path given stays inside the version, with each component one a directory
+//! the store makes may have, and every link's target within it.
 //!
 //! The receipt is the truth about what is installed, whatever a catalog says
 //! later. It records the catalog serial and the review the release was taken
@@ -41,8 +45,12 @@
 //! by removing what a dead process left in staging: a staging directory is
 //! live while the lock on the `.lock` file beside it is held, which its owner
 //! holds until it is committed or given up, and everything else in `.staging/`
-//! is a dead process's. A version removed, or replaced by a commit, is first
-//! renamed into `.staging/`, so a version is whole or gone.
+//! is a dead process's, removed but for a version a commit set aside, which is
+//! put back. Staging is read a few thousand entries at a time, a few times over,
+//! and a change is refused when more is there than that removes. A version
+//! pruned is first renamed into `.staging/`, so a version is whole or gone.
+//! An adoption hashes a version's files under the lock, and for a large
+//! version that can take longer than another change waits.
 //!
 //! A running agent holds its version through a file of its own in the
 //! version's `.in-use/`, named for the process that holds it, which that
@@ -50,23 +58,35 @@
 //! lock, so no prune can take the version between finding it there and holding
 //! it. A prune keeps every version an instance's `executable` names, and the
 //! newest of the rest by when it was fetched that has a receipt, and removes
-//! every other version no live process holds; a holder whose lock it can take
-//! belongs to a process that has ended, and is removed.
+//! every other version no live process holds and whose receipt is not one it
+//! cannot read, as a later crucible's; a holder whose lock it can take belongs
+//! to a process that has ended, and is removed. An `executable` is matched to
+//! a version by its path as written, resolved, or resolved as far as it is
+//! there; one that lies in the agent's directory and names no version the
+//! store can tell refuses the prune, which removes nothing on a guess. Names
+//! are compared as spelled: versions come from a signed catalog, each one
+//! directory name, and two that a file system takes for one are not told
+//! apart here.
 //!
 //! An install made before the store kept receipts, as 0.48 left Antigravity in
 //! `programs/antigravity/1.3.0/`, is adopted by hashing its files against the
 //! file list the catalog gives for it, and given a receipt when they match.
 //! One that differs in any way is left without one, for the user to check and
-//! reinstall. Verifying hashes every file a receipt lists in the same way, and
-//! names each difference: a file missing, changed, of another size or kind or
-//! exec flag, a link pointing elsewhere, or a file the receipt does not list,
-//! which would otherwise run unreviewed beside the files that were reviewed.
+//! reinstall, as is one whose receipt cannot be read. Verifying hashes every
+//! file a receipt lists in the same way, and names each difference: a file
+//! missing, changed, of another size or kind or exec flag, a link pointing
+//! elsewhere, or a file the receipt does not list, which would otherwise run
+//! unreviewed beside the files that were reviewed.
 //!
 //! What the store keeps is bounded by [`PROGRAMS_BYTES`]: an artifact whose
 //! download, or what it decompresses or unpacks to, is larger than that, or a
 //! release whose artifacts together unpack to more, is refused before it is
-//! downloaded, and a release that would take what the store's receipts
-//! account for past it is refused then and again before it is committed.
+//! downloaded, and a release that would take what the store holds past it is
+//! refused then and again before it is committed. What the store holds is what
+//! the receipts account for, and for a version with none, or none that can be
+//! read, what its files hold; a store with more agents or versions than it
+//! reads, or a version with more entries, is refused rather than counted
+//! short.
 //! Sizes are summed with checked arithmetic. The room is judged under one
 //! agent's lock, so two agents committed at once by two processes can pass it
 //! by one release.
@@ -98,8 +118,9 @@ pub const RECEIPT_BYTES: usize = 16 << 20;
 pub const FORMAT: u64 = 1;
 
 /// How long a change waits for another process's change to the same agent's
-/// store to finish: at most a few renames, a receipt, the removal of a version
-/// or the hashing of one version's files.
+/// store to finish: a few renames, a receipt or the removal of a version. An
+/// adoption hashing a large version can hold the store for longer, and a
+/// change waiting on it is then refused, to be asked again.
 pub const LOCK_WAIT: Duration = Duration::from_secs(30);
 
 /// How often the lock is asked for while it is waited for.
@@ -128,6 +149,18 @@ const OWN: [&str; 3] = [IN_USE, RECEIPT, DRAFT];
 /// The most entries read from one of the store's own directories: the keys,
 /// one agent's versions, a version's holders or what staging was left.
 const ENTRIES: usize = 4096;
+
+/// How many readings of staging a change makes before it says that what is
+/// there is more than it removes.
+const PASSES: usize = 16;
+
+/// The most entries read under one version to count what it holds when it
+/// has no receipt that says.
+const WALKED: usize = 1 << 16;
+
+/// The beginning of the name a version set aside by a commit is kept under in
+/// staging until the commit is whole.
+const ASIDE: &str = "aside";
 
 /// The most files a comparison names that a list does not.
 const UNLISTED: usize = 64;
@@ -165,11 +198,24 @@ pub struct Store {
     wait: Duration,
     /// The most it holds.
     ceiling: u64,
-    /// Where a commit says it has made its rename, and then waits to be
-    /// killed, so a test can end the process between the rename and the
-    /// receipt.
+    /// Where a commit says it has reached a point, and which, after which it
+    /// waits to be killed, so a test can end the process there.
     #[cfg(all(test, feature = "proof"))]
-    pause: Option<PathBuf>,
+    pause: Option<(PathBuf, Pause)>,
+    /// Whether a commit's receipt fails to be written, so a test can see what
+    /// such a failure leaves.
+    #[cfg(all(test, feature = "proof"))]
+    failing: bool,
+}
+
+/// A point in a commit a test can have it stop at.
+#[cfg(all(test, feature = "proof"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Pause {
+    /// The version there before is set aside, and the new one not renamed.
+    SetAside,
+    /// The new version is renamed into place.
+    Renamed,
 }
 
 /// One version of an agent as the store names its directory: the version,
@@ -320,6 +366,8 @@ pub struct Pruned {
     /// The versions that would have been removed, and are kept because a
     /// process runs them.
     pub held: Vec<Version>,
+    /// The versions kept because their receipt cannot be read.
+    pub unreadable: Vec<Version>,
 }
 
 /// Why the store did not do what it was asked.
@@ -392,6 +440,22 @@ pub enum StoreError {
     #[error("{} holds more entries than the install store reads", .path.display())]
     Crowded {
         /// Which.
+        path: PathBuf,
+    },
+    /// A file list names a path, or a link target, that does not stay inside
+    /// the version or that Windows cannot hold.
+    #[error("the file list names {name:?}, which {why}")]
+    Listed {
+        /// The path, cut short.
+        name: String,
+        /// What is wrong with it.
+        why: &'static str,
+    },
+    /// An executable lies in the agent's directory and names no version
+    /// the store can tell, so nothing is pruned on a guess.
+    #[error("{} lies in the install store and names no version of it", .path.display())]
+    Unmatched {
+        /// The executable.
         path: PathBuf,
     },
     /// The file system refused.
@@ -569,6 +633,28 @@ struct Change {
     _lock: Locked,
 }
 
+/// What the store knows of a version from its receipt.
+#[derive(Debug, PartialEq, Eq)]
+enum Kept {
+    /// It has one.
+    Receipted(Receipt),
+    /// It has none.
+    Unreceipted,
+    /// It has one this crucible cannot read, as a later crucible's.
+    Unreadable,
+}
+
+/// Where an instance's `executable` lies with respect to an agent's store.
+#[derive(Debug)]
+enum Placed {
+    /// In this version.
+    In(Version),
+    /// Not in the agent's directory at all.
+    Outside,
+    /// In the agent's directory, and in no version the store can tell.
+    Doubtful,
+}
+
 /// Whether a version's files are hashed when it is compared with a list, or
 /// only their kinds, sizes and exec flags are read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -587,6 +673,8 @@ impl Store {
             ceiling: PROGRAMS_BYTES,
             #[cfg(all(test, feature = "proof"))]
             pause: None,
+            #[cfg(all(test, feature = "proof"))]
+            failing: false,
         }
     }
 
@@ -606,9 +694,18 @@ impl Store {
     /// This store, whose commits write `ready` once they have renamed their
     /// staging into place and then wait to be killed.
     #[cfg(all(test, feature = "proof"))]
-    pub(crate) fn pausing(self, ready: PathBuf) -> Self {
+    pub(crate) fn pausing(self, ready: PathBuf, at: Pause) -> Self {
         Self {
-            pause: Some(ready),
+            pause: Some((ready, at)),
+            ..self
+        }
+    }
+
+    /// This store, whose commits fail to write their receipts.
+    #[cfg(all(test, feature = "proof"))]
+    pub(crate) fn failing(self) -> Self {
+        Self {
+            failing: true,
             ..self
         }
     }
@@ -624,13 +721,43 @@ impl Store {
     /// directory are resolved.
     #[must_use]
     pub fn version_of(&self, key: &AgentKey, executable: &Path) -> Option<Version> {
+        match self.placed(key, executable) {
+            Placed::In(version) => Some(version),
+            Placed::Outside | Placed::Doubtful => None,
+        }
+    }
+
+    /// Where `executable` lies with respect to the agent `key`'s store, read
+    /// from its path as written, resolved, and resolved as far as it is
+    /// there, each against the agent's directory spelled the same way.
+    fn placed(&self, key: &AgentKey, executable: &Path) -> Placed {
         let agent = self.root.join(key.as_str());
-        within(executable, &agent).or_else(|| {
-            within(
-                &fs::canonicalize(executable).ok()?,
-                &fs::canonicalize(&agent).ok()?,
-            )
-        })
+        let resolved_agent = fs::canonicalize(&agent).ok();
+        let mut forms = vec![(executable.to_path_buf(), Some(agent))];
+        if let Some(path) = fs::canonicalize(executable)
+            .ok()
+            .or_else(|| resolved(executable))
+        {
+            forms.push((path, resolved_agent));
+        }
+        let mut doubtful = false;
+        for (path, base) in forms {
+            let Some(base) = base else {
+                continue;
+            };
+            if path.strip_prefix(&base).is_err() {
+                continue;
+            }
+            match within(&path, &base) {
+                Some(version) => return Placed::In(version),
+                None => doubtful = true,
+            }
+        }
+        if doubtful {
+            Placed::Doubtful
+        } else {
+            Placed::Outside
+        }
     }
 
     /// Whether `target` can be installed: each artifact no larger than the
@@ -740,6 +867,7 @@ impl Store {
     ) -> Result<Receipt, StoreError> {
         let key = staging.key.clone();
         let change = self.change(&key)?;
+        checked(files)?;
         reserved(files)?;
         if let Some(own) = OWN.iter().find(|own| exists(&staging.directory.join(own))) {
             return Err(StoreError::Reserved {
@@ -774,19 +902,37 @@ impl Store {
             files: files.to_vec(),
         };
         let bytes = receipt.encoded()?;
+        // The receipt goes into staging, so the one rename below puts the
+        // version in place whole, receipt and all.
+        #[cfg(all(test, feature = "proof"))]
+        if self.failing {
+            return Err(at(
+                &staging.directory.join(RECEIPT),
+                io::ErrorKind::StorageFull.into(),
+            ));
+        }
+        recorded(&staging.directory, &bytes)?;
         let destination = change.directory.join(version.name());
         let aside = set_aside(&change.area, &destination)?;
+        #[cfg(all(test, feature = "proof"))]
+        self.paused(Pause::SetAside);
         if let Err(source) = fs::rename(&staging.directory, &destination) {
-            if let Some(aside) = &aside {
-                let _ = fs::rename(aside, &destination);
-            }
+            restored(aside.as_ref(), &destination);
             return Err(at(&destination, source));
         }
         staging.committed = true;
-        crucible_privacy::sync_parent(&destination).map_err(privacy(&destination))?;
+        if let Err(problem) = crucible_privacy::sync_parent(&destination) {
+            // Put back what was there, as though the rename had not been
+            // made, and give the new tree up.
+            let failed = change.area.join(scratch("failed"));
+            if fs::rename(&destination, &failed).is_ok() {
+                restored(aside.as_ref(), &destination);
+                let _ = fs::remove_dir_all(&failed);
+            }
+            return Err(privacy(&destination)(problem));
+        }
         #[cfg(all(test, feature = "proof"))]
-        self.paused();
-        recorded(&destination, &bytes)?;
+        self.paused(Pause::Renamed);
         if let Some(aside) = aside {
             let _ = fs::remove_dir_all(aside);
         }
@@ -874,14 +1020,25 @@ impl Store {
     ) -> Result<Adoption, StoreError> {
         let version = Version::new(&pin.version, pin.lock_revision)?;
         let files = listed(&pin.target)?;
+        checked(&files)?;
         reserved(&files)?;
         let change = self.change(&pin.key)?;
         let directory = change.directory.join(version.name());
         if !is_directory(&directory) {
             return Err(StoreError::NotInstalled);
         }
-        if let Some(receipt) = self.receipt(&pin.key, &version)? {
-            return Ok(Adoption::Adopted(receipt));
+        match self.receipt(&pin.key, &version) {
+            Ok(Some(receipt)) => return Ok(Adoption::Adopted(receipt)),
+            Ok(None) => {}
+            // A receipt that cannot be read, as one a later crucible wrote,
+            // is neither written over nor taken for none.
+            Err(StoreError::Format(_) | StoreError::Corrupt | StoreError::Oversize) => {
+                return Ok(Adoption::CheckNeeded(vec![Mismatch {
+                    path: RECEIPT.into(),
+                    what: Differs::Unreadable,
+                }]));
+            }
+            Err(error) => return Err(error),
         }
         let mismatches = compared(&directory, &files, Contents::Hashed);
         if !mismatches.is_empty() {
@@ -926,7 +1083,8 @@ impl Store {
         if !is_directory(&agent) {
             return Err(StoreError::NotInstalled);
         }
-        let _lock = self.locked(&agent)?;
+        // A change, so that a version a dead commit set aside is back first.
+        let _change = self.change(key)?;
         let directory = agent.join(version.name());
         if !is_directory(&directory) {
             return Err(StoreError::NotInstalled);
@@ -951,45 +1109,59 @@ impl Store {
     }
 
     /// Removes every version of the agent `key` that none of `executables`
-    /// lies in, but the newest of the rest that has a receipt, and any a
-    /// process holds; and the holders whose process has ended.
+    /// lies in, but the newest of the rest that has a receipt, any a process
+    /// holds and any whose receipt cannot be read; and the holders whose
+    /// process has ended.
     ///
     /// # Errors
     ///
-    /// [`StoreError`] when the store is held past the wait, holds more
-    /// versions than are read, or a version could not be removed; those
-    /// removed before stay removed.
+    /// [`StoreError::Unmatched`], before anything is removed, when one of
+    /// `executables` lies in the agent's directory and names no version the
+    /// store can tell; otherwise [`StoreError`] when the store is held past the
+    /// wait, holds more versions than are read, or a version could not be
+    /// removed, and those removed before stay removed.
     pub fn prune(&self, key: &AgentKey, executables: &[&Path]) -> Result<Pruned, StoreError> {
         let change = self.change(key)?;
-        let named: Vec<Version> = executables
-            .iter()
-            .filter_map(|executable| self.version_of(key, executable))
-            .collect();
+        let mut named: Vec<Version> = Vec::new();
+        for executable in executables {
+            match self.placed(key, executable) {
+                Placed::In(version) => named.push(version),
+                Placed::Outside => {}
+                Placed::Doubtful => {
+                    return Err(StoreError::Unmatched {
+                        path: executable.to_path_buf(),
+                    });
+                }
+            }
+        }
         let versions = self.versions(key, &change.directory)?;
         let previous = versions
             .iter()
             .filter(|(version, _)| !named.contains(version))
-            .filter_map(|(version, receipt)| Some((version, receipt.as_ref()?.fetched)))
+            .filter_map(|(version, kept)| match kept {
+                Kept::Receipted(receipt) => Some((version, receipt.fetched)),
+                Kept::Unreceipted | Kept::Unreadable => None,
+            })
             .max_by(|(one, at_one), (other, at_other)| {
                 at_one.cmp(at_other).then_with(|| one.name.cmp(&other.name))
             })
             .map(|(version, _)| version.clone());
         let mut pruned = Pruned::default();
-        for (version, _) in versions {
+        for (version, kept) in versions {
             let directory = change.directory.join(version.name());
             let live = swept(&directory);
             if named.contains(&version) || previous.as_ref() == Some(&version) {
+                continue;
+            }
+            if kept == Kept::Unreadable {
+                pruned.unreadable.push(version);
                 continue;
             }
             if live {
                 pruned.held.push(version);
                 continue;
             }
-            let aside = change.area.join(format!(
-                "removed-{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
+            let aside = change.area.join(scratch("removed"));
             fs::rename(&directory, &aside).map_err(|source| at(&directory, source))?;
             let _ = fs::remove_dir_all(&aside);
             pruned.removed.push(version);
@@ -999,8 +1171,10 @@ impl Store {
 
     /// Writes where the test that set it waits, and waits to be killed.
     #[cfg(all(test, feature = "proof"))]
-    fn paused(&self) {
-        if let Some(ready) = &self.pause {
+    fn paused(&self, point: Pause) {
+        if let Some((ready, at)) = &self.pause
+            && *at == point
+        {
             let _ = fs::write(ready, b"renamed\n");
             loop {
                 std::thread::park();
@@ -1018,7 +1192,7 @@ impl Store {
         let lock = self.locked(&directory)?;
         let area = directory.join(STAGING);
         crucible_privacy::directory(&area).map_err(privacy(&area))?;
-        cleaned(&area);
+        cleaned(&directory, &area)?;
         Ok(Change {
             directory,
             area,
@@ -1049,7 +1223,7 @@ impl Store {
         &self,
         key: &AgentKey,
         directory: &Path,
-    ) -> Result<Vec<(Version, Option<Receipt>)>, StoreError> {
+    ) -> Result<Vec<(Version, Kept)>, StoreError> {
         let mut versions = Vec::new();
         let entries = match fs::read_dir(directory) {
             Ok(entries) => entries,
@@ -1069,20 +1243,32 @@ impl Store {
             if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
                 continue;
             }
-            let receipt = self.receipt(key, &version).ok().flatten();
-            versions.push((version, receipt));
+            let kept = match self.receipt(key, &version) {
+                Ok(Some(receipt)) => Kept::Receipted(receipt),
+                Ok(None) => Kept::Unreceipted,
+                Err(_) => Kept::Unreadable,
+            };
+            versions.push((version, kept));
         }
         versions.sort_by(|(one, _), (other, _)| one.name.cmp(&other.name));
         Ok(versions)
     }
 
     /// What the receipts in the store account for, but `except`'s.
-    fn used(&self, except: Option<(&AgentKey, &Version)>) -> u64 {
-        let Ok(agents) = fs::read_dir(&self.root) else {
-            return 0;
+    fn used(&self, except: Option<(&AgentKey, &Version)>) -> Result<u64, StoreError> {
+        let agents = match fs::read_dir(&self.root) {
+            Ok(agents) => agents,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
+            Err(source) => return Err(at(&self.root, source)),
         };
         let mut total: u64 = 0;
-        for entry in agents.take(ENTRIES).flatten() {
+        for (index, entry) in agents.enumerate() {
+            if index >= ENTRIES {
+                return Err(StoreError::Crowded {
+                    path: self.root.clone(),
+                });
+            }
+            let entry = entry.map_err(|source| at(&self.root, source))?;
             let Some(key) = entry
                 .file_name()
                 .to_str()
@@ -1093,24 +1279,28 @@ impl Store {
             if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
                 continue;
             }
-            let Ok(versions) = self.versions(&key, &entry.path()) else {
-                continue;
-            };
-            for (version, receipt) in versions {
-                if except.is_some_and(|(agent, kept)| *agent == key && *kept == version) {
+            for (version, kept) in self.versions(&key, &entry.path())? {
+                if except.is_some_and(|(agent, other)| *agent == key && *other == version) {
                     continue;
                 }
-                total = total.saturating_add(receipt.map_or(0, |receipt| receipt.unpacked()));
+                let bytes = match kept {
+                    Kept::Receipted(receipt) => receipt.unpacked(),
+                    // What has no receipt to say still takes its room.
+                    Kept::Unreceipted | Kept::Unreadable => {
+                        holding(&entry.path().join(version.name()))?
+                    }
+                };
+                total = total.saturating_add(bytes);
             }
         }
-        total
+        Ok(total)
     }
 
     /// Whether `wanted` more bytes fit beside what the receipts in the store,
     /// but `except`'s, account for.
     fn room(&self, except: Option<(&AgentKey, &Version)>, wanted: u64) -> Result<(), StoreError> {
         if self
-            .used(except)
+            .used(except)?
             .checked_add(wanted)
             .is_some_and(|total| total <= self.ceiling)
         {
@@ -1228,15 +1418,65 @@ fn set_aside(area: &Path, destination: &Path) -> Result<Option<PathBuf>, StoreEr
             if swept(destination) {
                 return Err(StoreError::InUse);
             }
-            let aside = area.join(format!(
-                "replaced-{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-            fs::rename(destination, &aside).map_err(|source| at(destination, source))?;
+            // Under its own name, so that a change after a commit that died
+            // here can put it back.
+            let aside = area.join(scratch(ASIDE));
+            fs::create_dir(&aside).map_err(|source| at(&aside, source))?;
+            let name = destination.file_name().unwrap_or_default();
+            fs::rename(destination, aside.join(name)).map_err(|source| at(destination, source))?;
             Ok(Some(aside))
         }
     }
+}
+
+/// Puts the version `aside` holds back at `destination`, where nothing has
+/// taken its place, and removes what is left of `aside`.
+fn restored(aside: Option<&PathBuf>, destination: &Path) {
+    let Some(aside) = aside else {
+        return;
+    };
+    let name = destination.file_name().unwrap_or_default();
+    if !exists(destination) {
+        let _ = fs::rename(aside.join(name), destination);
+    }
+    let _ = fs::remove_dir_all(aside);
+}
+
+/// A name for a directory of a change's own in staging, beginning `what`.
+fn scratch(what: &str) -> String {
+    format!(
+        "{what}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+/// The bytes the files under `directory` hold, read through directories
+/// alone, refused past [`WALKED`] entries rather than counted short.
+fn holding(directory: &Path) -> Result<u64, StoreError> {
+    let mut total: u64 = 0;
+    let mut seen: usize = 0;
+    let mut pending = vec![directory.to_path_buf()];
+    while let Some(next) = pending.pop() {
+        let entries = fs::read_dir(&next).map_err(|source| at(&next, source))?;
+        for entry in entries {
+            seen += 1;
+            if seen > WALKED {
+                return Err(StoreError::Crowded {
+                    path: directory.to_owned(),
+                });
+            }
+            let entry = entry.map_err(|source| at(&next, source))?;
+            let kind = entry.file_type().map_err(|source| at(&next, source))?;
+            if kind.is_dir() {
+                pending.push(entry.path());
+            } else if kind.is_file() {
+                let length = entry.metadata().map_err(|source| at(&next, source))?.len();
+                total = total.saturating_add(length);
+            }
+        }
+    }
+    Ok(total)
 }
 
 /// Removes the holders of the version in `directory` whose process has ended,
@@ -1286,32 +1526,137 @@ fn held(path: &Path) -> bool {
 
 /// Removes what a dead process left in the staging directory `area`: every
 /// entry but the live staging directories and their locks.
-fn cleaned(area: &Path) {
-    let Ok(entries) = fs::read_dir(area) else {
+fn cleaned(agent: &Path, area: &Path) -> Result<(), StoreError> {
+    for _ in 0..PASSES {
+        let Ok(entries) = fs::read_dir(area) else {
+            return Ok(());
+        };
+        let names: Vec<_> = entries
+            .take(ENTRIES)
+            .flatten()
+            .map(|entry| entry.file_name())
+            .collect();
+        let live: HashSet<String> = names
+            .iter()
+            .filter_map(|name| {
+                let stem = name.to_str()?.strip_suffix(LOCK)?;
+                held(&area.join(name)).then(|| stem.to_owned())
+            })
+            .collect();
+        let mut removed = 0_usize;
+        for name in &names {
+            let text = name.to_string_lossy();
+            if live.contains(text.strip_suffix(LOCK).unwrap_or(&text)) {
+                continue;
+            }
+            let path = area.join(name);
+            // A version a commit set aside and died before replacing is the
+            // only copy of it: back it goes, unless something took its place.
+            if text.starts_with(ASIDE) {
+                put_back(agent, &path);
+            }
+            let _ = match fs::symlink_metadata(&path) {
+                Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(&path),
+                _ => fs::remove_file(&path),
+            };
+            removed += 1;
+        }
+        if names.len() < ENTRIES || removed == 0 {
+            return if names.len() < ENTRIES {
+                Ok(())
+            } else {
+                Err(StoreError::Crowded {
+                    path: area.to_owned(),
+                })
+            };
+        }
+    }
+    Err(StoreError::Crowded {
+        path: area.to_owned(),
+    })
+}
+
+/// Renames each version in the set-aside directory `aside` back into the
+/// agent's directory `agent`, where nothing has taken its place.
+fn put_back(agent: &Path, aside: &Path) {
+    let Ok(entries) = fs::read_dir(aside) else {
         return;
     };
-    let names: Vec<_> = entries
-        .take(ENTRIES)
-        .flatten()
-        .map(|entry| entry.file_name())
-        .collect();
-    let live: HashSet<String> = names
-        .iter()
-        .filter_map(|name| {
-            let stem = name.to_str()?.strip_suffix(LOCK)?;
-            held(&area.join(name)).then(|| stem.to_owned())
-        })
-        .collect();
-    for name in &names {
-        let text = name.to_string_lossy();
-        if live.contains(text.strip_suffix(LOCK).unwrap_or(&text)) {
+    for entry in entries.take(ENTRIES).flatten() {
+        let name = entry.file_name();
+        let Some(version) = name.to_str().and_then(Version::parse) else {
             continue;
-        }
-        let path = area.join(name);
-        let _ = match fs::symlink_metadata(&path) {
-            Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(&path),
-            _ => fs::remove_file(&path),
         };
+        let destination = agent.join(version.name());
+        if !exists(&destination) {
+            let _ = fs::rename(entry.path(), destination);
+        }
+    }
+}
+
+/// Refuses `files` where one names a path that does not stay inside the
+/// version, or a component Windows cannot hold, by the rules a directory the
+/// store makes is held to, or a link whose target leaves the version.
+fn checked(files: &[File]) -> Result<(), StoreError> {
+    for file in files {
+        let refused = |why| StoreError::Listed {
+            name: shown(&file.path),
+            why,
+        };
+        if file.path.len() > PATH_BYTES {
+            return Err(refused("is longer than a path a receipt lists"));
+        }
+        if file.path.split('/').any(|part| holdable(part).is_err()) {
+            return Err(refused(
+                "has a component that is empty, `.` or `..`, or one Windows cannot hold",
+            ));
+        }
+        if let FileKind::Link { target } = &file.kind
+            && !link_inside(&file.path, target)
+        {
+            return Err(refused("is a link whose target leaves the version"));
+        }
+    }
+    Ok(())
+}
+
+/// Whether the link at `path` to `target` resolves, by its components alone,
+/// to somewhere inside the version.
+fn link_inside(path: &str, target: &str) -> bool {
+    if target.is_empty()
+        || target.len() > PATH_BYTES
+        || target.starts_with('/')
+        || target.contains(['\\', ':', '\0'])
+    {
+        return false;
+    }
+    let mut at: Vec<&str> = path.split('/').collect();
+    at.pop();
+    for part in target.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                if at.pop().is_none() {
+                    return false;
+                }
+            }
+            part => at.push(part),
+        }
+    }
+    !at.is_empty()
+}
+
+/// `path` with its longest leading part that is there resolved, and the rest
+/// as written; nothing where no part of it resolves, or the rest climbs.
+fn resolved(path: &Path) -> Option<PathBuf> {
+    let mut rest = Vec::new();
+    let mut base = path;
+    loop {
+        if let Ok(found) = fs::canonicalize(base) {
+            return Some(rest.iter().rev().fold(found, |path, part| path.join(part)));
+        }
+        rest.push(base.file_name()?);
+        base = base.parent()?;
     }
 }
 

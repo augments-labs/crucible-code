@@ -12,7 +12,7 @@ use crucible_types::AgentKey;
 use sha2::{Digest as _, Sha256};
 
 use super::{
-    Adoption, Differs, Fetched, Listing, Mismatch, Origin, PROGRAMS_BYTES, Provenance,
+    Adoption, Differs, Fetched, Listing, Mismatch, Origin, PROGRAMS_BYTES, Pause, Provenance,
     RECEIPT_BYTES, Receipt, Store, StoreError, Version,
 };
 use crate::catalog::{Artifact, AssetRef, File, FileKind, Files, Format, Launch, OwnedPin, Target};
@@ -207,20 +207,36 @@ fn killed(mut child: Child) {
 }
 
 /// Commits release 2.0.0 of `goose` into the store it is given, and is killed
-/// once the staging directory is renamed into place and before the receipt is
-/// written.
+/// once the staging directory, its receipt in it, is renamed into place.
 ///
 /// A test in its own right only so that the test binary can be started as this
 /// process; run any other way, it finds nothing to do.
 #[test]
-fn the_process_killed_between_its_rename_and_its_receipt() {
+fn the_process_killed_once_its_rename_is_made() {
     let (Some(root), Some(ready)) = (std::env::var_os(CHILD_ROOT), std::env::var_os(CHILD_READY))
     else {
         return;
     };
-    let store = Store::new(PathBuf::from(root)).pausing(PathBuf::from(ready));
+    let store = Store::new(PathBuf::from(root)).pausing(PathBuf::from(ready), Pause::Renamed);
     install(&store, &key("goose"), &version("2.0.0", None), 20);
     panic!("the commit went past its rename without pausing");
+}
+
+/// Commits release 1.0.0 of `goose` again over the one installed, and is
+/// killed once the installed one is set aside and before the new one is
+/// renamed into its place.
+///
+/// A test in its own right only so that the test binary can be started as this
+/// process; run any other way, it finds nothing to do.
+#[test]
+fn the_process_killed_between_its_two_renames() {
+    let (Some(root), Some(ready)) = (std::env::var_os(CHILD_ROOT), std::env::var_os(CHILD_READY))
+    else {
+        return;
+    };
+    let store = Store::new(PathBuf::from(root)).pausing(PathBuf::from(ready), Pause::SetAside);
+    install(&store, &key("goose"), &version("1.0.0", None), 20);
+    panic!("the commit went past setting the old version aside without pausing");
 }
 
 /// Holds release 1.0.0 of `goose` in the store it is given, as a running
@@ -291,7 +307,7 @@ fn a_version_is_committed_by_rename_from_staging_with_its_receipt() {
 }
 
 #[test]
-fn a_process_killed_between_the_rename_and_the_receipt_leaves_a_version_not_installed() {
+fn a_process_killed_once_its_rename_is_made_leaves_the_new_version_whole() {
     let owned = Owned::new("store-killed");
     let root = programs(&owned);
     let store = Store::new(root.clone());
@@ -301,39 +317,85 @@ fn a_process_killed_between_the_rename_and_the_receipt_leaves_a_version_not_inst
     let ready = owned.0.join("ready");
 
     let mut child = started(
-        "store::tests::the_process_killed_between_its_rename_and_its_receipt",
+        "store::tests::the_process_killed_once_its_rename_is_made",
         &root,
         &ready,
     );
     reached(&mut child, &ready);
     killed(child);
 
-    // The rename was made and the receipt was not, so 2.0.0 is in place and
-    // is not installed.
-    assert!(store.directory(&goose, &two).join("agent").is_file());
-    assert_eq!(store.receipt(&goose, &two).ok(), Some(None));
-    let unverified = store.verify(&goose, &two);
-    assert!(
-        matches!(unverified, Err(StoreError::Unreceipted)),
-        "{unverified:?}"
-    );
+    // The receipt was written before the one rename that put 2.0.0 in place,
+    // so it is installed whole.
+    let receipt = store.receipt(&goose, &two).ok().flatten();
+    assert_eq!(receipt.map(|receipt| receipt.fetched), Some(at(20)));
+    assert_eq!(store.verify(&goose, &two).ok(), Some(Vec::new()));
     // The version installed before is as it was.
     assert_eq!(store.receipt(&goose, &one).ok().flatten(), Some(kept));
     assert_eq!(store.verify(&goose, &one).ok(), Some(Vec::new()));
     // The killed process's lock went with it, and what it left in staging is
     // removed when the next change starts.
     let store = Store::new(root.clone()).waiting(Duration::from_secs(2));
-    let staging = store.stage(&goose).expect("the store's lock is free");
+    let _staging = store.stage(&goose).expect("the store's lock is free");
     let left = names(&root.join("goose").join(".staging"));
     assert_eq!(left.len(), 2, "only the new staging and its lock: {left:?}");
-    // Committing 2.0.0 again replaces what the killed process put in place.
+}
+
+#[test]
+fn a_process_killed_between_its_two_renames_leaves_the_old_version_named_and_whole() {
+    let owned = Owned::new("store-killed-aside");
+    let root = programs(&owned);
+    let store = Store::new(root.clone());
+    let goose = key("goose");
+    let one = version("1.0.0", None);
+    let kept = install(&store, &goose, &one, 10);
+    let ready = owned.0.join("ready");
+
+    let mut child = started(
+        "store::tests::the_process_killed_between_its_two_renames",
+        &root,
+        &ready,
+    );
+    reached(&mut child, &ready);
+    killed(child);
+
+    // The next process to reach the store puts the version that was set aside
+    // back, rather than taking it for what a dead process left.
+    let held = store
+        .hold(&goose, &one)
+        .expect("the version is there again");
+    assert_eq!(store.receipt(&goose, &one).ok().flatten(), Some(kept));
+    assert_eq!(store.verify(&goose, &one).ok(), Some(Vec::new()));
+    drop(held);
+    let _staging = store.stage(&goose).expect("a staging directory");
+    let left = names(&root.join("goose").join(".staging"));
+    assert_eq!(left.len(), 2, "only the new staging and its lock: {left:?}");
+}
+
+#[test]
+fn a_receipt_that_cannot_be_written_leaves_the_version_it_would_replace_whole() {
+    let owned = Owned::new("store-receipt-fails");
+    let root = programs(&owned);
+    let goose = key("goose");
+    let one = version("1.0.0", None);
+    let kept = install(&Store::new(root.clone()), &goose, &one, 10);
+    let failing = Store::new(root.clone()).failing();
+
     let (archive, artifact) = release();
+    let staging = failing.stage(&goose).expect("a staging directory");
     let staged = Unpacker::unpack(&archive, &artifact, staging.directory()).expect("unpacked");
-    let receipt = store
-        .commit(staging, &two, staged.files(), provenance(&artifact, 30))
-        .expect("committed");
-    assert_eq!(store.receipt(&goose, &two).ok().flatten(), Some(receipt));
-    assert_eq!(store.verify(&goose, &two).ok(), Some(Vec::new()));
+    let refused = failing.commit(staging, &one, staged.files(), provenance(&artifact, 20));
+    assert!(matches!(refused, Err(StoreError::Io { .. })), "{refused:?}");
+    assert_eq!(failing.receipt(&goose, &one).ok().flatten(), Some(kept));
+    assert_eq!(failing.verify(&goose, &one).ok(), Some(Vec::new()));
+    assert!(names(&root.join("goose").join(".staging")).is_empty());
+
+    // Nor is a first install of another version left half in place.
+    let two = version("2.0.0", None);
+    let staging = failing.stage(&goose).expect("a staging directory");
+    let staged = Unpacker::unpack(&archive, &artifact, staging.directory()).expect("unpacked");
+    let refused = failing.commit(staging, &two, staged.files(), provenance(&artifact, 30));
+    assert!(matches!(refused, Err(StoreError::Io { .. })), "{refused:?}");
+    assert!(!failing.directory(&goose, &two).exists());
 }
 
 #[test]
@@ -1119,4 +1181,173 @@ fn a_link_where_a_version_goes_is_not_taken_for_one() {
     let pruned = store.prune(&goose, &[]).expect("pruned");
     assert_eq!(pruned, super::Pruned::default());
     assert!(store.directory(&goose, &linked).is_symlink());
+}
+
+#[test]
+fn what_the_store_cannot_read_whole_is_reported_and_never_counted_as_nothing() {
+    let owned = Owned::new("store-crowded");
+    let root = programs(&owned);
+    let (_, artifact) = release();
+    let target = Target {
+        platform: "linux-x86_64".into(),
+        cmd: "agent".into(),
+        args: Vec::new(),
+        env: Vec::new(),
+        hosts: Vec::new(),
+        artifacts: vec![artifact],
+        launch: Launch::Binary,
+    };
+    // A version with no receipt still takes room, and is counted by what it
+    // holds.
+    let unreceipted = root.join("goose").join("0.9.0");
+    fs::create_dir_all(&unreceipted).expect("a version");
+    fs::write(unreceipted.join("agent"), vec![b'x'; 4096]).expect("a file");
+    let tight = Store::new(root.clone()).bounded((1 << 20) + 100);
+    let refused = tight.fits(&target);
+    assert!(
+        matches!(refused, Err(StoreError::Full { .. })),
+        "{refused:?}"
+    );
+    // More agents than the store reads is said, not taken for none.
+    for index in 0..=4096 {
+        fs::create_dir(root.join(format!("agent-{index}"))).expect("an agent's directory");
+    }
+    let refused = Store::new(root.clone()).fits(&target);
+    assert!(
+        matches!(refused, Err(StoreError::Crowded { .. })),
+        "{refused:?}"
+    );
+    // And staging past one reading's worth is removed whole.
+    let area = root.join("goose").join(".staging");
+    fs::create_dir_all(&area).expect("the staging directory");
+    for index in 0..5000 {
+        fs::write(area.join(format!("dead-{index}")), b"").expect("a leftover");
+    }
+    let staging = Store::new(root.clone())
+        .stage(&key("goose"))
+        .expect("a staging directory");
+    assert_eq!(names(&area).len(), 2);
+    drop(staging);
+}
+
+#[test]
+fn a_prune_that_cannot_tell_which_version_an_executable_names_removes_nothing() {
+    let owned = Owned::new("store-unmatched");
+    let root = programs(&owned);
+    let store = Store::new(root.clone());
+    let goose = key("goose");
+    let [one, two, three] = ["1.0.0", "2.0.0", "3.0.0"].map(|text| version(text, None));
+    install(&store, &goose, &one, 10);
+    install(&store, &goose, &two, 20);
+    install(&store, &goose, &three, 30);
+    let named = store.directory(&goose, &three).join("agent");
+    for doubtful in [
+        root.join("goose").join("1.0.0+x").join("agent"),
+        root.join("goose").join(".staging").join("agent"),
+        root.join("goose").join("agent"),
+    ] {
+        let refused = store.prune(&goose, &[named.as_path(), doubtful.as_path()]);
+        assert!(
+            matches!(refused, Err(StoreError::Unmatched { .. })),
+            "{doubtful:?}: {refused:?}"
+        );
+        assert!(store.directory(&goose, &one).is_dir());
+    }
+    // A path to the store spelled through a link, to a file that is not
+    // there, still names its version.
+    #[cfg(unix)]
+    {
+        let spelled = owned.0.join("spelled");
+        std::os::unix::fs::symlink(&root, &spelled).expect("a link to the store");
+        let first = spelled.join("goose").join("1.0.0").join("gone");
+        let pruned = store
+            .prune(&goose, &[named.as_path(), first.as_path()])
+            .expect("pruned");
+        assert!(pruned.removed.is_empty(), "{pruned:?}");
+        assert!(store.directory(&goose, &one).is_dir());
+    }
+}
+
+#[test]
+fn a_version_whose_receipt_cannot_be_read_is_never_pruned_and_is_to_be_checked() {
+    let owned = Owned::new("store-later-format");
+    let root = programs(&owned);
+    let store = Store::new(root.clone());
+    let goose = key("goose");
+    let [one, two, three] = ["1.0.0", "2.0.0", "3.0.0"].map(|text| version(text, None));
+    install(&store, &goose, &one, 10);
+    install(&store, &goose, &two, 20);
+    install(&store, &goose, &three, 30);
+    let path = store.directory(&goose, &one).join(".receipt");
+    let later = fs::read_to_string(&path).expect("the receipt").replacen(
+        r#""format":1"#,
+        r#""format":2"#,
+        1,
+    );
+    fs::write(&path, later).expect("a receipt a later crucible wrote");
+    let named = store.directory(&goose, &three).join("agent");
+
+    let pruned = store.prune(&goose, &[named.as_path()]).expect("pruned");
+
+    assert!(pruned.removed.is_empty(), "{pruned:?}");
+    assert_eq!(pruned.unreadable, std::slice::from_ref(&one));
+    assert!(store.directory(&goose, &one).is_dir());
+    let pin = OwnedPin {
+        key: goose.clone(),
+        version: "1.0.0".into(),
+        ..antigravity(true)
+    };
+    assert_eq!(
+        store.adopt(&pin, listing(), at(40)).ok(),
+        Some(Adoption::CheckNeeded(vec![Mismatch {
+            path: ".receipt".into(),
+            what: Differs::Unreadable,
+        }]))
+    );
+}
+
+#[test]
+fn a_file_list_with_a_path_or_link_that_leaves_the_version_is_refused() {
+    let owned = Owned::new("store-paths");
+    let store = Store::new(programs(&owned));
+    let goose = key("goose");
+    let one = version("1.0.0", None);
+    let (archive, artifact) = release();
+    for (what, extra) in [
+        (
+            "a path that climbs out",
+            listed_file("../agent", b"x", false),
+        ),
+        (
+            "a path Windows cannot hold",
+            listed_file("lib/con", b"x", false),
+        ),
+        (
+            "a link that climbs out",
+            listed_link("lib/out", "../../agent"),
+        ),
+        ("an absolute link", listed_link("lib/out", "/etc/passwd")),
+    ] {
+        let staging = store.stage(&goose).expect("a staging directory");
+        Unpacker::unpack(&archive, &artifact, staging.directory()).expect("unpacked");
+        let mut files = listed();
+        files.push(extra);
+
+        let refused = store.commit(staging, &one, &files, provenance(&artifact, 10));
+
+        assert!(
+            matches!(refused, Err(StoreError::Listed { .. })),
+            "{what}: {refused:?}"
+        );
+    }
+    let mut pin = antigravity(true);
+    if let Some(Files::Listed(files)) = pin.target.artifacts.first_mut().map(|a| &mut a.files) {
+        files.push(listed_file("../outside", b"x", false));
+    }
+    earlier_install(&programs(&owned), &[("agy_acp_server.par", SERVER)]);
+    let refused = store.adopt(&pin, listing(), at(40));
+    assert!(
+        matches!(refused, Err(StoreError::Listed { .. })),
+        "{refused:?}"
+    );
 }
