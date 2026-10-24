@@ -346,10 +346,11 @@ fn a_catalog_agent_s_row_is_the_one_listed_for_its_key() {
     let registry = Registry::new(&[CLAUDE])
         .cataloging(Box::leak(Box::new([crate::launching::tests::cataloged()])));
 
-    let Some(AgentRow::Catalog(row)) = registry.row(Driver::Catalog, Some(&peer)) else {
+    let Some(row @ AgentRow::Catalog(_)) = registry.row(Driver::Catalog, Some(&peer)) else {
         panic!("the catalog row of {peer}");
     };
-    assert_eq!(row.key(), &peer);
+    assert_eq!(row.named(), "peer");
+    assert_eq!(row.command(), "peer");
     assert_eq!(row.route(), agent_route("peer"));
     assert!(registry.row(Driver::Catalog, Some(&goose)).is_none());
     assert!(registry.row(Driver::Catalog, None).is_none());

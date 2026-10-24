@@ -592,7 +592,7 @@ fn an_unstopped_run_whose_stop_never_finished_says_so_and_names_no_error() {
 struct Speaking(Plain);
 
 impl Dialect for Speaking {
-    fn program(&self) -> &'static str {
+    fn program(&self) -> &str {
         self.0.program()
     }
 

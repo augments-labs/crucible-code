@@ -22,18 +22,35 @@
 //! are not marked so, so one long enough to be a credential is withheld there
 //! as a credential would be.
 //!
+//! An entry whose admitted name or version is as long as an answer to
+//! initializing is cut to gives no profile, so an answer is compared only
+//! whole and a longer one cut to the same bytes is never taken for it.
+//!
 //! The hosts it reaches are parsed here, once, by the sandbox's own domain
 //! parser, and a pattern that names every host, `*` or a wildcard over a single
-//! label such as `*.com`, is refused, so no entry opens the whole network.
+//! label such as `*.com`, is refused, so no entry opens the whole network. A
+//! host is named, never numbered: an address in any spelling, bracketed, with
+//! a port, under a wildcard, or as a C resolver reads `127.1` or `0x7f.1`, is
+//! refused, public or not, since the sandbox lets a literal address through to
+//! space it closes to every name, the loopback, private and link-local ranges
+//! among it.
 
 use std::ffi::OsString;
+use std::net::{IpAddr, SocketAddr};
 
 use crucible_execution::Failure;
 use crucible_sandbox::{SandboxDomainPattern, SandboxPolicyError};
+use crucible_types::AgentKey;
 
 use super::{Admits, Entry, Method, Target, Variable};
 use crate::Request;
-use crate::acp::{Initialized, PROTOCOL, SignIn};
+use crate::acp::{Initialized, NAME_BYTES, PROTOCOL, SignIn};
+
+/// The longest name or version an entry may admit: shorter than an answer to
+/// initializing cut at [`NAME_BYTES`] on a character boundary ever is, since
+/// the cut drops at most the three bytes of a character it would split, so an
+/// answer equal to it was never cut.
+const ADMITTED_BYTES: usize = NAME_BYTES - 4;
 
 /// The variables taken from the shell, which say where programs and the
 /// user's own files are and how text is written, and nothing about any
@@ -59,6 +76,8 @@ pub(crate) const PASSED: [&str; 15] = [
 /// How an agent the catalog reviewed is run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CatalogProfile {
+    /// The agent, as its instance names it.
+    key: AgentKey,
     /// The `agentInfo` it must answer initializing with.
     admits: Admits,
     /// The methods it signs in with once asked through `authenticate`, in the
@@ -87,6 +106,13 @@ pub enum Unprofiled {
     /// A host it reaches names every host, or every host under one label.
     #[error("reach[{0}] names every host, or every host under one label, which is never granted")]
     Everywhere(usize),
+    /// A host it reaches is an address rather than a name.
+    #[error("reach[{0}] is an address, and an agent's hosts are named, never numbered")]
+    Address(usize),
+    /// The name or version it must answer with is as long as an answer is cut
+    /// to, so a longer answer would be taken for it.
+    #[error("{0} is longer than the {ADMITTED_BYTES} bytes an agent's answer is compared whole at")]
+    Admitted(&'static str),
 }
 
 impl CatalogProfile {
@@ -94,9 +120,18 @@ impl CatalogProfile {
     ///
     /// # Errors
     ///
-    /// [`Unprofiled`] for the first host it reaches that is not one a sandbox
-    /// can name, or that names every host.
+    /// [`Unprofiled`] for an admitted name or version an answer could be cut
+    /// to, or for the first host it reaches that is an address, is not one a
+    /// sandbox can name, or names every host.
     pub fn from_entry(entry: &Entry, target: &Target) -> Result<Self, Unprofiled> {
+        for (field, admitted) in [
+            ("admits.name", &entry.admits.name),
+            ("admits.version", &entry.admits.version),
+        ] {
+            if admitted.len() > ADMITTED_BYTES {
+                return Err(Unprofiled::Admitted(field));
+            }
+        }
         let reach = entry
             .reach
             .iter()
@@ -112,12 +147,18 @@ impl CatalogProfile {
             })
             .collect();
         Ok(Self {
+            key: entry.key.clone(),
             admits: entry.admits.clone(),
             sign_in,
             args: target.args.clone(),
             env: target.env.clone(),
             reach,
         })
+    }
+
+    /// The agent, as its instance names it.
+    pub(crate) const fn key(&self) -> &AgentKey {
+        &self.key
     }
 
     /// The protocol versions its answer to initializing may carry: the one
@@ -189,6 +230,9 @@ impl CatalogProfile {
 /// The host `reach[index]` names, as the sandbox's parser reads it, where it
 /// is one that may be granted.
 fn granted(index: usize, host: &str) -> Result<SandboxDomainPattern, Unprofiled> {
+    if numbered(host) {
+        return Err(Unprofiled::Address(index));
+    }
     let pattern =
         SandboxDomainPattern::new(host).map_err(|source| Unprofiled::Host { index, source })?;
     let spelled = pattern.as_str();
@@ -200,6 +244,38 @@ fn granted(index: usize, host: &str) -> Result<SandboxDomainPattern, Unprofiled>
         Err(Unprofiled::Everywhere(index))
     } else {
         Ok(pattern)
+    }
+}
+
+/// Whether `host` is an address rather than a name: a literal the platform
+/// parses, bracketed or not, with a port or not, under a wildcard or not, or a
+/// name whose last label a C resolver reads as a number.
+fn numbered(host: &str) -> bool {
+    let host = host.strip_prefix("*.").unwrap_or(host);
+    let bracketed = host
+        .strip_prefix('[')
+        .and_then(|rest| rest.split_once(']'))
+        .is_some_and(|(inside, _)| inside.parse::<IpAddr>().is_ok());
+    if bracketed || host.parse::<IpAddr>().is_ok() || host.parse::<SocketAddr>().is_ok() {
+        return true;
+    }
+    let host = host.strip_suffix('.').unwrap_or(host);
+    let host = host
+        .rsplit_once(':')
+        .filter(|(_, port)| port.parse::<u16>().is_ok())
+        .map_or(host, |(name, _)| name);
+    host.rsplit('.').next().is_some_and(numeric)
+}
+
+/// Whether `label` is a number as a C resolver reads one part of an address:
+/// decimal or octal digits, or hexadecimal ones after `0x`.
+fn numeric(label: &str) -> bool {
+    match label
+        .strip_prefix("0x")
+        .or_else(|| label.strip_prefix("0X"))
+    {
+        Some(digits) => digits.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        None => !label.is_empty() && label.bytes().all(|byte| byte.is_ascii_digit()),
     }
 }
 

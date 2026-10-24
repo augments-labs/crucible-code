@@ -370,8 +370,8 @@ impl Agent {
 /// Nothing for a program that was found.
 pub(crate) fn unfound(row: &AgentRow, discovery: &Discovery, shown: &str) -> Option<[String; 2]> {
     match row {
-        AgentRow::Built(built) => installing::refusal(built, discovery, shown, row.command()),
-        AgentRow::Catalog(_) => discovery.refusal(shown, row.command()),
+        AgentRow::Built(built) => installing::refusal(built, discovery, shown, &row.command()),
+        AgentRow::Catalog(_) => discovery.refusal(shown, &row.command()),
     }
 }
 

@@ -2365,3 +2365,81 @@ fn a_host_that_names_every_host_is_never_granted() {
         }
     }
 }
+
+/// A host an entry's agent reaches is named, never numbered: an address in
+/// any spelling, bracketed, with a port, mapped into IPv6, under a wildcard
+/// or as a C resolver reads digits, is refused by where it is listed, public
+/// or not, while a name is still granted.
+#[test]
+fn an_address_is_never_granted_as_a_host_an_agent_reaches() {
+    for address in [
+        "169.254.169.254",
+        "127.0.0.1",
+        "10.0.0.5",
+        "8.8.8.8",
+        "::1",
+        "fd00:ec2::254",
+        "::ffff:169.254.169.254",
+        "[::1]",
+        "[fd00:ec2::254]:443",
+        "127.0.0.1:443",
+        "127.0.0.1.",
+        "*.10.0.0.5",
+        "127.1",
+        "2130706433",
+        "0x7f.1",
+        "0X7F000001",
+    ] {
+        let refused = profiled(&with(
+            "/entries/0/reach",
+            json!(["api.example.com", address]),
+        ));
+
+        match refused {
+            Err(why) => assert!(
+                why.to_string()
+                    .starts_with("reach[1] is an address, and an agent's hosts are named"),
+                "{address}: {why}"
+            ),
+            Ok(profile) => panic!("{address} was granted: {profile:?}"),
+        }
+    }
+    for named in [
+        "api.example.com",
+        "localhost",
+        "a1.example.com",
+        "*.example.com",
+    ] {
+        let profile = profiled(&with("/entries/0/reach", json!([named])))
+            .unwrap_or_else(|why| panic!("{named}: {why}"));
+        let hosts: Vec<&str> = profile
+            .reach()
+            .iter()
+            .map(SandboxDomainPattern::as_str)
+            .collect();
+        assert_eq!(hosts, [named]);
+    }
+}
+
+/// An entry whose agent's name or version is as long as an answer to
+/// initializing is cut to gives no profile, since a longer answer cut to the
+/// same bytes would be taken for it; one a byte shorter than any cut answer
+/// can be is compared whole.
+#[test]
+fn an_admitted_name_or_version_an_answer_could_be_cut_to_is_refused() {
+    let whole = "n".repeat(252);
+    let cut = "n".repeat(253);
+    for (pointer, field) in [
+        ("/entries/0/admits/name", "admits.name"),
+        ("/entries/0/admits/version", "admits.version"),
+    ] {
+        let refused = profiled(&with(pointer, json!(cut)));
+        let admitted = profiled(&with(pointer, json!(whole)));
+
+        match refused {
+            Err(why) => assert!(why.to_string().starts_with(field), "{field}: {why}"),
+            Ok(profile) => panic!("{field} of 253 bytes gave {profile:?}"),
+        }
+        assert!(admitted.is_ok(), "{field}: {admitted:?}");
+    }
+}

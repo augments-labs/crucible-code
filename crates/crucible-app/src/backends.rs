@@ -117,12 +117,6 @@ impl CatalogRow {
         })
     }
 
-    /// The agent, as its instance names it.
-    #[must_use]
-    pub const fn key(&self) -> &AgentKey {
-        &self.key
-    }
-
     /// The content-use route a launch of it is held under.
     #[must_use]
     pub fn route(&self) -> &str {
@@ -149,15 +143,6 @@ pub enum AgentRow {
 }
 
 impl AgentRow {
-    /// Which driver its instance names.
-    #[must_use]
-    pub const fn driver(&self) -> Driver {
-        match self {
-            Self::Built(row) => row.driver,
-            Self::Catalog(_) => Driver::Catalog,
-        }
-    }
-
     /// The content-use route a launch of it is held under.
     #[must_use]
     pub fn route(&self) -> &str {
@@ -204,17 +189,16 @@ impl AgentRow {
         }
     }
 
-    /// The command a refusal says it is run as: the same in every mode, and
-    /// asking is a mode every row runs in. A catalog agent is looked up as
-    /// nothing, since it runs from the path its instance names, and is called
-    /// by its key.
+    /// The command it is run as, as its wire names it: the same in every
+    /// mode, and asking is a mode every row runs in. A catalog agent is
+    /// looked up as nothing, since it runs from the path its instance names,
+    /// and is called by its key.
     #[must_use]
-    pub fn command(&self) -> &str {
-        match self {
-            Self::Built(row) => (row.dialect)(Mode::default())
-                .map_or(row.driver.name(), |dialect| dialect.program()),
-            Self::Catalog(row) => row.key.as_str(),
-        }
+    pub fn command(&self) -> String {
+        self.dialect(Mode::default()).map_or_else(
+            |_| self.named().to_owned(),
+            |dialect| dialect.program().to_owned(),
+        )
     }
 }
 

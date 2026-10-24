@@ -492,8 +492,8 @@ fn installed(
     dialect: fn() -> Box<dyn Dialect>,
     script: &Script,
 ) -> Result<std::path::PathBuf, String> {
-    let program = dialect().program();
-    fake_peer::install(here, program, script).map_err(|unbuilt| unbuilt.to_string())
+    let dialect = dialect();
+    fake_peer::install(here, dialect.program(), script).map_err(|unbuilt| unbuilt.to_string())
 }
 
 /// No confinement, the case's directory its only root: the suite is about

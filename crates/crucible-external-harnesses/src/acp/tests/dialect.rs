@@ -621,6 +621,14 @@ fn a_catalog_profile_admits_the_agent_its_entry_names_and_no_other() {
     );
 }
 
+/// A client run from a catalog entry names its program by the agent's key, as
+/// the backend it runs under is described by.
+#[cfg(feature = "proof")]
+#[test]
+fn a_catalog_profile_names_its_program_by_the_agent_s_key() {
+    assert_eq!(cataloged("fake-peer").program(), "peer");
+}
+
 /// A client run from a catalog entry sends nothing more to the agent its
 /// entry names once it answers at a version the entry did not review.
 #[cfg(feature = "proof")]

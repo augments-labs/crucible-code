@@ -905,7 +905,7 @@ async fn instance(
     desk: &Desk<'_>,
     front: &mut dyn Front,
     capabilities: crucible_client_api::Capabilities,
-    (row, agent): (&crate::backends::Row, &str),
+    (row, agent): (&'static crate::backends::Row, &str),
     steps: Option<&crate::launching::Steps>,
 ) -> Option<Option<(ExternalAgent, bool)>> {
     let mut configured: Vec<ExternalAgent> = desk
@@ -949,13 +949,14 @@ async fn instance(
     // One whose release crucible installs is run as that release, installed
     // or not yet, unless its command is on the `PATH`, as one installed by
     // hand is.
+    let command = AgentRow::Built(row).command();
     let by_hand =
-        steps.is_some_and(|steps| matches!(steps.discover(command(row)), Discovery::Found(_)));
+        steps.is_some_and(|steps| matches!(steps.discover(&command), Discovery::Found(_)));
     let managed = crate::installing::executable(home, row).filter(|_| !by_hand);
     let executable = managed
         .as_deref()
         .and_then(std::path::Path::to_str)
-        .unwrap_or_else(|| command(row));
+        .unwrap_or(&command);
     // A row is a built-in driver's, so its instance names no catalog agent.
     let agent = ExternalAgent::unwritten(name, row.driver, executable, profile.as_deref(), None)?;
     Some(Some((agent, false)))
@@ -969,13 +970,6 @@ fn shown_as(conversation: &Conversation, row: &AgentRow) -> String {
         .and_then(|consent| consent.routes().warned(row.route()))
         .map_or(row.named(), |warned| warned.shown)
         .to_owned()
-}
-
-/// The command `row`'s agent is run as: the same in every mode, and asking
-/// is a mode every row runs in.
-fn command(row: &crate::backends::Row) -> &'static str {
-    (row.dialect)(crucible_tools::Mode::default())
-        .map_or(row.driver.name(), |dialect| dialect.program())
 }
 
 /// Whether the launcher would start `agent`, of the row given and shown as

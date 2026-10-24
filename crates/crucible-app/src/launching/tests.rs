@@ -535,8 +535,8 @@ fn a_profile_reached_through_a_link_into_protected_metadata_is_not_opened() {
 }
 
 /// The row a signed catalog entry gives the agent keyed `peer`: it must answer
-/// initializing as `fake-peer` at 1.0.0, signs in itself with `login`, and is
-/// started with `acp --stdio`.
+/// initializing as `fake-peer` at 1.0.0, signs in itself with `login`, is
+/// started with `acp --stdio`, and reaches `api.example.com`.
 pub(crate) fn cataloged() -> CatalogRow {
     let file =
         serde_json::json!({"path": "peer", "size": 1, "sha256": "b".repeat(64), "exec": true});
@@ -552,6 +552,7 @@ pub(crate) fn cataloged() -> CatalogRow {
             "license": "MIT",
             "review": "https://example.com/review/1",
             "admits": {"name": "fake-peer", "version": "1.0.0"},
+            "reach": ["api.example.com"],
             "auth_methods": [{"id": "login", "name": "Log in", "kind": "agent"}],
             "targets": [{
                 "platform": "any",
@@ -650,6 +651,25 @@ async fn a_catalog_row_is_launched_as_its_entry_reviewed_it() {
             "{calls_itself}"
         );
     }
+}
+
+/// A catalog row reaches the hosts its entry's profile grants, and the child
+/// of a conversation that confines its commands may reach those and no other.
+#[test]
+fn a_catalog_row_reaches_the_hosts_its_entry_grants() {
+    let sample = Sample::new("launch-catalog-reach");
+    let row = AgentRow::Catalog(cataloged());
+    let conversation = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
+
+    let child =
+        policy(&conversation, None, &row.reaches(), conversation.limits()).expect("a policy");
+
+    assert_eq!(row.reaches(), ["api.example.com"]);
+    let SandboxNetworkPolicy::Domains(domains) = child.network() else {
+        panic!("{:?}", child.network());
+    };
+    assert!(domains.permits_host("api.example.com"));
+    assert!(!domains.permits_host("elsewhere.example.com"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -773,7 +793,7 @@ async fn a_program_that_is_not_there_is_refused_with_how_to_install_it() {
 struct Speaking(Plain);
 
 impl Dialect for Speaking {
-    fn program(&self) -> &'static str {
+    fn program(&self) -> &str {
         self.0.program()
     }
 

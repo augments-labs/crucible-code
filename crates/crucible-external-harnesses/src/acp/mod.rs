@@ -6,8 +6,9 @@
 //! description of itself must pass, and the methods it signs in with, of which
 //! the first the agent offers is the one asked for. A built profile names the
 //! command the agent is found as, and the dialect that wraps the client builds
-//! what it is started with; a catalog profile is started with the arguments
-//! and environment its target was reviewed with.
+//! what it is started with; a catalog profile names its program by the
+//! agent's key and is started with the arguments and environment its target
+//! was reviewed with.
 //! A run's first turn initializes the agent and reads what it says of itself
 //! once, into an [`Initialized`]; nothing else is sent to an agent that answers
 //! with a version or a description its profile does not admit. The session is
@@ -66,11 +67,6 @@ use crate::{Account, Act, Dialect, Ran, Reading, Request, Shape, Told};
 /// The protocol version this client speaks.
 pub(crate) const PROTOCOL: u64 = 1;
 
-/// What a client of an agent the catalog reviewed says it is looked up as.
-/// Nothing is looked up for one, which is started from the path its instance
-/// names, so it is called what the protocol calls the program it speaks to.
-const CATALOGED: &str = "agent";
-
 /// The code an agent refuses with when it must be signed in first.
 const SIGN_IN_REQUIRED: i64 = -32000;
 
@@ -86,7 +82,7 @@ const RESOURCE_NOT_FOUND: i64 = -32002;
 
 /// The most bytes a name the agent gives keeps: its own name, its version, a
 /// sign-in method or a session.
-const NAME_BYTES: usize = 256;
+pub(crate) const NAME_BYTES: usize = 256;
 
 /// The most sign-in methods an agent's description keeps.
 const METHODS: usize = 16;
@@ -732,10 +728,12 @@ fn refusal(awaited: Awaited, refused: &Refused) -> Failure {
 }
 
 impl Dialect for Acp {
-    fn program(&self) -> &'static str {
+    fn program(&self) -> &str {
         match &self.reviewed {
             Reviewed::Built(profile) => profile.program,
-            Reviewed::Catalog(_) => CATALOGED,
+            // Looked up as nothing, since it is started from the path its
+            // instance names, and known by its key.
+            Reviewed::Catalog(profile) => profile.key().as_str(),
         }
     }
 
