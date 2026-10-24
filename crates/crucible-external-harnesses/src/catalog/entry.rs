@@ -367,6 +367,32 @@ pub struct Revoked {
 }
 
 impl Entry {
+    /// One entry, as a catalog spells it, read from `text` with no signature
+    /// to believe it by.
+    ///
+    /// This is what the intake describes an agent as before the catalog is
+    /// signed, so the same reader that believes a signed entry refuses the
+    /// same fields here. The caller bounds `text` before it is read.
+    ///
+    /// # Errors
+    ///
+    /// [`CatalogError`] naming the first field that is not what the catalog
+    /// holds there.
+    pub fn unsigned(text: &[u8]) -> Result<Self, CatalogError> {
+        let value: Value = serde_json::from_slice(text)?;
+        Self::read(&Fields::new(&value, String::new())?)
+    }
+
+    /// The target published for the platform this build runs on, where there
+    /// is one.
+    #[must_use]
+    pub fn here(&self) -> Option<&Target> {
+        let platform = super::trust::here();
+        self.targets
+            .iter()
+            .find(|target| *target.platform == *platform)
+    }
+
     /// The entry `fields` holds.
     pub(super) fn read(fields: &Fields<'_>) -> Result<Self, CatalogError> {
         let kind = match &*fields.text("kind")? {

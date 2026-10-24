@@ -343,6 +343,22 @@ enum AgentsAction {
         /// The directory to unpack into, which must not exist.
         out: PathBuf,
     },
+    /// Start an agent the agent catalog describes from where its release was
+    /// unpacked, in a sandbox with no network, ask it to initialize, write
+    /// what it said as JSON, and stop.
+    ///
+    /// The catalog's intake runs it, so `--help` leaves it out.
+    #[command(hide = true)]
+    Probe {
+        /// The directory the release was unpacked into.
+        root: PathBuf,
+        /// One entry as the catalog spells it.
+        entry: PathBuf,
+        /// Start the agent without the sandbox where this machine's cannot close
+        /// the network, and say so in the output; for a disposable machine only.
+        #[arg(long)]
+        unconfined: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -603,6 +619,18 @@ pub(crate) fn start() -> ExitCode {
             _,
             _,
         ) => return agents::unpack_check(entry, artifact, out),
+        (
+            Some(Command::Agents {
+                action:
+                    AgentsAction::Probe {
+                        root,
+                        entry,
+                        unconfined,
+                    },
+            }),
+            _,
+            _,
+        ) => return agents::probe(root, entry, *unconfined),
         (Some(Command::Mcp { action }), _, _) => declared(action),
         (
             Some(Command::Sessions {

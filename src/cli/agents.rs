@@ -13,15 +13,25 @@
 //! holds it to; the file list it records goes to standard output as
 //! [`crucible_app::installing::unpack_check`] gives it, and a refusal to
 //! standard error, written [`failing`].
+//!
+//! `crucible agents probe`, which the help leaves out as well, is the same
+//! intake starting the agent once in a sandbox with no network and asking it to
+//! initialize; what [`crucible_app::probing::probe`] records goes to standard
+//! output, and a refusal to standard error, written [`failing`].
 
 use std::io::{self, IsTerminal as _, Write as _};
 use std::path::Path;
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::time::Duration;
 
 use crucible_app::backends::REGISTRY;
 use crucible_app::catalog_fetch::trust_in;
 use crucible_app::installing::{self, Installed};
+use crucible_app::probing;
 use crucible_config::{Driver, Home};
+use crucible_sandbox::SandboxService;
+use tokio::runtime::Handle;
 
 use super::failure::failing;
 
@@ -102,9 +112,27 @@ pub(super) fn install(driver: Driver) -> ExitCode {
 /// Runs `crucible agents unpack-check` over the artifact the catalog spells
 /// in `entry` and its download at `artifact`, unpacking into `out`, and stops.
 pub(super) fn unpack_check(entry: &Path, artifact: &Path, out: &Path) -> ExitCode {
-    match checked(entry, artifact, out) {
-        Ok(listed) => {
-            let _ = io::stdout().write_all(listed.as_bytes());
+    written(checked(entry, artifact, out))
+}
+
+/// Runs `crucible agents probe` over the release unpacked into `root` and the
+/// entry at `entry`, and stops.
+pub(super) fn probe(root: &Path, entry: &Path, unconfined: bool) -> ExitCode {
+    written(probed(
+        root,
+        entry,
+        unconfined,
+        &probing::local,
+        probing::BOUND,
+    ))
+}
+
+/// Writes `answer` to standard output where it is an answer and to standard
+/// error where it is a refusal.
+fn written(answer: Result<String, String>) -> ExitCode {
+    match answer {
+        Ok(text) => {
+            let _ = io::stdout().write_all(text.as_bytes());
             ExitCode::SUCCESS
         }
         Err(refused) => {
@@ -112,6 +140,21 @@ pub(super) fn unpack_check(entry: &Path, artifact: &Path, out: &Path) -> ExitCod
             ExitCode::FAILURE
         }
     }
+}
+
+/// What `crucible agents probe` writes: the JSON for standard output, or the
+/// refusal for standard error, saying what refused it and why as each cause
+/// beneath it gives it. The agent is given `within` to answer, and the
+/// sandbox is the one `sandbox` makes on the application's runtime.
+fn probed(
+    root: &Path,
+    entry: &Path,
+    unconfined: bool,
+    sandbox: &dyn Fn(Handle) -> Arc<dyn SandboxService>,
+    within: Duration,
+) -> Result<String, String> {
+    probing::probe(root, entry, unconfined, sandbox, within)
+        .map_err(|refused| failing(&caused(&refused)))
 }
 
 /// What `crucible agents unpack-check` writes: the file list for standard

@@ -45,6 +45,35 @@ pub fn initialized(name: &str, version: &str, sign_in: &str) -> String {
     )
 }
 
+/// The answer to initializing of the agent the catalog intake's fixtures
+/// describe: it signs in in a browser or at a terminal.
+#[must_use]
+pub fn probed() -> String {
+    response(
+        0,
+        &json!({
+            "protocolVersion": 1,
+            "agentInfo": {"name": "fake-agent", "version": "1.0.0"},
+            "agentCapabilities": {
+                "loadSession": true,
+                "sessionCapabilities": {"resume": {}},
+                "auth": {"logout": {}},
+            },
+            "authMethods": [
+                {"id": "browser", "name": "Sign in with a browser"},
+                {
+                    "type": "terminal",
+                    "id": "terminal",
+                    "name": "Sign in at a terminal",
+                    "command": "agent",
+                    "args": ["login"],
+                    "env": {"LOGIN_MODE": "1"},
+                },
+            ],
+        }),
+    )
+}
+
 /// The answer to opening a session, as request `id`.
 #[must_use]
 pub fn opened(id: u64) -> String {

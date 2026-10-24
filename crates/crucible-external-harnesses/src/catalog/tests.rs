@@ -18,9 +18,9 @@ use super::trust::{
 };
 use super::{
     Admits, AssetRef, AuthMethod, Catalog, CatalogError, CatalogProfile, ContentUse, Disposition,
-    FileKind, Files, Format, GRACE, Held, INDEX_BYTES, KEYS, Keys, Kind, Launch, Lock, Method,
-    Revoked, Route, SCHEMA_SHOWN, SNAPSHOT, Script, Trust, TrustError, Unprofiled, Unusable,
-    VERSION_BYTES, Variable,
+    Entry, FileKind, Files, Format, GRACE, Held, INDEX_BYTES, KEYS, Keys, Kind, Launch, Lock,
+    Method, Revoked, Route, SCHEMA_SHOWN, SNAPSHOT, Script, Trust, TrustError, Unprofiled,
+    Unusable, VERSION_BYTES, Variable,
 };
 use crate::acp::SignIn;
 use crate::antigravity::AGENT;
@@ -2566,4 +2566,35 @@ fn an_admitted_name_or_version_an_answer_could_be_cut_to_is_refused() {
         }
         assert!(admitted.is_ok(), "{field}: {admitted:?}");
     }
+}
+
+/// An entry the intake describes, before any catalog signs it, is read by the
+/// reader that believes a signed one: its fields come out the same, and a
+/// field the reader refuses is refused here, naming the field.
+#[test]
+fn an_entry_is_read_unsigned_by_the_reader_that_believes_a_signed_one() {
+    let mut described = binary();
+    *described
+        .pointer_mut("/targets/0/platform")
+        .expect("a platform") = json!("plan9-mips");
+    let entry = Entry::unsigned(described.to_string().as_bytes()).expect("an entry");
+
+    assert_eq!(entry.key.as_str(), "goose");
+    assert_eq!(&*entry.admits.name, "goose");
+    assert_eq!(entry.auth_methods.len(), 3);
+    assert_eq!(
+        entry.here().map(|target| &*target.cmd),
+        None,
+        "its one target is for another platform"
+    );
+
+    *described
+        .pointer_mut("/targets/0/platform")
+        .expect("a platform") = json!(here());
+    let entry = Entry::unsigned(described.to_string().as_bytes()).expect("an entry");
+    assert_eq!(entry.here().map(|target| &*target.cmd), Some("goose"));
+
+    *described.pointer_mut("/targets/0/env").expect("an env") = json!({"LD_PRELOAD": "x"});
+    let refused = Entry::unsigned(described.to_string().as_bytes()).expect_err("a loader");
+    assert!(refused.to_string().contains("env"), "{refused}");
 }

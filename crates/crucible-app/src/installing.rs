@@ -399,7 +399,7 @@ pub fn unpack_check(entry: &Path, artifact: &Path, out: &Path) -> Result<String,
 
 /// What the file at `path` holds, refused when that is more than `ceiling`
 /// bytes; no more than one byte past it is read.
-fn bounded(path: &Path, ceiling: u64) -> Result<Vec<u8>, Unchecked> {
+pub(crate) fn bounded(path: &Path, ceiling: u64) -> Result<Vec<u8>, Unchecked> {
     let unread = |source| Unchecked::Read {
         path: path.to_owned(),
         source,

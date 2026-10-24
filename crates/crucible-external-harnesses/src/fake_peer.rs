@@ -19,6 +19,11 @@
 //! standard error, which is what a launch failure carries and a test asserts
 //! on.
 //!
+//! A script made by [`Script::once`] plays its one reply at every start and
+//! keeps no place, so a peer in a directory nothing may write to still plays;
+//! a reply can try to reach an address and say one line or another by whether
+//! it could, which is how a test sees what a sandbox's network allowed.
+//!
 //! What it hears is kept, bounded, in a file named `heard`, and the arguments
 //! of each start in one named `argued`, so a test can say what reached it; a
 //! reply can also start a grandchild that beats into a file named `lingering`
@@ -33,6 +38,7 @@
 use std::fmt;
 use std::fs;
 use std::io::{self, BufRead, Read, Write};
+use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::Duration;
@@ -97,6 +103,9 @@ const HELD: Duration = Duration::from_millis(150);
 /// within a slice of a loaded machine's scheduler, while one still beating has
 /// beaten twenty times by then.
 const SETTLE: Duration = Duration::from_secs(1);
+
+/// How long a reply waits to connect before it takes the address for refused.
+const REACH: Duration = Duration::from_secs(2);
 
 /// The script format this peer reads.
 const FORMAT: u64 = 1;
@@ -165,6 +174,9 @@ enum Step {
     Flood(Stream, u64),
     /// Waits this long.
     Pause(Duration),
+    /// Tries to connect to this address, and writes the first line to
+    /// standard output where it could not and the second where it could.
+    Reach(SocketAddr, String, String),
     /// Starts a grandchild that beats until it is stopped.
     Linger,
     /// Exits with this status.
@@ -235,6 +247,20 @@ impl Reply {
         self
     }
 
+    /// Then tries to connect to `to`, and writes `refused` to standard output
+    /// where it could not and `reached` where it could.
+    #[must_use]
+    pub fn reach(
+        mut self,
+        to: SocketAddr,
+        refused: impl Into<String>,
+        reached: impl Into<String>,
+    ) -> Self {
+        self.steps
+            .push(Step::Reach(to, refused.into(), reached.into()));
+        self
+    }
+
     /// Then starts a grandchild that beats into the install directory until
     /// it is stopped, and goes on once it has begun to.
     #[must_use]
@@ -271,6 +297,13 @@ impl Reply {
                     Step::Pause(pause) => {
                         json!({ "pause": u64::try_from(pause.as_millis()).unwrap_or(u64::MAX) })
                     }
+                    Step::Reach(to, refused, reached) => json!({
+                        "reach": {
+                            "to": to.to_string(),
+                            "refused": refused,
+                            "reached": reached,
+                        }
+                    }),
                     Step::Linger => json!({ "linger": null }),
                     Step::Exit(status) => json!({ "exit": status }),
                 })
@@ -300,6 +333,11 @@ impl Reply {
                         Step::Flood(stream, value.get("bytes")?.as_u64()?)
                     }
                     "pause" => Step::Pause(Duration::from_millis(value.as_u64()?)),
+                    "reach" => Step::Reach(
+                        value.get("to")?.as_str()?.parse().ok()?,
+                        value.get("refused")?.as_str()?.to_owned(),
+                        value.get("reached")?.as_str()?.to_owned(),
+                    ),
                     "linger" => Step::Linger,
                     "exit" => Step::Exit(u8::try_from(value.as_u64()?).ok()?),
                     _ => return None,
@@ -315,6 +353,8 @@ impl Reply {
 pub struct Script {
     /// The replies, in the order the starts consume them.
     replies: Vec<Reply>,
+    /// Whether the one reply is played at every start, with no place kept.
+    stateless: bool,
 }
 
 impl Script {
@@ -323,6 +363,17 @@ impl Script {
     pub fn of(replies: impl IntoIterator<Item = Reply>) -> Self {
         Self {
             replies: replies.into_iter().collect(),
+            stateless: false,
+        }
+    }
+
+    /// The script that gives `reply` at every start and keeps no place, for a
+    /// peer installed where nothing may write.
+    #[must_use]
+    pub fn once(reply: Reply) -> Self {
+        Self {
+            replies: vec![reply],
+            stateless: true,
         }
     }
 
@@ -330,6 +381,7 @@ impl Script {
     pub(crate) fn encoded(&self) -> Vec<u8> {
         json!({
             "format": FORMAT,
+            "stateless": self.stateless,
             "replies": self.replies.iter().map(Reply::encoded).collect::<Vec<_>>(),
         })
         .to_string()
@@ -348,7 +400,11 @@ impl Script {
             .iter()
             .map(Reply::decoded)
             .collect::<Option<Vec<_>>>()?;
-        Some(Self { replies })
+        let stateless = value
+            .get("stateless")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        Some(Self { replies, stateless })
     }
 }
 
@@ -610,7 +666,11 @@ fn play() -> ExitCode {
     else {
         return refuse("fake peer: script unreadable", UNREADABLE);
     };
-    let Ok(played) = counter(&directory) else {
+    let Ok(played) = (if script.stateless {
+        Ok(0)
+    } else {
+        counter(&directory)
+    }) else {
         return refuse("fake peer: counter unwritable", UNWRITABLE);
     };
     let Some(reply) = script.replies.get(played) else {
@@ -618,7 +678,7 @@ fn play() -> ExitCode {
     };
     // Kept before the reply is played, so a start that crashes is not played
     // again by the next one.
-    if keep(&directory, played.saturating_add(1)).is_err() {
+    if !script.stateless && keep(&directory, played.saturating_add(1)).is_err() {
         return refuse("fake peer: counter unwritable", UNWRITABLE);
     }
     let arguments: Vec<String> = std::env::args_os()
@@ -684,6 +744,15 @@ fn perform(directory: &Path, reply: &Reply) -> io::Result<ExitCode> {
                 }
             }
             Step::Pause(pause) => std::thread::sleep(*pause),
+            Step::Reach(to, refused, reached) => {
+                let line = match TcpStream::connect_timeout(to, REACH) {
+                    Ok(_) => reached,
+                    Err(_) => refused,
+                };
+                let mut out = io::stdout().lock();
+                writeln!(out, "{line}")?;
+                out.flush()?;
+            }
             Step::Linger => {
                 Command::new(std::env::current_exe()?)
                     .arg("--linger")
