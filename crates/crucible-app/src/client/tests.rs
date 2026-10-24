@@ -10,13 +10,13 @@ use std::collections::VecDeque;
 use crucible_client_api::bounds::{ITEMS, TEXT_BYTES};
 use crucible_client_api::pending::Operation;
 use crucible_client_api::{
-    Capabilities, Capability, Decision, ErrorCode, Lasting, Pending, PendingId, Picked, Progress,
-    Refusal, Ruling, Said, SummaryKind,
+    Capabilities, Capability, Choice, Decision, ErrorCode, Lasting, Pending, PendingId, Picked,
+    Progress, Refusal, Ruling, Said, SummaryKind, Text,
 };
 use crucible_tools::{Argument, Ask, Remember, Sensitivity, Summary, Target, Verdict};
 use crucible_types::{Answer, Question, ToolArgs, ToolCall, ToolId};
 
-use super::deciding::{Confirmation, Deciding, Front, Shown, confirmed, questions, warned};
+use super::deciding::{Confirmation, Deciding, Front, Shown, confirmed, questions, settle, warned};
 use super::reading::progress;
 use crate::content_use::WARNED;
 
@@ -1071,4 +1071,73 @@ fn an_agent_action_is_put_naming_who_runs_it_in_the_sandbox_s_own_word() {
     // Nothing said is nothing claimed, never the weakest word.
     let acting = super::Acting::new("work", &Capabilities::unknown());
     assert_eq!(acting.confinement, None);
+}
+
+#[test]
+fn nothing_a_client_says_settles_an_install_confirmation_a_conversation_never_raised() {
+    let install = Pending::Install {
+        id: PendingId::new(5),
+        asks: Text::cut("Install it?"),
+        facts: vec![Text::cut("1.2.3")],
+        choices: vec![
+            Choice {
+                name: Text::cut("Install"),
+                says: Text::cut(""),
+                recommended: true,
+            },
+            Choice {
+                name: Text::cut("Leave it"),
+                says: Text::cut(""),
+                recommended: false,
+            },
+        ],
+    };
+    let id = install.id();
+    let said = |word| Said::new(word).expect("a short word");
+
+    // Every kind of decision there is, each naming the action it is held
+    // against and one of them naming a choice it offers: none settles it.
+    for decision in [
+        Decision::Ruled {
+            id,
+            ruling: Ruling::Allow,
+            lasting: Lasting::Session,
+        },
+        Decision::Answered {
+            id,
+            answers: vec![Picked {
+                chosen: vec![said("Install")],
+                note: said(""),
+            }],
+        },
+        Decision::Declined { id },
+        Decision::Accepted { id },
+        Decision::Picked {
+            id,
+            choice: said("Install"),
+        },
+        Decision::Picked {
+            id,
+            choice: said("Leave it"),
+        },
+    ] {
+        assert_eq!(
+            settle(&install, decision.clone()).map_err(Refusal::code),
+            Err(ErrorCode::WrongDecision),
+            "{decision:?}"
+        );
+    }
+
+    // Naming some other action is still answered as it is everywhere.
+    assert_eq!(
+        settle(
+            &install,
+            Decision::Picked {
+                id: PendingId::new(6),
+                choice: said("Install"),
+            }
+        )
+        .map_err(Refusal::code),
+        Err(ErrorCode::StaleDecision)
+    );
 }

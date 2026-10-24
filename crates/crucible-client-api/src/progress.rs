@@ -17,10 +17,17 @@
 //! in: a client reading a stream from a host that speaks another is refused by
 //! name at the first report, rather than shown what the fields it recognised
 //! happened to say.
+//!
+//! An [`InstallProgress`] is the same kind of report for an install under way:
+//! how many bytes of the download have arrived, of how many it is to be. It is
+//! a type of its own because the door that installs has no conversation and so
+//! no turn, and it goes only to a client that claimed
+//! [`Capability::Install`](crate::Capability::Install). It, too, is a frame of
+//! its own that says its [`Version`].
 
 use serde_json::Value;
 
-use crate::bounds::Text;
+use crate::bounds::{Name, Text};
 use crate::context::Context;
 use crate::error::{ErrorCode, Refusal};
 use crate::outcome::{Problem, Stop};
@@ -159,6 +166,104 @@ impl SummaryKind {
             .into_iter()
             .find(|kind| kind.as_str() == word)
             .ok_or_else(|| ErrorCode::Malformed.into())
+    }
+}
+
+/// How far the download of an agent being installed has got, as an install
+/// reports it while it runs.
+///
+/// Provisional as [`Progress`] is, and a type of its own because it is not a
+/// turn's: it belongs to no conversation, and goes only to a client that
+/// claimed [`Capability::Install`](crate::Capability::Install). Bounded in
+/// what it can say: an agent by name, and two counts of bytes that never put
+/// more done than there is to do.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstallProgress {
+    agent: Name,
+    done: u64,
+    total: u64,
+}
+
+impl InstallProgress {
+    /// `done` of `total` bytes of `agent` fetched, where that is not more than
+    /// there is.
+    #[must_use]
+    pub fn new(agent: Name, done: u64, total: u64) -> Option<Self> {
+        if done > total {
+            return None;
+        }
+        Some(Self { agent, done, total })
+    }
+
+    /// The agent being installed, by the name the catalog gives it.
+    #[must_use]
+    pub const fn agent(&self) -> &Name {
+        &self.agent
+    }
+
+    /// How many bytes have arrived.
+    #[must_use]
+    pub const fn done(&self) -> u64 {
+        self.done
+    }
+
+    /// How many bytes the download is to be.
+    #[must_use]
+    pub const fn total(&self) -> u64 {
+        self.total
+    }
+
+    /// The value this travels as.
+    #[must_use]
+    pub fn written(&self) -> Value {
+        Writing::new()
+            .with("version", Version::CURRENT.number())
+            .with(
+                "install",
+                Writing::new()
+                    .with("agent", self.agent.as_str())
+                    .with("done", self.done)
+                    .with("total", self.total)
+                    .finish(),
+            )
+            .finish()
+    }
+
+    /// The frame this report travels as.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorCode::TooLarge`] where the frame would be over the ceiling.
+    pub fn encode(&self) -> Result<Vec<u8>, Refusal> {
+        frame(&self.written())
+    }
+
+    /// The report `bytes` spell.
+    ///
+    /// A frame that is a turn's progress, a snapshot or a response is refused
+    /// here: an install report is named by its own field, which none of them
+    /// has.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal`] for anything but one whole, bounded report in a version
+    /// this build speaks, whose `done` is not more than its `total`.
+    pub fn decode(bytes: &[u8]) -> Result<Self, Refusal> {
+        let mut frame = Fields::of(parsed(bytes)?)?;
+        if frame.number("version")? != u64::from(Version::CURRENT.number()) {
+            return Err(ErrorCode::UnsupportedVersion.into());
+        }
+        let mut fields = Fields::of(frame.take("install")?)?;
+        frame.done()?;
+
+        let report = Self::new(
+            fields.name("agent")?,
+            fields.number("done")?,
+            fields.number("total")?,
+        )
+        .ok_or_else(|| Refusal::new(ErrorCode::Malformed))?;
+        fields.done()?;
+        Ok(report)
     }
 }
 

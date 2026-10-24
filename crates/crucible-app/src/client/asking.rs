@@ -160,7 +160,9 @@ pub struct Answered {
 /// # Errors
 ///
 /// [`ErrorCode::Busy`] for any command but [`Command::AskLimits`]: this door
-/// answers that one alone, and nothing is done.
+/// answers that one alone, and nothing is done. The agent catalog
+/// commands are refused as [`ErrorCode::UnknownCommand`] instead, since the
+/// agents door serves them and no conversation does.
 pub fn asking(
     conversation: &mut Conversation,
     request: &Request,
@@ -168,6 +170,16 @@ pub fn asking(
 ) -> Result<Option<Asking>, Refusal> {
     match request.command() {
         Command::AskLimits => Ok(started(conversation, now)),
+        // The agents door serves the install commands and no conversation is
+        // part of it, so this door will never serve them: a client is told the
+        // command is not shipped here, not to come back.
+        Command::AgentCatalog
+        | Command::InstallAgent { .. }
+        | Command::UpdateAgent { .. }
+        | Command::RollbackAgent { .. }
+        | Command::RemoveAgent { .. }
+        | Command::VerifyAgent { .. }
+        | Command::SignInAgent { .. } => Err(ErrorCode::UnknownCommand.into()),
         Command::Prompt(_)
         | Command::Compact
         | Command::Cancel

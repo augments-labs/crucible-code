@@ -4,8 +4,10 @@
 //! application. This crate is the form their side of that takes once it has to
 //! be written down: a [`Request`] carrying one [`Command`], the [`Response`]
 //! carrying what came of it, the [`Snapshot`] of what is now true, the
-//! [`Progress`] that is only true so far, and the [`Pending`] action a turn
-//! stops on until a [`Decision`] naming it arrives. Beside them are three
+//! [`Progress`] that is only true so far, and the [`Pending`] action a turn, or
+//! an install, stops on until a [`Decision`] naming it arrives. An install has
+//! no turn, and says how far it has got in an [`InstallProgress`] of its own.
+//! Beside them are three
 //! reports no request asks for, held to the same bounds: the [`inspection`] a
 //! script reads from `crucible sandbox inspect --json`, the [`doctor`]'s report
 //! from `crucible doctor --json`, and the [`sessions`] list from
@@ -27,7 +29,8 @@
 //! and one with too many entries in a list, nested too deep, made of more
 //! values than [`bounds::VALUES`] or saying a key twice is refused where the
 //! parser meets that; a version this build does not speak — in a request, a
-//! response, a snapshot or a progress report, each of which says its own — a
+//! response, a snapshot or a progress report, a turn's or an install's, each of
+//! which says its own — a
 //! capability it has not heard of and a command it does not ship are each
 //! refused with their own stable code rather than guessed at.
 //!
@@ -66,7 +69,10 @@
 //!   can take part in, not what it is allowed to change. Nothing that ships
 //!   reads a [`Request`] from bytes, which is the only reason that is safe,
 //!   and the repository's checks fail when something starts to without each
-//!   of those commands having been decided about for it.
+//!   of those commands having been decided about for it. The commands that
+//!   install, update, roll back, remove and sign in an agent, and the two that
+//!   list and verify them, are behind [`Capability::Install`] and held to the
+//!   same decision.
 
 pub mod bounds;
 pub mod command;
@@ -94,7 +100,7 @@ pub use outcome::{
     Standing, Stop, ThemeOutcome, TurnOutcome,
 };
 pub use pending::{Asked, Choice, Decision, Effect, Lasting, Pending, PendingId, Picked, Ruling};
-pub use progress::{Progress, SummaryKind};
+pub use progress::{InstallProgress, Progress, SummaryKind};
 pub use request::{Capabilities, Capability, Correlation, Refused, Request, Version};
 pub use snapshot::{Agents, Billing, Execution, Model, Percent, Snapshot};
 pub use usage::{Cost, Limit, LimitGroup, Limits, Reading, Usage, Used, Window};

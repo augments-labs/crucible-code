@@ -522,6 +522,17 @@ fn renumbered(noted: Vec<Noted>) -> Vec<Noted> {
                 facts,
                 choices,
             }),
+            Noted::Put(Pending::Install {
+                id,
+                asks,
+                facts,
+                choices,
+            }) => Noted::Put(Pending::Install {
+                id: ordinal(id),
+                asks,
+                facts,
+                choices,
+            }),
             Noted::Put(Pending::Warning {
                 id,
                 route,

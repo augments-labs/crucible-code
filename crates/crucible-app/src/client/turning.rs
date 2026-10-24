@@ -58,6 +58,9 @@ pub enum Ended {
 /// a command of its own is about no action — the turn it would have to be
 /// about is not this one — and is refused as stale, as it is at every door.
 /// What the turn reports on the way goes to `run`, as it always has.
+///
+/// The agent catalog commands are refused as [`ErrorCode::UnknownCommand`]: the
+/// agents door serves them, and no conversation does.
 pub async fn turn(
     conversation: &mut Conversation,
     request: &Request,
@@ -124,6 +127,16 @@ pub async fn turn(
             )
         }
         Command::Decide(_) => Ended::Refused(ErrorCode::StaleDecision.into()),
+        // The agents door serves the install commands and no conversation is
+        // part of it, so this door will never serve them: a client is told the
+        // command is not shipped here, not to come back.
+        Command::AgentCatalog
+        | Command::InstallAgent { .. }
+        | Command::UpdateAgent { .. }
+        | Command::RollbackAgent { .. }
+        | Command::RemoveAgent { .. }
+        | Command::VerifyAgent { .. }
+        | Command::SignInAgent { .. } => Ended::Refused(ErrorCode::UnknownCommand.into()),
         Command::Theme(_)
         | Command::Setting { .. }
         | Command::Cancel
@@ -180,6 +193,9 @@ fn held(conversation: &Conversation, command: &Command) -> Option<Warned> {
 /// A decision handed in here is refused as stale rather than as busy: the
 /// turn's pending action is settled through the [`Front`] it was put to, and
 /// this door holds no action for a decision to name.
+///
+/// The agent catalog commands are refused as [`ErrorCode::UnknownCommand`], as
+/// at every door a conversation has.
 pub fn interrupt(request: &Request, cancel: &Cancel) -> Outcome {
     match request.command() {
         Command::Cancel => {
@@ -187,6 +203,16 @@ pub fn interrupt(request: &Request, cancel: &Cancel) -> Outcome {
             Outcome::Cancelling
         }
         Command::Decide(_) => Outcome::Refused(ErrorCode::StaleDecision.into()),
+        // The agents door serves the install commands and no conversation is
+        // part of it, so this door will never serve them: a client is told the
+        // command is not shipped here, not to come back.
+        Command::AgentCatalog
+        | Command::InstallAgent { .. }
+        | Command::UpdateAgent { .. }
+        | Command::RollbackAgent { .. }
+        | Command::RemoveAgent { .. }
+        | Command::VerifyAgent { .. }
+        | Command::SignInAgent { .. } => Outcome::Refused(ErrorCode::UnknownCommand.into()),
         Command::Prompt(_)
         | Command::Compact
         | Command::Theme(_)

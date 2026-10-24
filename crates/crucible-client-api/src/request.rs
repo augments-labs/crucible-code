@@ -22,10 +22,13 @@ impl Version {
     /// renamed, moved or taken away, or a word added that a build speaking the
     /// old number would refuse as malformed, as the second revision added the
     /// `plan_limit` code, the third the `summary_kind` a requested call
-    /// carries and the fourth the words a route to an installed agent brings.
-    /// A test holds the number and what the frames are made of together, so
-    /// that one cannot move without the other being looked at.
-    pub const CURRENT: Self = Self(4);
+    /// carries, the fourth the words a route to an installed agent brings and
+    /// the fifth the words the install commands bring: the commands, their
+    /// pending confirmation, the capability to take part in them, the report
+    /// of an install under way and the code a client without that capability
+    /// is refused with. A test holds the number and what the frames are made
+    /// of together, so that one cannot move without the other being looked at.
+    pub const CURRENT: Self = Self(5);
 
     /// The revision numbered `number`, spoken or not.
     #[must_use]
@@ -61,15 +64,22 @@ pub enum Capability {
     /// agent asks for, and choose among them. An operation for a client
     /// without this puts nothing and changes nothing.
     Account,
+    /// It can take part in installing agents from the reviewed catalog: it can
+    /// be put the confirmations an install, update, rollback or removal asks
+    /// for and choose among them, and be told how far an install has got. A
+    /// command that installs, or lists what can be, is refused to a client
+    /// without this as [`ErrorCode::NeedsCapability`], and nothing changes.
+    Install,
 }
 
 impl Capability {
     /// Every capability this build has heard of.
-    pub const EVERY: [Self; 4] = [
+    pub const EVERY: [Self; 5] = [
         Self::Permissions,
         Self::Questions,
         Self::Progress,
         Self::Account,
+        Self::Install,
     ];
 
     /// The word it crosses as.
@@ -80,6 +90,7 @@ impl Capability {
             Self::Questions => "questions",
             Self::Progress => "progress",
             Self::Account => "account",
+            Self::Install => "install",
         }
     }
 
@@ -89,6 +100,7 @@ impl Capability {
             Self::Questions => 2,
             Self::Progress => 4,
             Self::Account => 8,
+            Self::Install => 16,
         }
     }
 }
@@ -112,6 +124,7 @@ impl Capabilities {
             .with(Capability::Questions)
             .with(Capability::Progress)
             .with(Capability::Account)
+            .with(Capability::Install)
     }
 
     /// These, and `one`.
