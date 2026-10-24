@@ -109,8 +109,8 @@ use crucible_types::AgentKey;
 use serde_json::{Map, Value, json};
 use sha2::{Digest as _, Sha256};
 
-use crate::catalog::{File, FileKind, Files, OwnedPin, Target};
-use crate::release::link_resolves;
+use crate::catalog::{File, FileKind, Files, Target};
+use crate::release::{OwnedPin, link_resolves};
 
 /// The most the store holds, in bytes: the bound on an artifact's download,
 /// decompressed and unpacked sizes, and on everything its receipts account

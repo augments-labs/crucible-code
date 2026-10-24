@@ -15,8 +15,8 @@ use super::{
     Adoption, Differs, Fetched, Listing, Mismatch, Origin, PROGRAMS_BYTES, Pause, Provenance,
     RECEIPT_BYTES, Receipt, Store, StoreError, Version,
 };
-use crate::catalog::{Artifact, AssetRef, File, FileKind, Files, Format, Launch, OwnedPin, Target};
-use crate::release::{Unpacker, proof};
+use crate::catalog::{Admits, Artifact, AssetRef, File, FileKind, Files, Format, Launch, Target};
+use crate::release::{OwnedPin, Unpacker, proof};
 use crate::tests::Owned;
 
 /// Where a process a test starts finds the store it works in.
@@ -497,6 +497,10 @@ fn antigravity(digests: bool) -> OwnedPin {
         key: key("antigravity"),
         version: "1.3.0".into(),
         lock_revision: None,
+        admits: Admits {
+            name: "antigravity-acp".into(),
+            version: "1.3.0".into(),
+        },
         target: Target {
             platform: "linux-x86_64".into(),
             cmd: "agy_acp_server.par".into(),
