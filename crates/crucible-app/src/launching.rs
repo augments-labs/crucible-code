@@ -35,7 +35,7 @@
 //! since the agent was selected is the one the start is held to. What an agent
 //! built in is admitted as, and started with, is what those releases say; with
 //! the trust state unusable it is admitted as none.
-//! The catalog intake starts an agent's program too, with [`probing`]: from
+//! The catalog intake starts an agent's program too, with `probing`: from
 //! the directory its release was unpacked into and the entry that describes it,
 //! under a policy that requires the sandbox, closes the network and leaves that
 //! directory read-only. No route was asked about content use, since all the

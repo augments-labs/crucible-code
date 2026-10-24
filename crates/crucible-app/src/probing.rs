@@ -1,7 +1,7 @@
 //! What the agent catalog's intake records of an agent by starting it once.
 //!
 //! [`probe`] starts the program an entry lists, from the directory its release
-//! was unpacked into, through [`crate::launching::probing`]: the sandbox
+//! was unpacked into, through `launching::probing`: the sandbox
 //! required, the network closed and that directory read-only. It sends the one
 //! `initialize` a client sends and keeps what comes back as JSON the
 //! intake can compare from run to run: whether the sandbox closed the network,
