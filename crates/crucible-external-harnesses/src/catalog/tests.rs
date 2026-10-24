@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::Barrier;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crucible_sandbox::SandboxDomainPattern;
 use crucible_types::AgentKey;
 use serde_json::{Value, json};
 
@@ -16,10 +17,12 @@ use super::trust::{
     DIRECTORY, FILE, LOCK, REVOKED_CAP, STATE_BYTES, State, decode, here, merge, platform,
 };
 use super::{
-    Admits, AssetRef, AuthMethod, Catalog, CatalogError, ContentUse, Disposition, FileKind, Files,
-    Format, GRACE, Held, INDEX_BYTES, KEYS, Keys, Kind, Launch, Lock, Method, Revoked, Route,
-    SCHEMA_SHOWN, SNAPSHOT, Script, Trust, TrustError, Unusable, VERSION_BYTES, Variable,
+    Admits, AssetRef, AuthMethod, Catalog, CatalogError, CatalogProfile, ContentUse, Disposition,
+    FileKind, Files, Format, GRACE, Held, INDEX_BYTES, KEYS, Keys, Kind, Launch, Lock, Method,
+    Revoked, Route, SCHEMA_SHOWN, SNAPSHOT, Script, Trust, TrustError, Unprofiled, Unusable,
+    VERSION_BYTES, Variable,
 };
+use crate::acp::SignIn;
 use crate::antigravity::Manifest;
 use crate::tests::Owned;
 
@@ -2268,4 +2271,97 @@ fn a_release_published_only_for_another_platform_is_not_offered_here() {
         panic!("one pin, not {}", pins.len());
     };
     assert_eq!(*pin.target.platform, *here());
+}
+
+/// The profile `catalog`'s first entry gives the agent installed from its
+/// first target.
+// A test whose entry gives no profile has nothing else to report.
+#[allow(clippy::panic)]
+fn profiled(catalog: &Value) -> Result<CatalogProfile, Unprofiled> {
+    let Ok(catalog) = fetched(catalog) else {
+        panic!("the catalog is believed");
+    };
+    let Some(entry) = catalog.entries().first() else {
+        panic!("an entry");
+    };
+    let Some(target) = entry.targets.first() else {
+        panic!("a target");
+    };
+    CatalogProfile::from_entry(entry, target)
+}
+
+/// An entry's profile signs its agent in only by the methods the agent
+/// carries out itself, starts it with its target's arguments and variables,
+/// each of those replacing the shell's value of the same name, and passes it
+/// nothing else of the shell but what every agent is passed, which alone is
+/// shown.
+#[test]
+fn an_entry_gives_its_agent_its_own_sign_in_arguments_variables_and_hosts() {
+    let catalog = with(
+        "/entries/0/targets/0/env",
+        json!({"GOOSE_MODE": "acp", "LANG": "C.UTF-8"}),
+    );
+    let profile = profiled(&catalog).unwrap_or_else(|why| panic!("{why}"));
+    let ambient = [
+        ("PATH", "/usr/bin"),
+        ("LANG", "en_GB.UTF-8"),
+        ("GOOGLE_API_KEY", "ambient-sentinel-value"),
+    ]
+    .map(|(name, value)| (name.into(), value.into()));
+
+    let request = profile.request(ambient);
+
+    let methods: Vec<&str> = profile.sign_in().iter().map(SignIn::id).collect();
+    assert_eq!(methods, ["browser"]);
+    let hosts: Vec<&str> = profile
+        .reach()
+        .iter()
+        .map(SandboxDomainPattern::as_str)
+        .collect();
+    assert_eq!(hosts, ["api.example.com"]);
+    assert_eq!(request.arguments, ["acp"]);
+    let mut environment = request.environment.clone();
+    environment.sort();
+    let expected = [
+        ("GOOSE_MODE", "acp"),
+        ("LANG", "C.UTF-8"),
+        ("PATH", "/usr/bin"),
+    ]
+    .map(|(name, value)| (name.to_owned(), value.to_owned()));
+    assert_eq!(environment, expected);
+    assert_eq!(request.shown, ["PATH"]);
+}
+
+/// A host an entry's agent reaches is granted only as the sandbox's parser
+/// reads it, and one that names every host, or every host under a single
+/// label, is refused by where it is listed.
+#[test]
+fn a_host_that_names_every_host_is_never_granted() {
+    for (reach, refused) in [
+        (json!(["*"]), Some("reach[0] names every host")),
+        (
+            json!(["api.example.com", "*.com"]),
+            Some("reach[1] names every host"),
+        ),
+        (
+            json!(["https://api.example.com"]),
+            Some("reach[0] is not a host a sandbox can grant"),
+        ),
+        (json!(["*.example.com"]), None),
+    ] {
+        let profile = profiled(&with("/entries/0/reach", reach.clone()));
+
+        match (profile, refused) {
+            (Ok(profile), None) => {
+                let hosts: Vec<&str> = profile
+                    .reach()
+                    .iter()
+                    .map(SandboxDomainPattern::as_str)
+                    .collect();
+                assert_eq!(json!(hosts), reach);
+            }
+            (Err(why), Some(said)) => assert!(why.to_string().starts_with(said), "{reach}: {why}"),
+            (profile, refused) => panic!("{reach}: {profile:?}, not {refused:?}"),
+        }
+    }
 }

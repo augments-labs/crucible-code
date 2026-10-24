@@ -8,7 +8,7 @@ use crucible_execution::{
 use crucible_types::TurnId;
 use serde_json::{Value, json};
 
-use crate::acp::{Acp, Allowing, Initialized, Profile};
+use crate::acp::{Acp, Allowing, Initialized, Profile, SignIn};
 use crate::{Account, Act, Dialect, Reading, Shape, Told};
 
 /// Admits every agent.
@@ -22,7 +22,7 @@ const PROFILE: Profile = Profile {
     program: "agent",
     versions: &[1],
     admits: anyone,
-    sign_in: Some("login"),
+    sign_in: &[SignIn::named("login")],
 };
 
 /// A response to request `id` carrying `result`.
@@ -192,6 +192,55 @@ fn a_status_check_reads_sign_in_from_opening_a_session() {
             acp.told(Account::Status, &answer).unwrap(),
             Told::Done(Reading::Signed(signed))
         );
+    }
+}
+
+/// A sign-in asks for the first of the profile's methods the agent offers, in
+/// the profile's order whatever the agent's, and for none where the agent
+/// offers none of them.
+#[test]
+fn a_sign_in_asks_for_the_first_of_its_methods_the_agent_offers() {
+    const METHODS: Profile = Profile {
+        sign_in: &[
+            SignIn::named("browser"),
+            SignIn::named("login"),
+            SignIn::named("key"),
+        ],
+        ..PROFILE
+    };
+    let offering = |methods: &[&str]| {
+        let methods: Vec<Value> = methods
+            .iter()
+            .map(|id| json!({"id": id, "name": id}))
+            .collect();
+        response(
+            0,
+            &json!({"protocolVersion": 1, "agentCapabilities": {}, "authMethods": methods}),
+        )
+    };
+    for (offered, asked) in [
+        (vec!["login"], Some("login")),
+        (vec!["key", "login", "browser"], Some("browser")),
+        (vec!["other"], None),
+    ] {
+        let mut acp = Acp::new(METHODS);
+        let _ = acp.spoken(Account::SignIn).unwrap();
+
+        let told = acp.told(Account::SignIn, &offering(&offered)).unwrap();
+
+        match (told, asked) {
+            (Told::Send(frame), Some(method)) => {
+                let sent: Value = serde_json::from_str(&frame).unwrap();
+                assert_eq!(sent.pointer("/method"), Some(&json!("authenticate")));
+                assert_eq!(
+                    sent.pointer("/params/methodId"),
+                    Some(&json!(method)),
+                    "{offered:?}"
+                );
+            }
+            (Told::Done(Reading::Unreadable(_)), None) => {}
+            (told, asked) => panic!("{offered:?}: {told:?}, not {asked:?}"),
+        }
     }
 }
 
@@ -481,6 +530,113 @@ fn a_permission_asked_after_a_stop_is_never_answered_yes() {
         .unwrap();
 
     assert!(matches!(acts.as_slice(), [Act::Ask { .. }]), "{acts:?}");
+}
+
+/// The client of the agent a signed catalog entry reviewed as calling itself
+/// `name` at 1.0.0, working in this directory, its first turn opened.
+#[cfg(feature = "proof")]
+fn cataloged(name: &str) -> Acp {
+    use std::time::SystemTime;
+
+    use crate::catalog::{Catalog, CatalogProfile, Held, fixture};
+
+    let file = json!({"path": "peer", "size": 1, "sha256": "b".repeat(64), "exec": true});
+    let catalog = json!({
+        "schema": 1,
+        "serial": 1,
+        "revoked": [],
+        "entries": [{
+            "key": "peer",
+            "registry_id": "fake-peer",
+            "version": "1.0.0",
+            "kind": "binary",
+            "license": "MIT",
+            "review": "https://example.com/review/1",
+            "admits": {"name": name, "version": "1.0.0"},
+            "auth_methods": [{"id": "login", "name": "Log in", "kind": "agent"}],
+            "targets": [{
+                "platform": "any",
+                "cmd": "peer",
+                "artifacts": [{
+                    "url": "https://example.com/peer.zip",
+                    "sha256": "a".repeat(64),
+                    "size": 1,
+                    "format": "zip",
+                    "unpacked": 1,
+                    "decompressed": 1,
+                    "files": [file],
+                }],
+            }],
+        }],
+    });
+    let signed = fixture::signed(catalog.to_string().as_bytes());
+    let catalog = Catalog::verify(
+        &signed.index,
+        &signed.signature,
+        &signed.keys,
+        Held(0),
+        SystemTime::now(),
+    )
+    .unwrap();
+    let entry = catalog.entries().first().unwrap();
+    let profile = CatalogProfile::from_entry(entry, entry.targets.first().unwrap()).unwrap();
+    let mut acp = Acp::cataloged(profile, Allowing::Nothing);
+    let _ = acp.request(Shape {
+        workspace: Some(Path::new("/work")),
+        ..Shape::default()
+    });
+    let _ = acp.open(&TurnRequest::new(TurnId::FIRST, "hello")).unwrap();
+    acp
+}
+
+/// A client run from a catalog entry admits the agent the entry names, as the
+/// fake peer answers initializing, and sends nothing more to one that calls
+/// itself anything else.
+#[cfg(feature = "proof")]
+#[test]
+fn a_catalog_profile_admits_the_agent_its_entry_names_and_no_other() {
+    use crate::fake_peer::scripts::acp;
+
+    let mut admitting = cataloged("fake-peer");
+    let admitted = admitting
+        .heard(&acp::initialized("fake-peer", "1.0.0", "login"))
+        .unwrap();
+    let mut refusing = cataloged("fake-peer");
+    let refused = refusing
+        .heard(&acp::initialized("another-agent", "1.0.0", "login"))
+        .unwrap();
+
+    let [Act::Send(opened)] = admitted.as_slice() else {
+        panic!("{admitted:?}")
+    };
+    let opened: Value = serde_json::from_str(opened).unwrap();
+    assert_eq!(opened.pointer("/method"), Some(&json!("session/new")));
+    let [Act::Fail(failure)] = refused.as_slice() else {
+        panic!("{refused:?}")
+    };
+    let said = failure.reason().as_str();
+    assert!(
+        said.contains("fake-peer") && said.contains("another-agent"),
+        "{said}"
+    );
+}
+
+/// A client run from a catalog entry sends nothing more to the agent its
+/// entry names once it answers at a version the entry did not review.
+#[cfg(feature = "proof")]
+#[test]
+fn a_catalog_profile_refuses_its_agent_at_a_version_its_entry_did_not_review() {
+    use crate::fake_peer::scripts::acp;
+
+    let refused = cataloged("fake-peer")
+        .heard(&acp::initialized("fake-peer", "1.0.1", "login"))
+        .unwrap();
+
+    let [Act::Fail(failure)] = refused.as_slice() else {
+        panic!("{refused:?}")
+    };
+    let said = failure.reason().as_str();
+    assert!(said.contains("1.0.1") && said.contains("1.0.0"), "{said}");
 }
 
 /// Asked to load a session it kept, an agent that has none by that name ends

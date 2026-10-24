@@ -810,6 +810,7 @@ fn space(case: &str) -> String {
 /// What the fake peer says to an Antigravity status check of a signed-in
 /// profile: it initializes, then opens a session.
 fn antigravity_signed_in() -> Reply {
+    use crucible_external_harnesses::acp::SignIn;
     use crucible_external_harnesses::antigravity::Manifest;
     use crucible_external_harnesses::fake_peer::scripts::acp;
 
@@ -823,7 +824,7 @@ fn antigravity_signed_in() -> Reply {
         .say(acp::initialized(
             Manifest::REVIEWED.name,
             version,
-            Manifest::REVIEWED.sign_in,
+            Manifest::REVIEWED.sign_in.first().map_or("", SignIn::id),
         ))
         .hear(1)
         .say(acp::opened(1))
