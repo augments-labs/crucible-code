@@ -635,9 +635,10 @@ fn a_catalog_instance_needs_the_agent_it_runs() {
 /// would be one nothing reads.
 #[test]
 fn only_a_catalog_instance_names_an_agent() {
+    let agy = serde_json::Value::from(crate::sample::rooted("home/me/agy"));
     for (driver, beside) in [
-        ("claude", ""),
-        ("antigravity", r#", "profileDir": "/home/me/agy""#),
+        ("claude", String::new()),
+        ("antigravity", format!(r#", "profileDir": {agy}"#)),
     ] {
         let err = mine(&format!(
             r#"{{"externalAgents": {{"mine": {{"driver": "{driver}", "executable": "agent", "agent": "goose"{beside}}}}}}}"#
@@ -725,7 +726,12 @@ fn an_antigravity_and_a_catalog_instance_both_take_profile_dir() {
     .to_string();
     assert!(mine(&both).is_ok(), "{:?}", mine(&both).err());
 
-    let err = mine(&catalog(&"goose".into(), r#", "configDir": "/home/me/p""#)).unwrap_err();
+    let elsewhere = serde_json::Value::from(crate::sample::rooted("home/me/p"));
+    let err = mine(&catalog(
+        &"goose".into(),
+        &format!(r#", "configDir": {elsewhere}"#),
+    ))
+    .unwrap_err();
     let said = err.to_string();
     assert!(matches!(err, ConfigError::Variant { .. }), "got {err:?}");
     assert!(said.contains("externalAgents.mine.configDir"), "got {said}");

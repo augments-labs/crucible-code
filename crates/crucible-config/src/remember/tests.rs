@@ -1114,16 +1114,12 @@ fn installing_an_agent_the_file_already_names_is_refused() {
 #[test]
 fn installing_a_catalog_agent_writes_the_agent_it_runs() {
     let profile = crate::sample::rooted("home/me/.crucible/agents/goose");
+    let executable = crate::sample::rooted("opt/goose");
     let goose = AgentKey::new("goose").expect("an agent key");
     for profile in [None, Some(profile.as_str())] {
-        let unwritten = ExternalAgent::unwritten(
-            "goose",
-            Driver::Catalog,
-            "/opt/goose",
-            profile,
-            Some(&goose),
-        )
-        .expect("a catalog instance naming its agent");
+        let unwritten =
+            ExternalAgent::unwritten("goose", Driver::Catalog, &executable, profile, Some(&goose))
+                .expect("a catalog instance naming its agent");
 
         let written = installing("", FILE, "anthropic", &unwritten)
             .unwrap_or_else(|problem| panic!("{profile:?}: {problem}"));
