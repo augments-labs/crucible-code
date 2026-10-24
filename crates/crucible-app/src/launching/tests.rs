@@ -8,7 +8,7 @@ use crucible_config::{Driver, Serves};
 use crucible_execution::{
     Authentication, Decision, Event, Failure, Outcome, SessionRef, Sink, Text, TurnRequest,
 };
-use crucible_external_harnesses::catalog::{Catalog, Held, fixture};
+use crucible_external_harnesses::catalog::{Catalog, Held, Trust, fixture};
 use crucible_external_harnesses::fake_peer::scripts::acp;
 use crucible_external_harnesses::fake_peer::{self, Plain, Reply, Script};
 use crucible_external_harnesses::{
@@ -27,20 +27,22 @@ use tokio::runtime::Handle;
 
 use super::*;
 use crate::access::Route;
-use crate::backends::{CatalogRow, Registry, Row};
+use crate::backends::tests::{release_of, snapshot_version, trust_of, trusting};
+use crate::backends::{ANTIGRAVITY, CatalogRow, Registry, Row};
 use crate::content_use::{Consent, Routes, Warned, Warning};
 use crate::sample::Sample;
 
 /// The plain protocol, held under Claude Code's route and shipped.
 static SHIPPED: [Row; 1] = [Row {
     driver: Driver::Claude,
-    dialect: |_| Ok(Box::new(Plain)),
+    dialect: |_, _, _| Ok(Box::new(Plain)),
     profile_key: "configDir",
     route: "agent:claude",
     docs_section: "claude-code",
     reaches: &[],
     sign_in: |_| None,
-    pinned: || None,
+    pinned: |_| None,
+    catalogued: false,
     shipping: true,
 }];
 
@@ -164,7 +166,8 @@ async fn a_clean_turn_through_a_launch_is_complete_and_speaks_the_dialects_argum
     );
     let consent = granted();
     let policy = conversation(&sample);
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent);
+    let state = sample.state();
+    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
     let registry = Registry::new(&SHIPPED);
     let control = Control::new().expect("a control");
 
@@ -217,7 +220,8 @@ async fn answered_after(sample: &Sample, policy: &SandboxPolicy, waited: Duratio
         &Script::of([Reply::new().hear(1).say("say hello").say("end")]),
     );
     let consent = granted();
-    let launcher = Launcher::new(local(), Handle::current(), policy, &consent);
+    let state = sample.state();
+    let launcher = Launcher::new(local(), Handle::current(), policy, &consent, &state);
     let registry = Registry::new(&SHIPPED);
     let control = Control::new().expect("a control");
     let mut host = launcher
@@ -292,7 +296,8 @@ async fn an_account_step_is_still_held_to_the_time_one_command_is_allowed() {
             ..SandboxResourceLimits::default()
         },
     );
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent);
+    let state = sample.state();
+    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
     let registry = Registry::new(&SHIPPED);
     let control = Control::new().expect("a control");
     let began = std::time::Instant::now();
@@ -631,8 +636,9 @@ async fn a_catalog_row_is_launched_as_its_entry_reviewed_it() {
         let agent = Agent::configured(&instance, &registry, |_| None).expect("its catalog row");
         let consent = peer_granted();
         let policy = conversation(&sample);
-        let launcher = Launcher::new(local(), Handle::current(), &policy, &consent);
-        let mut dialect = agent.row().dialect(Mode::Ask).expect("asking");
+        let state = sample.state();
+        let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
+        let mut dialect = agent.row().dialect(Mode::Ask, None, None).expect("asking");
         let control = Control::new().expect("a control");
 
         let read = launcher
@@ -678,7 +684,8 @@ async fn a_turn_or_a_probe_without_a_yes_starts_nothing() {
     let peer = installed(&sample, &Script::of([Reply::lines(["1.0.0"])]));
     let consent = Consent::new(Routes::production());
     let policy = conversation(&sample);
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent);
+    let state = sample.state();
+    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
     let registry = Registry::new(&SHIPPED);
     let agent = agent(&registry, &peer);
     let control = Control::new().expect("a control");
@@ -703,7 +710,8 @@ async fn a_probe_with_a_yes_reads_the_version() {
     let peer = installed(&sample, &Script::of([Reply::lines(["1.2.3"])]));
     let consent = granted();
     let policy = conversation(&sample);
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent);
+    let state = sample.state();
+    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
     let registry = Registry::new(&SHIPPED);
     let control = Control::new().expect("a control");
 
@@ -731,7 +739,8 @@ async fn a_row_held_back_is_refused_with_its_documentation_and_nothing_internal(
     let peer = installed(&sample, &Script::of([Reply::lines(["1.0.0"])]));
     let consent = granted();
     let policy = conversation(&sample);
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent);
+    let state = sample.state();
+    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
     let registry = Registry::new(&HELD_BACK);
     let control = Control::new().expect("a control");
 
@@ -764,7 +773,8 @@ async fn a_program_that_is_not_there_is_refused_with_how_to_install_it() {
     let peer = installed(&sample, &Script::of([Reply::lines(["1.0.0"])]));
     let consent = granted();
     let policy = conversation(&sample);
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent);
+    let state = sample.state();
+    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
     let registry = Registry::new(&SHIPPED);
     let control = Control::new().expect("a control");
     // Looked for by name on a `PATH` with nothing on it.
@@ -850,7 +860,8 @@ async fn a_spoken_sign_in_hands_its_link_on_and_reads_its_end() {
     );
     let consent = granted();
     let policy = conversation(&sample);
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent);
+    let state = sample.state();
+    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
     let registry = Registry::new(&SHIPPED);
     let control = Control::new().expect("a control");
     let shown = Mutex::new(Vec::new());
@@ -899,7 +910,8 @@ async fn a_profile_is_made_private_to_the_user_before_the_agent_starts() {
     );
     let consent = granted();
     let policy = conversation(&sample);
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent);
+    let state = sample.state();
+    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
     let registry = Registry::new(&SHIPPED);
     let control = Control::new().expect("a control");
     let beside = Sample::new("launch-private-profile-beside");
@@ -927,7 +939,8 @@ async fn a_profile_the_conversation_protects_is_refused_before_it_is_made() {
     let peer = installed(&sample, &Script::of([Reply::lines(["1.0.0"])]));
     let consent = granted();
     let policy = conversation(&sample);
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent);
+    let state = sample.state();
+    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
     let registry = Registry::new(&SHIPPED);
     let control = Control::new().expect("a control");
     let inside = sample.root().join(".git").join("profile");
@@ -1074,9 +1087,14 @@ fn entry(sample: &Sample, executable: &Path) -> ExternalAgent {
 }
 
 /// The steps of the agents [`STEPPED`] holds, each started under `sandbox`.
-fn steps(sandbox: Arc<dyn SandboxService>, policy: &SandboxPolicy, consent: &Consent) -> Steps {
+fn steps(
+    sandbox: Arc<dyn SandboxService>,
+    policy: &SandboxPolicy,
+    consent: &Consent,
+    sample: &Sample,
+) -> Steps {
     Steps::new(
-        Launcher::new(sandbox, Handle::current(), policy, consent),
+        Launcher::new(sandbox, Handle::current(), policy, consent, &sample.state()),
         Arc::new(SandboxEnablement::new(false, false)),
         &STEPPED,
         None,
@@ -1113,7 +1131,7 @@ async fn no_account_step_starts_beside_a_run_not_confirmed_stopped() {
     );
     let consent = granted();
     let policy = conversation(&sample);
-    let steps = steps(Arc::new(Stubborn(local())), &policy, &consent);
+    let steps = steps(Arc::new(Stubborn(local())), &policy, &consent, &sample);
     let entry = entry(&sample, &peer);
     let (agent, _) = steps.onto(&entry, Mode::Ask).expect("startable");
     let runs = steps.runs(agent, entry.name());
@@ -1153,7 +1171,7 @@ async fn an_account_step_runs_beside_a_live_run_of_its_entry() {
     );
     let consent = granted();
     let policy = conversation(&sample);
-    let steps = steps(local(), &policy, &consent);
+    let steps = steps(local(), &policy, &consent, &sample);
     let entry = entry(&sample, &peer);
     let (agent, _) = steps.onto(&entry, Mode::Ask).expect("startable");
     let run = steps
@@ -1184,7 +1202,13 @@ async fn a_route_starts_no_run_beside_one_it_still_holds() {
     let policy = conversation(&sample);
     let registry = Registry::new(&SHIPPED);
     let runs = Runs::new(
-        Launcher::new(local(), Handle::current(), &policy, &consent),
+        Launcher::new(
+            local(),
+            Handle::current(),
+            &policy,
+            &consent,
+            &sample.state(),
+        ),
         Arc::new(SandboxEnablement::new(false, false)),
         agent(&registry, &peer),
         "work",
@@ -1231,6 +1255,7 @@ async fn the_route_opened_at_startup_holds_against_a_later_run_of_its_instance()
                 Handle::current(),
                 &policy,
                 &consent,
+                &sample.state(),
             ),
             agent(&registry, &peer),
             entry.name(),
@@ -1241,6 +1266,7 @@ async fn the_route_opened_at_startup_holds_against_a_later_run_of_its_instance()
                 Handle::current(),
                 &policy,
                 &consent,
+                &sample.state(),
             ),
             &STEPPED,
             None,
@@ -1382,4 +1408,280 @@ impl SandboxProcess for StubbornProcess {
     fn violation(&self) -> Option<SandboxViolation> {
         self.0.violation()
     }
+}
+
+/// The built-in Antigravity row alone.
+static ANTIGRAVITY_ONLY: [Row; 1] = [ANTIGRAVITY];
+
+/// The registry holding it.
+static ANTIGRAVITY_REGISTRY: Registry = Registry::new(&ANTIGRAVITY_ONLY);
+
+/// The catalog's entry for `version` of Antigravity.
+fn antigravity_release(version: &str) -> serde_json::Value {
+    release_of(
+        "antigravity",
+        version,
+        (
+            &format!("https://dl.google.com/agy-extensions/releases/linux/agy-{version}.zip"),
+            &"a".repeat(64),
+            1000,
+        ),
+        [("agy_acp_server.par", 700), ("localharness_external", 300)],
+        &[],
+    )
+}
+
+/// What the fake peer says to Antigravity's status check once it is
+/// initialized as `version`: it initializes, then opens a session.
+fn antigravity_answering(version: &str) -> Reply {
+    Reply::new()
+        .hear(1)
+        .say(acp::initialized(
+            "antigravity-acp",
+            version,
+            "oauth-personal",
+        ))
+        .hear(1)
+        .say(acp::opened(1))
+}
+
+/// The status of the Antigravity the peer playing `script` is, as the steps of
+/// the registry holding its row read it, with the trust state `sample` holds.
+async fn antigravity_status(sample: &Sample, script: &Script) -> (Reading, usize) {
+    let here = sample.root().join("peer");
+    let program = fake_peer::install(&here, "antigravity", script).expect("the fake peer");
+    let consent = Consent::new(Routes::production());
+    consent.give("agent:antigravity");
+    let policy = conversation(sample);
+    let state = sample.state();
+    let steps = Steps::new(
+        Launcher::new(local(), Handle::current(), &policy, &consent, &state),
+        Arc::new(SandboxEnablement::new(false, false)),
+        &ANTIGRAVITY_REGISTRY,
+        None,
+    );
+    let entry = ExternalAgent::unwritten(
+        "space",
+        Driver::Antigravity,
+        &program.to_string_lossy(),
+        None,
+        None,
+    )
+    .expect("an instance of a built-in driver");
+
+    let read = steps.account(&entry, Account::Status).await;
+
+    (read, fake_peer::played(&here))
+}
+
+/// The version the agent answers as is admitted when the trust state lists
+/// it, and is sent nothing more when it does not: a release the catalog
+/// reviewed since this build was made is run without a release of crucible.
+#[tokio::test(flavor = "multi_thread")]
+async fn antigravity_is_admitted_as_a_version_the_catalog_lists_and_no_other() {
+    let unlisted = Sample::new("launch-antigravity-unlisted");
+    let (refused, heard) = antigravity_status(
+        &unlisted,
+        &Script::of([antigravity_answering("1.4.1").hear_out()]),
+    )
+    .await;
+    let listed = Sample::new("launch-antigravity-listed");
+    trusting(&listed, 2, &[antigravity_release("1.4.1")]);
+    let (admitted, _) =
+        antigravity_status(&listed, &Script::of([antigravity_answering("1.4.1")])).await;
+    let snapshot = Sample::new("launch-antigravity-snapshot");
+    let (older, _) = antigravity_status(
+        &snapshot,
+        &Script::of([antigravity_answering(snapshot_version().unwrap_or("1.3.0"))]),
+    )
+    .await;
+
+    let Reading::Unreadable(failure) = refused else {
+        panic!("{refused:?}");
+    };
+    assert!(failure.reason().as_str().contains("1.4.1"), "{failure:?}");
+    assert_eq!(heard, 1, "nothing more was sent");
+    assert!(matches!(admitted, Reading::Signed(_)), "{admitted:?}");
+    if snapshot_version().is_some() {
+        assert!(matches!(older, Reading::Signed(_)), "{older:?}");
+    }
+}
+
+/// What a missing Antigravity is told to do is what the trust state offers:
+/// the command that installs the release, and where the state cannot be used,
+/// that it is to be repaired.
+#[test]
+fn a_missing_antigravity_is_told_what_the_trust_state_offers() {
+    let sample = Sample::new("launch-antigravity-missing");
+    let consent = Consent::new(Routes::production());
+    let route = Route::External {
+        serves: Serves::Provider("google"),
+        instance: "space".into(),
+        driver: Driver::Antigravity,
+        executable: "no-such-antigravity-program".into(),
+        profile: None,
+        model: None,
+        effort: None,
+        enabled: true,
+    };
+    let registry = &ANTIGRAVITY_REGISTRY;
+    let missing = Agent::routed(&route, registry, |_| {
+        Some(OsString::from(sample.root().join("empty")))
+    })
+    .expect("a row");
+    let said = |trust: &Trust| match missing.program(&consent, trust) {
+        Err(Unlaunched::NotInstalled([_, next])) => next,
+        other => panic!("{other:?}"),
+    };
+
+    let offered = said(&trusting(&sample, 2, &[antigravity_release("1.4.1")]));
+    let file = trust_of(&sample).file();
+    std::fs::create_dir_all(file.parent().expect("a directory")).expect("a directory");
+    std::fs::write(&file, "not a trust state").expect("the file");
+    let unusable = said(&trust_of(&sample));
+
+    assert!(
+        offered.contains("crucible agents install antigravity"),
+        "{offered}"
+    );
+    assert!(
+        unusable.contains(&file.display().to_string()) && unusable.contains("Repair or remove"),
+        "{unusable}"
+    );
+}
+
+/// A run is admitted as the releases on offer when it is launched, not when
+/// its agent was selected: a catalog taken in since is the one it is held to.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_is_admitted_as_the_releases_on_offer_when_it_is_launched() {
+    let sample = Sample::new("launch-antigravity-fresh");
+    let consent = Consent::new(Routes::production());
+    let route = Route::External {
+        serves: Serves::Provider("google"),
+        instance: "space".into(),
+        driver: Driver::Antigravity,
+        executable: "antigravity".into(),
+        profile: None,
+        model: None,
+        effort: None,
+        enabled: true,
+    };
+    let agent = Agent::routed(&route, &ANTIGRAVITY_REGISTRY, |_| None).expect("a row");
+    let policy = conversation(&sample);
+    let state = sample.state();
+    let runs = Runs::new(
+        Launcher::new(local(), Handle::current(), &policy, &consent, &state),
+        Arc::new(SandboxEnablement::new(false, false)),
+        agent,
+        "space",
+        &Controls::default(),
+    );
+    let answers = |version: &str| {
+        let mut dialect = runs.dialect(Mode::Ask).expect("asking");
+        let _ = dialect.request(Shape {
+            workspace: Some(Path::new("/work")),
+            ..Shape::default()
+        });
+        let _ = dialect
+            .open(&TurnRequest::new(TurnId::FIRST, "hello"))
+            .expect("a first request");
+        let frame = acp::initialized("antigravity-acp", version, "oauth-personal");
+        dialect.heard(&frame).expect("an answer")
+    };
+
+    let before = answers("1.4.1");
+    trusting(&sample, 2, &[antigravity_release("1.4.1")]);
+    let after = answers("1.4.1");
+
+    assert!(matches!(before.as_slice(), [Act::Fail(_)]), "{before:?}");
+    assert!(matches!(after.as_slice(), [Act::Send(_)]), "{after:?}");
+}
+
+/// A start of an Antigravity whose trust state cannot be used says so, naming
+/// the file to repair or remove, rather than that no release is offered.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_found_antigravity_with_an_unusable_trust_state_is_refused_naming_the_file() {
+    let sample = Sample::new("launch-antigravity-untrusted");
+    let file = trust_of(&sample).file();
+    std::fs::create_dir_all(file.parent().expect("a directory")).expect("a directory");
+    std::fs::write(&file, "not a trust state").expect("the file");
+
+    let (read, heard) =
+        antigravity_status(&sample, &Script::of([antigravity_answering("1.3.0")])).await;
+
+    let Reading::Unreadable(failure) = read else {
+        panic!("{read:?}");
+    };
+    let said = failure.reason().as_str();
+    assert!(said.contains(&file.display().to_string()), "{said}");
+    assert!(said.contains("Repair or remove"), "{said}");
+    assert_eq!(heard, 0, "nothing was started");
+}
+
+/// The wire a run is made with follows the release its program is: the
+/// version directory it is kept in, not the newest one on offer.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_is_started_with_the_arguments_of_the_release_its_program_is() {
+    let sample = Sample::new("launch-antigravity-directory");
+    let release = |version: &str, args: &[&str]| {
+        release_of(
+            "antigravity",
+            version,
+            (
+                &format!("https://dl.google.com/agy-extensions/releases/linux/agy-{version}.zip"),
+                &"a".repeat(64),
+                1000,
+            ),
+            [("agy_acp_server.par", 700), ("localharness_external", 300)],
+            args,
+        )
+    };
+    trusting(
+        &sample,
+        2,
+        &[release("1.4.1", &["--new"]), release("1.3.0", &["--old"])],
+    );
+    let consent = Consent::new(Routes::production());
+    let policy = conversation(&sample);
+    let state = sample.state();
+    let arguments = |version: &str| {
+        let program = sample
+            .root()
+            .join("programs/antigravity")
+            .join(version)
+            .join("agy_acp_server.par");
+        std::fs::create_dir_all(program.parent().expect("a directory")).expect("a directory");
+        std::fs::write(&program, "#!/bin/sh\n").expect("the program");
+        #[cfg(unix)]
+        std::fs::set_permissions(
+            &program,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .expect("executable");
+        let route = Route::External {
+            serves: Serves::Provider("google"),
+            instance: "space".into(),
+            driver: Driver::Antigravity,
+            executable: program.to_string_lossy().into(),
+            profile: None,
+            model: None,
+            effort: None,
+            enabled: true,
+        };
+        let agent = Agent::routed(&route, &ANTIGRAVITY_REGISTRY, |_| None).expect("a row");
+        let runs = Runs::new(
+            Launcher::new(local(), Handle::current(), &policy, &consent, &state),
+            Arc::new(SandboxEnablement::new(false, false)),
+            agent,
+            "space",
+            &Controls::default(),
+        );
+        runs.dialect(Mode::Ask)
+            .expect("asking")
+            .request(Shape::default())
+            .arguments
+    };
+
+    assert_eq!(arguments("1.4.1"), ["--new"]);
+    assert_eq!(arguments("1.3.0"), ["--old"]);
 }

@@ -294,8 +294,9 @@ fn left_running(tree: &Tree, outside: Outside, instance: &str) -> Result<Outside
     let sandbox: Arc<dyn SandboxService> = Arc::new(Stubborn(Arc::new(
         LocalSandbox::new().watching_on(runtime.clone()),
     )));
+    let state = tree.0.join("state");
     let steps = Steps::new(
-        Launcher::new(sandbox, runtime.clone(), &policy, &consent),
+        Launcher::new(sandbox, runtime.clone(), &policy, &consent, &state),
         Arc::new(SandboxEnablement::new(false, false)),
         Box::leak(Box::new(Registry::new(std::slice::from_ref(row()?)))),
         Some(Path::to_path_buf(&peer).into_os_string()),

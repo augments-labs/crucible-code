@@ -43,9 +43,11 @@ mod trust;
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crucible_types::AgentKey;
 use minisign_verify::{PublicKey, Signature};
 use serde_json::Value;
 
+use crate::release::OwnedPin;
 use entry::Fields;
 
 #[cfg(test)]
@@ -53,7 +55,7 @@ pub(crate) use profile::PASSED;
 pub(crate) use profile::passed;
 pub use profile::{CatalogProfile, Unprofiled};
 pub use snapshot::SNAPSHOT;
-pub use trust::{OwnedPin, Trust, TrustError, Unusable};
+pub use trust::{Trust, TrustError, Unusable};
 
 pub use entry::{
     ASSET_BYTES, Admits, Artifact, AssetRef, AuthMethod, ContentUse, Disposition, Entry, File,
@@ -244,6 +246,19 @@ impl Catalog {
     #[must_use]
     pub fn revoked(&self) -> &[Revoked] {
         &self.revoked
+    }
+
+    /// The releases of the agent `key` that it lists for the platform this
+    /// build runs on, in the order it lists them. No revocation is consulted:
+    /// that is [`Trust::offered`]'s.
+    #[must_use]
+    pub fn releases(&self, key: &AgentKey) -> Vec<OwnedPin> {
+        let platform = trust::here();
+        self.entries
+            .iter()
+            .filter(|entry| entry.key == *key)
+            .filter_map(|entry| trust::release(entry, &platform))
+            .collect()
     }
 }
 

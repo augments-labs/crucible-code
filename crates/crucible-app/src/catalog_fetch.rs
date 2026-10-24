@@ -340,6 +340,14 @@ pub fn state_in(home: &Path) -> PathBuf {
     home.join("state")
 }
 
+/// The trust state kept under `home`, as it is at this moment: what a release
+/// is offered or refused by, and where a state that cannot be used is to be
+/// repaired. Creates nothing.
+#[must_use]
+pub fn trust_in(home: &Path) -> Trust {
+    Trust::load(&state_in(home), SystemTime::now())
+}
+
 /// Whether a background attempt is due at `now`, and if it is, the time it is
 /// made at is recorded before it is.
 ///

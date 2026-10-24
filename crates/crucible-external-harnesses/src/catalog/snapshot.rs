@@ -7,15 +7,18 @@
 //! catalog to compile in and nothing for that check to run over. Until there
 //! is, the snapshot is built in from data written out in this file, and is
 //! **not** signed or verified: it is as trustworthy as this source file. The
-//! data is what 0.48's manifest of the reviewed Antigravity recorded: the
-//! release, the archive published for each platform and the two files that
-//! archive holds, by name and size, so a build offers what 0.48 offered and no
-//! more, and the argument 0.48 starts it with on Linux. It is a copy, not a read
-//! of that manifest, which a later change derives from this catalog; a test holds
-//! the two equal until then. It records no digest of the two files, because the
-//! manifest pins the archive and an unpack checks sizes, and it leaves empty the
-//! licence, the review, the hosts and the sign-in facts an entry carries once the
-//! owner's review fills them in, because the manifest holds none of them.
+//! data is what 0.48 shipped for the reviewed Antigravity: the release, the
+//! archive published for each platform and the two files that archive holds, by
+//! name and size, so a build offers what 0.48 offered and no more, and the
+//! argument 0.48 starts it with on Linux. It is the one copy of that data: the
+//! Antigravity module reads its releases, what each must call itself and what
+//! it is started with from the catalog, this snapshot included, and a test
+//! holds this one to what 0.48 shipped. It records no digest of the two files,
+//! because 0.48 pinned the archive and an unpack checks sizes. Its targets list
+//! the one host the archives are published on, which a download is held to. It
+//! leaves empty the licence, the review, the hosts the agent reaches and the
+//! sign-in facts an entry carries once the owner's review fills them in,
+//! because 0.48 held none of them.
 
 use std::sync::LazyLock;
 use std::time::UNIX_EPOCH;
@@ -25,9 +28,10 @@ use crucible_types::AgentKey;
 use super::{
     Admits, Artifact, Catalog, Entry, File, FileKind, Files, Format, Kind, Launch, Target,
 };
+use crate::antigravity::AGENT;
 
-/// The agent the manifest reviewed.
-const AGENT: &str = "antigravity";
+/// The host the archives are published on.
+const DOWNLOAD_HOST: &str = "dl.google.com";
 
 /// The release reviewed.
 const VERSION: &str = "1.3.0";
@@ -172,7 +176,8 @@ fn target(archive: &Archive) -> Target {
             Vec::new()
         },
         env: Vec::new(),
-        hosts: Vec::new(),
+        // The one host 0.48 downloaded it from, which a download is held to.
+        hosts: vec![DOWNLOAD_HOST.into()],
         artifacts: vec![Artifact {
             url: archive.url.into(),
             mirror: None,

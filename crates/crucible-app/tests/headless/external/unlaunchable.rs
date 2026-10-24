@@ -11,6 +11,7 @@
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
 use crucible_app::access::Route;
 use crucible_app::backends::Registry;
@@ -22,6 +23,7 @@ use crucible_client_api::{
     Capabilities as Asking, Command, Correlation, Outcome, Pending, Prompt, Request, TurnOutcome,
 };
 use crucible_config::{Driver, Serves};
+use crucible_external_harnesses::catalog::Trust;
 use crucible_external_harnesses::fake_peer::{self, scripts::claude};
 use crucible_runtime::{Aside, Cancel, Steer};
 use crucible_sandbox::{SandboxPolicy, SandboxService};
@@ -82,6 +84,7 @@ fn unlaunched(tree: &Tree, program: Option<PathBuf>) -> Result<Unlaunched, Faile
         runtime: runtime.clone(),
         policy: SandboxPolicy::standard(&tree.workspace()?)?.with_enabled(false),
         consent: consent.clone(),
+        state: tree.0.join("state"),
         agent: agent.clone(),
         row,
         launched: Arc::default(),
@@ -222,9 +225,10 @@ fn a_missing_program_on_an_unanswered_agent_route_is_refused_before_the_route_is
 -> Result<(), Failed> {
     let tree = Tree::new("external-unanswered-missing")?;
     let mut unlaunched = unlaunched(&tree, Some(tree.0.join("no-such-claude-program")))?;
+    let trust = Trust::load(&tree.0.join("state"), SystemTime::now());
     let reason = unlaunched
         .agent
-        .program(&unlaunched.consent)
+        .program(&unlaunched.consent, &trust)
         .err()
         .ok_or("the program was found")?
         .to_string();

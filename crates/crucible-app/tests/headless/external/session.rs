@@ -66,6 +66,7 @@ fn on_antigravity(tree: &Tree, script: &Peer) -> Result<Outside, Failed> {
         runtime: runtime.clone(),
         policy: SandboxPolicy::standard(&tree.workspace()?)?.with_enabled(false),
         consent,
+        state: tree.0.join("state"),
         agent,
         row,
         launched: Arc::default(),
@@ -109,15 +110,13 @@ fn on_antigravity(tree: &Tree, script: &Peer) -> Result<Outside, Failed> {
 fn a_session_the_agent_says_is_gone_is_opened_anew_by_the_next_turn() -> Result<(), Failed> {
     use crucible_external_harnesses::acp::SignIn;
     use crucible_external_harnesses::antigravity::Manifest;
+    use crucible_external_harnesses::catalog::SNAPSHOT;
     use crucible_external_harnesses::fake_peer::scripts::acp;
 
+    let shipped = SNAPSHOT.entries().first().ok_or("the snapshot's entry")?;
     let reviewed = acp::initialized(
-        Manifest::REVIEWED.name,
-        Manifest::REVIEWED
-            .versions
-            .first()
-            .copied()
-            .unwrap_or_default(),
+        &shipped.admits.name,
+        &shipped.admits.version,
         Manifest::REVIEWED.sign_in.first().map_or("", SignIn::id),
     );
     let answering = |text: &str| {
@@ -218,15 +217,13 @@ fn a_session_the_agent_says_is_gone_is_opened_anew_by_the_next_turn() -> Result<
 fn a_session_refused_for_another_reason_is_resumed_by_the_next_turn() -> Result<(), Failed> {
     use crucible_external_harnesses::acp::SignIn;
     use crucible_external_harnesses::antigravity::Manifest;
+    use crucible_external_harnesses::catalog::SNAPSHOT;
     use crucible_external_harnesses::fake_peer::scripts::acp;
 
+    let shipped = SNAPSHOT.entries().first().ok_or("the snapshot's entry")?;
     let reviewed = acp::initialized(
-        Manifest::REVIEWED.name,
-        Manifest::REVIEWED
-            .versions
-            .first()
-            .copied()
-            .unwrap_or_default(),
+        &shipped.admits.name,
+        &shipped.admits.version,
         Manifest::REVIEWED.sign_in.first().map_or("", SignIn::id),
     );
     let answering = |text: &str| {

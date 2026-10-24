@@ -16,47 +16,130 @@
 //! it, in its own module. Its [`Unpacker::survey`] holds an archive to the
 //! same rules with no list, so the list the catalog's intake records is one
 //! an unpack accepts.
+//!
+//! A [`Pin`] borrows what it names: the build's own table lends `'static`
+//! text, and an [`OwnedPin`], a release the agent catalog offers, lends text it
+//! holds. Only a release that is one archive of exactly two ordinary files is a
+//! pin; [`OwnedPin::pin`] says none for any other.
 
 use std::fs::{self, File};
 use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crucible_types::AgentKey;
 use sha2::{Digest as _, Sha256};
 use zip::result::ZipError;
 use zip::{CompressionMethod, ZipArchive};
 
+use crate::catalog::{Admits, FileKind, Files, Format, Launch, Target};
+
 mod unpack;
 
 pub use unpack::{Staged, UnpackError, Unpacker};
+
+/// The most a release may be: its archive, and what it unpacks to.
+pub const RELEASE_BYTES: u64 = 4 << 30;
 
 /// The most of a name the archive gives that a refusal repeats.
 const NAMED: usize = 64;
 
 /// One release, as the archive it is published in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Pin {
+pub struct Pin<'a> {
     /// The release's version, which names the directory it is unpacked into.
-    pub version: &'static str,
+    pub version: &'a str,
     /// Where the archive is published.
-    pub url: &'static str,
+    pub url: &'a str,
     /// The archive's SHA-256, in lowercase hexadecimal.
-    pub sha256: &'static str,
+    pub sha256: &'a str,
     /// The archive's size in bytes.
     pub archive: u64,
     /// The program that is started.
-    pub executable: Member,
+    pub executable: Member<'a>,
     /// The one other file the archive holds, which the program starts.
-    pub companion: Member,
+    pub companion: Member<'a>,
 }
 
 /// One file a pinned archive holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Member {
+pub struct Member<'a> {
     /// Its name, which is a file name alone.
-    pub name: &'static str,
+    pub name: &'a str,
     /// Its size in bytes once unpacked.
     pub bytes: u64,
+}
+
+/// One release the trust state offers, for the platform this build runs on.
+///
+/// It is owned, so it outlives the catalog it was read from, and it holds what
+/// an install needs of one entry and one of its targets: which release it is,
+/// what the agent must call itself when it is run, and the target with its
+/// archives, files and launch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnedPin {
+    /// The agent.
+    pub key: AgentKey,
+    /// The version.
+    pub version: Box<str>,
+    /// The revision of the version's package tree, for an agent whose tree is
+    /// resolved again under the same version.
+    pub lock_revision: Option<u64>,
+    /// The name and version the agent must answer initializing with.
+    pub admits: Admits,
+    /// The agent as published for this platform.
+    pub target: Target,
+}
+
+impl OwnedPin {
+    /// The release as the one archive of two files [`unpack()`] handles, lent
+    /// from what this holds; nothing for a release of any other shape: a
+    /// launch that is not the agent itself, more or fewer than one archive,
+    /// one that is not a zip or was built at review, a list of files that is
+    /// not exactly two ordinary files, or a program the list does not name.
+    #[must_use]
+    pub fn pin(&self) -> Option<Pin<'_>> {
+        if self.target.launch != Launch::Binary {
+            return None;
+        }
+        let [archive] = self.target.artifacts.as_slice() else {
+            return None;
+        };
+        if archive.format != Format::Zip || archive.replaced_by.is_some() {
+            return None;
+        }
+        let Files::Listed(listed) = &archive.files else {
+            return None;
+        };
+        let [first, second] = listed.as_slice() else {
+            return None;
+        };
+        let (executable, companion) = if *first.path == *self.target.cmd {
+            (first, second)
+        } else {
+            (second, first)
+        };
+        if *executable.path != *self.target.cmd || executable.path == companion.path {
+            return None;
+        }
+        let bytes = archive
+            .size
+            .max(executable_bytes(executable)?.checked_add(executable_bytes(companion)?)?);
+        if bytes > RELEASE_BYTES
+            || !listed_host(&archive.url, &self.target.hosts)
+            || executable.path.eq_ignore_ascii_case(&companion.path)
+        {
+            return None;
+        }
+        Some(Pin {
+            version: &self.version,
+            url: &archive.url,
+            sha256: &archive.sha256,
+            archive: archive.size,
+            executable: member(executable)?,
+            companion: member(companion)?,
+        })
+    }
 }
 
 /// Why a downloaded archive was not unpacked.
@@ -82,12 +165,12 @@ pub enum Unpacked {
     /// A pinned file in it is a directory, a link, encrypted, or compressed
     /// another way than stored or deflated.
     #[error("{0} in the archive is not an ordinary file")]
-    Kind(&'static str),
+    Kind(Box<str>),
     /// A pinned file in it is not its pinned size.
     #[error("{name} in the archive is not {pinned} bytes")]
     Member {
         /// The file.
-        name: &'static str,
+        name: Box<str>,
         /// Its pinned size.
         pinned: u64,
     },
@@ -111,7 +194,7 @@ pub enum Unpacked {
     InTheWay(PathBuf),
 }
 
-impl Pin {
+impl<'a> Pin<'a> {
     /// The executable's path once unpacked under `root`.
     #[must_use]
     pub fn executable(&self, root: &Path) -> PathBuf {
@@ -132,11 +215,46 @@ impl Pin {
     }
 
     /// The member the archive names `name`, where the pin names it.
-    fn member(&self, name: &str) -> Option<Member> {
+    fn member(&self, name: &str) -> Option<Member<'a>> {
         [self.executable, self.companion]
             .into_iter()
             .find(|member| member.name == name)
     }
+}
+
+/// `file` as a member of a pinned archive, where it is an ordinary file named
+/// by a file name alone, which the unpacker would take as written, and of a
+/// size a release may have.
+fn member(file: &crate::catalog::File) -> Option<Member<'_>> {
+    let FileKind::File { size, .. } = file.kind else {
+        return None;
+    };
+    let plain = !file.path.contains('/')
+        && unpack::named(file.path.as_bytes(), false).is_ok_and(|name| name == *file.path);
+    (plain && size <= RELEASE_BYTES).then_some(Member {
+        name: &file.path,
+        bytes: size,
+    })
+}
+
+/// The size of the ordinary file `file` is.
+fn executable_bytes(file: &crate::catalog::File) -> Option<u64> {
+    match file.kind {
+        FileKind::File { size, .. } => Some(size),
+        FileKind::Dir | FileKind::Link { .. } => None,
+    }
+}
+
+/// Whether the host of `url`, which is an `https` address with no user and no
+/// port, is one of `hosts`, compared as host names are.
+fn listed_host(url: &str, hosts: &[Box<str>]) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false;
+    };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    !host.is_empty()
+        && !host.contains(['@', ':', '[', ']'])
+        && hosts.iter().any(|listed| listed.eq_ignore_ascii_case(host))
 }
 
 /// Unpacks `archive`, the release `pin` names, into its version under `root`,
@@ -149,7 +267,7 @@ impl Pin {
 ///
 /// [`Unpacked`] naming the first way the archive is not the one pinned, or
 /// could not be read or written.
-pub fn unpack(pin: &Pin, archive: &Path, root: &Path) -> Result<PathBuf, Unpacked> {
+pub fn unpack(pin: &Pin<'_>, archive: &Path, root: &Path) -> Result<PathBuf, Unpacked> {
     let mut file = File::open(archive).map_err(Unpacked::Read)?;
     believed(pin, &mut file)?;
     let mut zip = ZipArchive::new(file)?;
@@ -178,11 +296,11 @@ pub fn unpack(pin: &Pin, archive: &Path, root: &Path) -> Result<PathBuf, Unpacke
                 CompressionMethod::Stored | CompressionMethod::Deflated
             );
         if !ordinary {
-            return Err(Unpacked::Kind(member.name));
+            return Err(Unpacked::Kind(member.name.into()));
         }
         if entry.size() != member.bytes {
             return Err(Unpacked::Member {
-                name: member.name,
+                name: member.name.into(),
                 pinned: member.bytes,
             });
         }
@@ -195,7 +313,7 @@ pub fn unpack(pin: &Pin, archive: &Path, root: &Path) -> Result<PathBuf, Unpacke
         .map_err(Unpacked::Read)?;
         if copied != member.bytes {
             return Err(Unpacked::Member {
-                name: member.name,
+                name: member.name.into(),
                 pinned: member.bytes,
             });
         }
@@ -215,7 +333,7 @@ pub fn unpack(pin: &Pin, archive: &Path, root: &Path) -> Result<PathBuf, Unpacke
 }
 
 /// Whether `file` is the archive `pin` names: its size, then its SHA-256.
-fn believed(pin: &Pin, file: &mut File) -> Result<(), Unpacked> {
+fn believed(pin: &Pin<'_>, file: &mut File) -> Result<(), Unpacked> {
     let held = file.metadata().map_err(Unpacked::Read)?.len();
     if held != pin.archive {
         return Err(Unpacked::Size {
@@ -411,7 +529,7 @@ pub mod proof {
     /// asking for it nothing to report.
     #[must_use]
     #[allow(clippy::expect_used)]
-    pub fn released(url: &'static str) -> (Vec<u8>, Pin) {
+    pub fn released(url: &'static str) -> (Vec<u8>, Pin<'static>) {
         let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
         let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
         for (name, bytes) in [("agent", EXECUTABLE), ("harness", COMPANION)] {

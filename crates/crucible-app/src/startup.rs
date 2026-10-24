@@ -137,6 +137,10 @@ pub struct Startup<'a> {
     pub settings: &'a Settings,
     /// Where session logs go.
     pub sessions: &'a Path,
+    /// The directory the catalog's trust state is kept under, which the
+    /// releases an installed agent is run as are read from each time one is
+    /// started.
+    pub state: &'a Path,
     /// The directory being worked in.
     pub workspace: &'a Workspace,
     /// Which files have been read. Made by the caller because the caller keeps
@@ -391,6 +395,7 @@ fn assembled(startup: &Startup<'_>, agents: &'static Registry) -> Result<Convers
                     runtime.clone(),
                     &on.policy,
                     startup.services.consent(),
+                    startup.state,
                 ),
                 on.agent.clone(),
                 &*on.instance,
@@ -403,6 +408,7 @@ fn assembled(startup: &Startup<'_>, agents: &'static Registry) -> Result<Convers
                     runtime.clone(),
                     policy,
                     startup.services.consent(),
+                    startup.state,
                 ),
                 agents,
                 (startup.from)("PATH").map(OsString::from),

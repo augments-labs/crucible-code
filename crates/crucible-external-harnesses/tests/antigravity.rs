@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crucible_execution::{Authentication, Text};
 use crucible_external_harnesses::acp::SignIn;
 use crucible_external_harnesses::antigravity::{Antigravity, Ended, Manifest};
+use crucible_external_harnesses::catalog::SNAPSHOT;
 use crucible_external_harnesses::conformance::{self, CASES};
 use crucible_external_harnesses::fake_peer::scripts::acp;
 use crucible_external_harnesses::fake_peer::{self, Reply, Script};
@@ -58,15 +59,20 @@ fn local() -> Arc<dyn SandboxService> {
     Arc::new(LocalSandbox::new().watching_on(Handle::current()))
 }
 
+/// The name and version the snapshot built into the binary says the reviewed
+/// release answers initializing with.
+fn shipped() -> (&'static str, &'static str) {
+    SNAPSHOT.entries().first().map_or(("", ""), |entry| {
+        (&*entry.admits.name, &*entry.admits.version)
+    })
+}
+
 /// The reviewed release's answer to initializing.
 fn reviewed() -> String {
+    let (name, version) = shipped();
     acp::initialized(
-        Manifest::REVIEWED.name,
-        Manifest::REVIEWED
-            .versions
-            .first()
-            .copied()
-            .unwrap_or_default(),
+        name,
+        version,
         Manifest::REVIEWED.sign_in.first().map_or("", SignIn::id),
     )
 }
@@ -304,7 +310,7 @@ async fn a_release_outside_the_manifest_is_sent_nothing_more() {
     let at = Owned::new("unreviewed");
     let profile = at.0.join("profile");
     let newer = acp::initialized(
-        Manifest::REVIEWED.name,
+        shipped().0,
         "9.9.9",
         Manifest::REVIEWED.sign_in.first().map_or("", SignIn::id),
     );

@@ -575,9 +575,10 @@ is installed, and the name GitHub gave is not printed.
 
 ### `agents install DRIVER`
 
-`crucible agents install antigravity` downloads the release of Antigravity's
-agent server this build of crucible runs, 1.3.0, for your platform, from the
-address Google publishes it at, and stops. `DRIVER` is the agent as an
+`crucible agents install antigravity` downloads the newest release of
+Antigravity's agent server that the agent catalog offers for your platform,
+which is 1.3.0 until a catalog lists a newer one, from the address Google
+publishes it at, and stops. `DRIVER` is the agent as an
 [`externalAgents`](../configuration/configuration.md#externalagents) entry
 names its `driver`; `claude` is refused, since Claude Code installs and updates
 itself, and so is `catalog`, which is no one agent's release: a catalog agent is
@@ -589,11 +590,14 @@ The archive is downloaded into a file only you can read under
 command ends. It is given up on if it is larger than the release, if it takes
 longer than 45 minutes, if nothing arrives for a whole minute, or if the
 address answers with anything but the archive itself; a redirect is not
-followed. It is unpacked only once its size and SHA-256 are the ones this build
-pins, and only if it holds the agent server and the harness beside it and
-nothing else, each of the size pinned. Both are put under
-`programs/antigravity/1.3.0`, which is there whole or not at all. A release
-already there is kept, and nothing is downloaded. While it downloads, a
+followed. It is unpacked only once its size and SHA-256 are the ones the
+catalog pins, and only if it holds the agent server and the harness beside it
+and nothing else, each of the size pinned. Both are put under
+`programs/antigravity/` and the release's version, which is there whole or not
+at all. A release already there is kept, and nothing is downloaded. A catalog
+trust state that cannot be read or used offers no release: the command says so,
+naming `state/agent-catalog/trust.json` under crucible's home, and installs
+nothing until that file is repaired or removed. While it downloads, a
 terminal is shown the percent that has arrived; any other standard error is
 told once that the download began. What was installed, and where, goes to
 standard output.

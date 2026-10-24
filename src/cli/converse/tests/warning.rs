@@ -5,6 +5,7 @@ use std::io::Cursor;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use crucible_app::catalog_fetch::trust_in;
 use crucible_app::content_use::{Consent, LAUNCHING, Routes, Serving, WARNED, agent_route};
 use crucible_runner::Tools;
 use crucible_session::Session;
@@ -216,8 +217,9 @@ fn a_missing_agent_program_is_refused_before_the_warning_is_put() {
         enabled: true,
     };
     let agent = Agent::routed(&route, &REGISTRY, |_| None).expect("Claude Code's route");
+    let state = std::env::temp_dir().join("crucible-no-such-state");
     let reason = agent
-        .program(&consent)
+        .program(&consent, &trust_in(&state))
         .expect_err("the program is not there")
         .to_string();
     let runtime = crate::cli::fake::runtime();
@@ -227,7 +229,7 @@ fn a_missing_agent_program_is_refused_before_the_warning_is_put() {
         .with_enabled(false);
     let sandbox: Arc<dyn SandboxService> = Arc::new(LocalSandbox::new());
     let runs = Runs::new(
-        Launcher::new(sandbox, runtime.clone(), &policy, &consent),
+        Launcher::new(sandbox, runtime.clone(), &policy, &consent, &state),
         Arc::new(SandboxEnablement::new(false, false)),
         agent,
         "work",

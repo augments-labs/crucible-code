@@ -6,11 +6,18 @@
 //! in one, which key names its profile directory, the content-use
 //! route it is held under, the section of `docs/providers/agents.md` that
 //! documents it, the hosts it must reach, the command a person signs it in
-//! with where it has one, and whether this release ships it.
+//! with where it has one, the release of it crucible installs, and whether
+//! this release ships it.
 //! The chooser, the launch and every test read the [`Registry`] they were
 //! built over, and the shipped one is [`REGISTRY`]; a row that does not ship
 //! is listed nowhere and refused at launch with the sentence that names its
 //! section.
+//!
+//! The release a row installs, and the releases its agent is admitted as, are
+//! the catalog's to say: the trust state offers them, the newest installable
+//! one is the row's [`pinned`](Row::pinned), and a row that takes its releases
+//! from the catalog says so, so that a trust state that cannot be used is told
+//! to the user and not read as nothing to install.
 //!
 //! An agent the catalog reviewed has no row built in: its row is a
 //! [`CatalogRow`], owned and made from the entry and target it was installed
@@ -27,19 +34,25 @@
 //! other: a driver is a word the user writes, and its route is asked about in
 //! the vendor's own terms.
 
+use std::path::Path;
+
 use crucible_config::Driver;
 use crucible_execution::{Failure, Text};
 use crucible_external_harnesses::Dialect;
 use crucible_external_harnesses::acp::{Acp, Allowing};
-use crucible_external_harnesses::antigravity::{Antigravity, Manifest};
-use crucible_external_harnesses::catalog::{CatalogProfile, Entry, Target, Unprofiled};
+use crucible_external_harnesses::antigravity::{self, Antigravity};
+use crucible_external_harnesses::catalog::{CatalogProfile, Entry, Target, Trust, Unprofiled};
 use crucible_external_harnesses::claude::Claude;
-use crucible_external_harnesses::release::Pin;
+use crucible_external_harnesses::release::OwnedPin;
 use crucible_sandbox::SandboxDomainPattern;
 use crucible_tools::Mode;
 use crucible_types::AgentKey;
 
 use crate::content_use::agent_route;
+
+/// A row's wire as it is made for a run, or why the agent does not run in the
+/// mode asked for.
+pub type Wire = Result<Box<dyn Dialect>, Failure>;
 
 /// The most rows a registry holds, which is more agents than any release has
 /// offered at once.
@@ -52,8 +65,11 @@ pub struct Row {
     pub driver: Driver,
     /// Its wire, fresh for each run, as it is spoken in the conversation's
     /// mode, or why the agent does not run in that mode. Every shipped row
-    /// runs in every mode.
-    pub dialect: fn(Mode) -> Result<Box<dyn Dialect>, Failure>,
+    /// runs in every mode. An agent whose releases the catalog offers is
+    /// admitted only as one `trust` offers; given no trust state it is
+    /// admitted as none, which is all that asking whether it runs in a mode,
+    /// or what it is called, needs.
+    pub dialect: fn(Mode, Option<&Trust>, Option<&Path>) -> Wire,
     /// The key of its `externalAgents` entry that names its profile directory.
     pub profile_key: &'static str,
     /// The content-use route a launch of it is held under.
@@ -67,9 +83,14 @@ pub struct Row {
     /// in from its own window and has no such command.
     pub sign_in: fn(Option<&std::path::Path>) -> Option<Text>,
     /// The release of it crucible downloads for the user on the platform it
-    /// runs on, which `crucible agents install` puts in crucible's home; `None`
-    /// for an agent the user installs themselves.
-    pub pinned: fn() -> Option<&'static Pin>,
+    /// runs on, which `crucible agents install` puts in crucible's home: the
+    /// newest that `trust` offers and that is one archive of two files; `None`
+    /// for an agent the user installs themselves, and while nothing is
+    /// offered.
+    pub pinned: fn(&Trust) -> Option<OwnedPin>,
+    /// Whether its releases are the catalog's, so that it is offered nothing,
+    /// and says why, while the trust state cannot be used.
+    pub catalogued: bool,
     /// Whether this release lets it run.
     pub shipping: bool,
 }
@@ -153,14 +174,28 @@ impl AgentRow {
     }
 
     /// Its wire, fresh for a run, as it is spoken in the conversation's
-    /// `mode`.
+    /// `mode`, admitting the agent as the releases `trust` offers; as none
+    /// given no trust state.
     ///
     /// # Errors
     ///
     /// Why the agent does not run in `mode`.
-    pub fn dialect(&self, mode: Mode) -> Result<Box<dyn Dialect>, Failure> {
+    pub fn dialect(&self, mode: Mode, trust: Option<&Trust>, program: Option<&Path>) -> Wire {
         match self {
-            Self::Built(row) => (row.dialect)(mode),
+            Self::Built(row) => {
+                let unusable = trust
+                    .filter(|_| row.catalogued)
+                    .and_then(|trust| Some((trust.file(), trust.unusable()?)));
+                if let Some((file, why)) = unusable {
+                    return Err(Failure::new(&format!(
+                        "The catalog trust state at {} cannot be used ({why}), so no release of \
+                         {} is admitted. Repair or remove that file.",
+                        file.display(),
+                        row.driver.name()
+                    )));
+                }
+                (row.dialect)(mode, trust, program)
+            }
             Self::Catalog(row) => Ok(row.dialect(mode)),
         }
     }
@@ -195,7 +230,7 @@ impl AgentRow {
     /// and is called by its key.
     #[must_use]
     pub fn command(&self) -> String {
-        self.dialect(Mode::default()).map_or_else(
+        self.dialect(Mode::default(), None, None).map_or_else(
             |_| self.named().to_owned(),
             |dialect| dialect.program().to_owned(),
         )
@@ -269,7 +304,7 @@ pub(crate) const CLAUDE: Row = Row {
     driver: Driver::Claude,
     // Started in the permission mode the reviewed table gives the
     // conversation's mode.
-    dialect: |mode| Ok(Box::new(Claude::in_mode(claude_mode(mode)))),
+    dialect: |mode, _, _| Ok(Box::new(Claude::in_mode(claude_mode(mode)))),
     profile_key: "configDir",
     route: "agent:claude",
     docs_section: "claude-code",
@@ -283,7 +318,8 @@ pub(crate) const CLAUDE: Row = Row {
     ],
     sign_in: |profile| Some(crucible_external_harnesses::claude::sign_in(profile)),
     // It installs and updates itself.
-    pinned: || None,
+    pinned: |_| None,
+    catalogued: false,
     shipping: true,
 };
 
@@ -292,7 +328,19 @@ pub(crate) const ANTIGRAVITY: Row = Row {
     driver: Driver::Antigravity,
     // The agent asks about every action itself, and what the
     // conversation's mode allows is answered yes without asking.
-    dialect: |mode| Ok(Box::new(Antigravity::allowing(allowing(mode)))),
+    dialect: |mode, trust, program| {
+        let offered = trust.map_or_else(Vec::new, antigravity::offered);
+        if let Some(version) = antigravity::unoffered(&offered, program) {
+            let listed: Vec<&str> = offered.iter().map(|pin| &*pin.version).collect();
+            return Err(Failure::new(&format!(
+                "Version {version} of the agent, where this program is kept, is a release the \
+                 catalog does not offer; it offers {}.",
+                listed.join(", ")
+            )));
+        }
+        let offered = antigravity::started(offered, program);
+        Ok(Box::new(Antigravity::allowing(allowing(mode), &offered)))
+    },
     profile_key: "profileDir",
     route: "agent:antigravity",
     docs_section: "antigravity",
@@ -305,7 +353,13 @@ pub(crate) const ANTIGRAVITY: Row = Row {
         "daily-cloudcode-pa.googleapis.com",
     ],
     sign_in: |_| None,
-    pinned: || Manifest::REVIEWED.here(),
+    // The newest release the catalog offers that the installer can unpack.
+    pinned: |trust| {
+        antigravity::offered(trust)
+            .into_iter()
+            .find(|pin| pin.pin().is_some())
+    },
+    catalogued: true,
     shipping: true,
 };
 
@@ -330,4 +384,4 @@ const fn claude_mode(mode: Mode) -> crucible_external_harnesses::claude::Mode {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

@@ -190,10 +190,10 @@ or elvish, made from this command line as it is, and stops. It reads no \
 configuration and opens no terminal.
 
 agents install DRIVER downloads the release of an installed coding agent \
-this build pins, antigravity's agent server, checks its size and SHA-256 \
-against the pin, unpacks it under crucible's home and stops; a release \
-already there is kept. /login then runs that release for an agent it sets \
-up.
+the agent catalog offers, antigravity's agent server, checks its size and \
+SHA-256 against the catalog's pin, unpacks it under crucible's home and \
+stops; a release already there is kept. /login then runs that release for an \
+agent it sets up.
 
 update says whether a release later than this one is out and, where \
 install.sh installed crucible, downloads it, checks it against the release's \
@@ -323,7 +323,7 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum AgentsAction {
-    /// Download the release of an agent this build pins, check it is that
+    /// Download the release of an agent the agent catalog offers, check it is that
     /// release and put it where crucible runs it from, and stop.
     Install {
         /// The agent, as externalAgents names its driver.
@@ -1335,6 +1335,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         mode,
         settings: &settings,
         sessions: home.sessions(),
+        state: &crucible_app::catalog_fetch::state_in(home.path()),
         workspace: &workspace,
         ledger: &ledger,
         revealed: &revealed,
