@@ -603,6 +603,7 @@ dependencies = [
  "ring",
  "serde_json",
  "sha2",
+ "tar",
  "thiserror",
  "tokio",
  "zip",

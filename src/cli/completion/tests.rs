@@ -41,6 +41,7 @@ const COMMANDS: &[&[&str]] = &[
     &["update"],
     &["agents"],
     &["agents", "install"],
+    &["agents", "unpack-check"],
     &["completion"],
 ];
 
@@ -77,7 +78,11 @@ fn paths(command: &Command) -> BTreeSet<Vec<String>> {
 /// word that merely appears somewhere in a script proves nothing about it.
 fn marker(shell: Shell, path: &[String]) -> String {
     match shell {
-        Shell::Bash => format!("crucible__subcmd__{})", path.join("__subcmd__")),
+        // bash spells a hyphen in a command's name as a separator too.
+        Shell::Bash => format!(
+            "crucible__subcmd__{})",
+            path.join("__subcmd__").replace('-', "__subcmd__")
+        ),
         Shell::Zsh => format!("_crucible__subcmd__{}_commands()", path.join("__subcmd__")),
         Shell::Fish => match path {
             [only] => format!("-a \"{only}\""),

@@ -1,0 +1,36 @@
+{
+  "decompressed": 5120,
+  "files": [
+    {
+      "exec": true,
+      "kind": "file",
+      "path": "agent",
+      "sha256": "3e1e219596211e269fe7c89cee42a1a01f28f2c5a397ae6c57220f79a153b9ae",
+      "size": 18
+    },
+    {
+      "exec": false,
+      "kind": "file",
+      "path": "LICENSE",
+      "sha256": "267f7a2e19dfa9df99af774520985a0e521925293ea5b7e767ab06969d06bf91",
+      "size": 12
+    },
+    {
+      "kind": "dir",
+      "path": "lib"
+    },
+    {
+      "exec": true,
+      "kind": "file",
+      "path": "lib/harness",
+      "sha256": "0326a4093c48fa18b44e5c45b511d48ecc97f657e65983a088a951e71a0270ae",
+      "size": 21
+    },
+    {
+      "kind": "link",
+      "path": "lib/current",
+      "target": "harness"
+    }
+  ],
+  "unpacked": 51
+}

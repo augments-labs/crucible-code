@@ -9,6 +9,13 @@
 //! own beside the release's, owner-only, then renamed into place as one, so a
 //! release is either whole under its version or absent; what an unpack leaves
 //! unfinished is removed with it.
+//!
+//! A release the agent catalog reviewed is unpacked by [`Unpacker`] instead,
+//! one artifact at a time into a staging directory its caller owns, only as
+//! the catalog lists it; the rules it holds an archive to are written above
+//! it, in its own module. Its [`Unpacker::survey`] holds an archive to the
+//! same rules with no list, so the list the catalog's intake records is one
+//! an unpack accepts.
 
 use std::fs::{self, File};
 use std::io::{self, Read as _};
@@ -18,6 +25,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use sha2::{Digest as _, Sha256};
 use zip::result::ZipError;
 use zip::{CompressionMethod, ZipArchive};
+
+mod unpack;
+
+pub use unpack::{Staged, UnpackError, Unpacker};
 
 /// The most of a name the archive gives that a refusal repeats.
 const NAMED: usize = 64;
@@ -312,7 +323,10 @@ fn hex(bytes: &[u8]) -> String {
 pub mod proof {
     use std::io::{Cursor, Write as _};
 
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
     use sha2::{Digest as _, Sha256};
+    use tar::{EntryType, Header};
     use zip::write::SimpleFileOptions;
     use zip::{CompressionMethod, ZipWriter};
 
@@ -323,6 +337,70 @@ pub mod proof {
 
     /// The bytes of the program it starts beside it.
     pub const COMPANION: &[u8] = b"the harness it starts";
+
+    /// The licence a catalog agent's release ships beside them.
+    pub const LICENSE: &[u8] = b"MIT License\n";
+
+    /// A catalog agent's release for the intake to survey, and the artifact
+    /// the catalog describes it as before a file list is recorded for it, as
+    /// the JSON `crucible agents unpack-check` reads.
+    ///
+    /// The release is a gzip-compressed tar of the executable `agent`, its
+    /// `LICENSE`, and a `lib` directory of the executable `harness` and a link
+    /// `current` to it. Every header and the gzip stream are written with no
+    /// time, owner or name in them, so the same bytes come out wherever it is
+    /// made.
+    ///
+    /// # Panics
+    ///
+    /// When the archive cannot be written in memory, which leaves the test
+    /// asking for it nothing to report.
+    #[must_use]
+    #[allow(clippy::expect_used)]
+    pub fn catalog_release() -> (Vec<u8>, Vec<u8>) {
+        // Each member's name, kind, bytes, mode and link target.
+        type Member<'a> = (&'a str, EntryType, &'a [u8], u32, Option<&'a str>);
+        let mut builder = tar::Builder::new(Vec::new());
+        let members: [Member<'_>; 5] = [
+            ("agent", EntryType::Regular, EXECUTABLE, 0o755, None),
+            ("LICENSE", EntryType::Regular, LICENSE, 0o644, None),
+            ("lib/", EntryType::Directory, b"", 0o755, None),
+            ("lib/harness", EntryType::Regular, COMPANION, 0o755, None),
+            (
+                "lib/current",
+                EntryType::Symlink,
+                b"",
+                0o777,
+                Some("harness"),
+            ),
+        ];
+        for (name, kind, bytes, mode, link) in members {
+            let mut header = Header::new_gnu();
+            header.set_path(name).expect("a name");
+            if let Some(link) = link {
+                header.set_link_name(link).expect("a target");
+            }
+            header.set_entry_type(kind);
+            header.set_size(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+            header.set_mode(mode);
+            header.set_mtime(0);
+            header.set_cksum();
+            builder.append(&header, bytes).expect("a member");
+        }
+        let tar = builder.into_inner().expect("a tar");
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&tar).expect("its bytes");
+        let archive = encoder.finish().expect("a gzip stream");
+        let described = serde_json::json!({
+            "url": "https://example.invalid/releases/download/v1.0.0/agent.tar.gz",
+            "sha256": hex(&Sha256::digest(&archive)),
+            "size": archive.len(),
+            "format": "tar.gz",
+            "unpacked": 1 << 20,
+            "decompressed": 1 << 20,
+        });
+        (archive, described.to_string().into_bytes())
+    }
 
     /// Release 1.0.0's archive, of an `agent` and a `harness`, and its pin,
     /// published at `url`.
