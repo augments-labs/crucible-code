@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use crucible_app::Conversation;
 use crucible_app::access::Rewritten;
-use crucible_app::backends::{Registry, Row};
+use crucible_app::backends::{CatalogRow, Registry};
 use crucible_app::client::{self, Front};
 use crucible_app::launching::Steps;
 use crucible_app::outside::Installed;
@@ -28,6 +28,7 @@ use crucible_client_api::{
     Outcome, Pending, Request, ResumeOutcome, Retained, Standing, Text,
 };
 use crucible_config::{Access, Driver, ExternalAgent, Settings};
+use crucible_external_harnesses::catalog::{Catalog, Held, fixture};
 use crucible_external_harnesses::fake_peer::{self, Reply, scripts::claude};
 use crucible_runner::Turned;
 use crucible_sandbox::SandboxEnablement;
@@ -934,22 +935,65 @@ fn a_sign_out_of_a_catalog_agent_is_refused_and_writes_nothing() -> Result<(), F
     Ok(())
 }
 
+/// The row a signed catalog entry gives the agent keyed `goose`.
+fn goose_row() -> Result<CatalogRow, Failed> {
+    let file =
+        serde_json::json!({"path": "goose", "size": 1, "sha256": "b".repeat(64), "exec": true});
+    let catalog = serde_json::json!({
+        "schema": 1,
+        "serial": 1,
+        "revoked": [],
+        "entries": [{
+            "key": "goose",
+            "registry_id": "goose",
+            "version": "1.4.1",
+            "kind": "binary",
+            "license": "Apache-2.0",
+            "review": "https://example.com/review/1",
+            "admits": {"name": "goose", "version": "1.4.1"},
+            "targets": [{
+                "platform": "any",
+                "cmd": "goose",
+                "artifacts": [{
+                    "url": "https://example.com/goose.zip",
+                    "sha256": "a".repeat(64),
+                    "size": 1,
+                    "format": "zip",
+                    "unpacked": 1,
+                    "decompressed": 1,
+                    "files": [file],
+                }],
+            }],
+        }],
+    });
+    let signed = fixture::signed(catalog.to_string().as_bytes());
+    let catalog = Catalog::verify(
+        &signed.index,
+        &signed.signature,
+        &signed.keys,
+        Held(0),
+        std::time::SystemTime::now(),
+    )?;
+    let entry = catalog.entries().first().ok_or("an entry")?;
+    Ok(CatalogRow::new(
+        entry,
+        entry.targets.first().ok_or("a target")?,
+    )?)
+}
+
 /// A new session opened on a catalog instance is bound to the agent its key
 /// names, `catalog:<key>` on the session's route line, so it can go on only
-/// on that agent. The catalog driver's row here is Claude Code's, played by
-/// the peer, standing in for the row a catalog entry will give.
+/// on that agent. The agent's row is the one a signed catalog entry gives, its
+/// program played by the peer.
 #[test]
 fn a_session_opened_on_a_catalog_agent_is_bound_to_its_key() -> Result<(), Failed> {
     let tree = Tree::new("routing-catalog-bound")?;
     let (launching, peer) = launching(&tree, &connected([]))?;
-    let row: &'static Row = Box::leak(Box::new(Row {
-        driver: Driver::Catalog,
-        ..*launching.row
-    }));
+    let listed: &'static [CatalogRow] = Box::leak(Box::new([goose_row()?]));
     let steps = Steps::new(
         launching.launcher(),
         Arc::new(SandboxEnablement::new(false, false)),
-        Box::leak(Box::new(Registry::new(std::slice::from_ref(row)))),
+        Box::leak(Box::new(Registry::new(&[]).cataloging(listed))),
         Some(peer.clone().into_os_string()),
     );
     let goose = AgentKey::new("goose")?;

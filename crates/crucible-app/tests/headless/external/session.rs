@@ -29,7 +29,7 @@ use crate::{Failed, Script, Tree};
 /// Antigravity's own row, reaching no host, as [`row`] is Claude Code's.
 fn antigravity_row() -> Result<&'static Row, Failed> {
     let shipped = REGISTRY
-        .row(Driver::Antigravity)
+        .built(Driver::Antigravity)
         .ok_or("Antigravity has no row")?;
     Ok(Box::leak(Box::new(Row {
         reaches: &[],
@@ -107,6 +107,7 @@ fn on_antigravity(tree: &Tree, script: &Peer) -> Result<Outside, Failed> {
 /// the first turn of the session picked back up opens a new one.
 #[test]
 fn a_session_the_agent_says_is_gone_is_opened_anew_by_the_next_turn() -> Result<(), Failed> {
+    use crucible_external_harnesses::acp::SignIn;
     use crucible_external_harnesses::antigravity::Manifest;
     use crucible_external_harnesses::fake_peer::scripts::acp;
 
@@ -117,7 +118,7 @@ fn a_session_the_agent_says_is_gone_is_opened_anew_by_the_next_turn() -> Result<
             .first()
             .copied()
             .unwrap_or_default(),
-        Manifest::REVIEWED.sign_in,
+        Manifest::REVIEWED.sign_in.first().map_or("", SignIn::id),
     );
     let answering = |text: &str| {
         acp::opening(&reviewed)
@@ -215,6 +216,7 @@ fn a_session_the_agent_says_is_gone_is_opened_anew_by_the_next_turn() -> Result<
 /// again.
 #[test]
 fn a_session_refused_for_another_reason_is_resumed_by_the_next_turn() -> Result<(), Failed> {
+    use crucible_external_harnesses::acp::SignIn;
     use crucible_external_harnesses::antigravity::Manifest;
     use crucible_external_harnesses::fake_peer::scripts::acp;
 
@@ -225,7 +227,7 @@ fn a_session_refused_for_another_reason_is_resumed_by_the_next_turn() -> Result<
             .first()
             .copied()
             .unwrap_or_default(),
-        Manifest::REVIEWED.sign_in,
+        Manifest::REVIEWED.sign_in.first().map_or("", SignIn::id),
     );
     let answering = |text: &str| {
         acp::opening(&reviewed)

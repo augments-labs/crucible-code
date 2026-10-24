@@ -1,8 +1,14 @@
 //! The Agent Client Protocol, spoken as its client to any agent that speaks it.
 //!
-//! [`Acp`] is a [`Dialect`] for one agent, described by its [`Profile`]: the
-//! command it is found as, the protocol versions it may answer with, the check
-//! its own description of itself must pass and the method it signs in with.
+//! [`Acp`] is a [`Dialect`] for one agent, described by the [`Profile`] a
+//! build gives it or by the [`CatalogProfile`] an entry of the agent catalog
+//! gives it: the protocol versions it may answer with, the check its own
+//! description of itself must pass, and the methods it signs in with, of which
+//! the first the agent offers is the one asked for. A built profile names the
+//! command the agent is found as, and the dialect that wraps the client builds
+//! what it is started with; a catalog profile names its program by the
+//! agent's key and is started with the arguments and environment its target
+//! was reviewed with.
 //! A run's first turn initializes the agent and reads what it says of itself
 //! once, into an [`Initialized`]; nothing else is sent to an agent that answers
 //! with a version or a description its profile does not admit. The session is
@@ -42,6 +48,7 @@ mod permission;
 mod session;
 mod wire;
 
+use std::borrow::Cow;
 use std::path::PathBuf;
 
 use crucible_execution::{
@@ -54,10 +61,11 @@ use serde_json::{Value, json};
 use crate::acp::permission::Permissions;
 use crate::acp::session::Updates;
 use crate::acp::wire::{Frame, Refused};
+use crate::catalog::CatalogProfile;
 use crate::{Account, Act, Dialect, Ran, Reading, Request, Shape, Told};
 
 /// The protocol version this client speaks.
-const PROTOCOL: u64 = 1;
+pub(crate) const PROTOCOL: u64 = 1;
 
 /// The code an agent refuses with when it must be signed in first.
 const SIGN_IN_REQUIRED: i64 = -32000;
@@ -74,7 +82,7 @@ const RESOURCE_NOT_FOUND: i64 = -32002;
 
 /// The most bytes a name the agent gives keeps: its own name, its version, a
 /// sign-in method or a session.
-const NAME_BYTES: usize = 256;
+pub(crate) const NAME_BYTES: usize = 256;
 
 /// The most sign-in methods an agent's description keeps.
 const METHODS: usize = 16;
@@ -121,8 +129,70 @@ pub struct Profile {
     pub versions: &'static [u64],
     /// Whether the agent, as it described itself, is one this profile runs.
     pub admits: fn(&Initialized) -> Result<(), Failure>,
-    /// The sign-in method it signs in with, where it has one.
-    pub sign_in: Option<&'static str>,
+    /// The sign-in methods it signs in with, in the order they are tried;
+    /// none where it has none.
+    pub sign_in: &'static [SignIn],
+}
+
+/// One sign-in method an agent carries out itself once asked through
+/// `authenticate`, by the id it offers the method under.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignIn(Cow<'static, str>);
+
+impl SignIn {
+    /// The method the agent offers as `id`, as a build names it.
+    #[must_use]
+    pub const fn named(id: &'static str) -> Self {
+        Self(Cow::Borrowed(id))
+    }
+
+    /// The method the agent offers as `id`, as a catalog entry names it.
+    #[must_use]
+    pub fn owned(id: &str) -> Self {
+        Self(Cow::Owned(id.to_owned()))
+    }
+
+    /// The id the agent offers it under.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.0
+    }
+}
+
+/// The agent a client runs, as it was reviewed: by this build, in a profile
+/// of its own, or by the catalog, in the profile its entry gives it.
+#[derive(Debug, Clone)]
+enum Reviewed {
+    /// A profile this build gives.
+    Built(Profile),
+    /// The profile a catalog entry gives.
+    Catalog(CatalogProfile),
+}
+
+impl Reviewed {
+    /// The protocol versions its answer to initializing may carry.
+    fn versions(&self) -> &[u64] {
+        match self {
+            Self::Built(profile) => profile.versions,
+            Self::Catalog(profile) => profile.versions(),
+        }
+    }
+
+    /// Whether the agent, as it described itself, is the one reviewed.
+    fn admits(&self, initialized: &Initialized) -> Result<(), Failure> {
+        match self {
+            Self::Built(profile) => (profile.admits)(initialized),
+            Self::Catalog(profile) => profile.admits(initialized),
+        }
+    }
+
+    /// The methods it signs in with, in the order they are tried.
+    fn sign_in(&self) -> &[SignIn] {
+        match self {
+            Self::Built(profile) => profile.sign_in,
+            Self::Catalog(profile) => profile.sign_in(),
+        }
+    }
 }
 
 /// What an agent said of itself when it was initialized.
@@ -246,7 +316,7 @@ enum Awaited {
 #[derive(Debug)]
 pub struct Acp {
     /// The agent.
-    profile: Profile,
+    reviewed: Reviewed,
     /// The permissions answered yes here rather than asked.
     allowing: Allowing,
     /// The directory sessions are opened in.
@@ -278,18 +348,28 @@ impl Acp {
     /// to what `allowing` names.
     #[must_use]
     pub fn allowing(profile: Profile, allowing: Allowing) -> Self {
-        Self {
-            allowing,
-            ..Self::new(profile)
-        }
+        Self::of(Reviewed::Built(profile), allowing)
     }
 
     /// The client of the agent `profile` describes.
     #[must_use]
     pub fn new(profile: Profile) -> Self {
+        Self::of(Reviewed::Built(profile), Allowing::Nothing)
+    }
+
+    /// The client of the agent the catalog reviewed as `profile` describes,
+    /// answering yes by itself to what `allowing` names.
+    #[must_use]
+    pub fn cataloged(profile: CatalogProfile, allowing: Allowing) -> Self {
+        Self::of(Reviewed::Catalog(profile), allowing)
+    }
+
+    /// The client of the agent as `reviewed`, answering yes by itself to what
+    /// `allowing` names.
+    fn of(reviewed: Reviewed, allowing: Allowing) -> Self {
         Self {
-            profile,
-            allowing: Allowing::Nothing,
+            reviewed,
+            allowing,
             workspace: None,
             resume: None,
             next: 0,
@@ -330,12 +410,12 @@ impl Acp {
     /// admits it.
     fn admitted(&self, result: &Value) -> Result<Initialized, Failure> {
         let initialized = Initialized::read(result);
-        if !self.profile.versions.contains(&initialized.protocol) {
+        if !self.reviewed.versions().contains(&initialized.protocol) {
             return Err(Failure::new(
                 "The agent answered with a protocol version this client does not speak.",
             ));
         }
-        (self.profile.admits)(&initialized)?;
+        self.reviewed.admits(&initialized)?;
         Ok(initialized)
     }
 
@@ -606,14 +686,22 @@ impl Acp {
                 )),
                 Err(failure) => Told::Done(Reading::Unreadable(failure)),
             },
-            Account::SignIn => match self.profile.sign_in {
-                Some(method) if initialized.offers(method) => Told::Send(self.send(
-                    "authenticate",
-                    &json!({"methodId": method}),
-                    Awaited::SignIn,
-                )),
-                _ => unreadable("The agent offers no sign-in this client uses."),
-            },
+            Account::SignIn => {
+                let offered = self
+                    .reviewed
+                    .sign_in()
+                    .iter()
+                    .find(|method| initialized.offers(method.id()))
+                    .map(|method| method.id().to_owned());
+                match offered {
+                    Some(method) => Told::Send(self.send(
+                        "authenticate",
+                        &json!({"methodId": method}),
+                        Awaited::SignIn,
+                    )),
+                    None => unreadable("The agent offers no sign-in this client uses."),
+                }
+            }
             Account::SignOut if initialized.signs_out => {
                 Told::Send(self.send("logout", &json!({}), Awaited::SignOut))
             }
@@ -640,17 +728,25 @@ fn refusal(awaited: Awaited, refused: &Refused) -> Failure {
 }
 
 impl Dialect for Acp {
-    fn program(&self) -> &'static str {
-        self.profile.program
+    fn program(&self) -> &str {
+        match &self.reviewed {
+            Reviewed::Built(profile) => profile.program,
+            // Looked up as nothing, since it is started from the path its
+            // instance names, and known by its key.
+            Reviewed::Catalog(profile) => profile.key().as_str(),
+        }
     }
 
     fn request(&mut self, shape: Shape<'_>) -> Request {
         self.workspace = shape.workspace.map(PathBuf::from);
         self.resume = shape.resume.map(str::to_owned);
-        Request {
-            arguments: Vec::new(),
-            environment: Vec::new(),
-            shown: Vec::new(),
+        match &self.reviewed {
+            Reviewed::Built(_) => Request {
+                arguments: Vec::new(),
+                environment: Vec::new(),
+                shown: Vec::new(),
+            },
+            Reviewed::Catalog(profile) => profile.request(std::env::vars_os()),
         }
     }
 

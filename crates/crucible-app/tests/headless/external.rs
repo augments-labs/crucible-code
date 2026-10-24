@@ -86,7 +86,7 @@ fn claims() -> Capabilities {
 /// sandbox that cannot hold a run to its hosts refuses to start one.
 fn row() -> Result<&'static Row, Failed> {
     let shipped = REGISTRY
-        .row(Driver::Claude)
+        .built(Driver::Claude)
         .ok_or("Claude Code has no row")?;
     Ok(Box::leak(Box::new(Row {
         reaches: &[],

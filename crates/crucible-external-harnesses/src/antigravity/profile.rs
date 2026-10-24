@@ -2,7 +2,8 @@
 //!
 //! A launch's environment starts from nothing and holds only what is named
 //! here: the few variables a program needs to run at all, taken from the
-//! shell, and the profile's own. The agent reads its account, project and home
+//! shell as they are for every agent the catalog reviewed, and the profile's
+//! own. The agent reads its account, project and home
 //! from variables a shell may hold for another use, and none of those is
 //! named, so the agent signs in, keeps its files and unpacks itself inside the
 //! profile alone: its home for sign-in is the profile's directory, and its
@@ -15,26 +16,7 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-/// The variables taken from the shell, which say where programs and the
-/// user's own files are and how text is written, and nothing about any
-/// account, so their values may be shown where what the agent says is kept.
-pub(crate) const PASSED: [&str; 15] = [
-    "PATH",
-    "HOME",
-    "USERPROFILE",
-    "LANG",
-    "LC_ALL",
-    "LC_CTYPE",
-    "TZ",
-    "USER",
-    "LOGNAME",
-    "SYSTEMROOT",
-    "WINDIR",
-    "COMSPEC",
-    "PATHEXT",
-    "SYSTEMDRIVE",
-    "NUMBER_OF_PROCESSORS",
-];
+use crate::catalog::passed;
 
 /// The variables naming a directory for temporary files, which the agent
 /// unpacks itself into: the profile's, so what a stopped agent leaves behind
@@ -51,22 +33,11 @@ const NO_BROWSER: &str = "true";
 /// The environment for a launch in `profile`, where there is one, from the
 /// `ambient` one. None of its variables says anything about an account, so
 /// each value may be shown.
-///
-/// On Windows a variable is matched whatever its case, as Windows matches it;
-/// one whose name or value is not text is left out, since none of those named
-/// is.
 pub(crate) fn environment(
     ambient: impl IntoIterator<Item = (OsString, OsString)>,
     profile: Option<&Path>,
 ) -> Vec<(&'static str, String)> {
-    let mut environment: Vec<(&'static str, String)> = ambient
-        .into_iter()
-        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
-        .filter_map(|(name, value)| {
-            let passed = PASSED.iter().find(|passed| named(&name, passed))?;
-            Some((*passed, value))
-        })
-        .collect();
+    let mut environment = passed(ambient);
     environment.extend(
         [
             ("AGY_ACP_FORCE_FILE_STORAGE", "1"),
@@ -86,13 +57,4 @@ pub(crate) fn environment(
         );
     }
     environment
-}
-
-/// Whether `name` is the variable `wanted`, as the platform compares names.
-fn named(name: &str, wanted: &str) -> bool {
-    if cfg!(windows) {
-        name.eq_ignore_ascii_case(wanted)
-    } else {
-        name == wanted
-    }
 }

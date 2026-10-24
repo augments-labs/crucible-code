@@ -12,7 +12,7 @@
 
 use crucible_execution::Failure;
 
-use crate::acp::Initialized;
+use crate::acp::{Initialized, SignIn};
 use crate::release::{Member, Pin};
 
 /// The release reviewed, as it names itself and as its archives name it.
@@ -47,8 +47,8 @@ pub struct Manifest {
     pub versions: &'static [&'static str],
     /// The protocol versions it may answer in.
     pub protocols: &'static [u64],
-    /// The sign-in method it must offer.
-    pub sign_in: &'static str,
+    /// The sign-in methods it must offer.
+    pub sign_in: &'static [SignIn],
     /// The platforms it was published for, as the operating system and
     /// architecture Rust names them, with the archive published for each.
     pub platforms: &'static [(&'static str, &'static str, Pin)],
@@ -60,7 +60,7 @@ impl Manifest {
         name: "antigravity-acp",
         versions: &[VERSION],
         protocols: &[1],
-        sign_in: "oauth-personal",
+        sign_in: &[SignIn::named("oauth-personal")],
         platforms: &[
             (
                 "macos",
@@ -225,7 +225,12 @@ impl Manifest {
             (initialized.loads(), "loading a session"),
             (initialized.resumes(), "resuming a session"),
             (initialized.signs_out(), "signing out"),
-            (initialized.offers(self.sign_in), "its usual sign-in"),
+            (
+                self.sign_in
+                    .iter()
+                    .all(|method| initialized.offers(method.id())),
+                "its usual sign-in",
+            ),
         ]
         .into_iter()
         .find_map(|(offered, what)| (!offered).then_some(what));

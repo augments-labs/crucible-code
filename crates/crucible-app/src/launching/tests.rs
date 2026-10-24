@@ -8,6 +8,8 @@ use crucible_config::{Driver, Serves};
 use crucible_execution::{
     Authentication, Decision, Event, Failure, Outcome, SessionRef, Sink, Text, TurnRequest,
 };
+use crucible_external_harnesses::catalog::{Catalog, Held, fixture};
+use crucible_external_harnesses::fake_peer::scripts::acp;
 use crucible_external_harnesses::fake_peer::{self, Plain, Reply, Script};
 use crucible_external_harnesses::{
     Account, Act, Control, Dialect, Discovery, Ran, Reading, Refusal, Request, Shape, Told,
@@ -25,8 +27,8 @@ use tokio::runtime::Handle;
 
 use super::*;
 use crate::access::Route;
-use crate::backends::{Registry, Row};
-use crate::content_use::{Consent, Routes};
+use crate::backends::{CatalogRow, Registry, Row};
+use crate::content_use::{Consent, Routes, Warned, Warning};
 use crate::sample::Sample;
 
 /// The plain protocol, held under Claude Code's route and shipped.
@@ -532,6 +534,144 @@ fn a_profile_reached_through_a_link_into_protected_metadata_is_not_opened() {
     }
 }
 
+/// The row a signed catalog entry gives the agent keyed `peer`: it must answer
+/// initializing as `fake-peer` at 1.0.0, signs in itself with `login`, is
+/// started with `acp --stdio`, and reaches `api.example.com`.
+pub(crate) fn cataloged() -> CatalogRow {
+    let file =
+        serde_json::json!({"path": "peer", "size": 1, "sha256": "b".repeat(64), "exec": true});
+    let catalog = serde_json::json!({
+        "schema": 1,
+        "serial": 1,
+        "revoked": [],
+        "entries": [{
+            "key": "peer",
+            "registry_id": "fake-peer",
+            "version": "1.0.0",
+            "kind": "binary",
+            "license": "MIT",
+            "review": "https://example.com/review/1",
+            "admits": {"name": "fake-peer", "version": "1.0.0"},
+            "reach": ["api.example.com"],
+            "auth_methods": [{"id": "login", "name": "Log in", "kind": "agent"}],
+            "targets": [{
+                "platform": "any",
+                "cmd": "peer",
+                "args": ["acp", "--stdio"],
+                "artifacts": [{
+                    "url": "https://example.com/peer.zip",
+                    "sha256": "a".repeat(64),
+                    "size": 1,
+                    "format": "zip",
+                    "unpacked": 1,
+                    "decompressed": 1,
+                    "files": [file],
+                }],
+            }],
+        }],
+    });
+    let signed = fixture::signed(catalog.to_string().as_bytes());
+    let catalog = Catalog::verify(
+        &signed.index,
+        &signed.signature,
+        &signed.keys,
+        Held(0),
+        std::time::SystemTime::now(),
+    )
+    .expect("the catalog is believed");
+    let entry = catalog.entries().first().expect("an entry");
+    CatalogRow::new(entry, entry.targets.first().expect("a target")).expect("a row")
+}
+
+/// A consent that has said yes to the catalog agent keyed `peer`, whose route
+/// a test warns about itself.
+fn peer_granted() -> Consent {
+    let consent = Consent::new(Routes::new(vec![Warned {
+        route: "agent:peer",
+        shown: "Peer",
+        warning: Warning {
+            sentence: "The peer keeps nothing it is sent.",
+            condition: None,
+            source: "A test",
+            link: "https://example.com/peer",
+            read: "24 Oct 2026",
+            caution: "keeps nothing",
+        },
+        origins: &[],
+    }]));
+    consent.give("agent:peer");
+    consent
+}
+
+/// The launcher starts a catalog agent's row as its entry reviewed it: with
+/// its target's arguments, under its own route's yes, and reads it signed in
+/// only where it answers initializing as the agent its entry names.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_catalog_row_is_launched_as_its_entry_reviewed_it() {
+    let key = AgentKey::new("peer").expect("a key");
+    let registry = Registry::new(&[]).cataloging(Box::leak(Box::new([cataloged()])));
+    for (calls_itself, signed_in) in [("fake-peer", true), ("another-agent", false)] {
+        let sample = Sample::new(&format!("launch-catalog-{calls_itself}"));
+        let peer = installed(
+            &sample,
+            &Script::of([Reply::new()
+                .hear(1)
+                .say(acp::initialized(calls_itself, "1.0.0", "login"))
+                .hear(1)
+                .say(acp::opened(1))]),
+        );
+        let instance = ExternalAgent::unwritten(
+            "work",
+            Driver::Catalog,
+            &peer.to_string_lossy(),
+            None,
+            Some(&key),
+        )
+        .expect("a catalog instance");
+        let agent = Agent::configured(&instance, &registry, |_| None).expect("its catalog row");
+        let consent = peer_granted();
+        let policy = conversation(&sample);
+        let launcher = Launcher::new(local(), Handle::current(), &policy, &consent);
+        let mut dialect = agent.row().dialect(Mode::Ask).expect("asking");
+        let control = Control::new().expect("a control");
+
+        let read = launcher
+            .account(&agent, &control, dialect.as_mut(), Account::Status, &|_| {})
+            .await
+            .expect("started");
+
+        assert_eq!(
+            matches!(read, Reading::Signed(Authentication::SignedIn)),
+            signed_in,
+            "{calls_itself}: {read:?}"
+        );
+        assert_eq!(
+            fake_peer::argued(peer.parent().expect("a directory")),
+            vec![vec!["acp".to_owned(), "--stdio".to_owned()]],
+            "{calls_itself}"
+        );
+    }
+}
+
+/// A catalog row reaches the hosts its entry's profile grants, and the child
+/// of a conversation that confines its commands may reach those and no other.
+#[test]
+fn a_catalog_row_reaches_the_hosts_its_entry_grants() {
+    let sample = Sample::new("launch-catalog-reach");
+    let row = AgentRow::Catalog(cataloged());
+    let conversation = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
+
+    let child =
+        policy(&conversation, None, &row.reaches(), conversation.limits()).expect("a policy");
+
+    assert_eq!(row.reaches(), ["api.example.com"]);
+    let SandboxNetworkPolicy::Domains(domains) = child.network() else {
+        panic!("{:?}", child.network());
+    };
+    assert!(domains.permits_host("api.example.com"));
+    assert!(!domains.permits_host("elsewhere.example.com"));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_turn_or_a_probe_without_a_yes_starts_nothing() {
     let sample = Sample::new("launch-unheld");
@@ -653,7 +793,7 @@ async fn a_program_that_is_not_there_is_refused_with_how_to_install_it() {
 struct Speaking(Plain);
 
 impl Dialect for Speaking {
-    fn program(&self) -> &'static str {
+    fn program(&self) -> &str {
         self.0.program()
     }
 

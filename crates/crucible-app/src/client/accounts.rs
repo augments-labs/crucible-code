@@ -39,7 +39,7 @@
 //! | sign out | sign out, its agent's route unanswered, declined | [`LogoutOutcome::Undecided`] |
 //! | sign out | sign out, its agent's route unanswered, the yes not written | [`LogoutOutcome::HoldUnkept`] |
 //! | sign out, its agent's route unanswered, the agent cannot be started | sign out | [`LogoutOutcome::Undecided`], the route not asked |
-//! | sign out, an agent this release has no launch for, as a catalog agent | sign out | [`LogoutOutcome::Undecided`], said so, the route not asked |
+//! | sign out, an agent this release has no launch for, as a catalog agent whose row is not listed | sign out | [`LogoutOutcome::Undecided`], said so, the route not asked |
 //! | sign out, a run of an instance sharing the scope not confirmed stopped | sign out | [`LogoutOutcome::Undecided`], the route not asked |
 //! | sign out | disconnect instead | as disconnect |
 //! | any | cancel, back, or nobody | [`LogoutOutcome::Undecided`] |
@@ -138,6 +138,7 @@ use crucible_external_harnesses::{
 use super::deciding::{Confirmation, Front, confirmed};
 use super::performing::{Desk, Performed};
 use crate::Conversation;
+use crate::backends::AgentRow;
 use crate::launching::Unlaunched;
 use crate::remember::{self, RememberError};
 
@@ -483,8 +484,14 @@ pub async fn account(
             else {
                 return Performed::Refused(ErrorCode::InvalidArgument.into());
             };
-            let Some(row) = crate::backends::REGISTRY.row(agent.driver()) else {
-                return Performed::Refused(ErrorCode::InvalidArgument.into());
+            let row = match crate::backends::REGISTRY.row(agent.driver(), agent.agent()) {
+                Some(AgentRow::Built(row)) => row,
+                // A catalog agent signs in to its own vendor, and no provider
+                // of this build's is reached through it.
+                Some(AgentRow::Catalog(_)) => {
+                    return Performed::Refused(ErrorCode::UnknownProvider.into());
+                }
+                None => return Performed::Refused(ErrorCode::InvalidArgument.into()),
             };
             let Some(provider) = served(desk, row) else {
                 return Performed::Refused(ErrorCode::UnknownProvider.into());
@@ -667,13 +674,13 @@ async fn still_running(
 /// Settles, before a sign-out changes anything, that the agent's own program
 /// can be run for it, and puts the agent's route to `front` where it has no
 /// yes. A launch the launcher would refuse, the program not installed, the
-/// row withheld or no row for the agent at all, as for a catalog agent, is
-/// said to be so first, whatever state the route is in, and the route is not
-/// put: nobody agrees to what cannot happen, and nothing is written for a
-/// sign-out that cannot run. Answers the account to end the sign-out with
-/// where the launch is so refused and the client goes no further, where the
-/// route did not get its yes, or the yes could not be written down, and
-/// `None` where the sign-out may go on.
+/// row withheld or no row for the agent at all, as for a catalog agent whose
+/// row the registry does not list, is said to be so first, whatever state the
+/// route is in, and the route is not put: nobody agrees to what cannot happen,
+/// and nothing is written for a sign-out that cannot run. Answers the account
+/// to end the sign-out with where the launch is so refused and the client goes
+/// no further, where the route did not get its yes, or the yes could not be
+/// written down, and `None` where the sign-out may go on.
 async fn launch_asked(
     conversation: &Conversation,
     request: &Request,
@@ -681,7 +688,7 @@ async fn launch_asked(
     agent: &ExternalAgent,
 ) -> Option<Account> {
     let capabilities = request.capabilities();
-    let Some(row) = crate::backends::REGISTRY.row(agent.driver()) else {
+    let Some(row) = crate::backends::REGISTRY.row(agent.driver(), agent.agent()) else {
         let unrun = Confirmation {
             asks: format!("{} cannot be signed out.", agent.name()),
             facts: vec![
@@ -701,7 +708,7 @@ async fn launch_asked(
         front,
         capabilities,
         agent,
-        (row, shown_as(conversation, row)),
+        (&row, &shown_as(conversation, &row)),
     )
     .await
         != Some(true)
@@ -709,7 +716,7 @@ async fn launch_asked(
         return Some(Account::Undecided);
     }
     let consent = conversation.consent()?;
-    let warned = consent.asks(row.route).copied()?;
+    let warned = consent.asks(row.route()).copied()?;
     if !super::deciding::warned(capabilities, front, &warned).await {
         return Some(Account::Undecided);
     }
@@ -840,7 +847,7 @@ async fn choose(
 ) -> Option<Chosen> {
     let capabilities = request.capabilities();
     let rows: Vec<&'static crate::backends::Row> = conversation.agents().shipping().collect();
-    let shown = |row: &crate::backends::Row| shown_as(conversation, row);
+    let shown = |row: &'static crate::backends::Row| shown_as(conversation, &AgentRow::Built(row));
     for _ in 0..CHECKS {
         let mut choices: Vec<(String, String)> = rows
             .iter()
@@ -850,7 +857,7 @@ async fn choose(
                     || format!("Run {agent}."),
                     |serves| format!("Reach {serves} through {agent}."),
                 );
-                (agent.to_owned(), said)
+                (agent, said)
             })
             .collect();
         choices.push(("Cancel".to_owned(), "Change nothing.".to_owned()));
@@ -867,14 +874,22 @@ async fn choose(
             desk,
             front,
             capabilities,
-            (row, shown(row)),
+            (row, &shown(row)),
             conversation.steps(),
         )
         .await?
         else {
             continue;
         };
-        if found(conversation, front, capabilities, &agent, (row, shown(row))).await? {
+        if found(
+            conversation,
+            front,
+            capabilities,
+            &agent,
+            (&AgentRow::Built(row), &shown(row)),
+        )
+        .await?
+        {
             return Some((agent, row, written));
         }
     }
@@ -890,7 +905,7 @@ async fn instance(
     desk: &Desk<'_>,
     front: &mut dyn Front,
     capabilities: crucible_client_api::Capabilities,
-    (row, agent): (&crate::backends::Row, &str),
+    (row, agent): (&'static crate::backends::Row, &str),
     steps: Option<&crate::launching::Steps>,
 ) -> Option<Option<(ExternalAgent, bool)>> {
     let mut configured: Vec<ExternalAgent> = desk
@@ -934,32 +949,27 @@ async fn instance(
     // One whose release crucible installs is run as that release, installed
     // or not yet, unless its command is on the `PATH`, as one installed by
     // hand is.
+    let command = AgentRow::Built(row).command();
     let by_hand =
-        steps.is_some_and(|steps| matches!(steps.discover(command(row)), Discovery::Found(_)));
+        steps.is_some_and(|steps| matches!(steps.discover(&command), Discovery::Found(_)));
     let managed = crate::installing::executable(home, row).filter(|_| !by_hand);
     let executable = managed
         .as_deref()
         .and_then(std::path::Path::to_str)
-        .unwrap_or_else(|| command(row));
+        .unwrap_or(&command);
     // A row is a built-in driver's, so its instance names no catalog agent.
     let agent = ExternalAgent::unwritten(name, row.driver, executable, profile.as_deref(), None)?;
     Some(Some((agent, false)))
 }
 
 /// How `row`'s agent is named to a person: as its route is warned about,
-/// else by its driver.
-fn shown_as(conversation: &Conversation, row: &crate::backends::Row) -> &'static str {
+/// else by its driver, or a catalog agent by its key.
+fn shown_as(conversation: &Conversation, row: &AgentRow) -> String {
     conversation
         .consent()
-        .and_then(|consent| consent.routes().warned(row.route))
-        .map_or(row.driver.name(), |warned| warned.shown)
-}
-
-/// The command `row`'s agent is run as: the same in every mode, and asking
-/// is a mode every row runs in.
-fn command(row: &crate::backends::Row) -> &'static str {
-    (row.dialect)(crucible_tools::Mode::default())
-        .map_or(row.driver.name(), |dialect| dialect.program())
+        .and_then(|consent| consent.routes().warned(row.route()))
+        .map_or(row.named(), |warned| warned.shown)
+        .to_owned()
 }
 
 /// Whether the launcher would start `agent`, of the row given and shown as
@@ -973,7 +983,7 @@ async fn found(
     front: &mut dyn Front,
     capabilities: crucible_client_api::Capabilities,
     agent: &ExternalAgent,
-    (row, shown): (&'static crate::backends::Row, &str),
+    (row, shown): (&AgentRow, &str),
 ) -> Option<bool> {
     for _ in 0..CHECKS {
         // What a start would refuse, as the launcher decides it, so that what
@@ -984,8 +994,7 @@ async fn found(
                 Some(Unlaunched::NotInstalled(sentences)) => sentences,
                 Some(other) => [other.to_string(), "Choose another agent.".to_owned()],
             },
-            None => match crate::installing::refusal(row, &Discovery::Missing, shown, command(row))
-            {
+            None => match crate::launching::unfound(row, &Discovery::Missing, shown) {
                 Some(sentences) => sentences,
                 None => return Some(true),
             },
@@ -1047,7 +1056,10 @@ async fn connect(
             front,
             capabilities,
             agent,
-            (row, shown_as(conversation, row)),
+            (
+                &AgentRow::Built(row),
+                &shown_as(conversation, &AgentRow::Built(row)),
+            ),
         )
         .await
             != Some(true)

@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crucible_execution::{Authentication, Text};
+use crucible_external_harnesses::acp::SignIn;
 use crucible_external_harnesses::antigravity::{Antigravity, Ended, Manifest};
 use crucible_external_harnesses::conformance::{self, CASES};
 use crucible_external_harnesses::fake_peer::scripts::acp;
@@ -66,7 +67,7 @@ fn reviewed() -> String {
             .first()
             .copied()
             .unwrap_or_default(),
-        Manifest::REVIEWED.sign_in,
+        Manifest::REVIEWED.sign_in.first().map_or("", SignIn::id),
     )
 }
 
@@ -302,7 +303,11 @@ async fn a_logout_nothing_confirms_says_external_sign_out_unverified() {
 async fn a_release_outside_the_manifest_is_sent_nothing_more() {
     let at = Owned::new("unreviewed");
     let profile = at.0.join("profile");
-    let newer = acp::initialized(Manifest::REVIEWED.name, "9.9.9", Manifest::REVIEWED.sign_in);
+    let newer = acp::initialized(
+        Manifest::REVIEWED.name,
+        "9.9.9",
+        Manifest::REVIEWED.sign_in.first().map_or("", SignIn::id),
+    );
     let script = Script::of([Reply::new().hear(1).say(newer).hear_out()]);
 
     let (read, _) = spoken(&at.0, &profile, &script, &[Account::Status]).await;

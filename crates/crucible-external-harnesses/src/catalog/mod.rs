@@ -20,6 +20,9 @@
 //! parsed into owned values once, here, and every refusal names the field it
 //! is about. This module does no network work and decides no consent.
 //!
+//! An entry becomes what its agent is run under as a [`CatalogProfile`]: owned
+//! data, with the hosts it reaches parsed by the sandbox's own parser.
+//!
 //! What a user is offered of it is [`Trust`]'s to decide, from the highest
 //! serial believed, every revocation taken in, the catalog most lately
 //! believed and the snapshot [`SNAPSHOT`] holds. The snapshot is checked by
@@ -34,6 +37,7 @@
 mod entry;
 #[cfg(feature = "proof")]
 pub mod fixture;
+mod profile;
 mod snapshot;
 mod trust;
 
@@ -44,6 +48,10 @@ use serde_json::Value;
 
 use entry::Fields;
 
+#[cfg(test)]
+pub(crate) use profile::PASSED;
+pub(crate) use profile::passed;
+pub use profile::{CatalogProfile, Unprofiled};
 pub use snapshot::SNAPSHOT;
 pub use trust::{OwnedPin, Trust, TrustError, Unusable};
 

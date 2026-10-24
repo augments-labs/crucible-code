@@ -55,7 +55,7 @@ const fn built_in(driver: Driver) -> bool {
 
 /// Runs `crucible agents install` for `driver`, and stops.
 pub(super) fn install(driver: Driver) -> ExitCode {
-    let Some(row) = REGISTRY.row(driver) else {
+    let Some(row) = REGISTRY.built(driver) else {
         let refused = format!("this build of crucible runs no {}", driver.name());
         let _ = io::stderr().write_all(failing(&refused).as_bytes());
         return ExitCode::FAILURE;

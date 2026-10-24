@@ -37,7 +37,7 @@ const PROFILE: Profile = Profile {
     program: PROGRAM,
     versions: Manifest::REVIEWED.protocols,
     admits,
-    sign_in: Some(Manifest::REVIEWED.sign_in),
+    sign_in: Manifest::REVIEWED.sign_in,
 };
 
 /// Whether the agent described as `initialized` is the reviewed release, on

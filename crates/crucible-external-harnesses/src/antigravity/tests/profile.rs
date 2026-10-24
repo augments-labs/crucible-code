@@ -3,7 +3,8 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use crate::antigravity::profile::{PASSED, environment};
+use crate::antigravity::profile::environment;
+use crate::catalog::PASSED;
 
 /// Every variable that would choose the agent's account, project or home over
 /// the profile's, as the published integration strips them.

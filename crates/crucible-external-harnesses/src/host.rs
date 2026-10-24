@@ -197,8 +197,9 @@ pub enum Act {
 /// [`Dialect::spoken`] says how it begins.
 pub trait Dialect: Send {
     /// The command the program is looked up as, without any suffix the
-    /// platform adds.
-    fn program(&self) -> &'static str;
+    /// platform adds; for one started only from the path its instance names,
+    /// the name it is known by.
+    fn program(&self) -> &str;
 
     /// What a turn's process is started with. A wire that names the session
     /// to resume or the workspace in its frames keeps them from here for the
