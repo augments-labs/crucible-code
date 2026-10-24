@@ -9,12 +9,17 @@
 //!   artifact's own, or the asset's that was built at review in its place.
 //!   Nothing of it is read before.
 //! - Every member's name is held to one set of rules before anything else is
-//!   done with it, whether it is written or not: printable ASCII alone, so it
-//!   holds no control character and no two spellings of it normalise alike;
-//!   relative, with no backslash, colon or character Windows refuses in a
-//!   name; no empty, `.` or `..` component; and no component that ends in a
-//!   dot or a space or names a device Windows reserves. A name is refused
-//!   rather than resolved.
+//!   done with it, whether it is written or not: at most [`NAME_BYTES`] long,
+//!   with at most [`COMPONENTS`] components of at most [`COMPONENT_BYTES`]
+//!   each, which is checked before a byte of it is copied; printable ASCII
+//!   alone, so it holds no control character and no two spellings of it
+//!   normalise alike; relative, with no backslash, colon or character Windows
+//!   refuses in a name; no empty, `.` or `..` component; and no component that
+//!   ends in a dot or a space or names a device Windows reserves, with or
+//!   without an extension and spaces before it. A name is refused rather than
+//!   resolved, but for one leading `./` and a member that is `.` itself, which
+//!   are the directory an archive was made from: the first is dropped, and the
+//!   second is the staging directory.
 //! - A member is written when it is kept: every member when the artifact
 //!   names none, and otherwise only those it names. The rest are read through
 //!   and discarded, whatever kind they are, and nothing of them is written.
@@ -23,7 +28,9 @@
 //!   pipe and every other kind are refused. A file is runnable exactly when
 //!   the archive's mode for it has an execute bit, which a zip member with no
 //!   Unix mode has not, or when it is a program published bare; and no more of
-//!   it is written than its size.
+//!   it is written than its size. On Unix a file is made with that mode and a
+//!   directory owner-only, each as it is created, both less what the umask
+//!   takes away.
 //! - Unpacked against a list, every member written must be listed as it is,
 //!   its kind, size, SHA-256, exec flag or link target, and every member
 //!   listed must be written. A member the list does not name, or names
@@ -38,11 +45,14 @@
 //!   directory, through directories alone and at most [`LINK_STEPS`] links.
 //! - What is read and written is bounded: no more than the artifact's
 //!   `decompressed` is read out of the archive, the members discarded
-//!   included, and no more than its `unpacked` is written. A list's sizes are
-//!   summed with checked arithmetic before the archive is opened. What is
-//!   held of the members in memory is bounded by the same ceilings and by the
-//!   pinned archive: a tar member takes at least a header of what is
-//!   decompressed, and a zip member a record of the archive.
+//!   included, no more than its `unpacked` is written, and no more members
+//!   than [`MEMBERS`] by a survey or than its list holds by an unpack. A
+//!   list's sizes are summed with checked arithmetic before the archive is
+//!   opened. A tar's GNU long name or link target is held to the name's
+//!   ceiling, and its extended header to [`PAX_BYTES`], before either is
+//!   read. What is held of the names written grows only with their own
+//!   bytes: each component of a directory is held once, in a tree, and each
+//!   name written once more for what was staged.
 //! - The intake and the user's machine read an archive with this one reader,
 //!   and the pin fixes its bytes, so what a survey recorded is what an unpack
 //!   reads.
@@ -70,9 +80,25 @@ use crate::catalog::{Artifact, File, FileKind, Files, Format};
 /// The most links a link's target is followed through, itself included.
 const LINK_STEPS: usize = 8;
 
-/// The devices Windows reserves a name for whatever follows it after a dot,
-/// besides `com0` to `com9` and `lpt0` to `lpt9`.
-const DEVICES: [&str; 4] = ["con", "prn", "aux", "nul"];
+/// The most members a survey writes; an unpack writes no more than its list
+/// holds.
+pub(super) const MEMBERS: usize = 65_536;
+
+/// The longest name a member may have, and a link's target, in bytes.
+const NAME_BYTES: usize = 4096;
+
+/// The longest component of a name, in bytes.
+const COMPONENT_BYTES: usize = 255;
+
+/// The most components a name may have.
+const COMPONENTS: usize = 64;
+
+/// The longest extended header a tar member may be described in, in bytes.
+const PAX_BYTES: u64 = 64 * 1024;
+
+/// The devices Windows reserves a name for whatever follows it after a dot or
+/// a space, besides `com0` to `com9` and `lpt0` to `lpt9`.
+const DEVICES: [&str; 6] = ["con", "prn", "aux", "nul", "conin$", "conout$"];
 
 /// The characters Windows refuses in a name, besides the backslash and the
 /// colon refused as a separator and a drive.
@@ -138,6 +164,34 @@ pub enum UnpackError {
     ListedTwice {
         /// The path, cut short.
         name: String,
+    },
+    /// A name, or a component of one, is longer than its ceiling.
+    #[error("the archive holds a name longer than {ceiling} bytes, {name:?}")]
+    Overlong {
+        /// The name, cut short.
+        name: String,
+        /// The most it may hold.
+        ceiling: usize,
+    },
+    /// A name has more components than its ceiling.
+    #[error("the archive holds a name deeper than {ceiling} components, {name:?}")]
+    Deep {
+        /// The name, cut short.
+        name: String,
+        /// The most it may have.
+        ceiling: usize,
+    },
+    /// An extended header describing a member is longer than its ceiling.
+    #[error("the archive describes a member in an extended header of more than {ceiling} bytes")]
+    Extended {
+        /// The most it may hold.
+        ceiling: u64,
+    },
+    /// It would write more members than its ceiling.
+    #[error("the archive holds more than the {ceiling} members it may write")]
+    Members {
+        /// The most it may write.
+        ceiling: usize,
     },
     /// A member's name is not one a file may be unpacked under.
     #[error("the archive holds a member named {name:?}, which {why}")]
@@ -347,18 +401,56 @@ fn shown(name: &[u8]) -> String {
     String::from_utf8_lossy(name).chars().take(NAMED).collect()
 }
 
+/// Refuses `raw` where it is longer than a name may be, before any of it is
+/// copied.
+fn sized(raw: &[u8]) -> Result<(), UnpackError> {
+    // A directory's name may end in one `/` more.
+    if raw.len() > NAME_BYTES + 1 {
+        return Err(UnpackError::Overlong {
+            name: shown(raw),
+            ceiling: NAME_BYTES,
+        });
+    }
+    Ok(())
+}
+
 /// The name a member is unpacked under, from the `raw` name the archive gives
-/// it, held to the rules every name is; a directory's may end in one `/`.
+/// it, held to the rules every name is: a directory's may end in one `/`, and
+/// one leading `./` is the directory the archive was made from, so it is
+/// dropped.
 fn named(raw: &[u8], directory: bool) -> Result<String, UnpackError> {
     let refused = |why| UnpackError::Name {
         name: shown(raw),
         why,
     };
+    sized(raw)?;
     let raw = if directory {
         raw.strip_suffix(b"/").unwrap_or(raw)
     } else {
         raw
     };
+    let raw = raw.strip_prefix(b"./").unwrap_or(raw);
+    if raw.len() > NAME_BYTES {
+        return Err(UnpackError::Overlong {
+            name: shown(raw),
+            ceiling: NAME_BYTES,
+        });
+    }
+    if raw.split(|byte| *byte == b'/').count() > COMPONENTS {
+        return Err(UnpackError::Deep {
+            name: shown(raw),
+            ceiling: COMPONENTS,
+        });
+    }
+    if raw
+        .split(|byte| *byte == b'/')
+        .any(|part| part.len() > COMPONENT_BYTES)
+    {
+        return Err(UnpackError::Overlong {
+            name: shown(raw),
+            ceiling: COMPONENT_BYTES,
+        });
+    }
     if let Some(byte) = raw
         .iter()
         .copied()
@@ -396,9 +488,14 @@ fn named(raw: &[u8], directory: bool) -> Result<String, UnpackError> {
 }
 
 /// Whether Windows takes `part` for a device, in any case and whatever
-/// follows it after a dot.
+/// follows it after a dot, with or without spaces before that.
 fn reserved(part: &str) -> bool {
-    let stem = part.split('.').next().unwrap_or(part).to_ascii_lowercase();
+    let stem = part
+        .split('.')
+        .next()
+        .unwrap_or(part)
+        .trim_end_matches(' ')
+        .to_ascii_lowercase();
     DEVICES.contains(&stem.as_str())
         || ["com", "lpt"].iter().any(|device| {
             stem.strip_prefix(device)
@@ -410,6 +507,12 @@ fn reserved(part: &str) -> bool {
 /// printable ASCII with no backslash, colon or empty component; it may climb
 /// with `..`, and where it resolves is decided once every member is known.
 fn linked(name: &str, raw: &[u8]) -> Result<String, UnpackError> {
+    if raw.len() > NAME_BYTES {
+        return Err(UnpackError::Overlong {
+            name: shown(raw),
+            ceiling: NAME_BYTES,
+        });
+    }
     let relative = !raw.is_empty()
         && raw.iter().all(|byte| matches!(byte, b' '..=b'~'))
         && !raw.starts_with(b"/")
@@ -457,6 +560,102 @@ enum Held {
     Directory,
     /// A file or a link.
     Other,
+}
+
+/// Every name written and every directory a member under it implies, as a
+/// tree of their components: each component is held once as spelled and once
+/// case-folded, so what is held grows with the names' own bytes.
+struct Names {
+    /// Each node, by its parent's and its component case-folded.
+    children: HashMap<(usize, Box<str>), usize>,
+    /// Each node's component as spelled, and how it is held; the staging
+    /// directory itself is the first.
+    nodes: Vec<(Box<str>, Held)>,
+}
+
+impl Names {
+    fn new() -> Self {
+        Self {
+            children: HashMap::new(),
+            nodes: vec![(Box::default(), Held::Directory)],
+        }
+    }
+
+    /// Holds `name` as `held`, with every directory above it, refusing a name
+    /// another differs from only in case, a name taken twice and a directory
+    /// that is also something else.
+    fn claim(&mut self, name: &str, held: Held) -> Result<(), UnpackError> {
+        let mut node = 0;
+        let mut parts = name.split('/').peekable();
+        while let Some(part) = parts.next() {
+            let wanted = if parts.peek().is_some() {
+                Held::Implied
+            } else {
+                held
+            };
+            node = self.hold(node, part, wanted, name)?;
+        }
+        Ok(())
+    }
+
+    /// Holds `part` under `parent` as `held`, for the name `name`, and gives
+    /// its node.
+    fn hold(
+        &mut self,
+        parent: usize,
+        part: &str,
+        held: Held,
+        name: &str,
+    ) -> Result<usize, UnpackError> {
+        let key = (parent, part.to_ascii_lowercase().into_boxed_str());
+        let Some(&node) = self.children.get(&key) else {
+            let node = self.nodes.len();
+            self.nodes.push((part.into(), held));
+            self.children.insert(key, node);
+            return Ok(node);
+        };
+        let shown = || shown(name.as_bytes());
+        let Some((spelled, before)) = self.nodes.get_mut(node) else {
+            return Err(UnpackError::Twice { name: shown() });
+        };
+        if &**spelled != part {
+            return Err(UnpackError::Collision { name: shown() });
+        }
+        match (*before, held) {
+            (Held::Implied | Held::Directory, Held::Implied) => Ok(node),
+            (Held::Implied, Held::Directory) => {
+                *before = Held::Directory;
+                Ok(node)
+            }
+            _ => Err(UnpackError::Twice { name: shown() }),
+        }
+    }
+
+    /// Whether `name`, spelled exactly so, is a directory written or implied
+    /// here; the staging directory itself is the empty name.
+    fn is_directory(&self, name: &str) -> bool {
+        if name.is_empty() {
+            return true;
+        }
+        let mut node = 0;
+        for part in name.split('/') {
+            let key = (node, part.to_ascii_lowercase().into_boxed_str());
+            let Some(&next) = self.children.get(&key) else {
+                return false;
+            };
+            if self
+                .nodes
+                .get(next)
+                .is_none_or(|(spelled, _)| &**spelled != part)
+            {
+                return false;
+            }
+            node = next;
+        }
+        self.nodes
+            .get(node)
+            .is_some_and(|(_, held)| *held != Held::Other)
+    }
 }
 
 /// The ceiling on what is read out of an archive, and how much of it is left.
@@ -519,6 +718,117 @@ impl<R: Read> Read for Bounded<'_, R> {
     }
 }
 
+/// What the entries before a tar member say of it: a GNU long name, a GNU
+/// long link target and an extended header, each held only once its ceiling
+/// allows it.
+#[derive(Default)]
+struct Ahead {
+    name: Option<Vec<u8>>,
+    link: Option<Vec<u8>>,
+    extended: Option<Vec<u8>>,
+}
+
+impl Ahead {
+    /// Whether nothing is waiting for a member to describe.
+    fn is_empty(&self) -> bool {
+        self.name.is_none() && self.link.is_none() && self.extended.is_none()
+    }
+
+    /// Takes `entry`, of `kind`, when it describes the member after it, or
+    /// says something of every member after it, which this reader does not
+    /// take from it; whether it was such an entry.
+    fn took(
+        &mut self,
+        kind: EntryType,
+        entry: &mut tar::Entry<'_, impl Read>,
+        budget: &Budget,
+    ) -> Result<bool, UnpackError> {
+        let (held, ceiling) = match kind {
+            EntryType::GNULongName => (&mut self.name, NAME_BYTES as u64 + 1),
+            EntryType::GNULongLink => (&mut self.link, NAME_BYTES as u64 + 1),
+            EntryType::XHeader => (&mut self.extended, PAX_BYTES),
+            EntryType::XGlobalHeader => return Ok(true),
+            _ => return Ok(false),
+        };
+        if entry.size() > ceiling {
+            return Err(if kind == EntryType::XHeader {
+                UnpackError::Extended { ceiling }
+            } else {
+                UnpackError::Overlong {
+                    name: shown(&entry.header().path_bytes()),
+                    ceiling: NAME_BYTES,
+                }
+            });
+        }
+        if held.is_some() {
+            return Err(UnpackError::Corrupt(io::Error::other(
+                "the archive describes one member twice",
+            )));
+        }
+        let mut data = Vec::new();
+        entry
+            .read_to_end(&mut data)
+            .map_err(|error| budget.failed(error))?;
+        *held = Some(data);
+        Ok(true)
+    }
+
+    /// The raw name and link target of `entry`, as what came before it says
+    /// they are, which it then no longer says.
+    fn named(
+        &mut self,
+        entry: &tar::Entry<'_, impl Read>,
+    ) -> Result<(Vec<u8>, Option<Vec<u8>>), UnpackError> {
+        let mut name = entry.header().path_bytes().into_owned();
+        let mut target = entry
+            .header()
+            .link_name_bytes()
+            .map(std::borrow::Cow::into_owned);
+        if let Some(extended) = self.extended.take() {
+            for record in tar::PaxExtensions::new(&extended) {
+                let record = record.map_err(UnpackError::Corrupt)?;
+                let value = record.value_bytes();
+                match record.key_bytes() {
+                    b"path" => {
+                        sized(value)?;
+                        name = value.to_vec();
+                    }
+                    b"linkpath" => {
+                        sized(value)?;
+                        target = Some(value.to_vec());
+                    }
+                    b"size" if parsed(value) != Some(entry.size()) => {
+                        return Err(UnpackError::Corrupt(io::Error::other(
+                            "an extended header gives a member another size than its header",
+                        )));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if let Some(long) = self.name.take() {
+            name = terminated(long);
+        }
+        if let Some(long) = self.link.take() {
+            target = Some(terminated(long));
+        }
+        Ok((name, target))
+    }
+}
+
+/// `long` without the one NUL a GNU long name may end in.
+fn terminated(mut long: Vec<u8>) -> Vec<u8> {
+    if long.last() == Some(&0) {
+        long.pop();
+    }
+    long
+}
+
+/// The whole number `value` spells in decimal, where it spells one.
+fn parsed(value: &[u8]) -> Option<u64> {
+    std::str::from_utf8(value).ok()?.parse().ok()
+}
+
 /// One artifact being unpacked: the rules it is held to and what it has
 /// written so far.
 struct Walk<'a> {
@@ -528,9 +838,10 @@ struct Walk<'a> {
     list: Option<HashMap<&'a str, &'a FileKind>>,
     /// The members kept, when not all of them are.
     kept: HashSet<&'a str>,
-    /// Every name written and every directory a member under it implies,
-    /// case-folded, with its spelling and how it is held.
-    names: HashMap<String, (String, Held)>,
+    /// Every name written and every directory a member under it implies.
+    names: Names,
+    /// The most members it writes.
+    members: usize,
     /// What was written, in the archive's order.
     files: Vec<File>,
     /// The ordinary files written, by path, with their size and SHA-256.
@@ -547,12 +858,14 @@ impl<'a> Walk<'a> {
         staging: &'a Path,
         list: Option<HashMap<&'a str, &'a FileKind>>,
     ) -> Self {
+        let members = list.as_ref().map_or(MEMBERS, HashMap::len);
         Self {
             artifact,
             staging,
             list,
             kept: artifact.kept.iter().map(|kept| &**kept).collect(),
-            names: HashMap::new(),
+            members,
+            names: Names::new(),
             files: Vec::new(),
             regular: HashMap::new(),
             links: Vec::new(),
@@ -585,6 +898,7 @@ impl<'a> Walk<'a> {
         let mut zip = ZipArchive::new(Cursor::new(bytes))?;
         for index in 0..zip.len() {
             let mut entry = zip.by_index(index)?;
+            sized(entry.name_raw())?;
             let raw = entry.name_raw().to_vec();
             let size = entry.size();
             let mode = entry.unix_mode();
@@ -617,21 +931,34 @@ impl<'a> Walk<'a> {
 
     /// Walks a gzip-compressed tar, decompressed through `budget`, and then
     /// the rest of its one gzip stream, refusing anything after it.
+    ///
+    /// Each header is read as it is written. A GNU long name or long link
+    /// target, and an extended header, is held to its own ceiling before a
+    /// byte of it is read, and then names the member after it as `tar` itself
+    /// takes it: a long name before an extended header's `path`, and that
+    /// before the header's own name. An extended header that gives a member
+    /// another size than its header is refused, since the member would then
+    /// be read as another.
     fn tarred(&mut self, bytes: &[u8], budget: &Budget) -> Result<(), UnpackError> {
         let mut archive = tar::Archive::new(Bounded {
             inner: GzDecoder::new(bytes),
             budget,
         });
-        for entry in archive.entries().map_err(|error| budget.failed(error))? {
+        let mut ahead = Ahead::default();
+        let entries = archive
+            .entries()
+            .map_err(|error| budget.failed(error))?
+            .raw(true);
+        for entry in entries {
             let mut entry = entry.map_err(|error| budget.failed(error))?;
-            let raw = entry.path_bytes().into_owned();
             let kind = entry.header().entry_type();
+            if ahead.took(kind, &mut entry, budget)? {
+                continue;
+            }
+            let (raw, target) = ahead.named(&entry)?;
             let size = entry.size();
             let exec = entry.header().mode().map_err(UnpackError::Corrupt)? & 0o111 != 0;
-            let target = entry
-                .link_name_bytes()
-                .map(std::borrow::Cow::into_owned)
-                .unwrap_or_default();
+            let target = target.unwrap_or_default();
             let body = match kind {
                 EntryType::Regular => Body::File(Incoming {
                     data: &mut entry,
@@ -650,6 +977,11 @@ impl<'a> Walk<'a> {
                 _ => Body::Refused("of a kind no unpacker writes"),
             };
             self.member(&raw, body, budget)?;
+        }
+        if !ahead.is_empty() {
+            return Err(UnpackError::Corrupt(io::Error::other(
+                "the archive describes a member it does not hold",
+            )));
         }
         let mut contents = archive.into_inner();
         io::copy(&mut contents, &mut io::sink()).map_err(|error| budget.failed(error))?;
@@ -693,6 +1025,10 @@ impl<'a> Walk<'a> {
     /// Takes one member the archive names `raw`: refused, discarded or
     /// written.
     fn member(&mut self, raw: &[u8], body: Body<'_>, budget: &Budget) -> Result<(), UnpackError> {
+        // The directory the archive was made from is the staging directory.
+        if matches!(body, Body::Dir) && matches!(raw, b"." | b"./") {
+            return Ok(());
+        }
         let name = named(raw, matches!(body, Body::Dir))?;
         if !self.kept.is_empty() && !self.kept.contains(name.as_str()) {
             return Ok(());
@@ -711,6 +1047,11 @@ impl<'a> Walk<'a> {
             ),
             None => None,
         };
+        if self.files.len() >= self.members {
+            return Err(UnpackError::Members {
+                ceiling: self.members,
+            });
+        }
         let differs = |what| UnpackError::Differs {
             name: shown(raw),
             what,
@@ -735,7 +1076,7 @@ impl<'a> Walk<'a> {
                         return Err(differs("an exec flag"));
                     }
                 }
-                self.claim(&name, Held::Other)?;
+                self.names.claim(&name, Held::Other)?;
                 let written = self.write(&name, incoming, &|error| budget.failed(error))?;
                 self.wrote(name, written, listed)
             }
@@ -743,7 +1084,7 @@ impl<'a> Walk<'a> {
                 if listed.is_some_and(|listed| *listed != FileKind::Dir) {
                     return Err(differs("a kind"));
                 }
-                self.claim(&name, Held::Directory)?;
+                self.names.claim(&name, Held::Directory)?;
                 self.directory(&name)?;
                 self.files.push(File {
                     path: name.into(),
@@ -758,7 +1099,7 @@ impl<'a> Walk<'a> {
                 }) {
                     return Err(differs("a kind or a target"));
                 }
-                self.claim(&name, Held::Other)?;
+                self.names.claim(&name, Held::Other)?;
                 self.files.push(File {
                     path: name.as_str().into(),
                     kind: FileKind::Link {
@@ -782,7 +1123,7 @@ impl<'a> Walk<'a> {
                 {
                     return Err(differs("a kind, a size or an exec flag"));
                 }
-                self.claim(&name, Held::Other)?;
+                self.names.claim(&name, Held::Other)?;
                 let from = self.path(&target);
                 let unread = |source| UnpackError::Write {
                     path: from.clone(),
@@ -829,50 +1170,6 @@ impl<'a> Walk<'a> {
         Ok(())
     }
 
-    /// Holds `name` as `held`, with every directory above it, refusing a name
-    /// another differs from only in case, a name taken twice and a directory
-    /// that is also something else.
-    fn claim(&mut self, name: &str, held: Held) -> Result<(), UnpackError> {
-        let above = name.match_indices('/').map(|(at, _)| name.get(..at));
-        for directory in above.flatten() {
-            self.hold(directory, Held::Implied)?;
-        }
-        self.hold(name, held)
-    }
-
-    fn hold(&mut self, name: &str, held: Held) -> Result<(), UnpackError> {
-        let folded = name.to_ascii_lowercase();
-        let Some((spelled, before)) = self.names.get_mut(&folded) else {
-            self.names.insert(folded, (name.to_owned(), held));
-            return Ok(());
-        };
-        if spelled.as_str() != name {
-            return Err(UnpackError::Collision {
-                name: shown(name.as_bytes()),
-            });
-        }
-        match (*before, held) {
-            (Held::Implied | Held::Directory, Held::Implied) => Ok(()),
-            (Held::Implied, Held::Directory) => {
-                *before = Held::Directory;
-                Ok(())
-            }
-            _ => Err(UnpackError::Twice {
-                name: shown(name.as_bytes()),
-            }),
-        }
-    }
-
-    /// Whether `name` is a directory written or implied here; the staging
-    /// directory itself is the empty name.
-    fn is_directory(&self, name: &str) -> bool {
-        name.is_empty()
-            || self
-                .names
-                .get(&name.to_ascii_lowercase())
-                .is_some_and(|(spelled, held)| spelled == name && *held != Held::Other)
-    }
-
     /// Where `name` is under the staging directory.
     fn path(&self, name: &str) -> PathBuf {
         name.split('/')
@@ -895,7 +1192,7 @@ impl<'a> Walk<'a> {
                     });
                 }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    fs::create_dir(&path).map_err(|source| UnpackError::Write {
+                    owner_only(&path).map_err(|source| UnpackError::Write {
                         path: path.clone(),
                         source,
                     })?;
@@ -1016,7 +1313,7 @@ impl<'a> Walk<'a> {
                     }
                     part => at.push(part),
                 }
-                if index + 1 < parts.len() && !self.is_directory(&at.join("/")) {
+                if index + 1 < parts.len() && !self.names.is_directory(&at.join("/")) {
                     return Err(refused(
                         "passes through what is not a directory written here",
                     ));
@@ -1053,21 +1350,26 @@ impl<'a> Walk<'a> {
     }
 }
 
-/// A new file at `path`, which on Unix anyone may run when `exec` says and
-/// otherwise only read.
+/// A new file at `path`, made on Unix with the mode it keeps, which anyone may
+/// run when `exec` says and otherwise only read, less what the process's
+/// umask takes away.
 fn created(path: &Path, exec: bool) -> io::Result<fs::File> {
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
-    let file = options.open(path)?;
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        let mode = if exec { 0o755 } else { 0o644 };
-        file.set_permissions(fs::Permissions::from_mode(mode))?;
-    }
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, if exec { 0o755 } else { 0o644 });
     #[cfg(not(unix))]
     let _ = exec;
-    Ok(file)
+    options.open(path)
+}
+
+/// A new directory at `path` only its owner may reach; whatever is made of the
+/// staged tree once it is committed widens that.
+fn owner_only(path: &Path) -> io::Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(path)
 }
 
 /// A symbolic link at `path` to `target`, which resolves to a file.

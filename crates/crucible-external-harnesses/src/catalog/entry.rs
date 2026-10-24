@@ -19,7 +19,7 @@
 //!   lists is left to whoever downloads it to check;
 //! - every digest is a SHA-256 in lowercase hexadecimal, and every artifact a
 //!   catalog carries lists the files it unpacks to, where one read alone for
-//!   the intake to survey may not yet;
+//!   the intake to survey lists none;
 //! - no variable it sets is one a loader reads to choose what code runs.
 //!
 //! Nothing more is checked here. Control characters, names a platform
@@ -549,10 +549,10 @@ impl Artifact {
     /// from `text` with no signature to believe it by.
     ///
     /// This is what the intake describes an artifact as before a file list is
-    /// recorded for it, so an absent `files` is read as an empty list: a
-    /// survey reads none, and an unpack, which writes only what is listed,
-    /// refuses every member of an archive against it. The caller bounds
-    /// `text` before it is read here.
+    /// recorded for it, so it holds no `files`, which only a signed catalog
+    /// lists, and its list is empty: a survey reads none, and an unpack, which
+    /// writes only what is listed, refuses every member of an archive against
+    /// it. The caller bounds `text` before it is read here.
     ///
     /// # Errors
     ///
@@ -567,8 +567,8 @@ impl Artifact {
         Self::parse(fields, true)
     }
 
-    /// The artifact `fields` holds, whose `files` may be absent only where it
-    /// is not `listed`.
+    /// The artifact `fields` holds, which gives its `files` where it is
+    /// `listed` and only then.
     fn parse(fields: &Fields<'_>, listed: bool) -> Result<Self, CatalogError> {
         let format = match &*fields.text("format")? {
             "zip" => Format::Zip,
@@ -579,6 +579,11 @@ impl Artifact {
         };
         let files = match fields.field("files") {
             None if !listed => Files::Listed(Vec::new()),
+            Some(_) if !listed => {
+                return Err(
+                    fields.wrong("files", "is a file list, which only a signed catalog gives")
+                );
+            }
             None => return Err(fields.wrong("files", "is missing, so nothing would be pinned")),
             Some(Value::Object(_)) => {
                 Files::Asset(fields.object("files")?.asset(Some(ASSET_BYTES))?)

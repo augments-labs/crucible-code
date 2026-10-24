@@ -291,10 +291,25 @@ fn gzipped(bytes: &[u8]) -> Vec<u8> {
     encoder.finish().expect("a gzip stream")
 }
 
-/// A gzip-compressed tar of `members`, in that order.
+/// `bytes` as one gzip stream of stored blocks, which is quick to write and
+/// to read back however much it holds.
 // A test that cannot build its archive has nothing to report.
 #[allow(clippy::expect_used)]
+fn stored(bytes: &[u8]) -> Vec<u8> {
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::none());
+    encoder.write_all(bytes).expect("its bytes");
+    encoder.finish().expect("a gzip stream")
+}
+
+/// A gzip-compressed tar of `members`, in that order.
 fn tar_gz(members: &[Tarred<'_>]) -> Vec<u8> {
+    gzipped(&tarred(members))
+}
+
+/// A tar of `members`, in that order, not compressed.
+// A test that cannot build its archive has nothing to report.
+#[allow(clippy::expect_used)]
+fn tarred(members: &[Tarred<'_>]) -> Vec<u8> {
     // A member's name, kind, bytes, mode and link target.
     type Described<'a> = (&'a str, EntryType, &'a [u8], u32, Option<&'a str>);
     let mut builder = tar::Builder::new(Vec::new());
@@ -318,7 +333,7 @@ fn tar_gz(members: &[Tarred<'_>]) -> Vec<u8> {
         header.set_cksum();
         builder.append(&header, bytes).expect("a member");
     }
-    gzipped(&builder.into_inner().expect("a tar"))
+    builder.into_inner().expect("a tar")
 }
 
 /// One member of a zip a test writes.
@@ -429,11 +444,15 @@ fn staging(owned: &Owned, name: &str) -> PathBuf {
 }
 
 /// Everything under `root`, sorted: a directory ends `/`, a link is followed
-/// by ` -> ` and its target, and nothing is followed through a link.
+/// by ` -> ` and its target, and nothing is followed through a link. Walked
+/// without recursion, so a tree as deep as a hostile name makes it is walked
+/// whole.
 fn tree(root: &Path) -> Vec<String> {
-    fn walk(at: &Path, prefix: &str, found: &mut Vec<String>) {
-        let Ok(entries) = fs::read_dir(at) else {
-            return;
+    let mut found = Vec::new();
+    let mut pending = vec![(root.to_path_buf(), String::new())];
+    while let Some((at, prefix)) = pending.pop() {
+        let Ok(entries) = fs::read_dir(&at) else {
+            continue;
         };
         for entry in entries.filter_map(Result::ok) {
             let name = format!("{prefix}{}", entry.file_name().to_string_lossy());
@@ -447,15 +466,13 @@ fn tree(root: &Path) -> Vec<String> {
                 }
                 Ok(metadata) if metadata.is_dir() => {
                     found.push(format!("{name}/"));
-                    walk(&path, &format!("{name}/"), found);
+                    pending.push((path, format!("{name}/")));
                 }
                 Ok(_) => found.push(name),
                 Err(_) => {}
             }
         }
     }
-    let mut found = Vec::new();
-    walk(root, "", &mut found);
     found.sort();
     found
 }
@@ -816,9 +833,12 @@ fn a_name_that_climbs_out_or_is_not_relative_is_refused() {
         "C:agent",
         "c:/agent",
         "lib\\agent",
-        "./agent",
         "lib//agent",
         "lib/./agent",
+        "././agent",
+        "./../agent",
+        "/./agent",
+        ".",
         "",
     ] {
         let files = vec![listed(name, EXECUTABLE, true)];
@@ -863,6 +883,16 @@ fn a_name_one_platform_would_take_otherwise_is_refused() {
         "COM9.dll",
         "lpt1",
         "lib/LPT9",
+        "con .txt",
+        "CON .txt",
+        "com1 .x",
+        "aux .tar.gz",
+        "lpt1 .x",
+        "lib/prn .so",
+        "nul .d/f",
+        "conin$",
+        "CONOUT$",
+        "conin$.txt",
         "agent.",
         "agent ",
         "lib./agent",
@@ -893,9 +923,13 @@ fn a_name_one_platform_would_take_otherwise_is_refused() {
     }
     let near = [
         "console",
+        "con x.txt",
+        "comx",
         "com10",
         "lpt",
         "auxiliary.so",
+        "a.con",
+        "conin",
         "agent.d/run",
         "a b",
         "v1.0.0",
@@ -1510,14 +1544,56 @@ fn a_survey_records_the_list_an_unpack_then_accepts() {
     );
 }
 
+/// `artifact`, as the catalog spells it, read back through a catalog signed
+/// for the test and believed, as an install reads one.
+#[cfg(feature = "proof")]
+// A test whose catalog is not believed has nothing to report.
+#[allow(clippy::expect_used)]
+fn signed_back(artifact: &serde_json::Value) -> Artifact {
+    use std::time::SystemTime;
+
+    use crate::catalog::{Catalog, Held, fixture};
+
+    let catalog = serde_json::json!({
+        "schema": 1,
+        "serial": 1,
+        "entries": [{
+            "key": "agent",
+            "registry_id": "agent",
+            "version": "1.0.0",
+            "kind": "binary",
+            "license": "MIT",
+            "review": "https://example.invalid/review/1",
+            "admits": {"name": "agent", "version": "1.0.0"},
+            "targets": [{
+                "platform": "linux-x86_64",
+                "cmd": "agent",
+                "artifacts": [artifact],
+            }],
+        }],
+    });
+    let signed = fixture::signed(catalog.to_string().as_bytes());
+    let believed = Catalog::verify(
+        &signed.index,
+        &signed.signature,
+        &signed.keys,
+        Held(0),
+        SystemTime::now(),
+    )
+    .expect("a believed catalog");
+    believed
+        .entries()
+        .first()
+        .and_then(|entry| entry.targets.first())
+        .and_then(|target| target.artifacts.first())
+        .cloned()
+        .expect("its artifact")
+}
+
 #[test]
-fn a_surveyed_list_reads_back_as_the_catalog_spells_it() {
-    let owned = Owned::new("catalog-spelled");
-    let archive = tar_gz(&[
-        Tarred::File("agent", EXECUTABLE, 0o755),
-        Tarred::Dir("lib/"),
-        Tarred::Symlink("lib/agent", "../agent"),
-    ]);
+fn an_unsigned_artifact_carries_no_file_list() {
+    let owned = Owned::new("catalog-unsigned");
+    let archive = tar_gz(&[Tarred::File("agent", EXECUTABLE, 0o755)]);
     let described = pinned_as(&archive, Format::TarGz, Vec::new());
     let mut spelled = serde_json::json!({
         "url": &*described.url,
@@ -1536,6 +1612,37 @@ fn a_surveyed_list_reads_back_as_the_catalog_spells_it() {
         "an artifact with no list is surveyed, never unpacked: {refused:?}"
     );
 
+    let listed = File::json(&listed("agent", EXECUTABLE, true));
+    if let Some(object) = spelled.as_object_mut() {
+        object.insert("files".to_owned(), serde_json::json!([listed]));
+    }
+    let refused = Artifact::unsigned(spelled.to_string().as_bytes());
+    assert!(
+        matches!(&refused, Err(crate::catalog::CatalogError::Field { field, .. }) if &**field == "files"),
+        "only a signed catalog lists an artifact's files: {refused:?}"
+    );
+}
+
+#[cfg(feature = "proof")]
+#[test]
+fn a_surveyed_list_reads_back_through_a_signed_catalog_as_one_an_unpack_accepts() {
+    let owned = Owned::new("catalog-spelled");
+    let archive = tar_gz(&[
+        Tarred::File("agent", EXECUTABLE, 0o755),
+        Tarred::Dir("lib/"),
+        Tarred::Symlink("lib/agent", "../agent"),
+    ]);
+    let described = pinned_as(&archive, Format::TarGz, Vec::new());
+    let mut spelled = serde_json::json!({
+        "url": &*described.url,
+        "sha256": &*described.sha256,
+        "size": described.size,
+        "format": "tar.gz",
+        "unpacked": 1 << 20,
+        "decompressed": 1 << 20
+    });
+    let unlisted = Artifact::unsigned(spelled.to_string().as_bytes()).expect("an artifact");
+
     let surveyed =
         Unpacker::survey(&archive, &unlisted, &staging(&owned, "surveyed")).expect("surveyed");
     let json = surveyed.json();
@@ -1547,12 +1654,22 @@ fn a_surveyed_list_reads_back_as_the_catalog_spells_it() {
         json.get("decompressed").and_then(serde_json::Value::as_u64),
         Some(surveyed.decompressed())
     );
-    let files = json.get("files").cloned().unwrap_or_default();
     if let Some(object) = spelled.as_object_mut() {
-        object.insert("files".to_owned(), files);
+        for field in ["unpacked", "decompressed", "files"] {
+            object.insert(
+                field.to_owned(),
+                json.get(field).cloned().unwrap_or_default(),
+            );
+        }
     }
-    let read = Artifact::unsigned(spelled.to_string().as_bytes()).expect("an artifact");
+
+    let read = signed_back(&spelled);
+
     assert_eq!(read.files, Files::Listed(surveyed.files().to_vec()));
+    let at = staging(&owned, "unpacked");
+    let unpacked = Unpacker::unpack(&archive, &read, &at).expect("unpacked");
+    assert_eq!(unpacked.files(), surveyed.files());
+    assert_eq!(tree(&at), tree(&owned.0.join("surveyed")));
 }
 
 #[test]
@@ -1608,4 +1725,334 @@ fn the_release_a_test_publishes_for_the_intake_surveys_to_its_list() {
     );
     // Five headers, three blocks of data and the two blocks that end a tar.
     assert_eq!(surveyed.decompressed(), 10 * 512);
+}
+
+#[test]
+fn a_tree_archived_from_its_own_directory_unpacks_as_its_relative_names() {
+    let owned = Owned::new("catalog-dot");
+    let files = vec![
+        listed("agent", EXECUTABLE, true),
+        listed_dir("lib"),
+        listed("lib/harness", COMPANION, true),
+        listed_link("lib/current", "harness"),
+    ];
+    for root in ["./", "."] {
+        let archive = tar_gz(&[
+            Tarred::Dir(root),
+            Tarred::File("./agent", EXECUTABLE, 0o755),
+            Tarred::Dir("./lib/"),
+            Tarred::File("./lib/harness", COMPANION, 0o755),
+            Tarred::Symlink("./lib/current", "harness"),
+        ]);
+        let artifact = pinned_as(&archive, Format::TarGz, files.clone());
+        let at = staging(&owned, "listed");
+        let staged = Unpacker::unpack(&archive, &artifact, &at).expect("unpacked");
+        assert_eq!(staged.files(), files.as_slice(), "{root:?}");
+        assert_eq!(
+            tree(&at),
+            ["agent", "lib/", "lib/current -> harness", "lib/harness"]
+        );
+        let _ = fs::remove_dir_all(at);
+        let at = staging(&owned, "surveyed");
+        let surveyed = Unpacker::survey(&archive, &artifact, &at).expect("surveyed");
+        assert_eq!(surveyed.files(), files.as_slice(), "{root:?}");
+        let _ = fs::remove_dir_all(at);
+    }
+
+    let zipped = zip_of(&[
+        Zipped::Dir("./"),
+        Zipped::File("./agent", EXECUTABLE, 0o755),
+    ]);
+    let artifact = pinned_as(
+        &zipped,
+        Format::Zip,
+        vec![listed("agent", EXECUTABLE, true)],
+    );
+    let staged = Unpacker::unpack(&zipped, &artifact, &staging(&owned, "zipped"));
+    assert_eq!(
+        staged.ok().map(|staged| staged.files().to_vec()),
+        Some(vec![listed("agent", EXECUTABLE, true)])
+    );
+
+    let twice = tar_gz(&[
+        Tarred::File("./agent", EXECUTABLE, 0o755),
+        Tarred::File("agent", EXECUTABLE, 0o755),
+    ]);
+    let artifact = Artifact {
+        unpacked: 1 << 20,
+        ..pinned_as(&twice, Format::TarGz, Vec::new())
+    };
+    let refused = Unpacker::survey(&twice, &artifact, &staging(&owned, "twice"));
+    assert!(
+        matches!(refused, Err(UnpackError::Twice { .. })),
+        "`./agent` is `agent`: {refused:?}"
+    );
+}
+
+/// A tar of one member named `name`, as `tar` writes a name too long for its
+/// header: in a GNU long name before it.
+// A test that cannot build its archive has nothing to report.
+#[allow(clippy::expect_used)]
+fn long_named(name: &str) -> Vec<u8> {
+    let mut builder = tar::Builder::new(Vec::new());
+    let mut header = Header::new_gnu();
+    header.set_entry_type(EntryType::Regular);
+    header.set_size(1);
+    header.set_mode(0o644);
+    header.set_mtime(0);
+    builder
+        .append_data(&mut header, name, &b"x"[..])
+        .expect("a member");
+    gzipped(&builder.into_inner().expect("a tar"))
+}
+
+/// A tar of one member whose name is given as `path` in an extended header
+/// before it.
+// A test that cannot build its archive has nothing to report.
+#[allow(clippy::expect_used)]
+fn pax_named(path: &str) -> Vec<u8> {
+    let mut builder = tar::Builder::new(Vec::new());
+    builder
+        .append_pax_extensions([("path", path.as_bytes())])
+        .expect("an extended header");
+    let mut header = Header::new_ustar();
+    put(&mut header.as_old_mut().name, b"short");
+    header.set_entry_type(EntryType::Regular);
+    header.set_size(1);
+    header.set_mode(0o644);
+    header.set_mtime(0);
+    header.set_cksum();
+    builder.append(&header, &b"x"[..]).expect("a member");
+    gzipped(&builder.into_inner().expect("a tar"))
+}
+
+#[test]
+fn a_name_past_its_ceilings_is_refused_before_it_is_held() {
+    let owned = Owned::new("catalog-ceilings");
+    let slashed = |components: usize| "a/".repeat(components - 1) + "f";
+    let mut parts = vec!["c".repeat(255); 15];
+    parts.extend(["d".repeat(254), "e".to_owned()]);
+    let whole = parts.join("/");
+    assert_eq!(whole.len(), 4096);
+    let cases: [(String, &str); 5] = [
+        (slashed(32_000), "long"),
+        ("c".repeat(256), "long"),
+        (format!("{whole}e"), "long"),
+        (slashed(65), "deep"),
+        (format!("lib/{}", "c".repeat(300)), "long"),
+    ];
+    for (name, why) in &cases {
+        let files = vec![listed(name, b"x", false)];
+        let archives = [
+            (long_named(name), Format::TarGz),
+            (pax_named(name), Format::TarGz),
+            (zip_of(&[Zipped::File(name, b"x", 0o644)]), Format::Zip),
+        ];
+        for (archive, format) in archives {
+            let artifact = pinned_as(&archive, format, files.clone());
+            for refused in refused_both_ways(&owned, &archive, &artifact) {
+                let refused_as = match why {
+                    &"deep" => matches!(refused, Err(UnpackError::Deep { .. })),
+                    _ => matches!(
+                        refused,
+                        Err(UnpackError::Overlong { .. } | UnpackError::Extended { .. })
+                    ),
+                };
+                assert!(refused_as, "{why} {} bytes: {refused:?}", name.len());
+            }
+        }
+    }
+
+    for name in [slashed(64), "c".repeat(255), whole.clone()] {
+        let archive = long_named(&name);
+        let artifact = pinned_as(&archive, Format::TarGz, vec![listed(&name, b"x", false)]);
+        let at = staging(&owned, "near");
+        let staged = Unpacker::unpack(&archive, &artifact, &at);
+        let _ = fs::remove_dir_all(at);
+        // A file system with a shorter limit than these refuses the write,
+        // not the name.
+        assert!(
+            !matches!(
+                staged,
+                Err(UnpackError::Overlong { .. } | UnpackError::Deep { .. })
+            ),
+            "{} bytes is a name a file may have: {staged:?}",
+            name.len()
+        );
+    }
+}
+
+#[test]
+fn a_link_target_past_its_ceiling_is_refused() {
+    let owned = Owned::new("catalog-link-ceiling");
+    let target = "../".repeat(1400) + "agent";
+    let mut builder = tar::Builder::new(Vec::new());
+    let mut header = Header::new_gnu();
+    header.set_entry_type(EntryType::Symlink);
+    header.set_size(0);
+    header.set_mode(0o777);
+    header.set_mtime(0);
+    let linked = builder.append_link(&mut header, "run", &target);
+    assert!(linked.is_ok(), "{linked:?}");
+    let archive = gzipped(&builder.into_inner().unwrap_or_default());
+    let artifact = pinned_as(&archive, Format::TarGz, vec![listed_link("run", &target)]);
+    for refused in refused_both_ways(&owned, &archive, &artifact) {
+        assert!(
+            matches!(refused, Err(UnpackError::Overlong { .. })),
+            "{refused:?}"
+        );
+    }
+}
+
+#[test]
+fn a_survey_writes_no_more_members_than_its_ceiling() {
+    let owned = Owned::new("catalog-members");
+    let names: Vec<String> = (0..=super::unpack::MEMBERS)
+        .map(|at| format!("d{at}/"))
+        .collect();
+    let members: Vec<Tarred<'_>> = names.iter().map(|name| Tarred::Dir(name)).collect();
+    let over = stored(&tarred(&members));
+    let artifact = pinned_as(&over, Format::TarGz, Vec::new());
+    let refused = Unpacker::survey(&over, &artifact, &staging(&owned, "over"));
+    assert!(
+        matches!(refused, Err(UnpackError::Members { .. })),
+        "{} members: {:?}",
+        members.len(),
+        refused.map(|staged| staged.files().len())
+    );
+
+    let at = members.len() - 1;
+    let within = stored(&tarred(members.get(..at).unwrap_or_default()));
+    let artifact = pinned_as(&within, Format::TarGz, Vec::new());
+    let surveyed = Unpacker::survey(&within, &artifact, &staging(&owned, "within"));
+    assert_eq!(surveyed.map(|staged| staged.files().len()).ok(), Some(at));
+}
+
+#[test]
+fn a_discarded_member_that_reads_past_the_ceiling_is_refused_as_it_streams() {
+    let owned = Owned::new("catalog-streamed");
+    let large = vec![0_u8; 256 * 1024];
+    let archive = tar_gz(&[
+        Tarred::File("agent", EXECUTABLE, 0o755),
+        Tarred::File("discarded", &large, 0o644),
+    ]);
+    let artifact = keeping(
+        Artifact {
+            decompressed: 64 * 1024,
+            ..pinned_as(
+                &archive,
+                Format::TarGz,
+                vec![listed("agent", EXECUTABLE, true)],
+            )
+        },
+        &["agent"],
+    );
+    for (refused, left) in both_ways(&owned, &archive, &artifact) {
+        assert!(
+            matches!(refused, Err(UnpackError::Decompressed { .. })),
+            "{refused:?}"
+        );
+        assert_eq!(left, ["agent"], "only what was kept was written");
+    }
+}
+
+/// `zip` with its one member's Unix mode, as its central directory gives it,
+/// changed from `from` to `to`.
+fn moded(mut zip: Vec<u8>, from: u32, to: u32) -> Vec<u8> {
+    let central = zip
+        .windows(4)
+        .rposition(|window| window == b"PK\x01\x02")
+        .unwrap_or_default();
+    let at = central + 38..central + 42;
+    if let Some(attributes) = zip.get_mut(at) {
+        assert_eq!(attributes, &(from << 16).to_le_bytes(), "the mode written");
+        attributes.copy_from_slice(&(to << 16).to_le_bytes());
+    }
+    zip
+}
+
+#[test]
+fn a_zip_member_moded_as_a_device_is_refused() {
+    let owned = Owned::new("catalog-zip-device");
+    for mode in [0o020_644, 0o060_644, 0o010_644, 0o140_644] {
+        let archive = moded(
+            zip_of(&[Zipped::File("agent", EXECUTABLE, 0o644)]),
+            0o100_644,
+            mode,
+        );
+        let artifact = pinned_as(
+            &archive,
+            Format::Zip,
+            vec![listed("agent", EXECUTABLE, false)],
+        );
+        for refused in refused_both_ways(&owned, &archive, &artifact) {
+            assert!(
+                matches!(refused, Err(UnpackError::Kind { .. })),
+                "{mode:o}: {refused:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_link_that_passes_through_a_link_is_refused() {
+    let owned = Owned::new("catalog-through");
+    let archive = tar_gz(&[
+        Tarred::Dir("lib/"),
+        Tarred::File("lib/agent", EXECUTABLE, 0o755),
+        Tarred::Symlink("run", "dir-link/agent"),
+        Tarred::Symlink("dir-link", "lib"),
+    ]);
+    let artifact = pinned_as(
+        &archive,
+        Format::TarGz,
+        vec![
+            listed_dir("lib"),
+            listed("lib/agent", EXECUTABLE, true),
+            listed_link("run", "dir-link/agent"),
+            listed_link("dir-link", "lib"),
+        ],
+    );
+    let refused = Unpacker::unpack(&archive, &artifact, &staging(&owned, "staging"));
+    assert!(
+        matches!(&refused, Err(UnpackError::Link { name, why })
+            if name == "run" && why.contains("passes through")),
+        "{refused:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn what_is_staged_is_made_owner_only_and_each_file_with_its_mode() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let owned = Owned::new("catalog-modes");
+    let archive = tar_gz(&[
+        Tarred::Dir("lib/"),
+        Tarred::File("lib/agent", EXECUTABLE, 0o6777),
+        Tarred::File("bin/run", EXECUTABLE, 0o700),
+        Tarred::File("LICENSE", b"MIT", 0o666),
+    ]);
+    let artifact = Artifact {
+        unpacked: 1 << 20,
+        ..pinned_as(&archive, Format::TarGz, Vec::new())
+    };
+    let at = staging(&owned, "staging");
+    let staged = Unpacker::survey(&archive, &artifact, &at);
+    assert!(staged.is_ok(), "{staged:?}");
+    let mode = |name: &str| {
+        fs::symlink_metadata(at.join(name))
+            .map_or(0, |metadata| metadata.permissions().mode() & 0o7777)
+    };
+    assert_eq!(mode("lib"), 0o700, "a directory the archive gives");
+    assert_eq!(mode("bin"), 0o700, "a directory a member implies");
+    for (file, exec) in [("lib/agent", true), ("bin/run", true), ("LICENSE", false)] {
+        let mode = mode(file);
+        assert_eq!(
+            mode & 0o7022,
+            0,
+            "{file}: {mode:o} sets no id, sticky or write bit for others"
+        );
+        assert_eq!(mode & 0o100 != 0, exec, "{file}: {mode:o}");
+    }
 }
