@@ -719,6 +719,69 @@ pub fn installing(
     connecting(&installed, file, provider, instance)
 }
 
+/// The text of a configuration file where each installed agent `moved` names
+/// is started as the last program beside it, where its block's `executable`
+/// still names the first, the one it was shown naming: written over, and every
+/// other byte where it was. Handed back beside the text are the instances
+/// whose `executable` names something else by now, which are left as they
+/// are; one that already names the new program is not among them.
+///
+/// Only the user file names installed agents, so `text` is that file's. Every
+/// instance is written in the one text handed back, or none is, and the text
+/// is read back before it is returned.
+///
+/// # Errors
+///
+/// Refuses malformed or invalid configuration, either as it is or as it would
+/// be, and [`ConfigError::Unspliceable`] where `externalAgents.<instance>` is
+/// not an object the file holds with an `executable` in it.
+pub fn pointing(
+    text: &str,
+    file: &str,
+    moved: &[(&str, &str, &str)],
+) -> Result<(String, Vec<String>), ConfigError> {
+    let mut left: Vec<String> = Vec::new();
+    let mut written = text.to_owned();
+    for (instance, shown, executable) in moved {
+        let answer = Value::from(*executable).to_string();
+        let refused = || ConfigError::Unspliceable {
+            file: file.into(),
+            at: format!("externalAgents.{instance}.executable").into(),
+            written: answer.clone().into(),
+        };
+        let checked = if written.trim().is_empty() {
+            "{}"
+        } else {
+            &written
+        };
+        let document =
+            crate::document::Document::parse(checked, file, crate::document::Origin::User)?;
+        let Some(was) = document
+            .value()
+            .get("externalAgents")
+            .and_then(|agents| agents.get(*instance))
+            .and_then(|block| block.get("executable"))
+        else {
+            return Err(refused());
+        };
+        if was.as_str() == Some(*executable) {
+            continue;
+        }
+        // Changed since it was shown: the person's own edit stands.
+        if was.as_str() != Some(*shown) {
+            left.push((*instance).to_owned());
+            continue;
+        }
+        let root = splice::root(&written).ok_or_else(refused)?;
+        let agents = splice::member(&written, root, "externalAgents").ok_or_else(refused)?;
+        let block = splice::member(&written, agents, instance).ok_or_else(refused)?;
+        let at = splice::member(&written, block, "executable").ok_or_else(refused)?;
+        written = splice::over(&written, at, &answer);
+    }
+    crate::document::Document::parse(&written, file, crate::document::Origin::User)?;
+    Ok((written, left))
+}
+
 /// The text of a configuration file without the installed agent `instance`.
 ///
 /// Only `externalAgents.<instance>` goes, with the comma that separated it

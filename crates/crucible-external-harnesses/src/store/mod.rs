@@ -14,7 +14,8 @@
 //! `.receipt` and `.receipt.writing`.
 //!
 //! A version is made in a staging directory under `.staging/`, which the
-//! unpackers write into. Its receipt is written into that directory too, as
+//! unpackers write into, each artifact downloaded first into a file beside
+//! it that goes with it. Its receipt is written into that directory too, as
 //! `.receipt`, and the directory is then committed by one rename into place,
 //! so a version is in place with its receipt or not in place at all. A
 //! version already there is replaced only when no process holds it: it is
@@ -74,6 +75,11 @@
 //! directory name, and two that a file system takes for one are not told
 //! apart here.
 //!
+//! Removing an agent takes every version it has, each renamed into
+//! `.staging/` first as a prune does, and is refused before anything is
+//! removed while an instance's `executable` lies in the agent's directory or
+//! any process holds one of its versions.
+//!
 //! An install made before the store kept receipts, as 0.48 left Antigravity in
 //! `programs/antigravity/1.3.0/`, is adopted by hashing its files against the
 //! file list the catalog gives for it, and given a receipt when they match.
@@ -87,8 +93,9 @@
 //! What the store keeps is bounded by [`PROGRAMS_BYTES`]: an artifact whose
 //! download, or what it decompresses or unpacks to, is larger than that, or a
 //! release whose artifacts together unpack to more, is refused before it is
-//! downloaded, and a release that would take what the store holds past it is
-//! refused then and again before it is committed. What the store holds is what
+//! downloaded, and a release that would take what the store holds past it,
+//! with its largest download beside it while it is unpacked, is refused then
+//! and again before it is committed. What the store holds is what
 //! the receipts account for, and for a version with none, or none that can be
 //! read, what its files hold; a store with more agents or versions than it
 //! reads, or a version with more entries, is refused rather than counted
@@ -137,6 +144,10 @@ const LOCK_POLL: Duration = Duration::from_millis(10);
 /// on, and the suffix of the file beside each staging directory whose lock
 /// says it is live.
 const LOCK: &str = ".lock";
+
+/// The suffix of the file beside each staging directory that an artifact is
+/// downloaded into, live while the staging is.
+const DOWNLOAD: &str = ".download";
 
 /// The directory in an agent's directory where versions are made and removed.
 const STAGING: &str = ".staging";
@@ -475,6 +486,13 @@ pub enum StoreError {
         /// The executable.
         path: PathBuf,
     },
+    /// An instance's `executable` lies in the agent's directory, so the agent
+    /// is not removed from under it.
+    #[error("{} is an instance's executable, so the agent is not removed", .path.display())]
+    Named {
+        /// The executable.
+        path: PathBuf,
+    },
     /// The file system refused.
     #[error("the install store could not be changed at {}", .path.display())]
     Io {
@@ -562,6 +580,41 @@ impl Staging {
     pub fn replacing_unreadable(&mut self) {
         self.unreadable = true;
     }
+
+    /// A file of this staging's own beside its directory, only its owner may
+    /// read, that an artifact is downloaded into before it is unpacked: made
+    /// empty, in place of the one an earlier artifact of the release was
+    /// downloaded into. It is live while the staging is, and removed with it.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Io`] where it could not be made.
+    pub fn download(&self) -> Result<Handle, StoreError> {
+        let path = self.download_path();
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(source) => return Err(at(&path, source)),
+        }
+        crucible_privacy::create_write(&path).map_err(privacy(&path))
+    }
+
+    /// The file [`Staging::download`] made, opened to be read.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Io`] where it could not be opened.
+    pub fn downloaded(&self) -> Result<Handle, StoreError> {
+        let path = self.download_path();
+        crucible_privacy::open_read(&path).map_err(privacy(&path))
+    }
+
+    /// Where the download is kept: beside the directory, under its name.
+    fn download_path(&self) -> PathBuf {
+        let mut name = self.directory.file_name().unwrap_or_default().to_owned();
+        name.push(DOWNLOAD);
+        self.directory.with_file_name(name)
+    }
 }
 
 impl Drop for Staging {
@@ -569,6 +622,7 @@ impl Drop for Staging {
         if !self.committed {
             let _ = fs::remove_dir_all(&self.directory);
         }
+        let _ = fs::remove_file(self.download_path());
         if let Some(lock) = self.lock.take() {
             // The lock goes with the handle whatever this says.
             let _ = crucible_privacy::unlock_identity(&lock);
@@ -803,10 +857,17 @@ impl Store {
     ///
     /// [`StoreError::TooLarge`] or [`StoreError::Full`].
     pub fn fits(&self, target: &Target) -> Result<(), StoreError> {
+        self.fitting(target, false)
+    }
+
+    /// [`Store::fits`], and where `downloading`, with room for the largest
+    /// download beside what the release unpacks to.
+    fn fitting(&self, target: &Target, downloading: bool) -> Result<(), StoreError> {
         let too_large = || StoreError::TooLarge {
             ceiling: self.ceiling,
         };
         let mut wanted: u64 = 0;
+        let mut largest: u64 = 0;
         for artifact in &target.artifacts {
             let downloaded = artifact
                 .replaced_by
@@ -821,12 +882,27 @@ impl Store {
             if sizes.iter().any(|bytes| *bytes > self.ceiling) {
                 return Err(too_large());
             }
+            largest = largest.max(downloaded);
             wanted = wanted
                 .checked_add(artifact.unpacked)
                 .filter(|wanted| *wanted <= self.ceiling)
                 .ok_or_else(too_large)?;
         }
+        if downloading {
+            wanted = wanted.checked_add(largest).ok_or_else(too_large)?;
+        }
         self.room(None, wanted)
+    }
+
+    /// Whether `target` fits as [`Store::fits`] says, with room as well for
+    /// its largest download, which lies beside its staging until it is
+    /// unpacked.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TooLarge`] or [`StoreError::Full`].
+    pub fn fits_while_downloading(&self, target: &Target) -> Result<(), StoreError> {
+        self.fitting(target, true)
     }
 
     /// A new staging directory for the agent `key`, once what a dead process
@@ -1150,6 +1226,74 @@ impl Store {
             }
         }
         Err(at(&holders, io::ErrorKind::AlreadyExists.into()))
+    }
+
+    /// Every version of the agent `key` that has a receipt this crucible can
+    /// read, each by its receipt, in the order of their directories' names.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] when the agent's directory holds more than is read, or
+    /// could not be read.
+    pub fn installed(&self, key: &AgentKey) -> Result<Vec<Receipt>, StoreError> {
+        holdable(key.as_str())?;
+        let directory = self.root.join(key.as_str());
+        Ok(self
+            .versions(key, &directory)?
+            .into_iter()
+            .filter_map(|(_, kept)| match kept {
+                Kept::Receipted(receipt) => Some(receipt),
+                Kept::Unreceipted | Kept::Unreadable => None,
+            })
+            .collect())
+    }
+
+    /// Removes every version of the agent `key`, and gives the versions
+    /// removed: refused, before anything is removed, while one of
+    /// `executables` lies in the agent's directory or a process holds any of
+    /// its versions.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Named`] or [`StoreError::InUse`] for what keeps the agent
+    /// in place; otherwise [`StoreError`] when the store is held past the
+    /// wait, holds more versions than are read, or a version could not be
+    /// removed, and those removed before stay removed.
+    pub fn remove(
+        &self,
+        key: &AgentKey,
+        executables: &[&Path],
+    ) -> Result<Vec<Version>, StoreError> {
+        let change = self.change(key)?;
+        for executable in executables {
+            match self.placed(key, executable) {
+                Placed::Outside => {}
+                Placed::In(_) | Placed::Doubtful => {
+                    return Err(StoreError::Named {
+                        path: executable.to_path_buf(),
+                    });
+                }
+            }
+        }
+        let versions = self.versions(key, &change.directory)?;
+        // Held under the store's lock, which a hold is made under too, so no
+        // process can come to hold a version between this look and the
+        // removal.
+        if versions
+            .iter()
+            .any(|(version, _)| swept(&change.directory.join(version.name())))
+        {
+            return Err(StoreError::InUse);
+        }
+        let mut removed = Vec::new();
+        for (version, _) in versions {
+            let directory = change.directory.join(version.name());
+            let aside = change.area.join(scratch("removed"));
+            fs::rename(&directory, &aside).map_err(|source| at(&directory, source))?;
+            let _ = fs::remove_dir_all(&aside);
+            removed.push(version);
+        }
+        Ok(removed)
     }
 
     /// Removes every version of the agent `key` that none of `executables`
@@ -1638,7 +1782,11 @@ impl Store {
             let mut removed = 0_usize;
             for name in &names {
                 let text = name.to_string_lossy();
-                if live.contains(text.strip_suffix(LOCK).unwrap_or(&text)) {
+                let stem = text
+                    .strip_suffix(LOCK)
+                    .or_else(|| text.strip_suffix(DOWNLOAD))
+                    .unwrap_or(&text);
+                if live.contains(stem) {
                     continue;
                 }
                 let path = area.join(name);

@@ -282,6 +282,23 @@ pub fn installing(
     })
 }
 
+/// Writes into `file` that each installed agent `moved` names is started as
+/// the last program beside it, where it still names the first, in one update,
+/// and changes nothing else in it; gives the instances left as they are
+/// because they name something else by now.
+///
+/// # Errors
+///
+/// [`RememberError::Busy`] when another crucible holds the file,
+/// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
+/// [`RememberError::Unusable`] when what it already says is not configuration
+/// or names no such instance.
+pub fn pointing(file: &Path, moved: &[(&str, &str, &str)]) -> Result<Vec<String>, RememberError> {
+    answered(file, |text, named| {
+        crucible_config::pointing(text, named, moved)
+    })
+}
+
 /// Takes the installed agent `instance` out of `file`, and changes nothing
 /// else in it.
 ///

@@ -444,9 +444,10 @@ fn client(limited: Limited, proxy: ProxyEnv) -> Result<Http, FetchError> {
 }
 
 /// The one place the catalog's hostname lookups run in, whoever asked and
-/// however many fetches there are: [`LOOKUPS`] lookups at a time, on blocking
-/// threads of the runtime.
-fn lookups() -> PlainLookups {
+/// however many fetches there are, the downloads of the releases it lists
+/// among them: [`LOOKUPS`] lookups at a time, on blocking threads of the
+/// runtime.
+pub(crate) fn lookups() -> PlainLookups {
     static PLACE: OnceLock<PlainLookups> = OnceLock::new();
     PLACE.get_or_init(|| Lookups::plain(LOOKUPS)).clone()
 }
@@ -506,7 +507,7 @@ impl<'a> Reaching<'a> {
 /// The host and port are the ones the client will dial, read by the parser the
 /// client parses the address with, so what is compared is what is reached.
 /// Nothing that is not plain ASCII without controls or spaces is followed.
-fn redirect_to(location: &str, scheme: &str, listed: &[&str]) -> Option<String> {
+pub(crate) fn redirect_to(location: &str, scheme: &str, listed: &[&str]) -> Option<String> {
     if !location.is_ascii()
         || location
             .bytes()
@@ -531,7 +532,7 @@ fn redirect_to(location: &str, scheme: &str, listed: &[&str]) -> Option<String> 
 }
 
 /// The port an address over `scheme` goes to when it names none.
-fn default_port(scheme: &str) -> u16 {
+pub(crate) fn default_port(scheme: &str) -> u16 {
     if scheme.eq_ignore_ascii_case("http") {
         80
     } else {
@@ -542,7 +543,7 @@ fn default_port(scheme: &str) -> u16 {
 /// The host and port a listed `entry` names, with `default` where it names no
 /// port: `entry` as an [`Origin`] spells a host, in lower case and without a
 /// trailing dot. Nothing for one that is empty, a pattern or not a name.
-fn place(entry: &str, default: u16) -> Option<(String, u16)> {
+pub(crate) fn place(entry: &str, default: u16) -> Option<(String, u16)> {
     let entry = entry.to_ascii_lowercase();
     let (host, port) = match entry.split_once(':') {
         Some((host, port)) => (host, port.parse::<u16>().ok()?),

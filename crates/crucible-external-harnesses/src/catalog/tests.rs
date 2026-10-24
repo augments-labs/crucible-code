@@ -2655,3 +2655,62 @@ fn a_catalog_the_intake_renders_verifies_under_the_key_that_signed_it() {
         "a catalog older than the one held is not taken"
     );
 }
+
+#[test]
+fn an_offer_carries_its_entry_and_the_serial_of_the_catalog_that_listed_it() {
+    let owned = Owned::new("catalog-offers");
+    let mut trust = trust(&owned, taken());
+    believe(
+        &mut trust,
+        &listing(
+            SNAPSHOT.serial() + 4,
+            [
+                release("goose", "1.4.1", None),
+                release("goose", "1.4.0", None),
+                release("kiro", "2.0.0", None),
+            ],
+            [withdrawn("goose", "1.4.0", None)],
+        ),
+        taken(),
+    );
+
+    let goose = trust.offers(Some(&agent("goose")));
+    let every = trust.offers(None);
+
+    assert_eq!(goose.len(), 1, "{goose:?}");
+    let offer = goose.first().expect("an offer");
+    assert_eq!(&*offer.pin.version, "1.4.1");
+    assert_eq!(offer.entry.key, agent("goose"));
+    assert_eq!(&*offer.entry.license, "Apache-2.0");
+    assert_eq!(
+        offer.entry.terms.as_deref(),
+        Some("https://example.com/terms")
+    );
+    assert_eq!(offer.serial, SNAPSHOT.serial() + 4);
+    let keys: Vec<&str> = every
+        .iter()
+        .map(|offer| offer.entry.key.as_str())
+        .filter(|key| *key != "antigravity")
+        .collect();
+    assert_eq!(keys, ["goose", "kiro"]);
+    assert!(
+        every
+            .iter()
+            .filter(|offer| offer.entry.key.as_str() == "antigravity")
+            .all(|offer| offer.serial == SNAPSHOT.serial())
+    );
+    assert!(trust.revoked(&agent("goose"), "1.4.0", None));
+    assert!(trust.revoked(&agent("goose"), "1.4.0", Some(3)));
+    assert!(!trust.revoked(&agent("goose"), "1.4.1", None));
+}
+
+#[test]
+fn a_trust_state_that_cannot_be_used_offers_nothing_and_counts_every_release_revoked() {
+    let owned = Owned::new("catalog-offers-unusable");
+    fs::create_dir_all(owned.0.join(DIRECTORY)).expect("the directory");
+    fs::write(state_file(&owned), b"not a trust state").expect("the file");
+    let trust = trust(&owned, taken());
+
+    assert!(trust.offers(None).is_empty());
+    assert!(trust.revoked(&agent("goose"), "1.4.1", None));
+}

@@ -1479,3 +1479,121 @@ fn a_version_whose_receipt_cannot_be_read_is_replaced_only_when_asked() {
         .expect("replaced when asked");
     assert_eq!(receipt.fetched, at(20));
 }
+
+#[test]
+fn removing_an_agent_takes_every_version_unless_an_instance_names_one_or_a_process_runs_one() {
+    let owned = Owned::new("store-remove");
+    let root = programs(&owned);
+    let store = Store::new(root.clone());
+    let goose = key("goose");
+    let [one, two] = ["1.0.0", "2.0.0"].map(|text| version(text, None));
+    install(&store, &goose, &one, 10);
+    install(&store, &goose, &two, 20);
+    let named = store.directory(&goose, &two).join("agent");
+
+    let refused = store.remove(&goose, &[named.as_path()]);
+
+    assert!(
+        matches!(refused, Err(StoreError::Named { ref path }) if *path == named),
+        "{refused:?}"
+    );
+    assert!(store.directory(&goose, &one).join("agent").is_file());
+    assert!(store.directory(&goose, &two).join("agent").is_file());
+
+    let ready = owned.0.join("ready");
+    let mut child = started("store::tests::the_process_holding_a_version", &root, &ready);
+    reached(&mut child, &ready);
+    let elsewhere = owned.0.join("bin").join("goose");
+
+    let refused = store.remove(&goose, &[elsewhere.as_path()]);
+
+    assert!(matches!(refused, Err(StoreError::InUse)), "{refused:?}");
+    assert!(store.directory(&goose, &one).join("agent").is_file());
+    assert!(store.directory(&goose, &two).join("agent").is_file());
+
+    killed(child);
+    let removed = store
+        .remove(&goose, &[elsewhere.as_path()])
+        .expect("removed");
+
+    assert_eq!(removed, [one, two]);
+    assert_eq!(names(&root.join("goose")), [".lock", ".staging"]);
+    assert!(names(&root.join("goose").join(".staging")).is_empty());
+}
+
+#[test]
+fn the_versions_installed_are_listed_with_their_receipts() {
+    let owned = Owned::new("store-installed");
+    let store = Store::new(programs(&owned));
+    let goose = key("goose");
+    assert!(store.installed(&goose).expect("listed").is_empty());
+    let [one, two] = ["1.0.0", "2.0.0"].map(|text| version(text, None));
+    let first = install(&store, &goose, &one, 10);
+    let second = install(&store, &goose, &two, 20);
+    fs::create_dir_all(programs(&owned).join("goose").join("0.9.0")).expect("a version");
+
+    let installed = store.installed(&goose).expect("listed");
+
+    assert_eq!(installed, [first, second]);
+}
+
+#[test]
+fn a_download_beside_a_live_staging_is_kept_by_another_change_and_goes_with_it() {
+    use std::io::{Read as _, Write as _};
+
+    let owned = Owned::new("store-download");
+    let root = programs(&owned);
+    let store = Store::new(root.clone());
+    let goose = key("goose");
+    let staging = store.stage(&goose).expect("a staging directory");
+    let mut written = staging.download().expect("a download file");
+    written.write_all(b"the first artifact").expect("written");
+    drop(written);
+    let mut again = staging.download().expect("the download file again");
+    again.write_all(b"the second").expect("written");
+    drop(again);
+
+    // Another change cleans staging, and this one is live.
+    let other = store.stage(&goose).expect("another staging directory");
+    drop(other);
+    let mut read = String::new();
+    staging
+        .downloaded()
+        .expect("the download opened")
+        .read_to_string(&mut read)
+        .expect("read");
+
+    assert_eq!(read, "the second");
+    let area = root.join("goose").join(".staging");
+    assert_eq!(names(&area).len(), 3, "{:?}", names(&area));
+    drop(staging);
+    assert!(names(&area).is_empty(), "{:?}", names(&area));
+}
+
+#[test]
+fn a_release_whose_download_would_pass_the_room_left_is_refused_before_it_is_fetched() {
+    let owned = Owned::new("store-cap-download");
+    let root = programs(&owned);
+    let (_, artifact) = release();
+    let target = Target {
+        platform: "linux-x86_64".into(),
+        cmd: "agent".into(),
+        args: Vec::new(),
+        env: Vec::new(),
+        hosts: Vec::new(),
+        artifacts: vec![artifact.clone()],
+        launch: Launch::Binary,
+    };
+    // Room for what it unpacks to, and not for the download beside it.
+    let tight = Store::new(root.clone()).bounded(artifact.unpacked + artifact.size - 1);
+    assert!(tight.fits(&target).is_ok());
+
+    let refused = tight.fits_while_downloading(&target);
+
+    assert!(
+        matches!(refused, Err(StoreError::Full { .. })),
+        "{refused:?}"
+    );
+    let roomy = Store::new(root).bounded(artifact.unpacked + artifact.size);
+    assert!(roomy.fits_while_downloading(&target).is_ok());
+}

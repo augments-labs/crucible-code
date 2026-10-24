@@ -2658,3 +2658,83 @@ fn a_release_whose_member_names_break_the_unpackers_rules_is_not_a_pin() {
     });
     assert_eq!(colliding.pin(), None, "names that differ only in case");
 }
+
+/// `bytes` kept in a file of their own under `owned`, opened to be read.
+fn kept(owned: &Owned, name: &str, bytes: &[u8]) -> fs::File {
+    let path = owned.0.join(name);
+    fs::write(&path, bytes).expect("the download");
+    fs::File::open(&path).expect("the download opened")
+}
+
+#[test]
+fn an_artifact_read_from_its_file_unpacks_as_its_bytes_do_and_is_held_to_its_pin() {
+    let owned = Owned::new("catalog-from-file");
+    let zip = zip_of(&[
+        Zipped::Dir("bin/"),
+        Zipped::File("bin/agent", EXECUTABLE, 0o755),
+    ]);
+    let zip_files = vec![listed_dir("bin"), listed("bin/agent", EXECUTABLE, true)];
+    let tarred = tar_gz(&[Tarred::File("agent", EXECUTABLE, 0o755)]);
+    let tar_files = vec![listed("agent", EXECUTABLE, true)];
+    let bare_files = vec![listed("agent-linux-x64", EXECUTABLE, true)];
+    for (index, (bytes, format, files)) in [
+        (zip.clone(), Format::Zip, zip_files),
+        (tarred.clone(), Format::TarGz, tar_files),
+        (EXECUTABLE.to_vec(), Format::Bare, bare_files),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let artifact = pinned_as(&bytes, format, files.clone());
+        let from_bytes = staging(&owned, &format!("bytes-{index}"));
+        let from_file = staging(&owned, &format!("file-{index}"));
+        let mut file = kept(&owned, &format!("download-{index}"), &bytes);
+
+        let read = Unpacker::unpack_from(&mut file, &artifact, &from_file).expect("unpacked");
+        let held = Unpacker::unpack(&bytes, &artifact, &from_bytes).expect("unpacked");
+
+        assert_eq!(read.files(), held.files(), "{format:?}");
+        assert_eq!(read.files(), files.as_slice(), "{format:?}");
+        assert_eq!(tree(&from_file), tree(&from_bytes), "{format:?}");
+    }
+
+    // Another byte, a byte more, or a gzip stream with something after it.
+    let artifact = pinned_as(&zip, Format::Zip, vec![]);
+    let mut other = zip.clone();
+    if let Some(last) = other.last_mut() {
+        *last ^= 1;
+    }
+    let refused = Unpacker::unpack_from(
+        &mut kept(&owned, "other", &other),
+        &artifact,
+        &staging(&owned, "other-out"),
+    );
+    assert!(matches!(refused, Err(UnpackError::Digest)), "{refused:?}");
+    let mut longer = zip.clone();
+    longer.push(0);
+    let refused = Unpacker::unpack_from(
+        &mut kept(&owned, "longer", &longer),
+        &artifact,
+        &staging(&owned, "longer-out"),
+    );
+    assert!(
+        matches!(refused, Err(UnpackError::Size { .. })),
+        "{refused:?}"
+    );
+    let mut trailing = tarred.clone();
+    trailing.extend_from_slice(b"more");
+    let artifact = pinned_as(
+        &trailing,
+        Format::TarGz,
+        vec![listed("agent", EXECUTABLE, true)],
+    );
+    let refused = Unpacker::unpack_from(
+        &mut kept(&owned, "trailing", &trailing),
+        &artifact,
+        &staging(&owned, "trailing-out"),
+    );
+    assert!(
+        matches!(refused, Err(UnpackError::Corrupt(_))),
+        "{refused:?}"
+    );
+}

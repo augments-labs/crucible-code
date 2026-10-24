@@ -67,7 +67,7 @@
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{self, Cursor, Read, Write as _};
+use std::io::{self, Cursor, Read, Seek as _, Write as _};
 use std::path::{Path, PathBuf};
 
 use flate2::bufread::GzDecoder;
@@ -302,7 +302,29 @@ impl Unpacker {
             return Err(UnpackError::Asset);
         };
         let list = listing(files, artifact.unpacked)?;
-        Walk::new(artifact, staging, Some(list)).run(bytes)
+        Walk::new(artifact, staging, Some(list)).run(Cursor::new(bytes))
+    }
+
+    /// Unpacks the download `artifact` pins, read from `file` rather than
+    /// held in memory, into `staging`, exactly as [`Unpacker::unpack`] does:
+    /// the file is read through once for its size and SHA-256 before anything
+    /// else is done with it, and then read again as the archive.
+    ///
+    /// # Errors
+    ///
+    /// As [`Unpacker::unpack`], and [`UnpackError::Corrupt`] where the file
+    /// could not be read.
+    pub fn unpack_from(
+        file: &mut fs::File,
+        artifact: &Artifact,
+        staging: &Path,
+    ) -> Result<Staged, UnpackError> {
+        pinned_file(file, artifact)?;
+        let Files::Listed(files) = &artifact.files else {
+            return Err(UnpackError::Asset);
+        };
+        let list = listing(files, artifact.unpacked)?;
+        Walk::new(artifact, staging, Some(list)).run(io::BufReader::new(file))
     }
 
     /// Unpacks `bytes`, the download `artifact` pins, into `staging`, a
@@ -320,7 +342,7 @@ impl Unpacker {
         staging: &Path,
     ) -> Result<Staged, UnpackError> {
         pinned(bytes, artifact)?;
-        Walk::new(artifact, staging, None).run(bytes)
+        Walk::new(artifact, staging, None).run(Cursor::new(bytes))
     }
 }
 
@@ -375,6 +397,39 @@ fn pinned(bytes: &[u8], artifact: &Artifact) -> Result<(), UnpackError> {
     if hex(&Sha256::digest(bytes)) != **sha256 {
         return Err(UnpackError::Digest);
     }
+    Ok(())
+}
+
+/// Whether what `file` holds is what `artifact` pins, read through from its
+/// start within one byte past the pinned size, and the file is left at its
+/// start again.
+fn pinned_file(file: &mut fs::File, artifact: &Artifact) -> Result<(), UnpackError> {
+    let (sha256, size) = match &artifact.replaced_by {
+        Some(asset) => (&asset.sha256, asset.size),
+        None => (&artifact.sha256, artifact.size),
+    };
+    file.seek(io::SeekFrom::Start(0))
+        .map_err(UnpackError::Corrupt)?;
+    let mut digest = Sha256::new();
+    let mut held: u64 = 0;
+    let mut reading = Read::take(&mut *file, size.saturating_add(1));
+    let mut chunk = vec![0_u8; 64 * 1024];
+    loop {
+        let read = reading.read(&mut chunk).map_err(UnpackError::Corrupt)?;
+        if read == 0 {
+            break;
+        }
+        digest.update(chunk.get(..read).unwrap_or_default());
+        held = held.saturating_add(u64::try_from(read).unwrap_or(u64::MAX));
+    }
+    if held != size {
+        return Err(UnpackError::Size { held, pinned: size });
+    }
+    if hex(&digest.finalize()) != **sha256 {
+        return Err(UnpackError::Digest);
+    }
+    file.seek(io::SeekFrom::Start(0))
+        .map_err(UnpackError::Corrupt)?;
     Ok(())
 }
 
@@ -894,12 +949,12 @@ impl<'a> Walk<'a> {
 
     /// Unpacks `bytes` by the artifact's format, then makes its links and
     /// checks that nothing it names is missing.
-    fn run(mut self, bytes: &[u8]) -> Result<Staged, UnpackError> {
+    fn run<R: io::BufRead + io::Seek>(mut self, reader: R) -> Result<Staged, UnpackError> {
         let budget = Budget::new(self.artifact.decompressed);
         match self.artifact.format {
-            Format::Zip => self.zipped(bytes, &budget)?,
-            Format::TarGz => self.tarred(bytes, &budget)?,
-            Format::Bare => self.bare(bytes, &budget)?,
+            Format::Zip => self.zipped(reader, &budget)?,
+            Format::TarGz => self.tarred(reader, &budget)?,
+            Format::Bare => self.bare(reader, &budget)?,
             Format::Wheel => return Err(UnpackError::Wheel),
         }
         self.linked()?;
@@ -913,8 +968,12 @@ impl<'a> Walk<'a> {
     }
 
     /// Walks a zip, reading every member through `budget`.
-    fn zipped(&mut self, bytes: &[u8], budget: &Budget) -> Result<(), UnpackError> {
-        let mut zip = ZipArchive::new(Cursor::new(bytes))?;
+    fn zipped<R: Read + io::Seek>(
+        &mut self,
+        reader: R,
+        budget: &Budget,
+    ) -> Result<(), UnpackError> {
+        let mut zip = ZipArchive::new(reader)?;
         for index in 0..zip.len() {
             let mut entry = zip.by_index(index)?;
             sized(entry.name_raw())?;
@@ -958,9 +1017,9 @@ impl<'a> Walk<'a> {
     /// before the header's own name. An extended header that gives a member
     /// another size than its header is refused, since the member would then
     /// be read as another.
-    fn tarred(&mut self, bytes: &[u8], budget: &Budget) -> Result<(), UnpackError> {
+    fn tarred<R: io::BufRead>(&mut self, reader: R, budget: &Budget) -> Result<(), UnpackError> {
         let mut archive = tar::Archive::new(Bounded {
-            inner: GzDecoder::new(bytes),
+            inner: GzDecoder::new(reader),
             budget,
         });
         let mut ahead = Ahead::default();
@@ -1012,7 +1071,11 @@ impl<'a> Walk<'a> {
         }
         let mut contents = archive.into_inner();
         io::copy(&mut contents, &mut io::sink()).map_err(|error| budget.failed(error))?;
-        if contents.inner.into_inner().is_empty() {
+        let mut rest = contents.inner.into_inner();
+        if io::BufRead::fill_buf(&mut rest)
+            .map_err(UnpackError::Corrupt)?
+            .is_empty()
+        {
             Ok(())
         } else {
             Err(UnpackError::Corrupt(io::Error::other(
@@ -1024,7 +1087,7 @@ impl<'a> Walk<'a> {
     /// Takes a program published bare as one member, named as its list names
     /// it, or for a survey as the last part of the address it is published
     /// at.
-    fn bare(&mut self, bytes: &[u8], budget: &Budget) -> Result<(), UnpackError> {
+    fn bare<R: Read>(&mut self, reader: R, budget: &Budget) -> Result<(), UnpackError> {
         let name = if let Some(list) = &self.list {
             let mut names = list.keys();
             match (names.next(), names.next()) {
@@ -1037,10 +1100,15 @@ impl<'a> Walk<'a> {
             path.rsplit('/').next().unwrap_or(path).to_owned()
         };
         let mut data = Bounded {
-            inner: bytes,
+            inner: reader,
             budget,
         };
-        let size = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        // What it holds was held to the pinned size before it was read here.
+        let size = self
+            .artifact
+            .replaced_by
+            .as_ref()
+            .map_or(self.artifact.size, |asset| asset.size);
         let body = Body::File(Incoming {
             data: &mut data,
             size,

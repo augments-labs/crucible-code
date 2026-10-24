@@ -250,7 +250,12 @@ fn granted(index: usize, host: &str) -> Result<SandboxDomainPattern, Unprofiled>
 /// Whether `host` is an address rather than a name: a literal the platform
 /// parses, bracketed or not, with a port or not, under a wildcard or not, or a
 /// name whose last label a C resolver reads as a number.
-fn numbered(host: &str) -> bool {
+///
+/// Whoever reads a host the catalog lists, for reach or for a download, holds
+/// it to this one predicate, so no list of the catalog's lets a literal
+/// address through.
+#[must_use]
+pub fn numbered(host: &str) -> bool {
     let host = host.strip_prefix("*.").unwrap_or(host);
     let bracketed = host
         .strip_prefix('[')

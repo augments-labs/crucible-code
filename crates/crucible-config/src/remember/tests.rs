@@ -1301,3 +1301,102 @@ fn an_agents_effort_is_written_beside_its_model_or_taken_out() {
     let chooses = r#"{"externalAgents": {"work": {"driver": "antigravity", "executable": "agy", "profileDir": "/home/me/agy"}}}"#;
     assert!(thinking_agent(chooses, FILE, "work", Some(Effort::High)).is_err());
 }
+
+/// `path`, a path written from the root as Unix writes it, rooted as this
+/// platform roots one: on Windows under a drive, which is what makes it
+/// absolute there, so the configuration takes it as a program's path.
+fn rooted(path: &str) -> String {
+    if cfg!(windows) {
+        format!("C:{path}")
+    } else {
+        path.to_owned()
+    }
+}
+
+#[test]
+fn pointing_instances_at_a_new_program_writes_each_executable_and_nothing_else() {
+    let was = rooted("/h/programs/goose/1.0.0/goose");
+    let to = rooted("/h/programs/goose/2.0.0/goose");
+    let mine = rooted("/usr/bin/goose");
+    let text = format!(
+        "{{\n  \"externalAgents\": {{\n    \"work\": {{\n      \"driver\": \"catalog\",\n      \"agent\": \"goose\",\n      \"executable\": \"{was}\"\n    }},\n    \"home\": {{\"driver\": \"catalog\", \"agent\": \"goose\", \"executable\": \"{was}\"}},\n    \"mine\": {{\"driver\": \"catalog\", \"agent\": \"goose\", \"executable\": \"{mine}\"}}\n  }}\n}}\n"
+    );
+
+    let (written, left) =
+        pointing(&text, FILE, &[("work", &was, &to), ("home", &was, &to)]).unwrap();
+
+    assert!(left.is_empty(), "{left:?}");
+    assert_eq!(written, text.replacen(&was, &to, 2));
+    let settings = Settings::resolve(vec![Document::sample(&written, Origin::User)]);
+    let mut executables: Vec<(String, String)> = settings
+        .external_agents()
+        .iter()
+        .map(|agent| (agent.name().to_owned(), agent.executable().to_owned()))
+        .collect();
+    executables.sort();
+    assert_eq!(
+        executables,
+        [
+            ("home".to_owned(), to.clone()),
+            ("mine".to_owned(), mine),
+            ("work".to_owned(), to.clone()),
+        ]
+    );
+    // Written again, it is already so.
+    assert_eq!(
+        pointing(&written, FILE, &[("work", &was, &to)]).unwrap(),
+        (written.clone(), Vec::new())
+    );
+    // A path is written as JSON spells it: a backslash and a quote escaped.
+    let spelled = rooted("/h/goose \"2\"\\run.exe");
+    let (escaped, _) = pointing(&text, FILE, &[("work", &was, &spelled)]).unwrap();
+    assert!(
+        escaped.contains(&format!(
+            "\"executable\": {}",
+            serde_json::Value::from(spelled.as_str())
+        )),
+        "{escaped}"
+    );
+}
+
+#[test]
+fn pointing_an_instance_the_file_does_not_name_is_refused_and_writes_nothing() {
+    let text =
+        "{\"externalAgents\": {\"work\": {\"driver\": \"claude\", \"executable\": \"claude\"}}}";
+
+    let refused = pointing(
+        text,
+        FILE,
+        &[
+            ("work", "claude", &rooted("/a")),
+            ("gone", &rooted("/b"), &rooted("/c")),
+        ],
+    );
+
+    assert!(
+        matches!(refused, Err(ConfigError::Unspliceable { .. })),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn pointing_leaves_an_instance_whose_program_changed_since_it_was_shown_and_names_it() {
+    let (own, one, two) = (
+        rooted("/usr/local/bin/goose"),
+        rooted("/h/1/goose"),
+        rooted("/h/2/goose"),
+    );
+    let text = format!(
+        "{{\"externalAgents\": {{\"work\": {{\"driver\": \"catalog\", \"agent\": \"goose\", \"executable\": \"{own}\"}}, \"home\": {{\"driver\": \"catalog\", \"agent\": \"goose\", \"executable\": \"{one}\"}}}}}}"
+    );
+
+    let (written, left) =
+        pointing(&text, FILE, &[("work", &one, &two), ("home", &one, &two)]).unwrap();
+
+    assert_eq!(left, ["work".to_owned()]);
+    assert_eq!(
+        written,
+        text.replace(&format!("\"{one}\""), &format!("\"{two}\""))
+    );
+    assert!(written.contains(&own));
+}

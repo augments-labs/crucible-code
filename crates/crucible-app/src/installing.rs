@@ -16,7 +16,11 @@
 //! from a session. A release already in place is kept, and nothing is asked
 //! for it, and an agent's entry `/login` writes names it as its executable.
 //! Like [`crate::update`], this is a local command rather than a
-//! request of the client contract, and it reads no configuration.
+//! request of the client contract, and it reads no configuration. It is the
+//! precedent the agents door replaces: [`crate::client::agents`] installs,
+//! updates, rolls back and removes a catalog agent as a client's request, asks
+//! before a byte is fetched, and writes the `executable` of every instance it
+//! moves into the user's configuration file, which its shelf's home names.
 //!
 //! [`unpack_check`] is the catalog intake's way to the same unpacker an
 //! install of a catalog agent goes through: it reads an artifact as the

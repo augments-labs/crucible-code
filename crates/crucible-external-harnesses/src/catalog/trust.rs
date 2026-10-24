@@ -359,33 +359,85 @@ impl Trust {
     /// state is unusable.
     #[must_use]
     pub fn offered(&self, key: &AgentKey) -> Vec<OwnedPin> {
+        self.offers(Some(key))
+            .into_iter()
+            .map(|offer| offer.pin)
+            .collect()
+    }
+
+    /// The releases offered for this platform, as [`Trust::offered`] gives
+    /// them, each with the entry that lists it and the serial of the catalog it
+    /// was listed in: of the agent `key`, or of every agent, in the order the
+    /// sources list them, where it is `None`.
+    #[must_use]
+    pub fn offers(&self, key: Option<&AgentKey>) -> Vec<Offer> {
         let Memory::Usable(state) = &self.memory else {
             return Vec::new();
         };
         let platform = here();
-        let held: &[Entry] = state
+        let held = state
             .held
             .as_ref()
-            .filter(|catalog| !expired(catalog, self.now))
-            .map_or(&[], Catalog::entries);
-        let mut pins: Vec<OwnedPin> = Vec::new();
-        for entry in held.iter().chain(SNAPSHOT.entries()) {
-            if entry.key != *key || state.withdraws(entry) {
-                continue;
+            .filter(|catalog| !expired(catalog, self.now));
+        let sources = held
+            .into_iter()
+            .map(|catalog| (catalog.serial(), catalog.entries()))
+            .chain(std::iter::once((SNAPSHOT.serial(), SNAPSHOT.entries())));
+        let mut offers: Vec<Offer> = Vec::new();
+        for (serial, entries) in sources {
+            for entry in entries {
+                if key.is_some_and(|key| entry.key != *key) || state.withdraws(entry) {
+                    continue;
+                }
+                let Some(pin) = release(entry, &platform) else {
+                    continue;
+                };
+                if offers.iter().any(|held| {
+                    held.pin.key == pin.key
+                        && held.pin.version == pin.version
+                        && held.pin.lock_revision == pin.lock_revision
+                }) {
+                    continue;
+                }
+                offers.push(Offer {
+                    pin,
+                    entry: entry.clone(),
+                    serial,
+                });
             }
-            let Some(pin) = release(entry, &platform) else {
-                continue;
-            };
-            if pins
-                .iter()
-                .any(|held| held.version == pin.version && held.lock_revision == pin.lock_revision)
-            {
-                continue;
-            }
-            pins.push(pin);
         }
-        pins
+        offers
     }
+
+    /// Whether a revocation taken in names `version` of the agent `key` at
+    /// `lock_revision`, as one names an offered release; every release is,
+    /// while the state is unusable, since its revocations cannot be known.
+    #[must_use]
+    pub fn revoked(&self, key: &AgentKey, version: &str, lock_revision: Option<u64>) -> bool {
+        let Memory::Usable(state) = &self.memory else {
+            return true;
+        };
+        let named = |lock_revision| {
+            state.withdrawn.contains(&Withdrawn {
+                key: key.clone(),
+                version: version.into(),
+                lock_revision,
+            })
+        };
+        named(None) || lock_revision.is_some_and(|revision| named(Some(revision)))
+    }
+}
+
+/// One release the trust state offers, with what its catalog said of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Offer {
+    /// The release, for the platform this build runs on.
+    pub pin: OwnedPin,
+    /// The entry that lists it.
+    pub entry: Entry,
+    /// The serial of the catalog that lists it: the one held, or the
+    /// snapshot's.
+    pub serial: u64,
 }
 
 /// The release `entry` lists, as published for `platform`, where it is.
