@@ -351,23 +351,25 @@ enum Zipped<'a> {
     Link(&'a str, &'a str),
 }
 
-/// A zip of `members`, in that order, its files deflated.
+/// A zip of `members`, in that order, its files deflated, each recorded as
+/// made on Unix with its mode. The writer records a member made on Windows
+/// as made on DOS unless told otherwise, and a DOS member carries no Unix
+/// mode, so without this the same test would read another archive there.
 // A test that cannot build its archive has nothing to report.
 #[allow(clippy::expect_used)]
 fn zip_of(members: &[Zipped<'_>]) -> Vec<u8> {
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    let unix = SimpleFileOptions::default().system(zip::System::Unix);
     for member in members {
         match *member {
             Zipped::File(name, bytes, mode) => {
-                let options = SimpleFileOptions::default()
+                let options = unix
                     .compression_method(CompressionMethod::Deflated)
                     .unix_permissions(mode);
                 writer.start_file(name, options).expect("a member");
                 writer.write_all(bytes).expect("its bytes");
             }
-            Zipped::Dir(name) => writer
-                .add_directory(name, SimpleFileOptions::default())
-                .expect("a directory"),
+            Zipped::Dir(name) => writer.add_directory(name, unix).expect("a directory"),
             Zipped::Link(name, target) => writer
                 .add_symlink(name, target, SimpleFileOptions::default())
                 .expect("a link"),
@@ -2306,5 +2308,31 @@ fn every_directory_a_member_implies_is_charged_to_the_ceiling() {
     assert_eq!(
         surveyed.map(|staged| staged.files().len()).ok(),
         Some(within)
+    );
+}
+
+#[test]
+fn a_zip_member_made_on_dos_has_no_unix_mode_so_it_is_not_runnable() {
+    let owned = Owned::new("catalog-dos");
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default()
+        .system(zip::System::Dos)
+        .unix_permissions(0o755);
+    let started = writer.start_file("agent.exe", options);
+    assert!(started.is_ok(), "{started:?}");
+    let written = writer.write_all(EXECUTABLE);
+    assert!(written.is_ok(), "{written:?}");
+    let archive = writer.finish().map(Cursor::into_inner).unwrap_or_default();
+    let artifact = Artifact {
+        unpacked: 1 << 20,
+        ..pinned_as(&archive, Format::Zip, Vec::new())
+    };
+
+    let surveyed = Unpacker::survey(&archive, &artifact, &staging(&owned, "staging"));
+
+    assert_eq!(
+        surveyed.ok().map(|staged| staged.files().to_vec()),
+        Some(vec![listed("agent.exe", EXECUTABLE, false)]),
+        "the mode a DOS member's high bits seem to give is not read, on any platform"
     );
 }
