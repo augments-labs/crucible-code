@@ -62,6 +62,50 @@ fn unpack_check_prints_the_file_list_committed_for_the_intake() {
         fs::read(out.join("lib").join("harness")).ok(),
         Some(proof::COMPANION.to_vec())
     );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = fs::metadata(&out).map_or(0, |metadata| metadata.permissions().mode() & 0o777);
+        assert_eq!(mode, 0o700, "only its owner reaches what was unpacked");
+    }
+}
+
+/// The artifact `described` spells, pinned instead at `archive`.
+fn repinned(described: &[u8], archive: &[u8]) -> Vec<u8> {
+    use sha2::{Digest as _, Sha256};
+
+    let mut artifact: serde_json::Value = serde_json::from_slice(described).expect("an artifact");
+    let sha256 = Sha256::digest(archive)
+        .iter()
+        .fold(String::new(), |mut text, byte| {
+            use std::fmt::Write as _;
+            let _ = write!(text, "{byte:02x}");
+            text
+        });
+    if let Some(fields) = artifact.as_object_mut() {
+        fields.insert("sha256".to_owned(), sha256.into());
+        fields.insert("size".to_owned(), archive.len().into());
+    }
+    artifact.to_string().into_bytes()
+}
+
+/// A refusal says what was wrong with what it was given, as the reader that
+/// refused it found it, and not only that it was refused.
+#[test]
+fn unpack_check_says_the_cause_of_a_refusal() {
+    let scratch = Scratch::new("unpack-check-cause");
+    let (mut archive, described) = proof::catalog_release();
+    archive.extend_from_slice(b"one byte more and then some");
+    let described = repinned(&described, &archive);
+    let (entry, download) = scratch.published(&described, &archive);
+    let out = scratch.0.join("out");
+
+    let refused = checked(&entry, &download, &out).expect_err("bytes after the stream");
+
+    assert!(refused.contains("could not be read: "), "{refused}");
+    assert!(refused.contains("past its gzip stream"), "{refused}");
+    assert_eq!(refused.lines().count(), 1, "{refused}");
+    assert!(!out.exists(), "nothing is left where the release would go");
 }
 
 /// A download that is not the artifact's, and a directory already where the
@@ -84,8 +128,12 @@ fn unpack_check_refuses_in_one_line_and_leaves_nothing_unpacked() {
     fs::create_dir(&out).expect("a directory in the way");
     let refused = checked(&entry, &download, &out).expect_err("a directory in the way");
     assert!(
-        refused.contains("could not be made to unpack into"),
+        refused.contains("could not be made to unpack into: "),
         "{refused}"
+    );
+    assert!(
+        refused.contains("(os error"),
+        "the system's own words: {refused}"
     );
 }
 

@@ -115,9 +115,32 @@ pub(super) fn unpack_check(entry: &Path, artifact: &Path, out: &Path) -> ExitCod
 }
 
 /// What `crucible agents unpack-check` writes: the file list for standard
-/// output, or the refusal for standard error.
+/// output, or the refusal for standard error, saying what refused it and why
+/// as each cause beneath it gives it.
 fn checked(entry: &Path, artifact: &Path, out: &Path) -> Result<String, String> {
-    installing::unpack_check(entry, artifact, out).map_err(|refused| failing(&refused.to_string()))
+    installing::unpack_check(entry, artifact, out).map_err(|refused| failing(&caused(&refused)))
+}
+
+/// The most causes beneath a refusal [`caused`] says.
+const CAUSES: usize = 8;
+
+/// `refused` and the causes beneath it, each after a colon; a cause whose
+/// words are already said is not said again.
+fn caused(refused: &dyn std::error::Error) -> String {
+    let mut said = refused.to_string();
+    let mut cause = refused.source();
+    for _ in 0..CAUSES {
+        let Some(next) = cause else {
+            break;
+        };
+        let words = next.to_string();
+        if !said.contains(&words) {
+            said.push_str(": ");
+            said.push_str(&words);
+        }
+        cause = next.source();
+    }
+    said
 }
 
 /// The line `installed` is written as.

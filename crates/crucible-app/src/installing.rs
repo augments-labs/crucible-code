@@ -268,7 +268,7 @@ pub enum Unchecked {
         ceiling: u64,
     },
     /// The artifact is not one as the catalog spells it.
-    #[error("{} is not an artifact as the catalog spells one: {source}", .path.display())]
+    #[error("{} is not an artifact as the catalog spells one", .path.display())]
     Artifact {
         /// The file.
         path: PathBuf,
@@ -295,9 +295,10 @@ pub enum Unchecked {
 }
 
 /// Surveys the download at `artifact`, which the catalog artifact spelled in
-/// `entry` pins, into `out`, a directory this makes and nothing else may
-/// already be at, by the rules an install unpacks it by, and gives the file
-/// list it recorded as JSON, with its sizes, ending in a line feed.
+/// `entry` pins, into `out`, a directory only its owner may reach that this
+/// makes and nothing else may already be at, by the rules an install unpacks
+/// it by, and gives the file list it recorded as JSON, with its sizes, ending
+/// in a line feed.
 ///
 /// `entry` is read only when it is at most [`INDEX_BYTES`], as a catalog is,
 /// and the download only up to the size the artifact pins, so neither is held
@@ -319,7 +320,10 @@ pub fn unpack_check(entry: &Path, artifact: &Path, out: &Path) -> Result<String,
         .as_ref()
         .map_or(described.size, |asset| asset.size);
     let bytes = bounded(artifact, pinned)?;
-    fs::create_dir(out).map_err(|source| Unchecked::Out {
+    let mut made = fs::DirBuilder::new();
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut made, 0o700);
+    made.create(out).map_err(|source| Unchecked::Out {
         path: out.to_owned(),
         source,
     })?;
