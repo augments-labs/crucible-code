@@ -110,6 +110,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest as _, Sha256};
 
 use crate::catalog::{File, FileKind, Files, OwnedPin, Target};
+use crate::release::link_resolves;
 
 /// The most the store holds, in bytes: the bound on an artifact's download,
 /// decompressed and unpacked sizes, and on everything its receipts account
@@ -155,10 +156,6 @@ const OWN: [&str; 3] = [IN_USE, RECEIPT, DRAFT];
 /// The most entries read from one of the store's own directories: the keys,
 /// one agent's versions, a version's holders or what staging was left.
 const ENTRIES: usize = 4096;
-
-/// The most links a listed link's target is followed through, itself
-/// included, as the unpacker follows them.
-const LINK_STEPS: usize = 8;
 
 /// How many readings of staging a change makes before it says that what is
 /// there is more than it removes.
@@ -1699,8 +1696,8 @@ fn checked(files: &[File]) -> Result<(), StoreError> {
 }
 
 /// Refuses `files` where a link they list does not resolve to a file they
-/// list, through directories they list or imply alone and at most
-/// [`LINK_STEPS`] links, as the unpacker makes a link only when it does.
+/// list, through directories they list or imply alone and at most eight
+/// links, by the rule the unpacker makes a link by.
 fn linked_inside(files: &[File]) -> Result<(), StoreError> {
     let links: HashMap<&str, &str> = files
         .iter()
@@ -1728,57 +1725,19 @@ fn linked_inside(files: &[File]) -> Result<(), StoreError> {
     directories
         .retain(|path| !links.contains_key(path.as_str()) && !regular.contains(path.as_str()));
     for (name, target) in &links {
-        if !resolves(name, target, &links, &regular, &directories) {
-            return Err(StoreError::Listed {
-                name: shown(name),
-                why: "is a link that does not resolve, through directories alone, to a file the list names",
-            });
-        }
+        link_resolves(
+            name,
+            target,
+            &links,
+            &|path| regular.contains(path),
+            &|path| directories.contains(path),
+        )
+        .map_err(|why| StoreError::Listed {
+            name: shown(name),
+            why,
+        })?;
     }
     Ok(())
-}
-
-/// Whether the link `name` to `target` resolves to one of `regular`, through
-/// `directories` alone and at most [`LINK_STEPS`] of `links`.
-fn resolves(
-    name: &str,
-    target: &str,
-    links: &HashMap<&str, &str>,
-    regular: &HashSet<&str>,
-    directories: &HashSet<String>,
-) -> bool {
-    let mut from = name.to_owned();
-    let mut target = target.to_owned();
-    for _ in 0..LINK_STEPS {
-        let mut at: Vec<&str> = from.split('/').collect();
-        at.pop();
-        let parts: Vec<&str> = target.split('/').collect();
-        for (index, part) in parts.iter().enumerate() {
-            match *part {
-                "" | "." => {}
-                ".." => {
-                    if at.pop().is_none() {
-                        return false;
-                    }
-                }
-                part => at.push(part),
-            }
-            if index + 1 < parts.len() && !directories.contains(&at.join("/")) {
-                return false;
-            }
-        }
-        let resolved = at.join("/");
-        if regular.contains(resolved.as_str()) {
-            return true;
-        }
-        let Some(next) = links.get(resolved.as_str()) else {
-            return false;
-        };
-        target.clear();
-        target.push_str(next);
-        from = resolved;
-    }
-    false
 }
 
 /// Whether the link at `path` to `target` resolves, by its components alone,
