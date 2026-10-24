@@ -736,10 +736,10 @@ fn described(way: &Way, held: &[Way], providers: &Providers, glyphs: Glyphs) -> 
     // `signed in` and before the row's own, so a narrow window cuts those.
     let caution = content_use::Routes::production()
         .warned(&content_use::row_route(way))
-        .map(|warned| warned.warning.caution);
+        .map(|warned| warned.warning.caution.to_string());
     // A key row beside a caution says `signed in` alone, so the caution
     // stands whole at forty columns: the list it is in already says a key.
-    let signed = holds.then_some(match (way.kind, caution) {
+    let signed = holds.then_some(match (way.kind, caution.as_ref()) {
         (Kind::Key, None) => SIGNED_IN_WITH_KEY,
         (Kind::Key, Some(_)) | (Kind::Account, _) => SIGNED_IN,
     });
@@ -750,7 +750,7 @@ fn described(way: &Way, held: &[Way], providers: &Providers, glyphs: Glyphs) -> 
         ),
         (Kind::Account, _) => Some(says.to_owned()),
     };
-    [signed.map(str::to_owned), caution.map(str::to_owned), own]
+    [signed.map(str::to_owned), caution, own]
         .into_iter()
         .flatten()
         .filter(|part| !part.is_empty())
@@ -814,7 +814,7 @@ const fn credential(way: &Way) -> &'static str {
 /// The screen of one row: its key box, or its sign-in.
 fn screen<T: Terminal>(way: &Way, opened: Opened, walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
     let route = content_use::row_route(way);
-    if let Some(warned) = walk.terms.consent.asks(&route).copied() {
+    if let Some(warned) = walk.terms.consent.asks(&route).cloned() {
         let style = walk.terms.style();
         match warning::ask(walk.renderer, style, &warned, Put::Choice)? {
             Answer::Yes => walk.terms.consent.give(&route),

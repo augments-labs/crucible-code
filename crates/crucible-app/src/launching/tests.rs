@@ -29,7 +29,7 @@ use super::*;
 use crate::access::Route;
 use crate::backends::tests::{release_of, snapshot_version, trust_of, trusting};
 use crate::backends::{ANTIGRAVITY, CatalogRow, Registry, Row};
-use crate::content_use::{Consent, Routes, Warned, Warning};
+use crate::content_use::{Consent, Routes, Unstated};
 use crate::sample::Sample;
 
 /// The plain protocol, held under Claude Code's route and shipped.
@@ -543,37 +543,55 @@ fn a_profile_reached_through_a_link_into_protected_metadata_is_not_opened() {
 /// initializing as `fake-peer` at 1.0.0, signs in itself with `login`, is
 /// started with `acp --stdio`, and reaches `api.example.com`.
 pub(crate) fn cataloged() -> CatalogRow {
+    cataloged_with(Some(serde_json::json!({
+        "text": "The peer keeps nothing it is sent.",
+        "source": "https://example.com/peer/data",
+        "date": "24 Oct 2026",
+        "origins": [],
+    })))
+}
+
+/// [`cataloged`], its entry carrying `statement` as its statement of content
+/// use where one is given.
+fn cataloged_with(statement: Option<serde_json::Value>) -> CatalogRow {
     let file =
         serde_json::json!({"path": "peer", "size": 1, "sha256": "b".repeat(64), "exec": true});
+    let mut entry = serde_json::json!({
+        "key": "peer",
+        "registry_id": "fake-peer",
+        "version": "1.0.0",
+        "kind": "binary",
+        "license": "MIT",
+        "review": "https://example.com/review/1",
+        "admits": {"name": "fake-peer", "version": "1.0.0"},
+        "reach": ["api.example.com"],
+        "auth_methods": [{"id": "login", "name": "Log in", "kind": "agent"}],
+        "targets": [{
+            "platform": "any",
+            "cmd": "peer",
+            "args": ["acp", "--stdio"],
+            "artifacts": [{
+                "url": "https://example.com/peer.zip",
+                "sha256": "a".repeat(64),
+                "size": 1,
+                "format": "zip",
+                "unpacked": 1,
+                "decompressed": 1,
+                "files": [file],
+            }],
+        }],
+    });
+    if let Some(statement) = statement {
+        entry
+            .as_object_mut()
+            .expect("an entry is an object")
+            .insert("content_use".into(), statement);
+    }
     let catalog = serde_json::json!({
         "schema": 1,
         "serial": 1,
         "revoked": [],
-        "entries": [{
-            "key": "peer",
-            "registry_id": "fake-peer",
-            "version": "1.0.0",
-            "kind": "binary",
-            "license": "MIT",
-            "review": "https://example.com/review/1",
-            "admits": {"name": "fake-peer", "version": "1.0.0"},
-            "reach": ["api.example.com"],
-            "auth_methods": [{"id": "login", "name": "Log in", "kind": "agent"}],
-            "targets": [{
-                "platform": "any",
-                "cmd": "peer",
-                "args": ["acp", "--stdio"],
-                "artifacts": [{
-                    "url": "https://example.com/peer.zip",
-                    "sha256": "a".repeat(64),
-                    "size": 1,
-                    "format": "zip",
-                    "unpacked": 1,
-                    "decompressed": 1,
-                    "files": [file],
-                }],
-            }],
-        }],
+        "entries": [entry],
     });
     let signed = fixture::signed(catalog.to_string().as_bytes());
     let catalog = Catalog::verify(
@@ -589,21 +607,10 @@ pub(crate) fn cataloged() -> CatalogRow {
 }
 
 /// A consent that has said yes to the catalog agent keyed `peer`, whose route
-/// a test warns about itself.
+/// is the hold its entry's statement gives.
 fn peer_granted() -> Consent {
-    let consent = Consent::new(Routes::new(vec![Warned {
-        route: "agent:peer",
-        shown: "Peer",
-        warning: Warning {
-            sentence: "The peer keeps nothing it is sent.",
-            condition: None,
-            source: "A test",
-            link: "https://example.com/peer",
-            read: "24 Oct 2026",
-            caution: "keeps nothing",
-        },
-        origins: &[],
-    }]));
+    let hold = cataloged().warned().cloned().expect("a statement");
+    let consent = Consent::new(Routes::production().cataloging([hold]));
     consent.give("agent:peer");
     consent
 }
@@ -657,6 +664,108 @@ async fn a_catalog_row_is_launched_as_its_entry_reviewed_it() {
             "{calls_itself}"
         );
     }
+}
+
+/// What the instance `work`, run as the catalog agent keyed `peer` by the
+/// program at `executable`, is, over a registry listing `row`.
+fn peer_agent(row: CatalogRow, executable: &Path) -> Agent {
+    let key = AgentKey::new("peer").expect("a key");
+    let registry: &'static Registry = Box::leak(Box::new(
+        Registry::new(&[]).cataloging(Box::leak(Box::new([row]))),
+    ));
+    let instance = ExternalAgent::unwritten(
+        "work",
+        Driver::Catalog,
+        &executable.to_string_lossy(),
+        None,
+        Some(&key),
+    )
+    .expect("a catalog instance");
+    Agent::configured(&instance, registry, |_| None).expect("its catalog row")
+}
+
+/// An entry without a statement of content use is listed and never launched,
+/// whatever yes its route has been given: the launch is refused with the
+/// reason, for a turn and for an account step alike, and nothing is started.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_catalog_agent_without_a_statement_is_never_launched() {
+    let sample = Sample::new("launch-catalog-unstated");
+    let peer = installed(&sample, &Script::of([Reply::lines(["1.0.0"])]));
+    let agent = peer_agent(cataloged_with(None), &peer);
+    let consent = Consent::new(Routes::production());
+    consent.give("agent:peer");
+    let policy = conversation(&sample);
+    let state = sample.root();
+    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
+    let control = Control::new().expect("a control");
+    let mut dialect = agent.row().dialect(Mode::Ask, None, None).expect("asking");
+
+    let turn = launcher
+        .launch(&agent, &control, dialect.as_mut(), None)
+        .await;
+    let status = launcher
+        .account(&agent, &control, dialect.as_mut(), Account::Status, &|_| {})
+        .await;
+
+    for refused in [turn.err(), status.err()] {
+        assert!(
+            matches!(
+                &refused,
+                Some(Unlaunched::Unstated {
+                    why: Unstated::Missing,
+                    ..
+                })
+            ),
+            "{refused:?}"
+        );
+        assert_eq!(
+            refused.map(|why| why.to_string()),
+            Some(
+                "peer cannot be launched: its catalog entry gives no statement of how its \
+                 vendor uses what is sent."
+                    .to_owned()
+            )
+        );
+    }
+    assert_eq!(fake_peer::played(peer.parent().expect("a directory")), 0);
+}
+
+/// An entry with a statement asks its own route before anything is started,
+/// and another catalog agent's yes does not answer it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_catalog_agent_with_a_statement_asks_its_own_hold_before_anything_is_started() {
+    let sample = Sample::new("launch-catalog-stated");
+    let peer = installed(&sample, &Script::of([Reply::lines(["1.0.0"])]));
+    let row = cataloged();
+    let hold = row.warned().cloned().expect("a statement");
+    let agent = peer_agent(row, &peer);
+    let consent = Consent::new(Routes::production().cataloging([hold]));
+    consent.give("agent:another");
+    let policy = conversation(&sample);
+    let state = sample.root();
+    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
+    let control = Control::new().expect("a control");
+    let mut dialect = agent.row().dialect(Mode::Ask, None, None).expect("asking");
+
+    let turn = launcher
+        .launch(&agent, &control, dialect.as_mut(), None)
+        .await;
+    let status = launcher
+        .account(&agent, &control, dialect.as_mut(), Account::Status, &|_| {})
+        .await;
+
+    for refused in [turn.err(), status.err()] {
+        assert!(
+            matches!(
+                &refused,
+                Some(Unlaunched::Asks(asked))
+                    if asked.route == "agent:peer"
+                        && asked.warning.sentence.starts_with("The peer keeps nothing it is sent.")
+            ),
+            "{refused:?}"
+        );
+    }
+    assert_eq!(fake_peer::played(peer.parent().expect("a directory")), 0);
 }
 
 /// A catalog row reaches the hosts its entry's profile grants, and the child

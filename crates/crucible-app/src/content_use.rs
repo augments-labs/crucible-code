@@ -17,7 +17,13 @@
 //! with one exception: an installed agent's route, spelled `agent:` and its
 //! driver, is always asked about once before its first launch, with
 //! [`LAUNCHING`] beside whatever its vendor says, because a launch is
-//! execution and not only a request. A client with no terminal is put the
+//! execution and not only a request. An agent the catalog reviewed is held
+//! under the statement its own entry carries ([`stated`]): the vendor's words,
+//! the page and the day, owned, built for the route of its key and given to
+//! [`Routes::cataloging`] beside [`WARNED`], which keeps the built-in agents. An
+//! entry with no statement, or one too long to be shown whole
+//! ([`STATEMENT_BYTES`]), gives no hold and its agent is never launched. A
+//! client with no terminal is put the
 //! same words, closing the warning's sentence, and so is a run with no
 //! terminal that ends unanswered and a client whose question was declined;
 //! [`full_sentence`] is the one place they are joined.
@@ -34,7 +40,10 @@
 //! request it makes. An agent's route names no origin either: what it sends
 //! goes from its own process, so it is held at the launch instead, and
 //! [`held`] is the one place the token a launch is started under is made.
+//! The origins a catalog agent's statement covers are said in its words and
+//! are never held at.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, PoisonError, RwLock};
@@ -42,6 +51,7 @@ use std::sync::{Arc, PoisonError, RwLock};
 use crucible_auth::{Dropped, LettingGo};
 use crucible_config::Settings;
 use crucible_external_harnesses::Held;
+use crucible_external_harnesses::catalog::Entry;
 use crucible_http::{Hold, Origin};
 
 use crate::providers::{List, Row, Rows};
@@ -51,22 +61,22 @@ mod asked;
 pub(crate) use asked::Asked;
 
 /// What a vendor says about one route, and where it says it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Warning {
     /// The vendor's words in English, the condition first where there is one
     /// and the way to opt out last where the page gives one.
-    pub sentence: &'static str,
+    pub sentence: Cow<'static, str>,
     /// What decides whether it holds, where crucible cannot see it: the plan
     /// or the quota. The sentence opens with it.
-    pub condition: Option<&'static str>,
+    pub condition: Option<Cow<'static, str>>,
     /// The page, as the panel's quiet row names it.
-    pub source: &'static str,
+    pub source: Cow<'static, str>,
     /// Where the page is.
-    pub link: &'static str,
+    pub link: Cow<'static, str>,
     /// The day it was read, or the day of the archived copy it rests on.
-    pub read: &'static str,
+    pub read: Cow<'static, str>,
     /// A `/login` row's few words for it, in the vendor's own verb.
-    pub caution: &'static str,
+    pub caution: Cow<'static, str>,
 }
 
 impl Warning {
@@ -78,166 +88,196 @@ impl Warning {
 }
 
 /// One warned route.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Warned {
     /// The route's spelling, as the yes is written.
-    pub route: &'static str,
+    pub route: Cow<'static, str>,
     /// What the panel is titled.
-    pub shown: &'static str,
+    pub shown: Cow<'static, str>,
     /// What its vendor says.
     pub warning: Warning,
     /// Every origin a request of this route is sent to: its model and web tool
     /// address, and for a sign-in the host that issues and renews its tokens.
-    /// None for a warned model: its host serves its provider's other models
+    /// None for an agent's route, catalog or built in, and for a warned model: its host serves its provider's other models
     /// too, so it is asked about at the send rather than held at the host.
     pub origins: &'static [&'static str],
 }
 
 const OPENAI_PLANS: Warning = Warning {
-    sentence: "On Free, Plus and Pro, OpenAI may use what you send to train its models. To stop \
+    sentence: Cow::Borrowed(
+        "On Free, Plus and Pro, OpenAI may use what you send to train its models. To stop \
                it, turn off Improve the model for everyone under Settings, Data controls in \
                ChatGPT, or choose Do not train on my content in its Privacy Portal; that covers \
                only what you send afterwards.",
-    condition: Some("On Free, Plus and Pro"),
-    source: "OpenAI Help Center, archived copy",
-    link: "https://help.openai.com/en/articles/5722486-how-your-data-is-used-to-improve-model-performance",
-    read: "28 Sep 2026",
-    caution: "may train on what is sent",
+    ),
+    condition: Some(Cow::Borrowed("On Free, Plus and Pro")),
+    source: Cow::Borrowed("OpenAI Help Center, archived copy"),
+    link: Cow::Borrowed(
+        "https://help.openai.com/en/articles/5722486-how-your-data-is-used-to-improve-model-performance",
+    ),
+    read: Cow::Borrowed("28 Sep 2026"),
+    caution: Cow::Borrowed("may train on what is sent"),
 };
 
 const GEMINI_UNPAID: Warning = Warning {
-    sentence: "On unpaid quota, Google uses what you send and what it answers to improve its \
+    sentence: Cow::Borrowed(
+        "On unpaid quota, Google uses what you send and what it answers to improve its \
                products and machine learning technologies. In the EEA, Switzerland and the UK \
                the paid terms apply instead.",
-    condition: Some("On unpaid quota"),
-    source: "Gemini API terms",
-    link: "https://ai.google.dev/gemini-api/terms",
-    read: "30 Sep 2026",
-    caution: "uses what is sent",
+    ),
+    condition: Some(Cow::Borrowed("On unpaid quota")),
+    source: Cow::Borrowed("Gemini API terms"),
+    link: Cow::Borrowed("https://ai.google.dev/gemini-api/terms"),
+    read: Cow::Borrowed("30 Sep 2026"),
+    caution: Cow::Borrowed("uses what is sent"),
 };
 
 const KIMI_AI: Warning = Warning {
-    sentence: "Kimi may use what you send to train its models. To stop it, contact Kimi as its \
+    sentence: Cow::Borrowed(
+        "Kimi may use what you send to train its models. To stop it, contact Kimi as its \
                terms say; that covers only what you send afterwards.",
+    ),
     condition: None,
-    source: "kimi.ai terms of service",
-    link: "https://www.kimi.ai/user/agreement/modelUse?version=v2",
-    read: "30 Sep 2026",
-    caution: "may train on what is sent",
+    source: Cow::Borrowed("kimi.ai terms of service"),
+    link: Cow::Borrowed("https://www.kimi.ai/user/agreement/modelUse?version=v2"),
+    read: Cow::Borrowed("30 Sep 2026"),
+    caution: Cow::Borrowed("may train on what is sent"),
 };
 
 const KIMI_COM: Warning = Warning {
-    sentence: "Kimi may use what you send, and what it answers, to improve its models. To keep \
+    sentence: Cow::Borrowed(
+        "Kimi may use what you send, and what it answers, to improve its models. To keep \
                it out of training, contact Kimi as its terms say.",
+    ),
     condition: None,
-    source: "kimi.com user agreement",
-    link: "https://www.kimi.com/user/agreement/modelUse?version=v2",
-    read: "30 Sep 2026",
-    caution: "may use what is sent",
+    source: Cow::Borrowed("kimi.com user agreement"),
+    link: Cow::Borrowed("https://www.kimi.com/user/agreement/modelUse?version=v2"),
+    read: Cow::Borrowed("30 Sep 2026"),
+    caution: Cow::Borrowed("may use what is sent"),
 };
 
 const PLATFORM_AI: Warning = Warning {
-    sentence: "Moonshot may use what you send to develop and improve its services, and to train \
+    sentence: Cow::Borrowed(
+        "Moonshot may use what you send to develop and improve its services, and to train \
                its models, unless you agree otherwise with it in writing.",
+    ),
     condition: None,
-    source: "Kimi open platform terms",
-    link: "https://platform.kimi.ai/docs/agreement/modeluse",
-    read: "30 Sep 2026",
-    caution: "may train on what is sent",
+    source: Cow::Borrowed("Kimi open platform terms"),
+    link: Cow::Borrowed("https://platform.kimi.ai/docs/agreement/modeluse"),
+    read: Cow::Borrowed("30 Sep 2026"),
+    caution: Cow::Borrowed("may train on what is sent"),
 };
 
 const PLATFORM_CN: Warning = Warning {
-    sentence: "Moonshot may use what you send, and what it answers, to improve its models.",
+    sentence: Cow::Borrowed(
+        "Moonshot may use what you send, and what it answers, to improve its models.",
+    ),
     condition: None,
-    source: "Kimi open platform terms, platform.kimi.com",
-    link: "https://platform.kimi.com/docs/agreement/modeluse",
-    read: "30 Sep 2026",
-    caution: "may use what is sent",
+    source: Cow::Borrowed("Kimi open platform terms, platform.kimi.com"),
+    link: Cow::Borrowed("https://platform.kimi.com/docs/agreement/modeluse"),
+    read: Cow::Borrowed("30 Sep 2026"),
+    caution: Cow::Borrowed("may use what is sent"),
 };
 
 const MINIMAX_IO: Warning = Warning {
-    sentence: "MiniMax may use what you send, and what it answers, to develop and improve its \
+    sentence: Cow::Borrowed(
+        "MiniMax may use what you send, and what it answers, to develop and improve its \
                services.",
+    ),
     condition: None,
-    source: "MiniMax terms of service",
-    link: "https://platform.minimax.io/protocol/terms-of-service",
-    read: "1 Oct 2026",
-    caution: "may use what is sent",
+    source: Cow::Borrowed("MiniMax terms of service"),
+    link: Cow::Borrowed("https://platform.minimax.io/protocol/terms-of-service"),
+    read: Cow::Borrowed("1 Oct 2026"),
+    caution: Cow::Borrowed("may use what is sent"),
 };
 
 const MINIMAX_CN: Warning = Warning {
-    sentence: "MiniMax may use what you send, and what it answers, once de-identified, to \
+    sentence: Cow::Borrowed(
+        "MiniMax may use what you send, and what it answers, once de-identified, to \
                optimise its services.",
+    ),
     condition: None,
-    source: "MiniMax user agreement, minimaxi.com",
-    link: "https://platform.minimaxi.com/protocol/user-agreement",
-    read: "1 Oct 2026",
-    caution: "may use what is sent",
+    source: Cow::Borrowed("MiniMax user agreement, minimaxi.com"),
+    link: Cow::Borrowed("https://platform.minimaxi.com/protocol/user-agreement"),
+    read: Cow::Borrowed("1 Oct 2026"),
+    caution: Cow::Borrowed("may use what is sent"),
 };
 
 const QWEN_CODING_CN: Warning = Warning {
-    sentence: "Alibaba Cloud uses what you send, and what the model answers, to improve its \
+    sentence: Cow::Borrowed(
+        "Alibaba Cloud uses what you send, and what the model answers, to improve its \
                service and its models. To stop it, stop using the Coding Plan; that covers only \
                what you send afterwards.",
+    ),
     condition: None,
-    source: "Qwen Coding Plan, aliyun.com",
-    link: "https://help.aliyun.com/zh/model-studio/coding-plan",
-    read: "1 Oct 2026",
-    caution: "uses what is sent",
+    source: Cow::Borrowed("Qwen Coding Plan, aliyun.com"),
+    link: Cow::Borrowed("https://help.aliyun.com/zh/model-studio/coding-plan"),
+    read: Cow::Borrowed("1 Oct 2026"),
+    caution: Cow::Borrowed("uses what is sent"),
 };
 
 const QWEN_TOKEN_CN: Warning = Warning {
-    sentence: "On the Personal edition, Alibaba Cloud uses what you send, and what the model \
+    sentence: Cow::Borrowed(
+        "On the Personal edition, Alibaba Cloud uses what you send, and what the model \
                answers, to improve its service and its models. To stop it, stop using the plan; \
                that covers only what you send afterwards.",
-    condition: Some("On the Personal edition"),
-    source: "Qwen Token Plan Personal, aliyun.com",
-    link: "https://help.aliyun.com/zh/model-studio/token-plan-personal-overview",
-    read: "1 Oct 2026",
-    caution: "uses what is sent",
+    ),
+    condition: Some(Cow::Borrowed("On the Personal edition")),
+    source: Cow::Borrowed("Qwen Token Plan Personal, aliyun.com"),
+    link: Cow::Borrowed("https://help.aliyun.com/zh/model-studio/token-plan-personal-overview"),
+    read: Cow::Borrowed("1 Oct 2026"),
+    caution: Cow::Borrowed("uses what is sent"),
 };
 
 const BIGMODEL: Warning = Warning {
-    sentence: "Zhipu may use what you send, once anonymised, to improve its products and \
+    sentence: Cow::Borrowed(
+        "Zhipu may use what you send, once anonymised, to improve its products and \
                services, including to train its models, without asking you again.",
+    ),
     condition: None,
-    source: "bigmodel.cn user agreement",
-    link: "https://docs.bigmodel.cn/cn/terms/user-agreement",
-    read: "1 Oct 2026",
-    caution: "may train on what is sent",
+    source: Cow::Borrowed("bigmodel.cn user agreement"),
+    link: Cow::Borrowed("https://docs.bigmodel.cn/cn/terms/user-agreement"),
+    read: Cow::Borrowed("1 Oct 2026"),
+    caution: Cow::Borrowed("may train on what is sent"),
 };
 
 const META_CONTRIBUTOR: Warning = Warning {
-    sentence: "Meta may use what you send to train, develop, evaluate and improve its AI models, \
+    sentence: Cow::Borrowed(
+        "Meta may use what you send to train, develop, evaluate and improve its AI models, \
                products and services, and gives no way to keep it out of training. Its terms say \
                not to send code or anything else you must keep confidential.",
+    ),
     condition: None,
-    source: "Meta Model API terms of service",
-    link: "https://dev.meta.ai/legal/terms-of-service",
-    read: "1 Oct 2026",
-    caution: "may train on what is sent",
+    source: Cow::Borrowed("Meta Model API terms of service"),
+    link: Cow::Borrowed("https://dev.meta.ai/legal/terms-of-service"),
+    read: Cow::Borrowed("1 Oct 2026"),
+    caution: Cow::Borrowed("may train on what is sent"),
 };
 
 const CLAUDE_CODE: Warning = Warning {
-    sentence: "On Free, Pro and Max, Anthropic trains new models on what you send through \
+    sentence: Cow::Borrowed(
+        "On Free, Pro and Max, Anthropic trains new models on what you send through \
                Claude Code while the setting that allows it is on. To stop it, turn that \
                setting off in your Claude data privacy controls.",
-    condition: Some("On Free, Pro and Max"),
-    source: "Claude Code data usage",
-    link: "https://code.claude.com/docs/en/data-usage",
-    read: "12 Oct 2026",
-    caution: "may train on what is sent",
+    ),
+    condition: Some(Cow::Borrowed("On Free, Pro and Max")),
+    source: Cow::Borrowed("Claude Code data usage"),
+    link: Cow::Borrowed("https://code.claude.com/docs/en/data-usage"),
+    read: Cow::Borrowed("12 Oct 2026"),
+    caution: Cow::Borrowed("may train on what is sent"),
 };
 
 const ANTIGRAVITY: Warning = Warning {
-    sentence: "Google uses what you do in Antigravity to evaluate, develop and improve its \
+    sentence: Cow::Borrowed(
+        "Google uses what you do in Antigravity to evaluate, develop and improve its \
                products and machine learning technologies. To stop it, turn off Enable \
                Telemetry in Antigravity's settings.",
+    ),
     condition: None,
-    source: "Antigravity terms",
-    link: "https://antigravity.google/terms",
-    read: "12 Oct 2026",
-    caution: "uses what is sent",
+    source: Cow::Borrowed("Antigravity terms"),
+    link: Cow::Borrowed("https://antigravity.google/terms"),
+    read: Cow::Borrowed("12 Oct 2026"),
+    caution: Cow::Borrowed("uses what is sent"),
 };
 
 /// What starting an installed agent does besides what it is asked, said
@@ -251,126 +291,126 @@ pub const LAUNCHING: &str = "Starting it runs the hooks, helper commands, MCP se
 /// refusal and a run with no terminal say the same words.
 #[must_use]
 pub fn full_sentence(warned: &Warned) -> String {
-    if launches(warned.route) {
+    if launches(&warned.route) {
         format!("{} {LAUNCHING}", warned.warning.sentence)
     } else {
-        warned.warning.sentence.to_owned()
+        warned.warning.sentence.to_string()
     }
 }
 
 /// Every warned route this build has.
 pub const WARNED: [Warned; 19] = [
     Warned {
-        route: "subscription:openai",
-        shown: "OpenAI",
+        route: Cow::Borrowed("subscription:openai"),
+        shown: Cow::Borrowed("OpenAI"),
         warning: OPENAI_PLANS,
         origins: &["https://chatgpt.com", "https://auth.openai.com"],
     },
     Warned {
-        route: "subscription:moonshot@kimi.ai",
-        shown: "Kimi Code · kimi.ai",
+        route: Cow::Borrowed("subscription:moonshot@kimi.ai"),
+        shown: Cow::Borrowed("Kimi Code · kimi.ai"),
         warning: KIMI_AI,
         origins: &["https://api.kimi.ai", "https://auth.kimi.ai"],
     },
     Warned {
-        route: "subscription:moonshot",
-        shown: "Kimi Code · kimi.com",
+        route: Cow::Borrowed("subscription:moonshot"),
+        shown: Cow::Borrowed("Kimi Code · kimi.com"),
         warning: KIMI_COM,
         origins: &["https://api.kimi.com", "https://auth.kimi.com"],
     },
     Warned {
-        route: "subscription:minimax@token-plan.minimax.io",
-        shown: "MiniMax Token Plan · minimax.io",
+        route: Cow::Borrowed("subscription:minimax@token-plan.minimax.io"),
+        shown: Cow::Borrowed("MiniMax Token Plan · minimax.io"),
         warning: MINIMAX_IO,
         origins: &["https://api.minimax.io"],
     },
     Warned {
-        route: "subscription:minimax@token-plan.minimaxi.com",
-        shown: "MiniMax Token Plan · minimaxi.com",
+        route: Cow::Borrowed("subscription:minimax@token-plan.minimaxi.com"),
+        shown: Cow::Borrowed("MiniMax Token Plan · minimaxi.com"),
         warning: MINIMAX_CN,
         origins: &["https://api.minimax.cn"],
     },
     Warned {
-        route: "subscription:qwen@coding-plan.aliyun.com",
-        shown: "Qwen Coding Plan · aliyun.com",
+        route: Cow::Borrowed("subscription:qwen@coding-plan.aliyun.com"),
+        shown: Cow::Borrowed("Qwen Coding Plan · aliyun.com"),
         warning: QWEN_CODING_CN,
         origins: &["https://coding.dashscope.aliyuncs.com"],
     },
     Warned {
-        route: "subscription:qwen@token-plan.aliyun.com",
-        shown: "Qwen Token Plan · aliyun.com",
+        route: Cow::Borrowed("subscription:qwen@token-plan.aliyun.com"),
+        shown: Cow::Borrowed("Qwen Token Plan · aliyun.com"),
         warning: QWEN_TOKEN_CN,
         origins: &["https://token-plan.cn-beijing.maas.aliyuncs.com"],
     },
     Warned {
-        route: "key:google",
-        shown: "Google",
+        route: Cow::Borrowed("key:google"),
+        shown: Cow::Borrowed("Google"),
         warning: GEMINI_UNPAID,
         origins: &["https://generativelanguage.googleapis.com"],
     },
     Warned {
-        route: "key:moonshot@kimi.ai",
-        shown: "MoonshotAI · kimi.ai",
+        route: Cow::Borrowed("key:moonshot@kimi.ai"),
+        shown: Cow::Borrowed("MoonshotAI · kimi.ai"),
         warning: KIMI_AI,
         origins: &["https://api.kimi.ai"],
     },
     Warned {
-        route: "key:moonshot",
-        shown: "MoonshotAI · kimi.com",
+        route: Cow::Borrowed("key:moonshot"),
+        shown: Cow::Borrowed("MoonshotAI · kimi.com"),
         warning: KIMI_COM,
         origins: &["https://api.kimi.com"],
     },
     Warned {
-        route: "key:minimax@minimax.io",
-        shown: "MiniMax · minimax.io",
+        route: Cow::Borrowed("key:minimax@minimax.io"),
+        shown: Cow::Borrowed("MiniMax · minimax.io"),
         warning: MINIMAX_IO,
         origins: &["https://api.minimax.io"],
     },
     Warned {
-        route: "key:minimax@minimaxi.com",
-        shown: "MiniMax · minimaxi.com",
+        route: Cow::Borrowed("key:minimax@minimaxi.com"),
+        shown: Cow::Borrowed("MiniMax · minimaxi.com"),
         warning: MINIMAX_CN,
         origins: &["https://api.minimax.cn"],
     },
     Warned {
-        route: "key:zai@bigmodel.cn",
-        shown: "Z.ai · bigmodel.cn",
+        route: Cow::Borrowed("key:zai@bigmodel.cn"),
+        shown: Cow::Borrowed("Z.ai · bigmodel.cn"),
         warning: BIGMODEL,
         origins: &["https://open.bigmodel.cn"],
     },
     Warned {
-        route: "model:meta/muse-spark-1.3-contributor",
-        shown: "Meta · muse-spark-1.3-contributor",
+        route: Cow::Borrowed("model:meta/muse-spark-1.3-contributor"),
+        shown: Cow::Borrowed("Meta · muse-spark-1.3-contributor"),
         warning: META_CONTRIBUTOR,
         origins: &[],
     },
     Warned {
-        route: "model:meta/muse-spark-1.2-contributor",
-        shown: "Meta · muse-spark-1.2-contributor",
+        route: Cow::Borrowed("model:meta/muse-spark-1.2-contributor"),
+        shown: Cow::Borrowed("Meta · muse-spark-1.2-contributor"),
         warning: META_CONTRIBUTOR,
         origins: &[],
     },
     Warned {
-        route: "api.moonshot.ai",
-        shown: "Kimi open platform · api.moonshot.ai",
+        route: Cow::Borrowed("api.moonshot.ai"),
+        shown: Cow::Borrowed("Kimi open platform · api.moonshot.ai"),
         warning: PLATFORM_AI,
         origins: &["https://api.moonshot.ai"],
     },
     Warned {
-        route: "api.moonshot.cn",
-        shown: "Kimi open platform · api.moonshot.cn",
+        route: Cow::Borrowed("api.moonshot.cn"),
+        shown: Cow::Borrowed("Kimi open platform · api.moonshot.cn"),
         warning: PLATFORM_CN,
         origins: &["https://api.moonshot.cn"],
     },
     Warned {
-        route: "agent:claude",
-        shown: "Claude Code",
+        route: Cow::Borrowed("agent:claude"),
+        shown: Cow::Borrowed("Claude Code"),
         warning: CLAUDE_CODE,
         origins: &[],
     },
     Warned {
-        route: "agent:antigravity",
-        shown: "Antigravity",
+        route: Cow::Borrowed("agent:antigravity"),
+        shown: Cow::Borrowed("Antigravity"),
         warning: ANTIGRAVITY,
         origins: &[],
     },
@@ -510,6 +550,89 @@ pub fn launches(route: &str) -> bool {
     route.starts_with("agent:")
 }
 
+/// The most bytes the words a catalog agent's warning says may come to, the
+/// vendor's statement and the origins it covers together: a statement longer
+/// than this cannot be shown whole, and an agent is never launched on words
+/// cut short.
+pub const STATEMENT_BYTES: usize = 4096;
+
+/// The most catalog agents' routes a [`Routes`] holds, the most rows a registry
+/// lists; a route beyond them is never asked about, and so never launched.
+pub const CATALOGED: usize = 32;
+
+/// Why a catalog entry gives no hold a launch can be asked under.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum Unstated {
+    /// The entry carries no statement of how its vendor uses what is sent.
+    #[error("its catalog entry gives no statement of how its vendor uses what is sent")]
+    Missing,
+    /// The statement's source is not an `https` address naming a host.
+    #[error("the source of its statement of content use is not an https address naming a host")]
+    Source,
+    /// The statement and the origins it covers are too long to be shown whole.
+    #[error(
+        "its statement of content use runs to {bytes} bytes with the origins it covers, more than the {STATEMENT_BYTES} that can be shown whole"
+    )]
+    TooLong {
+        /// What they come to.
+        bytes: usize,
+    },
+}
+
+/// The warning the agent `entry` describes is held under, built from the
+/// statement its entry carries.
+///
+/// # Errors
+///
+/// [`Unstated`] where the entry carries no statement, or one that cannot be
+/// shown whole.
+pub fn stated(entry: &Entry) -> Result<Warned, Unstated> {
+    let statement = entry.content_use.as_ref().ok_or(Unstated::Missing)?;
+    let host = Origin::of(&statement.source)
+        .filter(|origin| origin.scheme() == "https")
+        .map(|origin| origin.host().to_owned())
+        .ok_or(Unstated::Source)?;
+    // The origins it covers are said with the vendor's words, so they are
+    // counted before anything is built from them.
+    let covers: usize = statement
+        .origins
+        .iter()
+        .map(|origin| origin.len() + 2)
+        .sum();
+    let bytes = statement.text.len()
+        + if covers == 0 {
+            0
+        } else {
+            COVERS.len() + covers
+        };
+    if bytes > STATEMENT_BYTES {
+        return Err(Unstated::TooLong { bytes });
+    }
+    let mut sentence = statement.text.to_string();
+    if !statement.origins.is_empty() {
+        sentence.push_str(COVERS);
+        sentence.push_str(&statement.origins.join(", "));
+        sentence.push('.');
+    }
+    Ok(Warned {
+        route: Cow::Owned(agent_route(entry.key.as_str())),
+        shown: Cow::Owned(entry.key.as_str().to_owned()),
+        warning: Warning {
+            sentence: Cow::Owned(sentence),
+            condition: None,
+            source: Cow::Owned(host),
+            link: Cow::Owned(statement.source.to_string()),
+            read: Cow::Owned(statement.date.to_string()),
+            caution: Cow::Borrowed("see its content statement"),
+        },
+        origins: &[],
+    })
+}
+
+/// What crucible says after the vendor's words where its statement names
+/// origins, which are shown and never held at.
+const COVERS: &str = " Its statement covers ";
+
 /// Why no launch may be started on a route.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Unheld {
@@ -535,7 +658,7 @@ pub fn held(consent: &Consent, route: &str) -> Result<Held, Unheld> {
         return Err(Unheld::Unknown);
     }
     match consent.asks(route) {
-        Some(warned) => Err(Unheld::Asks(Box::new(*warned))),
+        Some(warned) => Err(Unheld::Asks(Box::new(warned.clone()))),
         None => Ok(Held::granted(route)),
     }
 }
@@ -669,6 +792,31 @@ impl Routes {
     #[must_use]
     pub fn production() -> Self {
         Self::new(WARNED.to_vec())
+    }
+
+    /// These routes and `catalog`'s: the warned route of each catalog agent
+    /// the build lists.
+    #[must_use]
+    pub fn cataloging(self, catalog: impl IntoIterator<Item = Warned>) -> Self {
+        let mut warned = self.warned.to_vec();
+        let mut listed = 0;
+        for one in catalog {
+            if listed == CATALOGED {
+                break;
+            }
+            // Only an agent's route that names no origin and restates none
+            // already warned about; anything else is never asked about, and
+            // so never launched.
+            if !launches(&one.route)
+                || !one.origins.is_empty()
+                || warned.iter().any(|have| have.route == one.route)
+            {
+                continue;
+            }
+            warned.push(one);
+            listed += 1;
+        }
+        Self::new(warned)
     }
 
     /// Any routes, for a caller that stands its own origins in.
@@ -806,8 +954,8 @@ impl Consent {
                 file: "the configuration file".into(),
                 source: std::io::Error::new(std::io::ErrorKind::NotFound, "no file was given"),
             })?;
-        crate::remember::accepting(file, warned.route)?;
-        self.record(warned.route);
+        crate::remember::accepting(file, &warned.route)?;
+        self.record(&warned.route);
         Ok(())
     }
 
@@ -856,7 +1004,7 @@ impl Consent {
             state.serving.get(provider)?.clone()
         };
         if let Some(warned) = self.asks(&model_route(provider, model)) {
-            return Some(*warned);
+            return Some(warned.clone());
         }
         // Whatever holds the origins the provider is served at, which may be
         // another provider's route there as well as its own: what is asked
@@ -879,7 +1027,7 @@ impl Consent {
         origins
             .iter()
             .find_map(|origin| self.held(origin))
-            .and_then(|route| self.routes.warned(&route).copied())
+            .and_then(|route| self.routes.warned(&route).cloned())
     }
 
     /// Takes the routes the user's file says yes to, the first time it is
@@ -1001,7 +1149,7 @@ impl Hold for Consent {
                 continue;
             }
             match warned {
-                Some(warned) if !said(warned.route) => return Some(warned.route.into()),
+                Some(warned) if !said(&warned.route) => return Some(warned.route.as_ref().into()),
                 Some(_) | None => served = true,
             }
         }
@@ -1012,8 +1160,8 @@ impl Hold for Consent {
         self.routes
             .all()
             .iter()
-            .find(|warned| sent_to(warned) && !said(warned.route))
-            .map(|warned| warned.route.into())
+            .find(|warned| sent_to(warned) && !said(&warned.route))
+            .map(|warned| warned.route.as_ref().into())
     }
 }
 

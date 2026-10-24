@@ -303,7 +303,7 @@ impl Ended {
                 Outcome::Turn(TurnOutcome::Failed(Problem::failed(problem)))
             }
             Self::Warned(warned) => Outcome::Turn(TurnOutcome::Warned {
-                route: Text::cut(warned.route),
+                route: Text::cut(&warned.route),
                 sentence: Text::cut(&full_sentence(warned)),
                 source: Text::cut(&warned.warning.cited()),
             }),

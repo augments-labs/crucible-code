@@ -609,8 +609,8 @@ pub async fn warned(capabilities: Capabilities, front: &mut dyn Front, warned: &
     // told what starting it runs, in the words the terminal shows.
     let sentence = full_sentence(warned);
     let words = [
-        Text::cut(warned.route),
-        Text::cut(warned.shown),
+        Text::cut(&warned.route),
+        Text::cut(&warned.shown),
         Text::cut(&sentence),
         Text::cut(&warned.warning.cited()),
     ];
