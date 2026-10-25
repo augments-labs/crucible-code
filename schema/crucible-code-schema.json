@@ -10,6 +10,28 @@
     "$schema": {
       "type": "string"
     },
+    "agents": {
+      "additionalProperties": false,
+      "description": "What crucible does about the installed coding agents it can update",
+      "properties": {
+        "$comment": {
+          "type": "string"
+        },
+        "$schema": {
+          "type": "string"
+        },
+        "update": {
+          "default": "ask",
+          "description": "Whether an update of an installed coding agent to a version the reviewed catalog lists is put to you (ask) or taken without asking (reviewed). A first install, a rollback and a removal are always asked. Read only from the configuration file in your home directory",
+          "enum": [
+            "ask",
+            "reviewed"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "compaction": {
       "additionalProperties": false,
       "description": "What happens when the model's window fills up",

@@ -656,6 +656,23 @@ const INPUT: &[Field] = &[Field {
 /// Every answer `updates.check` accepts.
 pub(crate) const UPDATE_CHECK: &[&str] = &["auto", "never"];
 
+/// Every answer `agents.update` accepts.
+pub(crate) const AGENT_UPDATE: &[&str] = &["ask", "reviewed"];
+
+/// What crucible does about the installed agents it can update.
+///
+/// `update` widens: `reviewed` takes a new program in without a question, so
+/// a file that arrives with a checkout cannot be the one that says so.
+const AGENTS: &[Field] = &[Field {
+    name: "update",
+    about: "Whether an update of an installed coding agent to a version the reviewed catalog lists is put to you (ask) or taken without asking (reviewed). A first install, a rollback and a removal are always asked. Read only from the configuration file in your home directory",
+    shape: Shape::Choice(AGENT_UPDATE),
+    examples: &[],
+    usual: Some("ask"),
+    needed: false,
+    widens: true,
+}];
+
 /// Whether crucible finds out that it is out of date.
 ///
 /// A key rather than a fact about the build, because asking means reaching a
@@ -1631,6 +1648,15 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         usual: None,
         needed: false,
         widens: true,
+    },
+    Field {
+        name: "agents",
+        about: "What crucible does about the installed coding agents it can update",
+        shape: Shape::Fields(AGENTS),
+        examples: &[],
+        usual: None,
+        needed: false,
+        widens: false,
     },
     Field {
         name: "input",

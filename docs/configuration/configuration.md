@@ -241,6 +241,28 @@ the configuration file in your home directory, and `/settings` shows none of
 it. A provider whose access names an entry has its conversations run by that
 agent; see [installed coding agents](../providers/agents.md).
 
+### `agents`
+
+| Key | Means |
+| --- | --- |
+| `update` | `ask`, the default, puts every update of an installed catalog agent to you; `reviewed` takes an update to a version the reviewed catalog lists, and has not revoked, without asking. |
+
+```json
+{ "agents": { "update": "reviewed" } }
+```
+
+`reviewed` skips one question only: the one before an update. A first install, a
+rollback and a removal are still asked, and so is a version the catalog does not
+list. Every other check an update makes still runs and still refuses: the
+catalog's signature, the download's pin and hosts, revocation, and the smoke
+test where your sandbox allows one. Your yes to the vendor receiving what you
+send is a separate question that `reviewed` never answers. An update taken this
+way is reported as taken under `agents.update = "reviewed"`.
+
+The key puts a new program in place without a question, so it is read only from
+the configuration file in your home directory. In a project file it is refused,
+naming the file. `/settings` shows no row for it.
+
 ### `systemPrompt`
 
 What the model is asked under, before you have typed anything.
@@ -898,7 +920,7 @@ is still not a way to ship somebody's key.
 The same refusal covers every key that could loosen what crucible does unasked:
 `permissions.mode`, `permissions.allow`, `permissions.extraDirectories`,
 `systemPrompt.custom`, `providers.<name>.apiKeyEnv`, `providers.<name>.baseUrl`,
-`providers.<name>.access`, `providers.<name>.fast`, `provider`, `externalAgents`, `promptCaching.namespace`,
+`providers.<name>.access`, `providers.<name>.fast`, `provider`, `externalAgents`, `agents.update`, `promptCaching.namespace`,
 `contentUse.accepted`, and `sandbox.enabled` set to `false`. Everything after
 the three `permissions` keys is not a permission, and is here for the same
 reason: these replace the instructions that say to ask, choose which credential

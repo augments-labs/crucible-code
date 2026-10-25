@@ -54,6 +54,14 @@
 //! revocation names, the same program in it, and fetches nothing; a removal
 //! is refused while an instance still runs a version from the store.
 //!
+//! The one exception is an update where the user's own configuration file,
+//! read alone and never a file in a checkout, says `agents.update =
+//! "reviewed"`: the release is then one the signed catalog offers, which a
+//! revocation has not withdrawn, and the question before the update is not
+//! put. Every other step runs and refuses as it does after a yes, and the
+//! outcome says the update was taken under that setting. A first install, a
+//! rollback and a removal are always asked.
+//!
 //! A switch is smoke-tested before any instance is moved onto it only where a
 //! conversation lent its launcher and that launcher's sandbox is on with the
 //! network closed and the agent's route has its yes, which the yes to the
@@ -72,7 +80,7 @@ use crucible_client_api::{
     Capability, Choice, Command, Decision, ErrorCode, InstallProgress, Name, Pending, Refusal,
     Request, Text,
 };
-use crucible_config::{ConfigError, Driver, ExternalAgent, Home, Settings};
+use crucible_config::{AgentUpdate, ConfigError, Driver, ExternalAgent, Home, Settings};
 use crucible_external_harnesses::catalog::{
     Entry, File, FileKind, Files, Kind, Launch, Offer, Target, Trust,
 };
@@ -183,6 +191,9 @@ pub enum Outcome {
         left: Vec<Box<str>>,
         /// Whether anything was downloaded for it.
         downloaded: bool,
+        /// Whether it was an update taken without asking, because the user's
+        /// own file says `agents.update = "reviewed"`.
+        standing: bool,
         /// Why the store was not pruned afterwards, where it was not.
         unpruned: Option<Box<AgentsError>>,
     },
@@ -329,13 +340,16 @@ pub async fn run(
     let unrefreshed = catalog_fetch::refresh(&state, &shelf.catalog, Trigger::Opening)
         .await
         .err();
+    let settings = Settings::read_home(shelf.home)?;
     let door = Door {
         request,
         shelf,
         trust: Trust::load(&state, SystemTime::now()),
         store: Store::new(shelf.home.path().join("programs")),
         user: crucible_config::user(shelf.home),
-        instances: Settings::read_home(shelf.home)?.external_agents(),
+        instances: settings.external_agents(),
+        // The user's own file alone: a checkout cannot ask for this.
+        standing: settings.agent_update() == AgentUpdate::Reviewed,
     };
     let Some(agent) = agent else {
         return Ok(door.listing(unrefreshed));
@@ -390,6 +404,10 @@ struct Door<'a> {
     store: Store,
     user: PathBuf,
     instances: Vec<ExternalAgent>,
+    /// Whether the user's own file says `agents.update = "reviewed"`, which
+    /// stands in for the yes to an update of a release the catalog offers.
+    /// Every check that can refuse the release still runs.
+    standing: bool,
 }
 
 impl Door<'_> {
@@ -564,9 +582,13 @@ impl Door<'_> {
             reached,
             smoking: self.smoking(agent),
         };
-        let confirmation = Self::installing(offer, how, &plan, &moving);
-        if confirmed(self.request, front, &confirmation).await != Some(0) {
-            return Ok(Outcome::Undecided);
+        // Only an update can stand on the user's file; any other move is asked.
+        let standing = self.standing && how == How::Updated;
+        if !standing {
+            let confirmation = Self::installing(offer, how, &plan, &moving);
+            if confirmed(self.request, front, &confirmation).await != Some(0) {
+                return Ok(Outcome::Undecided);
+            }
         }
 
         if !kept {
@@ -625,6 +647,7 @@ impl Door<'_> {
             instances,
             left,
             downloaded: !kept,
+            standing,
             unpruned: self.prune(agent, &program).err().map(Box::new),
         })
     }
@@ -861,6 +884,7 @@ impl Door<'_> {
             instances,
             left,
             downloaded: false,
+            standing: false,
             unpruned: self.prune(agent, &program).err().map(Box::new),
         })
     }
