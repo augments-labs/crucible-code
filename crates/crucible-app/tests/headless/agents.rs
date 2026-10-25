@@ -1606,9 +1606,14 @@ fn a_switch_is_smoke_tested_where_the_route_has_its_yes_and_the_sandbox_closes_t
         "{:?}",
         facts(&front)
     );
+    // The program is named as the release names it on this platform.
     assert_eq!(
         bench.executable()?,
-        bench.program("2.0.0").to_string_lossy()
+        bench
+            .programs()
+            .join("2.0.0")
+            .join(command())
+            .to_string_lossy()
     );
     Ok(())
 }
@@ -1789,11 +1794,15 @@ fn an_agent_started_from_the_store_reads_its_version_and_cannot_write_into_it() 
             .say(acp::initialized("goose", "1.0.0", "agent-login"))]),
     )?;
 
+    // What an account step read is never written into a failure.
     assert!(
         matches!(&reading, Reading::Version(version) if version.as_str() == "1.0.0"),
-        "{reading:?}"
+        "the agent started from the store did not read as version 1.0.0"
     );
-    assert!(matches!(writing, Reading::Unreadable(_)), "{writing:?}");
+    assert!(
+        matches!(writing, Reading::Unreadable(_)),
+        "the agent that writes into its root was read as though it ran"
+    );
     Ok(())
 }
 
@@ -1804,6 +1813,7 @@ const ECHOING: &[u8] = b"#!/bin/sh\nread line\nprintf '{\"jsonrpc\":\"2.0\",\"id
 
 /// `goose` at `version`, published as `program`, setting nothing of its own
 /// and turning its updater off with `GOOSE_NO_UPDATE=1`.
+#[cfg(unix)]
 fn updating_off(version: &str, program: &[u8]) -> Value {
     let mut release = stating(goose(version, program));
     set(&mut release, "/targets/0/env", json!({}));
@@ -1894,9 +1904,10 @@ fn a_version_the_catalog_no_longer_lists_is_started_with_its_updater_off() -> Re
         &|_| {},
     ))?;
 
+    // What an account step read is never written into a failure.
     assert!(
         matches!(&read, Reading::Version(version) if version.as_str() == "v1"),
-        "{read:?}"
+        "the agent was not started with GOOSE_NO_UPDATE=1"
     );
     Ok(())
 }

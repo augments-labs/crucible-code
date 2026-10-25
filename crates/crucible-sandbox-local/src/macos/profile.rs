@@ -526,13 +526,21 @@ fn materialization(problem: &'static str, source: Option<std::io::Error>) -> San
     }
 }
 
-/// Whether `path` lies beneath a writable root of `policy` other than itself.
+/// Whether `path` lies beneath a writable root of `policy` other than itself,
+/// in any spelling Seatbelt matches either by: `/var` and `/private/var` are
+/// one directory on macOS, and a rule may name it either way.
 fn beneath_writable(policy: &SandboxPolicy, path: &Path) -> bool {
-    policy.filesystem().iter().any(|rule| {
-        rule.access() == SandboxFilesystemAccess::ReadWrite
-            && rule.path() != path
-            && path.starts_with(rule.path())
-    })
+    let spellings = paths_with_system_alias(path);
+    policy
+        .filesystem()
+        .iter()
+        .filter(|rule| rule.access() == SandboxFilesystemAccess::ReadWrite)
+        .flat_map(|rule| paths_with_system_alias(rule.path()))
+        .any(|root| {
+            spellings
+                .iter()
+                .any(|spelled| *spelled != root && spelled.starts_with(&root))
+        })
 }
 
 fn push_deny_path(
@@ -1140,7 +1148,17 @@ mod tests {
     fn a_read_only_rule_beneath_a_writable_root_denies_writes_after_the_allow() {
         let sample = Sample::new("macos-seatbelt-read-only-beneath");
         let standard = SandboxPolicy::standard(&sample.workspace()).expect("standard policy");
-        let root = sample.root().join("programs").join("goose").join("1.0.0");
+        // The workspace's root as its policy names it, resolved: on macOS the
+        // temporary directory is reached through `/var`, which leads to
+        // `/private/var`, and a launch names a version root resolved too.
+        let writable = standard
+            .filesystem()
+            .iter()
+            .find(|rule| rule.access() == SandboxFilesystemAccess::ReadWrite)
+            .expect("a writable root")
+            .path()
+            .to_path_buf();
+        let root = writable.join("programs").join("goose").join("1.0.0");
         let read_only = SandboxFilesystemRule::new(
             &root,
             SandboxFilesystemAccess::ReadOnly,
@@ -1172,7 +1190,7 @@ mod tests {
                 })
                 .unwrap_or_else(|| panic!("a {prefix} definition for {}", path.display()))
         };
-        let written = key(sample.root(), "WRITE_");
+        let written = key(&writable, "WRITE_");
         let denied = key(&root, "DENY_WRITE_");
         let allow = profile
             .policy
@@ -1227,5 +1245,47 @@ mod tests {
             profile.policy
         );
         assert!(!profile.policy.contains("(allow file-write* (require-all"));
+    }
+
+    /// A read-only rule spelled through `/var` beneath a writable root
+    /// spelled through `/private/var`, the one directory macOS reaches by both,
+    /// is still denied every write in both spellings.
+    #[test]
+    fn a_read_only_rule_beneath_a_writable_root_spelled_through_the_other_alias_is_denied() {
+        let writable = SandboxFilesystemRule::new(
+            "/private/var/work",
+            SandboxFilesystemAccess::ReadWrite,
+            SandboxFilesystemProvenance::Workspace,
+        )
+        .expect("writable rule");
+        let read_only = SandboxFilesystemRule::new(
+            "/var/work/programs/goose/1.0.0",
+            SandboxFilesystemAccess::ReadOnly,
+            SandboxFilesystemProvenance::Runtime,
+        )
+        .expect("read-only rule");
+        let policy = SandboxPolicy::new(
+            true,
+            [writable, read_only],
+            "/private/var/work",
+            SandboxNetworkPolicy::Closed,
+            SandboxResourceLimits::confining(),
+        )
+        .expect("effective policy");
+
+        let profile = Profile::build(&policy, &[], &[], &[]).expect("Seatbelt profile");
+
+        for spelled in [
+            "/var/work/programs/goose/1.0.0",
+            "/private/var/work/programs/goose/1.0.0",
+        ] {
+            assert!(
+                profile.definitions.iter().any(|definition| {
+                    let text = definition.to_string_lossy();
+                    text.starts_with("DENY_WRITE_") && text.ends_with(&format!("={spelled}"))
+                }),
+                "no write is denied at {spelled}"
+            );
+        }
     }
 }
