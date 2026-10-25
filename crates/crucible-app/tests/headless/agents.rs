@@ -909,7 +909,7 @@ fn under_reviewed_a_rollback_and_a_removal_are_still_asked() -> Result<(), Faile
 
     // Nothing runs it from the store once the instance is off it.
     bench.configure(
-        Path::new("/usr/bin/true"),
+        &bench.home.path().join("bin").join("true"),
         &json!({"agents": {"update": "reviewed"}}),
     )?;
     let mut front = answering(&bench.server, Some("Cancel"));
