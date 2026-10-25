@@ -259,6 +259,14 @@ test where your sandbox allows one. Your yes to the vendor receiving what you
 send is a separate question that `reviewed` never answers. An update taken this
 way is reported as taken under `agents.update = "reviewed"`.
 
+Only an update to a version strictly newer than the one in place, from a catalog
+no older than the one it was installed from, is taken unasked; anything else is
+put to you as it is under `ask`. Under `reviewed` the catalog's signature is the
+only gate an update passes without you, so a compromised signing key would
+install unattended on every machine that sets it; leave it at `ask` if you do
+not accept that. An update taken unasked says whether it was smoke-tested, and
+why not where it was not.
+
 The key puts a new program in place without a question, so it is read only from
 the configuration file in your home directory. In a project file it is refused,
 naming the file. `/settings` shows no row for it.

@@ -56,11 +56,15 @@
 //!
 //! The one exception is an update where the user's own configuration file,
 //! read alone and never a file in a checkout, says `agents.update =
-//! "reviewed"`: the release is then one the signed catalog offers, which a
-//! revocation has not withdrawn, and the question before the update is not
-//! put. Every other step runs and refuses as it does after a yes, and the
-//! outcome says the update was taken under that setting. A first install, a
-//! rollback and a removal are always asked.
+//! "reviewed"`: the question before it is not put when the release is the
+//! newest the catalog offers by version order wherever it is listed, a
+//! revocation has not withdrawn it, it is strictly newer than every version
+//! being moved, and the catalog it comes from is no older than the one each of
+//! those was taken from. Anything else, a version not spelled as dotted
+//! numbers included, is asked about as it is without the setting. Every other
+//! step runs and refuses as it does after a yes, and the outcome says the
+//! update was taken under that setting and why it was not smoke-tested where
+//! it was not. A first install, a rollback and a removal are always asked.
 //!
 //! A switch is smoke-tested before any instance is moved onto it only where a
 //! conversation lent its launcher and that launcher's sandbox is on with the
@@ -72,6 +76,7 @@
 //! it failed in stays in the store for a prune to take. Elsewhere the question
 //! says it is not smoke-tested, and why, and nothing is started.
 
+use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -194,6 +199,8 @@ pub enum Outcome {
         /// Whether it was an update taken without asking, because the user's
         /// own file says `agents.update = "reviewed"`.
         standing: bool,
+        /// Why the switch was not smoke-tested, where it was not.
+        unsmoked: Option<Box<str>>,
         /// Why the store was not pruned afterwards, where it was not.
         unpruned: Option<Box<AgentsError>>,
     },
@@ -368,16 +375,19 @@ pub async fn run(
             door.switch(&offer, How::Installed, front, watching).await
         }
         Command::UpdateAgent { .. } => {
-            let offer = door
-                .trust
-                .offers(Some(&agent))
-                .into_iter()
-                .next()
-                .ok_or_else(|| AgentsError::Unlisted(agent.clone()))?;
+            let mut offers = door.trust.offers(Some(&agent));
+            if offers.is_empty() {
+                return Err(AgentsError::Unlisted(agent));
+            }
             let moving = door.moving(&agent);
             if moving.is_empty() {
                 return Err(AgentsError::NotInstalled(agent));
             }
+            // Asked about the first one listed, as ever, unless the user's
+            // file stands in for the question and one release is plainly the
+            // newest: then that one, wherever it is listed.
+            let at = door.standing_target(&agent, &offers, &moving).unwrap_or(0);
+            let offer = offers.swap_remove(at);
             if moving.iter().all(|(_, version)| {
                 version.version() == &*offer.pin.version
                     && version.lock_revision() == offer.pin.lock_revision
@@ -394,6 +404,31 @@ pub async fn run(
         Command::VerifyAgent { .. } => door.verify(agent),
         _ => Ok(Outcome::Refused(ErrorCode::Busy.into())),
     }
+}
+
+/// A version spelled as dot-separated decimal numbers, as those numbers, or
+/// nothing where it is spelled any other way.
+fn numbers(version: &str) -> Option<Vec<u64>> {
+    version
+        .split('.')
+        .map(|part| {
+            (!part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+                .then(|| part.parse().ok())
+                .flatten()
+        })
+        .collect()
+}
+
+/// Which of two versions' numbers is the later, a missing trailing part
+/// counting as zero.
+fn compare(left: &[u64], right: &[u64]) -> Ordering {
+    (0..left.len().max(right.len()))
+        .map(|at| {
+            let part = |from: &[u64]| from.get(at).copied().unwrap_or(0);
+            part(left).cmp(&part(right))
+        })
+        .find(|order| order.is_ne())
+        .unwrap_or(Ordering::Equal)
 }
 
 /// What one command is carried out with.
@@ -473,6 +508,72 @@ impl Door<'_> {
                 Some((instance, version))
             })
             .collect()
+    }
+
+    /// Whether the user's standing yes covers moving `moving` onto `offer`:
+    /// the release is not revoked, is strictly newer than every version being
+    /// moved, and comes from a catalog no older than the one each of those was
+    /// taken from, so a stale or replayed catalog cannot step an agent back.
+    /// A version number that is not plain dotted numbers is never newer.
+    fn stands_for(
+        &self,
+        agent: &AgentKey,
+        offer: &Offer,
+        moving: &[(&ExternalAgent, Version)],
+    ) -> bool {
+        if self
+            .trust
+            .revoked(agent, &offer.pin.version, offer.pin.lock_revision)
+        {
+            return false;
+        }
+        moving.iter().all(|(_, installed)| {
+            let newer = match (numbers(&offer.pin.version), numbers(installed.version())) {
+                (Some(offered), Some(held)) => match compare(&offered, &held) {
+                    Ordering::Greater => true,
+                    Ordering::Equal => offer.pin.lock_revision > installed.lock_revision(),
+                    Ordering::Less => false,
+                },
+                _ => false,
+            };
+            newer
+                && self
+                    .store
+                    .receipt(agent, installed)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|receipt| offer.serial >= receipt.listing.serial)
+        })
+    }
+
+    /// Which of `offers` the standing yes would take: the newest by version
+    /// order where it stands for the move, none otherwise.
+    fn standing_target(
+        &self,
+        agent: &AgentKey,
+        offers: &[Offer],
+        moving: &[(&ExternalAgent, Version)],
+    ) -> Option<usize> {
+        if !self.standing {
+            return None;
+        }
+        let mut best: Option<(usize, Vec<u64>)> = None;
+        for (at, offer) in offers.iter().enumerate() {
+            let Some(found) = numbers(&offer.pin.version) else {
+                continue;
+            };
+            if best
+                .as_ref()
+                .is_none_or(|(_, held)| compare(&found, held) == Ordering::Greater)
+            {
+                best = Some((at, found));
+            }
+        }
+        let (at, _) = best?;
+        offers
+            .get(at)
+            .is_some_and(|offer| self.stands_for(agent, offer, moving))
+            .then_some(at)
     }
 
     /// The launcher a switch onto a release of `agent` is smoke-tested with,
@@ -583,7 +684,8 @@ impl Door<'_> {
             smoking: self.smoking(agent),
         };
         // Only an update can stand on the user's file; any other move is asked.
-        let standing = self.standing && how == How::Updated;
+        let standing =
+            self.standing && how == How::Updated && self.stands_for(agent, offer, &moving);
         if !standing {
             let confirmation = Self::installing(offer, how, &plan, &moving);
             if confirmed(self.request, front, &confirmation).await != Some(0) {
@@ -648,6 +750,7 @@ impl Door<'_> {
             left,
             downloaded: !kept,
             standing,
+            unsmoked: plan.smoking.as_ref().err().map(|why| why.as_str().into()),
             unpruned: self.prune(agent, &program).err().map(Box::new),
         })
     }
@@ -885,6 +988,7 @@ impl Door<'_> {
             left,
             downloaded: false,
             standing: false,
+            unsmoked: smoking.as_ref().err().map(|why| why.as_str().into()),
             unpruned: self.prune(agent, &program).err().map(Box::new),
         })
     }
