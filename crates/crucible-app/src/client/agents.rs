@@ -87,7 +87,7 @@ use crucible_types::AgentKey;
 use super::deciding::{Confirmation, Front, Shown, mint, turned_away};
 use crate::agent_download::{self, DownloadError, Landing};
 use crate::catalog_fetch::{self, FetchError, Source, Trigger};
-use crate::launching::{Launcher, Unsmoked};
+use crate::launching::{Launcher, Unsmoked, quoted};
 use crate::remember::{self, RememberError};
 
 /// The most catalog agents a listing names; one with more says so.
@@ -976,24 +976,6 @@ struct Plan<'a> {
     kept: bool,
     reached: Vec<String>,
     smoking: Result<&'a Launcher<'a>, String>,
-}
-
-/// The most of one string the catalog or the configuration gave that a fact
-/// quotes, in characters.
-const QUOTED: usize = 256;
-
-/// `text`, a string the catalog or the configuration gave, as a fact quotes
-/// it: every control and format character written as its escape, so no line
-/// of its own can be drawn from it, and cut at [`QUOTED`] characters with an
-/// ellipsis, so no fact is made long enough to push the others out of sight.
-fn quoted(text: &str) -> String {
-    let escaped = crucible_types::shown::escaped(text);
-    if escaped.chars().count() <= QUOTED {
-        return escaped;
-    }
-    let mut cut: String = escaped.chars().take(QUOTED).collect();
-    cut.push('…');
-    cut
 }
 
 /// Every file the target's artifacts list, as they would be committed.

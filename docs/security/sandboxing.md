@@ -112,8 +112,8 @@ advertised as a hard CPU ceiling.
 
 The generated Seatbelt profile is closed by default. It reads only fixed
 system-runtime directories plus the declared filesystem roots,
-writes only declared read-write roots, carves protected and unreadable paths
-back out, and denies networking. Declared grants and exact carve-outs are
+writes only declared read-write roots, carves protected, unreadable and
+read-only paths back out of them, and denies networking. Declared grants and exact carve-outs are
 supplied as Seatbelt parameters. Case-insensitive protected-name and unreadable
 pattern predicates are escaped and anchored to validated roots in the generated
 profile so an APFS spelling alias cannot reopen them. On a case-insensitive,
@@ -444,8 +444,10 @@ can read and run the files that were reviewed and change none of them, so a
 rollback goes back to the bytes it ran before and verifying an installed agent
 checks the bytes that run. A profile directory configured inside that
 directory is refused rather than made writable. The agent is also started with
-the variable its catalog entry names to turn its own updater off, where the
-entry names one.
+the variable its catalog entry names to turn its own updater off. Where the
+catalog no longer lists that version, because a newer one superseded it or it
+was gone back to, the variable comes from the release the catalog offers the
+agent now.
 
 A version the agent catalog has revoked is not started: the refusal names the
 version and the catalog's reason, and says to roll back to the version

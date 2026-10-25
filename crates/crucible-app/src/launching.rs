@@ -22,7 +22,9 @@
 //! directory, whose release a revocation the trust state holds names, with
 //! the catalog's reason where a catalog still held gives it and the offer to
 //! roll back or update, or while the trust state cannot be used, naming its
-//! file, since then no revocation can be known; and a route with no yes, with
+//! file, since then no revocation can be known, or that lies there, as its
+//! path is written or where it leads, in another agent's directory or in no
+//! version of its own; and a route with no yes, with
 //! what to ask. A catalog row always ships, since it is listed only for an
 //! entry the catalog reviewed. Only then is the hold taken from
 //! `content_use`, the child's sandbox policy built, and the process started.
@@ -75,7 +77,8 @@
 //! read-only, at and beneath it, whatever writable root it lies in, so it can
 //! change none of the bytes that were reviewed, and a profile directory inside
 //! it is refused; and with the variable its catalog entry turns the agent's
-//! own updater off with, where the catalog still lists the release with one.
+//! own updater off with, or where the catalog lists that release no longer,
+//! the one named by the release an update would install.
 //!
 //! A switch the agents door makes is smoke-tested through [`Launcher::smoke`]
 //! only where the sandbox is on, the network it leaves commands is closed and
@@ -205,6 +208,15 @@ pub enum Unlaunched {
         /// Why, as the catalog said it and quoted, where a catalog still held
         /// says.
         reason: Option<Box<str>>,
+    },
+    /// Its program lies in crucible's install store where no version of its
+    /// own is kept.
+    #[error("{agent}'s program lies in crucible's install store {why}, so it is not started.")]
+    Unstored {
+        /// The agent, as its row names it.
+        agent: String,
+        /// Where, quoted.
+        why: String,
     },
     /// Its program is in crucible's install store, and the trust state that
     /// says whether its release was revoked cannot be used.
@@ -464,13 +476,17 @@ impl Agent {
     /// lies in a version in crucible's install store under `programs`, that
     /// release: refused before any process where a revocation `trust` holds
     /// names it, with the reason and what to do, or where `trust` cannot be
-    /// used, so its revocations cannot be known. A program outside the store
-    /// is the user's own, and no release of the catalog's.
+    /// used, so its revocations cannot be known. Whether it lies in the store
+    /// is judged by where its path leads as well as how it is written, and
+    /// one that lies there in another agent's directory, or in none of its
+    /// own versions, is refused rather than taken for the user's own. A
+    /// program outside the store is the user's own, and no release of the
+    /// catalog's.
     ///
     /// # Errors
     ///
-    /// As [`Agent::program`], else [`Unlaunched::Untrusted`] or
-    /// [`Unlaunched::Revoked`].
+    /// As [`Agent::program`], else [`Unlaunched::Unstored`],
+    /// [`Unlaunched::Untrusted`] or [`Unlaunched::Revoked`].
     pub fn release(
         &self,
         consent: &Consent,
@@ -482,8 +498,21 @@ impl Agent {
             return Ok((program, None));
         };
         let store = Store::new(programs.to_path_buf());
-        let Some(version) = store.version_of(&key, program.path()) else {
+        let Some(owner) = stored_under(programs, program.path()) else {
             return Ok((program, None));
+        };
+        let unstored = |why: String| Unlaunched::Unstored {
+            agent: key.to_string(),
+            why,
+        };
+        if owner != key.as_str() {
+            return Err(unstored(format!(
+                "in the directory of {}, not its own",
+                quoted(&owner)
+            )));
+        }
+        let Some(version) = store.version_of(&key, program.path()) else {
+            return Err(unstored("in no version the store keeps".to_owned()));
         };
         if let Some(why) = trust.unusable() {
             return Err(Unlaunched::Untrusted {
@@ -496,17 +525,21 @@ impl Agent {
         if trust.revoked(&key, named, revision) {
             return Err(Unlaunched::Revoked {
                 agent: key.to_string(),
-                version: crucible_types::shown::escaped(named).into(),
+                version: quoted(named).into(),
                 reason: trust
                     .reason(&key, named, revision)
-                    .map(|reason| crucible_types::shown::escaped(reason).into()),
+                    .map(|reason| quoted(reason).into()),
             });
         }
-        let updater_off = trust
-            .offers(Some(&key))
-            .into_iter()
+        // Its own entry's variable where the catalog still lists it; else
+        // that of the release an update would install, since a release
+        // superseded or gone back to is still that agent's program.
+        let offers = trust.offers(Some(&key));
+        let updater_off = offers
+            .iter()
             .find(|offer| *offer.pin.version == *named && offer.pin.lock_revision == revision)
-            .and_then(|offer| offer.entry.updater_off);
+            .or_else(|| offers.first())
+            .and_then(|offer| offer.entry.updater_off.clone());
         Ok((
             program,
             Some(Stored {
@@ -535,15 +568,55 @@ pub struct Stored {
     /// The directory of its version, which the program is started with
     /// read-only.
     root: PathBuf,
-    /// The variable its entry turns the agent's own updater off with, where
-    /// the catalog still lists it with one.
+    /// The variable its entry turns the agent's own updater off with, or
+    /// where the catalog no longer lists it, the one the release an update
+    /// would install names.
     updater_off: Option<Variable>,
+}
+
+/// The most of one string the catalog, the configuration or an agent gave
+/// that a refusal or a fact quotes, in characters.
+const QUOTED: usize = 256;
+
+/// `text`, a string the catalog, the configuration or an agent gave, as a
+/// refusal or a fact quotes it: every control and format character written
+/// as its escape, so no line of its own can be drawn from it, and cut at
+/// [`QUOTED`] characters with an ellipsis, so none is made long enough to push
+/// what is said beside it out of sight.
+pub(crate) fn quoted(text: &str) -> String {
+    let escaped = crucible_types::shown::escaped(text);
+    if escaped.chars().count() <= QUOTED {
+        return escaped;
+    }
+    let mut cut: String = escaped.chars().take(QUOTED).collect();
+    cut.push('…');
+    cut
 }
 
 /// Crucible's install store: `programs` in crucible's home, beside the
 /// directory `state` the trust state is kept under.
 fn programs_beside(state: &Path) -> PathBuf {
     state.parent().unwrap_or(state).join("programs")
+}
+
+/// The directory `program` lies in directly beneath `programs`, as either is
+/// written or once both are resolved, where it lies beneath it in either
+/// form; resolved first, so a link or another spelling of a directory is
+/// judged by where it leads.
+fn stored_under(programs: &Path, program: &Path) -> Option<String> {
+    let resolved = |path: &Path| std::fs::canonicalize(path).ok();
+    [
+        (resolved(programs), resolved(program)),
+        (Some(programs.to_path_buf()), Some(program.to_path_buf())),
+    ]
+    .into_iter()
+    .find_map(|(root, path)| {
+        let within = path?.strip_prefix(root?).ok()?.to_path_buf();
+        within
+            .components()
+            .next()
+            .map(|first| first.as_os_str().to_string_lossy().into_owned())
+    })
 }
 
 /// `request` with `variable` set where there is one, in place of any value of
@@ -1291,7 +1364,7 @@ impl Launcher<'_> {
             .map_err(|unheld| unsmoked(&unheld, route.clone()))?;
         let profile = CatalogProfile::from_entry(entry, target)?;
         let Discovery::Found(found) = Discovery::of(Some(program)) else {
-            return Err(Unsmoked::Program(program.display().to_string()));
+            return Err(Unsmoked::Program(quoted(&program.display().to_string())));
         };
         let root = resolved(root)?;
         let readable = SandboxFilesystemRule::new(
@@ -1338,8 +1411,9 @@ impl Launcher<'_> {
             .await
         {
             Reading::Version(_) => Ok(()),
+            // What the agent said is quoted before it is told anyone.
             Reading::Unreadable(failure) => {
-                Err(Unsmoked::Answered(failure.reason().as_str().to_owned()))
+                Err(Unsmoked::Answered(quoted(failure.reason().as_str())))
             }
             Reading::Signed(_) => Err(Unsmoked::Answered(
                 "it answered as though it had been asked more".to_owned(),

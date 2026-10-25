@@ -1796,3 +1796,158 @@ fn an_agent_started_from_the_store_reads_its_version_and_cannot_write_into_it() 
     assert!(matches!(writing, Reading::Unreadable(_)), "{writing:?}");
     Ok(())
 }
+
+/// A program that answers initializing as goose at the version its updater
+/// variable holds, so what it was started with is what it says.
+#[cfg(unix)]
+const ECHOING: &[u8] = b"#!/bin/sh\nread line\nprintf '{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{\"protocolVersion\":1,\"agentInfo\":{\"name\":\"goose\",\"version\":\"v%s\"}}}\\n' \"$GOOSE_NO_UPDATE\"\n";
+
+/// `goose` at `version`, published as `program`, setting nothing of its own
+/// and turning its updater off with `GOOSE_NO_UPDATE=1`.
+fn updating_off(version: &str, program: &[u8]) -> Value {
+    let mut release = stating(goose(version, program));
+    set(&mut release, "/targets/0/env", json!({}));
+    if let Some(object) = release.as_object_mut() {
+        object.insert(
+            "updater_off".into(),
+            json!({"name": "GOOSE_NO_UPDATE", "value": "1"}),
+        );
+    }
+    release
+}
+
+#[cfg(unix)]
+#[test]
+fn a_version_the_catalog_no_longer_lists_is_started_with_its_updater_off() -> Result<(), Failed> {
+    let bench = Bench::new("agents-door-superseded-updater")?;
+    let release = updating_off("1.0.0", ECHOING);
+    bench
+        .server
+        .serve(&asset_path(ECHOING), Reply::Body(ECHOING.to_vec()));
+    bench
+        .server
+        .catalog(1, std::slice::from_ref(&release), &json!([]))?;
+    bench.configure(&bench.program("1.0.0"), &json!({}))?;
+    let (installed, _) = bench.ask(
+        install("1.0.0")?,
+        &mut answering(&bench.server, Some("Install")),
+        false,
+    )?;
+    assert!(
+        matches!(installed, Ok(Outcome::Moved { .. })),
+        "{installed:?}"
+    );
+    // A newer release supersedes it, and the catalog lists it no longer.
+    bench
+        .server
+        .serve(&asset_path(TWO), Reply::Body(TWO.to_vec()));
+    bench
+        .server
+        .catalog(2, &[updating_off("2.0.0", TWO)], &json!([]))?;
+    let (listed, _) = bench.ask(
+        Command::AgentCatalog,
+        &mut answering(&bench.server, None),
+        false,
+    )?;
+    assert!(
+        matches!(
+            listed,
+            Ok(Outcome::Catalog {
+                unrefreshed: None,
+                ..
+            })
+        ),
+        "{listed:?}"
+    );
+
+    let row = row_of(&release)?;
+    let consent = Consent::new(Routes::production().cataloging(row.warned().ok().cloned()));
+    consent.give("agent:goose");
+    let registry: &'static Registry = Box::leak(Box::new(
+        Registry::new(&[]).cataloging(Box::leak(Box::new([row]))),
+    ));
+    let key = AgentKey::new("goose")?;
+    let instance = ExternalAgent::unwritten(
+        "work",
+        Driver::Catalog,
+        &bench.program("1.0.0").to_string_lossy(),
+        None,
+        Some(&key),
+    )
+    .ok_or("a catalog instance naming its agent")?;
+    let agent = Agent::configured(&instance, registry, |_| None).ok_or("its catalog row")?;
+    let runtime = runtime()?;
+    let handle = runtime.handle().clone();
+    let policy = SandboxPolicy::standard(&bench.tree.workspace()?)?.with_enabled(false);
+    let sandbox: Arc<dyn SandboxService> =
+        Arc::new(LocalSandbox::new().watching_on(handle.clone()));
+    let state = catalog_fetch::state_in(bench.home.path());
+    let launcher = Launcher::new(sandbox, handle, &policy, &consent, &state);
+    let control = Control::new().ok_or("a control")?;
+    let mut dialect = agent.row().dialect(Mode::Ask, None, None)?;
+
+    let read = runtime.block_on(launcher.account(
+        &agent,
+        &control,
+        dialect.as_mut(),
+        Account::Version,
+        &|_| {},
+    ))?;
+
+    assert!(
+        matches!(&read, Reading::Version(version) if version.as_str() == "v1"),
+        "{read:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_program_in_another_agent_s_store_directory_is_refused_rather_than_taken_for_the_user_s_own()
+-> Result<(), Failed> {
+    let bench = Bench::new("agents-door-elsewhere")?;
+    bench.installed_before()?;
+    // The same bytes, put where the store keeps another agent's versions,
+    // and revoked for goose.
+    let elsewhere = bench
+        .home
+        .path()
+        .join("programs")
+        .join("kiro")
+        .join("1.0.0");
+    fs::create_dir_all(&elsewhere)?;
+    fs::copy(bench.program("1.0.0"), elsewhere.join("goose"))?;
+    bench.server.catalog(
+        2,
+        &[goose("1.0.0", ONE)],
+        &json!([{"key": "goose", "version": "1.0.0", "reason": "It wrote outside its directory."}]),
+    )?;
+    let (listed, _) = bench.ask(
+        Command::AgentCatalog,
+        &mut answering(&bench.server, None),
+        false,
+    )?;
+    assert!(
+        matches!(
+            listed,
+            Ok(Outcome::Catalog {
+                unrefreshed: None,
+                ..
+            })
+        ),
+        "{listed:?}"
+    );
+
+    let row = row_of(&stating(goose("1.0.0", ONE)))?;
+    let (ended, before) = launched(&bench, row, &elsewhere.join("goose"))?;
+
+    let said = ended
+        .err()
+        .ok_or("a program in another agent's directory was started")?
+        .to_string();
+    assert!(
+        said.contains("install store") && said.contains("kiro"),
+        "{said:?}"
+    );
+    assert_eq!(before.map(|why| why.to_string()), Some(said));
+    Ok(())
+}
