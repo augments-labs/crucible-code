@@ -34,7 +34,7 @@ use crate::error::AuthError;
 use crate::oauth::{OAuthError, Tokens};
 
 use self::document::Document;
-pub use self::names::{Dropped, Held, Kind, Names, Settled, provider_of};
+pub use self::names::{Dropped, Held, Kind, METHOD_BYTES, Names, Settled, provider_of, signing_in};
 
 /// What the file is called, inside the home directory.
 const FILE: &str = "auth.json";

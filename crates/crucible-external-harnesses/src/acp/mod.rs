@@ -44,7 +44,9 @@
 //! Account steps are spoken over the same wire: each initializes the agent,
 //! then asks whether a session can be opened, signs in, or signs out, and a
 //! sign-out the agent does not offer is reported unverified rather than
-//! assumed.
+//! assumed. A sign-in asks for the first of its profile's methods the agent
+//! offers, or, where the user named one ([`Acp::signing_in_with`]), for that
+//! method alone, and for none where the agent does not offer it.
 
 mod permission;
 mod session;
@@ -346,6 +348,8 @@ pub struct Acp {
     permissions: Permissions,
     /// The reader of the open session's updates.
     updates: Updates,
+    /// The one sign-in method a sign-in asks for, where the user named one.
+    chosen: Option<SignIn>,
 }
 
 impl Acp {
@@ -398,7 +402,15 @@ impl Acp {
             stopping: false,
             permissions: Permissions::default(),
             updates: Updates::fresh(),
+            chosen: None,
         }
+    }
+
+    /// Makes a sign-in ask for the method the agent offers as `id`, and no
+    /// other: where the agent does not offer it, the sign-in reads as
+    /// unverified and nothing is asked.
+    pub fn signing_in_with(&mut self, id: &str) {
+        self.chosen = Some(SignIn::owned(id));
     }
 
     /// The request `method` with `params`, sent under the next id and waited
@@ -704,12 +716,17 @@ impl Acp {
                 Err(failure) => Told::Done(Reading::Unreadable(failure)),
             },
             Account::SignIn => {
-                let offered = self
-                    .reviewed
-                    .sign_in()
-                    .iter()
-                    .find(|method| initialized.offers(method.id()))
-                    .map(|method| method.id().to_owned());
+                let offered = match &self.chosen {
+                    Some(chosen) => initialized
+                        .offers(chosen.id())
+                        .then(|| chosen.id().to_owned()),
+                    None => self
+                        .reviewed
+                        .sign_in()
+                        .iter()
+                        .find(|method| initialized.offers(method.id()))
+                        .map(|method| method.id().to_owned()),
+                };
                 match offered {
                     Some(method) => Told::Send(self.send(
                         "authenticate",
@@ -850,6 +867,11 @@ impl Dialect for Acp {
     fn spoken(&mut self, _step: Account) -> Option<Vec<String>> {
         self.next = 0;
         Some(vec![self.initialize()])
+    }
+
+    fn signing_in_with(&mut self, id: &str) -> bool {
+        Acp::signing_in_with(self, id);
+        true
     }
 
     fn told(&mut self, step: Account, frame: &str) -> Result<Told, Failure> {

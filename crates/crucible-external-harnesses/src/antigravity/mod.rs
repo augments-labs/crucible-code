@@ -11,6 +11,9 @@
 //! from what the agent itself answers in that profile; a sign-in another Google
 //! product keeps is no evidence of its own.
 //!
+//! It signs in by any of the four methods [`methods`] lists, the one asked
+//! for named by the user.
+//!
 //! The agent asks to be signed in by printing a link rather than answering.
 //! During a sign-in the link is shown to the user; during a turn or a status
 //! check it means the profile is signed out, and the turn fails saying so;
@@ -24,7 +27,9 @@ mod account;
 mod manifest;
 mod profile;
 
-pub use account::Ended;
+pub use account::{
+    Ended, GEMINI_API_KEY, OAUTH_BUSINESS, OAUTH_PERSONAL, VERTEX_AI, methods, needs,
+};
 pub use manifest::Manifest;
 
 use crucible_execution::{Authentication, Decision, Failure, TurnRequest};
@@ -188,6 +193,11 @@ impl Dialect for Antigravity {
 
     fn spoken(&mut self, step: Account) -> Option<Vec<String>> {
         self.acp.spoken(step)
+    }
+
+    fn signing_in_with(&mut self, id: &str) -> bool {
+        self.acp.signing_in_with(id);
+        true
     }
 
     fn told(&mut self, step: Account, frame: &str) -> Result<Told, Failure> {

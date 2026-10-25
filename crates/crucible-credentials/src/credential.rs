@@ -91,6 +91,26 @@ impl ApiKey {
         request.set_header(&*header.name, format!("{}{}", header.scheme, self.0));
     }
 
+    /// Writes the key into `environment`, the variables a child process is
+    /// started with, as the variable `name`, in place of any value it held
+    /// there, its name compared as the platform compares names.
+    ///
+    /// The value is placed here and never returned. Whoever starts the
+    /// process withholds every value of its environment that it does not mark
+    /// as one that may be shown, from everything the process is seen to say,
+    /// and the variable is not one marked so: that is how the exact value sent
+    /// is kept out of what comes back.
+    pub fn set_in(&self, environment: &mut Vec<(String, String)>, name: &str) {
+        environment.retain(|(held, _)| {
+            if cfg!(windows) {
+                !held.eq_ignore_ascii_case(name)
+            } else {
+                held != name
+            }
+        });
+        environment.push((name.to_owned(), self.0.clone()));
+    }
+
     /// A key from the environment, with the lookup passed in.
     ///
     /// The lookup is a parameter so the "unset" and "blank" rules can be tested
@@ -547,6 +567,30 @@ mod tests {
             .iter()
             .find(|(present, _)| &**present == name)
             .map_or("<no such header>", |(_, value)| value)
+    }
+
+    #[test]
+    fn a_key_set_in_an_environment_replaces_the_variable_and_nothing_else() {
+        let key = ApiKey::new(SECRET);
+        let mut environment = vec![
+            ("PATH".to_owned(), "/usr/bin".to_owned()),
+            ("AGENT_KEY".to_owned(), "an earlier value".to_owned()),
+        ];
+
+        key.set_in(&mut environment, "AGENT_KEY");
+
+        let set: Vec<&str> = environment
+            .iter()
+            .filter(|(name, _)| name == "AGENT_KEY")
+            .map(|(_, value)| value.as_str())
+            .collect();
+        assert!(set == [SECRET], "the variable does not hold the key alone");
+        assert!(
+            environment
+                .iter()
+                .any(|(name, value)| name == "PATH" && value == "/usr/bin")
+        );
+        assert_eq!(environment.len(), 2);
     }
 
     #[test]

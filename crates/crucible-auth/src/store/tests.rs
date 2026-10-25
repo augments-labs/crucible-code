@@ -1296,3 +1296,44 @@ fn forgetting_while_another_crucible_writes_waits_and_then_takes_nothing() {
     );
     assert_eq!(on_disk(&scratch), before);
 }
+
+#[test]
+fn an_agent_s_key_is_named_by_its_method_and_a_name_that_cannot_last_is_refused() {
+    assert_eq!(
+        signing_in("goose", "api-key").as_deref(),
+        Some("goose@api-key")
+    );
+    assert_eq!(
+        signing_in("antigravity", "gemini-api-key").as_deref(),
+        Some("antigravity@gemini-api-key")
+    );
+    let long = "m".repeat(METHOD_BYTES + 1);
+    for (agent, method) in [
+        ("goose", ""),
+        ("goose", "api key"),
+        ("goose", "api@key"),
+        ("goose", "api/key"),
+        ("goose", "clé"),
+        ("goose", long.as_str()),
+        ("", "api-key"),
+        ("go@ose", "api-key"),
+    ] {
+        assert_eq!(signing_in(agent, method), None, "{agent:?} {method:?}");
+    }
+}
+
+#[test]
+fn an_agent_s_key_written_takes_no_provider_s_credential_out() {
+    let scratch = Scratch::new("agent-key");
+    let store = Store::in_home(scratch.home()).naming(Names::new(["openai", "moonshot@kimi.cn"]));
+    store.keep("openai", SECRET).expect("a writable home");
+    let name = signing_in("goose", "api-key").expect("a name");
+
+    let dropped = store
+        .keep(&name, "goose-key-value")
+        .expect("a writable home");
+
+    assert_eq!(dropped, []);
+    assert_eq!(held(&store, "openai").as_deref(), Some(SECRET));
+    assert_eq!(held(&store, &name).as_deref(), Some("goose-key-value"));
+}

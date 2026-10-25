@@ -10,6 +10,13 @@
 //! names when it writes one, so a provider holds one credential, and leaves
 //! every name it was not told exactly where it is, since a later release may
 //! have written it.
+//!
+//! An agent's key, typed for one of the sign-in methods it offers, is written
+//! under the agent's name, `@`, and the method's id ([`signing_in`]), and that
+//! name never changes once written. The store reads everything before a
+//! name's `@` as its provider, so such a name is never one it is told: the
+//! caller refuses an agent whose name is a provider's before it writes or
+//! reads one, and no write of a provider's ever takes an agent's key out.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -18,6 +25,29 @@ use std::sync::Arc;
 #[must_use]
 pub fn provider_of(name: &str) -> &str {
     name.split_once('@').map_or(name, |(provider, _)| provider)
+}
+
+/// The most bytes the id of a sign-in method may have in the name a key is
+/// written under.
+pub const METHOD_BYTES: usize = 64;
+
+/// The name the key `agent` signs in with by the method `method` is written
+/// under, `<agent>@<method>`; nothing where either cannot be part of a name
+/// that is never to change: an agent's name that is empty or holds `@`, or a
+/// method's id that is empty, longer than [`METHOD_BYTES`], or holds anything
+/// but ASCII letters, digits, `-`, `_` and `.`.
+///
+/// Whether `agent` is the name of a provider is not known here, and the
+/// caller refuses that first.
+#[must_use]
+pub fn signing_in(agent: &str, method: &str) -> Option<String> {
+    let named = !agent.is_empty() && !agent.contains('@');
+    let id = !method.is_empty()
+        && method.len() <= METHOD_BYTES
+        && method
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
+    (named && id).then(|| format!("{agent}@{method}"))
 }
 
 /// Every name this build writes a credential under, by provider.

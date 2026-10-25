@@ -245,6 +245,52 @@ fn a_sign_in_asks_for_the_first_of_its_methods_the_agent_offers() {
     }
 }
 
+/// A sign-in the user named a method for asks for that method alone, even one
+/// the profile lists later or not at all, and for none where the agent does
+/// not offer it.
+#[test]
+fn a_sign_in_by_a_named_method_asks_for_that_method_alone() {
+    const METHODS: Profile = Profile {
+        sign_in: &[SignIn::named("browser"), SignIn::named("key")],
+        ..PROFILE
+    };
+    let offering = |methods: &[&str]| {
+        let methods: Vec<Value> = methods
+            .iter()
+            .map(|id| json!({"id": id, "name": id}))
+            .collect();
+        response(
+            0,
+            &json!({"protocolVersion": 1, "agentCapabilities": {}, "authMethods": methods}),
+        )
+    };
+    for (named, offered, asked) in [
+        ("key", vec!["browser", "key"], Some("key")),
+        ("business", vec!["browser", "business"], Some("business")),
+        ("key", vec!["browser"], None),
+    ] {
+        let mut acp = Acp::new(METHODS);
+        assert!(Dialect::signing_in_with(&mut acp, named));
+        let _ = acp.spoken(Account::SignIn).unwrap();
+
+        let told = acp.told(Account::SignIn, &offering(&offered)).unwrap();
+
+        match (told, asked) {
+            (Told::Send(frame), Some(method)) => {
+                let sent: Value = serde_json::from_str(&frame).unwrap();
+                assert_eq!(sent.pointer("/method"), Some(&json!("authenticate")));
+                assert_eq!(
+                    sent.pointer("/params/methodId"),
+                    Some(&json!(method)),
+                    "{named:?} of {offered:?}"
+                );
+            }
+            (Told::Done(Reading::Unreadable(_)), None) => {}
+            (told, asked) => panic!("{named:?} of {offered:?}: {told:?}, not {asked:?}"),
+        }
+    }
+}
+
 /// An agent that offers no sign-out is never reported signed out.
 #[test]
 fn a_sign_out_the_agent_does_not_offer_is_unverified() {

@@ -80,6 +80,16 @@
 //! own updater off with, or where the catalog lists that release no longer,
 //! the one named by the release an update would install.
 //!
+//! Every start, a turn's or an account step's, is given each key the user
+//! typed for one of the methods its agent signs in by, kept in crucible's
+//! credential store under the agent's name and the method's id, in the
+//! variable that method names, where the agent's entry, or its driver's own
+//! module, still lists the method. Such a variable is never one whose value
+//! may be shown, so the exact value sent is withheld from all the agent is
+//! seen to say, as any credential in its environment is. An agent named as a
+//! provider is given none, and the store is not read for an agent that signs
+//! in by no key.
+//!
 //! A switch the agents door makes is smoke-tested through [`Launcher::smoke`]
 //! only where the sandbox is on, the network it leaves commands is closed and
 //! the agent's route already has its yes, which [`Launcher::unsmokable`]
@@ -136,7 +146,7 @@ use crucible_execution::{
 };
 use crucible_external_harnesses::acp::{Acp, Allowing};
 use crucible_external_harnesses::catalog::{
-    CatalogProfile, Entry, Target, Trust, Unprofiled, Unusable, Variable,
+    CatalogProfile, Entry, Method, Target, Trust, Unprofiled, Unusable, Variable,
 };
 use crucible_external_harnesses::store::Store;
 use crucible_external_harnesses::{
@@ -358,6 +368,30 @@ impl Agent {
             model,
             effort,
         })
+    }
+
+    /// The configuration's entry `agent`, run as `row`, with its program
+    /// looked for through `lookup`: for an agent whose row no registry lists,
+    /// as a catalog agent's is made from the entry the trust state offers.
+    #[must_use]
+    pub(crate) fn of_row(
+        agent: &ExternalAgent,
+        row: AgentRow,
+        lookup: impl Fn(&str) -> Option<OsString>,
+    ) -> Self {
+        let (model, effort) = started(
+            agent.driver(),
+            &agent.serves(),
+            agent.model(),
+            agent.effort(),
+        );
+        Self {
+            row,
+            discovery: discover(agent.executable(), lookup),
+            profile: agent.profile().map(PathBuf::from),
+            model,
+            effort,
+        }
     }
 
     /// Its registry row.
@@ -634,6 +668,47 @@ pub(crate) fn updating_off(mut request: Request, variable: Option<&Variable>) ->
         request
             .environment
             .push((variable.name.to_string(), variable.value.to_string()));
+    }
+    request
+}
+
+/// `request` with each key the credential store in `home` keeps for `row`'s
+/// agent set in the variable of the method it was typed for, where the agent
+/// still signs in by that method, and that variable taken off the ones whose
+/// value may be shown, so its value is withheld from what the agent says.
+pub(crate) fn keyed(mut request: Request, row: &AgentRow, home: &Path) -> Request {
+    let methods = row.methods();
+    let variables: Vec<(&str, &str)> = methods
+        .iter()
+        .filter_map(|method| match &method.method {
+            Method::EnvVar { var } => Some((&*method.id, &**var)),
+            Method::Agent | Method::Terminal { .. } => None,
+        })
+        .collect();
+    if variables.is_empty() {
+        return request;
+    }
+    let Ok(agent) = AgentKey::new(row.named()) else {
+        return request;
+    };
+    let rows = providers::Rows::production();
+    let stored = crucible_auth::Store::in_home(home)
+        .naming(rows.names())
+        .read();
+    for (id, var) in variables {
+        let Ok(name) = rows.signing_in(&agent, id) else {
+            continue;
+        };
+        if let Some(key) = stored.get(&name) {
+            request.shown.retain(|shown| {
+                if cfg!(windows) {
+                    !shown.eq_ignore_ascii_case(var)
+                } else {
+                    *shown != var
+                }
+            });
+            key.set_in(&mut request.environment, var);
+        }
     }
     request
 }
@@ -1002,6 +1077,24 @@ impl<'a> Launcher<'a> {
         }
     }
 
+    /// The content-use answers a launch is held by.
+    pub(crate) const fn consent(&self) -> &Consent {
+        self.consent
+    }
+
+    /// Why a start of `agent` would be refused before any process, as
+    /// [`Agent::release`] decides it with the trust state as it is now, before
+    /// its route is asked about; nothing where it would not be.
+    pub(crate) fn refusal(&self, agent: &Agent) -> Option<Unlaunched> {
+        agent
+            .release(
+                self.consent,
+                &Trust::load(self.state, SystemTime::now()),
+                &programs_beside(self.state),
+            )
+            .err()
+    }
+
     /// Starts `agent` for its turns, as `dialect` asks, resuming the session
     /// its program names `resume` where there is one.
     ///
@@ -1081,7 +1174,7 @@ impl<'a> Launcher<'a> {
             &row.reaches(),
             life.limits(self.conversation.limits()),
         )?;
-        let mut request = request;
+        let mut request = keyed(request, row, self.state.parent().unwrap_or(self.state));
         if let Some(stored) = &stored {
             policy = read_only(&policy, &stored.root)?;
             request = updating_off(request, stored.updater_off.as_ref());
