@@ -42,7 +42,7 @@ pub use mcp::McpServer;
 pub use menu::Forced;
 pub use output::{Color, Glyphs, ScreenMode, ThemeChoice, ToolDetail, TranscriptColours};
 pub use sandbox::SandboxSettings;
-pub use updates::Updates;
+pub use updates::{AgentUpdate, Updates};
 pub use variables::ScrollSpeed;
 
 pub(crate) use variables::{refused, spelled};

@@ -624,6 +624,307 @@ fn update_rewrites_the_executable_and_rollback_restores_it() -> Result<(), Faile
     Ok(())
 }
 
+/// Installs goose 1.0.0 with a yes, then publishes 2.0.0 beside it.
+fn installed_then_updated_in_the_catalog(bench: &Bench) -> Result<(), Failed> {
+    bench.server.publish(1, &[("1.0.0", ONE)], &[]);
+    let mut front = answering(&bench.server, Some("Install"));
+    let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+    assert!(
+        matches!(
+            installed,
+            Ok(Outcome::Moved {
+                standing: false,
+                ..
+            })
+        ),
+        "{installed:?}"
+    );
+    bench
+        .server
+        .publish(2, &[("2.0.0", TWO), ("1.0.0", ONE)], &[]);
+    Ok(())
+}
+
+#[test]
+fn under_reviewed_an_update_runs_with_no_question_and_says_so() -> Result<(), Failed> {
+    let bench = Bench::new("agents-door-reviewed")?;
+    bench.configure(
+        &bench.program("1.0.0"),
+        &json!({"agents": {"update": "reviewed"}}),
+    )?;
+    installed_then_updated_in_the_catalog(&bench)?;
+    let mut front = answering(&bench.server, Some("Cancel"));
+
+    let (updated, _) = bench.ask(
+        Command::UpdateAgent {
+            agent: name("goose")?,
+        },
+        &mut front,
+        false,
+    )?;
+
+    assert!(front.put.is_empty(), "nothing was put to the client");
+    assert!(
+        matches!(&updated, Ok(Outcome::Moved { how: How::Updated, version, standing: true, downloaded: true, .. })
+            if &**version == "2.0.0"),
+        "{updated:?}"
+    );
+    assert_eq!(
+        bench.executable()?,
+        bench.program("2.0.0").to_string_lossy()
+    );
+    assert_eq!(fs::read(bench.program("2.0.0"))?, TWO);
+    // No launcher was lent, so nothing was started, and the outcome says why.
+    assert!(
+        matches!(&updated, Ok(Outcome::Moved { unsmoked: Some(why), .. }) if why.contains("launcher")),
+        "{updated:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn under_ask_an_update_is_put_to_the_client_and_a_no_changes_nothing() -> Result<(), Failed> {
+    let bench = Bench::new("agents-door-ask")?;
+    bench.configure(
+        &bench.program("1.0.0"),
+        &json!({"agents": {"update": "ask"}}),
+    )?;
+    installed_then_updated_in_the_catalog(&bench)?;
+    let mut front = answering(&bench.server, Some("Cancel"));
+
+    let (updated, _) = bench.ask(
+        Command::UpdateAgent {
+            agent: name("goose")?,
+        },
+        &mut front,
+        false,
+    )?;
+
+    assert_eq!(front.put.len(), 1);
+    assert!(matches!(updated, Ok(Outcome::Undecided)), "{updated:?}");
+    assert_eq!(
+        bench.executable()?,
+        bench.program("1.0.0").to_string_lossy()
+    );
+    assert!(!bench.program("2.0.0").exists());
+    Ok(())
+}
+
+#[test]
+fn reviewed_asks_for_a_first_install_and_still_refuses_a_release_it_would_refuse_when_asked()
+-> Result<(), Failed> {
+    let bench = Bench::new("agents-door-reviewed-install")?;
+    bench.server.publish(1, &[("1.0.0", ONE)], &[]);
+    bench.configure(
+        &bench.program("1.0.0"),
+        &json!({"agents": {"update": "reviewed"}}),
+    )?;
+    let mut front = answering(&bench.server, Some("Cancel"));
+
+    let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+
+    assert_eq!(front.put.len(), 1, "a first install is asked");
+    assert!(matches!(installed, Ok(Outcome::Undecided)), "{installed:?}");
+
+    // An update whose download is redirected off the listed hosts is refused
+    // as it is when asked, and commits nothing.
+    let elsewhere = Server::start()?;
+    bench
+        .server
+        .publish(2, &[("2.0.0", TWO), ("1.0.0", ONE)], &[]);
+    elsewhere.serve("/stolen", Reply::Body(TWO.to_vec()));
+    bench
+        .server
+        .serve(&asset_path(TWO), Reply::Redirect(elsewhere.at("/stolen")));
+    let mut front = answering(&bench.server, Some("Install"));
+    let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+    assert!(
+        matches!(installed, Ok(Outcome::Moved { .. })),
+        "{installed:?}"
+    );
+    let mut front = answering(&bench.server, None);
+    let (refused, _) = bench.ask(
+        Command::UpdateAgent {
+            agent: name("goose")?,
+        },
+        &mut front,
+        false,
+    )?;
+    assert!(front.put.is_empty());
+    assert!(
+        matches!(refused, Err(AgentsError::Download(DownloadError::Redirect))),
+        "{refused:?}"
+    );
+    assert!(elsewhere.asked().is_empty());
+    assert!(!bench.program("2.0.0").exists());
+    assert_eq!(
+        bench.executable()?,
+        bench.program("1.0.0").to_string_lossy()
+    );
+    Ok(())
+}
+
+const ZERO: &[u8] = b"goose 0.9.0, as reviewed, and older";
+
+/// Installs goose 1.0.0 with a yes at the catalog serial `serial`, the user
+/// file saying `agents.update = "reviewed"`.
+fn reviewed_with_one_installed(bench: &Bench, serial: u64) -> Result<(), Failed> {
+    bench.configure(
+        &bench.program("1.0.0"),
+        &json!({"agents": {"update": "reviewed"}}),
+    )?;
+    bench.server.publish(serial, &[("1.0.0", ONE)], &[]);
+    let mut front = answering(&bench.server, Some("Install"));
+    let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+    assert!(
+        matches!(installed, Ok(Outcome::Moved { .. })),
+        "{installed:?}"
+    );
+    Ok(())
+}
+
+/// An update asked of the door, whose question is declined, and what the
+/// client was put.
+fn update_declined(bench: &Bench) -> Result<(usize, Result<Outcome, AgentsError>), Failed> {
+    let mut front = answering(&bench.server, Some("Cancel"));
+    let (outcome, _) = bench.ask(
+        Command::UpdateAgent {
+            agent: name("goose")?,
+        },
+        &mut front,
+        false,
+    )?;
+    Ok((front.put.len(), outcome))
+}
+
+#[test]
+fn under_reviewed_an_older_release_listed_first_is_asked_about_and_not_taken() -> Result<(), Failed>
+{
+    let bench = Bench::new("agents-door-reviewed-older")?;
+    reviewed_with_one_installed(&bench, 1)?;
+    bench
+        .server
+        .publish(2, &[("0.9.0", ZERO), ("1.0.0", ONE)], &[]);
+
+    let (put, outcome) = update_declined(&bench)?;
+
+    assert_eq!(put, 1, "an older release is never taken unasked");
+    assert!(matches!(outcome, Ok(Outcome::Undecided)), "{outcome:?}");
+    assert!(!bench.program("0.9.0").exists());
+    assert_eq!(
+        bench.executable()?,
+        bench.program("1.0.0").to_string_lossy()
+    );
+    Ok(())
+}
+
+#[test]
+fn under_reviewed_a_revoked_newest_release_does_not_install_an_older_one_unasked()
+-> Result<(), Failed> {
+    let bench = Bench::new("agents-door-reviewed-revoked")?;
+    reviewed_with_one_installed(&bench, 1)?;
+    bench
+        .server
+        .serve(&asset_path(TWO), Reply::Body(TWO.to_vec()));
+    bench
+        .server
+        .serve(&asset_path(ZERO), Reply::Body(ZERO.to_vec()));
+    bench.server.catalog(
+        2,
+        &[goose("2.0.0", TWO), goose("0.9.0", ZERO)],
+        &json!([{"key": "goose", "version": "2.0.0", "reason": "It wrote outside its directory."}]),
+    )?;
+
+    let (put, outcome) = update_declined(&bench)?;
+
+    assert_eq!(put, 1);
+    assert!(matches!(outcome, Ok(Outcome::Undecided)), "{outcome:?}");
+    assert!(!bench.program("0.9.0").exists());
+    assert!(!bench.program("2.0.0").exists());
+
+    // The revoked release itself is refused, asked or not.
+    let mut front = answering(&bench.server, None);
+    let (refused, _) = bench.ask(install("2.0.0")?, &mut front, false)?;
+    assert!(
+        matches!(refused, Err(AgentsError::Unoffered { .. })),
+        "{refused:?}"
+    );
+    assert!(front.put.is_empty());
+    Ok(())
+}
+
+#[test]
+fn under_reviewed_an_offer_from_a_catalog_older_than_the_install_s_is_asked_about()
+-> Result<(), Failed> {
+    let bench = Bench::new("agents-door-reviewed-serial")?;
+    reviewed_with_one_installed(&bench, 1)?;
+    // The install is recorded as taken from a catalog later than any the
+    // offers below come from.
+    let receipt = bench.programs().join("1.0.0").join(".receipt");
+    let mut kept: Value = serde_json::from_slice(&fs::read(&receipt)?)?;
+    set(&mut kept, "/serial", json!(SNAPSHOT.serial() + 1000));
+    fs::write(&receipt, serde_json::to_vec(&kept)?)?;
+    bench
+        .server
+        .publish(2, &[("2.0.0", TWO), ("1.0.0", ONE)], &[]);
+
+    let (put, outcome) = update_declined(&bench)?;
+
+    assert_eq!(put, 1);
+    assert!(matches!(outcome, Ok(Outcome::Undecided)), "{outcome:?}");
+    assert!(!bench.program("2.0.0").exists());
+    Ok(())
+}
+
+#[test]
+fn under_reviewed_a_rollback_and_a_removal_are_still_asked() -> Result<(), Failed> {
+    let bench = Bench::new("agents-door-reviewed-rollback")?;
+    reviewed_with_one_installed(&bench, 1)?;
+    bench
+        .server
+        .publish(2, &[("2.0.0", TWO), ("1.0.0", ONE)], &[]);
+    let mut front = answering(&bench.server, Some("Cancel"));
+    let (updated, _) = bench.ask(
+        Command::UpdateAgent {
+            agent: name("goose")?,
+        },
+        &mut front,
+        false,
+    )?;
+    assert!(
+        matches!(updated, Ok(Outcome::Moved { standing: true, .. })),
+        "{updated:?}"
+    );
+
+    let mut front = answering(&bench.server, Some("Cancel"));
+    let (rolled, _) = bench.ask(
+        Command::RollbackAgent {
+            agent: name("goose")?,
+        },
+        &mut front,
+        false,
+    )?;
+    assert_eq!(front.put.len(), 1);
+    assert!(matches!(rolled, Ok(Outcome::Undecided)), "{rolled:?}");
+
+    // Nothing runs it from the store once the instance is off it.
+    bench.configure(
+        &bench.home.path().join("bin").join("true"),
+        &json!({"agents": {"update": "reviewed"}}),
+    )?;
+    let mut front = answering(&bench.server, Some("Cancel"));
+    let (removed, _) = bench.ask(
+        Command::RemoveAgent {
+            agent: name("goose")?,
+        },
+        &mut front,
+        false,
+    )?;
+    assert_eq!(front.put.len(), 1);
+    assert!(matches!(removed, Ok(Outcome::Undecided)), "{removed:?}");
+    Ok(())
+}
+
 #[test]
 fn a_redirect_to_a_host_not_listed_is_refused_and_commits_nothing() -> Result<(), Failed> {
     let bench = Bench::new("agents-door-redirect")?;
