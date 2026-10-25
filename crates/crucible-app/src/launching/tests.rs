@@ -8,7 +8,7 @@ use crucible_config::{Driver, Serves};
 use crucible_execution::{
     Authentication, Decision, Event, Failure, Outcome, SessionRef, Sink, Text, TurnRequest,
 };
-use crucible_external_harnesses::catalog::{Catalog, Held, Trust, fixture};
+use crucible_external_harnesses::catalog::{Catalog, Held, Trust, Variable, fixture};
 use crucible_external_harnesses::fake_peer::scripts::acp;
 use crucible_external_harnesses::fake_peer::{self, Plain, Reply, Script};
 use crucible_external_harnesses::{
@@ -1793,4 +1793,60 @@ async fn a_run_is_started_with_the_arguments_of_the_release_its_program_is() {
 
     assert_eq!(arguments("1.4.1"), ["--new"]);
     assert_eq!(arguments("1.3.0"), ["--old"]);
+}
+
+/// The variable an entry turns its agent's updater off with is set, in place
+/// of any value of the same name the request already carried.
+#[test]
+fn the_updater_off_variable_replaces_any_value_of_its_name() {
+    let request = Request {
+        arguments: Vec::new(),
+        environment: vec![
+            ("GOOSE_NO_UPDATE".to_owned(), "0".to_owned()),
+            ("PATH".to_owned(), "/usr/bin".to_owned()),
+        ],
+        shown: Vec::new(),
+    };
+    let off = Variable {
+        name: "GOOSE_NO_UPDATE".into(),
+        value: "1".into(),
+    };
+
+    let started = updating_off(request, Some(&off));
+
+    assert_eq!(
+        started.environment,
+        [
+            ("PATH".to_owned(), "/usr/bin".to_owned()),
+            ("GOOSE_NO_UPDATE".to_owned(), "1".to_owned()),
+        ]
+    );
+}
+
+/// A version root inside a writable root is read-only at and beneath it, and
+/// a rule that would let something beneath it be written is gone.
+#[test]
+fn a_version_root_is_read_only_inside_a_writable_root() {
+    let sample = Sample::new("launch-read-only-root");
+    let conversation = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
+    let root = sample
+        .workspace()
+        .root()
+        .join("programs")
+        .join("goose")
+        .join("1.0.0");
+    let profile = root.join("profile");
+    let child =
+        policy(&conversation, Some(&profile), &[], conversation.limits()).expect("a policy");
+
+    let narrowed = read_only(&child, &root).expect("a policy");
+
+    assert!(child.permits_path(&root.join("goose"), SandboxFilesystemAccess::ReadWrite));
+    assert!(narrowed.permits_path(&root.join("goose"), SandboxFilesystemAccess::ReadOnly));
+    assert!(!narrowed.permits_path(&root.join("goose"), SandboxFilesystemAccess::ReadWrite));
+    assert!(!narrowed.permits_path(&profile, SandboxFilesystemAccess::ReadWrite));
+    assert!(narrowed.permits_path(
+        &sample.workspace().root().join("src"),
+        SandboxFilesystemAccess::ReadWrite
+    ));
 }

@@ -25,7 +25,7 @@
 //! answered. It is put to the client as [`Pending::Install`], whose facts are
 //! the release's version and size, every host the download may contact, its
 //! licence, terms and caution, what it is started with, the instances whose
-//! `executable` it moves, and that it is not smoke-tested and why; the
+//! `executable` it moves, and whether it is smoke-tested, and why not; the
 //! identity is the process's one count, and the answer is held against the
 //! action put. Every string the catalog or the configuration gave is quoted
 //! with its control and format characters escaped and its length bounded, so
@@ -54,8 +54,15 @@
 //! revocation names, the same program in it, and fetches nothing; a removal
 //! is refused while an instance still runs a version from the store.
 //!
-//! The door does not start the agent: a switch is not smoke-tested here, and
-//! the question says so.
+//! A switch is smoke-tested before any instance is moved onto it only where a
+//! conversation lent its launcher and that launcher's sandbox is on with the
+//! network closed and the agent's route has its yes, which the yes to the
+//! switch is not: the version put in place, or for a rollback the one gone
+//! back to where the catalog still lists it, is started once through
+//! `launching` and must answer `initialize` as its entry reviewed it. One
+//! that fails leaves every instance on the program it named, and the version
+//! it failed in stays in the store for a prune to take. Elsewhere the question
+//! says it is not smoke-tested, and why, and nothing is started.
 
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -67,7 +74,7 @@ use crucible_client_api::{
 };
 use crucible_config::{ConfigError, Driver, ExternalAgent, Home, Settings};
 use crucible_external_harnesses::catalog::{
-    File, FileKind, Files, Kind, Launch, Offer, Target, Trust,
+    Entry, File, FileKind, Files, Kind, Launch, Offer, Target, Trust,
 };
 use crucible_external_harnesses::release::{RELEASE_BYTES, UnpackError, Unpacker};
 use crucible_external_harnesses::store::{
@@ -80,7 +87,7 @@ use crucible_types::AgentKey;
 use super::deciding::{Confirmation, Front, Shown, mint, turned_away};
 use crate::agent_download::{self, DownloadError, Landing};
 use crate::catalog_fetch::{self, FetchError, Source, Trigger};
-use crate::launching::Launcher;
+use crate::launching::{Launcher, Unsmoked, quoted};
 use crate::remember::{self, RememberError};
 
 /// The most catalog agents a listing names; one with more says so.
@@ -95,7 +102,8 @@ pub struct Shelf<'a> {
     /// Crucible's home: the programs, the trust state and the user's own
     /// configuration file are under it.
     pub home: &'a Home,
-    /// The launcher of the conversation asking, where there is one.
+    /// The launcher of the conversation asking, where there is one, which a
+    /// switch is smoke-tested through.
     pub smoke: Option<&'a Launcher<'a>>,
 }
 
@@ -266,6 +274,20 @@ pub enum AgentsError {
     /// The user's configuration could not be written.
     #[error(transparent)]
     Remember(#[from] RememberError),
+    /// The version put in place did not pass its smoke test, so no instance
+    /// was moved onto it.
+    #[error(
+        "{agent} {version} did not pass its smoke test, so every instance still runs what it \
+         ran: {why}"
+    )]
+    Smoke {
+        /// The agent.
+        agent: AgentKey,
+        /// The version that failed.
+        version: Box<str>,
+        /// Why.
+        why: Unsmoked,
+    },
     /// Signing an agent in is not served here.
     #[error("signing an agent in is not available through the agents door in this build")]
     SignIn,
@@ -435,12 +457,50 @@ impl Door<'_> {
             .collect()
     }
 
-    /// Why the switch is not smoke-tested.
-    fn unsmoked(&self) -> String {
-        match self.shelf.smoke {
-            None => "Not smoke-tested: no conversation lent a launcher to start it with.".into(),
-            Some(_) => "Not smoke-tested: the new version is not started before it is used.".into(),
+    /// The launcher a switch onto a release of `agent` is smoke-tested with,
+    /// or why it is not smoke-tested.
+    fn smoking(&self, agent: &AgentKey) -> Result<&Launcher<'_>, String> {
+        let launcher = self
+            .shelf
+            .smoke
+            .ok_or_else(|| "no conversation lent a launcher to start it with".to_owned())?;
+        match launcher.unsmokable(agent) {
+            None => Ok(launcher),
+            Some(why) => Err(why.to_string()),
         }
+    }
+
+    /// What the question says of the smoke test `smoking` planned.
+    fn smoked(smoking: &Result<&Launcher<'_>, String>) -> String {
+        match smoking {
+            Ok(_) => "Smoke-tested before any instance is moved onto it: started once in the \
+                      sandbox with the network closed, it must answer initialize as its catalog \
+                      entry reviewed it."
+                .to_owned(),
+            Err(why) => format!("Not smoke-tested: {why}."),
+        }
+    }
+
+    /// Smoke-tests `program`, of the release `entry` lists as `target`, in
+    /// `root`, with `smoking`'s launcher where it planned one, after the
+    /// question was answered: a failure leaves every instance as it is.
+    async fn smoke(
+        smoking: &Result<&Launcher<'_>, String>,
+        (entry, target): (&Entry, &Target),
+        root: &Path,
+        program: &Path,
+    ) -> Result<(), AgentsError> {
+        let Ok(launcher) = smoking else {
+            return Ok(());
+        };
+        launcher
+            .smoke(entry, target, root, program)
+            .await
+            .map_err(|why| AgentsError::Smoke {
+                agent: entry.key.clone(),
+                version: quoted(&entry.version).into(),
+                why,
+            })
     }
 
     /// Installs `offer` of `agent` after a yes, and moves every instance the
@@ -496,10 +556,15 @@ impl Door<'_> {
             self.store.fits_while_downloading(target)?;
         }
         let moving = self.moving(agent);
-        let program = self.store.directory(agent, &version).join(&*target.cmd);
+        let root = self.store.directory(agent, &version);
+        let program = root.join(&*target.cmd);
 
-        let plan = Plan { kept, reached };
-        let confirmation = self.installing(offer, how, &plan, &moving);
+        let plan = Plan {
+            kept,
+            reached,
+            smoking: self.smoking(agent),
+        };
+        let confirmation = Self::installing(offer, how, &plan, &moving);
         if confirmed(self.request, front, &confirmation).await != Some(0) {
             return Ok(Outcome::Undecided);
         }
@@ -551,6 +616,7 @@ impl Door<'_> {
             };
             self.store.commit(staging, &version, &files, provenance)?;
         }
+        Self::smoke(&plan.smoking, (&offer.entry, target), &root, &program).await?;
         let (instances, left) = self.point(&moving, &program)?;
         Ok(Outcome::Moved {
             agent: agent.clone(),
@@ -565,10 +631,9 @@ impl Door<'_> {
 
     /// The question an install or update puts.
     fn installing(
-        &self,
         offer: &Offer,
         how: How,
-        plan: &Plan,
+        plan: &Plan<'_>,
         moving: &[(&ExternalAgent, Version)],
     ) -> Confirmation {
         let kept = plan.kept;
@@ -633,7 +698,7 @@ impl Door<'_> {
             format!("Started with the environment {}.", set.join(", "))
         });
         facts.push(moves(&entry.key, &offer.pin.version, moving));
-        facts.push(self.unsmoked());
+        facts.push(Self::smoked(&plan.smoking));
         Confirmation {
             asks,
             facts,
@@ -753,7 +818,20 @@ impl Door<'_> {
             None => "It was installed with no terms to accept.".to_owned(),
         });
         facts.push(moves(agent, &previous.version, &moving));
-        facts.push(self.unsmoked());
+        // Smoke-tested only as the catalog still lists it: its entry is what
+        // says what it must answer as.
+        let listed = self.trust.offers(Some(agent)).into_iter().find(|offer| {
+            *offer.pin.version == *previous.version
+                && offer.pin.lock_revision == previous.lock_revision
+        });
+        let smoking = match &listed {
+            Some(_) => self.smoking(agent),
+            None => Err(format!(
+                "the catalog no longer lists {}, so nothing says what it must answer as",
+                quoted(&previous.version)
+            )),
+        };
+        facts.push(Self::smoked(&smoking));
         let confirmation = Confirmation {
             asks: format!("Roll {agent} back to {}?", quoted(&previous.version)),
             facts,
@@ -770,6 +848,10 @@ impl Door<'_> {
         };
         if confirmed(self.request, front, &confirmation).await != Some(0) {
             return Ok(Outcome::Undecided);
+        }
+        if let Some(offer) = &listed {
+            let root = self.store.directory(agent, &version);
+            Self::smoke(&smoking, (&offer.entry, &offer.pin.target), &root, &program).await?;
         }
         let (instances, left) = self.point(&moving, &program)?;
         Ok(Outcome::Moved {
@@ -888,28 +970,12 @@ fn sized(offer: &Offer) -> Result<u64, AgentsError> {
 type Written = (Vec<Box<str>>, Vec<Box<str>>);
 
 /// What a switch found before it asked: whether the version is already in
-/// place, and every host its download may contact.
-struct Plan {
+/// place, every host its download may contact, and the launcher it is
+/// smoke-tested with, or why it is not.
+struct Plan<'a> {
     kept: bool,
     reached: Vec<String>,
-}
-
-/// The most of one string the catalog or the configuration gave that a fact
-/// quotes, in characters.
-const QUOTED: usize = 256;
-
-/// `text`, a string the catalog or the configuration gave, as a fact quotes
-/// it: every control and format character written as its escape, so no line
-/// of its own can be drawn from it, and cut at [`QUOTED`] characters with an
-/// ellipsis, so no fact is made long enough to push the others out of sight.
-fn quoted(text: &str) -> String {
-    let escaped = crucible_types::shown::escaped(text);
-    if escaped.chars().count() <= QUOTED {
-        return escaped;
-    }
-    let mut cut: String = escaped.chars().take(QUOTED).collect();
-    cut.push('…');
-    cut
+    smoking: Result<&'a Launcher<'a>, String>,
 }
 
 /// Every file the target's artifacts list, as they would be committed.
