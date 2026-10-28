@@ -352,12 +352,11 @@ other time, so a change to either key takes effect at the next business
 sign-in. The write follows no link: where `antigravity-acp` or the file in it
 is a link, the sign-in is refused and nothing is written, and the file is
 written in the directory crucible opened at that name, so a name changed while
-it writes cannot send it elsewhere. A business sign-in
-for an entry that names neither key is refused naming both, and one whose
-location is too long to make the name of its host is refused naming
-`cloudLocation`, each before anything is asked, written or started. A business
-sign-in read as signed in means the agent then opened a session, not that the
-project holds a licence for it.
+it writes cannot send it elsewhere. A business sign-in for an entry that names
+neither key is refused naming both, and one whose location is too long to make
+the name of its host is refused naming `cloudLocation`, each before anything
+is asked, written or started. A business sign-in read as signed in means the
+agent then opened a session, not that the project holds a licence for it.
 
 **Its session.** Each time the agent is started again, after a failed turn, a
 change of mode or `/resume`, it is asked to resume the session it last named.
