@@ -352,8 +352,12 @@ impl Store {
         Ok(dropped)
     }
 
-    /// Writes a completed sign-in under `name`, taking out every other
-    /// credential its provider holds in the same write, and says what went.
+    /// Writes a completed sign-in under `name`, and says what went.
+    ///
+    /// Every other credential of the provider, under any name this build
+    /// writes it under and in either map, goes in the same write: a provider
+    /// holds one. Of a provider the store was told no name of, only a key
+    /// under `name` itself goes.
     pub(crate) fn keep_subscription(
         &self,
         name: &str,
