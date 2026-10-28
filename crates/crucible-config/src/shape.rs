@@ -1531,6 +1531,28 @@ const EXTERNAL_AGENT: Shape = Shape::Fields(&[
         needed: false,
         widens: false,
     },
+    Field {
+        name: "cloudProject",
+        about: "For an antigravity agent: the ID of the Google Cloud project its business sign-in is billed to, written with cloudLocation and only with it. 6 to 30 lowercase letters, digits and hyphens, starting with a letter and not ending with a hyphen. Takes effect at the next business sign-in. Read only from the configuration file in your home directory",
+        shape: Shape::Pattern(access::CLOUD_PROJECT),
+        // No example: an example is checked written beside the example
+        // driver, and a project beside a claude instance is refused.
+        examples: &[],
+        usual: None,
+        needed: false,
+        // Which project is billed, and which location's host the agent's
+        // sandbox opens, is the user's to choose and never a checkout's.
+        widens: true,
+    },
+    Field {
+        name: "cloudLocation",
+        about: "For an antigravity agent: the Google Cloud location its business sign-in is billed in, such as us-central1, written with cloudProject and only with it. One host name label of 1 to 63 lowercase letters, digits and hyphens, neither starting nor ending with a hyphen. Takes effect at the next business sign-in. Read only from the configuration file in your home directory",
+        shape: Shape::Pattern(access::CLOUD_LOCATION),
+        examples: &[],
+        usual: None,
+        needed: false,
+        widens: true,
+    },
 ]);
 
 /// What the `mcp` block may say.

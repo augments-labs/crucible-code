@@ -13,6 +13,12 @@
 //! key's spelling alone: never a driver's word, the native runner's name or a
 //! name Windows keeps for a device.
 //!
+//! An Antigravity instance may name the Google Cloud project and location its
+//! business sign-in is billed to, both or neither. They are checked here for
+//! their spelling alone, since the location names a host the agent reaches:
+//! whether the project exists, or the account may use it, is for the agent to
+//! learn when it signs in.
+//!
 //! The document has already been walked against the shape and checked, so a
 //! value that reaches these readers is one of the spellings below; a reader
 //! that met anything else would be reading a document that was never checked,
@@ -198,6 +204,18 @@ impl Driver {
         }
     }
 
+    /// Whether an instance names `cloudProject` and `cloudLocation`, the
+    /// Google Cloud project and location its business sign-in is billed to.
+    /// No other agent signs in that way, and a project written for one would
+    /// be one nothing reads.
+    #[must_use]
+    pub const fn takes_cloud(self) -> bool {
+        match self {
+            Self::Antigravity => true,
+            Self::Claude | Self::Catalog => false,
+        }
+    }
+
     /// What an instance of it serves, given the catalog agent its entry
     /// names where it names one: a built-in driver's agent signs in to its
     /// own vendor and asks only that vendor, so it serves that one provider
@@ -318,6 +336,82 @@ pub fn model_name(found: &str) -> bool {
             .all(|one| one.is_ascii_alphanumeric() || "._-:@/[]".contains(one))
 }
 
+/// What `externalAgents.<instance>.cloudProject` is spelled with, as an
+/// editor checks it: Google's spelling of a project ID, 6 to 30 lowercase
+/// letters, digits and hyphens, starting with a letter and not ending with a
+/// hyphen.
+///
+/// [`cloud_project`] is what refuses one; the test beside the schema holds
+/// the two to one answer.
+pub(crate) const CLOUD_PROJECT: &str = "^[a-z][a-z0-9-]{4,28}[a-z0-9]$";
+
+/// What `externalAgents.<instance>.cloudLocation` is spelled with, as an
+/// editor checks it: one DNS label, 1 to 63 lowercase letters, digits and
+/// hyphens, neither starting nor ending with a hyphen, since a location
+/// names a host the agent reaches.
+///
+/// [`cloud_location`] is what refuses one; the test beside the schema holds
+/// the two to one answer.
+pub(crate) const CLOUD_LOCATION: &str = "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$";
+
+/// What [`cloud_project`] holds a project to, as a refusal says it.
+pub(crate) const CLOUD_PROJECT_NAMED: &str = "a Google Cloud project is named by its ID: 6 to 30 \
+     lowercase letters, digits and hyphens, starting with a letter and not ending with a hyphen";
+
+/// What [`cloud_location`] holds a location to, as a refusal says it.
+pub(crate) const CLOUD_LOCATION_NAMED: &str = "a Google Cloud location is one host name label: \
+     1 to 63 lowercase letters, digits and hyphens, neither starting nor ending with a hyphen, \
+     since the agent reaches a host named after it";
+
+/// Whether every byte of `found` is a lowercase ASCII letter, a digit or a
+/// hyphen.
+fn labelled(found: &str) -> bool {
+    found
+        .bytes()
+        .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
+/// Whether `found` is spelled as [`CLOUD_PROJECT`] says.
+pub(crate) fn cloud_project(found: &str) -> bool {
+    (6..=30).contains(&found.len())
+        && labelled(found)
+        && found.starts_with(|first: char| first.is_ascii_lowercase())
+        && !found.ends_with('-')
+}
+
+/// Whether `found` is spelled as [`CLOUD_LOCATION`] says.
+pub(crate) fn cloud_location(found: &str) -> bool {
+    (1..=63).contains(&found.len())
+        && labelled(found)
+        && !found.starts_with('-')
+        && !found.ends_with('-')
+}
+
+/// The Google Cloud project and location an Antigravity instance's business
+/// sign-in is billed to, both written or neither.
+///
+/// Neither is a secret: a project ID and a location name where usage is
+/// billed, not anything that signs in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cloud {
+    project: Box<str>,
+    location: Box<str>,
+}
+
+impl Cloud {
+    /// The project's ID, as `cloudProject` spells it.
+    #[must_use]
+    pub fn project(&self) -> &str {
+        &self.project
+    }
+
+    /// The location, as `cloudLocation` spells it.
+    #[must_use]
+    pub fn location(&self) -> &str {
+        &self.location
+    }
+}
+
 /// One installed agent, as the document states it.
 ///
 /// Nothing in it has been resolved: `executable` has not been looked for and
@@ -336,6 +430,7 @@ pub struct ExternalAgent {
     profile: Option<Box<str>>,
     model: Option<Box<str>>,
     effort: Option<Effort>,
+    cloud: Option<Cloud>,
 }
 
 impl ExternalAgent {
@@ -395,6 +490,13 @@ impl ExternalAgent {
         self.effort
     }
 
+    /// The project and location its business sign-in is billed to, where
+    /// both are written. Only an Antigravity instance names them.
+    #[must_use]
+    pub const fn cloud(&self) -> Option<&Cloud> {
+        self.cloud.as_ref()
+    }
+
     /// An instance named `name` of `driver`, running the catalog agent
     /// `agent` where it is a catalog instance, run as `executable` with its
     /// profile directory at `profile`, as a configuration that has not been
@@ -422,6 +524,7 @@ impl ExternalAgent {
             profile: profile.map(Into::into),
             model: None,
             effort: None,
+            cloud: None,
         })
     }
 
@@ -452,6 +555,17 @@ impl ExternalAgent {
                 .get("effort")
                 .and_then(Value::as_str)
                 .and_then(|effort| effort.parse().ok()),
+            // Read for the driver that takes them, and only both together:
+            // the check refused anything else.
+            cloud: driver
+                .takes_cloud()
+                .then(|| {
+                    Some(Cloud {
+                        project: record.get("cloudProject")?.as_str()?.into(),
+                        location: record.get("cloudLocation")?.as_str()?.into(),
+                    })
+                })
+                .flatten(),
         })
     }
 }

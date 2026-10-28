@@ -606,6 +606,184 @@ fn a_model_or_effort_for_an_agent_that_chooses_its_own_is_refused() {
     }
 }
 
+/// An Antigravity instance with its profile, `beside` written after it.
+fn antigravity(beside: &str) -> String {
+    let profile = serde_json::Value::from(crate::sample::rooted("home/me/agy"));
+    format!(
+        r#"{{"externalAgents": {{"mine": {{"driver": "antigravity", "executable": "agy", "profileDir": {profile}{beside}}}}}}}"#
+    )
+}
+
+/// The project and location a business sign-in is billed to.
+const BILLED: &str = r#", "cloudProject": "my-project-id", "cloudLocation": "us-central1""#;
+
+/// A Google Cloud project and location are what Antigravity's business
+/// sign-in is billed to, and written for any other agent they would be keys
+/// nothing reads, so they are refused, naming the driver that reads them.
+#[test]
+fn a_cloud_project_or_location_for_another_agent_is_refused() {
+    let agy = serde_json::Value::from(crate::sample::rooted("home/me/agy"));
+    for record in [
+        r#""driver": "claude", "executable": "claude""#.to_owned(),
+        format!(r#""driver": "catalog", "executable": "goose", "agent": "goose", "profileDir": {agy}"#),
+    ] {
+        for (beside, key) in [
+            (r#", "cloudProject": "my-project-id""#, "cloudProject"),
+            (r#", "cloudLocation": "us-central1""#, "cloudLocation"),
+            (BILLED, "cloudProject"),
+        ] {
+            let err = mine(&format!(
+                r#"{{"externalAgents": {{"mine": {{{record}{beside}}}}}}}"#
+            ))
+            .unwrap_err();
+            let said = err.to_string();
+            assert!(matches!(err, ConfigError::Variant { .. }), "got {err:?}");
+            assert!(
+                said.contains(&format!("externalAgents.mine.{key}")),
+                "got {said}"
+            );
+            assert!(said.contains("antigravity"), "got {said}");
+            assert!(said.contains("~/.crucible/config.json"), "got {said}");
+        }
+    }
+    mine(&antigravity(BILLED)).unwrap();
+}
+
+/// A project is billed in a location, so a business sign-in given one
+/// without the other would be one the agent cannot make: each is refused
+/// naming the key it is missing.
+#[test]
+fn a_cloud_project_without_its_location_or_a_location_without_its_project_is_refused() {
+    for (beside, given, missing) in [
+        (
+            r#", "cloudProject": "my-project-id""#,
+            "cloudProject",
+            "cloudLocation",
+        ),
+        (
+            r#", "cloudLocation": "us-central1""#,
+            "cloudLocation",
+            "cloudProject",
+        ),
+    ] {
+        let err = mine(&antigravity(beside)).unwrap_err();
+        let said = err.to_string();
+        assert!(matches!(err, ConfigError::Needed { .. }), "got {err:?}");
+        assert!(
+            said.contains(&format!("externalAgents.mine needs {missing}")),
+            "got {said}"
+        );
+        assert!(said.contains(given), "got {said}");
+        assert!(said.contains("~/.crucible/config.json"), "got {said}");
+    }
+    mine(&antigravity("")).unwrap();
+}
+
+/// The project is held to Google's spelling of a project ID, and the
+/// location to one DNS label, since the location names a host the agent's
+/// sandbox opens; a key misspelt is no key crucible has.
+#[test]
+fn a_cloud_project_or_location_misspelt_is_refused() {
+    let long_project = "a".repeat(31);
+    for project in [
+        "",
+        "short",
+        "1starts-with-a-digit",
+        "Upper-case-id",
+        "ends-with-a-hyphen-",
+        "has_an_underscore",
+        "has.a.dot",
+        "has a space",
+        "my-project-\u{ef}d",
+        long_project.as_str(),
+    ] {
+        let beside = format!(r#", "cloudProject": {project:?}, "cloudLocation": "us-central1""#);
+        let err = mine(&antigravity(&beside)).unwrap_err();
+        let said = err.to_string();
+        assert!(
+            matches!(err, ConfigError::Variant { .. }),
+            "{project:?}: got {err:?}"
+        );
+        assert!(
+            said.contains("externalAgents.mine.cloudProject"),
+            "{project:?}: got {said}"
+        );
+        assert!(said.contains("~/.crucible/config.json"), "got {said}");
+    }
+    let longest_project = format!("a{}", "b".repeat(29));
+    for project in ["my-project-id", "abcdef", "a-1-2-3", longest_project.as_str()] {
+        let beside = format!(r#", "cloudProject": {project:?}, "cloudLocation": "us-central1""#);
+        assert!(mine(&antigravity(&beside)).is_ok(), "{project}");
+    }
+
+    let long_location = "a".repeat(64);
+    for location in [
+        "",
+        "-us",
+        "us-",
+        "US",
+        "us_central1",
+        "us.central1",
+        "us central1",
+        "europe-w\u{e9}st4",
+        long_location.as_str(),
+    ] {
+        let beside = format!(r#", "cloudProject": "my-project-id", "cloudLocation": {location:?}"#);
+        let err = mine(&antigravity(&beside)).unwrap_err();
+        let said = err.to_string();
+        assert!(
+            matches!(err, ConfigError::Variant { .. }),
+            "{location:?}: got {err:?}"
+        );
+        assert!(
+            said.contains("externalAgents.mine.cloudLocation"),
+            "{location:?}: got {said}"
+        );
+        assert!(said.contains("~/.crucible/config.json"), "got {said}");
+    }
+    let longest_location = "a".repeat(63);
+    for location in [
+        "us-central1",
+        "us",
+        "eu",
+        "global",
+        "europe-west4",
+        "a",
+        "9",
+        longest_location.as_str(),
+    ] {
+        let beside = format!(r#", "cloudProject": "my-project-id", "cloudLocation": {location:?}"#);
+        assert!(mine(&antigravity(&beside)).is_ok(), "{location}");
+    }
+
+    for misspelt in ["cloudProjectId", "cloud_project", "gcpLocation"] {
+        let beside = format!(r#", "{misspelt}": "my-project-id""#);
+        let err = mine(&antigravity(&beside)).unwrap_err();
+        assert!(
+            matches!(err, ConfigError::UnknownKey { .. }),
+            "{misspelt}: got {err:?}"
+        );
+        assert!(
+            err.to_string()
+                .contains(&format!("externalAgents.mine.{misspelt}")),
+            "{err}"
+        );
+    }
+}
+
+/// What a business sign-in is billed to is chosen where every other key of
+/// an installed agent is: in the user's own file, never in a checkout's.
+#[test]
+fn neither_workspace_file_can_choose_what_a_business_sign_in_is_billed_to() {
+    for read in [shared as fn(&str) -> Result<Document, ConfigError>, local] {
+        let err = read(&antigravity(BILLED)).unwrap_err();
+        let said = err.to_string();
+        assert!(matches!(err, ConfigError::Widening { .. }), "got {err:?}");
+        assert!(said.contains("externalAgents"), "got {said}");
+        assert!(!said.contains("my-project-id"), "got {said}");
+    }
+}
+
 /// A catalog instance with `agent` set to `agent`, `beside` written after it.
 fn catalog(agent: &serde_json::Value, beside: &str) -> String {
     format!(
