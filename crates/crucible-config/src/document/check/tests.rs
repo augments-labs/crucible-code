@@ -923,6 +923,144 @@ fn an_antigravity_and_a_catalog_instance_both_take_profile_dir() {
     assert!(said.contains("catalog"), "got {said}");
 }
 
+/// A home file naming `instances`, each an Antigravity agent on the profile
+/// directory written beside its name.
+fn on_profiles(instances: &[(&str, &str)]) -> Result<Document, ConfigError> {
+    let block: serde_json::Map<String, serde_json::Value> = instances
+        .iter()
+        .map(|(name, profile)| {
+            (
+                (*name).to_owned(),
+                serde_json::json!({"driver": "antigravity", "executable": "agy", "profileDir": profile}),
+            )
+        })
+        .collect();
+    mine(&serde_json::json!({"externalAgents": block}).to_string())
+}
+
+/// Instances share a credential scope exactly where their profile directories
+/// are written alike, so one directory written two ways would be two scopes
+/// over one set of credentials, and is refused naming both instances. A
+/// trailing separator, a repeated one and a `.` component are the same
+/// directory to the path type, and are what a person typing them would write.
+#[test]
+fn one_profile_directory_written_two_ways_is_refused_naming_both_instances() {
+    let tree = crate::sample::Scratch::new("profile-spelling-components");
+    let plain = tree.text("agy");
+    let separator = std::path::MAIN_SEPARATOR;
+    let root = tree.text("");
+    for spelled in [
+        format!("{plain}{separator}"),
+        format!("{root}{separator}{separator}agy"),
+        tree.root().join(".").join("agy").display().to_string(),
+    ] {
+        let err = on_profiles(&[("spare", &plain), ("work", &spelled)]).unwrap_err();
+        let said = err.to_string();
+        assert!(matches!(err, ConfigError::Variant { .. }), "got {err:?}");
+        assert!(
+            said.contains("externalAgents.spare.profileDir"),
+            "got {said}"
+        );
+        assert!(
+            said.contains("externalAgents.work.profileDir"),
+            "got {said}"
+        );
+        assert!(said.contains("same way"), "got {said}");
+        assert!(said.contains("~/.crucible/config.json"), "got {said}");
+    }
+}
+
+/// Which agent an instance runs is no reason to spell its directory another
+/// way: a Claude Code instance and an Antigravity one on one directory are
+/// refused as two Antigravity ones are.
+#[test]
+fn one_directory_written_two_ways_is_refused_whatever_the_agents() {
+    let tree = crate::sample::Scratch::new("profile-spelling-drivers");
+    let plain = tree.text("shared");
+    let trailing = format!("{plain}{}", std::path::MAIN_SEPARATOR);
+    let err = mine(
+        &serde_json::json!({"externalAgents": {
+            "chat": {"driver": "claude", "executable": "claude", "configDir": plain},
+            "space": {"driver": "antigravity", "executable": "agy", "profileDir": trailing}
+        }})
+        .to_string(),
+    )
+    .unwrap_err();
+    let said = err.to_string();
+    assert!(matches!(err, ConfigError::Variant { .. }), "got {err:?}");
+    assert!(said.contains("externalAgents.chat.configDir"), "got {said}");
+    assert!(
+        said.contains("externalAgents.space.profileDir"),
+        "got {said}"
+    );
+}
+
+/// Two directories that exist and are one on the disk, as through a link, are
+/// one directory however they are written.
+#[cfg(unix)]
+#[test]
+fn a_profile_directory_and_a_link_to_it_are_refused_naming_both_instances() {
+    let tree = crate::sample::Scratch::new("profile-spelling-link");
+    let real = tree.make("real");
+    let link = tree.at("link");
+    std::os::unix::fs::symlink(&real, &link).expect("a link in the temporary directory");
+
+    let err = on_profiles(&[
+        ("spare", &real.display().to_string()),
+        ("work", &link.display().to_string()),
+    ])
+    .unwrap_err();
+    let said = err.to_string();
+    assert!(matches!(err, ConfigError::Variant { .. }), "got {err:?}");
+    assert!(
+        said.contains("externalAgents.spare.profileDir"),
+        "got {said}"
+    );
+    assert!(
+        said.contains("externalAgents.work.profileDir"),
+        "got {said}"
+    );
+    assert!(said.contains("same way"), "got {said}");
+}
+
+/// Writing one directory alike is how instances share a profile, a single
+/// instance is never refused for how it spells its own, and directories that
+/// are not known to be one are two: different ones, ones that are absent, and
+/// an absent one beside an existing one.
+#[test]
+fn profile_directories_not_known_to_be_one_load() {
+    let tree = crate::sample::Scratch::new("profile-spelling-loads");
+    let plain = tree.text("agy");
+    let trailing = format!("{plain}{}", std::path::MAIN_SEPARATOR);
+    let present = tree.make("present");
+    let other = tree.make("other");
+    let present = present.display().to_string();
+    let other = other.display().to_string();
+    let absent = tree.text("absent");
+    let elsewhere = tree.text("elsewhere");
+
+    for instances in [
+        vec![("spare", &plain), ("work", &plain)],
+        vec![("work", &trailing)],
+        vec![("spare", &present), ("work", &other)],
+        vec![("spare", &absent), ("work", &elsewhere)],
+        vec![("spare", &present), ("work", &absent)],
+        // The same spelling twice and a third beside them: only a different
+        // spelling of the same directory is refused.
+        vec![("one", &plain), ("two", &plain), ("three", &elsewhere)],
+    ] {
+        let instances: Vec<(&str, &str)> = instances
+            .into_iter()
+            .map(|(name, profile)| (name, profile.as_str()))
+            .collect();
+        assert!(
+            on_profiles(&instances).is_ok(),
+            "{instances:?}: {:?}",
+            on_profiles(&instances).err()
+        );
+    }
+}
+
 /// A catalog agent chooses its own model, so neither a model nor an effort
 /// is read for it.
 #[test]
