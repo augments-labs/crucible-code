@@ -623,3 +623,38 @@ fn an_agent_access_carries_the_model_its_entry_names() {
         "{route:?}"
     );
 }
+
+/// The Google Cloud location an Antigravity entry names is carried on its
+/// route, so the run that route starts can reach that location's host.
+#[test]
+fn an_antigravity_access_carries_the_cloud_location_its_entry_names() {
+    let sample = Sample::new("access-agent-location");
+    let profile = sample.root().join("antigravity-profile");
+    let settings = sample.user(
+        &serde_json::json!({
+            "providers": {"google": {"access": {"type": "externalAgent", "instance": "work"}}},
+            "externalAgents": {"work": {
+                "driver": "antigravity",
+                "executable": "agy",
+                "profileDir": profile,
+                "cloudProject": "my-project-id",
+                "cloudLocation": "us-central1",
+            }},
+        })
+        .to_string(),
+    );
+
+    let route = resolved(
+        serving("google"),
+        &settings,
+        &lookup(None),
+        None,
+        NO_SUBSCRIPTION,
+    )
+    .unwrap();
+
+    assert!(
+        matches!(&route, Route::External { location: Some(location), .. } if &**location == "us-central1"),
+        "{route:?}"
+    );
+}

@@ -1799,6 +1799,97 @@ async fn a_run_is_started_with_the_arguments_of_the_release_its_program_is() {
     assert_eq!(arguments("1.3.0"), ["--old"]);
 }
 
+/// A sandbox that keeps the network each start asked of it, and starts none.
+struct Recording {
+    local: Arc<dyn SandboxService>,
+    asked: Arc<Mutex<Vec<SandboxNetworkPolicy>>>,
+}
+
+impl SandboxService for Recording {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        self.local.probe()
+    }
+
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            self.asked
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(request.policy().network().clone());
+            Err(SandboxError::BackendUnavailable {
+                reason: "this sandbox only records what it is asked".into(),
+            })
+        })
+    }
+}
+
+/// The Google Cloud location an Antigravity route carries is reached by the
+/// conversation's run that route starts, and no other location is.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_routed_antigravity_run_reaches_the_host_of_the_location_its_route_carries() {
+    let sample = Sample::new("launch-antigravity-located");
+    let program = fake_peer::install(
+        &sample.root().join("peer"),
+        "antigravity",
+        &Script::of([Reply::new()]),
+    )
+    .expect("the fake peer");
+    let route = Route::External {
+        serves: Serves::Provider("google"),
+        instance: "space".into(),
+        driver: Driver::Antigravity,
+        executable: program.to_string_lossy().into(),
+        profile: None,
+        model: None,
+        effort: None,
+        location: Some("us-central1".into()),
+        enabled: true,
+    };
+    let agent = Agent::routed(&route, &ANTIGRAVITY_REGISTRY, |_| None).expect("a row");
+    let consent = Consent::new(Routes::production());
+    consent.give("agent:antigravity");
+    // Confined, as only a policy that is enforced is given the agent's hosts.
+    let policy = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
+    let state = sample.state();
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let recording = Recording {
+        local: local(),
+        asked: Arc::clone(&asked),
+    };
+    let launcher = Launcher::new(
+        Arc::new(recording),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+    );
+    let control = Control::new().expect("a control");
+    let mut dialect = agent.row().dialect(Mode::Ask, None, None).expect("asking");
+
+    let started = launcher
+        .launch(&agent, &control, dialect.as_mut(), None)
+        .await;
+
+    assert!(started.is_err(), "the recording sandbox started a run");
+    let asked = asked.lock().unwrap_or_else(PoisonError::into_inner).clone();
+    let [SandboxNetworkPolicy::Domains(domains)] = asked.as_slice() else {
+        panic!("the start asked the sandbox for {asked:?}");
+    };
+    assert!(
+        domains.permits_host("us-central1-businessaicode.googleapis.com"),
+        "the location the route carries is not reached"
+    );
+    assert!(
+        !domains.permits_host("europe-west1-businessaicode.googleapis.com"),
+        "a location the route does not carry is reached"
+    );
+}
+
 /// The variable an entry turns its agent's updater off with is set, in place
 /// of any value of the same name the request already carried.
 #[test]
