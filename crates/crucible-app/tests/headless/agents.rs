@@ -3957,3 +3957,70 @@ fn a_sign_in_with_a_launcher_and_no_steps_is_refused_before_anything_is_started(
     );
     Ok(())
 }
+
+/// A sign-in by a key already kept starts the agent where a conversation lent
+/// its launcher, so it is refused beside a run not confirmed stopped as one the
+/// agent carries out is: before the route is asked or the agent is started,
+/// and with the kept key left as it was.
+#[test]
+fn a_kept_key_is_not_signed_in_beside_a_run_not_confirmed_stopped_where_a_launcher_is_lent()
+-> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-sign-in-unstopped-kept")?;
+    bench.server.catalog(1, &[], &json!([]))?;
+    let peer = bench.tree.0.join("work").join("peer");
+    // The one start is the run left running.
+    let program = fake_peer::install(
+        &peer,
+        "antigravity",
+        &Peer::of([acp::opening(&business_initialized()?), business_reply()?]),
+    )?;
+    bench.antigravity_sharing(&program)?;
+    let local: Arc<dyn SandboxService> =
+        Arc::new(LocalSandbox::new().watching_on(runtime.handle().clone()));
+    let (steps, confirmed) =
+        bench.ran(Arc::new(Stubborn(Arc::clone(&local))), &program, &runtime)?;
+    assert!(!confirmed, "the run's stop was confirmed");
+    assert_eq!(fake_peer::played(&peer), 1, "the run was not started");
+    keep_key(
+        &bench.home,
+        "google",
+        "gemini-api-key",
+        Typed::new(KEY.to_owned()),
+    )?;
+    let user = fs::read(bench.user())?;
+    let kept = credentials(&bench);
+    assert!(
+        kept.contains("\"antigravity@gemini-api-key\""),
+        "the key was not kept under the method"
+    );
+
+    // The conversation's route has no yes, so that a sign-in that went on
+    // would ask for one.
+    let mut front = answering(&bench.server, None);
+    let refused = bench.ask_with(
+        (sign_in("google", "gemini-api-key")?, &mut front),
+        (local, false),
+        (false, Some(&steps)),
+        &runtime,
+    )?;
+
+    let Err(AgentsError::Unstopped(held)) = &refused else {
+        return Err(shape(&refused).into());
+    };
+    assert!(
+        held.iter().any(|held| &**held == "google"),
+        "the refusal does not name the instance with the run"
+    );
+    assert!(front.put.is_empty(), "a route was asked");
+    assert!(
+        !bench.agy_profile().join("antigravity-acp").exists(),
+        "the agent's settings were written for a refused sign-in"
+    );
+    assert_eq!(fake_peer::played(&peer), 1, "the agent was started");
+    assert!(
+        fs::read(bench.user())? == user && credentials(&bench) == kept,
+        "a refused sign-in wrote the configuration or the credentials"
+    );
+    Ok(())
+}
