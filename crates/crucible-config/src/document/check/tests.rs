@@ -995,6 +995,32 @@ fn one_directory_written_two_ways_is_refused_whatever_the_agents() {
     );
 }
 
+/// Every pair of instances is compared, not each with the one after it: the
+/// two spellings of one directory are split by an instance on a different one,
+/// and the file is still refused, the path naming the later of the two and the
+/// problem the earlier.
+#[test]
+fn one_directory_written_two_ways_is_refused_with_another_instance_between() {
+    let tree = crate::sample::Scratch::new("profile-spelling-apart");
+    let plain = tree.text("agy");
+    let trailing = format!("{plain}{}", std::path::MAIN_SEPARATOR);
+    let between = tree.text("between");
+
+    let err = on_profiles(&[("a", &plain), ("b", &between), ("c", &trailing)]).unwrap_err();
+    let ConfigError::Variant { path, problem, .. } = err else {
+        panic!("the refusal is a variant error");
+    };
+    assert_eq!(&*path, "externalAgents.c.profileDir");
+    assert!(
+        problem.contains("externalAgents.a.profileDir"),
+        "got {problem}"
+    );
+    assert!(
+        !problem.contains("externalAgents.b.profileDir"),
+        "got {problem}"
+    );
+}
+
 /// Two directories that exist and are one on the disk, as through a link, are
 /// one directory however they are written.
 #[cfg(unix)]
