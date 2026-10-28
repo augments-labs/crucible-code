@@ -242,8 +242,9 @@ neither; see [Antigravity](../providers/agents.md#antigravity).
 A profile key belongs to the drivers that read it, `configDir` to `claude` and
 `profileDir` to `antigravity` and `catalog`, and any other is refused by name.
 Entries share a profile where they write its directory alike, so two that write
-one directory differently, with and without a trailing `/` or through a link,
-are refused, naming both; spell it the same way in each.
+one directory differently, with and without a trailing `/` or, where both
+directories exist, through a link, are refused, naming both; spell it the same
+way in each.
 A `catalog` agent chooses its own model, so `model` and `effort` are refused
 for it. A session one ran is bound to its key, so once the entry names
 another `agent` that session is not resumed on it.
