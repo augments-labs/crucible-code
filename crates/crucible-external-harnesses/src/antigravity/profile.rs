@@ -16,15 +16,14 @@
 //! A business sign-in is billed to a Google Cloud project in a location,
 //! which the agent reads from its own settings file in the profile and from
 //! no variable. [`business`] writes that file before the agent is started for
-//! the sign-in, holding the method, project and location and nothing else,
-//! and follows no link at the settings directory or the file, so the write
-//! never leaves the profile.
+//! the sign-in, holding the method, project and location and nothing else. It
+//! opens the settings directory once, as itself, and writes the file within
+//! what that open holds, so a link at either name refuses the sign-in and a
+//! name changed while it writes cannot take the file out of the profile.
 
-use std::ffi::OsString;
-use std::fs;
-use std::io::{self, Write};
+use std::ffi::{OsStr, OsString};
+use std::io;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::Value;
 
@@ -86,30 +85,16 @@ const SETTINGS: &str = "settings.json";
 ///
 /// The write follows no link and leaves the profile at neither name: a link
 /// at the settings directory or at the file refuses it before anything is
-/// written, and the file is replaced through a draft beside it, so a name
-/// that turned into a link meanwhile is replaced rather than written through.
+/// written. The directory is opened once, as itself, and the file is drafted
+/// and renamed within what that open holds, so a name changed meanwhile
+/// cannot send the write to another directory, and a link made at the file's
+/// name since is replaced rather than written through.
 ///
 /// # Errors
 ///
 /// [`io::Error`] where either name is a link, the settings directory cannot
 /// be made one, or the file cannot be replaced.
 pub fn business(profile: &Path, project: &str, location: &str) -> io::Result<()> {
-    let directory = profile.join(SETTINGS_DIRECTORY);
-    let file = directory.join(SETTINGS);
-    for name in [&directory, &file] {
-        match fs::symlink_metadata(name) {
-            Ok(found) if found.file_type().is_symlink() => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "a link stands where the agent keeps its settings, and they are written only inside its profile",
-                ));
-            }
-            Ok(_) => {}
-            Err(problem) if problem.kind() == io::ErrorKind::NotFound => {}
-            Err(problem) => return Err(problem),
-        }
-    }
-    crucible_privacy::directory(&directory).map_err(crucible_privacy::PrivacyError::into_io)?;
     // Each value spelled by the JSON writer, and the keys in the order the
     // agent's own settings name them.
     let settings = format!(
@@ -118,34 +103,10 @@ pub fn business(profile: &Path, project: &str, location: &str) -> io::Result<()>
         Value::from(project),
         Value::from(location),
     );
-    replace(&directory, &file, settings.as_bytes())
-}
-
-/// Replaces `file` in `directory` with `bytes`, through a draft of its own
-/// beside it that is removed unless it replaced the file.
-fn replace(directory: &Path, file: &Path, bytes: &[u8]) -> io::Result<()> {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    for _ in 0..16 {
-        let next = NEXT.fetch_add(1, Ordering::Relaxed);
-        let draft = directory.join(format!(".settings.{}.{next}.writing", std::process::id()));
-        let mut written = match crucible_privacy::create_write(&draft) {
-            Ok(written) => written,
-            Err(problem) if problem.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(problem) => return Err(problem.into_io()),
-        };
-        let synced = written.write_all(bytes).and_then(|()| written.sync_all());
-        drop(written);
-        let landed = synced.and_then(|()| {
-            crucible_privacy::replace(&draft, file).map_err(crucible_privacy::PrivacyError::into_io)
-        });
-        if landed.is_err() {
-            // A draft left behind is one the agent never reads.
-            let _ = fs::remove_file(&draft);
-        }
-        return landed;
-    }
-    Err(io::Error::new(
-        io::ErrorKind::AlreadyExists,
-        "no free name for the agent's settings draft",
-    ))
+    crucible_privacy::replace_in(
+        &profile.join(SETTINGS_DIRECTORY),
+        OsStr::new(SETTINGS),
+        settings.as_bytes(),
+    )
+    .map_err(crucible_privacy::PrivacyError::into_io)
 }

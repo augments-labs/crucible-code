@@ -350,7 +350,9 @@ the agent starts, crucible writes them as `antigravity-acp/settings.json` in
 its profile, replacing what is there. That file is written then and at no
 other time, so a change to either key takes effect at the next business
 sign-in. The write follows no link: where `antigravity-acp` or the file in it
-is a link, the sign-in is refused and nothing is written. A business sign-in
+is a link, the sign-in is refused and nothing is written, and the file is
+written in the directory crucible opened at that name, so a name changed while
+it writes cannot send it elsewhere. A business sign-in
 for an entry that names neither key is refused naming both, and one whose
 location is too long to make the name of its host is refused naming
 `cloudLocation`, each before anything is asked, written or started. A business
