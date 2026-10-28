@@ -40,17 +40,21 @@
 //! out, so whoever signs the agent in finds the method asked for among them by
 //! its id. A sign-in link is shown only as [`CatalogProfile::link`] passes it:
 //! printable, bounded, `https` on the default port, with no user before its
-//! host and no fragment, at a host its entry lists for signing in, and with
-//! the `state` it carries kept. What a person pastes back from the browser is
-//! a [`Callback`], a secret from the moment it is read: its `Debug` names
-//! nothing of it, it has no `Display`, no refusal of it repeats it, and it is
-//! taken only where its `state` is the one the link carried.
+//! host and no fragment, at a host spelled in the one alphabet the sandbox
+//! holds every host it grants to and listed by its entry for signing in, and
+//! with the `state` its query carries kept. What a person pastes back from the
+//! browser is a [`Callback`], a secret from the moment it is read: its `Debug`
+//! names nothing of it, it has no `Display`, no refusal of it repeats it, and
+//! it is taken only where the `state` its query carries is the one the link
+//! carried. Neither is read for fields where it has no `?`.
 
 use std::ffi::OsString;
 use std::net::{IpAddr, SocketAddr};
 
 use crucible_execution::Failure;
-use crucible_sandbox::{SandboxDomainPattern, SandboxPolicyError};
+use crucible_sandbox::{
+    SandboxDomainPattern, SandboxNetworkEndpoint, SandboxNetworkProvenance, SandboxPolicyError,
+};
 use crucible_types::AgentKey;
 
 use super::{Admits, AuthMethod, Entry, Method, Target, Variable};
@@ -251,7 +255,8 @@ impl CatalogProfile {
     /// The sign-in link `printed`, as the agent printed it, where it may be
     /// shown to a person: printable ASCII of at most [`LINK_BYTES`], `https`
     /// on the default port, no user before its host and no fragment, its host
-    /// a name its entry's sign-in hosts list, and at most one `state`.
+    /// spelled as a host name is and one its entry's sign-in hosts list, and
+    /// at most one `state`, read from its query alone.
     ///
     /// # Errors
     ///
@@ -282,11 +287,16 @@ impl CatalogProfile {
         if host.is_empty() || numbered(&host) {
             return Err(Unlinked::Address);
         }
+        // Held to the one alphabet the sandbox holds every host it grants to,
+        // so a character a browser reads as ending the host, such as `\`,
+        // never carries a link past a wildcard it does not belong under.
+        let named = SandboxNetworkEndpoint::new(host, 443, SandboxNetworkProvenance::Descendant)
+            .map_err(|_| Unlinked::Unnamed)?;
         if !self
             .signing
             .hosts
             .iter()
-            .any(|listed| listed.matches(&host))
+            .any(|listed| listed.matches(named.host()))
         {
             return Err(Unlinked::Unlisted);
         }
@@ -420,10 +430,10 @@ fn named(name: &str, wanted: &str) -> bool {
 
 /// The fields of the query of `after`, what follows a link's host or what was
 /// pasted back, as `name` and `value` pairs, each as written: everything after
-/// the first `?`, or all of it where it has none, split at `&` and then at the
-/// first `=`.
+/// the first `?`, split at `&` and then at the first `=`, and none where it
+/// has no `?`, since a path that looks like a query is not one.
 fn query(after: &str) -> impl Iterator<Item = (&str, &str)> {
-    let query = after.split_once('?').map_or(after, |(_, query)| query);
+    let query = after.split_once('?').map_or("", |(_, query)| query);
     query
         .split('&')
         .filter(|field| !field.is_empty())
@@ -475,6 +485,10 @@ pub enum Unlinked {
     /// Its host is missing, or an address rather than a name.
     #[error("the sign-in link's host is not a name")]
     Address,
+    /// Its host is not spelled as a host name is: labels of letters, digits
+    /// and inner hyphens, joined by dots.
+    #[error("the sign-in link's host is not spelled as a host name")]
+    Unnamed,
     /// Its host is not one its entry lists for signing in.
     #[error("the sign-in link opens a host its catalog entry does not list for signing in")]
     Unlisted,
@@ -498,9 +512,9 @@ impl std::fmt::Debug for Callback {
 }
 
 impl Callback {
-    /// `pasted`, the address the browser was sent back to or its query, where
-    /// it answers `link`: printable ASCII of at most [`LINK_BYTES`], with a
-    /// `code`, and one `state` that is the link's own.
+    /// `pasted`, the address the browser was sent back to or its query from
+    /// the `?` on, where it answers `link`: printable ASCII of at most
+    /// [`LINK_BYTES`], with a `code`, and one `state` that is the link's own.
     ///
     /// # Errors
     ///

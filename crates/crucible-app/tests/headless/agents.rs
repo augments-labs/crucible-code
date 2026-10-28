@@ -2596,12 +2596,12 @@ fn a_sign_in_link_is_shown_only_on_a_listed_host_and_a_paste_only_with_its_state
     assert!(taken.sent().contains(code));
     for (paste, why) in [
         (pasted("another-state"), Uncalled::Mismatched),
-        (format!("code={code}"), Uncalled::Stateless),
+        (format!("?code={code}"), Uncalled::Stateless),
         (
             format!("?code={code}&state=s3cret-state&state=s3cret-state"),
             Uncalled::Mismatched,
         ),
-        ("state=s3cret-state".to_owned(), Uncalled::Codeless),
+        ("?state=s3cret-state".to_owned(), Uncalled::Codeless),
         (
             format!("code={code}\u{1b}[2J&state=s3cret-state"),
             Uncalled::Unreadable,
@@ -2619,8 +2619,66 @@ fn a_sign_in_link_is_shown_only_on_a_listed_host_and_a_paste_only_with_its_state
     }
     let unstated = profile.link("https://accounts.vendor.example/authorize")?;
     assert_eq!(
-        Callback::checked(format!("code={code}&state=s"), &unstated).err(),
+        Callback::checked(format!("?code={code}&state=s"), &unstated).err(),
         Some(Uncalled::Stateless)
+    );
+    Ok(())
+}
+
+/// The release of `signing_in`, showing sign-in links on any host under
+/// `vendor.example`.
+fn signing_in_under_a_wildcard() -> Value {
+    let mut release = signing_in("goose", ONE);
+    set(&mut release, "/sign_in_hosts", json!(["*.vendor.example"]));
+    release
+}
+
+/// A link's host is held to the letters a host name is spelled in before it
+/// is matched, so no character a browser reads differently from a resolver
+/// carries it past a wildcard.
+#[test]
+fn a_sign_in_link_host_is_spelled_as_a_host_name_before_it_is_matched() -> Result<(), Failed> {
+    let row = row_of(&signing_in_under_a_wildcard())?;
+    let profile = row.profile();
+    for printed in [
+        "https://login.vendor.example/authorize?state=s",
+        "https://LOGIN.Vendor.Example/authorize?state=s",
+        "https://deep.login.vendor.example:443/authorize?state=s",
+    ] {
+        assert_eq!(profile.link(printed)?.state(), Some("s"), "{printed}");
+    }
+    let misspelled = [
+        "https://evil.example\\.vendor.example/authorize?state=s",
+        "https://evil.example%5c.vendor.example/authorize?state=s",
+        "https://evil.example%5C.vendor.example/authorize?state=s",
+        "https://evil!.vendor.example/authorize?state=s",
+        "https://evil_host.vendor.example/authorize?state=s",
+    ];
+    let refused: Vec<(&str, Option<Unlinked>)> = misspelled
+        .iter()
+        .map(|printed| (*printed, profile.link(printed).err()))
+        .collect();
+    let expected: Vec<(&str, Option<Unlinked>)> = misspelled
+        .iter()
+        .map(|printed| (*printed, Some(Unlinked::Unnamed)))
+        .collect();
+    assert_eq!(refused, expected);
+    Ok(())
+}
+
+/// A link's `state`, and a paste's fields, are read only from after a `?`, so
+/// a path that looks like a query carries none.
+#[test]
+fn a_sign_in_state_is_read_only_from_a_query() -> Result<(), Failed> {
+    let row = row_of(&signing_in_under_a_wildcard())?;
+    let profile = row.profile();
+    let pathed = profile.link("https://login.vendor.example/a&state=s")?;
+    let link = profile.link("https://login.vendor.example/authorize?state=s3cret-state")?;
+    let code = "4/the-code-never-shown";
+    let unqueried = Callback::checked(format!("code={code}&state=s3cret-state"), &link).err();
+    assert_eq!(
+        (pathed.state(), unqueried),
+        (None, Some(Uncalled::Codeless))
     );
     Ok(())
 }
