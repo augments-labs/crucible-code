@@ -165,7 +165,8 @@ async fn every_conformance_case_ends_as_it_must_over_the_protocol() {
 }
 
 /// The link is shown while the agent waits for the browser, and the sign-in
-/// is told as done only once a status step after it reads signed in.
+/// reads signed in only once a session opens on its own start after the agent
+/// says it took, as the status step after it reads it.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_sign_in_a_status_confirms_shows_its_link_and_says_signed_in() {
     let at = Owned::new("signed-in");
@@ -177,7 +178,9 @@ async fn a_sign_in_a_status_confirms_shows_its_link_and_says_signed_in() {
         .say(format!(
             "Open the following link to authenticate the ACP server: {SIGN_IN}"
         ))
-        .say(acp::response(1, &serde_json::json!({})));
+        .say(acp::response(1, &serde_json::json!({})))
+        .hear(1)
+        .say(acp::opened(2));
     let script = Script::of([sign_in, answering(acp::opened(1))]);
 
     let (read, shown) = spoken(
@@ -201,7 +204,9 @@ async fn a_sign_in_the_status_after_it_refuses_says_could_not_verify_sign_in() {
     let at = Owned::new("unverified");
     let profile = at.0.join("profile");
     let script = Script::of([
-        answering(acp::response(1, &serde_json::json!({}))),
+        answering(acp::response(1, &serde_json::json!({})))
+            .hear(1)
+            .say(acp::sign_in_required(2)),
         answering(acp::sign_in_required(1)),
     ]);
 
