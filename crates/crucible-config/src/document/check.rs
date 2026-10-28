@@ -700,15 +700,18 @@ impl Reader<'_> {
 
     /// Refuses two instances that write one profile directory two ways.
     ///
-    /// Instances share a credential scope exactly where the strings written
-    /// for their profile directories are equal, and the journal of an account
-    /// operation on one is named by that string. A directory written two ways
-    /// would therefore be two scopes over one set of credentials, each blind
-    /// to the other's sign-in, sign-out and journal. The file is refused
-    /// rather than the value rewritten, because a changed spelling would
-    /// orphan the journal an earlier version left behind. Instances written
-    /// alike share their profile, as intended, and an instance is never
-    /// refused for the way it spells its own.
+    /// The credential scope an instance signs in under is the agent it is
+    /// bound to together with its profile directory as written, which is
+    /// `scope` in the app's client accounts, and the journal of an account
+    /// operation on it is named by that same pair. This check keeps that pair
+    /// whole: a directory written two ways would be two scopes over one set of
+    /// credentials, each blind to the other's sign-in, sign-out and journal.
+    /// The refusal does not depend on the instances' drivers, since there is
+    /// no reason to spell one directory two ways. The file is refused rather
+    /// than the value rewritten, because a changed spelling would orphan the
+    /// journal an earlier version left behind. Instances written alike share
+    /// their profile, as intended, and an instance is never refused for the
+    /// way it spells its own.
     ///
     /// Two values that differ as written name one directory when they are
     /// equal component by component, which a trailing or repeated separator
