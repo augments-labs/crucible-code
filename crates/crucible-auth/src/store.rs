@@ -336,7 +336,9 @@ impl Store {
     ///
     /// Every other credential of the provider, under any name this build
     /// writes it under and in either map, goes in the same write: a provider
-    /// holds one. What went comes back, so the caller can say which row it was.
+    /// holds one. Of a provider the store was told no name of, only an account
+    /// under `name` itself goes. What went comes back, so the caller can say
+    /// which row it was.
     pub fn keep(&self, name: &str, key: &str) -> Result<Vec<Dropped>, AuthError> {
         let mut dropped = Vec::new();
         let names = self.names.clone();

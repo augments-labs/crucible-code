@@ -1336,4 +1336,25 @@ fn an_agent_s_key_written_takes_no_provider_s_credential_out() {
     assert_eq!(dropped, []);
     assert_eq!(held(&store, "openai").as_deref(), Some(SECRET));
     assert_eq!(held(&store, &name).as_deref(), Some("goose-key-value"));
+
+    // A provider only another release knows keeps the credential that release
+    // wrote under its bare name, beside an agent's key of the same name.
+    store
+        .keep("futurevendor", "another-release-key")
+        .expect("a writable home");
+    let beside = signing_in("futurevendor", "api-key").expect("a name");
+
+    let dropped = store
+        .keep(&beside, "futurevendor-agent-key")
+        .expect("a writable home");
+
+    assert_eq!(dropped, []);
+    assert_eq!(
+        held(&store, "futurevendor").as_deref(),
+        Some("another-release-key")
+    );
+    assert_eq!(
+        held(&store, &beside).as_deref(),
+        Some("futurevendor-agent-key")
+    );
 }

@@ -9,14 +9,18 @@
 //! The store is told the names and knows no row. It removes a provider's other
 //! names when it writes one, so a provider holds one credential, and leaves
 //! every name it was not told exactly where it is, since a later release may
-//! have written it.
+//! have written it. A write under a provider it was told no name of takes out
+//! no other name, so the bare name a release that knows that provider wrote
+//! stays.
 //!
 //! An agent's key, typed for one of the sign-in methods it offers, is written
-//! under the agent's name, `@`, and the method's id ([`signing_in`]), and that
-//! name never changes once written. The store reads everything before a
-//! name's `@` as its provider, so such a name is never one it is told: the
-//! caller refuses an agent whose name is a provider's before it writes or
-//! reads one, and no write of a provider's ever takes an agent's key out.
+//! under the agent's name, `@`, and the method's id ([`signing_in`]). An
+//! agent's `<agent>@<method>` name never changes once shipped, like a
+//! provider's. The store reads everything before a name's `@` as its
+//! provider, so such a name is never one it is told: the caller refuses an
+//! agent whose name is a provider's before it writes or reads one, no write of
+//! a provider's ever takes an agent's key out, and no agent's key takes out
+//! another name.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -70,6 +74,11 @@ impl Names {
         Self {
             names: Arc::new(by_provider),
         }
+    }
+
+    /// Whether it was told a name of `provider`.
+    pub(super) fn tells(&self, provider: &str) -> bool {
+        self.names.contains_key(provider)
     }
 
     /// Every provider it was told a name of, in the order of their names.
