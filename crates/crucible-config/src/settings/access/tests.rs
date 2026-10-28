@@ -352,11 +352,7 @@ fn the_published_cloud_patterns_are_the_ones_the_check_holds_to() {
     for byte in 0_u8..=127 {
         let one = char::from(byte);
         let inner = byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-';
-        assert_eq!(
-            cloud_project(&format!("abcd{one}e")),
-            inner,
-            "{byte:#04x}"
-        );
+        assert_eq!(cloud_project(&format!("abcd{one}e")), inner, "{byte:#04x}");
         assert_eq!(cloud_location(&format!("a{one}a")), inner, "{byte:#04x}");
     }
     assert!(cloud_project(&format!("a{}", "b".repeat(29))));

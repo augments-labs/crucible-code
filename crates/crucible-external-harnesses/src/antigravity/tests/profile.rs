@@ -201,7 +201,10 @@ fn a_link_at_either_name_refuses_the_write_and_writes_nothing_where_it_leads() {
     let linked = Owned::new("agy-business-linked-directory");
     symlink(&outside.0, linked.0.join("antigravity-acp")).expect("a link to a directory");
     assert!(business(&linked.0, "my-project-id", "us-central1").is_err());
-    assert!(names(&outside.0).is_empty(), "something was written through the link");
+    assert!(
+        names(&outside.0).is_empty(),
+        "something was written through the link"
+    );
 
     let kept = outside.0.join("settings.json");
     fs::write(&kept, "kept").expect("a file outside");

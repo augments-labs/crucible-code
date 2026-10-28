@@ -625,7 +625,9 @@ fn a_cloud_project_or_location_for_another_agent_is_refused() {
     let agy = serde_json::Value::from(crate::sample::rooted("home/me/agy"));
     for record in [
         r#""driver": "claude", "executable": "claude""#.to_owned(),
-        format!(r#""driver": "catalog", "executable": "goose", "agent": "goose", "profileDir": {agy}"#),
+        format!(
+            r#""driver": "catalog", "executable": "goose", "agent": "goose", "profileDir": {agy}"#
+        ),
     ] {
         for (beside, key) in [
             (r#", "cloudProject": "my-project-id""#, "cloudProject"),
@@ -711,7 +713,12 @@ fn a_cloud_project_or_location_misspelt_is_refused() {
         assert!(said.contains("~/.crucible/config.json"), "got {said}");
     }
     let longest_project = format!("a{}", "b".repeat(29));
-    for project in ["my-project-id", "abcdef", "a-1-2-3", longest_project.as_str()] {
+    for project in [
+        "my-project-id",
+        "abcdef",
+        "a-1-2-3",
+        longest_project.as_str(),
+    ] {
         let beside = format!(r#", "cloudProject": {project:?}, "cloudLocation": "us-central1""#);
         assert!(mine(&antigravity(&beside)).is_ok(), "{project}");
     }
