@@ -214,6 +214,7 @@ fn a_missing_agent_program_is_refused_before_the_warning_is_put() {
         profile: None,
         model: None,
         effort: None,
+        location: None,
         enabled: true,
     };
     let agent = Agent::routed(&route, &REGISTRY, |_| None).expect("Claude Code's route");
