@@ -83,17 +83,25 @@
 //! secret never crosses the contract. A key a method is given in a variable
 //! is typed on this machine and handed to [`keep_key`], which writes it to
 //! crucible's credential store under the agent's name and the method's id, and
-//! never under a provider's name; a sign-in by that method then only finds it
-//! kept, writes nothing, and every start of the agent after it is given the
-//! key in that variable, withheld from all the agent is seen to say. A method
-//! the agent carries out itself is asked for through `authenticate`, that
-//! method alone, once the agent's route has its yes, and only through the
-//! launcher a conversation lent: with none, it is refused saying a
-//! conversation is needed, and nothing is started. A sign-in link the agent
-//! prints is told to [`Watching::link`] as the agent's wire passed it. A
-//! method run at a terminal is refused here, and a business sign-in to
-//! Antigravity is refused naming the project and location it would need,
-//! since nothing gives the agent those.
+//! never under a provider's name; every start of the agent after it is given
+//! the key in that variable, withheld from all the agent is seen to say. A
+//! sign-in by that method writes nothing and is refused while no key is kept
+//! for it. The agent learns which method it signs in by only from being
+//! asked, so where a conversation lent its launcher the sign-in goes on as one
+//! the agent carries out itself does, with the key in the start's
+//! environment; with none, nothing is started, and the outcome says only that
+//! the key is kept, is given to the agent at its next start, and that the
+//! sign-in is not yet verified. A method the agent carries out itself is
+//! asked for through `authenticate`, that method alone, once the agent's
+//! route has its yes, and only through the launcher a conversation lent: with
+//! none, it is refused saying a conversation is needed, and nothing is
+//! started. Either is answered signed in only where the agent, on the same
+//! start, then opens a session as a status step reads it; one it reads signed
+//! out, or cannot read, is unverified. A sign-in link the agent prints is told
+//! to [`Watching::link`] as the agent's wire passed it. A method run at a
+//! terminal is refused here, and a business sign-in to Antigravity is refused
+//! naming the project and location it would need, since nothing gives the
+//! agent those.
 
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
@@ -250,7 +258,8 @@ pub enum Outcome {
         /// The versions removed.
         versions: Vec<Box<str>>,
     },
-    /// The instance signs in by the method named.
+    /// The instance signs in by the method named: the agent said so, and a
+    /// status step on the same start then read it signed in.
     SignedIn {
         /// The instance.
         instance: Box<str>,
@@ -258,6 +267,15 @@ pub enum Outcome {
         method: Box<str>,
         /// How it was found signed in.
         by: Signed,
+    },
+    /// A key typed for the method is kept, and is given to the agent at its
+    /// next start; no conversation lent a launcher, so nothing was started
+    /// and the sign-in is not yet verified.
+    Kept {
+        /// The instance.
+        instance: Box<str>,
+        /// The method, by its id.
+        method: Box<str>,
     },
     /// The installed versions, each hashed against its receipt.
     Verified {
@@ -269,12 +287,14 @@ pub enum Outcome {
     },
 }
 
-/// How a sign-in was found to hold.
+/// What a sign-in the agent was asked for through `authenticate` was made
+/// with; either way a status step on the same start then read it signed in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Signed {
-    /// The agent signed in itself, asked through `authenticate`, and said so.
+    /// The agent's own sign-in, which it carried out itself.
     Agent,
-    /// A key typed for the method is kept, and every start is given it.
+    /// A key typed for the method and kept, which the start was given in the
+    /// method's variable.
     Kept,
 }
 
@@ -1215,7 +1235,7 @@ impl Door<'_> {
                 by,
             })
         };
-        match &found.method {
+        let (launcher, by) = match &found.method {
             Method::EnvVar { .. } => {
                 let rows = Rows::production();
                 let name = rows.signing_in(&agent, &found.id)?;
@@ -1228,12 +1248,23 @@ impl Door<'_> {
                         method: quoted(&found.id).into(),
                     });
                 }
-                signed(Signed::Kept)
+                // The agent learns which method it signs in by only from
+                // being asked, so with nothing lent to start it the key is
+                // kept and no more is known.
+                let Some(launcher) = self.shelf.smoke else {
+                    return Ok(Outcome::Kept {
+                        instance: instance.into(),
+                        method: found.id.clone(),
+                    });
+                };
+                (launcher, Signed::Kept)
             }
-            Method::Terminal { .. } => Err(AgentsError::Unsupported(
-                "a sign-in run at a terminal, which this build does not run through the agents \
-                 door",
-            )),
+            Method::Terminal { .. } => {
+                return Err(AgentsError::Unsupported(
+                    "a sign-in run at a terminal, which this build does not run through the \
+                     agents door",
+                ));
+            }
             Method::Agent => {
                 let needs = match &row {
                     AgentRow::Built(built) if built.driver == Driver::Antigravity => {
@@ -1251,53 +1282,56 @@ impl Door<'_> {
                     .shelf
                     .smoke
                     .ok_or_else(|| AgentsError::Conversation(quoted(&found.id).into()))?;
-                let started = Agent::of_row(configured, row, |name| std::env::var_os(name));
-                if let Some(refused) = launcher.refusal(&started) {
-                    return Err(refused.into());
-                }
-                // Nothing of the agent's is started before its route has a
-                // yes, and a yes is written down before anything is.
-                if let Some(warned) = launcher.consent().asks(started.row().route()).cloned() {
-                    if !deciding::warned(self.request.capabilities(), front, &warned).await {
-                        return Ok(Outcome::Undecided);
-                    }
-                    launcher
-                        .consent()
-                        .accept(&warned)
-                        .map_err(AgentsError::HoldUnkept)?;
-                }
-                let trust = Trust::load(
-                    &catalog_fetch::state_in(self.shelf.home.path()),
-                    SystemTime::now(),
-                );
-                let mut dialect = started
-                    .row()
-                    .dialect(
-                        crucible_tools::Mode::default(),
-                        Some(&trust),
-                        started.installed(),
-                    )
-                    .map_err(AgentsError::Unverified)?;
-                drop(trust);
-                if !dialect.signing_in_with(&found.id) {
-                    return Err(AgentsError::Unsupported(
-                        "an agent whose wire signs in by no method named",
-                    ));
-                }
-                let control = Control::new().ok_or_else(|| {
-                    AgentsError::Unverified(Failure::new("no control for the agent's program"))
-                })?;
-                match launcher
-                    .account(&started, &control, dialect.as_mut(), Account::SignIn, link)
-                    .await?
-                {
-                    Reading::Signed(Authentication::SignedIn) => signed(Signed::Agent),
-                    Reading::Unreadable(failure) => Err(AgentsError::Unverified(failure)),
-                    Reading::Signed(_) | Reading::Version(_) => Err(AgentsError::Unverified(
-                        Failure::new("The agent did not report a sign-in."),
-                    )),
-                }
+                (launcher, Signed::Agent)
             }
+        };
+        let started = Agent::of_row(configured, row, |name| std::env::var_os(name));
+        if let Some(refused) = launcher.refusal(&started) {
+            return Err(refused.into());
+        }
+        // Nothing of the agent's is started before its route has a yes, and a
+        // yes is written down before anything is.
+        if let Some(warned) = launcher.consent().asks(started.row().route()).cloned() {
+            if !deciding::warned(self.request.capabilities(), front, &warned).await {
+                return Ok(Outcome::Undecided);
+            }
+            launcher
+                .consent()
+                .accept(&warned)
+                .map_err(AgentsError::HoldUnkept)?;
+        }
+        let trust = Trust::load(
+            &catalog_fetch::state_in(self.shelf.home.path()),
+            SystemTime::now(),
+        );
+        let mut dialect = started
+            .row()
+            .dialect(
+                crucible_tools::Mode::default(),
+                Some(&trust),
+                started.installed(),
+            )
+            .map_err(AgentsError::Unverified)?;
+        drop(trust);
+        if !dialect.signing_in_with(&found.id) {
+            return Err(AgentsError::Unsupported(
+                "an agent whose wire signs in by no method named",
+            ));
+        }
+        let control = Control::new().ok_or_else(|| {
+            AgentsError::Unverified(Failure::new("no control for the agent's program"))
+        })?;
+        // The start is given every key kept for the agent, so a kept key's
+        // method is asked for with its key already in the agent's environment.
+        match launcher
+            .account(&started, &control, dialect.as_mut(), Account::SignIn, link)
+            .await?
+        {
+            Reading::Signed(Authentication::SignedIn) => signed(by),
+            Reading::Unreadable(failure) => Err(AgentsError::Unverified(failure)),
+            Reading::Signed(_) | Reading::Version(_) => Err(AgentsError::Unverified(Failure::new(
+                "The agent did not read as signed in after the sign-in.",
+            ))),
         }
     }
 

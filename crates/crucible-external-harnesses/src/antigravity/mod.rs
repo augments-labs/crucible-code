@@ -15,9 +15,10 @@
 //! for named by the user.
 //!
 //! The agent asks to be signed in by printing a link rather than answering.
-//! During a sign-in the link is shown to the user; during a turn or a status
-//! check it means the profile is signed out, and the turn fails saying so;
-//! during a sign-out or a version check it answers nothing asked.
+//! During a sign-in the link is shown to the user until the agent says the
+//! sign-in took; after that, as during a turn or a status check, it means the
+//! profile is signed out, the step reads so and a turn fails saying so; during
+//! a sign-out or a version check it answers nothing asked.
 //!
 //! The agent asks about every action itself; one made [`Antigravity::allowing`]
 //! answers yes to what the conversation's mode allows without asking, as
@@ -203,8 +204,13 @@ impl Dialect for Antigravity {
     fn told(&mut self, step: Account, frame: &str) -> Result<Told, Failure> {
         match account::link(frame) {
             Some(Ok(link)) => Ok(match step {
-                Account::SignIn => Told::Link(link),
-                Account::Status => Told::Done(Reading::Signed(Authentication::SignedOut)),
+                Account::SignIn if !self.acp.reading_status() => Told::Link(link),
+                // Asking to be signed in while a session is being opened says
+                // the agent is signed out, after a sign-in it said took as in
+                // a status step.
+                Account::SignIn | Account::Status => {
+                    Told::Done(Reading::Signed(Authentication::SignedOut))
+                }
                 // Asking to be signed in says nothing of whether a sign-out
                 // took or what version is running.
                 Account::SignOut | Account::Version => Told::Done(Reading::Unreadable(

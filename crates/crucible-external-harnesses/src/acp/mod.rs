@@ -46,7 +46,9 @@
 //! sign-out the agent does not offer is reported unverified rather than
 //! assumed. A sign-in asks for the first of its profile's methods the agent
 //! offers, or, where the user named one ([`Acp::signing_in_with`]), for that
-//! method alone, and for none where the agent does not offer it.
+//! method alone, and for none where the agent does not offer it. A sign-in the
+//! agent answers as done is then read as a status step reads it, on the same
+//! start, so it reads signed in only where a session opens after it.
 
 mod permission;
 mod session;
@@ -687,9 +689,11 @@ impl Acp {
                 };
                 self.after_initializing(step, &initialized)
             }
-            (Awaited::Status | Awaited::SignIn, Ok(_)) => {
-                done(Reading::Signed(Authentication::SignedIn))
-            }
+            // A sign-in the agent says took is read as a status step reads
+            // it, on the same start, so that it is signed in only where a
+            // session then opens.
+            (Awaited::SignIn, Ok(_)) => self.status(),
+            (Awaited::Status, Ok(_)) => done(Reading::Signed(Authentication::SignedIn)),
             (Awaited::Status, Err(refused)) if refused.code == SIGN_IN_REQUIRED => {
                 done(Reading::Signed(Authentication::SignedOut))
             }
@@ -701,20 +705,32 @@ impl Acp {
         }
     }
 
+    /// The request that asks whether a session can be opened, which is how a
+    /// status step reads whether the agent is signed in.
+    fn status(&mut self) -> Told {
+        match self.cwd() {
+            Ok(cwd) => Told::Send(self.send(
+                "session/new",
+                &json!({"cwd": cwd, "mcpServers": []}),
+                Awaited::Status,
+            )),
+            Err(failure) => Told::Done(Reading::Unreadable(failure)),
+        }
+    }
+
+    /// Whether an account step is waiting on a session to be opened, as a
+    /// status step does and a sign-in does once the agent says it took.
+    pub(crate) const fn reading_status(&self) -> bool {
+        matches!(self.awaited, Some((_, Awaited::Status)))
+    }
+
     /// What account step `step` sends once the agent is initialized as
     /// `initialized`.
     fn after_initializing(&mut self, step: Account, initialized: &Initialized) -> Told {
         let unreadable = |reason| Told::Done(Reading::Unreadable(Failure::new(reason)));
         match step {
             Account::Version => unreadable("The agent's version was asked twice."),
-            Account::Status => match self.cwd() {
-                Ok(cwd) => Told::Send(self.send(
-                    "session/new",
-                    &json!({"cwd": cwd, "mcpServers": []}),
-                    Awaited::Status,
-                )),
-                Err(failure) => Told::Done(Reading::Unreadable(failure)),
-            },
+            Account::Status => self.status(),
             Account::SignIn => {
                 let offered = match &self.chosen {
                     Some(chosen) => initialized

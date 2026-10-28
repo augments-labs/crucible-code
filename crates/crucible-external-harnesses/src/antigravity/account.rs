@@ -7,22 +7,23 @@
 //! for the user to open.
 //!
 //! It offers four ways to sign in ([`methods`]): its own Google sign-in, for
-//! a personal account or for a business one, each carried out by the agent
-//! once asked through `authenticate`, and a Gemini API key or a Gemini
+//! a personal account or for a business one, and a Gemini API key or a Gemini
 //! Enterprise Agent Platform API key, each typed by the user, kept by crucible
 //! under the agent's name and the method's id, and given to the agent in the
-//! variable it reads. A
-//! business sign-in also needs the Google Cloud project and location it is
-//! billed to ([`needs`]); the agent is never given the shell's, so nothing
-//! gives it those yet, and the sign-in is refused naming them. The machine's
-//! own application default credentials are not offered: they would carry the
-//! host's cloud sign-in into the sandbox.
+//! variable it reads. The agent carries out every one itself once asked
+//! through `authenticate`, by the method's id, since that is the only way it
+//! learns which to use: a key's method is asked for with the key already in
+//! its environment. A business sign-in also needs the Google Cloud project
+//! and location it is billed to ([`needs`]); the agent is never given the
+//! shell's, so nothing gives it those yet, and the sign-in is refused naming
+//! them. The machine's own application default credentials are not offered:
+//! they would carry the host's cloud sign-in into the sandbox.
 //!
 //! Each operation ends in a sentence that claims no more than its steps
-//! established: a sign-in is verified by a status step after it, a sign-out
-//! by the agent's own logout and a status step after it reading signed out,
-//! and a disconnect calls the agent for nothing,
-//! so it says what it knew of the account beforehand and never more.
+//! established: a sign-in is verified by a status step after it on the same
+//! start, a sign-out by the agent's own logout and a status step after it
+//! reading signed out, and a disconnect calls the agent for nothing, so it
+//! says what it knew of the account beforehand and never more.
 
 use crucible_execution::{Authentication, Failure, Text};
 

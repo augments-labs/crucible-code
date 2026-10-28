@@ -2338,10 +2338,10 @@ fn a_key_typed_for_a_method_is_kept_under_the_agent_and_method_and_adopted_witho
     assert!(
         matches!(
             &adopted,
-            Ok(Outcome::SignedIn { instance, method, by: Signed::Kept })
+            Ok(Outcome::Kept { instance, method })
                 if &**instance == "work" && &**method == "api-key"
         ),
-        "the kept key was not adopted"
+        "the kept key was not found kept, or was claimed signed in with nothing started"
     );
     assert!(
         credentials(&bench).contains("\"goose@api-key\""),
@@ -2489,7 +2489,9 @@ fn a_method_the_agent_carries_out_is_asked_for_by_name_once_its_route_has_a_yes(
                 .hear(1)
                 .say(acp::initialized("goose", "1.0.0", "browser"))
                 .hear(1)
-                .say(acp::response(1, &json!({}))),
+                .say(acp::response(1, &json!({})))
+                .hear(1)
+                .say(acp::opened(2)),
         ),
     )?;
     bench.configure(&program, &json!({}))?;
@@ -2527,6 +2529,128 @@ fn a_method_the_agent_carries_out_is_asked_for_by_name_once_its_route_has_a_yes(
     assert!(
         heard.contains("\"authenticate\"") && heard.contains("\"methodId\":\"browser\""),
         "{heard}"
+    );
+    assert!(
+        heard
+            .find("\"authenticate\"")
+            .zip(heard.find("session/new"))
+            .is_some_and(|(asked, opened)| asked < opened),
+        "the sign-in was not read by opening a session after it: {heard}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_sign_in_the_agent_says_took_is_unverified_where_no_session_opens_after_it()
+-> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-sign-in-unverified")?;
+    let release = signing_in("goose", ONE);
+    bench
+        .server
+        .catalog(1, std::slice::from_ref(&release), &json!([]))?;
+    let made = Tree::new("agents-door-sign-in-unverified-peer")?;
+    let program = fake_peer::install(
+        &made.0,
+        "goose",
+        &Peer::once(
+            Played::new()
+                .hear(1)
+                .say(acp::initialized("goose", "1.0.0", "browser"))
+                .hear(1)
+                .say(acp::response(1, &json!({})))
+                .hear(1)
+                .say(acp::sign_in_required(2)),
+        ),
+    )?;
+    bench.configure(&program, &json!({}))?;
+
+    let signed = bench.ask_smoking(
+        (
+            sign_in("work", "browser")?,
+            &mut answering(&bench.server, None),
+        ),
+        (false, true),
+        &release,
+        &runtime,
+    )?;
+
+    assert!(
+        matches!(&signed, Err(AgentsError::Unverified(_))),
+        "{signed:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_kept_key_is_asked_for_by_its_method_where_a_conversation_lent_its_launcher()
+-> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-sign-in-kept")?;
+    let release = signing_in("goose", ONE);
+    bench
+        .server
+        .catalog(1, std::slice::from_ref(&release), &json!([]))?;
+    let made = Tree::new("agents-door-sign-in-kept-peer")?;
+    let program = fake_peer::install(
+        &made.0,
+        "goose",
+        &Peer::once(
+            Played::new()
+                .hear(1)
+                .say(acp::initialized("goose", "1.0.0", "api-key"))
+                .hear(1)
+                .say(acp::response(1, &json!({})))
+                .hear(1)
+                .say(acp::opened(2)),
+        ),
+    )?;
+    bench.configure(&program, &json!({}))?;
+    let ask = |yes: bool| {
+        bench.ask_smoking(
+            (
+                sign_in("work", "api-key")?,
+                &mut answering(&bench.server, None),
+            ),
+            (false, yes),
+            &release,
+            &runtime,
+        )
+    };
+
+    let unkept = ask(true)?;
+    keep_key(&bench.home, "work", "api-key", Typed::new(KEY.to_owned()))?;
+    let unasked = ask(false)?;
+    assert!(
+        matches!(&unkept, Err(AgentsError::Unstored { .. })),
+        "{unkept:?}"
+    );
+    assert!(matches!(&unasked, Ok(Outcome::Undecided)), "{unasked:?}");
+    assert!(
+        fake_peer::heard(&made.0).is_empty(),
+        "the agent was started before a key was kept and its route had a yes"
+    );
+
+    let signed = ask(true)?;
+
+    assert!(
+        matches!(
+            &signed,
+            Ok(Outcome::SignedIn { instance, method, by: Signed::Kept })
+                if &**instance == "work" && &**method == "api-key"
+        ),
+        "the kept key was not signed in by its method"
+    );
+    let heard = fake_peer::heard(&made.0).join("\n");
+    assert!(
+        heard.contains("\"authenticate\"")
+            && heard.contains("\"methodId\":\"api-key\"")
+            && heard.contains("session/new"),
+        "the agent was not asked to sign in by the kept key's method"
+    );
+    assert!(
+        !heard.contains(KEY) && !format!("{signed:?}").contains(KEY),
+        "the key was sent on the wire or carried by the outcome"
     );
     Ok(())
 }
@@ -2747,14 +2871,8 @@ fn antigravity_offers_its_four_methods_and_a_business_sign_in_names_what_it_need
         "{personal:?}"
     );
     assert!(
-        matches!(
-            gemini,
-            Ok(Outcome::SignedIn {
-                by: Signed::Kept,
-                ..
-            })
-        ),
-        "the Gemini key was not adopted"
+        matches!(gemini, Ok(Outcome::Kept { .. })),
+        "the Gemini key was not found kept, or was claimed signed in with nothing started"
     );
     assert!(
         matches!(platform, Err(AgentsError::Unstored { .. })),
