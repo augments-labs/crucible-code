@@ -75,15 +75,16 @@
 //! for a catalog row those its entry's profile grants, with the host of the
 //! Google Cloud location its entry names where that location has one of its
 //! own, are reachable where the conversation's commands are confined, since an
-//! unconfined child reaches the host's network already. Every other rule, the protected metadata included,
-//! stays as the conversation has it, so a profile directory inside one, named
-//! directly or through a link, is refused rather than opened. A program in a
-//! version of the install store is started with that version's directory
-//! read-only, at and beneath it, whatever writable root it lies in, so it can
-//! change none of the bytes that were reviewed, and a profile directory inside
-//! it is refused; and with the variable its catalog entry turns the agent's
-//! own updater off with, or where the catalog lists that release no longer,
-//! the one named by the release an update would install.
+//! unconfined child reaches the host's network already. Every other rule, the
+//! protected metadata included, stays as the conversation has it, so a profile
+//! directory inside one, named directly or through a link, is refused rather
+//! than opened. A program in a version of the install store is started with
+//! that version's directory read-only, at and beneath it, whatever writable
+//! root it lies in, so it can change none of the bytes that were reviewed, and
+//! a profile directory inside it is refused; and with the variable its catalog
+//! entry turns the agent's own updater off with, or where the catalog lists
+//! that release no longer, the one named by the release an update would
+//! install.
 //!
 //! Every start, a turn's or an account step's, is given each key the user
 //! typed for one of the methods its agent signs in by, kept in crucible's
