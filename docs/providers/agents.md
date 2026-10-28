@@ -335,6 +335,28 @@ saying to sign in. Signing out runs the agent's own logout, then asks again
 whether a session can be opened, and says the sign-out is unverified unless
 the agent then answers that it is signed out.
 
+**Its sign-in methods.** The agent offers four, each asked for by its id.
+`oauth-personal`, a personal Google account, needs nothing more.
+`oauth-business`, a business Google account, needs the Google Cloud project
+and location it is billed to, which the entry names as `cloudProject` and
+`cloudLocation` (see [configuration](../configuration/configuration.md#externalagents)).
+`gemini-api-key`, a Gemini API key, and `agent-platform`, a Gemini Enterprise
+Agent Platform API key, each need the key, which you type, crucible keeps
+under the agent's name and the method's id, and the agent is given in
+`GEMINI_API_KEY` or `GOOGLE_API_KEY`; neither needs a project or a location.
+The agent reads a business sign-in's project and location only from its own
+settings, so at that sign-in, once the agent's route has your yes and before
+the agent starts, crucible writes them as `antigravity-acp/settings.json` in
+its profile, replacing what is there. That file is written then and at no
+other time, so a change to either key takes effect at the next business
+sign-in. The write follows no link: where `antigravity-acp` or the file in it
+is a link, the sign-in is refused and nothing is written. A business sign-in
+for an entry that names neither key is refused naming both, and one whose
+location is too long to make the name of its host is refused naming
+`cloudLocation`, each before anything is asked, written or started. A business
+sign-in read as signed in means the agent then opened a session, not that the
+project holds a licence for it.
+
 **Its session.** Each time the agent is started again, after a failed turn, a
 change of mode or `/resume`, it is asked to resume the session it last named.
 Where it answers that it has no session by that name, that message fails with
@@ -350,6 +372,14 @@ offers no yes for that action alone, the question comes to you whatever the
 mode. crucible's own rules are not consulted for the agent's actions, and once
 a turn is stopped nothing more is answered yes.
 
-**Network.** Its sandbox adds to what the conversation lets it reach
-`accounts.google.com`, `oauth2.googleapis.com`, `cloudcode-pa.googleapis.com`
-and `daily-cloudcode-pa.googleapis.com`, by name, and no other Google host.
+**Network.** Its sandbox adds to what the conversation lets it reach, by name,
+`accounts.google.com`, `oauth2.googleapis.com` and `www.googleapis.com`, which
+a Google sign-in uses; `cloudcode-pa.googleapis.com` and
+`daily-cloudcode-pa.googleapis.com`, the service the agent asks;
+`generativelanguage.googleapis.com`, the Gemini API; `aiplatform.googleapis.com`,
+Agent Platform; and `businessaicode.googleapis.com`, the service a business
+sign-in is billed through. An entry naming `cloudLocation` also reaches that
+location's own host: `{location}-businessaicode.googleapis.com` for a region,
+such as `us-central1-businessaicode.googleapis.com`, and
+`businessaicode.{location}.rep.googleapis.com` for `us` or `eu`. `global`, and
+any other location, adds none. It reaches no other Google host.
