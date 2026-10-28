@@ -14,10 +14,11 @@
 //! through `authenticate`, by the method's id, since that is the only way it
 //! learns which to use: a key's method is asked for with the key already in
 //! its environment. A business sign-in also needs the Google Cloud project
-//! and location it is billed to ([`needs`]); the agent is never given the
-//! shell's, so nothing gives it those yet, and the sign-in is refused naming
-//! them. The machine's own application default credentials are not offered:
-//! they would carry the host's cloud sign-in into the sandbox.
+//! and location it is billed to ([`needs`]), which the agent reads only from
+//! its own settings file and from no variable; nothing writes that file yet,
+//! so the sign-in is refused saying so. The machine's own application default
+//! credentials are not offered: they would carry the host's cloud sign-in
+//! into the sandbox.
 //!
 //! Each operation ends in a sentence that claims no more than its steps
 //! established: a sign-in is verified by a status step after it on the same
@@ -76,15 +77,13 @@ pub fn methods() -> Vec<AuthMethod> {
     ]
 }
 
-/// The variables the method `id` needs set besides any key: for a business
-/// sign-in, the Google Cloud project and location it is billed to.
+/// What the method `id` needs that this version cannot yet give the agent, in
+/// words, if anything: for a business sign-in, the Google Cloud project and
+/// location it is billed to, which the agent reads only from its own settings
+/// file and never from a variable.
 #[must_use]
-pub fn needs(id: &str) -> &'static [&'static str] {
-    if id == OAUTH_BUSINESS {
-        &["GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION"]
-    } else {
-        &[]
-    }
+pub fn needs(id: &str) -> Option<&'static str> {
+    (id == OAUTH_BUSINESS).then_some("a Google Cloud project and location for Gemini Enterprise")
 }
 
 /// What the agent prints before its sign-in link.

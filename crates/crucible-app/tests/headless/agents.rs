@@ -2862,10 +2862,23 @@ fn antigravity_offers_its_four_methods_and_a_business_sign_in_names_what_it_need
     let elsewhere = ask("application-default")?;
 
     assert!(
-        matches!(&business, Err(AgentsError::Needs { variables, .. })
-            if variables == &["GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION"]),
+        matches!(&business, Err(AgentsError::Needs { .. })),
         "{business:?}"
     );
+    // The agent reads a business project and location only from its own
+    // settings, so the refusal names no variable it could be given them in.
+    let said = business
+        .err()
+        .map(|refused| refused.to_string())
+        .unwrap_or_default();
+    assert!(
+        said.contains(
+            "needs a Google Cloud project and location for Gemini Enterprise, which this version \
+             cannot yet give the agent"
+        ),
+        "{said}"
+    );
+    assert!(!said.contains("GOOGLE_"), "{said}");
     assert!(
         matches!(personal, Err(AgentsError::Conversation(_))),
         "{personal:?}"

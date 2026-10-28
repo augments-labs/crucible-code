@@ -100,8 +100,8 @@
 //! out, or cannot read, is unverified. A sign-in link the agent prints is told
 //! to [`Watching::link`] as the agent's wire passed it. A method run at a
 //! terminal is refused here, and a business sign-in to Antigravity is refused
-//! naming the project and location it would need, since nothing gives the
-//! agent those.
+//! saying it needs a Google Cloud project and location, which this version
+//! cannot yet give the agent.
 
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
@@ -409,17 +409,16 @@ pub enum AgentsError {
         /// The method asked for, quoted.
         method: Box<str>,
     },
-    /// The method needs variables nothing gives the agent.
+    /// The method needs what this version cannot yet give the agent.
     #[error(
-        "signing in by {method} needs {} set for the agent, and nothing gives it those, so \
-         nothing was started",
-        .variables.join(" and ")
+        "signing in by {method} needs {needed}, which this version cannot yet give the agent, \
+         so nothing was started"
     )]
     Needs {
         /// The method.
         method: Box<str>,
-        /// The variables it needs.
-        variables: Vec<&'static str>,
+        /// What it needs, in words.
+        needed: &'static str,
     },
     /// The method starts the agent, and no conversation lent a launcher.
     #[error(
@@ -1270,12 +1269,12 @@ impl Door<'_> {
                     AgentRow::Built(built) if built.driver == Driver::Antigravity => {
                         antigravity::needs(&found.id)
                     }
-                    AgentRow::Built(_) | AgentRow::Catalog(_) => &[],
+                    AgentRow::Built(_) | AgentRow::Catalog(_) => None,
                 };
-                if !needs.is_empty() {
+                if let Some(needed) = needs {
                     return Err(AgentsError::Needs {
                         method: quoted(&found.id).into(),
-                        variables: needs.to_vec(),
+                        needed,
                     });
                 }
                 let launcher = self
