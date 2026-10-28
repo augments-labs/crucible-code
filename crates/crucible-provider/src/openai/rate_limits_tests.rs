@@ -20,6 +20,11 @@ const ANSWER: &str = "data: {\"type\":\"response.output_text.delta\",\"delta\":\
      data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-limits\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":10,\"output_tokens\":1,\"total_tokens\":11}}}\n\n";
 
 /// A second some days after this was written, as the backend spells one.
+///
+/// The window a refusal names is one whose reset is still ahead of the clock,
+/// so a test that asserts that window builds its reset with [`next_week`].
+/// Any other test compares this only with an instant it fixes, or with the
+/// reset a reading or refusal carries.
 const RESET: u64 = 1_793_000_000;
 
 fn asking() -> Request<'static> {
@@ -100,6 +105,15 @@ fn grouped(windows: Option<PlanWindows>) -> Grouped {
 
 fn at(seconds: u64) -> SystemTime {
     SystemTime::UNIX_EPOCH + Duration::from_secs(seconds)
+}
+
+/// A second a week from now, as the backend spells one: still to come however
+/// long after this was written the test runs.
+fn next_week() -> u64 {
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    now + Duration::from_hours(7 * 24).as_secs()
 }
 
 #[test]
@@ -601,16 +615,18 @@ fn plan_limit_a_bad_reset_falls_back_to_the_seconds_still_to_wait() {
 
 #[test]
 fn plan_limit_names_the_window_the_refusals_own_head_reports_used_up() {
-    let reset = RESET.to_string();
+    let reset = next_week();
+    let sooner = (reset - 10_000).to_string();
+    let reset = reset.to_string();
     let (error, _) = refused_at(
         SUBSCRIPTION,
         "gpt-5.5",
         429,
-        &used_up(&format!(r#","resets_at":{RESET}"#)),
+        &used_up(&format!(r#","resets_at":{reset}"#)),
         &[
             ("x-codex-primary-used-percent", "40"),
             ("x-codex-primary-window-minutes", "300"),
-            ("x-codex-primary-reset-at", "1792990000"),
+            ("x-codex-primary-reset-at", &sooner),
             ("x-codex-secondary-used-percent", "100"),
             ("x-codex-secondary-window-minutes", "10080"),
             ("x-codex-secondary-reset-at", &reset),
