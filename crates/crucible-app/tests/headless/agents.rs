@@ -35,6 +35,7 @@ use crucible_app::client::agents::{
 use crucible_app::client::{Front, Shown};
 use crucible_app::content_use::{Consent, Routes};
 use crucible_app::launching::{Agent, Launcher, Steps, Unlaunched};
+use crucible_app::outside::Relaunch as _;
 use crucible_client_api::{
     Capabilities, Capability, Command, Correlation, Decision, ErrorCode, InstallProgress, Name,
     Pending, PendingId, Refusal, Request, Said,
@@ -47,9 +48,10 @@ use crucible_external_harnesses::{Account, Control, Reading};
 use crucible_http::ProxyEnv;
 use crucible_runtime::{BoxFuture, Cancel};
 use crucible_sandbox::{
-    SandboxBackendIdentity, SandboxCapabilities, SandboxCapability, SandboxEnablement,
-    SandboxError, SandboxFeature, SandboxNetworkPolicy, SandboxPolicy, SandboxRequest,
-    SandboxService, SandboxSession,
+    SandboxBackendIdentity, SandboxCapabilities, SandboxCapability, SandboxCommand,
+    SandboxEnablement, SandboxError, SandboxFeature, SandboxInput, SandboxInspection,
+    SandboxLaunch, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy, SandboxProcess,
+    SandboxRequest, SandboxService, SandboxSession, SandboxUsage, SandboxViolation,
 };
 use crucible_sandbox_local::LocalSandbox;
 use crucible_tools::Mode;
@@ -441,6 +443,7 @@ impl Bench {
             catalog: self.server.source(),
             home: &self.home,
             smoke: None,
+            steps: None,
         };
         let request = request(command);
         let cancel = Cancel::new();
@@ -525,6 +528,7 @@ const fn shape(outcome: &Result<Outcome, AgentsError>) -> &'static str {
         Err(AgentsError::Unlaunched(_)) => "Err(Unlaunched)",
         Err(AgentsError::HoldUnkept(_)) => "Err(HoldUnkept)",
         Err(AgentsError::Unverified(_)) => "Err(Unverified)",
+        Err(AgentsError::Unstopped(_)) => "Err(Unstopped)",
     }
 }
 
@@ -1150,6 +1154,7 @@ fn a_client_that_did_not_claim_install_is_refused_before_anything_is_fetched() -
         catalog: bench.server.source(),
         home: &bench.home,
         smoke: None,
+        steps: None,
     };
     let mut front = Answering {
         choice: Some("Install"),
@@ -1938,7 +1943,7 @@ impl Bench {
     /// `command` asked of the door on `runtime`, lent a launcher whose sandbox
     /// is on where `confined`, whose network is closed, and whose route
     /// `agent:goose` has its yes where `yes`, as `release` states its content
-    /// use.
+    /// use, and the steps of a conversation that has made no run.
     fn ask_smoking(
         &self,
         (command, front): (Command, &mut Answering<'_>),
@@ -1956,11 +1961,24 @@ impl Bench {
         let sandbox: Arc<dyn SandboxService> =
             Arc::new(LocalSandbox::new().watching_on(handle.clone()));
         let state = catalog_fetch::state_in(self.home.path());
+        let steps = Steps::new(
+            Launcher::new(
+                Arc::clone(&sandbox),
+                handle.clone(),
+                &policy,
+                &consent,
+                &state,
+            ),
+            Arc::new(SandboxEnablement::new(confined, false)),
+            &REGISTRY,
+            None,
+        );
         let launcher = Launcher::new(sandbox, handle, &policy, &consent, &state);
         let lent = Shelf {
             catalog: self.server.source(),
             home: &self.home,
             smoke: Some(&launcher),
+            steps: Some(&steps),
         };
         let request = request(command);
         let cancel = Cancel::new();
@@ -3059,10 +3077,9 @@ fn antigravity_offers_its_four_methods_and_a_business_sign_in_names_what_it_need
     Ok(())
 }
 
-/// The fake Antigravity installed in `directory`, answering as the release
-/// the snapshot reviewed with the four methods it signs in by, signing in by
-/// a business account when asked and opening a session after it.
-fn business_peer(directory: &Path) -> Result<PathBuf, Failed> {
+/// What the fake Antigravity answers initializing with: the release the
+/// snapshot reviewed, with the four methods it signs in by.
+fn business_initialized() -> Result<String, Failed> {
     let shipped = SNAPSHOT
         .entries()
         .iter()
@@ -3077,7 +3094,7 @@ fn business_peer(directory: &Path) -> Result<PathBuf, Failed> {
     .into_iter()
     .map(|id| json!({"id": id, "name": id}))
     .collect();
-    let initialized = acp::response(
+    Ok(acp::response(
         0,
         &json!({
             "protocolVersion": 1,
@@ -3089,19 +3106,29 @@ fn business_peer(directory: &Path) -> Result<PathBuf, Failed> {
             },
             "authMethods": methods,
         }),
-    );
+    ))
+}
+
+/// What the fake Antigravity does for one start: answers initializing as
+/// [`business_initialized`] says, signs in by a business account when asked
+/// and opens a session after it.
+fn business_reply() -> Result<Played, Failed> {
+    Ok(Played::new()
+        .hear(1)
+        .say(business_initialized()?)
+        .hear(1)
+        .say(acp::response(1, &json!({})))
+        .hear(1)
+        .say(acp::opened(2)))
+}
+
+/// The fake Antigravity installed in `directory`, doing [`business_reply`] at
+/// every start.
+fn business_peer(directory: &Path) -> Result<PathBuf, Failed> {
     Ok(fake_peer::install(
         directory,
         "antigravity",
-        &Peer::once(
-            Played::new()
-                .hear(1)
-                .say(initialized)
-                .hear(1)
-                .say(acp::response(1, &json!({})))
-                .hear(1)
-                .say(acp::opened(2)),
-        ),
+        &Peer::once(business_reply()?),
     )?)
 }
 
@@ -3150,6 +3177,19 @@ impl SandboxService for Recording {
 /// gives the agent.
 const BILLED: &str = r#"{"auth":{"type":"oauth-business"},"gcp":{"project":"my-project-id","location":"us-central1"}}"#;
 
+/// The consent of a conversation, whose route for Antigravity has its yes
+/// where `yes`.
+fn consent_for_antigravity(yes: bool) -> Result<Consent, Failed> {
+    let row = REGISTRY
+        .built(Driver::Antigravity)
+        .ok_or("Antigravity has no row")?;
+    let consent = Consent::new(Routes::production());
+    if yes {
+        consent.give(row.route);
+    }
+    Ok(consent)
+}
+
 impl Bench {
     /// Where the instance `google` keeps its profile.
     fn agy_profile(&self) -> PathBuf {
@@ -3172,20 +3212,110 @@ impl Bench {
         Ok(())
     }
 
+    /// Writes the user file with the instances `google` and `spare` of
+    /// Antigravity on one profile and `apart` on another, each run as
+    /// `executable` and billed to a project and location.
+    fn antigravity_sharing(&self, executable: &Path) -> Result<(), Failed> {
+        let instance = |profile: PathBuf| {
+            json!({
+                "driver": "antigravity",
+                "executable": executable.to_string_lossy(),
+                "profileDir": profile.to_string_lossy(),
+                "cloudProject": "my-project-id",
+                "cloudLocation": "us-central1",
+            })
+        };
+        let document = json!({"externalAgents": {
+            "google": instance(self.agy_profile()),
+            "spare": instance(self.agy_profile()),
+            "apart": instance(self.home.path().join("agents").join("apart")),
+        }});
+        fs::write(self.user(), serde_json::to_vec_pretty(&document)?)?;
+        Ok(())
+    }
+
+    /// The steps of a conversation on `sandbox` that launched a run of
+    /// `google`, run as `program`, and closed it, and whether the close
+    /// confirmed that the run had stopped.
+    fn ran(
+        &self,
+        sandbox: Arc<dyn SandboxService>,
+        program: &Path,
+        runtime: &tokio::runtime::Runtime,
+    ) -> Result<(Steps, bool), Failed> {
+        let steps = self.steps(sandbox, false, true, runtime)?;
+        let entry = ExternalAgent::unwritten(
+            "google",
+            Driver::Antigravity,
+            &program.to_string_lossy(),
+            Some(&self.agy_profile().to_string_lossy()),
+            None,
+        )
+        .ok_or("an instance of a built-in driver")?;
+        let (agent, _) = steps.onto(&entry, Mode::Ask)?;
+        let runs = steps.runs(agent, "google");
+        let confirmed = runtime.block_on(async {
+            let run = runs.launch(Mode::Ask, None, None, None).await?;
+            Ok::<_, Failed>(run.close().await.is_ok())
+        })?;
+        Ok((steps, confirmed))
+    }
+
     /// `command` asked of the door on `runtime`, lent a launcher on `sandbox`
     /// whose conversation confines its commands where `confined`, and whose
-    /// route for Antigravity has its yes.
+    /// route for Antigravity has its yes, and the steps of a conversation that
+    /// has made no run.
     fn ask_lending(
         &self,
         command: Command,
         (sandbox, confined): (Arc<dyn SandboxService>, bool),
         runtime: &tokio::runtime::Runtime,
     ) -> Result<Result<Outcome, AgentsError>, Failed> {
-        let row = REGISTRY
-            .built(Driver::Antigravity)
-            .ok_or("Antigravity has no row")?;
-        let consent = Consent::new(Routes::production());
-        consent.give(row.route);
+        let steps = self.steps(Arc::clone(&sandbox), confined, true, runtime)?;
+        self.ask_with(
+            command,
+            &mut answering(&self.server, None),
+            (sandbox, confined),
+            true,
+            Some(&steps),
+            runtime,
+        )
+    }
+
+    /// The steps of a conversation on `sandbox` that confines its commands
+    /// where `confined`, whose route for Antigravity has its yes where `yes`.
+    fn steps(
+        &self,
+        sandbox: Arc<dyn SandboxService>,
+        confined: bool,
+        yes: bool,
+        runtime: &tokio::runtime::Runtime,
+    ) -> Result<Steps, Failed> {
+        let consent = consent_for_antigravity(yes)?;
+        let policy = SandboxPolicy::standard(&self.tree.workspace()?)?.with_enabled(confined);
+        let state = catalog_fetch::state_in(self.home.path());
+        Ok(Steps::new(
+            Launcher::new(sandbox, runtime.handle().clone(), &policy, &consent, &state),
+            Arc::new(SandboxEnablement::new(confined, false)),
+            &REGISTRY,
+            None,
+        ))
+    }
+
+    /// `command` asked of the door on `runtime` and answered by `front`, lent
+    /// a launcher on `sandbox` whose conversation confines its commands where
+    /// `confined`, whose route for Antigravity has its yes where `yes`, and
+    /// `steps`.
+    fn ask_with(
+        &self,
+        command: Command,
+        front: &mut Answering<'_>,
+        (sandbox, confined): (Arc<dyn SandboxService>, bool),
+        yes: bool,
+        steps: Option<&Steps>,
+        runtime: &tokio::runtime::Runtime,
+    ) -> Result<Result<Outcome, AgentsError>, Failed> {
+        let consent = consent_for_antigravity(yes)?;
         let policy = SandboxPolicy::standard(&self.tree.workspace()?)?.with_enabled(confined);
         let state = catalog_fetch::state_in(self.home.path());
         let launcher = Launcher::new(sandbox, runtime.handle().clone(), &policy, &consent, &state);
@@ -3193,14 +3323,14 @@ impl Bench {
             catalog: self.server.source(),
             home: &self.home,
             smoke: Some(&launcher),
+            steps,
         };
         let request = request(command);
         let cancel = Cancel::new();
-        let mut front = answering(&self.server, None);
         Ok(runtime.block_on(run(
             &request,
             &lent,
-            &mut front,
+            front,
             Watching {
                 progress: &mut |_| {},
                 cancel: &cancel,
@@ -3542,4 +3672,300 @@ fn said_from_the_store(bench: &Bench, release: &Value) -> Result<String, Failed>
         Reading::Version(version) => Ok(version.as_str().to_owned()),
         _ => Err("the agent did not say its version".into()),
     }
+}
+
+/// A sandbox whose processes run as the local one's do, but which can never
+/// confirm that one of them stopped, so that a run made on it is one that may
+/// still be running.
+struct Stubborn(Arc<dyn SandboxService>);
+
+impl SandboxService for Stubborn {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        self.0.probe()
+    }
+
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            let session: Box<dyn SandboxSession> =
+                Box::new(StubbornSession(self.0.prepare(request).await?));
+            Ok(session)
+        })
+    }
+}
+
+/// Its session.
+struct StubbornSession(Box<dyn SandboxSession>);
+
+impl SandboxSession for StubbornSession {
+    fn inspection(&self) -> &SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn materialize(&mut self) -> BoxFuture<'_, Result<(), SandboxError>> {
+        self.0.materialize()
+    }
+
+    fn stage<'a>(
+        self: Box<Self>,
+        command: SandboxCommand,
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxLaunch>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let launch: Box<dyn SandboxLaunch> =
+                Box::new(StubbornLaunch(self.0.stage(command).await?));
+            Ok(launch)
+        })
+    }
+}
+
+/// Its staged launch.
+struct StubbornLaunch(Box<dyn SandboxLaunch>);
+
+impl SandboxLaunch for StubbornLaunch {
+    fn inspection(&self) -> &SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn release<'a>(self: Box<Self>) -> BoxFuture<'a, Result<Box<dyn SandboxProcess>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let process: Box<dyn SandboxProcess> =
+                Box::new(StubbornProcess(self.0.release().await?));
+            Ok(process)
+        })
+    }
+}
+
+/// Its process, which never reads as ended and whose stop always fails.
+struct StubbornProcess(Box<dyn SandboxProcess>);
+
+impl SandboxProcess for StubbornProcess {
+    fn take_stdin(&mut self) -> Option<Box<dyn std::io::Write + Send>> {
+        self.0.take_stdin()
+    }
+
+    fn take_async_stdin(&mut self) -> Option<Box<dyn SandboxInput>> {
+        self.0.take_async_stdin()
+    }
+
+    fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.0.take_stdout()
+    }
+
+    fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.0.take_stderr()
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        Ok(None)
+    }
+
+    fn stop(&mut self) -> BoxFuture<'_, std::io::Result<()>> {
+        Box::pin(async { Err(std::io::Error::other("the scope did not answer")) })
+    }
+
+    fn inspection(&self) -> &SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn usage(&self) -> SandboxUsage {
+        self.0.usage()
+    }
+
+    fn violation(&self) -> Option<SandboxViolation> {
+        self.0.violation()
+    }
+}
+
+/// A sign-in that would start the agent is refused beside a run that could
+/// not be confirmed stopped, for the instance that made it and for every other
+/// instance on its profile, before the route is asked, a setting is written or
+/// the agent is started; an instance on another profile is not refused for it.
+#[test]
+fn a_sign_in_beside_a_run_not_confirmed_stopped_is_refused_for_every_instance_on_its_profile()
+-> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-sign-in-unstopped")?;
+    bench.server.catalog(1, &[], &json!([]))?;
+    let peer = bench.tree.0.join("work").join("peer");
+    // The first start is the run left running, the second the sign-in of the
+    // instance on another profile.
+    let program = fake_peer::install(
+        &peer,
+        "antigravity",
+        &Peer::of([acp::opening(&business_initialized()?), business_reply()?]),
+    )?;
+    bench.antigravity_sharing(&program)?;
+    let local: Arc<dyn SandboxService> =
+        Arc::new(LocalSandbox::new().watching_on(runtime.handle().clone()));
+    let (steps, confirmed) =
+        bench.ran(Arc::new(Stubborn(Arc::clone(&local))), &program, &runtime)?;
+    assert!(!confirmed, "the run's stop was confirmed");
+    assert_eq!(fake_peer::played(&peer), 1, "the run was not started");
+    let user = fs::read(bench.user())?;
+    let kept = credentials(&bench);
+
+    // The conversation's route has no yes, so that a sign-in that went on
+    // would ask for one.
+    for instance in ["google", "spare"] {
+        let mut front = answering(&bench.server, None);
+        let refused = bench.ask_with(
+            sign_in(instance, "oauth-business")?,
+            &mut front,
+            (Arc::clone(&local), false),
+            false,
+            Some(&steps),
+            &runtime,
+        )?;
+        let Err(AgentsError::Unstopped(held)) = &refused else {
+            return Err(shape(&refused).into());
+        };
+        assert!(
+            held.iter().any(|held| &**held == "google"),
+            "the refusal does not name the instance with the run"
+        );
+        assert!(
+            held.iter().all(|held| &**held != "apart"),
+            "the refusal names an instance on another profile"
+        );
+        let said = refused
+            .as_ref()
+            .err()
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        assert!(
+            said.contains(&crucible_external_harnesses::Refusal::Unstopped.to_string()),
+            "the refusal does not say what a refusal beside a run says"
+        );
+        assert!(front.put.is_empty(), "a route was asked");
+        assert!(
+            !bench.agy_profile().join("antigravity-acp").exists(),
+            "the agent's settings were written for a refused sign-in"
+        );
+        assert_eq!(fake_peer::played(&peer), 1, "the agent was started");
+        assert!(
+            fs::read(bench.user())? == user && credentials(&bench) == kept,
+            "a refused sign-in wrote the configuration or the credentials"
+        );
+    }
+
+    let mut front = answering(&bench.server, None);
+    let apart = bench.ask_with(
+        sign_in("apart", "oauth-business")?,
+        &mut front,
+        (Arc::clone(&local), false),
+        true,
+        Some(&steps),
+        &runtime,
+    )?;
+    assert!(
+        matches!(
+            &apart,
+            Ok(Outcome::SignedIn {
+                by: Signed::Agent,
+                ..
+            })
+        ),
+        "{}",
+        shape(&apart)
+    );
+    assert_eq!(fake_peer::played(&peer), 2, "the agent was not started");
+    Ok(())
+}
+
+/// The sign-in a run not confirmed stopped refuses goes ahead where the run
+/// beside it was confirmed stopped.
+#[test]
+fn a_sign_in_goes_ahead_beside_a_run_confirmed_stopped() -> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-sign-in-stopped")?;
+    bench.server.catalog(1, &[], &json!([]))?;
+    let peer = bench.tree.0.join("work").join("peer");
+    let program = fake_peer::install(
+        &peer,
+        "antigravity",
+        &Peer::of([acp::opening(&business_initialized()?), business_reply()?]),
+    )?;
+    bench.antigravity_sharing(&program)?;
+    let local: Arc<dyn SandboxService> =
+        Arc::new(LocalSandbox::new().watching_on(runtime.handle().clone()));
+    let (steps, confirmed) = bench.ran(Arc::clone(&local), &program, &runtime)?;
+    assert!(confirmed, "the run's stop was not confirmed");
+    assert_eq!(fake_peer::played(&peer), 1, "the run was not started");
+
+    let mut front = answering(&bench.server, None);
+    let signed = bench.ask_with(
+        sign_in("google", "oauth-business")?,
+        &mut front,
+        (local, false),
+        true,
+        Some(&steps),
+        &runtime,
+    )?;
+    assert!(
+        matches!(
+            &signed,
+            Ok(Outcome::SignedIn {
+                by: Signed::Agent,
+                ..
+            })
+        ),
+        "{}",
+        shape(&signed)
+    );
+    assert_eq!(fake_peer::played(&peer), 2, "the agent was not started");
+    Ok(())
+}
+
+/// A launcher lent with no steps knows nothing of the runs beside a sign-in
+/// that would start the agent, so the sign-in is refused as one that has no
+/// conversation, and starts, writes and asks nothing.
+#[test]
+fn a_sign_in_with_a_launcher_and_no_steps_is_refused_before_anything_is_started()
+-> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-sign-in-no-steps")?;
+    bench.server.catalog(1, &[], &json!([]))?;
+    let peer = bench.tree.0.join("work").join("peer");
+    let program = business_peer(&peer)?;
+    bench.antigravity_sharing(&program)?;
+    let local: Arc<dyn SandboxService> =
+        Arc::new(LocalSandbox::new().watching_on(runtime.handle().clone()));
+    let user = fs::read(bench.user())?;
+
+    let mut front = answering(&bench.server, None);
+    let refused = bench.ask_with(
+        sign_in("google", "oauth-business")?,
+        &mut front,
+        (local, false),
+        false,
+        None,
+        &runtime,
+    )?;
+
+    assert!(
+        matches!(refused, Err(AgentsError::Conversation(_))),
+        "{}",
+        shape(&refused)
+    );
+    assert!(front.put.is_empty(), "a route was asked");
+    assert!(
+        !bench.agy_profile().join("antigravity-acp").exists(),
+        "the agent's settings were written for a refused sign-in"
+    );
+    assert!(fake_peer::heard(&peer).is_empty(), "the agent was started");
+    assert!(
+        fs::read(bench.user())? == user,
+        "a refused sign-in wrote the configuration"
+    );
+    Ok(())
 }

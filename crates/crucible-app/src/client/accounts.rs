@@ -1432,7 +1432,7 @@ async fn disconnect(
 /// session on it is bound, and its profile directory, where it names one.
 /// Instances share a scope exactly where both agree, and the journal of an
 /// account operation on one is named by it, so the two cannot differ.
-fn scope(agent: &ExternalAgent) -> (Cow<'static, str>, Option<&str>) {
+pub(super) fn scope(agent: &ExternalAgent) -> (Cow<'static, str>, Option<&str>) {
     (
         crate::launching::bound(agent.driver(), agent.agent()),
         agent.profile(),
