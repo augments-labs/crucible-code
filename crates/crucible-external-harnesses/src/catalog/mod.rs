@@ -21,7 +21,9 @@
 //! is about. This module does no network work and decides no consent.
 //!
 //! An entry becomes what its agent is run under as a [`CatalogProfile`]: owned
-//! data, with the hosts it reaches parsed by the sandbox's own parser.
+//! data, with the hosts it reaches and those a sign-in link may open parsed by
+//! the sandbox's own parser, and the one check a sign-in link it prints is
+//! shown by, and what is pasted back from it taken by, as a [`Callback`].
 //!
 //! What a user is offered of it is [`Trust`]'s to decide, from the highest
 //! serial believed, every revocation taken in, the catalog most lately
@@ -53,7 +55,9 @@ use entry::Fields;
 #[cfg(test)]
 pub(crate) use profile::PASSED;
 pub(crate) use profile::passed;
-pub use profile::{CatalogProfile, Unprofiled, numbered};
+pub use profile::{
+    Callback, CatalogProfile, LINK_BYTES, SignInLink, Uncalled, Unlinked, Unprofiled, numbered,
+};
 pub use snapshot::SNAPSHOT;
 pub use trust::{Offer, Trust, TrustError, Unusable};
 

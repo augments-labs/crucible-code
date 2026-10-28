@@ -28,7 +28,9 @@
 //! statement of content use gives its route, or why the entry gives none, in
 //! which case the agent is listed and never launched. [`Registry::row`]
 //! answers a built-in driver with its row and a catalog instance with the row
-//! listed for its key, each as an [`AgentRow`]. The registry this build ships lists no catalog row, so
+//! listed for its key, each as an [`AgentRow`], which also says by which
+//! methods its agent signs in: its entry's for a catalog agent, and for one
+//! built in what its driver's own module offers. The registry this build ships lists no catalog row, so
 //! a catalog instance has none to run until one is listed.
 //!
 //! The rows agree with the configuration's driver list and with the
@@ -43,7 +45,9 @@ use crucible_execution::{Failure, Text};
 use crucible_external_harnesses::Dialect;
 use crucible_external_harnesses::acp::{Acp, Allowing};
 use crucible_external_harnesses::antigravity::{self, Antigravity};
-use crucible_external_harnesses::catalog::{CatalogProfile, Entry, Target, Trust, Unprofiled};
+use crucible_external_harnesses::catalog::{
+    AuthMethod, CatalogProfile, Entry, Target, Trust, Unprofiled,
+};
 use crucible_external_harnesses::claude::Claude;
 use crucible_external_harnesses::release::OwnedPin;
 use crucible_sandbox::SandboxDomainPattern;
@@ -162,6 +166,12 @@ impl CatalogRow {
         &self.route
     }
 
+    /// How it is run, as its entry reviewed it.
+    #[must_use]
+    pub const fn profile(&self) -> &CatalogProfile {
+        &self.profile
+    }
+
     /// Its wire, fresh for a run, as it is spoken in the conversation's
     /// `mode`: its entry's profile, answering yes by itself to what the mode
     /// allows.
@@ -229,6 +239,20 @@ impl AgentRow {
                 .iter()
                 .map(SandboxDomainPattern::as_str)
                 .collect(),
+        }
+    }
+
+    /// The methods its agent signs in by, in the order offered: a catalog
+    /// agent's entry's, and Antigravity's own four; none for Claude Code,
+    /// which signs in at its own command.
+    #[must_use]
+    pub fn methods(&self) -> Vec<AuthMethod> {
+        match self {
+            Self::Built(row) => match row.driver {
+                Driver::Antigravity => antigravity::methods(),
+                Driver::Claude | Driver::Catalog => Vec::new(),
+            },
+            Self::Catalog(row) => row.profile.methods().to_vec(),
         }
     }
 

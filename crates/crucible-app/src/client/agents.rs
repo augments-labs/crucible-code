@@ -75,36 +75,72 @@
 //! that fails leaves every instance on the program it named, and the version
 //! it failed in stays in the store for a prune to take. Elsewhere the question
 //! says it is not smoke-tested, and why, and nothing is started.
+//!
+//! A sign-in names an instance the configuration has, by equality, and one of
+//! the methods its agent signs in by, by equality among them: a catalog
+//! agent's are its entry's, for the release its instance runs or else the
+//! newest offered, and Antigravity's are the four its own module offers. A
+//! secret never crosses the contract. A key a method is given in a variable
+//! is typed on this machine and handed to [`keep_key`], which writes it to
+//! crucible's credential store under the agent's name and the method's id, and
+//! never under a provider's name; every start of the agent after it is given
+//! the key in that variable, withheld from all the agent is seen to say. A
+//! sign-in by that method writes nothing and is refused while no key is kept
+//! for it. The agent learns which method it signs in by only from being
+//! asked, so where a conversation lent its launcher the sign-in goes on as one
+//! the agent carries out itself does, with the key in the start's
+//! environment; with none, nothing is started, and the outcome says only that
+//! the key is kept, is given to the agent at its next start, and that the
+//! sign-in is not yet verified. A method the agent carries out itself is
+//! asked for through `authenticate`, that method alone, once the agent's
+//! route has its yes, and only through the launcher a conversation lent: with
+//! none, it is refused saying a conversation is needed, and nothing is
+//! started. Either is answered signed in only where the agent, on the same
+//! start, then opens a session as a status step reads it; one it reads signed
+//! out, or cannot read, is unverified. A sign-in link the agent prints is told
+//! to [`Watching::link`] as the agent's wire passed it. A method run at a
+//! terminal is refused here, and a business sign-in to Antigravity is refused
+//! saying it needs a Google Cloud project and location, which this version
+//! cannot yet give the agent.
 
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use crucible_auth::Store as Credentials;
 use crucible_client_api::bounds::ITEMS;
 use crucible_client_api::{
     Capability, Choice, Command, Decision, ErrorCode, InstallProgress, Name, Pending, Refusal,
     Request, Text,
 };
 use crucible_config::{AgentUpdate, ConfigError, Driver, ExternalAgent, Home, Settings};
+use crucible_execution::{Authentication, Failure};
 use crucible_external_harnesses::catalog::{
-    Entry, File, FileKind, Files, Kind, Launch, Offer, Target, Trust,
+    AuthMethod, Entry, File, FileKind, Files, Kind, Launch, Method, Offer, Target, Trust,
+    Unprofiled,
 };
 use crucible_external_harnesses::release::{RELEASE_BYTES, UnpackError, Unpacker};
 use crucible_external_harnesses::store::{
     Listing, Mismatch, Provenance, Receipt, Store, StoreError, Version,
 };
+use crucible_external_harnesses::{Account, Control, Reading, WITHHELD_BYTES, antigravity};
 use crucible_http::Origin;
 use crucible_runtime::Cancel;
 use crucible_types::AgentKey;
 
-use super::deciding::{Confirmation, Front, Shown, mint, turned_away};
+use super::deciding::{self, Confirmation, Front, Shown, mint, turned_away};
 use crate::agent_download::{self, DownloadError, Landing};
+use crate::backends::{AgentRow, CatalogRow, REGISTRY};
 use crate::catalog_fetch::{self, FetchError, Source, Trigger};
-use crate::launching::{Launcher, Unsmoked, quoted};
+use crate::launching::{Agent, Launcher, Unlaunched, Unsmoked, quoted};
+use crate::providers::{Rows, Unnamed};
 use crate::remember::{self, RememberError};
 
 /// The most catalog agents a listing names; one with more says so.
 pub const LISTED: usize = 32;
+
+/// The most bytes a key typed for an agent may have.
+pub const KEY_BYTES: usize = 4096;
 
 /// What the door is lent by the front end that asks it.
 #[derive(Debug)]
@@ -120,12 +156,16 @@ pub struct Shelf<'a> {
     pub smoke: Option<&'a Launcher<'a>>,
 }
 
-/// Where an install says how far it has got, and how it is cancelled.
+/// Where an install says how far it has got, and how it is cancelled, and
+/// where a sign-in shows the link it is waiting on.
 pub struct Watching<'a> {
     /// Told after every piece of a download that arrives.
     pub progress: &'a mut (dyn FnMut(InstallProgress) + Send),
     /// Raised to give the download up, which then commits nothing.
     pub cancel: &'a Cancel,
+    /// Told each sign-in link the agent prints, as its wire passed it, for a
+    /// person to open while the sign-in waits.
+    pub link: &'a (dyn Fn(crucible_execution::Text) + Sync),
 }
 
 impl std::fmt::Debug for Watching<'_> {
@@ -218,6 +258,25 @@ pub enum Outcome {
         /// The versions removed.
         versions: Vec<Box<str>>,
     },
+    /// The instance signs in by the method named: the agent said so, and a
+    /// status step on the same start then read it signed in.
+    SignedIn {
+        /// The instance.
+        instance: Box<str>,
+        /// The method, by its id.
+        method: Box<str>,
+        /// How it was found signed in.
+        by: Signed,
+    },
+    /// A key typed for the method is kept, and is given to the agent at its
+    /// next start; no conversation lent a launcher, so nothing was started
+    /// and the sign-in is not yet verified.
+    Kept {
+        /// The instance.
+        instance: Box<str>,
+        /// The method, by its id.
+        method: Box<str>,
+    },
     /// The installed versions, each hashed against its receipt.
     Verified {
         /// The agent.
@@ -226,6 +285,36 @@ pub enum Outcome {
         /// is as recorded.
         versions: Vec<(Box<str>, Vec<Mismatch>)>,
     },
+}
+
+/// What a sign-in the agent was asked for through `authenticate` was made
+/// with; either way a status step on the same start then read it signed in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Signed {
+    /// The agent's own sign-in, which it carried out itself.
+    Agent,
+    /// A key typed for the method and kept, which the start was given in the
+    /// method's variable.
+    Kept,
+}
+
+/// A key a person typed on this machine for an agent to sign in with: a
+/// secret from the moment it was read. Its `Debug` names nothing of it, it has
+/// no `Display`, and no refusal of it repeats it.
+pub struct Typed(String);
+
+impl Typed {
+    /// The key as it was typed.
+    #[must_use]
+    pub const fn new(typed: String) -> Self {
+        Self(typed)
+    }
+}
+
+impl std::fmt::Debug for Typed {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.write_str("Typed(<redacted>)")
+    }
 }
 
 /// Why a command at the agents door did not do what it was asked.
@@ -306,9 +395,73 @@ pub enum AgentsError {
         /// Why.
         why: Unsmoked,
     },
-    /// Signing an agent in is not served here.
-    #[error("signing an agent in is not available through the agents door in this build")]
-    SignIn,
+    /// The configuration names no such instance.
+    #[error("the configuration names no instance {0}")]
+    NoInstance(Box<str>),
+    /// The instance's agent signs in by no method this door carries out.
+    #[error("{0} signs in by no method crucible carries out; sign it in at its own command")]
+    Unsigned(Box<str>),
+    /// The agent offers no such method.
+    #[error("{agent} offers no sign-in method {method}")]
+    NoMethod {
+        /// The agent.
+        agent: AgentKey,
+        /// The method asked for, quoted.
+        method: Box<str>,
+    },
+    /// The method needs what this version cannot yet give the agent.
+    #[error(
+        "signing in by {method} needs {needed}, which this version cannot yet give the agent, \
+         so nothing was started"
+    )]
+    Needs {
+        /// The method.
+        method: Box<str>,
+        /// What it needs, in words.
+        needed: &'static str,
+    },
+    /// The method starts the agent, and no conversation lent a launcher.
+    #[error(
+        "signing in by {0} starts the agent, which needs a conversation to start it in; \
+         nothing was started"
+    )]
+    Conversation(Box<str>),
+    /// The method's key has no name to be kept under.
+    #[error(transparent)]
+    Unnamed(#[from] Unnamed),
+    /// No key is kept for the method.
+    #[error("no key is kept for {agent} to sign in by {method}; type it on this machine first")]
+    Unstored {
+        /// The agent.
+        agent: AgentKey,
+        /// The method, quoted.
+        method: Box<str>,
+    },
+    /// The method is not one whose key is typed.
+    #[error("{0} is not a sign-in method that takes a key")]
+    Keyless(Box<str>),
+    /// The key typed is not one a key can be.
+    #[error(
+        "the key typed is shorter than {WITHHELD_BYTES} or longer than {KEY_BYTES} characters, \
+         or holds a space or an unprintable character, so it was not kept"
+    )]
+    Typed,
+    /// The credential store could not keep the key.
+    #[error(transparent)]
+    Credentials(#[from] crucible_auth::AuthError),
+    /// The entry gives no profile to run the agent under.
+    #[error(transparent)]
+    Unprofiled(#[from] Unprofiled),
+    /// The agent's program was not started.
+    #[error(transparent)]
+    Unlaunched(#[from] Unlaunched),
+    /// The yes to the agent's route could not be written down, so nothing
+    /// was started.
+    #[error("the yes to this agent's route could not be written down, so nothing was started: {0}")]
+    HoldUnkept(RememberError),
+    /// The agent did not read as signed in afterwards.
+    #[error("the agent did not read as signed in afterwards: {}", .0.reason().as_str())]
+    Unverified(Failure),
 }
 
 /// Carries out `request` where it is one of the agent catalog's commands,
@@ -331,7 +484,8 @@ pub async fn run(
         None => return Ok(Outcome::Refused(ErrorCode::Busy.into())),
     }
     let agent = match command {
-        Command::AgentCatalog => None,
+        // A listing names no agent, and a sign-in names an instance instead.
+        Command::AgentCatalog | Command::SignInAgent { .. } => None,
         Command::InstallAgent { agent, .. }
         | Command::UpdateAgent { agent }
         | Command::RollbackAgent { agent }
@@ -340,7 +494,6 @@ pub async fn run(
             Ok(key) => Some(key),
             Err(_) => return Ok(Outcome::Refused(ErrorCode::InvalidArgument.into())),
         },
-        Command::SignInAgent { .. } => return Err(AgentsError::SignIn),
         _ => return Ok(Outcome::Refused(ErrorCode::Busy.into())),
     };
     let state = catalog_fetch::state_in(shelf.home.path());
@@ -358,6 +511,11 @@ pub async fn run(
         // The user's own file alone: a checkout cannot ask for this.
         standing: settings.agent_update() == AgentUpdate::Reviewed,
     };
+    if let Command::SignInAgent { instance, method } = command {
+        return door
+            .sign_in(instance.as_str(), method.as_str(), front, watching.link)
+            .await;
+    }
     let Some(agent) = agent else {
         return Ok(door.listing(unrefreshed));
     };
@@ -1056,6 +1214,126 @@ impl Door<'_> {
         })
     }
 
+    /// Signs the configured `instance` in by the method its agent offers as
+    /// `method`, telling `link` each sign-in link it prints.
+    async fn sign_in(
+        &self,
+        instance: &str,
+        method: &str,
+        front: &mut dyn Front,
+        link: &(dyn Fn(crucible_execution::Text) + Sync),
+    ) -> Result<Outcome, AgentsError> {
+        let Some(configured) = self.instances.iter().find(|one| one.name() == instance) else {
+            return Ok(Outcome::Refused(ErrorCode::InvalidArgument.into()));
+        };
+        let (row, agent, found) = signing(&self.trust, &self.store, configured, method)?;
+        let signed = |by| {
+            Ok(Outcome::SignedIn {
+                instance: instance.into(),
+                method: found.id.clone(),
+                by,
+            })
+        };
+        let (launcher, by) = match &found.method {
+            Method::EnvVar { .. } => {
+                let rows = Rows::production();
+                let name = rows.signing_in(&agent, &found.id)?;
+                let stored = Credentials::in_home(self.shelf.home.path())
+                    .naming(rows.names())
+                    .read();
+                if !stored.has_key(&name) {
+                    return Err(AgentsError::Unstored {
+                        agent,
+                        method: quoted(&found.id).into(),
+                    });
+                }
+                // The agent learns which method it signs in by only from
+                // being asked, so with nothing lent to start it the key is
+                // kept and no more is known.
+                let Some(launcher) = self.shelf.smoke else {
+                    return Ok(Outcome::Kept {
+                        instance: instance.into(),
+                        method: found.id.clone(),
+                    });
+                };
+                (launcher, Signed::Kept)
+            }
+            Method::Terminal { .. } => {
+                return Err(AgentsError::Unsupported(
+                    "a sign-in run at a terminal, which this build does not run through the \
+                     agents door",
+                ));
+            }
+            Method::Agent => {
+                let needs = match &row {
+                    AgentRow::Built(built) if built.driver == Driver::Antigravity => {
+                        antigravity::needs(&found.id)
+                    }
+                    AgentRow::Built(_) | AgentRow::Catalog(_) => None,
+                };
+                if let Some(needed) = needs {
+                    return Err(AgentsError::Needs {
+                        method: quoted(&found.id).into(),
+                        needed,
+                    });
+                }
+                let launcher = self
+                    .shelf
+                    .smoke
+                    .ok_or_else(|| AgentsError::Conversation(quoted(&found.id).into()))?;
+                (launcher, Signed::Agent)
+            }
+        };
+        let started = Agent::of_row(configured, row, |name| std::env::var_os(name));
+        if let Some(refused) = launcher.refusal(&started) {
+            return Err(refused.into());
+        }
+        // Nothing of the agent's is started before its route has a yes, and a
+        // yes is written down before anything is.
+        if let Some(warned) = launcher.consent().asks(started.row().route()).cloned() {
+            if !deciding::warned(self.request.capabilities(), front, &warned).await {
+                return Ok(Outcome::Undecided);
+            }
+            launcher
+                .consent()
+                .accept(&warned)
+                .map_err(AgentsError::HoldUnkept)?;
+        }
+        let trust = Trust::load(
+            &catalog_fetch::state_in(self.shelf.home.path()),
+            SystemTime::now(),
+        );
+        let mut dialect = started
+            .row()
+            .dialect(
+                crucible_tools::Mode::default(),
+                Some(&trust),
+                started.installed(),
+            )
+            .map_err(AgentsError::Unverified)?;
+        drop(trust);
+        if !dialect.signing_in_with(&found.id) {
+            return Err(AgentsError::Unsupported(
+                "an agent whose wire signs in by no method named",
+            ));
+        }
+        let control = Control::new().ok_or_else(|| {
+            AgentsError::Unverified(Failure::new("no control for the agent's program"))
+        })?;
+        // The start is given every key kept for the agent, so a kept key's
+        // method is asked for with its key already in the agent's environment.
+        match launcher
+            .account(&started, &control, dialect.as_mut(), Account::SignIn, link)
+            .await?
+        {
+            Reading::Signed(Authentication::SignedIn) => signed(by),
+            Reading::Unreadable(failure) => Err(AgentsError::Unverified(failure)),
+            Reading::Signed(_) | Reading::Version(_) => Err(AgentsError::Unverified(Failure::new(
+                "The agent did not read as signed in after the sign-in.",
+            ))),
+        }
+    }
+
     /// Hashes every installed version of `agent` against its receipt.
     fn verify(&self, agent: AgentKey) -> Result<Outcome, AgentsError> {
         let installed = self.store.installed(&agent)?;
@@ -1069,6 +1347,96 @@ impl Door<'_> {
         }
         Ok(Outcome::Verified { agent, versions })
     }
+}
+
+/// Keeps `key`, typed on this machine, for the configured `instance` to sign
+/// in by the method its agent offers as `method`, in crucible's credential
+/// store in `home`, under the agent's name and the method's id; every start of
+/// the agent after it is given the key in the variable the method names.
+///
+/// Nothing is fetched: the methods are those the trust state offers now, for
+/// the release the instance runs or else the newest.
+///
+/// # Errors
+///
+/// [`AgentsError`] where the configuration cannot be read or names no such
+/// instance, its agent offers no such method or the method takes no key, the
+/// agent has a provider's name, the key is not one a key can be, or the store
+/// cannot keep it. None repeats the key.
+pub fn keep_key(home: &Home, instance: &str, method: &str, key: Typed) -> Result<(), AgentsError> {
+    let settings = Settings::read_home(home)?;
+    let instances = settings.external_agents();
+    let configured = instances
+        .iter()
+        .find(|one| one.name() == instance)
+        .ok_or_else(|| AgentsError::NoInstance(quoted(instance).into()))?;
+    let trust = Trust::load(&catalog_fetch::state_in(home.path()), SystemTime::now());
+    let store = Store::new(home.path().join("programs"));
+    let (_, agent, found) = signing(&trust, &store, configured, method)?;
+    if !matches!(found.method, Method::EnvVar { .. }) {
+        return Err(AgentsError::Keyless(quoted(&found.id).into()));
+    }
+    let rows = Rows::production();
+    let name = rows.signing_in(&agent, &found.id)?;
+    let Typed(typed) = key;
+    let typed = typed.trim();
+    let sound = (WITHHELD_BYTES..=KEY_BYTES).contains(&typed.len())
+        && typed.bytes().all(|byte| byte.is_ascii_graphic());
+    if !sound {
+        return Err(AgentsError::Typed);
+    }
+    Credentials::in_home(home.path())
+        .naming(rows.names())
+        .keep(&name, typed)?;
+    Ok(())
+}
+
+/// The row the configured `instance` runs as, its agent's name, and the
+/// method among those it signs in by whose id is `method`: a catalog agent's
+/// row made from the entry `trust` offers for the release it runs in `store`,
+/// or else the newest offered, and Antigravity's built in.
+fn signing(
+    trust: &Trust,
+    store: &Store,
+    instance: &ExternalAgent,
+    method: &str,
+) -> Result<(AgentRow, AgentKey, AuthMethod), AgentsError> {
+    let row = match instance.driver() {
+        Driver::Catalog => {
+            let key = instance
+                .agent()
+                .ok_or_else(|| AgentsError::Unsigned(quoted(instance.name()).into()))?;
+            let offers = trust.offers(Some(key));
+            let running = store.version_of(key, Path::new(instance.executable()));
+            let offer = offers
+                .iter()
+                .find(|offer| {
+                    running.as_ref().is_some_and(|version| {
+                        version.version() == &*offer.pin.version
+                            && version.lock_revision() == offer.pin.lock_revision
+                    })
+                })
+                .or_else(|| offers.first())
+                .ok_or_else(|| AgentsError::Unlisted(key.clone()))?;
+            AgentRow::Catalog(CatalogRow::new(&offer.entry, &offer.pin.target)?)
+        }
+        Driver::Antigravity => REGISTRY
+            .built(Driver::Antigravity)
+            .map(AgentRow::Built)
+            .ok_or_else(|| AgentsError::Unsigned(quoted(instance.name()).into()))?,
+        Driver::Claude => return Err(AgentsError::Unsigned(quoted(instance.name()).into())),
+    };
+    let agent = AgentKey::new(row.named())
+        .map_err(|_| AgentsError::Unsigned(quoted(instance.name()).into()))?;
+    let found = row
+        .methods()
+        .into_iter()
+        .find(|offered| *offered.id == *method)
+        .ok_or_else(|| AgentsError::NoMethod {
+            agent: agent.clone(),
+            method: quoted(method).into(),
+        })?;
+    Ok((row, agent, found))
 }
 
 /// What downloading `offer` takes, in bytes, refused where it or what it

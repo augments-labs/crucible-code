@@ -11,10 +11,14 @@
 //! from what the agent itself answers in that profile; a sign-in another Google
 //! product keeps is no evidence of its own.
 //!
+//! It signs in by any of the four methods [`methods`] lists, the one asked
+//! for named by the user.
+//!
 //! The agent asks to be signed in by printing a link rather than answering.
-//! During a sign-in the link is shown to the user; during a turn or a status
-//! check it means the profile is signed out, and the turn fails saying so;
-//! during a sign-out or a version check it answers nothing asked.
+//! During a sign-in the link is shown to the user until the agent says the
+//! sign-in took; after that, as during a turn or a status check, it means the
+//! profile is signed out, the step reads so and a turn fails saying so; during
+//! a sign-out or a version check it answers nothing asked.
 //!
 //! The agent asks about every action itself; one made [`Antigravity::allowing`]
 //! answers yes to what the conversation's mode allows without asking, as
@@ -24,7 +28,9 @@ mod account;
 mod manifest;
 mod profile;
 
-pub use account::Ended;
+pub use account::{
+    AGENT_PLATFORM, Ended, GEMINI_API_KEY, OAUTH_BUSINESS, OAUTH_PERSONAL, methods, needs,
+};
 pub use manifest::Manifest;
 
 use crucible_execution::{Authentication, Decision, Failure, TurnRequest};
@@ -190,11 +196,21 @@ impl Dialect for Antigravity {
         self.acp.spoken(step)
     }
 
+    fn signing_in_with(&mut self, id: &str) -> bool {
+        self.acp.signing_in_with(id);
+        true
+    }
+
     fn told(&mut self, step: Account, frame: &str) -> Result<Told, Failure> {
         match account::link(frame) {
             Some(Ok(link)) => Ok(match step {
-                Account::SignIn => Told::Link(link),
-                Account::Status => Told::Done(Reading::Signed(Authentication::SignedOut)),
+                Account::SignIn if !self.acp.reading_status() => Told::Link(link),
+                // Asking to be signed in while a session is being opened says
+                // the agent is signed out, after a sign-in it said took as in
+                // a status step.
+                Account::SignIn | Account::Status => {
+                    Told::Done(Reading::Signed(Authentication::SignedOut))
+                }
                 // Asking to be signed in says nothing of whether a sign-out
                 // took or what version is running.
                 Account::SignOut | Account::Version => Told::Done(Reading::Unreadable(

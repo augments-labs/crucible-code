@@ -196,6 +196,33 @@ fn a_status_check_reads_sign_in_from_opening_a_session() {
     }
 }
 
+/// A sign-in the agent answers as done is read as a status step reads it, by
+/// opening a session on the same start: signed in only where one opens.
+#[test]
+fn a_sign_in_reads_signed_in_only_once_a_session_opens_after_it() {
+    for (answer, signed) in [
+        (
+            json!({"jsonrpc": "2.0", "id": 2, "error": {"code": -32000, "message": "Authentication required"}}).to_string(),
+            crucible_execution::Authentication::SignedOut,
+        ),
+        (response(2, &json!({"sessionId": "probe"})), crucible_execution::Authentication::SignedIn),
+    ] {
+        let mut acp = Acp::new(PROFILE);
+        let _ = acp.account(Account::SignIn, Shape { workspace: Some(Path::new("/work")), ..Shape::default() });
+        let _ = acp.spoken(Account::SignIn).unwrap();
+        let asked = acp.told(Account::SignIn, &initialized(1)).unwrap();
+        assert!(matches!(&asked, Told::Send(frame) if frame.contains("\"authenticate\"")), "{asked:?}");
+
+        let took = acp.told(Account::SignIn, &response(1, &json!({}))).unwrap();
+
+        assert!(matches!(&took, Told::Send(frame) if frame.contains("session/new")), "{took:?}");
+        assert_eq!(
+            acp.told(Account::SignIn, &answer).unwrap(),
+            Told::Done(Reading::Signed(signed))
+        );
+    }
+}
+
 /// A sign-in asks for the first of the profile's methods the agent offers, in
 /// the profile's order whatever the agent's, and for none where the agent
 /// offers none of them.
@@ -241,6 +268,52 @@ fn a_sign_in_asks_for_the_first_of_its_methods_the_agent_offers() {
             }
             (Told::Done(Reading::Unreadable(_)), None) => {}
             (told, asked) => panic!("{offered:?}: {told:?}, not {asked:?}"),
+        }
+    }
+}
+
+/// A sign-in the user named a method for asks for that method alone, even one
+/// the profile lists later or not at all, and for none where the agent does
+/// not offer it.
+#[test]
+fn a_sign_in_by_a_named_method_asks_for_that_method_alone() {
+    const METHODS: Profile = Profile {
+        sign_in: &[SignIn::named("browser"), SignIn::named("key")],
+        ..PROFILE
+    };
+    let offering = |methods: &[&str]| {
+        let methods: Vec<Value> = methods
+            .iter()
+            .map(|id| json!({"id": id, "name": id}))
+            .collect();
+        response(
+            0,
+            &json!({"protocolVersion": 1, "agentCapabilities": {}, "authMethods": methods}),
+        )
+    };
+    for (named, offered, asked) in [
+        ("key", vec!["browser", "key"], Some("key")),
+        ("business", vec!["browser", "business"], Some("business")),
+        ("key", vec!["browser"], None),
+    ] {
+        let mut acp = Acp::new(METHODS);
+        assert!(Dialect::signing_in_with(&mut acp, named));
+        let _ = acp.spoken(Account::SignIn).unwrap();
+
+        let told = acp.told(Account::SignIn, &offering(&offered)).unwrap();
+
+        match (told, asked) {
+            (Told::Send(frame), Some(method)) => {
+                let sent: Value = serde_json::from_str(&frame).unwrap();
+                assert_eq!(sent.pointer("/method"), Some(&json!("authenticate")));
+                assert_eq!(
+                    sent.pointer("/params/methodId"),
+                    Some(&json!(method)),
+                    "{named:?} of {offered:?}"
+                );
+            }
+            (Told::Done(Reading::Unreadable(_)), None) => {}
+            (told, asked) => panic!("{named:?} of {offered:?}: {told:?}, not {asked:?}"),
         }
     }
 }

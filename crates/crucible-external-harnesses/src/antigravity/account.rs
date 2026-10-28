@@ -6,15 +6,85 @@
 //! account it signs in to and nothing longer than a link, and shown as text
 //! for the user to open.
 //!
+//! It offers four ways to sign in ([`methods`]): its own Google sign-in, for
+//! a personal account or for a business one, and a Gemini API key or a Gemini
+//! Enterprise Agent Platform API key, each typed by the user, kept by crucible
+//! under the agent's name and the method's id, and given to the agent in the
+//! variable it reads. The agent carries out every one itself once asked
+//! through `authenticate`, by the method's id, since that is the only way it
+//! learns which to use: a key's method is asked for with the key already in
+//! its environment. A business sign-in also needs the Google Cloud project
+//! and location it is billed to ([`needs`]), which the agent reads only from
+//! its own settings file and from no variable; nothing writes that file yet,
+//! so the sign-in is refused saying so. The machine's own application default
+//! credentials are not offered: they would carry the host's cloud sign-in
+//! into the sandbox.
+//!
 //! Each operation ends in a sentence that claims no more than its steps
-//! established: a sign-in is verified by a status step after it, a sign-out
-//! by the agent's own logout and a status step after it reading signed out,
-//! and a disconnect calls the agent for nothing,
-//! so it says what it knew of the account beforehand and never more.
+//! established: a sign-in is verified by a status step after it on the same
+//! start, a sign-out by the agent's own logout and a status step after it
+//! reading signed out, and a disconnect calls the agent for nothing, so it
+//! says what it knew of the account beforehand and never more.
 
 use crucible_execution::{Authentication, Failure, Text};
 
 use crate::Reading;
+use crate::catalog::{AuthMethod, Method};
+
+/// The method a person signs in to their own Google account by.
+pub const OAUTH_PERSONAL: &str = "oauth-personal";
+
+/// The method a business's Google account signs in by.
+pub const OAUTH_BUSINESS: &str = "oauth-business";
+
+/// The method a Gemini API key signs in by.
+pub const GEMINI_API_KEY: &str = "gemini-api-key";
+
+/// The method a Gemini Enterprise Agent Platform API key signs in by: the
+/// platform once called Vertex AI.
+pub const AGENT_PLATFORM: &str = "agent-platform";
+
+/// The ways the agent signs in, in the order it offers them.
+#[must_use]
+pub fn methods() -> Vec<AuthMethod> {
+    let method = |id: &str, name: &str, method: Method| AuthMethod {
+        id: id.into(),
+        name: name.into(),
+        description: None,
+        method,
+    };
+    vec![
+        method(OAUTH_PERSONAL, "Sign in with Google", Method::Agent),
+        method(
+            OAUTH_BUSINESS,
+            "Sign in with a Google business account",
+            Method::Agent,
+        ),
+        method(
+            GEMINI_API_KEY,
+            "Gemini API key",
+            Method::EnvVar {
+                var: "GEMINI_API_KEY".into(),
+            },
+        ),
+        method(
+            AGENT_PLATFORM,
+            "Gemini Enterprise Agent Platform API key",
+            Method::EnvVar {
+                var: "GOOGLE_API_KEY".into(),
+            },
+        ),
+    ]
+}
+
+/// What the method `id` needs that this version cannot yet give the agent, in
+/// words, if anything: for a business sign-in, the Google Cloud project and
+/// location it is billed to, which the agent reads only from its own settings
+/// file and never from a variable.
+#[must_use]
+pub fn needs(id: &str) -> Option<&'static str> {
+    (id == OAUTH_BUSINESS).then_some("a Google Cloud project and location for Gemini Enterprise")
+}
 
 /// What the agent prints before its sign-in link.
 pub(crate) const LINK_PREFIX: &str = "Open the following link to authenticate the ACP server: ";

@@ -101,3 +101,52 @@ fn a_disconnect_says_the_account_remains_signed_in_only_when_that_was_known() {
         );
     }
 }
+
+/// The four methods are offered in the agent's order: two it carries out once
+/// asked, and two keys, each given in the variable the agent reads; a business
+/// sign-in needs a project and location, which the agent reads from no
+/// variable, and nothing offers the machine's own cloud credentials.
+#[test]
+fn the_four_methods_are_offered_with_the_variables_each_needs() {
+    use crate::antigravity::{methods, needs};
+    use crate::catalog::Method;
+
+    let offered: Vec<(String, Option<String>)> = methods()
+        .into_iter()
+        .map(|method| {
+            let var = match method.method {
+                Method::EnvVar { var } => Some(var.to_string()),
+                Method::Agent | Method::Terminal { .. } => None,
+            };
+            (method.id.to_string(), var)
+        })
+        .collect();
+
+    assert_eq!(
+        offered,
+        [
+            ("oauth-personal".to_owned(), None),
+            ("oauth-business".to_owned(), None),
+            (
+                "gemini-api-key".to_owned(),
+                Some("GEMINI_API_KEY".to_owned())
+            ),
+            (
+                "agent-platform".to_owned(),
+                Some("GOOGLE_API_KEY".to_owned())
+            ),
+        ]
+    );
+    assert_eq!(
+        needs("oauth-business"),
+        Some("a Google Cloud project and location for Gemini Enterprise")
+    );
+    for id in ["oauth-personal", "gemini-api-key", "agent-platform"] {
+        assert!(needs(id).is_none(), "{id}");
+    }
+    assert!(
+        offered
+            .iter()
+            .all(|(_, var)| var.as_deref() != Some("GOOGLE_APPLICATION_CREDENTIALS"))
+    );
+}

@@ -34,7 +34,7 @@ use crate::error::AuthError;
 use crate::oauth::{OAuthError, Tokens};
 
 use self::document::Document;
-pub use self::names::{Dropped, Held, Kind, Names, Settled, provider_of};
+pub use self::names::{Dropped, Held, Kind, METHOD_BYTES, Names, Settled, provider_of, signing_in};
 
 /// What the file is called, inside the home directory.
 const FILE: &str = "auth.json";
@@ -336,7 +336,9 @@ impl Store {
     ///
     /// Every other credential of the provider, under any name this build
     /// writes it under and in either map, goes in the same write: a provider
-    /// holds one. What went comes back, so the caller can say which row it was.
+    /// holds one. Of a provider the store was told no name of, only an account
+    /// under `name` itself goes. What went comes back, so the caller can say
+    /// which row it was.
     pub fn keep(&self, name: &str, key: &str) -> Result<Vec<Dropped>, AuthError> {
         let mut dropped = Vec::new();
         let names = self.names.clone();
@@ -350,8 +352,12 @@ impl Store {
         Ok(dropped)
     }
 
-    /// Writes a completed sign-in under `name`, taking out every other
-    /// credential its provider holds in the same write, and says what went.
+    /// Writes a completed sign-in under `name`, and says what went.
+    ///
+    /// Every other credential of the provider, under any name this build
+    /// writes it under and in either map, goes in the same write: a provider
+    /// holds one. Of a provider the store was told no name of, only a key
+    /// under `name` itself goes.
     pub(crate) fn keep_subscription(
         &self,
         name: &str,

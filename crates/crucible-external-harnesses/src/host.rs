@@ -257,6 +257,14 @@ pub trait Dialect: Send {
         let _ = (step, frame);
         Err(Failure::new("this agent speaks no account step"))
     }
+
+    /// Makes the sign-in step ask for the method the agent offers as `id`,
+    /// and no other; whether this wire can, which one that signs in by no
+    /// method the user names cannot.
+    fn signing_in_with(&mut self, id: &str) -> bool {
+        let _ = id;
+        false
+    }
 }
 
 /// A decision settled in the table and on its way to the program.

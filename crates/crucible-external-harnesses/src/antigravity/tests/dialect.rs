@@ -104,6 +104,40 @@ fn a_sign_in_link_is_shown_only_while_signing_in() {
     ));
 }
 
+/// Once the agent says a sign-in took, a link it prints while the session
+/// after it is being opened reads as signed out, as a status step reads it,
+/// and is never shown as a second sign-in.
+#[test]
+fn a_sign_in_link_after_the_agent_said_it_signed_in_reads_signed_out() {
+    let printed = format!("{LINK_PREFIX}{SIGN_IN}");
+    let mut agent = Antigravity::allowing(Allowing::Nothing, &[offering("1.3.0", &[])]);
+    let _ = agent.account(
+        Account::SignIn,
+        Shape {
+            workspace: Some(Path::new("/work")),
+            ..Shape::default()
+        },
+    );
+    assert!(agent.signing_in_with("oauth-personal"));
+    let _ = agent.spoken(Account::SignIn).unwrap();
+    let asked = agent.told(Account::SignIn, &answered_as("1.3.0")).unwrap();
+    assert!(
+        matches!(&asked, Told::Send(frame) if frame.contains("\"authenticate\"")),
+        "{asked:?}"
+    );
+    let took = json!({"jsonrpc": "2.0", "id": 1, "result": {}}).to_string();
+    let took = agent.told(Account::SignIn, &took).unwrap();
+    assert!(
+        matches!(&took, Told::Send(frame) if frame.contains("session/new")),
+        "{took:?}"
+    );
+
+    assert_eq!(
+        agent.told(Account::SignIn, &printed).unwrap(),
+        Told::Done(Reading::Signed(Authentication::SignedOut))
+    );
+}
+
 /// A sign-in link during a sign-out or a version check says nothing either
 /// step asked, so neither is read from it.
 #[test]

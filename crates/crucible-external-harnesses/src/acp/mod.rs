@@ -44,7 +44,11 @@
 //! Account steps are spoken over the same wire: each initializes the agent,
 //! then asks whether a session can be opened, signs in, or signs out, and a
 //! sign-out the agent does not offer is reported unverified rather than
-//! assumed.
+//! assumed. A sign-in asks for the first of its profile's methods the agent
+//! offers, or, where the user named one ([`Acp::signing_in_with`]), for that
+//! method alone, and for none where the agent does not offer it. A sign-in the
+//! agent answers as done is then read as a status step reads it, on the same
+//! start, so it reads signed in only where a session opens after it.
 
 mod permission;
 mod session;
@@ -346,6 +350,8 @@ pub struct Acp {
     permissions: Permissions,
     /// The reader of the open session's updates.
     updates: Updates,
+    /// The one sign-in method a sign-in asks for, where the user named one.
+    chosen: Option<SignIn>,
 }
 
 impl Acp {
@@ -398,7 +404,15 @@ impl Acp {
             stopping: false,
             permissions: Permissions::default(),
             updates: Updates::fresh(),
+            chosen: None,
         }
+    }
+
+    /// Makes a sign-in ask for the method the agent offers as `id`, and no
+    /// other: where the agent does not offer it, the sign-in reads as
+    /// unverified and nothing is asked.
+    pub fn signing_in_with(&mut self, id: &str) {
+        self.chosen = Some(SignIn::owned(id));
     }
 
     /// The request `method` with `params`, sent under the next id and waited
@@ -675,9 +689,11 @@ impl Acp {
                 };
                 self.after_initializing(step, &initialized)
             }
-            (Awaited::Status | Awaited::SignIn, Ok(_)) => {
-                done(Reading::Signed(Authentication::SignedIn))
-            }
+            // A sign-in the agent says took is read as a status step reads
+            // it, on the same start, so that it is signed in only where a
+            // session then opens.
+            (Awaited::SignIn, Ok(_)) => self.status(),
+            (Awaited::Status, Ok(_)) => done(Reading::Signed(Authentication::SignedIn)),
             (Awaited::Status, Err(refused)) if refused.code == SIGN_IN_REQUIRED => {
                 done(Reading::Signed(Authentication::SignedOut))
             }
@@ -689,27 +705,44 @@ impl Acp {
         }
     }
 
+    /// The request that asks whether a session can be opened, which is how a
+    /// status step reads whether the agent is signed in.
+    fn status(&mut self) -> Told {
+        match self.cwd() {
+            Ok(cwd) => Told::Send(self.send(
+                "session/new",
+                &json!({"cwd": cwd, "mcpServers": []}),
+                Awaited::Status,
+            )),
+            Err(failure) => Told::Done(Reading::Unreadable(failure)),
+        }
+    }
+
+    /// Whether an account step is waiting on a session to be opened, as a
+    /// status step does and a sign-in does once the agent says it took.
+    pub(crate) const fn reading_status(&self) -> bool {
+        matches!(self.awaited, Some((_, Awaited::Status)))
+    }
+
     /// What account step `step` sends once the agent is initialized as
     /// `initialized`.
     fn after_initializing(&mut self, step: Account, initialized: &Initialized) -> Told {
         let unreadable = |reason| Told::Done(Reading::Unreadable(Failure::new(reason)));
         match step {
             Account::Version => unreadable("The agent's version was asked twice."),
-            Account::Status => match self.cwd() {
-                Ok(cwd) => Told::Send(self.send(
-                    "session/new",
-                    &json!({"cwd": cwd, "mcpServers": []}),
-                    Awaited::Status,
-                )),
-                Err(failure) => Told::Done(Reading::Unreadable(failure)),
-            },
+            Account::Status => self.status(),
             Account::SignIn => {
-                let offered = self
-                    .reviewed
-                    .sign_in()
-                    .iter()
-                    .find(|method| initialized.offers(method.id()))
-                    .map(|method| method.id().to_owned());
+                let offered = match &self.chosen {
+                    Some(chosen) => initialized
+                        .offers(chosen.id())
+                        .then(|| chosen.id().to_owned()),
+                    None => self
+                        .reviewed
+                        .sign_in()
+                        .iter()
+                        .find(|method| initialized.offers(method.id()))
+                        .map(|method| method.id().to_owned()),
+                };
                 match offered {
                     Some(method) => Told::Send(self.send(
                         "authenticate",
@@ -850,6 +883,11 @@ impl Dialect for Acp {
     fn spoken(&mut self, _step: Account) -> Option<Vec<String>> {
         self.next = 0;
         Some(vec![self.initialize()])
+    }
+
+    fn signing_in_with(&mut self, id: &str) -> bool {
+        Acp::signing_in_with(self, id);
+        true
     }
 
     fn told(&mut self, step: Account, frame: &str) -> Result<Told, Failure> {

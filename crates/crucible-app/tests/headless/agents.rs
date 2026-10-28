@@ -29,7 +29,9 @@ use std::time::{Duration, SystemTime};
 use crucible_app::agent_download::DownloadError;
 use crucible_app::backends::{AgentRow, CatalogRow, Registry};
 use crucible_app::catalog_fetch::{self, Source};
-use crucible_app::client::agents::{AgentsError, How, Outcome, Shelf, Watching, run};
+use crucible_app::client::agents::{
+    AgentsError, How, Outcome, Shelf, Signed, Typed, Watching, keep_key, run,
+};
 use crucible_app::client::{Front, Shown};
 use crucible_app::content_use::{Consent, Routes};
 use crucible_app::launching::{Agent, Launcher, Steps, Unlaunched};
@@ -39,7 +41,7 @@ use crucible_client_api::{
 };
 use crucible_config::{Driver, ExternalAgent};
 use crucible_external_harnesses::catalog::fixture::signed;
-use crucible_external_harnesses::catalog::{Catalog, Held, SNAPSHOT};
+use crucible_external_harnesses::catalog::{Callback, Catalog, Held, SNAPSHOT, Uncalled, Unlinked};
 use crucible_external_harnesses::fake_peer::{self, Reply as Played, Script as Peer, scripts::acp};
 use crucible_external_harnesses::{Account, Control, Reading};
 use crucible_http::ProxyEnv;
@@ -455,6 +457,7 @@ impl Bench {
                 Watching {
                     progress: &mut progress,
                     cancel: &cancel,
+                    link: &|_| {},
                 },
             ))?
         };
@@ -473,6 +476,52 @@ impl Bench {
             .unwrap_or_default();
         names.sort();
         names
+    }
+}
+
+/// What came of a command at the door, named by its variant alone, so a
+/// failure says which came back and prints nothing it carries: what an
+/// agent's account step read is never written into a failure.
+const fn shape(outcome: &Result<Outcome, AgentsError>) -> &'static str {
+    match outcome {
+        Ok(Outcome::Refused(_)) => "Ok(Refused)",
+        Ok(Outcome::Catalog { .. }) => "Ok(Catalog)",
+        Ok(Outcome::Undecided) => "Ok(Undecided)",
+        Ok(Outcome::Moved { .. }) => "Ok(Moved)",
+        Ok(Outcome::Current { .. }) => "Ok(Current)",
+        Ok(Outcome::Removed { .. }) => "Ok(Removed)",
+        Ok(Outcome::SignedIn { .. }) => "Ok(SignedIn)",
+        Ok(Outcome::Kept { .. }) => "Ok(Kept)",
+        Ok(Outcome::Verified { .. }) => "Ok(Verified)",
+        Err(AgentsError::Config(_)) => "Err(Config)",
+        Err(AgentsError::Unoffered { .. }) => "Err(Unoffered)",
+        Err(AgentsError::Unlisted(_)) => "Err(Unlisted)",
+        Err(AgentsError::NotInstalled(_)) => "Err(NotInstalled)",
+        Err(AgentsError::NoPrevious(_)) => "Err(NoPrevious)",
+        Err(AgentsError::InUse { .. }) => "Err(InUse)",
+        Err(AgentsError::Unsupported(_)) => "Err(Unsupported)",
+        Err(AgentsError::Program(_)) => "Err(Program)",
+        Err(AgentsError::Kept { .. }) => "Err(Kept)",
+        Err(AgentsError::TooLarge) => "Err(TooLarge)",
+        Err(AgentsError::Store(_)) => "Err(Store)",
+        Err(AgentsError::Download(_)) => "Err(Download)",
+        Err(AgentsError::Unpacked(_)) => "Err(Unpacked)",
+        Err(AgentsError::Remember(_)) => "Err(Remember)",
+        Err(AgentsError::Smoke { .. }) => "Err(Smoke)",
+        Err(AgentsError::NoInstance(_)) => "Err(NoInstance)",
+        Err(AgentsError::Unsigned(_)) => "Err(Unsigned)",
+        Err(AgentsError::NoMethod { .. }) => "Err(NoMethod)",
+        Err(AgentsError::Needs { .. }) => "Err(Needs)",
+        Err(AgentsError::Conversation(_)) => "Err(Conversation)",
+        Err(AgentsError::Unnamed(_)) => "Err(Unnamed)",
+        Err(AgentsError::Unstored { .. }) => "Err(Unstored)",
+        Err(AgentsError::Keyless(_)) => "Err(Keyless)",
+        Err(AgentsError::Typed) => "Err(Typed)",
+        Err(AgentsError::Credentials(_)) => "Err(Credentials)",
+        Err(AgentsError::Unprofiled(_)) => "Err(Unprofiled)",
+        Err(AgentsError::Unlaunched(_)) => "Err(Unlaunched)",
+        Err(AgentsError::HoldUnkept(_)) => "Err(HoldUnkept)",
+        Err(AgentsError::Unverified(_)) => "Err(Unverified)",
     }
 }
 
@@ -501,7 +550,11 @@ fn nothing_is_fetched_before_the_answer_and_a_no_leaves_every_file_as_it_was() -
 
     let (outcome, told) = bench.ask(install("1.0.0")?, &mut front, false)?;
 
-    assert!(matches!(outcome, Ok(Outcome::Undecided)), "{outcome:?}");
+    assert!(
+        matches!(outcome, Ok(Outcome::Undecided)),
+        "{}",
+        shape(&outcome)
+    );
     let [(Pending::Install { facts, choices, .. }, asked)] = front.put.as_slice() else {
         return Err(format!("one install confirmation, not {:?}", front.put).into());
     };
@@ -559,7 +612,8 @@ fn update_rewrites_the_executable_and_rollback_restores_it() -> Result<(), Faile
             Ok(Outcome::Moved { how: How::Installed, version, instances, downloaded: true, unpruned: None, .. })
                 if &**version == "1.0.0" && instances.len() == 1
         ),
-        "{installed:?}"
+        "{}",
+        shape(&installed)
     );
     assert_eq!(fs::read(bench.program("1.0.0"))?, ONE);
     let total = u64::try_from(ONE.len())?;
@@ -588,7 +642,8 @@ fn update_rewrites_the_executable_and_rollback_restores_it() -> Result<(), Faile
 
     assert!(
         matches!(&updated, Ok(Outcome::Moved { how: How::Updated, version, .. }) if &**version == "2.0.0"),
-        "{updated:?}"
+        "{}",
+        shape(&updated)
     );
     assert_eq!(
         bench.executable()?,
@@ -613,7 +668,8 @@ fn update_rewrites_the_executable_and_rollback_restores_it() -> Result<(), Faile
 
     assert!(
         matches!(&rolled, Ok(Outcome::Moved { how: How::RolledBack, version, downloaded: false, .. }) if &**version == "1.0.0"),
-        "{rolled:?}"
+        "{}",
+        shape(&rolled)
     );
     assert_eq!(
         bench.executable()?,
@@ -637,7 +693,8 @@ fn installed_then_updated_in_the_catalog(bench: &Bench) -> Result<(), Failed> {
                 ..
             })
         ),
-        "{installed:?}"
+        "{}",
+        shape(&installed)
     );
     bench
         .server
@@ -667,7 +724,8 @@ fn under_reviewed_an_update_runs_with_no_question_and_says_so() -> Result<(), Fa
     assert!(
         matches!(&updated, Ok(Outcome::Moved { how: How::Updated, version, standing: true, downloaded: true, .. })
             if &**version == "2.0.0"),
-        "{updated:?}"
+        "{}",
+        shape(&updated)
     );
     assert_eq!(
         bench.executable()?,
@@ -677,7 +735,8 @@ fn under_reviewed_an_update_runs_with_no_question_and_says_so() -> Result<(), Fa
     // No launcher was lent, so nothing was started, and the outcome says why.
     assert!(
         matches!(&updated, Ok(Outcome::Moved { unsmoked: Some(why), .. }) if why.contains("launcher")),
-        "{updated:?}"
+        "{}",
+        shape(&updated)
     );
     Ok(())
 }
@@ -701,7 +760,11 @@ fn under_ask_an_update_is_put_to_the_client_and_a_no_changes_nothing() -> Result
     )?;
 
     assert_eq!(front.put.len(), 1);
-    assert!(matches!(updated, Ok(Outcome::Undecided)), "{updated:?}");
+    assert!(
+        matches!(updated, Ok(Outcome::Undecided)),
+        "{}",
+        shape(&updated)
+    );
     assert_eq!(
         bench.executable()?,
         bench.program("1.0.0").to_string_lossy()
@@ -724,7 +787,11 @@ fn reviewed_asks_for_a_first_install_and_still_refuses_a_release_it_would_refuse
     let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
 
     assert_eq!(front.put.len(), 1, "a first install is asked");
-    assert!(matches!(installed, Ok(Outcome::Undecided)), "{installed:?}");
+    assert!(
+        matches!(installed, Ok(Outcome::Undecided)),
+        "{}",
+        shape(&installed)
+    );
 
     // An update whose download is redirected off the listed hosts is refused
     // as it is when asked, and commits nothing.
@@ -740,7 +807,8 @@ fn reviewed_asks_for_a_first_install_and_still_refuses_a_release_it_would_refuse
     let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
     assert!(
         matches!(installed, Ok(Outcome::Moved { .. })),
-        "{installed:?}"
+        "{}",
+        shape(&installed)
     );
     let mut front = answering(&bench.server, None);
     let (refused, _) = bench.ask(
@@ -753,7 +821,8 @@ fn reviewed_asks_for_a_first_install_and_still_refuses_a_release_it_would_refuse
     assert!(front.put.is_empty());
     assert!(
         matches!(refused, Err(AgentsError::Download(DownloadError::Redirect))),
-        "{refused:?}"
+        "{}",
+        shape(&refused)
     );
     assert!(elsewhere.asked().is_empty());
     assert!(!bench.program("2.0.0").exists());
@@ -778,7 +847,8 @@ fn reviewed_with_one_installed(bench: &Bench, serial: u64) -> Result<(), Failed>
     let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
     assert!(
         matches!(installed, Ok(Outcome::Moved { .. })),
-        "{installed:?}"
+        "{}",
+        shape(&installed)
     );
     Ok(())
 }
@@ -809,7 +879,11 @@ fn under_reviewed_an_older_release_listed_first_is_asked_about_and_not_taken() -
     let (put, outcome) = update_declined(&bench)?;
 
     assert_eq!(put, 1, "an older release is never taken unasked");
-    assert!(matches!(outcome, Ok(Outcome::Undecided)), "{outcome:?}");
+    assert!(
+        matches!(outcome, Ok(Outcome::Undecided)),
+        "{}",
+        shape(&outcome)
+    );
     assert!(!bench.program("0.9.0").exists());
     assert_eq!(
         bench.executable()?,
@@ -838,7 +912,11 @@ fn under_reviewed_a_revoked_newest_release_does_not_install_an_older_one_unasked
     let (put, outcome) = update_declined(&bench)?;
 
     assert_eq!(put, 1);
-    assert!(matches!(outcome, Ok(Outcome::Undecided)), "{outcome:?}");
+    assert!(
+        matches!(outcome, Ok(Outcome::Undecided)),
+        "{}",
+        shape(&outcome)
+    );
     assert!(!bench.program("0.9.0").exists());
     assert!(!bench.program("2.0.0").exists());
 
@@ -847,7 +925,8 @@ fn under_reviewed_a_revoked_newest_release_does_not_install_an_older_one_unasked
     let (refused, _) = bench.ask(install("2.0.0")?, &mut front, false)?;
     assert!(
         matches!(refused, Err(AgentsError::Unoffered { .. })),
-        "{refused:?}"
+        "{}",
+        shape(&refused)
     );
     assert!(front.put.is_empty());
     Ok(())
@@ -871,7 +950,11 @@ fn under_reviewed_an_offer_from_a_catalog_older_than_the_install_s_is_asked_abou
     let (put, outcome) = update_declined(&bench)?;
 
     assert_eq!(put, 1);
-    assert!(matches!(outcome, Ok(Outcome::Undecided)), "{outcome:?}");
+    assert!(
+        matches!(outcome, Ok(Outcome::Undecided)),
+        "{}",
+        shape(&outcome)
+    );
     assert!(!bench.program("2.0.0").exists());
     Ok(())
 }
@@ -893,7 +976,8 @@ fn under_reviewed_a_rollback_and_a_removal_are_still_asked() -> Result<(), Faile
     )?;
     assert!(
         matches!(updated, Ok(Outcome::Moved { standing: true, .. })),
-        "{updated:?}"
+        "{}",
+        shape(&updated)
     );
 
     let mut front = answering(&bench.server, Some("Cancel"));
@@ -905,7 +989,11 @@ fn under_reviewed_a_rollback_and_a_removal_are_still_asked() -> Result<(), Faile
         false,
     )?;
     assert_eq!(front.put.len(), 1);
-    assert!(matches!(rolled, Ok(Outcome::Undecided)), "{rolled:?}");
+    assert!(
+        matches!(rolled, Ok(Outcome::Undecided)),
+        "{}",
+        shape(&rolled)
+    );
 
     // Nothing runs it from the store once the instance is off it.
     bench.configure(
@@ -921,7 +1009,11 @@ fn under_reviewed_a_rollback_and_a_removal_are_still_asked() -> Result<(), Faile
         false,
     )?;
     assert_eq!(front.put.len(), 1);
-    assert!(matches!(removed, Ok(Outcome::Undecided)), "{removed:?}");
+    assert!(
+        matches!(removed, Ok(Outcome::Undecided)),
+        "{}",
+        shape(&removed)
+    );
     Ok(())
 }
 
@@ -947,7 +1039,8 @@ fn a_redirect_to_a_host_not_listed_is_refused_and_commits_nothing() -> Result<()
 
     assert!(
         matches!(outcome, Err(AgentsError::Download(DownloadError::Redirect))),
-        "{outcome:?}"
+        "{}",
+        shape(&outcome)
     );
     assert!(elsewhere.asked().is_empty());
     assert!(!bench.program("1.0.0").exists());
@@ -981,7 +1074,8 @@ fn a_download_cancelled_part_way_commits_nothing() -> Result<(), Failed> {
             outcome,
             Err(AgentsError::Download(DownloadError::Cancelled))
         ),
-        "{outcome:?}"
+        "{}",
+        shape(&outcome)
     );
     let half = u64::try_from(ONE.len())?;
     assert_eq!(
@@ -1026,7 +1120,7 @@ fn a_listing_fetches_the_catalog_even_where_updates_are_never_checked() -> Resul
         unrefreshed: None,
     }) = outcome
     else {
-        return Err(format!("a listing, not {outcome:?}").into());
+        return Err(format!("a listing, not {}", shape(&outcome)).into());
     };
     let named: Vec<(&str, Vec<&str>)> = agents
         .iter()
@@ -1075,12 +1169,14 @@ fn a_client_that_did_not_claim_install_is_refused_before_anything_is_fetched() -
             Watching {
                 progress: &mut |_| {},
                 cancel: &cancel,
+                link: &|_| {},
             },
         ))?;
 
         assert!(
             matches!(&outcome, Ok(Outcome::Refused(refusal)) if refusal.code() == ErrorCode::NeedsCapability),
-            "{outcome:?}"
+            "{}",
+            shape(&outcome)
         );
     }
     assert!(bench.server.asked().is_empty());
@@ -1104,7 +1200,8 @@ fn a_removal_waits_until_no_instance_runs_the_agent_then_takes_every_version() -
     let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
     assert!(
         matches!(installed, Ok(Outcome::Moved { .. })),
-        "{installed:?}"
+        "{}",
+        shape(&installed)
     );
     let remove = || -> Result<Command, Failed> {
         Ok(Command::RemoveAgent {
@@ -1122,7 +1219,8 @@ fn a_removal_waits_until_no_instance_runs_the_agent_then_takes_every_version() -
 
     assert!(
         matches!(&refused, Err(AgentsError::InUse { instances, .. }) if instances.len() == 1),
-        "{refused:?}"
+        "{}",
+        shape(&refused)
     );
     assert!(front.put.is_empty());
     assert!(bench.program("1.0.0").is_file());
@@ -1133,7 +1231,8 @@ fn a_removal_waits_until_no_instance_runs_the_agent_then_takes_every_version() -
 
     assert!(
         matches!(&removed, Ok(Outcome::Removed { versions, .. }) if versions.len() == 1),
-        "{removed:?}"
+        "{}",
+        shape(&removed)
     );
     assert!(!bench.program("1.0.0").exists());
     let _ = &bench.tree;
@@ -1156,7 +1255,11 @@ fn a_yes_naming_another_action_is_refused_and_after_three_nothing_is_fetched() -
 
     let (outcome, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
 
-    assert!(matches!(outcome, Ok(Outcome::Undecided)), "{outcome:?}");
+    assert!(
+        matches!(outcome, Ok(Outcome::Undecided)),
+        "{}",
+        shape(&outcome)
+    );
     assert_eq!(front.put.len(), 3);
     let ids: Vec<u64> = front
         .put
@@ -1192,7 +1295,11 @@ fn a_release_larger_than_a_release_may_be_is_refused_before_it_is_asked_about() 
 
     let (outcome, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
 
-    assert!(matches!(outcome, Err(AgentsError::TooLarge)), "{outcome:?}");
+    assert!(
+        matches!(outcome, Err(AgentsError::TooLarge)),
+        "{}",
+        shape(&outcome)
+    );
     assert!(front.put.is_empty());
     assert_eq!(bench.server.asked(), CATALOG);
     Ok(())
@@ -1243,7 +1350,8 @@ fn a_program_the_release_does_not_list_as_one_that_runs_is_refused_before_the_qu
 
         assert!(
             matches!(&outcome, Err(AgentsError::Program(program)) if &**program == "goose"),
-            "{path}: {outcome:?}"
+            "{path}: {}",
+            shape(&outcome)
         );
         assert!(front.put.is_empty());
         assert_eq!(bench.server.asked(), CATALOG);
@@ -1270,7 +1378,8 @@ fn an_address_on_a_host_not_listed_is_refused_before_the_question() -> Result<()
 
     assert!(
         matches!(&outcome, Err(AgentsError::Download(DownloadError::Unlisted(at))) if &**at == "https://elsewhere.example/goose"),
-        "{outcome:?}"
+        "{}",
+        shape(&outcome)
     );
     assert!(front.put.is_empty());
     assert_eq!(bench.server.asked(), CATALOG);
@@ -1293,7 +1402,8 @@ fn a_version_in_place_is_kept_when_its_receipt_is_the_pin_and_refused_when_it_is
                 ..
             })
         ),
-        "{first:?}"
+        "{}",
+        shape(&first)
     );
     bench.server.forget();
 
@@ -1302,7 +1412,8 @@ fn a_version_in_place_is_kept_when_its_receipt_is_the_pin_and_refused_when_it_is
 
     assert!(
         matches!(&again, Ok(Outcome::Moved { downloaded: false, version, .. }) if &**version == "1.0.0"),
-        "{again:?}"
+        "{}",
+        shape(&again)
     );
     assert!(
         facts(&front)?
@@ -1321,7 +1432,8 @@ fn a_version_in_place_is_kept_when_its_receipt_is_the_pin_and_refused_when_it_is
 
     assert!(
         matches!(&refused, Err(AgentsError::Kept { version, .. }) if &**version == "1.0.0"),
-        "{refused:?}"
+        "{}",
+        shape(&refused)
     );
     assert!(front.put.is_empty());
     assert_eq!(fs::read(bench.program("1.0.0"))?, ONE);
@@ -1351,7 +1463,11 @@ fn catalog_text_is_escaped_and_bounded_before_it_is_put() -> Result<(), Failed> 
 
     let (outcome, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
 
-    assert!(matches!(outcome, Ok(Outcome::Undecided)), "{outcome:?}");
+    assert!(
+        matches!(outcome, Ok(Outcome::Undecided)),
+        "{}",
+        shape(&outcome)
+    );
     let facts = facts(&front)?;
     for fact in &facts {
         assert!(
@@ -1392,7 +1508,8 @@ fn an_instance_changed_while_the_question_was_out_keeps_its_change_and_is_named(
     let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
     assert!(
         matches!(installed, Ok(Outcome::Moved { .. })),
-        "{installed:?}"
+        "{}",
+        shape(&installed)
     );
     bench
         .server
@@ -1418,7 +1535,8 @@ fn an_instance_changed_while_the_question_was_out_keeps_its_change_and_is_named(
     assert!(
         matches!(&updated, Ok(Outcome::Moved { instances, left, .. })
             if instances.is_empty() && left.iter().map(|one| &**one).eq(["work"])),
-        "{updated:?}"
+        "{}",
+        shape(&updated)
     );
     assert_eq!(fs::read(bench.user())?, edited);
     assert_eq!(fs::read(bench.program("2.0.0"))?, TWO);
@@ -1434,7 +1552,8 @@ fn verify_names_a_file_of_an_installed_version_that_changed() -> Result<(), Fail
     let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
     assert!(
         matches!(installed, Ok(Outcome::Moved { .. })),
-        "{installed:?}"
+        "{}",
+        shape(&installed)
     );
     let verify = || -> Result<Command, Failed> {
         Ok(Command::VerifyAgent {
@@ -1448,7 +1567,8 @@ fn verify_names_a_file_of_an_installed_version_that_changed() -> Result<(), Fail
     assert!(
         matches!(&whole, Ok(Outcome::Verified { versions, .. })
             if versions.len() == 1 && versions.iter().all(|(version, differs)| &**version == "1.0.0" && differs.is_empty())),
-        "{whole:?}"
+        "{}",
+        shape(&whole)
     );
     let mut changed = ONE.to_vec();
     if let Some(first) = changed.first_mut() {
@@ -1460,7 +1580,8 @@ fn verify_names_a_file_of_an_installed_version_that_changed() -> Result<(), Fail
     assert!(
         matches!(&differs, Ok(Outcome::Verified { versions, .. })
             if versions.iter().any(|(_, differs)| differs.iter().any(|one| &*one.path == "goose"))),
-        "{differs:?}"
+        "{}",
+        shape(&differs)
     );
     assert!(front.put.is_empty());
     Ok(())
@@ -1475,7 +1596,8 @@ fn an_update_already_on_the_version_offered_is_current_and_asks_nothing() -> Res
     let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
     assert!(
         matches!(installed, Ok(Outcome::Moved { .. })),
-        "{installed:?}"
+        "{}",
+        shape(&installed)
     );
     let mut front = answering(&bench.server, Some("Update"));
 
@@ -1489,7 +1611,8 @@ fn an_update_already_on_the_version_offered_is_current_and_asks_nothing() -> Res
 
     assert!(
         matches!(&current, Ok(Outcome::Current { version, .. }) if &**version == "1.0.0"),
-        "{current:?}"
+        "{}",
+        shape(&current)
     );
     assert!(front.put.is_empty());
     Ok(())
@@ -1510,7 +1633,7 @@ fn a_listing_says_on_its_row_that_one_agent_s_store_cannot_be_read() -> Result<(
     let (outcome, _) = bench.ask(Command::AgentCatalog, &mut front, false)?;
 
     let Ok(Outcome::Catalog { agents, .. }) = outcome else {
-        return Err(format!("a listing, not {outcome:?}").into());
+        return Err(format!("a listing, not {}", shape(&outcome)).into());
     };
     let rows: Vec<(&str, bool)> = agents
         .iter()
@@ -1533,7 +1656,8 @@ fn an_install_no_instance_runs_keeps_the_version_before_it_for_a_rollback() -> R
         let (installed, _) = bench.ask(install(version)?, &mut front, false)?;
         assert!(
             matches!(&installed, Ok(Outcome::Moved { instances, unpruned: None, .. }) if instances.is_empty()),
-            "{version}: {installed:?}"
+            "{version}: {}",
+            shape(&installed)
         );
     }
 
@@ -1663,7 +1787,8 @@ fn a_revoked_version_is_refused_at_launch_with_its_reason_and_offers_rollback_or
     let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
     assert!(
         matches!(installed, Ok(Outcome::Moved { .. })),
-        "{installed:?}"
+        "{}",
+        shape(&installed)
     );
     bench
         .server
@@ -1687,7 +1812,8 @@ fn a_revoked_version_is_refused_at_launch_with_its_reason_and_offers_rollback_or
                 ..
             })
         ),
-        "{listed:?}"
+        "{}",
+        shape(&listed)
     );
 
     let row = row_of(&stating(goose("1.0.0", ONE)))?;
@@ -1718,7 +1844,8 @@ fn a_version_in_the_store_is_refused_at_launch_while_the_trust_state_cannot_be_u
     let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
     assert!(
         matches!(installed, Ok(Outcome::Moved { .. })),
-        "{installed:?}"
+        "{}",
+        shape(&installed)
     );
     let file = catalog_fetch::trust_in(bench.home.path()).file();
     fs::write(&file, b"not a trust state")?;
@@ -1841,6 +1968,7 @@ impl Bench {
             Watching {
                 progress: &mut |_| {},
                 cancel: &cancel,
+                link: &|_| {},
             },
         )))
     }
@@ -1856,7 +1984,7 @@ impl Bench {
         )?;
         match installed {
             Ok(Outcome::Moved { .. }) => Ok(()),
-            other => Err(format!("installed before: {other:?}").into()),
+            other => Err(format!("installed before: {}", shape(&other)).into()),
         }
     }
 }
@@ -1898,7 +2026,8 @@ fn a_switch_is_smoke_tested_where_the_route_has_its_yes_and_the_sandbox_closes_t
 
     assert!(
         matches!(&updated, Ok(Outcome::Moved { version, .. }) if &**version == "2.0.0"),
-        "{updated:?}"
+        "{}",
+        shape(&updated)
     );
     assert!(
         facts(&front)?
@@ -1938,7 +2067,10 @@ fn a_smoke_with_a_wrong_agent_info_keeps_the_old_executable() -> Result<(), Fail
     let updated = bench.ask_smoking((update()?, &mut front), (true, true), &release, &runtime)?;
 
     let failed = updated.err().ok_or("the switch went ahead")?.to_string();
-    assert!(failed.contains("9.9.9"), "{failed:?}");
+    assert!(
+        failed.contains("9.9.9"),
+        "the refusal does not name the version the agent said"
+    );
     assert_eq!(
         bench.executable()?,
         bench.program("1.0.0").to_string_lossy()
@@ -1968,7 +2100,7 @@ fn the_fake_peer_writing_into_its_root_fails_its_smoke_and_keeps_the_old_executa
 
     let updated = bench.ask_smoking((update()?, &mut front), (true, true), &release, &runtime)?;
 
-    assert!(updated.is_err(), "{updated:?}");
+    assert!(updated.is_err(), "{}", shape(&updated));
     let root = bench.programs().join("2.0.0");
     assert!(
         root.join("script").is_file(),
@@ -2009,7 +2141,8 @@ fn a_switch_says_why_it_is_not_smoke_tested_where_the_sandbox_is_off_or_the_rout
 
         assert!(
             matches!(&updated, Ok(Outcome::Moved { version, .. }) if &**version == "2.0.0"),
-            "{updated:?}"
+            "{}",
+            shape(&updated)
         );
         assert!(
             facts(&front)?
@@ -2040,7 +2173,7 @@ fn asked_from_the_store(name: &str, script: &Peer) -> Result<Reading, Failed> {
         false,
     )?;
     if !matches!(installed, Ok(Outcome::Moved { .. })) {
-        return Err(format!("installed: {installed:?}").into());
+        return Err(format!("installed: {}", shape(&installed)).into());
     }
     let row = row_of(&release)?;
     let consent = Consent::new(Routes::production().cataloging(row.warned().ok().cloned()));
@@ -2146,7 +2279,8 @@ fn a_version_the_catalog_no_longer_lists_is_started_with_its_updater_off() -> Re
     )?;
     assert!(
         matches!(installed, Ok(Outcome::Moved { .. })),
-        "{installed:?}"
+        "{}",
+        shape(&installed)
     );
     // A newer release supersedes it, and the catalog lists it no longer.
     bench
@@ -2168,7 +2302,8 @@ fn a_version_the_catalog_no_longer_lists_is_started_with_its_updater_off() -> Re
                 ..
             })
         ),
-        "{listed:?}"
+        "{}",
+        shape(&listed)
     );
 
     let row = row_of(&release)?;
@@ -2246,7 +2381,8 @@ fn a_program_in_another_agent_s_store_directory_is_refused_rather_than_taken_for
                 ..
             })
         ),
-        "{listed:?}"
+        "{}",
+        shape(&listed)
     );
 
     let row = row_of(&stating(goose("1.0.0", ONE)))?;
@@ -2262,4 +2398,741 @@ fn a_program_in_another_agent_s_store_directory_is_refused_rather_than_taken_for
     );
     assert_eq!(before.map(|why| why.to_string()), Some(said));
     Ok(())
+}
+
+/// A key nobody would mistake for a real one, which no output may carry.
+const KEY: &str = "goose-key-never-shown-0123456789";
+
+/// `key` at 1.0.0, stating its content use, signing in by a key given in
+/// `GOOSE_API_KEY`, by a browser it opens itself, or at a terminal, and
+/// showing sign-in links only on `accounts.vendor.example`.
+fn signing_in(key: &str, program: &[u8]) -> Value {
+    let mut release = stating(entry(key, "1.0.0", program));
+    if let Some(object) = release.as_object_mut() {
+        object.insert(
+            "auth_methods".into(),
+            json!([
+                {"id": "api-key", "kind": "env_var", "name": "API key", "var": "GOOSE_API_KEY"},
+                {"id": "browser", "kind": "agent", "name": "Sign in with a browser"},
+                {"id": "terminal", "kind": "terminal", "name": "Sign in at a terminal",
+                 "command": "goose", "args": ["login"], "env": {}, "route": "piped"},
+            ]),
+        );
+        object.insert("sign_in_hosts".into(), json!(["accounts.vendor.example"]));
+    }
+    release
+}
+
+fn sign_in(instance: &str, method: &str) -> Result<Command, Failed> {
+    Ok(Command::SignInAgent {
+        instance: name(instance)?,
+        method: name(method)?,
+    })
+}
+
+/// The bytes of crucible's credential store in `bench`'s home, or nothing.
+fn credentials(bench: &Bench) -> String {
+    fs::read_to_string(bench.home.path().join("auth.json")).unwrap_or_default()
+}
+
+#[test]
+fn a_key_typed_for_a_method_is_kept_under_the_agent_and_method_and_adopted_without_being_shown()
+-> Result<(), Failed> {
+    let bench = Bench::new("agents-door-sign-in-key")?;
+    bench
+        .server
+        .catalog(1, &[signing_in("goose", ONE)], &json!([]))?;
+    bench.configure(&bench.program("1.0.0"), &json!({}))?;
+
+    let (before, _) = bench.ask(
+        sign_in("work", "api-key")?,
+        &mut answering(&bench.server, None),
+        false,
+    )?;
+    assert!(
+        matches!(&before, Err(AgentsError::Unstored { .. })),
+        "a sign-in by a key not yet typed was adopted"
+    );
+
+    let typed = Typed::new(format!("  {KEY}\n"));
+    assert!(
+        !format!("{typed:?}").contains(KEY),
+        "the typed key's Debug names it"
+    );
+    keep_key(&bench.home, "work", "api-key", typed)?;
+    let (adopted, _) = bench.ask(
+        sign_in("work", "api-key")?,
+        &mut answering(&bench.server, None),
+        false,
+    )?;
+
+    assert!(
+        matches!(
+            &adopted,
+            Ok(Outcome::Kept { instance, method })
+                if &**instance == "work" && &**method == "api-key"
+        ),
+        "the kept key was not found kept, or was claimed signed in with nothing started"
+    );
+    assert!(
+        credentials(&bench).contains("\"goose@api-key\""),
+        "the key is not kept under the agent's name and the method's id"
+    );
+    // Nothing said of it, done or refused, carries it.
+    let refused = [
+        keep_key(&bench.home, "work", "browser", Typed::new(KEY.to_owned())),
+        keep_key(&bench.home, "work", "none", Typed::new(KEY.to_owned())),
+        keep_key(&bench.home, "else", "api-key", Typed::new(KEY.to_owned())),
+        keep_key(
+            &bench.home,
+            "work",
+            "api-key",
+            Typed::new("short".to_owned()),
+        ),
+        keep_key(
+            &bench.home,
+            "work",
+            "api-key",
+            Typed::new(format!("{KEY} {KEY}")),
+        ),
+    ];
+    for refusal in &refused {
+        let Err(why) = refusal else {
+            return Err("a key was kept where it should have been refused".into());
+        };
+        assert!(
+            !why.to_string().contains(KEY) && !format!("{why:?}").contains(KEY),
+            "a refusal carried the key"
+        );
+    }
+    assert!(
+        !format!("{adopted:?}").contains(KEY),
+        "the outcome carried the key"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_catalog_agent_named_as_a_provider_keeps_no_key_and_the_provider_s_key_survives()
+-> Result<(), Failed> {
+    let bench = Bench::new("agents-door-sign-in-provider")?;
+    bench
+        .server
+        .catalog(1, &[signing_in("openai", ONE)], &json!([]))?;
+    let document = json!({"externalAgents": {"work": {
+        "driver": "catalog",
+        "agent": "openai",
+        "executable": bench.program("1.0.0").to_string_lossy(),
+    }}});
+    fs::write(bench.user(), serde_json::to_vec_pretty(&document)?)?;
+    let store = crucible_auth::Store::in_home(bench.home.path())
+        .naming(crucible_app::providers::Rows::production().names());
+    store.keep("openai", "fake-provider-key-for-openai")?;
+
+    // Asked first, so the catalog is fetched and offers the agent.
+    let (adopted, _) = bench.ask(
+        sign_in("work", "api-key")?,
+        &mut answering(&bench.server, None),
+        false,
+    )?;
+    let kept = keep_key(&bench.home, "work", "api-key", Typed::new(KEY.to_owned()));
+
+    assert!(
+        matches!(kept, Err(AgentsError::Unnamed(_))),
+        "a key was kept under a provider's name"
+    );
+    assert!(
+        matches!(adopted, Err(AgentsError::Unnamed(_))),
+        "a provider's name was read as an agent's key"
+    );
+    assert!(
+        store.read().has_key("openai"),
+        "the provider's key was taken out"
+    );
+    assert!(
+        !credentials(&bench).contains("openai@"),
+        "an agent's key joined the provider's"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_method_the_agent_carries_out_needs_a_conversation_and_one_not_offered_is_refused()
+-> Result<(), Failed> {
+    let bench = Bench::new("agents-door-sign-in-refused")?;
+    bench
+        .server
+        .catalog(1, &[signing_in("goose", ONE)], &json!([]))?;
+    bench.configure(&bench.program("1.0.0"), &json!({}))?;
+
+    let mut outcomes = Vec::new();
+    for (instance, method) in [
+        ("work", "browser"),
+        ("work", "terminal"),
+        ("work", "unknown"),
+        ("else", "browser"),
+    ] {
+        let (outcome, _) = bench.ask(
+            sign_in(instance, method)?,
+            &mut answering(&bench.server, None),
+            false,
+        )?;
+        outcomes.push(outcome);
+    }
+
+    let [browser, terminal, unknown, unconfigured] = outcomes.as_slice() else {
+        return Err("four outcomes".into());
+    };
+    assert!(
+        matches!(browser, Err(AgentsError::Conversation(method)) if method.contains("browser")),
+        "{}",
+        shape(browser)
+    );
+    assert!(
+        matches!(terminal, Err(AgentsError::Unsupported(_))),
+        "{}",
+        shape(terminal)
+    );
+    assert!(
+        matches!(unknown, Err(AgentsError::NoMethod { .. })),
+        "{}",
+        shape(unknown)
+    );
+    assert!(
+        matches!(unconfigured, Ok(Outcome::Refused(refusal)) if refusal.code() == ErrorCode::InvalidArgument),
+        "{}",
+        shape(unconfigured)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_method_the_agent_carries_out_is_asked_for_by_name_once_its_route_has_a_yes()
+-> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-sign-in-agent")?;
+    let release = signing_in("goose", ONE);
+    bench
+        .server
+        .catalog(1, std::slice::from_ref(&release), &json!([]))?;
+    let made = Tree::new("agents-door-sign-in-agent-peer")?;
+    let program = fake_peer::install(
+        &made.0,
+        "goose",
+        &Peer::once(
+            Played::new()
+                .hear(1)
+                .say(acp::initialized("goose", "1.0.0", "browser"))
+                .hear(1)
+                .say(acp::response(1, &json!({})))
+                .hear(1)
+                .say(acp::opened(2)),
+        ),
+    )?;
+    bench.configure(&program, &json!({}))?;
+
+    let unasked = bench.ask_smoking(
+        (
+            sign_in("work", "browser")?,
+            &mut answering(&bench.server, None),
+        ),
+        (false, false),
+        &release,
+        &runtime,
+    )?;
+    assert!(
+        matches!(unasked, Ok(Outcome::Undecided)),
+        "{}",
+        shape(&unasked)
+    );
+    assert!(
+        fake_peer::heard(&made.0).is_empty(),
+        "the agent was started before its route had a yes"
+    );
+
+    let signed = bench.ask_smoking(
+        (
+            sign_in("work", "browser")?,
+            &mut answering(&bench.server, None),
+        ),
+        (false, true),
+        &release,
+        &runtime,
+    )?;
+
+    assert!(
+        matches!(&signed, Ok(Outcome::SignedIn { by: Signed::Agent, method, .. }) if &**method == "browser"),
+        "{}",
+        shape(&signed)
+    );
+    let heard = fake_peer::heard(&made.0).join("\n");
+    assert!(
+        heard.contains("\"authenticate\"") && heard.contains("\"methodId\":\"browser\""),
+        "{heard}"
+    );
+    assert!(
+        heard
+            .find("\"authenticate\"")
+            .zip(heard.find("session/new"))
+            .is_some_and(|(asked, opened)| asked < opened),
+        "the sign-in was not read by opening a session after it: {heard}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_sign_in_the_agent_says_took_is_unverified_where_no_session_opens_after_it()
+-> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-sign-in-unverified")?;
+    let release = signing_in("goose", ONE);
+    bench
+        .server
+        .catalog(1, std::slice::from_ref(&release), &json!([]))?;
+    let made = Tree::new("agents-door-sign-in-unverified-peer")?;
+    let program = fake_peer::install(
+        &made.0,
+        "goose",
+        &Peer::once(
+            Played::new()
+                .hear(1)
+                .say(acp::initialized("goose", "1.0.0", "browser"))
+                .hear(1)
+                .say(acp::response(1, &json!({})))
+                .hear(1)
+                .say(acp::sign_in_required(2)),
+        ),
+    )?;
+    bench.configure(&program, &json!({}))?;
+
+    let signed = bench.ask_smoking(
+        (
+            sign_in("work", "browser")?,
+            &mut answering(&bench.server, None),
+        ),
+        (false, true),
+        &release,
+        &runtime,
+    )?;
+
+    assert!(
+        matches!(&signed, Err(AgentsError::Unverified(_))),
+        "{}",
+        shape(&signed)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_kept_key_is_asked_for_by_its_method_where_a_conversation_lent_its_launcher()
+-> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-sign-in-kept")?;
+    let release = signing_in("goose", ONE);
+    bench
+        .server
+        .catalog(1, std::slice::from_ref(&release), &json!([]))?;
+    let made = Tree::new("agents-door-sign-in-kept-peer")?;
+    let program = fake_peer::install(
+        &made.0,
+        "goose",
+        &Peer::once(
+            Played::new()
+                .hear(1)
+                .say(acp::initialized("goose", "1.0.0", "api-key"))
+                .hear(1)
+                .say(acp::response(1, &json!({})))
+                .hear(1)
+                .say(acp::opened(2)),
+        ),
+    )?;
+    bench.configure(&program, &json!({}))?;
+    let ask = |yes: bool| {
+        bench.ask_smoking(
+            (
+                sign_in("work", "api-key")?,
+                &mut answering(&bench.server, None),
+            ),
+            (false, yes),
+            &release,
+            &runtime,
+        )
+    };
+
+    let unkept = ask(true)?;
+    keep_key(&bench.home, "work", "api-key", Typed::new(KEY.to_owned()))?;
+    let unasked = ask(false)?;
+    assert!(
+        matches!(&unkept, Err(AgentsError::Unstored { .. })),
+        "{}",
+        shape(&unkept)
+    );
+    assert!(
+        matches!(&unasked, Ok(Outcome::Undecided)),
+        "{}",
+        shape(&unasked)
+    );
+    assert!(
+        fake_peer::heard(&made.0).is_empty(),
+        "the agent was started before a key was kept and its route had a yes"
+    );
+
+    let signed = ask(true)?;
+
+    assert!(
+        matches!(
+            &signed,
+            Ok(Outcome::SignedIn { instance, method, by: Signed::Kept })
+                if &**instance == "work" && &**method == "api-key"
+        ),
+        "the kept key was not signed in by its method"
+    );
+    let heard = fake_peer::heard(&made.0).join("\n");
+    assert!(
+        heard.contains("\"authenticate\"")
+            && heard.contains("\"methodId\":\"api-key\"")
+            && heard.contains("session/new"),
+        "the agent was not asked to sign in by the kept key's method"
+    );
+    assert!(
+        !heard.contains(KEY) && !format!("{signed:?}").contains(KEY),
+        "the key was sent on the wire or carried by the outcome"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_sign_in_link_is_shown_only_on_a_listed_host_and_a_paste_only_with_its_state()
+-> Result<(), Failed> {
+    let row = row_of(&signing_in("goose", ONE))?;
+    let profile = row.profile();
+    let link = profile.link(
+        "https://accounts.vendor.example/authorize?client_id=c&redirect_uri=http%3A%2F%2F127.0.0.1%3A4000%2F&state=s3cret-state\r\n",
+    )?;
+    assert_eq!(link.state(), Some("s3cret-state"));
+    assert!(
+        link.as_str()
+            .starts_with("https://accounts.vendor.example/authorize?")
+    );
+    for (printed, why) in [
+        (
+            "https://accounts.other.example/authorize?state=s",
+            Unlinked::Unlisted,
+        ),
+        (
+            "https://accounts.vendor.example.other.example/?state=s",
+            Unlinked::Unlisted,
+        ),
+        (
+            "https://other.example/?next=https://accounts.vendor.example/",
+            Unlinked::Unlisted,
+        ),
+        (
+            "http://accounts.vendor.example/authorize?state=s",
+            Unlinked::Unsecured,
+        ),
+        (
+            "https://user@accounts.vendor.example/authorize?state=s",
+            Unlinked::User,
+        ),
+        (
+            "https://accounts.vendor.example:8443/authorize?state=s",
+            Unlinked::Port,
+        ),
+        ("https://127.0.0.1/authorize?state=s", Unlinked::Address),
+        (
+            "https://accounts.vendor.example/authorize?state=s#more",
+            Unlinked::Fragment,
+        ),
+        (
+            "https://accounts.vendor.example/authorize?state=a&state=b",
+            Unlinked::States,
+        ),
+        (
+            "https://accounts.vendor.example/authorize?state=s and more",
+            Unlinked::Unprintable,
+        ),
+    ] {
+        assert_eq!(profile.link(printed).err(), Some(why), "{printed}");
+    }
+
+    let code = "4/the-code-never-shown";
+    let pasted = |state: &str| format!("http://127.0.0.1:4000/?code={code}&state={state}");
+    let taken = Callback::checked(pasted("s3cret-state"), &link)?;
+    assert!(
+        !format!("{taken:?}").contains(code),
+        "the paste's Debug names it"
+    );
+    assert!(taken.sent().contains(code));
+    for (paste, why) in [
+        (pasted("another-state"), Uncalled::Mismatched),
+        (format!("?code={code}"), Uncalled::Stateless),
+        (
+            format!("?code={code}&state=s3cret-state&state=s3cret-state"),
+            Uncalled::Mismatched,
+        ),
+        ("?state=s3cret-state".to_owned(), Uncalled::Codeless),
+        (
+            format!("code={code}\u{1b}[2J&state=s3cret-state"),
+            Uncalled::Unreadable,
+        ),
+    ] {
+        let refused = Callback::checked(paste, &link);
+        let Err(refusal) = refused else {
+            return Err("a paste was taken where it should have been refused".into());
+        };
+        assert_eq!(refusal, why);
+        assert!(
+            !refusal.to_string().contains(code),
+            "a refusal carried the code"
+        );
+    }
+    let unstated = profile.link("https://accounts.vendor.example/authorize")?;
+    assert_eq!(
+        Callback::checked(format!("?code={code}&state=s"), &unstated).err(),
+        Some(Uncalled::Stateless)
+    );
+    Ok(())
+}
+
+/// The release of `signing_in`, showing sign-in links on any host under
+/// `vendor.example`.
+fn signing_in_under_a_wildcard() -> Value {
+    let mut release = signing_in("goose", ONE);
+    set(&mut release, "/sign_in_hosts", json!(["*.vendor.example"]));
+    release
+}
+
+/// A link's host is held to the letters a host name is spelled in before it
+/// is matched, so no character a browser reads differently from a resolver
+/// carries it past a wildcard.
+#[test]
+fn a_sign_in_link_host_is_spelled_as_a_host_name_before_it_is_matched() -> Result<(), Failed> {
+    let row = row_of(&signing_in_under_a_wildcard())?;
+    let profile = row.profile();
+    for printed in [
+        "https://login.vendor.example/authorize?state=s",
+        "https://LOGIN.Vendor.Example/authorize?state=s",
+        "https://deep.login.vendor.example:443/authorize?state=s",
+    ] {
+        assert_eq!(profile.link(printed)?.state(), Some("s"), "{printed}");
+    }
+    let misspelled = [
+        "https://evil.example\\.vendor.example/authorize?state=s",
+        "https://evil.example%5c.vendor.example/authorize?state=s",
+        "https://evil.example%5C.vendor.example/authorize?state=s",
+        "https://evil!.vendor.example/authorize?state=s",
+        "https://evil_host.vendor.example/authorize?state=s",
+    ];
+    let refused: Vec<(&str, Option<Unlinked>)> = misspelled
+        .iter()
+        .map(|printed| (*printed, profile.link(printed).err()))
+        .collect();
+    let expected: Vec<(&str, Option<Unlinked>)> = misspelled
+        .iter()
+        .map(|printed| (*printed, Some(Unlinked::Unnamed)))
+        .collect();
+    assert_eq!(refused, expected);
+    Ok(())
+}
+
+/// A link's `state`, and a paste's fields, are read only from after a `?`, so
+/// a path that looks like a query carries none.
+#[test]
+fn a_sign_in_state_is_read_only_from_a_query() -> Result<(), Failed> {
+    let row = row_of(&signing_in_under_a_wildcard())?;
+    let profile = row.profile();
+    let pathed = profile.link("https://login.vendor.example/a&state=s")?;
+    let link = profile.link("https://login.vendor.example/authorize?state=s3cret-state")?;
+    let code = "4/the-code-never-shown";
+    let unqueried = Callback::checked(format!("code={code}&state=s3cret-state"), &link).err();
+    assert_eq!(
+        (pathed.state(), unqueried),
+        (None, Some(Uncalled::Codeless))
+    );
+    Ok(())
+}
+
+#[test]
+fn sign_in_hosts_that_name_every_host_or_an_address_give_no_profile() -> Result<(), Failed> {
+    for (hosts, said) in [
+        (json!(["*"]), "sign_in_hosts[0] names every host"),
+        (
+            json!(["accounts.vendor.example", "*.example"]),
+            "sign_in_hosts[1] names every host",
+        ),
+        (json!(["127.0.0.1"]), "sign_in_hosts[0] is an address"),
+        (json!(["[::1]"]), "sign_in_hosts[0] is an address"),
+        (json!(["0x7f.1"]), "sign_in_hosts[0] is an address"),
+    ] {
+        let mut release = signing_in("goose", ONE);
+        set(&mut release, "/sign_in_hosts", hosts);
+        let refused = row_of(&release).err().ok_or("a profile with such hosts")?;
+        assert!(refused.to_string().contains(said), "{refused}");
+    }
+    Ok(())
+}
+
+#[test]
+fn antigravity_offers_its_four_methods_and_a_business_sign_in_names_what_it_needs()
+-> Result<(), Failed> {
+    let bench = Bench::new("agents-door-sign-in-antigravity")?;
+    bench.server.catalog(1, &[], &json!([]))?;
+    let profile = bench.home.path().join("agents").join("antigravity");
+    let document = json!({"externalAgents": {"google": {
+        "driver": "antigravity",
+        "executable": bench.program("1.0.0").to_string_lossy(),
+        "profileDir": profile.to_string_lossy(),
+    }}});
+    fs::write(bench.user(), serde_json::to_vec_pretty(&document)?)?;
+
+    let ask = |method: &str| -> Result<Result<Outcome, AgentsError>, Failed> {
+        Ok(bench
+            .ask(
+                sign_in("google", method)?,
+                &mut answering(&bench.server, None),
+                false,
+            )?
+            .0)
+    };
+    let business = ask("oauth-business")?;
+    let personal = ask("oauth-personal")?;
+    keep_key(
+        &bench.home,
+        "google",
+        "gemini-api-key",
+        Typed::new(KEY.to_owned()),
+    )?;
+    let gemini = ask("gemini-api-key")?;
+    let platform = ask("agent-platform")?;
+    let elsewhere = ask("application-default")?;
+
+    assert!(
+        matches!(&business, Err(AgentsError::Needs { .. })),
+        "{}",
+        shape(&business)
+    );
+    // The agent reads a business project and location only from its own
+    // settings, so the refusal names no variable it could be given them in.
+    let said = business
+        .err()
+        .map(|refused| refused.to_string())
+        .unwrap_or_default();
+    assert!(
+        said.contains(
+            "needs a Google Cloud project and location for Gemini Enterprise, which this version \
+             cannot yet give the agent"
+        ),
+        "the refusal does not say what a business sign-in needs"
+    );
+    assert!(!said.contains("GOOGLE_"), "the refusal names a variable");
+    assert!(
+        matches!(personal, Err(AgentsError::Conversation(_))),
+        "{}",
+        shape(&personal)
+    );
+    assert!(
+        matches!(gemini, Ok(Outcome::Kept { .. })),
+        "the Gemini key was not found kept, or was claimed signed in with nothing started"
+    );
+    assert!(
+        matches!(platform, Err(AgentsError::Unstored { .. })),
+        "{}",
+        shape(&platform)
+    );
+    assert!(
+        matches!(elsewhere, Err(AgentsError::NoMethod { .. })),
+        "{}",
+        shape(&elsewhere)
+    );
+    assert!(credentials(&bench).contains("\"antigravity@gemini-api-key\""));
+    Ok(())
+}
+
+/// A program that answers initializing as goose at a version spelled from
+/// the key it was given, so what it would say of the key is what is kept.
+#[cfg(unix)]
+const SAYING_THE_KEY: &[u8] = b"#!/bin/sh\nread line\nprintf '{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{\"protocolVersion\":1,\"agentInfo\":{\"name\":\"goose\",\"version\":\"k%s\"}}}\\n' \"$GOOSE_API_KEY\"\n";
+
+#[cfg(unix)]
+#[test]
+fn a_kept_key_is_given_at_launch_and_withheld_from_what_the_agent_says() -> Result<(), Failed> {
+    let bench = Bench::new("agents-door-sign-in-launch")?;
+    let mut release = signing_in("goose", SAYING_THE_KEY);
+    set(&mut release, "/targets/0/env", json!({}));
+    bench.server.serve(
+        &asset_path(SAYING_THE_KEY),
+        Reply::Body(SAYING_THE_KEY.to_vec()),
+    );
+    bench
+        .server
+        .catalog(1, std::slice::from_ref(&release), &json!([]))?;
+    bench.configure(&bench.program("1.0.0"), &json!({}))?;
+    let (installed, _) = bench.ask(
+        install("1.0.0")?,
+        &mut answering(&bench.server, Some("Install")),
+        false,
+    )?;
+    assert!(
+        matches!(installed, Ok(Outcome::Moved { .. })),
+        "{}",
+        shape(&installed)
+    );
+
+    let unkeyed = said_from_the_store(&bench, &release)?;
+    keep_key(&bench.home, "work", "api-key", Typed::new(KEY.to_owned()))?;
+    let keyed = said_from_the_store(&bench, &release)?;
+
+    // What the agent said, as it is kept, is compared without being printed.
+    assert!(
+        unkeyed == "k",
+        "the agent was given a key before one was kept"
+    );
+    assert!(
+        keyed == "k[withheld]",
+        "the kept key was not given, or was not withheld"
+    );
+    Ok(())
+}
+
+/// The version goose, installed for `work` in `bench` from `release`, says it
+/// is, as what it says is kept.
+#[cfg(unix)]
+fn said_from_the_store(bench: &Bench, release: &Value) -> Result<String, Failed> {
+    let row = row_of(release)?;
+    let consent = Consent::new(Routes::production().cataloging(row.warned().ok().cloned()));
+    consent.give("agent:goose");
+    let registry: &'static Registry = Box::leak(Box::new(
+        Registry::new(&[]).cataloging(Box::leak(Box::new([row]))),
+    ));
+    let key = AgentKey::new("goose")?;
+    let instance = ExternalAgent::unwritten(
+        "work",
+        Driver::Catalog,
+        &bench.program("1.0.0").to_string_lossy(),
+        None,
+        Some(&key),
+    )
+    .ok_or("a catalog instance naming its agent")?;
+    let agent = Agent::configured(&instance, registry, |_| None).ok_or("its catalog row")?;
+    let runtime = runtime()?;
+    let handle = runtime.handle().clone();
+    let policy = SandboxPolicy::standard(&bench.tree.workspace()?)?.with_enabled(false);
+    let sandbox: Arc<dyn SandboxService> =
+        Arc::new(LocalSandbox::new().watching_on(handle.clone()));
+    let state = catalog_fetch::state_in(bench.home.path());
+    let launcher = Launcher::new(sandbox, handle, &policy, &consent, &state);
+    let control = Control::new().ok_or("a control")?;
+    let mut dialect = agent.row().dialect(Mode::Ask, None, None)?;
+    let read = runtime.block_on(launcher.account(
+        &agent,
+        &control,
+        dialect.as_mut(),
+        Account::Version,
+        &|_| {},
+    ))?;
+    match read {
+        Reading::Version(version) => Ok(version.as_str().to_owned()),
+        _ => Err("the agent did not say its version".into()),
+    }
 }
