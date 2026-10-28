@@ -97,8 +97,15 @@
 //! none, it is refused saying a conversation is needed, and nothing is
 //! started. Either is answered signed in only where the agent, on the same
 //! start, then opens a session as a status step reads it; one it reads signed
-//! out, or cannot read, is unverified. A sign-in link the agent prints is told
-//! to [`Watching::link`] as the agent's wire passed it. A method run at a
+//! out, or cannot read, is unverified. Where a sign-in starts the agent it is
+//! refused if the instance, or any configured instance sharing its credential
+//! scope as a sign-out reads it, has a run that could not be confirmed
+//! stopped, since the agent's program would run beside it: the refusal names
+//! those instances, and comes before the route is asked, a setting is written
+//! or anything is started. The runs are known only to the conversation that
+//! made them, through the steps it lent, so a launcher lent with none is
+//! refused as no conversation. A sign-in link the agent prints is told to
+//! [`Watching::link`] as the agent's wire passed it. A method run at a
 //! terminal is refused here. A business sign-in to Antigravity is billed to
 //! the Google Cloud project and location its entry names: one whose entry
 //! names neither is refused naming both keys, and one whose location's host
@@ -131,11 +138,12 @@ use crucible_http::Origin;
 use crucible_runtime::Cancel;
 use crucible_types::AgentKey;
 
+use super::accounts;
 use super::deciding::{self, Confirmation, Front, Shown, mint, turned_away};
 use crate::agent_download::{self, DownloadError, Landing};
 use crate::backends::{AgentRow, CatalogRow, REGISTRY};
 use crate::catalog_fetch::{self, FetchError, Source, Trigger};
-use crate::launching::{self, Agent, Launcher, Unlaunched, Unsmoked, quoted};
+use crate::launching::{self, Agent, Launcher, Steps, Unlaunched, Unsmoked, quoted};
 use crate::providers::{Rows, Unnamed};
 use crate::remember::{self, RememberError};
 
@@ -157,6 +165,9 @@ pub struct Shelf<'a> {
     /// The launcher of the conversation asking, where there is one, which a
     /// switch is smoke-tested through.
     pub smoke: Option<&'a Launcher<'a>>,
+    /// The steps of the conversation asking, where there is one, which know
+    /// the runs it has made of each configured instance.
+    pub steps: Option<&'a Steps>,
 }
 
 /// Where an install says how far it has got, and how it is cancelled, and
@@ -432,7 +443,8 @@ pub enum AgentsError {
          of the host it is reached at, so the agent could not reach it and nothing was started"
     )]
     Unlocated(Box<str>),
-    /// The method starts the agent, and no conversation lent a launcher.
+    /// The method starts the agent, and no conversation lent a launcher with
+    /// the steps that know its runs.
     #[error(
         "signing in by {0} starts the agent, which needs a conversation to start it in; \
          nothing was started"
@@ -474,6 +486,14 @@ pub enum AgentsError {
     /// The agent did not read as signed in afterwards.
     #[error("the agent did not read as signed in afterwards: {}", .0.reason().as_str())]
     Unverified(Failure),
+    /// A sign-in that starts the agent, and an instance on its profile has a
+    /// run that could not be confirmed stopped.
+    #[error(
+        "run not confirmed stopped: {}. {}",
+        .0.join(", "),
+        crucible_external_harnesses::Refusal::Unstopped
+    )]
+    Unstopped(Vec<Box<str>>),
 }
 
 /// Carries out `request` where it is one of the agent catalog's commands,
@@ -1293,6 +1313,25 @@ impl Door<'_> {
                 (launcher, Signed::Agent, billed)
             }
         };
+        // The agent's program is started beside any run of an instance on its
+        // profile, so none may be one that could not be confirmed stopped, and
+        // what runs there are is known only to the conversation that made them.
+        let steps = self
+            .shelf
+            .steps
+            .ok_or_else(|| AgentsError::Conversation(quoted(&found.id).into()))?;
+        let sharing: Vec<ExternalAgent> = self
+            .instances
+            .iter()
+            .filter(|other| accounts::scope(other) == accounts::scope(configured))
+            .cloned()
+            .collect();
+        let held = steps.unstopped(&sharing);
+        if !held.is_empty() {
+            return Err(AgentsError::Unstopped(
+                held.into_iter().map(Into::into).collect(),
+            ));
+        }
         let started = Agent::of_row(configured, row, |name| std::env::var_os(name));
         // Its settings are written once the route has its yes, just before
         // the agent is started.

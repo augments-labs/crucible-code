@@ -35,7 +35,7 @@ use crucible_app::client::{
     perform,
 };
 use crucible_app::content_use::Warned;
-use crucible_app::launching::Launcher;
+use crucible_app::launching::{Launcher, Steps};
 use crucible_app::providers::Providers;
 use crucible_client_api::{
     Capabilities, Command, Correlation, Decision, Name, Outcome, Pending, Refusal, Request, Said,
@@ -455,19 +455,23 @@ impl Terms {
 /// What the agents door is lent by every front end that asks it, for crucible's
 /// `home`: the catalog where it is published, under the keys compiled into
 /// this build and through the hosts it is served from, with the proxy settings
-/// this process was started with, and `smoke`, the launcher of the
-/// conversation asking, where there is one.
+/// this process was started with, and `smoke` and `steps`, the launcher and
+/// the steps of the conversation asking, where there is one. Both are lent
+/// together: a sign-in that starts the agent is refused beside a launcher with
+/// no steps, since the runs beside it would not be known.
 // Waits for its first caller, the `/login` rows or the `crucible agents`
 // subcommands, which removes this allow.
 #[allow(dead_code)]
 pub(crate) fn shelf<'a>(
     home: &'a crucible_config::Home,
     smoke: Option<&'a Launcher<'a>>,
+    steps: Option<&'a Steps>,
 ) -> Shelf<'a> {
     Shelf {
         catalog: Source::published(&|name| std::env::var(name).ok()),
         home,
         smoke,
+        steps,
     }
 }
 
