@@ -100,11 +100,19 @@
 //! out, or cannot read, is unverified. Where a sign-in starts the agent it is
 //! refused if the instance, or any configured instance sharing its credential
 //! scope as a sign-out reads it, has a run that could not be confirmed
-//! stopped, since the agent's program would run beside it: the refusal names
-//! those instances, and comes before the route is asked, a setting is written
-//! or anything is started. The runs are known only to the conversation that
-//! made them, through the steps it lent, so a launcher lent with none is
-//! refused as no conversation. A sign-in link the agent prints is told to
+//! stopped, or else a run live, since the agent's program would run beside it:
+//! the refusal names those instances, says that their runs must end first, as
+//! disconnecting an instance ends its run, and comes before the route is
+//! asked, a setting is written or anything is started. Nothing is ended to
+//! make room: the refusal is not a disconnect. Both are asked again once the
+//! route has its yes, just before the agent is started, so a run that began or
+//! failed to stop while it was asked is not started beside. The agent is
+//! started on the instance's own control, so a second sign-in of it beside the
+//! first is refused as busy, and one whose stop could not be confirmed leaves
+//! the instance, and every instance on its profile, refused as a run not
+//! confirmed stopped is. The runs are known only to the conversation that made
+//! them, through the steps it lent, so a launcher lent with none is refused as
+//! no conversation. A sign-in link the agent prints is told to
 //! [`Watching::link`] as the agent's wire passed it. A method run at a
 //! terminal is refused here. A business sign-in to Antigravity is billed to
 //! the Google Cloud project and location its entry names: one whose entry
@@ -133,7 +141,7 @@ use crucible_external_harnesses::release::{RELEASE_BYTES, UnpackError, Unpacker}
 use crucible_external_harnesses::store::{
     Listing, Mismatch, Provenance, Receipt, Store, StoreError, Version,
 };
-use crucible_external_harnesses::{Account, Control, Reading, WITHHELD_BYTES, antigravity};
+use crucible_external_harnesses::{Account, Reading, WITHHELD_BYTES, antigravity};
 use crucible_http::Origin;
 use crucible_runtime::Cancel;
 use crucible_types::AgentKey;
@@ -494,6 +502,15 @@ pub enum AgentsError {
         crucible_external_harnesses::Refusal::Unstopped
     )]
     Unstopped(Vec<Box<str>>),
+    /// A sign-in that starts the agent, and an instance on its profile has a
+    /// live run, beside which the agent's program would run. A run that could
+    /// not be confirmed stopped is [`AgentsError::Unstopped`] instead.
+    #[error(
+        "live run: {}. The runs of these instances must end first, as disconnecting an \
+         instance ends its run; nothing was started",
+        .0.join(", ")
+    )]
+    Running(Vec<Box<str>>),
 }
 
 /// Carries out `request` where it is one of the agent catalog's commands,
@@ -1314,8 +1331,9 @@ impl Door<'_> {
             }
         };
         // The agent's program is started beside any run of an instance on its
-        // profile, so none may be one that could not be confirmed stopped, and
-        // what runs there are is known only to the conversation that made them.
+        // profile, so none may be one that could not be confirmed stopped or
+        // one live, and what runs there are is known only to the conversation
+        // that made them.
         let steps = self
             .shelf
             .steps
@@ -1326,12 +1344,7 @@ impl Door<'_> {
             .filter(|other| accounts::scope(other) == accounts::scope(configured))
             .cloned()
             .collect();
-        let held = steps.unstopped(&sharing);
-        if !held.is_empty() {
-            return Err(AgentsError::Unstopped(
-                held.into_iter().map(Into::into).collect(),
-            ));
-        }
+        beside(steps, &sharing)?;
         let started = Agent::of_row(configured, row, |name| std::env::var_os(name));
         // Its settings are written once the route has its yes, just before
         // the agent is started.
@@ -1371,7 +1384,14 @@ impl Door<'_> {
                 "an agent whose wire signs in by no method named",
             ));
         }
-        let control = Control::new().ok_or_else(|| {
+        // The route was asked, and a run may have begun, or failed to stop,
+        // while it was.
+        beside(steps, &sharing)?;
+        // The agent's program is started on the instance's own control, so a
+        // run of the instance is refused beside it, and it beside one, and a
+        // stop that cannot be confirmed leaves the instance, and so every
+        // instance on its profile, refused as a run not confirmed stopped is.
+        let control = steps.control(configured.name()).ok_or_else(|| {
             AgentsError::Unverified(Failure::new("no control for the agent's program"))
         })?;
         // The start is given every key kept for the agent, so a kept key's
@@ -1401,6 +1421,32 @@ impl Door<'_> {
         }
         Ok(Outcome::Verified { agent, versions })
     }
+}
+
+/// Whether the agent's program may be started beside the runs of `sharing`, the
+/// configured instances on one profile, as `steps` knows them: none may have a
+/// run that could not be confirmed stopped, which is named first since such a
+/// run also holds its control, and then none a run live. Nothing is stopped,
+/// disconnected or interrupted to make it so.
+///
+/// # Errors
+///
+/// [`AgentsError::Unstopped`] or [`AgentsError::Running`] naming those
+/// instances.
+fn beside(steps: &Steps, sharing: &[ExternalAgent]) -> Result<(), AgentsError> {
+    let held = steps.unstopped(sharing);
+    if !held.is_empty() {
+        return Err(AgentsError::Unstopped(
+            held.into_iter().map(Into::into).collect(),
+        ));
+    }
+    let live = steps.running(sharing);
+    if !live.is_empty() {
+        return Err(AgentsError::Running(
+            live.into_iter().map(Into::into).collect(),
+        ));
+    }
+    Ok(())
 }
 
 /// Keeps `key`, typed on this machine, for the configured `instance` to sign

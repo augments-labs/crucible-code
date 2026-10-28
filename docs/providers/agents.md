@@ -357,9 +357,11 @@ neither key is refused naming both, and one whose location is too long to make
 the name of its host is refused naming `cloudLocation`, each before anything
 is asked, written or started. So is any sign-in that starts the agent where a
 run of an instance on its profile could not be confirmed to have stopped, as a
-sign-out is: crucible names the instances and says to restart crucible. A
-business sign-in read as signed in means the agent then opened a session, not
-that the project holds a licence for it.
+sign-out is: crucible names the instances and says to restart crucible. So is
+one where a run of an instance on its profile is still live: crucible names the
+instances and says their runs must end first, as a disconnect ends them, and
+it ends none itself. A business sign-in read as signed in means the agent then
+opened a session, not that the project holds a licence for it.
 
 **Its session.** Each time the agent is started again, after a failed turn, a
 change of mode or `/resume`, it is asked to resume the session it last named.
