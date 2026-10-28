@@ -14,11 +14,11 @@
 //! through `authenticate`, by the method's id, since that is the only way it
 //! learns which to use: a key's method is asked for with the key already in
 //! its environment. A business sign-in also needs the Google Cloud project
-//! and location it is billed to ([`needs`]), which the agent reads only from
-//! its own settings file and from no variable; nothing writes that file yet,
-//! so the sign-in is refused saying so. The machine's own application default
-//! credentials are not offered: they would carry the host's cloud sign-in
-//! into the sandbox.
+//! and location it is billed to, which the agent reads only from its own
+//! settings file and from no variable, so that file is written in the profile
+//! ([`business`](super::business)) before the agent is started for it. The
+//! machine's own application default credentials are not offered: they would
+//! carry the host's cloud sign-in into the sandbox.
 //!
 //! Each operation ends in a sentence that claims no more than its steps
 //! established: a sign-in is verified by a status step after it on the same

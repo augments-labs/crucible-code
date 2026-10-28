@@ -32,6 +32,7 @@ pub use account::{
     AGENT_PLATFORM, Ended, GEMINI_API_KEY, OAUTH_BUSINESS, OAUTH_PERSONAL, methods, needs,
 };
 pub use manifest::Manifest;
+pub use profile::business;
 
 use crucible_execution::{Authentication, Decision, Failure, TurnRequest};
 use crucible_types::AgentKey;
