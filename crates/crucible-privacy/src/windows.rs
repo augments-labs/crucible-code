@@ -278,10 +278,12 @@ pub(super) fn replace_in(
     draft: &OsStr,
     contents: &[u8],
 ) -> io::Result<()> {
-    // Windows creates a file only by name, so the directory is held instead:
-    // its handle withholds the delete sharing that renaming or removing the
-    // directory needs, so while it is open the name cannot be moved, removed
-    // or put back as a link, and the names below reach what this open did.
+    // The draft is created by name, since this crate has no create relative
+    // to a handle on Windows, so the directory is held instead: its handle
+    // withholds the delete sharing that renaming or removing the directory
+    // needs, so while it is open its name cannot be moved or removed. While
+    // it is empty it can still be turned into a junction, which the check
+    // after the draft is created answers.
     let held = held(directory)?;
     narrow_open(&held, OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE)?;
     // A reparse point made at `name` after this is a directory entry the
@@ -297,9 +299,11 @@ pub(super) fn replace_in(
     let mut written = Draft::create(&directory.join(draft))?;
 
     // Setting a reparse point needs no share right, so an empty directory can
-    // still become a junction while held. The draft is proved by its handle to
-    // be a child of the held directory before a byte is written; once it is,
-    // the directory is not empty and cannot become one.
+    // still become a junction while held, and the draft is then created,
+    // empty, where the junction leads. The draft is proved by its handle to be
+    // a child of the held directory before a byte is written; one that is not
+    // is refused and removed through its handle as it drops. Once a draft is
+    // in place, the directory is not empty and cannot become a junction.
     if final_path(&written.file)? != final_path(&held)?.join(draft) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,

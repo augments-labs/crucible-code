@@ -85,10 +85,14 @@ const SETTINGS: &str = "settings.json";
 ///
 /// The write follows no link and leaves the profile at neither name: a link
 /// at the settings directory or at the file refuses it before anything is
-/// written. The directory is opened once, as itself, and the file is drafted
+/// written. The directory is opened once, as itself, and the file is written
 /// and renamed within what that open holds, so a name changed meanwhile
 /// cannot send the write to another directory, and a link made at the file's
-/// name since is replaced rather than written through.
+/// name since is replaced rather than written through. On Windows the draft
+/// is created by name first and shown to be in that directory before a byte
+/// is written, so a settings directory still empty that is turned into a
+/// junction meanwhile gets an empty draft where the junction leads, removed
+/// with nothing written and the sign-in refused.
 ///
 /// # Errors
 ///

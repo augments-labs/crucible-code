@@ -17,9 +17,14 @@
 //! than protect it.
 //!
 //! [`replace_in`] is the one write that holds its directory: the directory is
-//! opened once, as itself, and the file is drafted and renamed into what that
-//! open holds, so neither a link at either name nor a name changed while it
-//! runs can send the write to another directory.
+//! opened once, as itself, and the file is written and renamed only within
+//! what that open holds, so neither a link at either name nor a name changed
+//! while it runs can send what is written to another directory. On Unix every
+//! step after the open is taken through it. On Windows the draft is created by
+//! name and shown by its handle to be in the held directory before any byte is
+//! written: a held directory that is still empty can be turned into a
+//! junction, and then an empty draft is made where the junction leads and
+//! removed, with nothing written.
 
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
@@ -250,10 +255,17 @@ pub fn replace(source: &Path, destination: &Path) -> Result<(), PrivacyError> {
 /// [`directory`] does.
 ///
 /// The directory is opened once, as itself, and held: a link or anything but
-/// a directory at its name is refused, and every later step is taken in the
-/// directory that open holds, so a name changed meanwhile cannot send the
-/// write to another directory. A link at `name` is refused before anything is
-/// written, and one made there afterwards is replaced rather than followed.
+/// a directory at its name is refused, and the contents are written and
+/// renamed only within the directory that open holds, so a name changed
+/// meanwhile cannot send them to another directory. On Unix every later step
+/// is taken through that open. On Windows the draft is created by name and
+/// shown by its handle to be in the held directory before any byte is
+/// written: a held directory that is still empty can be turned into a
+/// junction, and then an empty draft is made where the junction leads and
+/// removed, and the write is refused with nothing written there. A link at
+/// `name`, looked at through the open on Unix and by name on Windows, is
+/// refused before anything is written, and one made there afterwards is
+/// replaced rather than followed.
 /// The contents are written to an owner-only draft beside `name`, under a name
 /// nothing outside this process can predict, synced and renamed over `name`;
 /// the draft is removed on any failure once it exists. On Unix the rename is
