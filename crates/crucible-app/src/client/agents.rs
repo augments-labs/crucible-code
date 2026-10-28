@@ -99,9 +99,12 @@
 //! start, then opens a session as a status step reads it; one it reads signed
 //! out, or cannot read, is unverified. A sign-in link the agent prints is told
 //! to [`Watching::link`] as the agent's wire passed it. A method run at a
-//! terminal is refused here, and a business sign-in to Antigravity is refused
-//! saying it needs a Google Cloud project and location, which this version
-//! cannot yet give the agent.
+//! terminal is refused here. A business sign-in to Antigravity is billed to
+//! the Google Cloud project and location its entry names: one whose entry
+//! names neither is refused naming both keys, and one whose location's host
+//! no sandbox policy can name is refused naming that key, each before anything
+//! is asked, written or started; otherwise the two are written in the agent's
+//! profile once its route has its yes, just before it starts.
 
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
@@ -113,7 +116,7 @@ use crucible_client_api::{
     Capability, Choice, Command, Decision, ErrorCode, InstallProgress, Name, Pending, Refusal,
     Request, Text,
 };
-use crucible_config::{AgentUpdate, ConfigError, Driver, ExternalAgent, Home, Settings};
+use crucible_config::{AgentUpdate, Cloud, ConfigError, Driver, ExternalAgent, Home, Settings};
 use crucible_execution::{Authentication, Failure};
 use crucible_external_harnesses::catalog::{
     AuthMethod, Entry, File, FileKind, Files, Kind, Launch, Method, Offer, Target, Trust,
@@ -132,7 +135,7 @@ use super::deciding::{self, Confirmation, Front, Shown, mint, turned_away};
 use crate::agent_download::{self, DownloadError, Landing};
 use crate::backends::{AgentRow, CatalogRow, REGISTRY};
 use crate::catalog_fetch::{self, FetchError, Source, Trigger};
-use crate::launching::{Agent, Launcher, Unlaunched, Unsmoked, quoted};
+use crate::launching::{self, Agent, Launcher, Unlaunched, Unsmoked, quoted};
 use crate::providers::{Rows, Unnamed};
 use crate::remember::{self, RememberError};
 
@@ -409,17 +412,26 @@ pub enum AgentsError {
         /// The method asked for, quoted.
         method: Box<str>,
     },
-    /// The method needs what this version cannot yet give the agent.
+    /// A business sign-in, and the instance's entry names no Google Cloud
+    /// project and location to bill it to.
     #[error(
-        "signing in by {method} needs {needed}, which this version cannot yet give the agent, \
-         so nothing was started"
+        "signing in by {method} needs the Google Cloud project and location it is billed to; \
+         set externalAgents.{instance}.cloudProject and externalAgents.{instance}.cloudLocation \
+         in the configuration file in your home directory, so nothing was started"
     )]
-    Needs {
-        /// The method.
+    Unclouded {
+        /// The method, quoted.
         method: Box<str>,
-        /// What it needs, in words.
-        needed: &'static str,
+        /// The instance.
+        instance: Box<str>,
     },
+    /// A business sign-in whose entry's location names no host the agent
+    /// could be let reach.
+    #[error(
+        "externalAgents.{0}.cloudLocation names a Google Cloud location too long for the name \
+         of the host it is reached at, so the agent could not reach it and nothing was started"
+    )]
+    Unlocated(Box<str>),
     /// The method starts the agent, and no conversation lent a launcher.
     #[error(
         "signing in by {0} starts the agent, which needs a conversation to start it in; \
@@ -1234,7 +1246,7 @@ impl Door<'_> {
                 by,
             })
         };
-        let (launcher, by) = match &found.method {
+        let (launcher, by, billed) = match &found.method {
             Method::EnvVar { .. } => {
                 let rows = Rows::production();
                 let name = rows.signing_in(&agent, &found.id)?;
@@ -1256,7 +1268,7 @@ impl Door<'_> {
                         method: found.id.clone(),
                     });
                 };
-                (launcher, Signed::Kept)
+                (launcher, Signed::Kept, None)
             }
             Method::Terminal { .. } => {
                 return Err(AgentsError::Unsupported(
@@ -1265,26 +1277,29 @@ impl Door<'_> {
                 ));
             }
             Method::Agent => {
-                let needs = match &row {
-                    AgentRow::Built(built) if built.driver == Driver::Antigravity => {
-                        antigravity::needs(&found.id)
+                let billed = match &row {
+                    AgentRow::Built(built)
+                        if built.driver == Driver::Antigravity
+                            && &*found.id == antigravity::OAUTH_BUSINESS =>
+                    {
+                        Some(billed(configured, instance, &found.id)?)
                     }
                     AgentRow::Built(_) | AgentRow::Catalog(_) => None,
                 };
-                if let Some(needed) = needs {
-                    return Err(AgentsError::Needs {
-                        method: quoted(&found.id).into(),
-                        needed,
-                    });
-                }
                 let launcher = self
                     .shelf
                     .smoke
                     .ok_or_else(|| AgentsError::Conversation(quoted(&found.id).into()))?;
-                (launcher, Signed::Agent)
+                (launcher, Signed::Agent, billed)
             }
         };
         let started = Agent::of_row(configured, row, |name| std::env::var_os(name));
+        // Its settings are written once the route has its yes, just before
+        // the agent is started.
+        let started = match billed {
+            Some(cloud) => started.billed_to(cloud),
+            None => started,
+        };
         if let Some(refused) = launcher.refusal(&started) {
             return Err(refused.into());
         }
@@ -1389,6 +1404,26 @@ pub fn keep_key(home: &Home, instance: &str, method: &str, key: Typed) -> Result
         .naming(rows.names())
         .keep(&name, typed)?;
     Ok(())
+}
+
+/// The Google Cloud project and location the configured `instance`, named
+/// `name`, bills a business sign-in by `method` to, where its entry names
+/// both and the location names a host its agent can be let reach.
+///
+/// # Errors
+///
+/// [`AgentsError::Unclouded`] where the entry names neither, and
+/// [`AgentsError::Unlocated`] where the location's host is not one a sandbox
+/// policy can name.
+fn billed(instance: &ExternalAgent, name: &str, method: &str) -> Result<Cloud, AgentsError> {
+    let cloud = instance.cloud().ok_or_else(|| AgentsError::Unclouded {
+        method: quoted(method).into(),
+        instance: name.into(),
+    })?;
+    if launching::located(cloud.location()).is_err() {
+        return Err(AgentsError::Unlocated(name.into()));
+    }
+    Ok(cloud.clone())
 }
 
 /// The row the configured `instance` runs as, its agent's name, and the

@@ -425,6 +425,7 @@ fn an_agent_access_resolves_to_its_instance_as_written() {
                 profile: None,
                 model: None,
                 effort: None,
+                location: None,
                 enabled,
             }
         );

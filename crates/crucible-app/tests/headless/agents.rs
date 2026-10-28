@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use crucible_app::agent_download::DownloadError;
-use crucible_app::backends::{AgentRow, CatalogRow, Registry};
+use crucible_app::backends::{AgentRow, CatalogRow, REGISTRY, Registry};
 use crucible_app::catalog_fetch::{self, Source};
 use crucible_app::client::agents::{
     AgentsError, How, Outcome, Shelf, Signed, Typed, Watching, keep_key, run,
@@ -47,7 +47,9 @@ use crucible_external_harnesses::{Account, Control, Reading};
 use crucible_http::ProxyEnv;
 use crucible_runtime::{BoxFuture, Cancel};
 use crucible_sandbox::{
-    SandboxCapability, SandboxEnablement, SandboxFeature, SandboxPolicy, SandboxService,
+    SandboxBackendIdentity, SandboxCapabilities, SandboxCapability, SandboxEnablement,
+    SandboxError, SandboxFeature, SandboxNetworkPolicy, SandboxPolicy, SandboxRequest,
+    SandboxService, SandboxSession,
 };
 use crucible_sandbox_local::LocalSandbox;
 use crucible_tools::Mode;
@@ -511,7 +513,8 @@ const fn shape(outcome: &Result<Outcome, AgentsError>) -> &'static str {
         Err(AgentsError::NoInstance(_)) => "Err(NoInstance)",
         Err(AgentsError::Unsigned(_)) => "Err(Unsigned)",
         Err(AgentsError::NoMethod { .. }) => "Err(NoMethod)",
-        Err(AgentsError::Needs { .. }) => "Err(Needs)",
+        Err(AgentsError::Unclouded { .. }) => "Err(Unclouded)",
+        Err(AgentsError::Unlocated(_)) => "Err(Unlocated)",
         Err(AgentsError::Conversation(_)) => "Err(Conversation)",
         Err(AgentsError::Unnamed(_)) => "Err(Unnamed)",
         Err(AgentsError::Unstored { .. }) => "Err(Unstored)",
@@ -3008,24 +3011,31 @@ fn antigravity_offers_its_four_methods_and_a_business_sign_in_names_what_it_need
     let elsewhere = ask("application-default")?;
 
     assert!(
-        matches!(&business, Err(AgentsError::Needs { .. })),
+        matches!(&business, Err(AgentsError::Unclouded { .. })),
         "{}",
         shape(&business)
     );
     // The agent reads a business project and location only from its own
-    // settings, so the refusal names no variable it could be given them in.
+    // settings, so the refusal names the keys crucible writes them from and
+    // no variable it could be given them in.
     let said = business
         .err()
         .map(|refused| refused.to_string())
         .unwrap_or_default();
-    assert!(
-        said.contains(
-            "needs a Google Cloud project and location for Gemini Enterprise, which this version \
-             cannot yet give the agent"
-        ),
-        "the refusal does not say what a business sign-in needs"
-    );
+    for key in [
+        "externalAgents.google.cloudProject",
+        "externalAgents.google.cloudLocation",
+    ] {
+        assert!(
+            said.contains(key),
+            "the refusal does not name a key a business sign-in needs"
+        );
+    }
     assert!(!said.contains("GOOGLE_"), "the refusal names a variable");
+    assert!(
+        !profile.join("antigravity-acp").exists(),
+        "the agent's settings were written for a refused sign-in"
+    );
     assert!(
         matches!(personal, Err(AgentsError::Conversation(_))),
         "{}",
@@ -3046,6 +3056,403 @@ fn antigravity_offers_its_four_methods_and_a_business_sign_in_names_what_it_need
         shape(&elsewhere)
     );
     assert!(credentials(&bench).contains("\"antigravity@gemini-api-key\""));
+    Ok(())
+}
+
+/// The fake Antigravity installed in `directory`, answering as the release
+/// the snapshot reviewed with the four methods it signs in by, signing in by
+/// a business account when asked and opening a session after it.
+fn business_peer(directory: &Path) -> Result<PathBuf, Failed> {
+    let shipped = SNAPSHOT
+        .entries()
+        .iter()
+        .find(|entry| entry.key.as_str() == "antigravity")
+        .ok_or("the snapshot reviews Antigravity")?;
+    let methods: Vec<Value> = [
+        "oauth-personal",
+        "oauth-business",
+        "gemini-api-key",
+        "agent-platform",
+    ]
+    .into_iter()
+    .map(|id| json!({"id": id, "name": id}))
+    .collect();
+    let initialized = acp::response(
+        0,
+        &json!({
+            "protocolVersion": 1,
+            "agentInfo": {"name": &*shipped.admits.name, "version": &*shipped.admits.version},
+            "agentCapabilities": {
+                "loadSession": true,
+                "sessionCapabilities": {"resume": {}},
+                "auth": {"logout": {}},
+            },
+            "authMethods": methods,
+        }),
+    );
+    Ok(fake_peer::install(
+        directory,
+        "antigravity",
+        &Peer::once(
+            Played::new()
+                .hear(1)
+                .say(initialized)
+                .hear(1)
+                .say(acp::response(1, &json!({})))
+                .hear(1)
+                .say(acp::opened(2)),
+        ),
+    )?)
+}
+
+/// What a start's sandbox was asked for: the network its policy grants, and
+/// the bytes of the agent's settings in its profile at that moment.
+type Prepared = (SandboxNetworkPolicy, Option<Vec<u8>>);
+
+/// A sandbox that keeps what each start asked of it, then refuses it where
+/// `refusing`, and otherwise runs it as the local sandbox does.
+struct Recording {
+    local: Arc<dyn SandboxService>,
+    settings: PathBuf,
+    refusing: bool,
+    prepared: Arc<Mutex<Vec<Prepared>>>,
+}
+
+impl SandboxService for Recording {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        self.local.probe()
+    }
+
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            if let Ok(mut prepared) = self.prepared.lock() {
+                prepared.push((
+                    request.policy().network().clone(),
+                    fs::read(&self.settings).ok(),
+                ));
+            }
+            if self.refusing {
+                return Err(SandboxError::BackendUnavailable {
+                    reason: "this sandbox only records what it is asked".into(),
+                });
+            }
+            self.local.prepare(request).await
+        })
+    }
+}
+
+/// The settings a business sign-in billed to `my-project-id` in `us-central1`
+/// gives the agent.
+const BILLED: &str = r#"{"auth":{"type":"oauth-business"},"gcp":{"project":"my-project-id","location":"us-central1"}}"#;
+
+impl Bench {
+    /// Where the instance `google` keeps its profile.
+    fn agy_profile(&self) -> PathBuf {
+        self.home.path().join("agents").join("antigravity")
+    }
+
+    /// Writes the user file with one instance `google` of Antigravity run as
+    /// `executable`, and the keys `cloud` adds to it.
+    fn antigravity(&self, executable: &Path, cloud: &Value) -> Result<(), Failed> {
+        let mut instance = json!({
+            "driver": "antigravity",
+            "executable": executable.to_string_lossy(),
+            "profileDir": self.agy_profile().to_string_lossy(),
+        });
+        if let (Some(into), Some(from)) = (instance.as_object_mut(), cloud.as_object()) {
+            into.extend(from.clone());
+        }
+        let document = json!({"externalAgents": {"google": instance}});
+        fs::write(self.user(), serde_json::to_vec_pretty(&document)?)?;
+        Ok(())
+    }
+
+    /// `command` asked of the door on `runtime`, lent a launcher on `sandbox`
+    /// whose conversation confines its commands where `confined`, and whose
+    /// route for Antigravity has its yes.
+    fn ask_lending(
+        &self,
+        command: Command,
+        (sandbox, confined): (Arc<dyn SandboxService>, bool),
+        runtime: &tokio::runtime::Runtime,
+    ) -> Result<Result<Outcome, AgentsError>, Failed> {
+        let row = REGISTRY
+            .built(Driver::Antigravity)
+            .ok_or("Antigravity has no row")?;
+        let consent = Consent::new(Routes::production());
+        consent.give(row.route);
+        let policy = SandboxPolicy::standard(&self.tree.workspace()?)?.with_enabled(confined);
+        let state = catalog_fetch::state_in(self.home.path());
+        let launcher = Launcher::new(sandbox, runtime.handle().clone(), &policy, &consent, &state);
+        let lent = Shelf {
+            catalog: self.server.source(),
+            home: &self.home,
+            smoke: Some(&launcher),
+        };
+        let request = request(command);
+        let cancel = Cancel::new();
+        let mut front = answering(&self.server, None);
+        Ok(runtime.block_on(run(
+            &request,
+            &lent,
+            &mut front,
+            Watching {
+                progress: &mut |_| {},
+                cancel: &cancel,
+                link: &|_| {},
+            },
+        )))
+    }
+}
+
+/// A business sign-in for an entry naming its project and location writes
+/// them into the agent's settings before the agent starts, starts it reaching
+/// the business service's own host and the one its location names, and asks
+/// the agent to sign in by that method.
+#[test]
+fn a_business_sign_in_writes_its_project_and_location_before_the_start_and_reaches_its_hosts()
+-> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-sign-in-business")?;
+    bench.server.catalog(1, &[], &json!([]))?;
+    let peer = bench.tree.0.join("work").join("peer");
+    let program = business_peer(&peer)?;
+    bench.antigravity(
+        &program,
+        &json!({"cloudProject": "my-project-id", "cloudLocation": "us-central1"}),
+    )?;
+    let settings = bench
+        .agy_profile()
+        .join("antigravity-acp")
+        .join("settings.json");
+    let local: Arc<dyn SandboxService> =
+        Arc::new(LocalSandbox::new().watching_on(runtime.handle().clone()));
+    let recording = |refusing| Recording {
+        local: Arc::clone(&local),
+        settings: settings.clone(),
+        refusing,
+        prepared: Arc::default(),
+    };
+
+    // Confined, as only a sandbox that holds the agent to its hosts is asked,
+    // and refused at the sandbox, so what the start asked for is all it did.
+    let confining = recording(true);
+    let confined = Arc::clone(&confining.prepared);
+    let refused = bench.ask_lending(
+        sign_in("google", "oauth-business")?,
+        (Arc::new(confining), true),
+        &runtime,
+    )?;
+    assert!(
+        matches!(refused, Err(AgentsError::Unlaunched(_))),
+        "{}",
+        shape(&refused)
+    );
+    let confined = confined.lock().map(|seen| seen.clone()).unwrap_or_default();
+    let [(network, written)] = confined.as_slice() else {
+        return Err("the start did not ask the sandbox once".into());
+    };
+    assert!(
+        written.as_deref() == Some(BILLED.as_bytes()),
+        "the settings did not name the project and location before the start"
+    );
+    let SandboxNetworkPolicy::Domains(domains) = network else {
+        return Err("the confined start was given no hosts".into());
+    };
+    for host in [
+        "businessaicode.googleapis.com",
+        "us-central1-businessaicode.googleapis.com",
+    ] {
+        assert!(domains.permits_host(host), "{host} is not reached");
+    }
+    assert!(
+        !domains.permits_host("europe-west1-businessaicode.googleapis.com"),
+        "a location the entry does not name is reached"
+    );
+    assert!(fake_peer::heard(&peer).is_empty(), "the agent was started");
+
+    fs::write(&settings, b"{\"auth\":{\"type\":\"oauth-personal\"}}")?;
+    let running = recording(false);
+    let ran = Arc::clone(&running.prepared);
+    let signed = bench.ask_lending(
+        sign_in("google", "oauth-business")?,
+        (Arc::new(running), false),
+        &runtime,
+    )?;
+    assert!(
+        matches!(&signed, Ok(Outcome::SignedIn { by: Signed::Agent, method, .. }) if &**method == "oauth-business"),
+        "{}",
+        shape(&signed)
+    );
+    let ran = ran.lock().map(|seen| seen.clone()).unwrap_or_default();
+    assert!(
+        matches!(ran.as_slice(), [(_, Some(written))] if written == BILLED.as_bytes()),
+        "the settings the agent was started on were not replaced first"
+    );
+    let heard = fake_peer::heard(&peer).join("\n");
+    assert!(
+        heard.contains("\"authenticate\"") && heard.contains("\"methodId\":\"oauth-business\""),
+        "the agent was not asked to sign in by a business account"
+    );
+    Ok(())
+}
+
+/// A business sign-in for an entry that does not give both its project and
+/// its location is refused naming both keys, and writes and starts nothing.
+#[test]
+fn a_business_sign_in_without_its_project_and_location_names_both_and_starts_nothing()
+-> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-sign-in-unclouded")?;
+    bench.server.catalog(1, &[], &json!([]))?;
+    let peer = bench.tree.0.join("work").join("peer");
+    let program = business_peer(&peer)?;
+    let local: Arc<dyn SandboxService> =
+        Arc::new(LocalSandbox::new().watching_on(runtime.handle().clone()));
+
+    for (cloud, named) in [
+        (json!({}), true),
+        (json!({"cloudProject": "my-project-id"}), false),
+        (json!({"cloudLocation": "us-central1"}), false),
+    ] {
+        bench.antigravity(&program, &cloud)?;
+        let refused = bench.ask_lending(
+            sign_in("google", "oauth-business")?,
+            (Arc::clone(&local), false),
+            &runtime,
+        )?;
+        // An entry giving one without the other is refused as the
+        // configuration is read; one giving neither, at the sign-in.
+        assert!(
+            if named {
+                matches!(refused, Err(AgentsError::Unclouded { .. }))
+            } else {
+                matches!(refused, Err(AgentsError::Config(_)))
+            },
+            "{}",
+            shape(&refused)
+        );
+        let said = refused
+            .err()
+            .map(|refused| refused.to_string())
+            .unwrap_or_default();
+        for key in ["cloudProject", "cloudLocation"] {
+            assert!(said.contains(key), "the refusal does not name both keys");
+        }
+        assert!(
+            !bench.agy_profile().join("antigravity-acp").exists(),
+            "the agent's settings were written for a refused sign-in"
+        );
+        assert!(fake_peer::heard(&peer).is_empty(), "the agent was started");
+    }
+    Ok(())
+}
+
+/// A business sign-in whose location makes a host no policy can name is
+/// refused naming the location's key, and writes and starts nothing.
+#[test]
+fn a_business_sign_in_whose_location_names_no_host_is_refused_naming_it() -> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-sign-in-unlocated")?;
+    bench.server.catalog(1, &[], &json!([]))?;
+    let peer = bench.tree.0.join("work").join("peer");
+    let program = business_peer(&peer)?;
+    // One label the configuration takes, too long for the host it makes.
+    let location = format!("a-{}", "b".repeat(47));
+    bench.antigravity(
+        &program,
+        &json!({"cloudProject": "my-project-id", "cloudLocation": location}),
+    )?;
+    let local: Arc<dyn SandboxService> =
+        Arc::new(LocalSandbox::new().watching_on(runtime.handle().clone()));
+
+    let refused = bench.ask_lending(
+        sign_in("google", "oauth-business")?,
+        (local, false),
+        &runtime,
+    )?;
+
+    assert!(
+        matches!(refused, Err(AgentsError::Unlocated(_))),
+        "{}",
+        shape(&refused)
+    );
+    let said = refused
+        .err()
+        .map(|refused| refused.to_string())
+        .unwrap_or_default();
+    assert!(
+        said.contains("externalAgents.google.cloudLocation"),
+        "the refusal does not name the location's key"
+    );
+    assert!(
+        !bench.agy_profile().join("antigravity-acp").exists(),
+        "the agent's settings were written for a refused sign-in"
+    );
+    assert!(fake_peer::heard(&peer).is_empty(), "the agent was started");
+    Ok(())
+}
+
+/// Where the agent keeps its settings is a link out of its profile, a business
+/// sign-in writes nothing where it leads and is refused before the start.
+#[cfg(unix)]
+#[test]
+fn a_business_sign_in_through_a_link_out_of_the_profile_writes_nothing_and_is_refused()
+-> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-sign-in-linked")?;
+    bench.server.catalog(1, &[], &json!([]))?;
+    let peer = bench.tree.0.join("work").join("peer");
+    let program = business_peer(&peer)?;
+    bench.antigravity(
+        &program,
+        &json!({"cloudProject": "my-project-id", "cloudLocation": "us-central1"}),
+    )?;
+    let outside = bench.tree.0.join("outside");
+    fs::create_dir_all(&outside)?;
+    fs::create_dir_all(bench.agy_profile())?;
+    std::os::unix::fs::symlink(&outside, bench.agy_profile().join("antigravity-acp"))?;
+    let local: Arc<dyn SandboxService> =
+        Arc::new(LocalSandbox::new().watching_on(runtime.handle().clone()));
+
+    let refused = bench.ask_lending(
+        sign_in("google", "oauth-business")?,
+        (local, false),
+        &runtime,
+    )?;
+
+    assert!(
+        matches!(refused, Err(AgentsError::Unlaunched(_))),
+        "{}",
+        shape(&refused)
+    );
+    assert!(
+        fs::read_dir(&outside)?.next().is_none(),
+        "something was written where the link leads"
+    );
+    assert!(fake_peer::heard(&peer).is_empty(), "the agent was started");
+    Ok(())
+}
+
+/// Every run of Antigravity reaches the hosts each of its sign-ins asks.
+#[test]
+fn antigravity_reaches_the_hosts_its_google_cloud_sign_ins_ask() -> Result<(), Failed> {
+    let row = REGISTRY
+        .built(Driver::Antigravity)
+        .ok_or("Antigravity has no row")?;
+    for host in [
+        "generativelanguage.googleapis.com",
+        "aiplatform.googleapis.com",
+        "businessaicode.googleapis.com",
+        "www.googleapis.com",
+    ] {
+        assert!(row.reaches.contains(&host), "{host} is not reached");
+    }
     Ok(())
 }
 

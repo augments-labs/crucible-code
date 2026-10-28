@@ -77,15 +77,6 @@ pub fn methods() -> Vec<AuthMethod> {
     ]
 }
 
-/// What the method `id` needs that this version cannot yet give the agent, in
-/// words, if anything: for a business sign-in, the Google Cloud project and
-/// location it is billed to, which the agent reads only from its own settings
-/// file and never from a variable.
-#[must_use]
-pub fn needs(id: &str) -> Option<&'static str> {
-    (id == OAUTH_BUSINESS).then_some("a Google Cloud project and location for Gemini Enterprise")
-}
-
 /// What the agent prints before its sign-in link.
 pub(crate) const LINK_PREFIX: &str = "Open the following link to authenticate the ACP server: ";
 

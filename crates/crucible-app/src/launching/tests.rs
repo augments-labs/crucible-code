@@ -96,6 +96,7 @@ fn route(executable: &Path, profile: Option<&Path>) -> Route {
         profile: profile.map(|profile| profile.to_string_lossy().into()),
         model: None,
         effort: None,
+        location: None,
         enabled: true,
     }
 }
@@ -1631,6 +1632,7 @@ fn a_missing_antigravity_is_told_what_the_trust_state_offers() {
         profile: None,
         model: None,
         effort: None,
+        location: None,
         enabled: true,
     };
     let registry = &ANTIGRAVITY_REGISTRY;
@@ -1673,6 +1675,7 @@ async fn a_run_is_admitted_as_the_releases_on_offer_when_it_is_launched() {
         profile: None,
         model: None,
         effort: None,
+        location: None,
         enabled: true,
     };
     let agent = Agent::routed(&route, &ANTIGRAVITY_REGISTRY, |_| None).expect("a row");
@@ -1775,6 +1778,7 @@ async fn a_run_is_started_with_the_arguments_of_the_release_its_program_is() {
             profile: None,
             model: None,
             effort: None,
+            location: None,
             enabled: true,
         };
         let agent = Agent::routed(&route, &ANTIGRAVITY_REGISTRY, |_| None).expect("a row");
@@ -1849,4 +1853,39 @@ fn a_version_root_is_read_only_inside_a_writable_root() {
         &sample.workspace().root().join("src"),
         SandboxFilesystemAccess::ReadWrite
     ));
+}
+
+/// A Google Cloud location names its business host as its shape says: a
+/// region one of its own, `us` and `eu` one under their own name, and any
+/// other none; and one whose host no policy can name is refused.
+#[test]
+fn a_location_names_the_business_host_its_shape_gives() {
+    let host = |location: &str| {
+        located(location)
+            .expect("a host a policy can name")
+            .map(|endpoint| endpoint.host().to_owned())
+    };
+    assert_eq!(
+        host("us-central1").as_deref(),
+        Some("us-central1-businessaicode.googleapis.com")
+    );
+    assert_eq!(
+        host("europe-west4").as_deref(),
+        Some("europe-west4-businessaicode.googleapis.com")
+    );
+    assert_eq!(
+        host("us").as_deref(),
+        Some("businessaicode.us.rep.googleapis.com")
+    );
+    assert_eq!(
+        host("eu").as_deref(),
+        Some("businessaicode.eu.rep.googleapis.com")
+    );
+    for location in ["global", "asia", "usa", "e"] {
+        assert_eq!(host(location), None, "{location}");
+    }
+    let longest = format!("a-{}", "b".repeat(46));
+    assert!(host(&longest).is_some());
+    let over = format!("a-{}", "b".repeat(47));
+    assert!(located(&over).is_err());
 }

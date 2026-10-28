@@ -57,6 +57,7 @@ fn on_antigravity(tree: &Tree, script: &Peer) -> Result<Outside, Failed> {
         profile: None,
         model: None,
         effort: None,
+        location: None,
         enabled: true,
     };
     let registry = Registry::new(std::slice::from_ref(row));

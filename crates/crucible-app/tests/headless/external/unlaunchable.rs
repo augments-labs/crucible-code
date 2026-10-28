@@ -73,6 +73,7 @@ fn unlaunched(tree: &Tree, program: Option<PathBuf>) -> Result<Unlaunched, Faile
         profile: None,
         model: None,
         effort: None,
+        location: None,
         enabled: true,
     };
     let registry = Registry::new(std::slice::from_ref(row));
