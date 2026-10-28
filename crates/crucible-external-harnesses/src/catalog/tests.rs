@@ -272,15 +272,19 @@ fn sign(catalog: &Value) -> Signed {
 }
 
 /// `catalog`, signed, as a fetched catalog is believed: nothing held, now.
+///
+/// For a catalog with no date of its own, which the fixture signs as of now. A
+/// catalog dated by [`dated`] or [`listing`] is believed as of an instant
+/// inside its dates, with [`fetched_at`], whatever day the test runs.
 fn fetched(catalog: &Value) -> Result<Catalog, CatalogError> {
+    fetched_at(catalog, SystemTime::now())
+}
+
+/// `catalog`, signed, as a fetched catalog is believed as of `now`: nothing
+/// held.
+fn fetched_at(catalog: &Value, now: SystemTime) -> Result<Catalog, CatalogError> {
     let signed = sign(catalog);
-    Catalog::verify(
-        &signed.index,
-        &signed.signature,
-        &signed.keys,
-        Held(0),
-        SystemTime::now(),
-    )
+    Catalog::verify(&signed.index, &signed.signature, &signed.keys, Held(0), now)
 }
 
 /// The whole catalog, believed.
@@ -2310,11 +2314,10 @@ fn the_snapshots_own_revocations_are_in_every_base_state_and_count() {
             .collect(),
         ..snapshot
     };
-    let one_more = fetched(&listing(
-        5,
-        Vec::new(),
-        vec![withdrawn("goose", "one-more", None)],
-    ));
+    let one_more = fetched_at(
+        &listing(5, Vec::new(), vec![withdrawn("goose", "one-more", None)]),
+        taken(),
+    );
     let Ok(one_more) = one_more else {
         panic!("a good catalog is believed");
     };
