@@ -497,7 +497,12 @@ fn a_link_where_the_directory_is_named_refuses_the_replace_and_writes_nothing_wh
     let link = scratch.0.join("held");
     std::os::unix::fs::symlink(&outside, &link).unwrap();
 
-    assert!(replace_in(&link, OsStr::new("settings.json"), b"new").is_err());
+    let refused = replace_in(&link, OsStr::new("settings.json"), b"new").unwrap_err();
+    assert!(
+        refused.kind() == std::io::ErrorKind::InvalidInput
+            && refused.to_string() == "private state cannot be a symbolic link",
+        "the refusal does not say a link stands where the directory is named"
+    );
     assert!(names(&outside).is_empty());
     assert_eq!(
         fs::metadata(&outside).unwrap().permissions().mode() & 0o777,

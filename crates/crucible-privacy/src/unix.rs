@@ -207,18 +207,32 @@ pub(super) fn replace_in(
 /// opened, created owner-only first where nothing has the name.
 fn held(path: &Path) -> io::Result<File> {
     let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
-    let held = match opened(path, flags, Mode::empty()) {
+    let open = || opened(path, flags, Mode::empty()).map_err(|problem| refused(path, problem));
+    let held = match open() {
         Err(problem) if problem.kind() == io::ErrorKind::NotFound => {
             std::fs::DirBuilder::new()
                 .recursive(true)
                 .mode(DIRECTORY)
                 .create(path)?;
-            opened(path, flags, Mode::empty())?
+            open()?
         }
         opened => opened?,
     };
     narrow(&held, DIRECTORY)?;
     Ok(held)
+}
+
+/// What a directory open at `path` that failed is refused as. Linux refuses
+/// a link opened as a directory without following it as no directory rather
+/// than as a link, so the name is looked at to say a link stands there. The
+/// look only chooses the message: nothing is opened after it.
+fn refused(path: &Path, problem: io::Error) -> io::Error {
+    if problem.raw_os_error() == Some(rustix::io::Errno::NOTDIR.raw_os_error())
+        && std::fs::symlink_metadata(path).is_ok_and(|found| found.file_type().is_symlink())
+    {
+        return linked();
+    }
+    problem
 }
 
 fn linked() -> io::Error {
