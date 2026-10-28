@@ -1,11 +1,12 @@
 //! Unix owner-only modes.
 
+use std::ffi::OsStr;
 use std::fs::{File, TryLockError};
-use std::io;
+use std::io::{self, Write as _};
 use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, PermissionsExt as _};
 use std::path::Path;
 
-use rustix::fs::{Mode, OFlags};
+use rustix::fs::{AtFlags, FileType, Mode, OFlags};
 
 const DIRECTORY: u32 = 0o700;
 const FILE: u32 = 0o600;
@@ -163,15 +164,90 @@ pub(super) fn replace(source: &Path, destination: &Path) -> io::Result<()> {
     sync_parent(destination)
 }
 
+pub(super) fn replace_in(
+    directory: &Path,
+    name: &OsStr,
+    draft: &OsStr,
+    contents: &[u8],
+) -> io::Result<()> {
+    // Every step after this one is taken through the descriptor, so the
+    // directory written is the one opened here whatever its name comes to
+    // reach meanwhile, and nothing below looks the directory up by path.
+    let held = held(directory)?;
+    match rustix::fs::statat(&held, name, AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(found) if FileType::from_raw_mode(found.st_mode) == FileType::Symlink => {
+            return Err(linked());
+        }
+        Ok(_) | Err(rustix::io::Errno::NOENT) => {}
+        Err(problem) => return Err(problem.into()),
+    }
+    let mut written = rustix::fs::openat(
+        &held,
+        draft,
+        OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        private_file(),
+    )
+    .map(File::from)?;
+    // A link made at `name` since it was looked at is a directory entry the
+    // rename replaces, and is never opened.
+    let landed = narrow(&written, FILE)
+        .and_then(|_| written.write_all(contents))
+        .and_then(|()| written.sync_all())
+        .and_then(|()| rustix::fs::renameat(&held, draft, &held, name).map_err(Into::into));
+    drop(written);
+    if let Err(problem) = landed {
+        // Removed from the directory held, the only one it can be in.
+        let _ = rustix::fs::unlinkat(&held, draft, AtFlags::empty());
+        return Err(problem);
+    }
+    held.sync_all()
+}
+
+/// The directory at `path`, opened as itself and owner-only through what was
+/// opened, created owner-only first where nothing has the name.
+fn held(path: &Path) -> io::Result<File> {
+    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let open = || opened(path, flags, Mode::empty()).map_err(|problem| refused(path, problem));
+    let held = match open() {
+        Err(problem) if problem.kind() == io::ErrorKind::NotFound => {
+            std::fs::DirBuilder::new()
+                .recursive(true)
+                .mode(DIRECTORY)
+                .create(path)?;
+            open()?
+        }
+        opened => opened?,
+    };
+    narrow(&held, DIRECTORY)?;
+    Ok(held)
+}
+
+/// What a directory open at `path` that failed is refused as. Linux refuses
+/// a link opened as a directory without following it as no directory rather
+/// than as a link, so the name is looked at to say a link stands there. The
+/// look only chooses the message: nothing is opened after it.
+fn refused(path: &Path, problem: io::Error) -> io::Error {
+    if problem.raw_os_error() == Some(rustix::io::Errno::NOTDIR.raw_os_error())
+        && std::fs::symlink_metadata(path).is_ok_and(|found| found.file_type().is_symlink())
+    {
+        return linked();
+    }
+    problem
+}
+
+fn linked() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "private state cannot be a symbolic link",
+    )
+}
+
 fn opened(path: &Path, flags: OFlags, mode: Mode) -> io::Result<File> {
     rustix::fs::open(path, flags, mode)
         .map(File::from)
         .map_err(|problem| {
             if problem == rustix::io::Errno::LOOP {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "private state cannot be a symbolic link",
-                )
+                linked()
             } else {
                 problem.into()
             }

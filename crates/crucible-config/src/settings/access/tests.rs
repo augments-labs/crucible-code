@@ -297,3 +297,67 @@ fn an_unwritten_instance_names_an_agent_exactly_when_it_is_a_catalog_one() {
         Some(Serves::Provider("anthropic"))
     );
 }
+
+#[test]
+fn an_antigravity_instance_is_read_back_with_what_its_business_sign_in_is_billed_to() {
+    let read = settings(
+        &serde_json::json!({"externalAgents": {
+            "work": {
+                "driver": "antigravity",
+                "executable": "agy",
+                "profileDir": rooted("home/me/agy"),
+                "cloudProject": "my-project-id",
+                "cloudLocation": "us-central1"
+            },
+            "personal": {"driver": "antigravity", "executable": "agy", "profileDir": rooted("home/me/agy-personal")},
+            "claude": {"driver": "claude", "executable": "claude"}
+        }})
+        .to_string(),
+    );
+    let agents = read.external_agents();
+    let named = |name: &str| {
+        agents
+            .iter()
+            .find(|agent| agent.name() == name)
+            .unwrap_or_else(|| panic!("{name} was written, got {agents:?}"))
+    };
+    let (work, personal, claude) = (named("work"), named("personal"), named("claude"));
+
+    let billed = work.cloud().expect("both keys were written");
+    assert_eq!(
+        (billed.project(), billed.location()),
+        ("my-project-id", "us-central1")
+    );
+    assert_eq!(personal.cloud(), None);
+    assert_eq!(claude.cloud(), None);
+}
+
+/// The patterns an editor checks a project and a location against are the
+/// ones the check holds them to: the schema publishes them, and each takes
+/// exactly the alphabet the reader does.
+#[test]
+fn the_published_cloud_patterns_are_the_ones_the_check_holds_to() {
+    let schema: Value = serde_json::from_str(&crate::schema()).expect("the schema is JSON");
+    let at = |key: &str| {
+        schema
+            .pointer(&format!(
+                "/properties/externalAgents/additionalProperties/properties/{key}/pattern"
+            ))
+            .cloned()
+    };
+    assert_eq!(at("cloudProject"), Some(Value::from(CLOUD_PROJECT)));
+    assert_eq!(at("cloudLocation"), Some(Value::from(CLOUD_LOCATION)));
+    assert_eq!(CLOUD_PROJECT, "^[a-z][a-z0-9-]{4,28}[a-z0-9]$");
+    assert_eq!(CLOUD_LOCATION, "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$");
+    for byte in 0_u8..=127 {
+        let one = char::from(byte);
+        let inner = byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-';
+        assert_eq!(cloud_project(&format!("abcd{one}e")), inner, "{byte:#04x}");
+        assert_eq!(cloud_location(&format!("a{one}a")), inner, "{byte:#04x}");
+    }
+    assert!(cloud_project(&format!("a{}", "b".repeat(29))));
+    assert!(!cloud_project(&format!("a{}", "b".repeat(30))));
+    assert!(!cloud_project("abcde"));
+    assert!(cloud_location(&"a".repeat(63)));
+    assert!(!cloud_location(&"a".repeat(64)));
+}

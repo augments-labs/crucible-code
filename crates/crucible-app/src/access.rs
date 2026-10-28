@@ -75,6 +75,9 @@ pub enum Route {
         model: Option<Box<str>>,
         /// The effort it is started at, where its entry names one.
         effort: Option<Effort>,
+        /// The Google Cloud location its business sign-in is billed in,
+        /// where its entry names one: a run reaches that location's host.
+        location: Option<Box<str>>,
         /// Whether new work may be sent through it. Carried rather than
         /// refused here, because a disabled agent is still the route the user
         /// chose: what to say about it belongs to whoever would have started it.
@@ -402,6 +405,7 @@ fn settled(
                 profile: agent.profile().map(Into::into),
                 model: agent.model().map(Into::into),
                 effort: agent.effort(),
+                location: agent.cloud().map(|cloud| cloud.location().into()),
                 enabled: agent.enabled(),
             }))
         }

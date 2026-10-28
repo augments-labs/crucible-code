@@ -647,6 +647,7 @@ impl Reader<'_> {
                     problem: settings::access::MODEL_NAMED.into(),
                 });
             }
+            self.cloud(name, record, driver, at)?;
 
             let Some(key) = own else {
                 continue;
@@ -676,6 +677,76 @@ impl Reader<'_> {
             }
         }
         Ok(())
+    }
+
+    /// Refuses an instance `name`, written as `record` for `driver`, whose
+    /// Google Cloud project and location are not as a business sign-in needs
+    /// them: written only for the driver that reads them, both or neither,
+    /// and each spelled as its pattern says, since the location names a host
+    /// the agent reaches.
+    fn cloud(&self, name: &str, record: &Value, driver: Driver, at: At) -> Result<(), ConfigError> {
+        const KEYS: [&str; 2] = ["cloudProject", "cloudLocation"];
+        let variant = |key: &str, problem: String| ConfigError::Variant {
+            file: self.file.into(),
+            path: format!("externalAgents.{name}.{key}").into(),
+            at: At::of(key, self.text),
+            problem: problem.into(),
+        };
+        if !driver.takes_cloud() {
+            let Some(key) = KEYS.into_iter().find(|key| record.get(*key).is_some()) else {
+                return Ok(());
+            };
+            let readers: Vec<&str> = Driver::ALL
+                .into_iter()
+                .filter(|other| other.takes_cloud())
+                .map(Driver::name)
+                .collect();
+            return Err(variant(
+                key,
+                format!(
+                    "{key} is read only for {}, whose business sign-in is billed to a Google Cloud project, and this instance's driver is {}",
+                    readers.join(" and "),
+                    driver.name()
+                ),
+            ));
+        }
+        let project = record.get("cloudProject").and_then(Value::as_str);
+        let location = record.get("cloudLocation").and_then(Value::as_str);
+        match (project, location) {
+            (None, None) => Ok(()),
+            (Some(_), None) | (None, Some(_)) => {
+                let (given, missing) = if project.is_some() {
+                    ("cloudProject", "cloudLocation")
+                } else {
+                    ("cloudLocation", "cloudProject")
+                };
+                Err(ConfigError::Needed {
+                    file: self.file.into(),
+                    path: format!("externalAgents.{name}").into(),
+                    name: missing.into(),
+                    said: format!(
+                        "{given} is written, and a business sign-in is billed to a project in a location, so the two are written together or not at all"
+                    )
+                    .into(),
+                    at,
+                })
+            }
+            (Some(project), Some(location)) => {
+                if !settings::access::cloud_project(project) {
+                    return Err(variant(
+                        "cloudProject",
+                        settings::access::CLOUD_PROJECT_NAMED.into(),
+                    ));
+                }
+                if !settings::access::cloud_location(location) {
+                    return Err(variant(
+                        "cloudLocation",
+                        settings::access::CLOUD_LOCATION_NAMED.into(),
+                    ));
+                }
+                Ok(())
+            }
+        }
     }
 
     /// Refuses an instance `name`, written as `record` for `driver`, whose

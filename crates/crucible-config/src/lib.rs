@@ -76,7 +76,7 @@ pub use remember::{
     removing, sandboxing, setting, slowing, thinking, thinking_agent, unasked,
 };
 pub use settings::access::{
-    MODEL_NAMED as AGENT_MODEL_NAMED, NATIVE_RUNNER, Serves, model_name as agent_model,
+    Cloud, MODEL_NAMED as AGENT_MODEL_NAMED, NATIVE_RUNNER, Serves, model_name as agent_model,
 };
 pub use settings::{
     Access, AgentUpdate, Color, Compaction, Driver, ExternalAgent, Forced, Glyphs, McpServer,

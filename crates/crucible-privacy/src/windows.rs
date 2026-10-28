@@ -1,19 +1,25 @@
 //! Windows protected access control lists.
 #![allow(
     unsafe_code,
-    reason = "Windows exposes protected DACLs and bounded file locks through FFI; this module is their single audited unsafe boundary"
+    reason = "Windows exposes protected DACLs, bounded file locks, final paths and handle-relative renames through FFI; this module is their single audited unsafe boundary"
 )]
 
-use std::ffi::c_void;
+use std::ffi::{OsStr, OsString, c_void};
 use std::fs::{File, OpenOptions};
-use std::io;
-use std::os::windows::ffi::OsStrExt as _;
+use std::io::{self, Write as _};
+use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
 use std::os::windows::fs::{MetadataExt as _, OpenOptionsExt as _};
 use std::os::windows::io::AsRawHandle as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use windows_sys::Wdk::Storage::FileSystem::{
+    FILE_INFORMATION_CLASS, FILE_RENAME_INFORMATION, FILE_RENAME_INFORMATION_0,
+    FILE_RENAME_POSIX_SEMANTICS, FILE_RENAME_REPLACE_IF_EXISTS, FileRenameInformation,
+    FileRenameInformationEx, NtSetInformationFile,
+};
 use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_ACCESS_DENIED, ERROR_LOCK_VIOLATION, ERROR_SUCCESS, HANDLE,
+    CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, ERROR_LOCK_VIOLATION,
+    ERROR_NOT_SUPPORTED, ERROR_SUCCESS, GENERIC_WRITE, HANDLE, RtlNtStatusToDosError,
 };
 use windows_sys::Win32::Security::Authorization::{
     SE_FILE_OBJECT, SetNamedSecurityInfoW, SetSecurityInfo,
@@ -25,12 +31,15 @@ use windows_sys::Win32::Security::{
     TokenUser,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    BY_HANDLE_FILE_INFORMATION, FILE_ALL_ACCESS, FILE_ATTRIBUTE_REPARSE_POINT,
-    FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-    GetFileInformationByHandle, LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY, LockFileEx,
-    MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW, UnlockFileEx,
+    BY_HANDLE_FILE_INFORMATION, DELETE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_REPARSE_POINT,
+    FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+    FILE_NAME_NORMALIZED, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, FILE_TRAVERSE, FileDispositionInfo, GetFileInformationByHandle,
+    GetFinalPathNameByHandleW, LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY, LockFileEx,
+    MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW, READ_CONTROL, SYNCHRONIZE,
+    SetFileInformationByHandle, UnlockFileEx, WRITE_DAC,
 };
-use windows_sys::Win32::System::IO::{OVERLAPPED, OVERLAPPED_0, OVERLAPPED_0_0};
+use windows_sys::Win32::System::IO::{IO_STATUS_BLOCK, OVERLAPPED, OVERLAPPED_0, OVERLAPPED_0_0};
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
 /// One byte at 4 EiB, outside the range of a replayable private file.
@@ -105,8 +114,15 @@ pub(super) fn single_name(file: &File) -> io::Result<()> {
 }
 
 pub(super) fn tighten_open(file: &File) -> io::Result<bool> {
+    narrow_open(file, 0)?;
+    Ok(false)
+}
+
+/// Makes the object `file` holds owner-only through the handle, so a name
+/// changed meanwhile cannot move the list to another object.
+fn narrow_open(file: &File, inherited: ACE_FLAGS) -> io::Result<()> {
     let user = Sid::current()?;
-    let mut list = AccessList::granting(user.as_psid(), 0)?;
+    let mut list = AccessList::granting(user.as_psid(), inherited)?;
 
     // SAFETY: `file` is a live handle and `list` is initialized for its
     // allocation. The call changes that handle's object, not a mutable name.
@@ -122,7 +138,7 @@ pub(super) fn tighten_open(file: &File) -> io::Result<bool> {
         )
     };
     if status == ERROR_SUCCESS {
-        Ok(false)
+        Ok(())
     } else {
         Err(io::Error::from_raw_os_error(
             i32::try_from(status).unwrap_or(-1),
@@ -256,6 +272,261 @@ pub(super) fn replace(source: &Path, destination: &Path) -> io::Result<()> {
     Err(refused)
 }
 
+pub(super) fn replace_in(
+    directory: &Path,
+    name: &OsStr,
+    draft: &OsStr,
+    contents: &[u8],
+) -> io::Result<()> {
+    // The draft is created by name, since this crate has no create relative
+    // to a handle on Windows, so the directory is held instead: its handle
+    // withholds the delete sharing that renaming or removing the directory
+    // needs, so while it is open its name cannot be moved or removed. While
+    // it is empty it can still be turned into a junction, which the check
+    // after the draft is created answers.
+    let held = held(directory)?;
+    narrow_open(&held, OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE)?;
+    // A reparse point made at `name` after this is a directory entry the
+    // rename below replaces, and is never opened.
+    match std::fs::symlink_metadata(directory.join(name)) {
+        Ok(found) if found.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 => {
+            return Err(reparse());
+        }
+        Ok(_) => {}
+        Err(problem) if problem.kind() == io::ErrorKind::NotFound => {}
+        Err(problem) => return Err(problem),
+    }
+    let mut written = Draft::create(&directory.join(draft))?;
+
+    // Setting a reparse point needs no share right, so an empty directory can
+    // still become a junction while held, and the draft is then created,
+    // empty, where the junction leads. The draft is proved by its handle to be
+    // a child of the held directory before a byte is written; one that is not
+    // is refused and removed through its handle as it drops. Once a draft is
+    // in place, the directory is not empty and cannot become a junction.
+    if final_path(&written.file)? != final_path(&held)?.join(draft) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "private state left the directory it was written in",
+        ));
+    }
+    narrow_open(&written.file, 0)?;
+    written.file.write_all(contents)?;
+    written.file.sync_all()?;
+    written.commit(&held, name)
+}
+
+/// The directory at `path`, opened as itself and held so its name stays
+/// where it is, created first where nothing has the name.
+fn held(path: &Path) -> io::Result<File> {
+    let access = FILE_TRAVERSE | FILE_READ_ATTRIBUTES | READ_CONTROL | WRITE_DAC | SYNCHRONIZE;
+    let open = || {
+        OpenOptions::new()
+            .access_mode(access)
+            // No delete sharing: the name cannot be renamed or removed while
+            // this handle is open. Write sharing is what the rename into it
+            // asks for.
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+    };
+    let held = match open() {
+        Err(problem) if problem.kind() == io::ErrorKind::NotFound => {
+            std::fs::create_dir_all(path)?;
+            open()?
+        }
+        opened => opened?,
+    };
+    let metadata = held.metadata()?;
+    if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(reparse());
+    }
+    if !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "private state is kept in a directory",
+        ));
+    }
+    Ok(held)
+}
+
+/// The path the system reaches `file` by now, read from its handle.
+fn final_path(file: &File) -> io::Result<PathBuf> {
+    let mut buffer = Vec::<u16>::new();
+    loop {
+        let capacity = u32::try_from(buffer.capacity()).unwrap_or(u32::MAX);
+        // SAFETY: the handle is live. A null buffer with zero capacity asks for
+        // the size; otherwise the allocation has `capacity` writable units and
+        // they are read only after the call reports what it initialized.
+        let written = unsafe {
+            GetFinalPathNameByHandleW(
+                file.as_raw_handle() as HANDLE,
+                if capacity == 0 {
+                    std::ptr::null_mut()
+                } else {
+                    buffer.as_mut_ptr()
+                },
+                capacity,
+                FILE_NAME_NORMALIZED,
+            )
+        };
+        if written == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if written < capacity {
+            // SAFETY: a successful call initialized `written` UTF-16 units.
+            unsafe { buffer.set_len(written as usize) };
+            return Ok(PathBuf::from(OsString::from_wide(&buffer)));
+        }
+        let wanted = (written as usize)
+            .checked_add(1)
+            .ok_or_else(|| io::Error::other("the final path is too long to hold"))?;
+        buffer.try_reserve_exact(wanted).map_err(io::Error::other)?;
+    }
+}
+
+/// An owner-only file being written, removed through its handle unless it
+/// was renamed into place.
+struct Draft {
+    file: File,
+    landed: bool,
+}
+
+impl Draft {
+    fn create(path: &Path) -> io::Result<Self> {
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .access_mode(
+                GENERIC_WRITE
+                    | DELETE
+                    | READ_CONTROL
+                    | WRITE_DAC
+                    | FILE_READ_ATTRIBUTES
+                    | SYNCHRONIZE,
+            )
+            // Unshared: nothing else opens what is being written.
+            .share_mode(0)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)?;
+        Ok(Self {
+            file,
+            landed: false,
+        })
+    }
+
+    /// Renames this file to `name` in the directory `held` holds, replacing
+    /// whatever entry has that name rather than opening it.
+    fn commit(&mut self, held: &File, name: &OsStr) -> io::Result<()> {
+        let posix = FILE_RENAME_INFORMATION_0 {
+            // Under POSIX semantics a reader holding the old file keeps it
+            // while the name moves on, as on Unix.
+            Flags: FILE_RENAME_REPLACE_IF_EXISTS | FILE_RENAME_POSIX_SEMANTICS,
+        };
+        match self.rename(held, name, posix, FileRenameInformationEx) {
+            // A file system without POSIX renames refuses the extended
+            // request; `std::fs::rename` falls back on the same two errors.
+            Err(problem)
+                if problem.raw_os_error() == Some(ERROR_INVALID_PARAMETER.cast_signed())
+                    || problem.raw_os_error() == Some(ERROR_NOT_SUPPORTED.cast_signed()) =>
+            {
+                let classic = FILE_RENAME_INFORMATION_0 {
+                    ReplaceIfExists: true,
+                };
+                self.rename(held, name, classic, FileRenameInformation)
+            }
+            renamed => renamed,
+        }?;
+        self.landed = true;
+        Ok(())
+    }
+
+    fn rename(
+        &self,
+        held: &File,
+        name: &OsStr,
+        action: FILE_RENAME_INFORMATION_0,
+        class: FILE_INFORMATION_CLASS,
+    ) -> io::Result<()> {
+        let name: Vec<u16> = name.encode_wide().collect();
+        let name_bytes = name
+            .len()
+            .checked_mul(size_of::<u16>())
+            .ok_or_else(|| io::Error::other("the private file's name is too long"))?;
+        let bytes = size_of::<FILE_RENAME_INFORMATION>()
+            .checked_add(name_bytes)
+            .ok_or_else(|| io::Error::other("the rename request is too large"))?;
+        let length = u32::try_from(name_bytes)
+            .map_err(|_| io::Error::other("the private file's name is too long"))?;
+        let size = u32::try_from(bytes)
+            .map_err(|_| io::Error::other("the rename request is too large"))?;
+        let mut storage = vec![0_usize; bytes.div_ceil(size_of::<usize>())];
+        let info = storage.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
+
+        // SAFETY: `storage` is aligned for every pointer-sized field and holds
+        // the fixed prefix plus every UTF-16 unit copied below.
+        unsafe {
+            std::ptr::addr_of_mut!((*info).Anonymous).write(action);
+            std::ptr::addr_of_mut!((*info).RootDirectory).write(held.as_raw_handle() as HANDLE);
+            std::ptr::addr_of_mut!((*info).FileNameLength).write(length);
+            name.as_ptr().copy_to_nonoverlapping(
+                std::ptr::addr_of_mut!((*info).FileName).cast::<u16>(),
+                name.len(),
+            );
+        }
+
+        let mut status = IO_STATUS_BLOCK::default();
+        // SAFETY: `info` describes the initialized buffer above, `status` is
+        // writable, this handle has delete access, and both handles stay live
+        // through the call. The ntdll boundary honors the held root directory,
+        // which the Win32 wrapper refuses.
+        let renamed = unsafe {
+            NtSetInformationFile(
+                self.file.as_raw_handle() as HANDLE,
+                &raw mut status,
+                info.cast(),
+                size,
+                class,
+            )
+        };
+        if renamed < 0 {
+            // SAFETY: this conversion has no preconditions.
+            let code = unsafe { RtlNtStatusToDosError(renamed) };
+            return Err(io::Error::from_raw_os_error(
+                i32::try_from(code).unwrap_or(i32::MAX),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Draft {
+    fn drop(&mut self) {
+        if self.landed {
+            return;
+        }
+        let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
+        // SAFETY: the file is still live and was opened with delete access.
+        // Deleting through the handle removes this file and no other, whatever
+        // its name reaches by now.
+        unsafe {
+            SetFileInformationByHandle(
+                self.file.as_raw_handle() as HANDLE,
+                FileDispositionInfo,
+                std::ptr::from_ref(&disposition).cast(),
+                u32::try_from(size_of::<FILE_DISPOSITION_INFO>()).unwrap_or(u32::MAX),
+            )
+        };
+    }
+}
+
+fn reparse() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "private state cannot be a reparse point",
+    )
+}
+
 fn wide(path: &Path) -> Vec<u16> {
     path.as_os_str().encode_wide().chain(Some(0)).collect()
 }
@@ -310,10 +581,7 @@ fn regular(file: &File) -> io::Result<()> {
 fn reject_reparse(path: &Path) -> io::Result<()> {
     let attributes = std::fs::symlink_metadata(path)?.file_attributes();
     if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "private state cannot be a reparse point",
-        ));
+        return Err(reparse());
     }
     Ok(())
 }

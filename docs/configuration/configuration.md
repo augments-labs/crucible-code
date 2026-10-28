@@ -230,6 +230,14 @@ choosing that `providers.<name>.access.instance` uses. At most 32.
 | `profileDir` | For `antigravity`: the same, and required, since its usual one is the Antigravity IDE's. For `catalog`: the same. |
 | `model` | For `claude`: the model it is started on, such as `claude-opus-5-5`. Defaults to Anthropic's default model. |
 | `effort` | For `claude`: the rung it is started at, `low`, `medium`, `high`, `xhigh` or `max`. Defaults to the model's default rung. |
+| `cloudProject` | For `antigravity`: the Google Cloud project its business sign-in (`oauth-business`) is billed to, by its project ID: 6 to 30 lowercase letters, digits and hyphens, starting with a letter and not ending with a hyphen. |
+| `cloudLocation` | For `antigravity`: the Google Cloud location of that project's service, such as `us-central1`, `us`, `eu` or `global`: 1 to 63 lowercase letters, digits and hyphens, not starting or ending with a hyphen. |
+
+`cloudProject` and `cloudLocation` are given together or not at all, and an
+entry for another driver that names either is refused, saying `antigravity`
+reads them. They are written into the agent's own settings at its next
+business sign-in, which is refused, naming both, for an entry that gives
+neither; see [Antigravity](../providers/agents.md#antigravity).
 
 A profile key belongs to the drivers that read it, `configDir` to `claude` and
 `profileDir` to `antigravity` and `catalog`, and any other is refused by name.

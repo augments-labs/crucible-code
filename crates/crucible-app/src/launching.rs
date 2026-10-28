@@ -64,21 +64,27 @@
 //! created owner-only where it is missing and closed to everyone else where
 //! it is not, before the process that keeps its sign-in there is started.
 //! Elsewhere it is created where it is missing and its access left as it is.
+//! A business sign-in to Antigravity then has the Google Cloud project and
+//! location its entry names written in that directory, as the settings the
+//! agent reads them from, replacing what is there and following no link; a
+//! start for one with no profile directory is refused.
 //!
 //! The child's policy is the conversation's, widened in exactly two ways: its
 //! profile directory, where one is configured, is writable but for the
 //! metadata protected beneath any writable root, and the hosts its row names,
-//! for a catalog row those its entry's profile grants, are reachable where the
-//! conversation's commands are confined, since an unconfined child reaches the
-//! host's network already. Every other rule, the protected metadata included,
-//! stays as the conversation has it, so a profile directory inside one, named
-//! directly or through a link, is refused rather than opened. A program in a
-//! version of the install store is started with that version's directory
-//! read-only, at and beneath it, whatever writable root it lies in, so it can
-//! change none of the bytes that were reviewed, and a profile directory inside
-//! it is refused; and with the variable its catalog entry turns the agent's
-//! own updater off with, or where the catalog lists that release no longer,
-//! the one named by the release an update would install.
+//! for a catalog row those its entry's profile grants, with the host of the
+//! Google Cloud location its entry names where that location has one of its
+//! own, are reachable where the conversation's commands are confined, since an
+//! unconfined child reaches the host's network already. Every other rule, the
+//! protected metadata included, stays as the conversation has it, so a profile
+//! directory inside one, named directly or through a link, is refused rather
+//! than opened. A program in a version of the install store is started with
+//! that version's directory read-only, at and beneath it, whatever writable
+//! root it lies in, so it can change none of the bytes that were reviewed, and
+//! a profile directory inside it is refused; and with the variable its catalog
+//! entry turns the agent's own updater off with, or where the catalog lists
+//! that release no longer, the one named by the release an update would
+//! install.
 //!
 //! Every start, a turn's or an account step's, is given each key the user
 //! typed for one of the methods its agent signs in by, kept in crucible's
@@ -140,7 +146,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
 
-use crucible_config::{Driver, ExternalAgent, Serves};
+use crucible_config::{Cloud, Driver, ExternalAgent, Serves};
 use crucible_execution::{
     Backend, Capabilities, Capability, Failure, SessionRef, Text, TurnRequest,
 };
@@ -151,15 +157,15 @@ use crucible_external_harnesses::catalog::{
 use crucible_external_harnesses::store::Store;
 use crucible_external_harnesses::{
     Account, Act, Control, Dialect, Discovery, Held, Host, Launch, PREPARING, Program, Ran,
-    Reading, Refusal, Request, Shape, Told,
+    Reading, Refusal, Request, Shape, Told, antigravity,
 };
 use crucible_models::Effort;
 use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxCapability, SandboxDomainPattern, SandboxDomainPolicy, SandboxEnablement,
     SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
-    SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy, SandboxPolicyError,
-    SandboxResourceLimits, SandboxService,
+    SandboxNetworkEndpoint, SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy,
+    SandboxPolicyError, SandboxResourceLimits, SandboxService,
 };
 use crucible_session::{ExternalRef, RouteBinding};
 use crucible_tools::Mode;
@@ -246,6 +252,10 @@ pub enum Unlaunched {
     /// Its profile directory could not be made private to the user.
     #[error("the profile directory could not be made private to you: {0}")]
     Profile(std::io::Error),
+    /// The settings a business sign-in is made with could not be written in
+    /// its profile directory.
+    #[error("the agent's settings could not be written in its profile directory: {0}")]
+    Settings(std::io::Error),
     /// The sandbox policy its child would run under is not a valid one.
     #[error("the sandbox policy for this agent could not be built: {0}")]
     Policy(#[from] SandboxPolicyError),
@@ -270,6 +280,13 @@ pub struct Agent {
     /// The effort it is started at, where its model takes one: its entry's
     /// where the model serves it, else the model's default rung.
     effort: Option<Effort>,
+    /// The Google Cloud location its entry names, where it names one: every
+    /// run reaches that location's host besides its row's.
+    location: Option<Box<str>>,
+    /// The project and location a business sign-in started on it is billed
+    /// to, written in its profile before it starts; only that sign-in sets
+    /// it.
+    billed: Option<Cloud>,
 }
 
 /// The model and effort an agent of `driver`, serving `serves`, is started
@@ -331,6 +348,7 @@ impl Agent {
             profile,
             model,
             effort,
+            location,
             ..
         } = route
         else {
@@ -343,6 +361,8 @@ impl Agent {
             profile: profile.as_deref().map(PathBuf::from),
             model,
             effort,
+            location: location.clone(),
+            billed: None,
         })
     }
 
@@ -367,6 +387,8 @@ impl Agent {
             profile: agent.profile().map(PathBuf::from),
             model,
             effort,
+            location: located_in(agent),
+            billed: None,
         })
     }
 
@@ -391,6 +413,19 @@ impl Agent {
             profile: agent.profile().map(PathBuf::from),
             model,
             effort,
+            location: located_in(agent),
+            billed: None,
+        }
+    }
+
+    /// The same agent started for a business sign-in billed to `cloud`, whose
+    /// settings are written in its profile once its route has its yes, just
+    /// before it is started.
+    #[must_use]
+    pub(crate) fn billed_to(self, cloud: Cloud) -> Self {
+        Self {
+            billed: Some(cloud),
+            ..self
         }
     }
 
@@ -947,6 +982,34 @@ pub fn policy(
     })
 }
 
+/// The location the entry `agent` names, where it names one.
+fn located_in(agent: &ExternalAgent) -> Option<Box<str>> {
+    agent.cloud().map(|cloud| cloud.location().into())
+}
+
+/// The host an agent's business sign-in billed in the Google Cloud
+/// `location` reaches besides its row's, as the location names it: a
+/// location with a hyphen, a region, has a host of its own, the
+/// multi-regions `us` and `eu` one under their own name, and any other,
+/// `global` among them, none besides the row's.
+///
+/// # Errors
+///
+/// [`SandboxPolicyError`] where the host so named is not one a policy can
+/// name, as one whose first label is longer than a host name's can be.
+pub(crate) fn located(
+    location: &str,
+) -> Result<Option<SandboxNetworkEndpoint>, SandboxPolicyError> {
+    let host = if location.contains('-') {
+        format!("{location}-businessaicode.googleapis.com")
+    } else if matches!(location, "us" | "eu") {
+        format!("businessaicode.{location}.rep.googleapis.com")
+    } else {
+        return Ok(None);
+    };
+    SandboxNetworkEndpoint::new(host, 443, SandboxNetworkProvenance::User).map(Some)
+}
+
 /// How long a started agent is to live.
 #[derive(Clone, Copy)]
 enum Life<'a> {
@@ -1168,10 +1231,19 @@ impl<'a> Launcher<'a> {
             Unheld::Asks(warned) => Unlaunched::Asks(warned),
             Unheld::Unknown => Unlaunched::Unknown(row.route().to_owned()),
         })?;
+        // A location whose host no policy can name adds none, and the
+        // sandbox then refuses what the agent asks of it; a business sign-in
+        // there is refused before anything is started.
+        let located = agent
+            .location
+            .as_deref()
+            .and_then(|location| located(location).ok().flatten());
+        let mut reaches = row.reaches();
+        reaches.extend(located.as_ref().map(SandboxNetworkEndpoint::host));
         let mut policy = policy(
             self.conversation,
             agent.profile.as_deref(),
-            &row.reaches(),
+            &reaches,
             life.limits(self.conversation.limits()),
         )?;
         let mut request = keyed(request, row, self.state.parent().unwrap_or(self.state));
@@ -1191,6 +1263,15 @@ impl<'a> Launcher<'a> {
                 return Err(SandboxPolicyError::InvalidPath.into());
             }
             private(&profile).map_err(Unlaunched::Profile)?;
+            if let Some(cloud) = &agent.billed {
+                antigravity::business(&profile, cloud.project(), cloud.location())
+                    .map_err(Unlaunched::Settings)?;
+            }
+        } else if agent.billed.is_some() {
+            return Err(Unlaunched::Settings(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "a business sign-in's settings are written in the agent's profile directory, and none is configured",
+            )));
         }
         let mut launch = Launch::new(program, policy, held).asking(request);
         if let Some(profile) = &agent.profile {
@@ -1933,6 +2014,8 @@ impl Steps {
             profile: None,
             model: None,
             effort: None,
+            location: None,
+            billed: None,
         }
         .release(
             &self.consent,

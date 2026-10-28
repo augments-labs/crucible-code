@@ -108,7 +108,7 @@ fn a_disconnect_says_the_account_remains_signed_in_only_when_that_was_known() {
 /// variable, and nothing offers the machine's own cloud credentials.
 #[test]
 fn the_four_methods_are_offered_with_the_variables_each_needs() {
-    use crate::antigravity::{methods, needs};
+    use crate::antigravity::methods;
     use crate::catalog::Method;
 
     let offered: Vec<(String, Option<String>)> = methods()
@@ -137,13 +137,6 @@ fn the_four_methods_are_offered_with_the_variables_each_needs() {
             ),
         ]
     );
-    assert_eq!(
-        needs("oauth-business"),
-        Some("a Google Cloud project and location for Gemini Enterprise")
-    );
-    for id in ["oauth-personal", "gemini-api-key", "agent-platform"] {
-        assert!(needs(id).is_none(), "{id}");
-    }
     assert!(
         offered
             .iter()

@@ -15,8 +15,20 @@
 //! that is read and not trusted, where a second name is what a backup made with
 //! hard links leaves on every file, and refusing it would hide the file rather
 //! than protect it.
+//!
+//! [`replace_in`] is the one write that holds its directory: the directory is
+//! opened once, as itself, and the file is written and renamed only within
+//! what that open holds, so neither a link at either name nor a name changed
+//! while it runs can send what is written to another directory. On Unix every
+//! step after the open is taken through it. On Windows the draft is created by
+//! name and shown by its handle to be in the held directory before any byte is
+//! written: a held directory that is still empty can be turned into a
+//! junction, and then an empty draft is made where the junction leads and
+//! removed, with nothing written.
 
+use std::ffi::{OsStr, OsString};
 use std::fs::File;
+use std::hash::BuildHasher as _;
 use std::io;
 use std::path::Path;
 
@@ -236,6 +248,52 @@ pub fn sync_parent(path: &Path) -> Result<(), PrivacyError> {
 /// [`PrivacyError`] when the replacement or its durability step fails.
 pub fn replace(source: &Path, destination: &Path) -> Result<(), PrivacyError> {
     platform::replace(source, destination).map_err(Into::into)
+}
+
+/// Replaces the file `name` in the owner-only `directory` with one that holds
+/// `contents` and nothing else, creating or tightening the directory as
+/// [`directory`] does.
+///
+/// The directory is opened once, as itself, and held: a link or anything but
+/// a directory at its name is refused, and the contents are written and
+/// renamed only within the directory that open holds, so a name changed
+/// meanwhile cannot send them to another directory. On Unix every later step
+/// is taken through that open. On Windows the draft is created by name and
+/// shown by its handle to be in the held directory before any byte is
+/// written: a held directory that is still empty can be turned into a
+/// junction, and then an empty draft is made where the junction leads and
+/// removed, and the write is refused with nothing written there. A link at
+/// `name`, looked at through the open on Unix and by name on Windows, is
+/// refused before anything is written, and one made there afterwards is
+/// replaced rather than followed.
+/// The contents are written to an owner-only draft beside `name`, under a name
+/// nothing outside this process can predict, synced and renamed over `name`;
+/// the draft is removed on any failure once it exists. On Unix the rename is
+/// then made durable in the directory, a step Windows does not expose.
+///
+/// # Errors
+///
+/// [`PrivacyError`] where `name` is not one name in a directory, either name
+/// is a link, the directory cannot be made or protected, or the file cannot
+/// be replaced.
+pub fn replace_in(directory: &Path, name: &OsStr, contents: &[u8]) -> Result<(), PrivacyError> {
+    if Path::new(name).file_name() != Some(name) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "a private file is named by one name in its directory",
+        )
+        .into());
+    }
+    platform::replace_in(directory, name, &draft(), contents).map_err(Into::into)
+}
+
+/// The name of a draft [`replace_in`] writes, which nothing outside this
+/// process can predict: a hash under keys `std` draws from the operating
+/// system once per thread and changes for every new state, so neither a name
+/// planted first nor one guessed from another draft is the one taken.
+fn draft() -> OsString {
+    let unpredictable = std::hash::RandomState::new().hash_one(std::process::id());
+    format!(".crucible-{unpredictable:016x}.writing").into()
 }
 
 #[cfg(test)]

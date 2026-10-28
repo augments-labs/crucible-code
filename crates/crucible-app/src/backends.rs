@@ -5,7 +5,8 @@
 //! its wire is spoken in each mode a conversation runs in, or why it is not run
 //! in one, which key names its profile directory, the content-use
 //! route it is held under, the section of `docs/providers/agents.md` that
-//! documents it, the hosts it must reach, the command a person signs it in
+//! documents it, the hosts every run of it must reach (a start adds the one a
+//! configured Google Cloud location names), the command a person signs it in
 //! with where it has one, the release of it crucible installs, and whether
 //! this release ships it.
 //! The chooser, the launch and every test read the [`Registry`] they were
@@ -387,12 +388,19 @@ pub(crate) const ANTIGRAVITY: Row = Row {
     route: "agent:antigravity",
     docs_section: "antigravity",
     // Its sign-in page, the token exchange behind it, and the service it
-    // asks, in its released and its daily build.
+    // asks, in its released and its daily build; the Gemini API a key signs
+    // in to; Agent Platform; the business service's global host; and the
+    // account details a Google sign-in reads. A business sign-in's regional
+    // host is its entry's location's, which the start adds.
     reaches: &[
         "accounts.google.com",
         "oauth2.googleapis.com",
         "cloudcode-pa.googleapis.com",
         "daily-cloudcode-pa.googleapis.com",
+        "generativelanguage.googleapis.com",
+        "aiplatform.googleapis.com",
+        "businessaicode.googleapis.com",
+        "www.googleapis.com",
     ],
     sign_in: |_| None,
     // The newest release the catalog offers that the installer can unpack.

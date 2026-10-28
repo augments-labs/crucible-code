@@ -214,6 +214,7 @@ fn launching_on(
         profile: None,
         model: model.map(Into::into),
         effort: None,
+        location: None,
         enabled: true,
     };
     let registry = Registry::new(std::slice::from_ref(row));

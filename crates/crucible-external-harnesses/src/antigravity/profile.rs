@@ -12,10 +12,22 @@
 //! configuration refuses an instance without a profile, since its usual home
 //! is the one the Antigravity IDE signs in under; a launch given none keeps its
 //! files there, its token still in a file.
+//!
+//! A business sign-in is billed to a Google Cloud project in a location,
+//! which the agent reads from its own settings file in the profile and from
+//! no variable. [`business`] writes that file before the agent is started for
+//! the sign-in, holding the method, project and location and nothing else. It
+//! opens the settings directory once, as itself, and writes the file within
+//! what that open holds, so a link at either name refuses the sign-in and a
+//! name changed while it writes cannot take the file out of the profile.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
+use std::io;
 use std::path::Path;
 
+use serde_json::Value;
+
+use super::OAUTH_BUSINESS;
 use crate::catalog::passed;
 
 /// The variables naming a directory for temporary files, which the agent
@@ -57,4 +69,48 @@ pub(crate) fn environment(
         );
     }
     environment
+}
+
+/// The directory in the profile the agent keeps its settings in.
+const SETTINGS_DIRECTORY: &str = "antigravity-acp";
+
+/// The agent's settings file in [`SETTINGS_DIRECTORY`].
+const SETTINGS: &str = "settings.json";
+
+/// Writes the settings a business sign-in in `profile` is made with: the
+/// method, and the Google Cloud `project` and `location` it is billed to,
+/// which the agent reads from this file alone. The file holds that and
+/// nothing else, replacing whatever the agent kept there, and none of it is a
+/// credential.
+///
+/// The write follows no link and leaves the profile at neither name: a link
+/// at the settings directory or at the file refuses it before anything is
+/// written. The directory is opened once, as itself, and the file is written
+/// and renamed within what that open holds, so a name changed meanwhile
+/// cannot send the write to another directory, and a link made at the file's
+/// name since is replaced rather than written through. On Windows the draft
+/// is created by name first and shown to be in that directory before a byte
+/// is written, so a settings directory still empty that is turned into a
+/// junction meanwhile gets an empty draft where the junction leads, removed
+/// with nothing written and the sign-in refused.
+///
+/// # Errors
+///
+/// [`io::Error`] where either name is a link, the settings directory cannot
+/// be made one, or the file cannot be replaced.
+pub fn business(profile: &Path, project: &str, location: &str) -> io::Result<()> {
+    // Each value spelled by the JSON writer, and the keys in the order the
+    // agent's own settings name them.
+    let settings = format!(
+        r#"{{"auth":{{"type":{}}},"gcp":{{"project":{},"location":{}}}}}"#,
+        Value::from(OAUTH_BUSINESS),
+        Value::from(project),
+        Value::from(location),
+    );
+    crucible_privacy::replace_in(
+        &profile.join(SETTINGS_DIRECTORY),
+        OsStr::new(SETTINGS),
+        settings.as_bytes(),
+    )
+    .map_err(crucible_privacy::PrivacyError::into_io)
 }
