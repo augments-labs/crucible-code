@@ -3273,11 +3273,9 @@ impl Bench {
     ) -> Result<Result<Outcome, AgentsError>, Failed> {
         let steps = self.steps(Arc::clone(&sandbox), confined, true, runtime)?;
         self.ask_with(
-            command,
-            &mut answering(&self.server, None),
+            (command, &mut answering(&self.server, None)),
             (sandbox, confined),
-            true,
-            Some(&steps),
+            (true, Some(&steps)),
             runtime,
         )
     }
@@ -3308,11 +3306,9 @@ impl Bench {
     /// `steps`.
     fn ask_with(
         &self,
-        command: Command,
-        front: &mut Answering<'_>,
+        (command, front): (Command, &mut Answering<'_>),
         (sandbox, confined): (Arc<dyn SandboxService>, bool),
-        yes: bool,
-        steps: Option<&Steps>,
+        (yes, steps): (bool, Option<&Steps>),
         runtime: &tokio::runtime::Runtime,
     ) -> Result<Result<Outcome, AgentsError>, Failed> {
         let consent = consent_for_antigravity(yes)?;
@@ -3819,11 +3815,9 @@ fn a_sign_in_beside_a_run_not_confirmed_stopped_is_refused_for_every_instance_on
     for instance in ["google", "spare"] {
         let mut front = answering(&bench.server, None);
         let refused = bench.ask_with(
-            sign_in(instance, "oauth-business")?,
-            &mut front,
+            (sign_in(instance, "oauth-business")?, &mut front),
             (Arc::clone(&local), false),
-            false,
-            Some(&steps),
+            (false, Some(&steps)),
             &runtime,
         )?;
         let Err(AgentsError::Unstopped(held)) = &refused else {
@@ -3860,11 +3854,9 @@ fn a_sign_in_beside_a_run_not_confirmed_stopped_is_refused_for_every_instance_on
 
     let mut front = answering(&bench.server, None);
     let apart = bench.ask_with(
-        sign_in("apart", "oauth-business")?,
-        &mut front,
+        (sign_in("apart", "oauth-business")?, &mut front),
         (Arc::clone(&local), false),
-        true,
-        Some(&steps),
+        (true, Some(&steps)),
         &runtime,
     )?;
     assert!(
@@ -3904,11 +3896,9 @@ fn a_sign_in_goes_ahead_beside_a_run_confirmed_stopped() -> Result<(), Failed> {
 
     let mut front = answering(&bench.server, None);
     let signed = bench.ask_with(
-        sign_in("google", "oauth-business")?,
-        &mut front,
+        (sign_in("google", "oauth-business")?, &mut front),
         (local, false),
-        true,
-        Some(&steps),
+        (true, Some(&steps)),
         &runtime,
     )?;
     assert!(
@@ -3944,11 +3934,9 @@ fn a_sign_in_with_a_launcher_and_no_steps_is_refused_before_anything_is_started(
 
     let mut front = answering(&bench.server, None);
     let refused = bench.ask_with(
-        sign_in("google", "oauth-business")?,
-        &mut front,
+        (sign_in("google", "oauth-business")?, &mut front),
         (local, false),
-        false,
-        None,
+        (false, None),
         &runtime,
     )?;
 
