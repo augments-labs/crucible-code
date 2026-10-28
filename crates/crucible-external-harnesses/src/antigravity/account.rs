@@ -8,9 +8,10 @@
 //!
 //! It offers four ways to sign in ([`methods`]): its own Google sign-in, for
 //! a personal account or for a business one, each carried out by the agent
-//! once asked through `authenticate`, and a Gemini API key or a Vertex AI API
-//! key, each typed by the user, kept by crucible under the agent's name and
-//! the method's id, and given to the agent in the variable it reads. A
+//! once asked through `authenticate`, and a Gemini API key or a Gemini
+//! Enterprise Agent Platform API key, each typed by the user, kept by crucible
+//! under the agent's name and the method's id, and given to the agent in the
+//! variable it reads. A
 //! business sign-in also needs the Google Cloud project and location it is
 //! billed to ([`needs`]); the agent is never given the shell's, so nothing
 //! gives it those yet, and the sign-in is refused naming them. The machine's
@@ -37,8 +38,9 @@ pub const OAUTH_BUSINESS: &str = "oauth-business";
 /// The method a Gemini API key signs in by.
 pub const GEMINI_API_KEY: &str = "gemini-api-key";
 
-/// The method a Vertex AI API key signs in by.
-pub const VERTEX_AI: &str = "vertex-ai";
+/// The method a Gemini Enterprise Agent Platform API key signs in by: the
+/// platform once called Vertex AI.
+pub const AGENT_PLATFORM: &str = "agent-platform";
 
 /// The ways the agent signs in, in the order it offers them.
 #[must_use]
@@ -64,8 +66,8 @@ pub fn methods() -> Vec<AuthMethod> {
             },
         ),
         method(
-            VERTEX_AI,
-            "Vertex AI API key",
+            AGENT_PLATFORM,
+            "Gemini Enterprise Agent Platform API key",
             Method::EnvVar {
                 var: "GOOGLE_API_KEY".into(),
             },

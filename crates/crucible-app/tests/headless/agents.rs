@@ -2734,7 +2734,7 @@ fn antigravity_offers_its_four_methods_and_a_business_sign_in_names_what_it_need
         Typed::new(KEY.to_owned()),
     )?;
     let gemini = ask("gemini-api-key")?;
-    let vertex = ask("vertex-ai")?;
+    let platform = ask("agent-platform")?;
     let elsewhere = ask("application-default")?;
 
     assert!(
@@ -2757,8 +2757,8 @@ fn antigravity_offers_its_four_methods_and_a_business_sign_in_names_what_it_need
         "the Gemini key was not adopted"
     );
     assert!(
-        matches!(vertex, Err(AgentsError::Unstored { .. })),
-        "{vertex:?}"
+        matches!(platform, Err(AgentsError::Unstored { .. })),
+        "{platform:?}"
     );
     assert!(
         matches!(elsewhere, Err(AgentsError::NoMethod { .. })),

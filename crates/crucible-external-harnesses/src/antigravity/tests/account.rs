@@ -131,14 +131,17 @@ fn the_four_methods_are_offered_with_the_variables_each_needs() {
                 "gemini-api-key".to_owned(),
                 Some("GEMINI_API_KEY".to_owned())
             ),
-            ("vertex-ai".to_owned(), Some("GOOGLE_API_KEY".to_owned())),
+            (
+                "agent-platform".to_owned(),
+                Some("GOOGLE_API_KEY".to_owned())
+            ),
         ]
     );
     assert_eq!(
         needs("oauth-business"),
         ["GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION"]
     );
-    for id in ["oauth-personal", "gemini-api-key", "vertex-ai"] {
+    for id in ["oauth-personal", "gemini-api-key", "agent-platform"] {
         assert!(needs(id).is_empty(), "{id}");
     }
     assert!(

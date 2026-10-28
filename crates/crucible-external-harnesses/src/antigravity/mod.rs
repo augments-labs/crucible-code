@@ -28,7 +28,7 @@ mod manifest;
 mod profile;
 
 pub use account::{
-    Ended, GEMINI_API_KEY, OAUTH_BUSINESS, OAUTH_PERSONAL, VERTEX_AI, methods, needs,
+    AGENT_PLATFORM, Ended, GEMINI_API_KEY, OAUTH_BUSINESS, OAUTH_PERSONAL, methods, needs,
 };
 pub use manifest::Manifest;
 
