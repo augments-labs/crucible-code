@@ -39,6 +39,9 @@
 //! the terminal's scrollback, and taking the panel down again brings none of
 //! them back. A panel that cannot be drawn in half the window stands at the
 //! least it can be drawn in, and the rows that costs stay in the scrollback.
+//! A caller may lay a question out in the whole window instead, so that every
+//! fact it states is read before it is answered, and the rows that pushes off
+//! the top stay in the scrollback the same way.
 //!
 //! The region keeps its height from one frame to the next. What a turn shows,
 //! or a panel, grows it, and the rows it grows over scroll into the terminal's

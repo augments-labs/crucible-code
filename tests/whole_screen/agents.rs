@@ -151,6 +151,20 @@ fn moved_onto(window: &Watched) {
     assert!(!picture.contains("no credential"), "{picture}");
 }
 
+/// Fails where the door's question on `picture` gives up its headline, as the
+/// door words it, or either of its choices, each read off a row of its own
+/// with the mark taken off.
+fn asks(case: &str, picture: &str, headline: &str, choices: [&str; 2]) {
+    assert!(picture.contains(headline), "{case}: {headline}\n{picture}");
+    for choice in choices {
+        let offered = picture.lines().any(|row| {
+            let row = row.trim_matches('|').trim();
+            row.strip_prefix('›').unwrap_or(row).trim_start() == choice
+        });
+        assert!(offered, "{case}: no choice {choice}\n{picture}");
+    }
+}
+
 #[test]
 fn the_first_login_panel_offers_an_installed_agent() {
     captured(
@@ -218,6 +232,28 @@ fn an_agent_installed_after_a_yes_shows_its_download_then_the_agents_again() {
             window.types_until("", "Not installed");
             takes(&mut window, "Install");
             window.types_until("", "Read the terms first");
+            // The window holds the whole question in either mode, so every
+            // fact is read before the answer: one part of each that sits on
+            // one row at either width, the hosts and the size left out for
+            // the port and the bytes they carry.
+            let asked = window.picture();
+            asks(
+                &case,
+                &asked,
+                "Install antigravity 1.3.0?",
+                ["Install", "Cancel"],
+            );
+            for fact in [
+                "Licence Proprietary; terms at",
+                "https://example.com/terms.",
+                "Caution: Read the terms first.",
+                "Started as: agy_acp_server.par",
+                "Started with no environment of its own.",
+                "Moves no configured instance",
+                "Not smoke-tested",
+            ] {
+                assert!(asked.contains(fact), "{case}: {fact}\n{asked}");
+            }
             takes(&mut window, "Install");
             // The host sends half the program and holds the rest back, so
             // the download stands where it is until this has seen it.
@@ -1562,6 +1598,12 @@ fn a_second_add_of_the_same_agent_writes_the_next_free_instance() {
             asked.contains("already installed, so nothing is downloaded"),
             "{case}: {asked}"
         );
+        asks(
+            &case,
+            &asked,
+            "Add goose 1.0.0 as the instance goose-2?",
+            ["Add", "Cancel"],
+        );
         takes(&mut window, "Add");
         window.types_until("", "Apache-2.0 · installed");
         left(&mut window, "as the instance \"goose-2\".");
@@ -1577,9 +1619,8 @@ fn a_second_add_of_the_same_agent_writes_the_next_free_instance() {
     }
 }
 
-/// A window tall enough for the add question to stand whole on the terminal's
-/// own screen too, where a panel has half the window: its question, every
-/// fact and both of its choices.
+/// A window tall enough for the add question to stand whole in either mode:
+/// its question, every fact and both of its choices.
 const ASKED_WHOLE: (u16, u16) = (80, 50);
 
 /// The configuration file as it stands, with the case named.

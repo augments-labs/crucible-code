@@ -2,9 +2,7 @@
 source: tests/whole_screen/agents.rs
 expression: picture
 ---
-80x40 cursor 35,0 scrollback 0
-|╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
-|│                                  │ Recent sessions                           │|
+80x40 cursor 39,0 scrollback 2
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
 |│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No earlier session for this workspace     │|
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
@@ -21,6 +19,12 @@ expression: picture
 |› /login                                                                        |
 |⎿ antigravity 1.3.0 installed; it was not smoke-tested: the sandbox is off, and |
 |  a smoke test runs only inside it                                              |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
 |────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |Log in                                                                          |
@@ -39,7 +43,3 @@ expression: picture
 |  Change nothing.                                                               |
 |                                                                                |
 |esc to go back                                                                  |
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |

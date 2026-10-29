@@ -2,7 +2,7 @@
 source: tests/whole_screen/agents.rs
 expression: picture
 ---
-80x40 cursor 19,15 scrollback 0
+80x40 cursor 20,15 scrollback 0
 |╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
 |│                                  │ Recent sessions                           │|
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
@@ -21,6 +21,7 @@ expression: picture
 |› /agents                                                                       |
 |⎿ Added goose 1.0.0 as the instance "goose". It was not smoke-tested: the       |
 |  sandbox is off, and a smoke test runs only inside it.                         |
+|                                                                                |
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ Search  goose                                                                │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
@@ -41,5 +42,4 @@ expression: picture
 |╰──────────────────────────────╯ ╰─────────────────────────────────────────────╯|
 |                                                                                |
 | ↑↓ to walk · enter to open · type to search · esc to cancel                    |
-|                                                                                |
 |                                                                                |

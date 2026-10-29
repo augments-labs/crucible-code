@@ -57,6 +57,31 @@ pub(super) enum Ended {
     Cramped,
 }
 
+/// How much of the window something standing over the box may be laid out in.
+///
+/// Two answers that differ only in native mode, where a row the transcript
+/// gives up goes into the terminal's scrollback for good: most of what stands
+/// is held to a share there, and a question asked before something changes is
+/// not, since a fact scrolled out of sight is one the answer was given without.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Room {
+    /// [`Renderer::room`]'s: the whole window on the full screen, and a share
+    /// of it in native mode.
+    Share,
+    /// The whole window in either mode.
+    Window,
+}
+
+impl Room {
+    /// How many rows this room is in `renderer`'s window as it is now.
+    fn rows(self, renderer: &Renderer<impl Terminal>) -> usize {
+        match self {
+            Self::Share => renderer.room(),
+            Self::Window => renderer.rows(),
+        }
+    }
+}
+
 /// What one key does to something that is standing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Moved {
@@ -122,11 +147,37 @@ pub(super) fn stand_while<T: Terminal, S>(
 ) -> Result<Ended, Fatal> {
     standing(
         renderer,
+        Room::Share,
         style,
         state,
         laid,
         keys,
         while_waiting,
+        None::<(Duration, fn(&mut S) -> Moved)>,
+    )
+}
+
+/// [`stand`], laid out in `room` rather than in the share.
+#[allow(clippy::too_many_arguments)]
+// The five `stand` takes, and the room: what a component may be laid out in
+// is the caller's to choose, and it is no part of the state, the layout or the
+// keys, so a struct for it would exist only to satisfy the count.
+pub(super) fn stand_in<T: Terminal, S>(
+    renderer: &mut Renderer<T>,
+    room: Room,
+    style: impl Fn(&S) -> Style,
+    state: &mut S,
+    laid: impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
+    keys: impl Fn(Pressed, &mut S) -> Moved,
+) -> Result<Ended, Fatal> {
+    standing(
+        renderer,
+        room,
+        style,
+        state,
+        laid,
+        keys,
+        |_| Ok(()),
         None::<(Duration, fn(&mut S) -> Moved)>,
     )
 }
@@ -152,6 +203,7 @@ pub(super) fn stand_watching<T: Terminal, S>(
 ) -> Result<Ended, Fatal> {
     standing(
         renderer,
+        Room::Share,
         style,
         state,
         laid,
@@ -177,12 +229,14 @@ pub(super) fn unheard<T: Terminal>(renderer: &mut Renderer<T>) -> Result<(), Fat
     Ok(())
 }
 
-/// The loop behind [`stand_while`] and [`stand_watching`].
+/// The loop behind [`stand_while`], [`stand_in`] and [`stand_watching`].
 #[allow(clippy::too_many_arguments)]
-// Seven for the reason `stand_while` gives its six, and the one more is the
-// watch a component that changes without a key is looked at on.
+// Eight for the reason `stand_while` gives its six, and the two more are the
+// room `stand_in` lays a component out in and the watch a component that
+// changes without a key is looked at on.
 fn standing<T: Terminal, S>(
     renderer: &mut Renderer<T>,
+    room: Room,
     style: impl Fn(&S) -> Style,
     state: &mut S,
     mut laid: impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
@@ -197,7 +251,7 @@ fn standing<T: Terminal, S>(
     loop {
         while_waiting(renderer)?;
         if changed {
-            let (rows, caret) = fitted(renderer, state, &mut laid);
+            let (rows, caret) = fitted(renderer, room, state, &mut laid);
             // Asked per frame rather than taken once, because one caller
             // changes it between frames: `/theme` draws its specimen in
             // whatever the mark is standing on, which is the whole of how a
@@ -326,27 +380,31 @@ fn stood<T: Terminal>(renderer: &Renderer<T>, row: usize, column: usize) -> Opti
     }
 }
 
-/// Lays the component out in the room the renderer gives what stands over the
-/// box, or, where it cannot be drawn in that, in the least it can be drawn in.
+/// Lays the component out in `room`, or, where it cannot be drawn in that, in
+/// the least it can be drawn in.
 ///
-/// The room is the renderer's answer and not a component's: the whole window
-/// on the full screen, and a share of it in native mode, where a row given up
-/// goes into the terminal's scrollback for good. A component gives nothing
+/// How many rows the room is is asked of the renderer each frame, since a
+/// resize changes it. [`Room::Share`] is the renderer's answer and not a
+/// component's: the whole window on the full screen, and a share of it in
+/// native mode, where a row given up goes into the terminal's scrollback for
+/// good. [`Room::Window`] is the whole window in either mode, for a question
+/// whose facts are all read before it is answered. A component gives nothing
 /// back rather than a picture cut short, so one the share cannot hold is laid
 /// out again a row taller each time until it stands — the smallest height it
-/// draws itself at, found without the component naming it. On the full screen
-/// the room is the window and the second layout never runs.
+/// draws itself at, found without the component naming it. Where the room is
+/// the window the second layout never runs.
 fn fitted<S>(
     renderer: &Renderer<impl Terminal>,
+    room: Room,
     state: &mut S,
     laid: &mut impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
 ) -> (Vec<Row>, Option<Caret>) {
     let columns = renderer.columns();
-    let mut room = renderer.room();
-    let mut drawn = laid(state, columns, room);
-    while drawn.0.is_empty() && room < renderer.rows() {
-        room += 1;
-        drawn = laid(state, columns, room);
+    let mut rows = room.rows(renderer);
+    let mut drawn = laid(state, columns, rows);
+    while drawn.0.is_empty() && rows < renderer.rows() {
+        rows += 1;
+        drawn = laid(state, columns, rows);
     }
     drawn
 }
@@ -361,8 +419,11 @@ fn fitted<S>(
 /// component here is not a prompt, so the share a prompt is held to is not
 /// its: on the full screen a list of themes may take the window it needs, and
 /// there is nothing underneath it for that to push off the screen. In native
-/// mode there is — the terminal's scrollback — and what it may take is
-/// [`Renderer::room`]'s to say, by way of [`fitted`].
+/// mode there is — the terminal's scrollback — and what it may take is the
+/// [`Room`] it was stood in, by way of [`fitted`]: [`Renderer::room`]'s share
+/// for most, and the whole window for a question whose facts are all read
+/// before it is answered, whose rows pushed off the top stay in the
+/// scrollback.
 ///
 /// The cursor is parked where `caret` says, and on the last row it drew where
 /// that is `None`. Nothing here hides it — this program never does — and the

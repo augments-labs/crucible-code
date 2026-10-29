@@ -2,11 +2,18 @@
 source: tests/whole_screen/agents.rs
 expression: picture
 ---
-40x40 cursor 28,0 scrollback 0
+40x40 cursor 35,0 scrollback 0
 |CRUCIBLE                                |
 |/…/workspace                            |
 |                                        |
 |› /login                                |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
 |                                        |
 |                                        |
 |                                        |
@@ -32,13 +39,6 @@ expression: picture
 |██████████████████░░░░░░░░░░░░░░░░░  50%|
 |                                        |
 |esc cancels the download                |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
 |                                        |
 |                                        |
 |                                        |

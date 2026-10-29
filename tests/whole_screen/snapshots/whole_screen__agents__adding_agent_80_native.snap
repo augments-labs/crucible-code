@@ -2,7 +2,7 @@
 source: tests/whole_screen/agents.rs
 expression: picture
 ---
-80x40 cursor 35,0 scrollback 0
+80x40 cursor 38,0 scrollback 0
 |╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
 |│                                  │ Recent sessions                           │|
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
@@ -33,13 +33,13 @@ expression: picture
 |                                                                                |
 |                                                                                |
 |                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
 |────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |Agents · downloading goose                                                      |
 |██████████████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  50%|
 |                                                                                |
 |esc cancels the download                                                        |
-|                                                                                |
-|                                                                                |
-|                                                                                |
 |                                                                                |
