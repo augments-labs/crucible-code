@@ -10,7 +10,10 @@ use crucible_app::client::agents::{AgentsError, How, Outcome};
 use crucible_types::AgentKey;
 use serde_json::{Value, json};
 
-use super::{Answering, Bench, CATALOG, Failed, ONE, add, answering, facts, shape};
+use super::{
+    Answering, Bench, CATALOG, Failed, ONE, TWO, add, answering, facts,
+    reviewed_with_one_installed, shape,
+};
 
 /// The entry the user file holds for instance `instance`, or null.
 fn instance(bench: &Bench, name: &str) -> Result<Value, Failed> {
@@ -173,5 +176,32 @@ fn an_add_the_user_file_has_no_room_for_keeps_the_version_and_writes_nothing() -
     );
     assert_eq!(fs::read(bench.program("1.0.0"))?, ONE);
     assert_eq!(fs::read_to_string(bench.user())?, full);
+    Ok(())
+}
+
+#[test]
+fn a_standing_yes_to_updates_still_asks_before_an_add() -> Result<(), Failed> {
+    let bench = Bench::new("agents-door-add-reviewed")?;
+    reviewed_with_one_installed(&bench, 1)?;
+    bench
+        .server
+        .publish(2, &[("2.0.0", TWO), ("1.0.0", ONE)], &[]);
+    bench.server.forget();
+    let before = fs::read(bench.user())?;
+    let mut front = answering(&bench.server, None);
+
+    let (outcome, told) = bench.ask(add("2.0.0")?, &mut front, false)?;
+
+    assert!(
+        matches!(outcome, Ok(Outcome::Undecided)),
+        "{}",
+        shape(&outcome)
+    );
+    // One install question was put, and it was the add's.
+    assert!(says(&front, "Adds the instance goose to")?);
+    assert_eq!(bench.server.asked(), CATALOG);
+    assert!(told.is_empty());
+    assert!(!bench.program("2.0.0").exists());
+    assert_eq!(fs::read(bench.user())?, before);
     Ok(())
 }
