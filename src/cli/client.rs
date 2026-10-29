@@ -18,7 +18,11 @@
 //! itself, takes it off a channel, draws it and sends the answer back. The
 //! panel is drawn from the question whole, as the host holds it.
 //!
-//! A terminal has somebody at it and a screen, so it claims every capability.
+//! A terminal has somebody at it and a screen, so it claims every capability,
+//! but for `/login`'s agent connect, which claims every one but
+//! [`Capability::Install`](crucible_client_api::Capability::Install): a client
+//! that claims it can be offered a move on an agent in place of the connect,
+//! and the terminal cannot yet carry one out.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -87,9 +91,14 @@ impl Client {
 
     /// The next request, asking for `command`.
     pub(crate) fn asking(&self, command: Command) -> Request {
+        self.claiming(Capabilities::every(), command)
+    }
+
+    /// The next request, asking for `command` and claiming `capabilities`.
+    fn claiming(&self, capabilities: Capabilities, command: Command) -> Request {
         let number = self.sent.fetch_add(1, Ordering::Relaxed).saturating_add(1);
 
-        Request::new(Capabilities::every(), Correlation::new(number), command)
+        Request::new(capabilities, Correlation::new(number), command)
     }
 
     /// Asks the turn `cancel` belongs to to stop.
@@ -271,9 +280,30 @@ impl Terms {
         &self,
         conversation: &mut Conversation,
         command: Command,
+        answer: impl FnMut(&Question) -> Result<Option<Reply>, E>,
+    ) -> Result<Performed, E> {
+        self.operate_claiming(conversation, Capabilities::every(), command, answer)
+    }
+
+    /// [`Terms::operate`], with the request claiming `capabilities` rather
+    /// than every one.
+    ///
+    /// Only `/login`'s agent connect claims fewer: it withholds
+    /// [`Capability::Install`](crucible_client_api::Capability::Install)
+    /// because it cannot yet carry out the agent moves a client that claims it
+    /// is offered in place of the connect.
+    ///
+    /// # Errors
+    ///
+    /// Whatever `answer` fails with; the operation is dropped where it stood.
+    pub(crate) fn operate_claiming<E>(
+        &self,
+        conversation: &mut Conversation,
+        capabilities: Capabilities,
+        command: Command,
         mut answer: impl FnMut(&Question) -> Result<Option<Reply>, E>,
     ) -> Result<Performed, E> {
-        let request = self.client.asking(command);
+        let request = self.client.claiming(capabilities, command);
         let (providers, settings) = (self.providers.snapshot(), self.reading());
         let desk = self.desk(&providers, &settings);
         // One question is out at a time: the operation awaits each answer.

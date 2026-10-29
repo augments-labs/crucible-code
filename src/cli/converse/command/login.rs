@@ -89,7 +89,7 @@ use crucible_app::providers::{
 use crucible_app::subscription::Route;
 use crucible_app::switching::LoggedIn;
 use crucible_auth::{AuthError, Kind, LoginAttempt, LoginUpdate, Stopped};
-use crucible_client_api::{Agents, Command, LogoutOutcome, Outcome};
+use crucible_client_api::{Agents, Capabilities, Capability, Command, LogoutOutcome, Outcome};
 use crucible_tui::{
     Caret, Glyphs, Heading, Key, Offered, Panel, Pressed, Renderer, Row, Slot, Terminal,
     characters, clip, fold, pressed,
@@ -469,15 +469,11 @@ fn connected<T: Terminal>(walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
     let style = walk.terms.style();
     let renderer = &mut *walk.renderer;
     let mut cramped = false;
-    let performed = walk.terms.operate(
-        walk.conversation,
-        Command::Connect { instance: None },
-        |question| {
-            let replied = answered(renderer, style, question)?;
-            cramped |= replied.is_none();
-            Ok::<_, Fatal>(replied)
-        },
-    )?;
+    let performed = connecting(walk.terms, walk.conversation, |question| {
+        let replied = answered(renderer, style, question)?;
+        cramped |= replied.is_none();
+        Ok::<_, Fatal>(replied)
+    })?;
     if cramped {
         say(walk.renderer, CRAMPED_CONNECT)?;
         return Ok(Closed::Done);
@@ -491,6 +487,27 @@ fn connected<T: Terminal>(walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
         executing(walk.renderer, walk.conversation, style)?;
     }
     Ok(Closed::Done)
+}
+
+/// What `/login`'s agent connect claims: every capability but
+/// [`Capability::Install`]. A client that claims it can be offered a move on
+/// an agent in place of the connect, and the terminal cannot yet carry one
+/// out, so `/login` withholds it and is put the questions it was before.
+const CONNECTING: Capabilities = Capabilities::every().without(Capability::Install);
+
+/// The agent connect the third row asks for, each question it stops on
+/// answered by `answer`.
+fn connecting<E>(
+    terms: &Terms,
+    conversation: &mut Conversation,
+    answer: impl FnMut(&Question) -> Result<Option<Reply>, E>,
+) -> Result<Performed, E> {
+    terms.operate_claiming(
+        conversation,
+        CONNECTING,
+        Command::Connect { instance: None },
+        answer,
+    )
 }
 
 /// The line an account operation ends on, and whether a provider is now

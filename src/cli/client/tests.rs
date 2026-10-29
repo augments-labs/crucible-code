@@ -238,6 +238,52 @@ impl Journal {
     }
 }
 
+/// The capabilities each request a client was answered for claimed, beside
+/// its command, in the order they were answered.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Claims(Arc<Mutex<Vec<(Command, Capabilities)>>>);
+
+impl Claims {
+    fn claimed(&self, request: &Request) {
+        self.0
+            .lock()
+            .expect("the claims")
+            .push((request.command().clone(), request.capabilities()));
+    }
+
+    pub(crate) fn taken(&self) -> Vec<(Command, Capabilities)> {
+        self.0.lock().expect("the claims").clone()
+    }
+}
+
+impl Witness for Claims {
+    fn answered(&self, request: &Request, _: &Conversation, _: Outcome) {
+        self.claimed(request);
+    }
+
+    fn apart(&self, request: &Request, _: Outcome) {
+        self.claimed(request);
+    }
+
+    fn put(&self, _: &Pending) {}
+
+    fn decided(&self, _: &Decision) {}
+}
+
+impl Client {
+    /// A client whose requests' claims are noted, beside where they are
+    /// noted.
+    pub(crate) fn noting_claims() -> (Self, Claims) {
+        let claims = Claims::default();
+        let client = Self {
+            witness: Some(Arc::new(claims.clone())),
+            ..Self::default()
+        };
+
+        (client, claims)
+    }
+}
+
 /// Requests numbered as they are made, each read back off the bytes it
 /// travels as.
 #[derive(Debug, Clone, Default)]

@@ -1342,3 +1342,38 @@ fn a_fact_an_agent_gave_reaches_the_panel_with_none_of_its_control_bytes() {
         Some("Agent: work, run as work.")
     );
 }
+
+#[test]
+fn the_agent_connect_claims_every_capability_but_the_one_whose_moves_it_cannot_carry_out() {
+    let sample = Sample::new("login-connect-claims");
+    let mut terms = in_force(&sample);
+    let (client, claims) = crate::cli::client::Client::noting_claims();
+    terms.client = client;
+    let mut conversation = asking("claude-test-1");
+    let mut asked = 0;
+
+    let performed = connecting(&terms, &mut conversation, |_| {
+        asked += 1;
+        Ok::<_, Fatal>(None)
+    })
+    .expect("nobody answering fails nothing");
+
+    assert!(
+        matches!(performed, Performed::Account(Account::Unconnected)),
+        "{:?}",
+        performed.outcome().kind()
+    );
+    assert_eq!(asked, 1, "the agent question was put");
+    let taken = claims.taken();
+    let [(command, claimed)] = taken.as_slice() else {
+        panic!("one request answered, not {}", taken.len());
+    };
+    assert_eq!(*command, Command::Connect { instance: None });
+    assert!(!claimed.has(Capability::Install), "{claimed:?}");
+    assert!(claimed.has(Capability::Account), "{claimed:?}");
+    assert_eq!(
+        *claimed,
+        Capabilities::every().without(Capability::Install),
+        "every other capability is still claimed"
+    );
+}
