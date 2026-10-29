@@ -121,6 +121,7 @@ const fn claimed(command: &Command) -> Capabilities {
         | Command::AskLimits
         | Command::AgentCatalog
         | Command::InstallAgent { .. }
+        | Command::AddAgent { .. }
         | Command::UpdateAgent { .. }
         | Command::RollbackAgent { .. }
         | Command::RemoveAgent { .. }
@@ -666,6 +667,7 @@ pub(crate) const fn coded(refused: &AgentsError) -> ErrorCode {
         | AgentsError::Download(_)
         | AgentsError::Unpacked(_)
         | AgentsError::Remember(_)
+        | AgentsError::Unadded { .. }
         | AgentsError::Smoke { .. }
         | AgentsError::Unclouded { .. }
         | AgentsError::Unlocated(_)

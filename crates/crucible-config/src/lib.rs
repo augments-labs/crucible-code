@@ -71,9 +71,10 @@ pub use document::check::{
 pub use error::{Accepted, At, ConfigError};
 pub use home::{HOME, Home};
 pub use remember::{
-    accepting, allowing, asking, choosing, choosing_agent_model, chosen, connecting, defaulting,
-    disabling, drawing, forgetting, hastened, hastening, installing, pointing, reaching, reading,
-    removing, sandboxing, setting, slowing, thinking, thinking_agent, unasked,
+    accepting, adding, allowing, asking, choosing, choosing_agent_model, chosen, connecting,
+    defaulting, disabling, drawing, forgetting, free_name, hastened, hastening, installing,
+    pointing, reaching, reading, removing, sandboxing, setting, slowing, thinking, thinking_agent,
+    unasked,
 };
 pub use settings::access::{
     Cloud, MODEL_NAMED as AGENT_MODEL_NAMED, NATIVE_RUNNER, Serves, model_name as agent_model,

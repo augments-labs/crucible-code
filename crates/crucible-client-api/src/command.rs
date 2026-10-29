@@ -10,17 +10,17 @@
 //! login names a provider and never the credential: the secret is stored on
 //! the host, and the command says only that it now can be read.
 //!
-//! The commands that install, update, roll back, remove, verify and sign in an
-//! agent from the reviewed catalog, and the one that lists it, are served by a
-//! door of their own that no conversation is part of, and only of a client that
-//! claimed [`Capability::Install`]: [`Command::needs`] says which, and a
-//! conversation refuses them as [`ErrorCode::AgentsDoor`]. They name an agent by
-//! the name the catalog gives it and a sign-in by the instance and the method,
-//! and never what is fetched, where it is put or the secret a sign-in takes. The
-//! names are only names: the door checks `agent` as an agent key, and finds
-//! `version`, `instance` and `method` by equality against the catalog or the
-//! configuration, before any of them is used, and none is ever read as a path,
-//! an argument or shell text.
+//! The commands that install, add, update, roll back, remove, verify and sign
+//! in an agent from the reviewed catalog, and the one that lists it, are served
+//! by a door of their own that no conversation is part of, and only of a client
+//! that claimed [`Capability::Install`]: [`Command::needs`] says which, and a
+//! conversation refuses them as [`ErrorCode::AgentsDoor`]. They name an agent
+//! by the name the catalog gives it and a sign-in by the instance and the
+//! method, and never what is fetched, where it is put or the secret a sign-in
+//! takes. The names are only names: the door checks `agent` as an agent key,
+//! and finds `version`, `instance` and `method` by equality against the catalog
+//! or the configuration, before any of them is used, and none is ever read as a
+//! path, an argument or shell text.
 
 use std::fmt;
 use std::str::FromStr;
@@ -174,6 +174,17 @@ pub enum Command {
         /// catalog by equality and uses it as nothing else.
         version: Name,
     },
+    /// Install this version of this catalog agent and add an instance of it to
+    /// the user's configuration. Asked for as [`Command::InstallAgent`] is. The
+    /// door picks the instance's name, and the outcome names the one written.
+    AddAgent {
+        /// The agent, by the name the catalog gives it. The door checks it as
+        /// an agent key before it is used.
+        agent: Name,
+        /// The version, as the catalog spells it. The door finds it in the
+        /// catalog by equality and uses it as nothing else.
+        version: Name,
+    },
     /// Move an installed catalog agent to the version the catalog now offers
     /// for it. Asked for as [`Command::InstallAgent`] is.
     UpdateAgent {
@@ -222,7 +233,7 @@ pub enum Command {
 
 impl Command {
     /// The word each arm crosses as, in the order the arms are declared.
-    pub const KINDS: [&'static str; 35] = [
+    pub const KINDS: [&'static str; 36] = [
         "prompt",
         "compact",
         "cancel",
@@ -252,6 +263,7 @@ impl Command {
         "ask_limits",
         "agent_catalog",
         "install_agent",
+        "add_agent",
         "update_agent",
         "rollback_agent",
         "remove_agent",
@@ -293,6 +305,7 @@ impl Command {
             Self::AskLimits => "ask_limits",
             Self::AgentCatalog => "agent_catalog",
             Self::InstallAgent { .. } => "install_agent",
+            Self::AddAgent { .. } => "add_agent",
             Self::UpdateAgent { .. } => "update_agent",
             Self::RollbackAgent { .. } => "rollback_agent",
             Self::RemoveAgent { .. } => "remove_agent",
@@ -315,6 +328,7 @@ impl Command {
         match self {
             Self::AgentCatalog
             | Self::InstallAgent { .. }
+            | Self::AddAgent { .. }
             | Self::UpdateAgent { .. }
             | Self::RollbackAgent { .. }
             | Self::RemoveAgent { .. }
@@ -374,7 +388,7 @@ impl Command {
             Self::Disconnect { instance }
             | Self::RemoveIntegration { instance }
             | Self::SignOut { instance } => object.with("instance", instance.as_str()),
-            Self::InstallAgent { agent, version } => object
+            Self::InstallAgent { agent, version } | Self::AddAgent { agent, version } => object
                 .with("agent", agent.as_str())
                 .with("version", version.as_str()),
             Self::UpdateAgent { agent }
@@ -476,6 +490,10 @@ impl Command {
             "ask_limits" => Self::AskLimits,
             "agent_catalog" => Self::AgentCatalog,
             "install_agent" => Self::InstallAgent {
+                agent: fields.name("agent")?,
+                version: fields.name("version")?,
+            },
+            "add_agent" => Self::AddAgent {
                 agent: fields.name("agent")?,
                 version: fields.name("version")?,
             },

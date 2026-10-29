@@ -1003,12 +1003,16 @@ fn what_cannot_be_carried_out_is_refused_by_code_and_changes_nothing() -> Result
     Ok(())
 }
 
-/// The seven commands the agents door serves and no conversation does.
+/// The eight commands the agents door serves and no conversation does.
 fn installing() -> Result<Vec<Command>, Failed> {
     let agent = || Name::new("example-agent");
     Ok(vec![
         Command::AgentCatalog,
         Command::InstallAgent {
+            agent: agent()?,
+            version: Name::new("1.2.3")?,
+        },
+        Command::AddAgent {
             agent: agent()?,
             version: Name::new("1.2.3")?,
         },

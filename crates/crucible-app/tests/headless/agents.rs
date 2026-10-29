@@ -62,6 +62,9 @@ use sha2::{Digest as _, Sha256};
 
 use super::{Failed, Tree};
 
+#[path = "agents/adding.rs"]
+mod adding;
+
 /// What the fake host answers a path with.
 #[derive(Clone)]
 enum Reply {
@@ -513,6 +516,7 @@ const fn shape(outcome: &Result<Outcome, AgentsError>) -> &'static str {
         Err(AgentsError::Download(_)) => "Err(Download)",
         Err(AgentsError::Unpacked(_)) => "Err(Unpacked)",
         Err(AgentsError::Remember(_)) => "Err(Remember)",
+        Err(AgentsError::Unadded { .. }) => "Err(Unadded)",
         Err(AgentsError::Smoke { .. }) => "Err(Smoke)",
         Err(AgentsError::NoInstance(_)) => "Err(NoInstance)",
         Err(AgentsError::Unsigned(_)) => "Err(Unsigned)",
@@ -536,6 +540,13 @@ const fn shape(outcome: &Result<Outcome, AgentsError>) -> &'static str {
 
 fn install(version: &str) -> Result<Command, Failed> {
     Ok(Command::InstallAgent {
+        agent: name("goose")?,
+        version: name(version)?,
+    })
+}
+
+fn add(version: &str) -> Result<Command, Failed> {
+    Ok(Command::AddAgent {
         agent: name("goose")?,
         version: name(version)?,
     })
@@ -1166,7 +1177,7 @@ fn a_client_that_did_not_claim_install_is_refused_before_anything_is_fetched() -
     };
     let cancel = Cancel::new();
 
-    for command in [Command::AgentCatalog, install("1.0.0")?] {
+    for command in [Command::AgentCatalog, install("1.0.0")?, add("1.0.0")?] {
         let request = Request::new(
             Capabilities::none().with(Capability::Permissions),
             Correlation::new(1),
@@ -1192,6 +1203,7 @@ fn a_client_that_did_not_claim_install_is_refused_before_anything_is_fetched() -
     assert!(bench.server.asked().is_empty());
     assert!(front.put.is_empty());
     assert!(!bench.programs().exists());
+    assert!(!bench.user().exists());
     Ok(())
 }
 
