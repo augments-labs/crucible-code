@@ -362,6 +362,22 @@ pub enum Unlaunched {
         /// The agent, as its entry names it.
         agent: String,
     },
+    /// A place its catalog entry says it keeps its sign-in in already holds a
+    /// directory the conversation protects, so the child could not be given it
+    /// to write.
+    #[error(
+        "externalAgents.{instance}: a place {agent}'s catalog entry keeps its sign-in in, \
+         {place}, holds a .git, .agents, .codex or .crucible directory, which the conversation \
+         protects, so it cannot be written and the agent is not started."
+    )]
+    StateProtected {
+        /// The instance, quoted.
+        instance: String,
+        /// The agent, as its entry names it.
+        agent: String,
+        /// The place, quoted.
+        place: String,
+    },
     /// Its profile directory could not be made private to the user.
     #[error("the profile directory could not be made private to you: {0}")]
     Profile(std::io::Error),
@@ -1975,20 +1991,35 @@ impl Agent {
         roots: &[PathBuf],
         make: impl Fn(&Path) -> std::io::Result<()>,
     ) -> Result<(), Unlaunched> {
-        let moved = || Unlaunched::StateMoved {
-            instance: quoted(&self.instance),
-            agent: quoted(self.row.named()),
-        };
         if !roots.iter().all(|root| unmoved(root)) {
-            return Err(moved());
+            return Err(self.moved());
         }
         for root in roots {
             make(root).map_err(Unlaunched::StateRoot)?;
         }
         if !roots.iter().all(|root| unmoved(root)) {
-            return Err(moved());
+            return Err(self.moved());
         }
         Ok(())
+    }
+
+    /// The refusal of a place that leads somewhere else than where it was
+    /// judged.
+    fn moved(&self) -> Unlaunched {
+        Unlaunched::StateMoved {
+            instance: quoted(&self.instance),
+            agent: quoted(self.row.named()),
+        }
+    }
+
+    /// The refusal of a `root` that holds a directory the conversation
+    /// protects.
+    fn protected(&self, root: &Path) -> Unlaunched {
+        Unlaunched::StateProtected {
+            instance: quoted(&self.instance),
+            agent: quoted(self.row.named()),
+            place: quoted(&root.display().to_string()),
+        }
     }
 }
 
@@ -2092,13 +2123,35 @@ const fn within(step: Account) -> Duration {
 /// How long a sign-in waits for the user to finish it in their browser.
 const SIGNING_IN: Duration = Duration::from_mins(5);
 
+/// How a policy stands towards a root a child is to write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Grant {
+    /// It lets the child write the root by a rule of its own for exactly that
+    /// place.
+    Given,
+    /// It has such a rule, and a directory the conversation protects lies
+    /// within the root, so the child may not write it.
+    Protected,
+    /// It has no such rule, as a rule for a place that contains the root, for
+    /// the root with less access, or for another place is not what was
+    /// judged: the place the policy was built for is not the one that was.
+    Missing,
+}
+
 /// Whether `policy` lets a child write `root` by a rule of its own for exactly
 /// that place, and not only by a rule for a place that contains it: what the
 /// sandbox is given is the place that was judged.
-fn grants(policy: &SandboxPolicy, root: &Path) -> bool {
-    policy.filesystem().iter().any(|rule| {
+fn grants(policy: &SandboxPolicy, root: &Path) -> Grant {
+    let ruled = policy.filesystem().iter().any(|rule| {
         matches!(rule.access(), SandboxFilesystemAccess::ReadWrite) && same_path(rule.path(), root)
-    }) && policy.permits_path(root, SandboxFilesystemAccess::ReadWrite)
+    });
+    if !ruled {
+        Grant::Missing
+    } else if policy.permits_path(root, SandboxFilesystemAccess::ReadWrite) {
+        Grant::Given
+    } else {
+        Grant::Protected
+    }
 }
 
 /// Whether `a` and `b` are one path, compared by components as the file
@@ -2385,9 +2438,14 @@ impl<'a> Launcher<'a> {
         }
         for root in &kept {
             // Made only where the child may write it, as the profile is, and
-            // only where it was judged: the rule is the place that was.
-            if !grants(&policy, root) {
-                return Err(SandboxPolicyError::InvalidPath.into());
+            // only where it was judged: the rule is the place that was. A
+            // root with no rule of its own led elsewhere than it was judged
+            // to, and one that holds a directory the conversation protects
+            // is a place the user has made, not a race.
+            match grants(&policy, root) {
+                Grant::Given => {}
+                Grant::Missing => return Err(agent.moved()),
+                Grant::Protected => return Err(agent.protected(root)),
             }
         }
         let resume = match life {

@@ -2831,6 +2831,10 @@ fn a_root_is_granted_only_by_a_rule_for_exactly_that_place() {
     };
 
     let exact = policy(vec![rule(&root, SandboxFilesystemAccess::ReadWrite)]);
+    let protected = policy(vec![
+        rule(&root, SandboxFilesystemAccess::ReadWrite),
+        rule(&root.join(".git"), SandboxFilesystemAccess::Protected),
+    ]);
     let wider = policy(vec![rule(&home, SandboxFilesystemAccess::ReadWrite)]);
     let lesser = policy(vec![rule(&root, SandboxFilesystemAccess::ReadOnly)]);
     let another = policy(vec![rule(
@@ -2838,11 +2842,24 @@ fn a_root_is_granted_only_by_a_rule_for_exactly_that_place() {
         SandboxFilesystemAccess::ReadWrite,
     )]);
 
-    assert!(grants(&exact, &root));
+    assert_eq!(grants(&exact, &root), Grant::Given);
     assert!(wider.permits_path(&root, SandboxFilesystemAccess::ReadWrite));
-    assert!(!grants(&wider, &root), "a rule for the home grants it");
-    assert!(!grants(&lesser, &root), "a read-only rule grants it");
-    assert!(!grants(&another, &root), "a rule for its parent grants it");
+    assert_eq!(grants(&wider, &root), Grant::Missing, "the home grants it");
+    assert_eq!(
+        grants(&lesser, &root),
+        Grant::Missing,
+        "read-only grants it"
+    );
+    assert_eq!(
+        grants(&another, &root),
+        Grant::Missing,
+        "its parent grants it"
+    );
+    assert_eq!(
+        grants(&protected, &root),
+        Grant::Protected,
+        "a root with a protected directory within it is given"
+    );
 }
 
 /// An entry's place that does not stay inside the home it is joined to is
@@ -3168,6 +3185,22 @@ async fn asked_for_beside(
     consent: &Consent,
     sessions: &Path,
 ) -> Option<SandboxPolicy> {
+    launched_beside(sample, agent, confined, home, consent, sessions)
+        .await
+        .0
+}
+
+/// [`asked_for_beside`], and why the launch did not start.
+// As for `asked_for_beside`, whose arguments these are.
+#[allow(clippy::too_many_arguments)]
+async fn launched_beside(
+    sample: &Sample,
+    agent: &Agent,
+    confined: bool,
+    home: Option<&Path>,
+    consent: &Consent,
+    sessions: &Path,
+) -> (Option<SandboxPolicy>, Unlaunched) {
     let policy = SandboxPolicy::standard(&sample.workspace())
         .expect("a policy")
         .with_enabled(confined);
@@ -3195,9 +3228,11 @@ async fn asked_for_beside(
         .launch(agent, &control, dialect.as_mut(), None)
         .await;
 
-    assert!(started.is_err(), "the recording sandbox started a run");
+    let Err(refused) = started else {
+        panic!("the recording sandbox started a run")
+    };
     let asked = asked.lock().unwrap_or_else(PoisonError::into_inner).clone();
-    asked.into_iter().next()
+    (asked.into_iter().next(), refused)
 }
 
 /// Under the sandbox a catalog agent's turn may write where its entry says it
@@ -3242,6 +3277,51 @@ async fn a_sandboxed_catalog_launch_may_write_where_its_entry_keeps_the_sign_in(
         };
         assert_eq!(mode(".config/goose"), 0o700);
     }
+}
+
+/// A place the entry keeps its sign-in in that already holds a directory the
+/// conversation protects, such as a `.git`, cannot be written by the child, and
+/// the launch says so by name before the sandbox is asked for anything and
+/// before anything is made, and is not told as a path that failed to
+/// normalize, nor as a place that moved.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_launch_is_refused_where_the_place_for_the_sign_in_holds_a_protected_directory() {
+    let sample = Sample::new("launch-state-protected-launch");
+    let home = homed_in(&sample);
+    let peer = standing(&sample);
+    let agent = peer_agent(row_of(&keeping(None, &[".config/goose", ".goose"])), &peer);
+    fs::create_dir_all(home.join(".config/goose/.git")).expect("a directory to protect");
+
+    let (asked, refused) = launched_beside(
+        &sample,
+        &agent,
+        true,
+        Some(&home),
+        &peer_granted(),
+        &sample.sessions(),
+    )
+    .await;
+
+    assert!(
+        matches!(&refused, Unlaunched::StateProtected { .. }),
+        "{refused:?}"
+    );
+    let said = refused.to_string();
+    assert!(said.contains("externalAgents.work"), "{said}");
+    assert!(
+        said.contains(&home.join(".config/goose").display().to_string()),
+        "{said}"
+    );
+    assert!(said.contains(".git"), "{said}");
+    assert!(!said.contains("normaliz"), "{said}");
+    assert!(
+        asked.is_none(),
+        "the sandbox was asked for a place that cannot be written"
+    );
+    assert!(
+        !home.join(".goose").exists(),
+        "a place was made before the launch was refused"
+    );
 }
 
 /// The smoke test of a release signs nothing in, so it is given no place its

@@ -255,8 +255,11 @@ given none of those places, so it cannot change the account another instance of
 the agent is signed in to. A place that is missing is created for you alone,
 and one that is there is left as it is, whatever its access. If a place leads
 somewhere else by the time it is made than where it was checked, the agent is
-not started. A place whose links lead out of your home, as a dotfile manager's
-link can, is refused. Names are compared by their parts, ignoring case as the
+not started, and neither is it where a place already holds a `.git`, `.agents`,
+`.codex` or `.crucible` directory, which the conversation protects, so that the
+agent could not write it; the refusal names the entry and the place. A place
+whose links lead out of your home, as a dotfile manager's link can, is refused.
+Names are compared by their parts, ignoring case as the
 most forgiving file system would, and, on Windows, the dots and spaces that end
 a name; a place with a part outside ASCII is refused, since two spellings of one
 name cannot be told apart.
