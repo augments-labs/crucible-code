@@ -112,9 +112,8 @@
 //! listed as the agents door lists them. Choosing one never connects it,
 //! since no provider of this build's is reached through a catalog agent: it
 //! asks instead whether to install the version the door would, update its
-//! instance to the version offered first, roll it back to another version
-//! the store holds, or sign its configured instance in by one of the agent's
-//! methods. A row says where its instance runs the user's own program rather
+//! instance, roll it back to another version the store holds, or sign its
+//! configured instance in by one of the agent's methods. A row says where its instance runs the user's own program rather
 //! than a release crucible installed, or a version the catalog revoked. Every
 //! word of the catalog's is quoted before it is shown. A move chosen here, or
 //! the install offered where the agent cannot be started, ends the connect as
@@ -1283,8 +1282,12 @@ fn held(installed: &Result<Vec<Receipt>, StoreError>) -> String {
 /// the first offered, where the store holds none; an update, where the
 /// instance spoken of runs `running`, a version from the store, other than
 /// the first offered; and a roll back, where it runs one and the store holds
-/// another the catalog did not revoke, naming the one last fetched, as the
-/// door picks it.
+/// another the catalog did not revoke.
+///
+/// An update and a roll back name the version running and the direction
+/// alone. The door picks the version either moves to when it carries the move
+/// out, from what every instance runs and what `agents.update` stands at,
+/// which the one instance spoken of here cannot say.
 fn moves(
     releases: &Releases,
     key: &AgentKey,
@@ -1315,36 +1318,27 @@ fn moves(
     {
         offered.push((
             "Update".to_owned(),
-            format!(
-                "Update {shown} from {} to {}.",
-                quoted(running.version()),
-                quoted(&first.version)
-            ),
+            format!("Update {shown} from {}.", quoted(running.version())),
             AgentAction::Update {
                 agent: agent.clone(),
             },
         ));
     }
-    let previous = running
-        .zip(installed.as_ref().ok())
-        .and_then(|(running, receipts)| {
-            receipts
-                .iter()
-                .filter(|receipt| {
-                    &*receipt.version != running.version()
-                        || receipt.lock_revision != running.lock_revision()
-                })
-                .filter(|receipt| {
-                    !releases
+    let other = |running: &&Version| {
+        installed.as_ref().is_ok_and(|receipts| {
+            receipts.iter().any(|receipt| {
+                (&*receipt.version != running.version()
+                    || receipt.lock_revision != running.lock_revision())
+                    && !releases
                         .trust
                         .revoked(key, &receipt.version, receipt.lock_revision)
-                })
-                .max_by_key(|receipt| receipt.fetched)
-        });
-    if let Some(previous) = previous {
+            })
+        })
+    };
+    if let Some(running) = running.filter(other) {
         offered.push((
             "Roll back".to_owned(),
-            format!("Roll back {shown} to {}.", quoted(&previous.version)),
+            format!("Roll back {shown} from {}.", quoted(running.version())),
             AgentAction::Rollback { agent },
         ));
     }

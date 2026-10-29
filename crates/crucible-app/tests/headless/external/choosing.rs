@@ -622,8 +622,9 @@ fn an_agent_read_signed_out_offers_its_sign_in_methods() -> Result<(), Failed> {
 }
 
 /// A catalog agent with two versions in crucible's store is offered a roll
-/// back to the other where its instance runs the version offered first, and
-/// an update as well where it runs the older one; the move chosen ends the
+/// back where its instance runs the version offered first, and an update as
+/// well where it runs the older one, each naming the version it runs and no
+/// other, since the door picks the one it moves to; the move chosen ends the
 /// connect.
 #[test]
 fn a_catalog_agent_with_two_versions_stored_offers_update_or_roll_back() -> Result<(), Failed> {
@@ -632,7 +633,7 @@ fn a_catalog_agent_with_two_versions_stored_offers_update_or_roll_back() -> Resu
             "newest",
             "2.0.0",
             vec![
-                ("Roll back", "Roll back goose to 1.0.0."),
+                ("Roll back", "Roll back goose from 2.0.0."),
                 ("Go back", "Choose another agent."),
             ],
             "Roll back",
@@ -641,8 +642,8 @@ fn a_catalog_agent_with_two_versions_stored_offers_update_or_roll_back() -> Resu
             "older",
             "1.0.0",
             vec![
-                ("Update", "Update goose from 1.0.0 to 2.0.0."),
-                ("Roll back", "Roll back goose to 2.0.0."),
+                ("Update", "Update goose from 1.0.0."),
+                ("Roll back", "Roll back goose from 1.0.0."),
                 ("Go back", "Choose another agent."),
             ],
             "Update",
