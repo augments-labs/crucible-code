@@ -568,7 +568,7 @@ fn carried<T: Terminal>(
     walk: &mut Walk<'_, T>,
     action: &AgentAction,
 ) -> Result<Option<Closed>, Fatal> {
-    let Some(mut carried) = carrying(walk, action.command())? else {
+    let Some(mut carried) = carrying(walk, action)? else {
         say(walk.renderer, CRAMPED_CONNECT)?;
         return Ok(Some(Closed::Done));
     };
@@ -598,7 +598,7 @@ fn carried<T: Terminal>(
             say(walk.renderer, &refused(&refusal))?;
             return Ok(None);
         }
-        let Some(again) = carrying(walk, action.command())? else {
+        let Some(again) = carrying(walk, action)? else {
             say(walk.renderer, CRAMPED_CONNECT)?;
             return Ok(Some(Closed::Done));
         };
@@ -615,21 +615,22 @@ fn carried<T: Terminal>(
     Ok(None)
 }
 
-/// `command` sent to the agents door, each question it stops on answered as
-/// the connect's are and the panel saying how far it has got stood between
-/// them: nothing where a question had no room to stand.
+/// `action`'s command sent to the agents door, each question it stops on
+/// answered as the connect's are and the panel saying how far it has got
+/// stood between them: nothing where a question had no room to stand.
 fn carrying<T: Terminal>(
     walk: &mut Walk<'_, T>,
-    command: Command,
+    action: &AgentAction,
 ) -> Result<Option<Result<door::Outcome, AgentsError>>, Fatal> {
     let mut overseer = Overseeing {
         renderer: &mut *walk.renderer,
         style: walk.terms.style(),
+        doing: doing(action),
         cramped: false,
     };
     let carried = walk
         .terms
-        .carry(walk.conversation, command, &mut overseer)?;
+        .carry(walk.conversation, action.command(), &mut overseer)?;
     Ok((!overseer.cramped).then_some(carried))
 }
 
@@ -638,6 +639,8 @@ fn carrying<T: Terminal>(
 struct Overseeing<'a, T: Terminal> {
     renderer: &'a mut Renderer<T>,
     style: Style,
+    /// What the panel says is under way, as [`doing`] says it.
+    doing: String,
     /// Whether a question had no room to stand.
     cramped: bool,
 }
@@ -652,7 +655,22 @@ impl<T: Terminal> Overseer for Overseeing<'_, T> {
     }
 
     fn stand(&mut self, carrying: &mut Carrying<'_>) -> Result<(), Fatal> {
-        watched(self.renderer, self.style, carrying)
+        watched(self.renderer, self.style, &self.doing, carrying)
+    }
+}
+
+/// What the panel over `action` says is under way, its names shown as the
+/// catalog and the configuration gave them.
+fn doing(action: &AgentAction) -> String {
+    match action {
+        AgentAction::Install { agent, version } => format!(
+            "installing {} {}",
+            shown(agent.as_str()),
+            shown(version.as_str())
+        ),
+        AgentAction::Update { agent } => format!("updating {}", shown(agent.as_str())),
+        AgentAction::Rollback { agent } => format!("rolling back {}", shown(agent.as_str())),
+        AgentAction::SignIn { instance, .. } => format!("signing {} in", named(instance.as_str())),
     }
 }
 
@@ -664,13 +682,14 @@ impl<T: Terminal> Overseer for Overseeing<'_, T> {
 fn watched<T: Terminal>(
     renderer: &mut Renderer<T>,
     style: Style,
+    doing: &str,
     carrying: &mut Carrying<'_>,
 ) -> Result<(), Fatal> {
     if !carrying.working() {
         return Ok(());
     }
     let glyphs = style.glyphs();
-    let mut working = Working::new(carrying.watched(), carrying.cancel().clone());
+    let mut working = Working::new(doing, carrying.watched(), carrying.cancel().clone());
     let ended = region::stand_watching(
         renderer,
         |_| style,
@@ -703,6 +722,8 @@ fn watched<T: Terminal>(
 /// given up.
 #[derive(Debug)]
 struct Working {
+    /// What is under way, said until the door reports more.
+    doing: String,
     /// How far a download has got, where one has begun.
     progress: Option<InstallProgress>,
     /// The link the agent printed last, and whether the door cut it.
@@ -714,10 +735,11 @@ struct Working {
 }
 
 impl Working {
-    /// The panel over what the door has said so far, given up through
-    /// `cancel`, and being given up where it already was.
-    fn new(watched: Watched, cancel: Cancel) -> Self {
+    /// The panel over `doing` and what the door has said of it so far, given
+    /// up through `cancel`, and being given up where it already was.
+    fn new(doing: &str, watched: Watched, cancel: Cancel) -> Self {
         Self {
+            doing: doing.to_owned(),
             progress: watched.progress,
             link: watched.link,
             cancelling: cancel.requested(),
@@ -775,7 +797,7 @@ impl Working {
         } else if self.progress.is_some() {
             "esc cancels the download"
         } else {
-            "waiting for the agent"
+            "waiting for it to finish"
         };
         let mut laid = Vec::with_capacity(body.len().saturating_add(WORKING_CHROME));
         laid.push(Row::new().then(Slot::Accent, glyphs.horizontal().repeat(columns)));
@@ -787,8 +809,8 @@ impl Working {
     }
 
     /// What the panel says, at `columns`: a download's agent and its bar, or
-    /// its bytes where its size is not known; else the link, folded across as
-    /// many rows as it takes; else that the agent is at work.
+    /// its bytes where its size is not known; else what is under way, and
+    /// the link a sign-in waits on, folded across as many rows as it takes.
     fn body(&self, columns: usize, glyphs: Glyphs) -> Vec<Row> {
         if let Some(progress) = &self.progress {
             let lead = Row::new().then(
@@ -819,9 +841,12 @@ impl Working {
                 .then(Slot::Plain, figure);
             return vec![lead, bar];
         }
-        let lead = Row::new().then(Slot::Strong, format!("{TITLE} {} agent", glyphs.dot()));
+        let lead = Row::new().then(
+            Slot::Strong,
+            format!("{TITLE} {} {}", glyphs.dot(), self.doing),
+        );
         let Some((link, cut)) = &self.link else {
-            return vec![lead, Row::new().then(Slot::Quiet, "the agent is at work…")];
+            return vec![lead];
         };
         let link = crucible_types::shown::escaped(link);
         let mut body = vec![lead, Row::plain("Open this link to sign in:")];

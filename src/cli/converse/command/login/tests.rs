@@ -1401,6 +1401,7 @@ fn the_login_agent_connect_claims_install_and_the_connect_logout_sends_withholds
 fn working(download: Option<(u64, u64)>, link: Option<&str>, cancelling: bool) -> Working {
     let agent = crucible_client_api::Name::new("antigravity").expect("a name the contract takes");
     Working {
+        doing: "installing antigravity 1.3.0".to_owned(),
         progress: download.and_then(|(done, total)| {
             crucible_client_api::InstallProgress::new(agent.clone(), done, total)
         }),
@@ -1446,6 +1447,55 @@ fn every_state_of_the_working_panel_fits_every_window_it_is_given() {
             }
         }
     }
+}
+
+#[test]
+fn before_the_door_reports_anything_the_panel_says_which_move_is_under_way() {
+    let name = |text: &str| crucible_client_api::Name::new(text).expect("a contract name");
+    let moves = [
+        (
+            AgentAction::Install {
+                agent: name("antigravity"),
+                version: name("1.3.0"),
+            },
+            "installing antigravity 1.3.0",
+        ),
+        (
+            AgentAction::Update {
+                agent: name("antigravity"),
+            },
+            "updating antigravity",
+        ),
+        (
+            AgentAction::Rollback {
+                agent: name("antigravity"),
+            },
+            "rolling back antigravity",
+        ),
+        (
+            AgentAction::SignIn {
+                instance: name("work"),
+                method: name("oauth-personal"),
+            },
+            "signing \"work\" in",
+        ),
+    ];
+    for (action, says) in &moves {
+        assert_eq!(doing(action), *says);
+    }
+    // Nothing reported yet: the panel names the move, and claims nothing of
+    // who is at work, since an install is still fetching the catalog.
+    let text: Vec<String> = working(None, None, false)
+        .laid(80, 24, Glyphs::Unicode)
+        .iter()
+        .map(Row::text)
+        .collect();
+    assert!(
+        text.iter()
+            .any(|row| row == "Log in · installing antigravity 1.3.0"),
+        "{text:?}"
+    );
+    assert!(text.iter().all(|row| !row.contains("agent")), "{text:?}");
 }
 
 #[test]
