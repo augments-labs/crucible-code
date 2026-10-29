@@ -377,6 +377,23 @@ an installed agent is listed, with the common keys and the footer
 `Remove integration settings`, with the same keys; each then asks its own
 question, where <kbd>Esc</kbd> changes nothing.
 
+### `/agents`
+
+| Key | What it does |
+| --- | --- |
+| Typing, paste | Narrows the list to the agents whose key or licence holds the text, ignoring case. With no match the list says `no agent matches "the text"`. |
+| <kbd>↑</kbd>, <kbd>↓</kbd> | Walks the list. In a window 70 columns or wider, the pane beside it follows the mark. |
+| <kbd>Enter</kbd> | Opens the marked agent's screen. Nothing while nothing matches. |
+| <kbd>Esc</kbd> | Clears the search and marks the top. With nothing to clear, leaves. |
+| <kbd>Ctrl+C</kbd>, <kbd>Ctrl+D</kbd> | Leaves. |
+| Pointer | Lights the row under it. |
+
+The agent's screen takes the common keys, and <kbd>Esc</kbd>,
+<kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd> go back to the list with nothing
+changed; its footer reads `esc to go back`. *Add* asks first, where
+<kbd>Esc</kbd> changes nothing, and <kbd>Esc</kbd> during the download cancels
+it. [`/agents`](../providers/agents.md#agents) says what each choice does.
+
 ### `/help`, and a command refused mid-turn
 
 `/help` writes the list of commands into the transcript, and there is nothing

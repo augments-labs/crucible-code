@@ -169,6 +169,50 @@ held before and after, such as `the agent made room · 150k → 30k carried`, an
 the reading drops to what was left. `/context` gives the same figure in its
 `held by the agent` row.
 
+## `/agents`
+
+`/agents` lists the coding agents the agent catalog offers, asking for the
+catalog whatever [`updates`](../configuration/configuration.md#updates) says,
+since you asked. Each agent stands on two rows: its key and newest version,
+over its licence and what is installed of it, such as `Apache-2.0 · not
+installed` or `installed 1.0.0`. In a window 70 columns or wider, a pane beside
+the list says the marked agent's licence, terms link, caution and what is
+installed whole. Typing narrows the list to the agents whose key or licence
+holds what is typed, ignoring case, and the heading says how many are left of
+how many are offered, such as `Agents · 1 of 3 offered`; with no match the list
+says `no agent matches "the text"`. Where the catalog could not be fetched, the
+list says so, with why, and is the catalog crucible believed before. A window
+with no keys to read, or no room for the list, has the agents printed one to a
+line instead.
+
+Taking an agent opens its own screen, which says where it comes from: the
+versions offered, its licence, its terms link and caution where the catalog
+gives them, each version installed with a receipt, and whether a sign-in made
+under the sandbox is kept. Every word on it is the catalog's or the store's,
+with any control character written out as an escape rather than acted on.
+
+*Add* installs the newest version offered and writes one more instance of the
+agent under
+[`externalAgents`](../configuration/configuration.md#externalagents), named by
+the agent's key, or by the key and the next free number, such as `goose-2`,
+where that name is taken. It asks first, as `/login`'s *Install* does, saying
+what it will put in place, fetch and write; the download then shows how far it
+has come, and Escape cancels it, changing nothing. After the yes, a line in the
+transcript names the instance written, such as `Added goose 1.0.0 as the
+instance "goose".`, then the other instances moved onto that version, any that
+changed meanwhile and were left as they are, whether the agent was smoke-tested
+and the older versions kept; the list stands again as the store now stands,
+with what you had typed still in the search.
+
+*Verify*, offered where a version is installed, hashes every file of each
+installed version against the receipt written when it was installed, and only
+when chosen. It says on the same screen, a line a version, that every file is
+as recorded, or how many differ, naming up to eight of them.
+
+Installing another version, updating, rolling back, removing and signing in
+stay on `/login`'s agent screen, described above. `/agents` cannot be opened
+while a turn runs, since it installs an agent and writes your configuration.
+
 ## Claude Code
 
 crucible speaks to Claude Code over its own stream protocol: the program is
