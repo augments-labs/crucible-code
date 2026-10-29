@@ -1033,15 +1033,20 @@ impl Door<'_> {
         // never reaches.
         let total = sized(offer).unwrap_or(0);
         let (key, version) = (entry.key.as_str(), quoted(&offer.pin.version));
-        let (asks, choice) = match (how, &plan.adding) {
-            (How::Updated, _) => (format!("Update {key} to {version}?"), "Update"),
+        let putting = format!("Put {version} in place and move the instances named onto it");
+        let (asks, choice, does) = match (how, &plan.adding) {
+            (How::Updated, _) => (format!("Update {key} to {version}?"), "Update", putting),
             (How::Added, Some(name)) => (
                 format!("Add {key} {version} as the instance {}?", quoted(name)),
                 "Add",
+                format!(
+                    "Put {version} in place, move the instances named onto it and add the instance {}",
+                    quoted(name)
+                ),
             ),
             // The plan of an add always holds the name it shows.
             (How::Installed | How::RolledBack | How::Added, _) => {
-                (format!("Install {key} {version}?"), "Install")
+                (format!("Install {key} {version}?"), "Install", putting)
             }
         };
         let mut facts = vec![if kept {
@@ -1106,10 +1111,7 @@ impl Door<'_> {
             asks,
             facts,
             choices: vec![
-                (
-                    choice.to_owned(),
-                    format!("Put {version} in place and move the instances named onto it"),
-                ),
+                (choice.to_owned(), does),
                 ("Cancel".to_owned(), "Leave everything as it is".to_owned()),
             ],
         }

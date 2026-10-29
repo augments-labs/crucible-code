@@ -57,13 +57,18 @@ fn without(bench: &Bench, instance: &str) -> Result<Value, Failed> {
     Ok(value)
 }
 
-/// What the one install question `front` was put asks, and the names of the
-/// choices it offers.
-fn asked(front: &Answering<'_>) -> Result<(String, Vec<String>), Failed> {
+/// What the one install question `front` was put asks, and each choice it
+/// offers with what that choice says.
+fn asked(front: &Answering<'_>) -> Result<(String, Vec<(String, String)>), Failed> {
     let [(Pending::Install { asks, choices, .. }, _)] = front.put.as_slice() else {
         return Err(format!("one install confirmation, not {:?}", front.put).into());
     };
-    let choices = choices.iter().map(|choice| choice.name.as_str().to_owned());
+    let choices = choices.iter().map(|choice| {
+        (
+            choice.name.as_str().to_owned(),
+            choice.says.as_str().to_owned(),
+        )
+    });
     Ok((asks.as_str().to_owned(), choices.collect()))
 }
 
@@ -89,7 +94,14 @@ fn an_add_writes_an_instance_under_the_agent_key_then_one_under_the_next_free_na
         asked(&front)?,
         (
             "Add goose 1.0.0 as the instance goose?".to_owned(),
-            vec!["Add".to_owned(), "Cancel".to_owned()]
+            vec![
+                (
+                    "Add".to_owned(),
+                    "Put 1.0.0 in place, move the instances named onto it and add the instance goose"
+                        .to_owned()
+                ),
+                ("Cancel".to_owned(), "Leave everything as it is".to_owned()),
+            ]
         )
     );
     assert!(says(&front, "Adds the instance goose to")?);
