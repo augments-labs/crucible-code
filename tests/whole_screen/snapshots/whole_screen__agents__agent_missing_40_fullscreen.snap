@@ -11,9 +11,6 @@ expression: picture
 |                                        |
 |                                        |
 |                                        |
-|                                        |
-|                                        |
-|                                        |
 |────────────────────────────────────────|
 |                                        |
 |Log in                                  |
@@ -36,7 +33,10 @@ expression: picture
 |/home/programs/antigravity/1.3.0/agy_acp|
 |_server.par.                            |
 |                                        |
-|› Check again                           |
+|› Install                               |
+|  Install Antigravity 1.3.0.            |
+|                                        |
+|  Check again                           |
 |  Look for the agent's program again.   |
 |                                        |
 |  Go back                               |

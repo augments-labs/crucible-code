@@ -151,8 +151,21 @@ pub struct Source {
 impl Source {
     /// The published catalog, under the keys compiled into this build, with
     /// the proxy settings `from` names.
+    ///
+    /// A test build fetches instead the catalog a test serves, under the one
+    /// key it signed it with, where `from` names one as [`crate::proof`]
+    /// reads it; a build that ships has no reader of that name.
     #[must_use]
     pub fn published(from: &dyn Fn(&str) -> Option<String>) -> Self {
+        #[cfg(feature = "proof")]
+        if let Some(served) = crate::proof::catalog(from) {
+            return Self {
+                keys: served.keys(),
+                base: served.base,
+                hosts: &[],
+                proxy: ProxyEnv::read(from),
+            };
+        }
         Self {
             base: PUBLISHED.to_owned(),
             keys: KEYS,

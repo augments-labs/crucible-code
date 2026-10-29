@@ -219,6 +219,19 @@ pub enum AppError {
         /// What was asked for, as far as it reads as text.
         value: Box<str>,
     },
+
+    /// A test build was asked to fetch a catalog from a value that names no
+    /// address and key. Only a test build has this, as it has
+    /// [`crate::proof`].
+    #[cfg(feature = "proof")]
+    #[error(
+        "a test build's catalog was asked for as {value:?}; {} takes a loopback address and a key, apart by one space",
+        crate::proof::CATALOG
+    )]
+    ProofCatalog {
+        /// What was asked for, as far as it reads as text.
+        value: Box<str>,
+    },
 }
 
 impl From<AccessError> for AppError {

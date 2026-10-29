@@ -14,7 +14,7 @@ use crucible_external_harnesses::fake_peer::scripts::claude;
 use crucible_external_harnesses::fake_peer::{self, Reply, Script};
 
 use crate::vendor::Vendor;
-use crate::watched::{self, Watched};
+use crate::watched::{self, Published, Watched};
 use crate::{scrubbed, takes, timeless};
 
 /// The widths every screen is captured at, each with rows enough for the
@@ -187,8 +187,98 @@ fn an_agent_whose_program_is_not_installed_says_so() {
             agents(window);
             takes(window, "Antigravity");
             window.types_until("", "Not installed");
+            // `/login` carries an install out, so it is offered, first.
+            assert!(
+                window.picture().contains("› Install"),
+                "{}",
+                window.picture()
+            );
         },
     );
+}
+
+#[test]
+fn an_agent_installed_after_a_yes_shows_its_download_then_the_agents_again() {
+    for native in [false, true] {
+        for size in SIZES {
+            let mode = if native { "native" } else { "fullscreen" };
+            let case = format!("agent-installing-{}-{mode}", size.0);
+            let published = Published::start();
+            let vendor = Vendor::answering("Not asked.");
+            let script = Script::of(Vec::new());
+            let mut window = Watched::capturing_agents_published(
+                &case,
+                (size, native),
+                &vendor,
+                Some(&script),
+                &published,
+            );
+            agents(&mut window);
+            takes(&mut window, "Antigravity");
+            window.types_until("", "Not installed");
+            takes(&mut window, "Install");
+            window.types_until("", "Read the terms first");
+            takes(&mut window, "Install");
+            // The host sends half the program and holds the rest back, so
+            // the download stands where it is until this has seen it.
+            window.types_until("", "50%");
+            let picture = scrubbed(&timeless(&window.picture()), &case);
+            insta::assert_snapshot!(format!("install_downloading_{}_{mode}", size.0), picture);
+
+            published.release();
+            window.types_until("", "installed");
+            window.types_until("", "Which installed agent");
+            let picture = scrubbed(&timeless(&window.picture()), &case);
+            insta::assert_snapshot!(format!("install_done_{}_{mode}", size.0), picture);
+        }
+    }
+}
+
+#[test]
+fn escape_while_an_install_downloads_cancels_it_and_the_agents_stand_again() {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let case = format!("agent-install-cancelled-{mode}");
+        let published = Published::start();
+        let vendor = Vendor::answering("Not asked.");
+        let script = Script::of(Vec::new());
+        let mut window = Watched::capturing_agents_published(
+            &case,
+            (SIZES[0], native),
+            &vendor,
+            Some(&script),
+            &published,
+        );
+        agents(&mut window);
+        takes(&mut window, "Antigravity");
+        window.types_until("", "Not installed");
+        takes(&mut window, "Install");
+        window.types_until("", "Read the terms first");
+        takes(&mut window, "Install");
+        // The host holds the second half back and is never told to send it,
+        // so the download is still running when Escape is pressed.
+        window.types_until("", "50%");
+        window.types_until("\x1b", "download cancelled; nothing was changed");
+        // The whole row: the user asked for the cancel, so it is said as the
+        // command's answer, after the gutter native mode draws an answer under,
+        // and not as a refusal, which opens with "! ".
+        let answered = if native {
+            "⎿ download cancelled; nothing was changed"
+        } else {
+            "download cancelled; nothing was changed"
+        };
+        let picture = window.picture();
+        assert!(
+            picture
+                .lines()
+                .any(|row| row.trim_matches('|').trim_end() == answered),
+            "the cancel is not said as the command's answer\n{picture}"
+        );
+        window.types_until("", "Which installed agent");
+        // Nothing was put in place: the agent's row reads as it did before.
+        takes(&mut window, "Antigravity");
+        window.types_until("", "Not installed");
+    }
 }
 
 #[test]

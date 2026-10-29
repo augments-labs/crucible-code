@@ -32,14 +32,17 @@ use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read as _, Write as _};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
+use crucible_external_harnesses::catalog::fixture::signed;
+use crucible_external_harnesses::catalog::{Keys, SNAPSHOT};
 use crucible_external_harnesses::fake_peer::{self, Script};
 use rustix::pty::{self, OpenptFlags};
 use rustix::termios::{self, OptionalActions, Winsize};
@@ -264,6 +267,230 @@ pub(crate) fn piped_agents(
     child.wait_with_output().expect("crucible ends")
 }
 
+/// The release a published catalog offers of Antigravity, in place of the
+/// one this build's own catalog names: a program of this many bytes, served
+/// half at first.
+const RELEASE: usize = 1000;
+
+/// A host on this machine standing where the agent catalog is published, as
+/// crucible's test build is pointed at it.
+///
+/// It serves one catalog, signed with this process's test key, offering
+/// Antigravity at the version this build's own catalog offers, as a program
+/// the catalog keeps on this host and names by its digest. The program
+/// is sent half at first and the rest only once [`Published::release`] is
+/// called, so the download stands on the screen until a case has seen it.
+#[derive(Debug)]
+pub(crate) struct Published {
+    port: u16,
+    /// The key line the catalog verifies under, a public key.
+    key: String,
+    /// Whether the rest of the program may be sent.
+    released: Arc<AtomicBool>,
+    /// Whether the case is over, which ends every answer and the listener.
+    done: Arc<AtomicBool>,
+}
+
+impl Published {
+    /// Starts the host, listening on a port of this machine's choosing.
+    pub(crate) fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a port on this machine");
+        let port = listener.local_addr().expect("its address").port();
+        let program: Vec<u8> = b"agy-acp-server, as reviewed\n"
+            .iter()
+            .cycle()
+            .take(RELEASE)
+            .copied()
+            .collect();
+        let asset = format!("/catalog/{}", digest(&program));
+        let version = SNAPSHOT
+            .entries()
+            .iter()
+            .find(|entry| entry.key.as_str() == "antigravity")
+            .map(|entry| entry.version.to_string())
+            .expect("this build's catalog offers Antigravity");
+        let catalog = serde_json::json!({
+            "schema": 1,
+            "serial": SNAPSHOT.serial() + 1,
+            "entries": [antigravity(&version, &program)],
+            "revoked": [],
+        });
+        let signed = signed(&serde_json::to_vec(&catalog).expect("a catalog in JSON"));
+        let key = key_line(signed.keys);
+        let routes: Arc<Vec<(String, Vec<u8>)>> = Arc::new(vec![
+            ("/catalog/index.json".to_owned(), signed.index),
+            ("/catalog/index.json.minisig".to_owned(), signed.signature),
+            (asset, program),
+        ]);
+        let released = Arc::new(AtomicBool::new(false));
+        let done = Arc::new(AtomicBool::new(false));
+        let (releasing, finishing) = (Arc::clone(&released), Arc::clone(&done));
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                if finishing.load(Ordering::Acquire) {
+                    break;
+                }
+                let (routes, released, done) = (
+                    Arc::clone(&routes),
+                    Arc::clone(&releasing),
+                    Arc::clone(&finishing),
+                );
+                std::thread::spawn(move || answer(stream, &routes, &released, &done));
+            }
+        });
+        Self {
+            port,
+            key,
+            released,
+            done,
+        }
+    }
+
+    /// Sends the rest of the program, to a download waiting for it and to
+    /// every one after.
+    pub(crate) fn release(&self) {
+        self.released.store(true, Ordering::Release);
+    }
+
+    /// The value of the variable that points a test build at this host.
+    fn named(&self) -> String {
+        format!("http://127.0.0.1:{}/catalog/ {}", self.port, self.key)
+    }
+}
+
+impl Drop for Published {
+    fn drop(&mut self) {
+        self.done.store(true, Ordering::Release);
+        let _ = TcpStream::connect(("127.0.0.1", self.port));
+    }
+}
+
+/// The one key line `keys` holds, read from how it prints, which is the only
+/// way the fixture shows it. A public key, never a secret.
+fn key_line(keys: Keys) -> String {
+    format!("{keys:?}")
+        .strip_prefix("Keys([\"")
+        .and_then(|rest| rest.strip_suffix("\"])"))
+        .filter(|key| !key.is_empty() && !key.contains('"'))
+        .map(str::to_owned)
+        .expect("a test catalog's keys print as one key line")
+}
+
+/// Answers one request on `stream` with what `routes` holds at its path, the
+/// program's second half held back until `released` or the case is `done`.
+fn answer(
+    mut stream: TcpStream,
+    routes: &[(String, Vec<u8>)],
+    released: &AtomicBool,
+    done: &AtomicBool,
+) {
+    let _ = stream.set_read_timeout(Some(CEILING));
+    let mut head = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    while !head.windows(4).any(|end| end == b"\r\n\r\n") {
+        match stream.read(&mut buffer) {
+            Ok(0) | Err(_) => return,
+            Ok(read) => head.extend_from_slice(buffer.get(..read).unwrap_or_default()),
+        }
+    }
+    let text = String::from_utf8_lossy(&head).into_owned();
+    let path = text
+        .lines()
+        .next()
+        .and_then(|line| line.split(' ').nth(1))
+        .unwrap_or_default();
+    let Some((_, body)) = routes.iter().find(|(served, _)| served == path) else {
+        let _ = stream
+            .write_all(b"HTTP/1.1 404 Not Found\r\nconnection: close\r\ncontent-length: 0\r\n\r\n");
+        return;
+    };
+    let _ = write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nconnection: close\r\ncontent-length: {}\r\n\r\n",
+        body.len()
+    );
+    // The catalog is sent whole; only the program is held back, half of it.
+    let (first, rest) = if path.starts_with("/catalog/index.json") {
+        (body.as_slice(), &[][..])
+    } else {
+        body.split_at(body.len() / 2)
+    };
+    let _ = stream.write_all(first);
+    let _ = stream.flush();
+    if !rest.is_empty() {
+        let began = Instant::now();
+        while !released.load(Ordering::Acquire) {
+            if done.load(Ordering::Acquire) || began.elapsed() > CEILING * 3 {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let _ = stream.write_all(rest);
+        let _ = stream.flush();
+    }
+    let _ = stream.shutdown(Shutdown::Write);
+}
+
+/// `bytes`' SHA-256, in lower case hexadecimal.
+fn digest(bytes: &[u8]) -> String {
+    use sha2::Digest as _;
+    use std::fmt::Write as _;
+    sha2::Sha256::digest(bytes)
+        .iter()
+        .fold(String::new(), |mut text, byte| {
+            let _ = write!(text, "{byte:02x}");
+            text
+        })
+}
+
+/// How this machine's platform is spelled in a catalog.
+fn platform() -> String {
+    let os = match std::env::consts::OS {
+        "macos" => "darwin",
+        other => other,
+    };
+    format!("{os}-{}", std::env::consts::ARCH)
+}
+
+/// Antigravity at `version`, as a catalog entry whose program, `program`, is
+/// kept on the catalog's own host and fetched from there by its digest.
+fn antigravity(version: &str, program: &[u8]) -> serde_json::Value {
+    let command = "agy_acp_server.par";
+    serde_json::json!({
+        "key": "antigravity",
+        "registry_id": "antigravity-acp",
+        "version": version,
+        "kind": "binary",
+        "license": "Proprietary",
+        "terms": "https://example.com/terms",
+        "caution": "Read the terms first.",
+        "review": "https://example.com/review",
+        "admits": {"name": "antigravity-acp", "version": version},
+        "targets": [{
+            "platform": platform(),
+            "cmd": command,
+            "args": [],
+            "env": {},
+            "hosts": ["downloads.example.com"],
+            "artifacts": [{
+                "url": "https://downloads.example.com/antigravity",
+                "sha256": "a".repeat(64),
+                "size": program.len(),
+                "format": "bare",
+                "unpacked": program.len(),
+                "decompressed": program.len(),
+                "files": [{
+                    "path": command,
+                    "size": program.len(),
+                    "sha256": digest(program),
+                    "exec": true
+                }],
+                "replaced_by": {"sha256": digest(program), "size": program.len()}
+            }]
+        }]
+    })
+}
+
 /// What a case starts crucible with beyond what every case is given.
 #[derive(Debug, Default)]
 pub(crate) struct Launch<'a> {
@@ -454,6 +681,25 @@ impl Watched {
         installed: (Option<&Script>, &str),
     ) -> Self {
         Self::capturing_agents_beside(case, (size, native), vendor, installed, &[])
+    }
+
+    /// [`Watched::capturing_agents`], with the agent catalog fetched from
+    /// `published` rather than from where it is published.
+    pub(crate) fn capturing_agents_published(
+        case: &str,
+        (size, native): ((u16, u16), bool),
+        vendor: &Vendor,
+        script: Option<&Script>,
+        published: &Published,
+    ) -> Self {
+        let named = published.named();
+        Self::capturing_agents_beside(
+            case,
+            (size, native),
+            Some(vendor),
+            (script, ""),
+            &[("CRUCIBLE_CODE_PROOF_CATALOG", &named)],
+        )
     }
 
     /// [`Watched::capturing_agents`], with `env` set too, such as a key for

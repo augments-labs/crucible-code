@@ -56,9 +56,24 @@ is asked: the agent's own provider is reached through it, made the `provider`
 asked, and the conversation moves onto it. Where the agent's sign-in could not be
 read, *Could not verify sign-in* gives one reason, the agent's own where it
 said one: how it exited and the first line it printed, cut to 160 characters,
-with its control characters taken out. *Check again* reads it again. Escape
-changes nothing and goes back; apart from that one yes, nothing is written
-until the agent reads signed in.
+with its control characters taken out. *Check again* reads it again.
+
+The same screen offers what the agent catalog lets crucible do for the agent:
+*Install* where its program is not there, *Update* and *Roll back* where one
+installed from the catalog can move, and a sign-in by each method the agent
+offers, named as the agent names it. `/login` carries the one you choose out
+itself and then shows the agent screen again, so the agent's row reads as it
+now stands. An install, update or rollback asks first, saying what it will put
+in place and fetch; a download then shows how far it has come, as a share where
+its size is known and in bytes where it is not, and Escape cancels the
+download while it runs, changing nothing; once all of it has arrived, the panel
+waits for the install to finish. While a sign-in waits for you, the link the
+agent prints is shown for you to open. The first time you choose a method that
+takes a key, `/login` asks for the key as hidden input; crucible keeps it for
+that agent and method and asks for it no more, and Escape there keeps nothing.
+A sign-in read as signed in means the agent then opened a session. Escape on a
+question changes nothing and goes back; apart from that one yes and what you
+choose here, nothing is written until the agent reads signed in.
 
 `/logout` lists each agent named under `externalAgents` after the stored
 credentials, as an external agent instance, and `/logout <name>` takes one
@@ -292,7 +307,8 @@ newest of them for your platform, checks it is that release and puts it under
 `programs/antigravity/` and its version in crucible's home. Where no entry
 names Antigravity, `/login` sets one up run as that release, unless an
 `antigravity` command is on your `PATH`, and where the release is not there yet
-it says to run that command and choose *Check again*. An entry you write
+it offers *Install*, which puts it in place as that command does, and says the
+command can be run instead, then *Check again* chosen. An entry you write
 yourself names its executable, `agy_acp_server.par`, or `agy_acp_server.exe` on
 Windows, with an absolute path. When the catalog offers a newer release, run
 the command again and change the entry's `executable` to the path it prints.
@@ -323,7 +339,10 @@ shell holds for another program never reaches it, and a path under your home
 the agent names is shown as that path. Its temporary files go in the profile
 too. Its sign-in token is kept as a file in the profile rather than
 in the shared keyring, so a sign-in the Antigravity IDE or another Google
-product keeps is never read as the agent's.
+product keeps is never read as the agent's. Two entries that write one profile
+directory two ways, with and without a trailing `/` or through a link, are
+refused, naming both (see
+[configuration](../configuration/configuration.md#externalagents)).
 
 **Signing in.** Whether it is signed in is read from the agent's own answer
 when a session is opened in its profile. To sign in, the agent prints a link to

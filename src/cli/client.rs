@@ -21,19 +21,28 @@
 //! A terminal has somebody at it and a screen, so it claims every capability,
 //! but in a connect, which claims every one but [`Capability::Install`]: a
 //! client that claims it can be offered a move on an agent in place of the
-//! connect, and the terminal cannot yet carry one out. The request decides,
-//! whichever command sends it, so no sender chooses its own claim.
+//! connect, and only the sender that carries the move out may claim it. That
+//! is `/login`'s agent connect, which names its claim through
+//! [`Terms::operate_claiming`] beside the carrying out; every other connect,
+//! `/logout`'s among them, is asked for with the claim the command decides.
+//!
+//! A move is carried out at the agents door by [`Terms::carry`], on a thread
+//! of its own, since a download goes on while the drawing thread draws how
+//! far it has got. The door says that, and the link a sign-in waits on, into
+//! a place that keeps only the latest of each, and puts its questions on the
+//! same channel an account operation does; only the drawing thread draws any
+//! of it.
 
 use std::future::Future;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::task::Poll;
 
 use tokio::sync::{mpsc, oneshot};
 
 use crucible_app::Conversation;
 use crucible_app::catalog_fetch::Source;
-use crucible_app::client::agents::Shelf;
+use crucible_app::client::agents::{self as door, AgentsError, Shelf, Watching};
 use crucible_app::client::{
     Answered, Confirmation, Desk, Front, Performed, Shown, account, asked, asking, interrupt, keep,
     perform,
@@ -42,8 +51,8 @@ use crucible_app::content_use::Warned;
 use crucible_app::launching::{Launcher, Steps};
 use crucible_app::providers::Providers;
 use crucible_client_api::{
-    Capabilities, Capability, Command, Correlation, Decision, Name, Outcome, Pending, Refusal,
-    Request, Said, Theme,
+    Capabilities, Capability, Command, Correlation, Decision, ErrorCode, InstallProgress, Name,
+    Outcome, Pending, Refusal, Request, Said, Theme,
 };
 use crucible_runtime::{BoxFuture, Cancel};
 
@@ -72,13 +81,15 @@ pub(crate) trait Witness: std::fmt::Debug + Send + Sync {
     fn decided(&self, decision: &Decision);
 }
 
-/// What the terminal claims in a request asking for `command`: every
-/// capability, but in a connect, every one but [`Capability::Install`].
+/// What the terminal claims in a request asking for `command`, where its
+/// sender names no claim of its own: every capability, but in a connect,
+/// every one but [`Capability::Install`].
 ///
 /// A client that claims install can be offered a move on an agent in place of
-/// a connect, and the terminal cannot yet carry one out. Decided on the
-/// command alone, so whichever command sends a connect, it claims the same.
-/// Every command is named, so a new one decides what it claims.
+/// a connect, and only a sender that carries the move out claims it, by
+/// naming its claim through [`Client::claiming`]. Every connect asked for
+/// here, whichever command sends it, claims the same. Every command is named,
+/// so a new one decides what it claims.
 const fn claimed(command: &Command) -> Capabilities {
     match command {
         Command::Connect { .. } => Capabilities::every().without(Capability::Install),
@@ -139,9 +150,16 @@ impl Client {
     /// The next request, asking for `command` and claiming what [`claimed`]
     /// says the terminal claims for it.
     pub(crate) fn asking(&self, command: Command) -> Request {
+        let claims = claimed(&command);
+        self.claiming(command, claims)
+    }
+
+    /// The next request, asking for `command` and claiming `claims`: what a
+    /// sender that carries out what the claim lets it be offered names.
+    pub(crate) fn claiming(&self, command: Command, claims: Capabilities) -> Request {
         let number = self.sent.fetch_add(1, Ordering::Relaxed).saturating_add(1);
 
-        Request::new(claimed(&command), Correlation::new(number), command)
+        Request::new(claims, Correlation::new(number), command)
     }
 
     /// Asks the turn `cancel` belongs to to stop.
@@ -256,8 +274,9 @@ struct Answering {
 
 impl Front for Answering {
     /// Hands the question to the drawing thread and awaits its answer. Only
-    /// an account operation's questions and the route it would start an
-    /// agent on are put here; anything else is answered by nobody.
+    /// an account operation's questions, an install's, and the route either
+    /// would start an agent on are put here; anything else is answered by
+    /// nobody.
     fn put<'a>(
         &'a mut self,
         pending: &'a Pending,
@@ -265,12 +284,13 @@ impl Front for Answering {
     ) -> BoxFuture<'a, Option<Decision>> {
         Box::pin(async move {
             let question = match shown {
-                Shown::Account(confirmation) => Question::Account(confirmation.clone()),
+                // An install is asked the way an account operation is: which
+                // way it goes on, from choices the question names.
+                Shown::Account(confirmation) | Shown::Install(confirmation) => {
+                    Question::Account(confirmation.clone())
+                }
                 Shown::Warning(warned) => Question::Warning(warned.clone()),
-                Shown::Call { .. }
-                | Shown::Questions(_)
-                | Shown::External(_)
-                | Shown::Install(_) => return None,
+                Shown::Call { .. } | Shown::Questions(_) | Shown::External(_) => return None,
             };
 
             self.client.put(pending);
@@ -281,7 +301,10 @@ impl Front for Answering {
             let decision = match (hear.await.ok()??, pending) {
                 // Named as the pending action names it, which is what it is
                 // held against.
-                (Reply::Took(at), Pending::Account { choices, .. }) => Decision::Picked {
+                (
+                    Reply::Took(at),
+                    Pending::Account { choices, .. } | Pending::Install { choices, .. },
+                ) => Decision::Picked {
                     id,
                     choice: Said::new(choices.get(at)?.name.as_str()).ok()?,
                 },
@@ -323,9 +346,26 @@ impl Terms {
         &self,
         conversation: &mut Conversation,
         command: Command,
+        answer: impl FnMut(&Question) -> Result<Option<Reply>, E>,
+    ) -> Result<Performed, E> {
+        let claims = claimed(&command);
+        self.operate_claiming(conversation, command, claims, answer)
+    }
+
+    /// [`Terms::operate`], with the request claiming `claims`: what a sender
+    /// that carries out what the claim lets it be offered names.
+    ///
+    /// # Errors
+    ///
+    /// As [`Terms::operate`].
+    pub(crate) fn operate_claiming<E>(
+        &self,
+        conversation: &mut Conversation,
+        command: Command,
+        claims: Capabilities,
         mut answer: impl FnMut(&Question) -> Result<Option<Reply>, E>,
     ) -> Result<Performed, E> {
-        let request = self.client.asking(command);
+        let request = self.client.claiming(command, claims);
         let (providers, settings) = (self.providers.snapshot(), self.reading());
         let desk = self.desk(&providers, &settings);
         // One question is out at a time: the operation awaits each answer.
@@ -365,6 +405,278 @@ impl Terms {
             .answered(&request, conversation, || performed.outcome());
 
         Ok(performed)
+    }
+}
+
+/// What the agents door has said while it carries a move out, as the drawing
+/// thread draws it: only the latest of each, so nothing kept grows with what
+/// it does.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Watched {
+    /// How far a download has got, where one has begun.
+    pub(crate) progress: Option<InstallProgress>,
+    /// The sign-in link the agent printed last, within the door's ceiling,
+    /// and whether that ceiling cut it.
+    pub(crate) link: Option<(String, bool)>,
+}
+
+/// A move being carried out at the agents door, as the drawing thread stands
+/// over it between the questions it puts.
+pub(crate) struct Carrying<'a> {
+    /// Where the door's questions arrive.
+    from: mpsc::Receiver<Put>,
+    /// A question that arrived while the drawing thread was standing, and is
+    /// answered once it stops.
+    held: Option<Put>,
+    /// What the door has said so far.
+    told: &'a Mutex<Watched>,
+    /// What gives a download up.
+    cancel: &'a Cancel,
+    /// Raised once the door has answered, however it did.
+    over: &'a AtomicBool,
+}
+
+impl Carrying<'_> {
+    /// Whether the door is still at work with nothing to ask: what a panel
+    /// standing over it stands while.
+    pub(crate) fn working(&mut self) -> bool {
+        if self.held.is_none() {
+            self.held = self.from.try_recv().ok();
+        }
+        self.held.is_none() && !self.over.load(Ordering::Acquire)
+    }
+
+    /// What the door has said so far.
+    pub(crate) fn watched(&self) -> Watched {
+        self.told
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// What gives the download up, which then commits nothing.
+    pub(crate) const fn cancel(&self) -> &Cancel {
+        self.cancel
+    }
+}
+
+/// Raises the flag it holds when dropped, so the door's thread says it is
+/// over however it ends, a panic among the ways.
+struct Over<'a>(&'a AtomicBool);
+
+impl Drop for Over<'_> {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
+impl Terms {
+    /// Carries the move `command` out at the agents door, lent the shelf this
+    /// conversation stands on, and hands back what the door answered for the
+    /// caller to draw.
+    ///
+    /// The door runs on a thread of its own, on the runtime the turns run on,
+    /// so a download goes on while this, the drawing thread, stands `stand`
+    /// over it: `overseer` stands what [`Carrying::watched`] says for as
+    /// long as [`Carrying::working`] holds, and cancels through
+    /// [`Carrying::cancel`]. Each question the door stops on it answers here,
+    /// as [`Terms::operate`] answers an account operation's.
+    ///
+    /// # Errors
+    ///
+    /// Whatever `overseer` fails with. The download is cancelled, any
+    /// question out is left unanswered, and the door is waited for before
+    /// this returns.
+    pub(crate) fn carry<O: Overseer>(
+        &self,
+        conversation: &Conversation,
+        command: Command,
+        overseer: &mut O,
+    ) -> Result<Result<door::Outcome, AgentsError>, O::Error> {
+        let request = self.client.asking(command);
+        let carried = match crucible_config::Home::find(&|name| std::env::var_os(name)) {
+            Err(homeless) => Ok(Err(AgentsError::Config(homeless))),
+            Ok(home) => {
+                let steps = conversation.steps();
+                let (request, runtime, home) = (&request, &self.runtime, &home);
+                overseen(&self.client, overseer, move |front, watching| {
+                    let carried = |smoke: Option<&Launcher<'_>>| {
+                        let lent = shelf(home, smoke, steps);
+                        runtime.block_on(door::run(request, &lent, front, watching))
+                    };
+                    match steps {
+                        Some(steps) => steps.lending(|launcher| carried(Some(launcher))),
+                        None => carried(None),
+                    }
+                })
+            }
+        }?;
+
+        if let Some(witness) = &self.client.witness {
+            match &carried {
+                Ok(door::Outcome::Refused(refusal)) => {
+                    witness.apart(&request, Outcome::Refused(*refusal));
+                }
+                Err(refused) => witness.apart(&request, Outcome::Refused(coded(refused).into())),
+                // The contract has no outcome for what the door did; it is
+                // the door's own to say, and the terminal draws it whole.
+                Ok(_) => {}
+            }
+        }
+
+        Ok(carried)
+    }
+}
+
+/// Runs `door`, the half of [`Terms::carry`] that is the agents door, on a
+/// thread of its own, lent the front that puts each question it stops on to
+/// `overseer` and the watching `overseer` stands over, and stands `overseer`
+/// over it from this, the drawing thread, until it is over.
+///
+/// # Errors
+///
+/// Whatever `overseer` fails with. The download is cancelled, any question
+/// out is left unanswered, and the door is waited for before this returns.
+fn overseen<O: Overseer, R: Send>(
+    client: &Client,
+    overseer: &mut O,
+    door: impl FnOnce(&mut Answering, Watching<'_>) -> R + Send,
+) -> Result<R, O::Error> {
+    let told = Mutex::new(Watched::default());
+    let cancel = Cancel::new();
+    let over = AtomicBool::new(false);
+    // One question is out at a time: the door awaits each answer.
+    let (to, from) = mpsc::channel(1);
+    let front = Answering {
+        to,
+        client: client.clone(),
+    };
+    let (told_, cancel_, over_) = (&told, &cancel, &over);
+    std::thread::scope(|scope| {
+        let worker = scope.spawn(move || {
+            let _over = Over(over_);
+            let mut front = front;
+            let mut progress = |progress: InstallProgress| {
+                told_
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .progress = Some(progress);
+            };
+            let watching = Watching {
+                progress: &mut progress,
+                cancel: cancel_,
+                link: &|link| {
+                    let link = (link.as_str().to_owned(), link.incomplete());
+                    told_.lock().unwrap_or_else(PoisonError::into_inner).link = Some(link);
+                },
+            };
+            door(&mut front, watching)
+        });
+        let mut carrying = Carrying {
+            from,
+            held: None,
+            told: told_,
+            cancel: cancel_,
+            over: over_,
+        };
+        let stood = stood(overseer, &mut carrying);
+        if stood.is_err() {
+            cancel_.request();
+        }
+        // Nobody is left to answer: a question still out, or put from here
+        // on, is answered by nobody.
+        drop(carrying);
+        let carried = worker
+            .join()
+            .unwrap_or_else(|panicked| std::panic::resume_unwind(panicked));
+        stood.map(|()| carried)
+    })
+}
+
+/// Who stands over a move [`Terms::carry`] carries out: it answers each
+/// question the door stops on, and stands a panel over the door between them.
+/// It is on the drawing thread, and nothing else draws.
+pub(crate) trait Overseer {
+    /// What it fails with, which gives the move up.
+    type Error;
+
+    /// Answers `question`, the way a question an account operation stops on
+    /// is answered: nothing where it had no room to stand.
+    ///
+    /// # Errors
+    ///
+    /// Whatever drawing or reading the answer failed with.
+    fn answer(&mut self, question: &Question) -> Result<Option<Reply>, Self::Error>;
+
+    /// Stands a panel over the door `carrying` watches, for as long as
+    /// [`Carrying::working`] holds or less.
+    ///
+    /// # Errors
+    ///
+    /// Whatever drawing the panel or reading a key failed with.
+    fn stand(&mut self, carrying: &mut Carrying<'_>) -> Result<(), Self::Error>;
+}
+
+/// Stands `overseer` over the door `carrying` watches until it is over, and
+/// has it answer each question the door stops on.
+fn stood<O: Overseer>(overseer: &mut O, carrying: &mut Carrying<'_>) -> Result<(), O::Error> {
+    loop {
+        if carrying.held.is_none() {
+            carrying.held = carrying.from.try_recv().ok();
+        }
+        if let Some(put) = carrying.held.take() {
+            let replied = overseer.answer(&put.question)?;
+            // A door that stopped waiting has nobody to tell.
+            let _ = put.reply.send(replied);
+            continue;
+        }
+        if carrying.over.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        overseer.stand(carrying)?;
+    }
+}
+
+/// The contract's code for `refused`, a refusal at the agents door.
+///
+/// Written out by hand, every variant named, so a new one decides its code.
+/// [`ErrorCode::Busy`] is a run's alone: a sign-in that would start the agent
+/// beside a live run, or one not confirmed stopped, is refused until the run
+/// has ended, and nothing else here is about now.
+pub(crate) const fn coded(refused: &AgentsError) -> ErrorCode {
+    match refused {
+        AgentsError::Running(_) | AgentsError::Unstopped(_) => ErrorCode::Busy,
+        // What the request named is not one there is, or not one this can do.
+        AgentsError::Unoffered { .. }
+        | AgentsError::Unlisted(_)
+        | AgentsError::NoInstance(_)
+        | AgentsError::Unsigned(_)
+        | AgentsError::NoMethod { .. }
+        | AgentsError::Keyless(_)
+        | AgentsError::Typed => ErrorCode::InvalidArgument,
+        AgentsError::Config(_)
+        | AgentsError::NotInstalled(_)
+        | AgentsError::NoPrevious(_)
+        | AgentsError::InUse { .. }
+        | AgentsError::Unsupported(_)
+        | AgentsError::Program(_)
+        | AgentsError::Kept { .. }
+        | AgentsError::TooLarge
+        | AgentsError::Store(_)
+        | AgentsError::Download(_)
+        | AgentsError::Unpacked(_)
+        | AgentsError::Remember(_)
+        | AgentsError::Smoke { .. }
+        | AgentsError::Unclouded { .. }
+        | AgentsError::Unlocated(_)
+        | AgentsError::Conversation(_)
+        | AgentsError::Unnamed(_)
+        | AgentsError::Unstored { .. }
+        | AgentsError::Credentials(_)
+        | AgentsError::Unprofiled(_)
+        | AgentsError::Unlaunched(_)
+        | AgentsError::HoldUnkept(_)
+        | AgentsError::Unverified(_) => ErrorCode::Failed,
     }
 }
 
@@ -511,9 +823,6 @@ impl Terms {
 /// the steps of the conversation asking, where there is one. Both are lent
 /// together: a sign-in that starts the agent is refused beside a launcher with
 /// no steps, since the runs beside it would not be known.
-// Waits for its first caller, the `/login` rows or the `crucible agents`
-// subcommands, which removes this allow.
-#[allow(dead_code)]
 pub(crate) fn shelf<'a>(
     home: &'a crucible_config::Home,
     smoke: Option<&'a Launcher<'a>>,
