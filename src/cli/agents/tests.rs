@@ -580,12 +580,23 @@ impl Bench {
         answer: Option<fn() -> String>,
         key: &mut dyn FnMut(&str) -> Result<Option<Typed>, Unstored>,
     ) -> Answer {
-        let said = |text: &str| {
-            self.heard
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .push_str(text);
-        };
+        let said = |text: &str| self.say(text);
+        self.desk(&said, answer).carried(action, key)
+    }
+
+    /// What the desk writes `outcome` as, where it came back from the door.
+    fn answered(&self, outcome: Outcome) -> Answer {
+        let said = |text: &str| self.say(text);
+        self.desk(&said, None).answered(Ok(outcome), None)
+    }
+
+    /// The desk a command is carried out at in this test's home, writing to
+    /// standard error through `said` and reading an answer from `answer`.
+    fn desk<'a>(
+        &'a self,
+        said: &'a (dyn Fn(&str) + Sync),
+        answer: Option<fn() -> String>,
+    ) -> Desk<'a> {
         Desk {
             home: &self.home,
             shelf: Shelf {
@@ -595,11 +606,18 @@ impl Bench {
                 steps: None,
             },
             runtime: self.runtime.handle(),
-            said: &said,
+            said,
             terminal: false,
             answer,
         }
-        .carried(action, key)
+    }
+
+    /// Keeps `text` as said on standard error.
+    fn say(&self, text: &str) {
+        self.heard
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push_str(text);
     }
 
     /// What has been said on standard error since it was last asked.
@@ -780,6 +798,33 @@ fn an_update_taken_without_asking_says_so_and_what_it_moved() {
     );
 }
 
+/// The instances a move names and why it was not smoke-tested are each written
+/// escaped on their line, so that a line break or an escape character in
+/// either neither starts another line nor reaches the terminal as a control.
+#[test]
+fn what_a_move_names_is_written_escaped_on_its_own_line() {
+    let bench = Bench::new("moved-escaped");
+
+    let said = done(bench.answered(Outcome::Moved {
+        agent: AgentKey::new("goose").expect("a key"),
+        how: How::Updated,
+        version: "0.0.0-unoffered".into(),
+        instances: vec!["work\nrm".into(), "a\u{1b}[2J".into()],
+        left: Vec::new(),
+        downloaded: false,
+        standing: false,
+        unsmoked: Some("it said\n\u{1b}[31mno".into()),
+        unpruned: None,
+    }));
+
+    assert_eq!(
+        said,
+        "Updated goose to 0.0.0-unoffered.\n\
+         Moved onto it: work\\nrm, a\\u{1b}[2J.\n\
+         Not smoke-tested: it said\\n\\u{1b}[31mno.\n"
+    );
+}
+
 /// A line longer than an answer is read to: `1`, then more than the bound of
 /// spaces before its newline.
 fn past_the_bound() -> String {
@@ -798,11 +843,14 @@ fn only_a_choice_s_number_alone_on_its_line_answers_an_install() {
     let bench = Bench::new("install-answers");
     bench.host.publish(1, &[goose("1.0.0", ONE)]);
     let install = action(&["install", "goose", "1.0.0"]);
-    let declines: [Typing; 6] = [
+    let declines: [Typing; 7] = [
         ("+1", || answer_in(&mut &b"+1\n"[..])),
         ("01", || answer_in(&mut &b"01\n"[..])),
         (" 1", || answer_in(&mut &b" 1\n"[..])),
         ("1x", || answer_in(&mut &b"1x\n"[..])),
+        ("1 and two carriage returns", || {
+            answer_in(&mut &b"1\r\r\n"[..])
+        }),
         ("1 past the bound", || {
             answer_in(&mut past_the_bound().as_bytes())
         }),
@@ -828,8 +876,8 @@ fn only_a_choice_s_number_alone_on_its_line_answers_an_install() {
 }
 
 /// An answer is its line up to the newline, which must come within the bound
-/// it is read to, and nothing where it does not; a console's carriage return
-/// before it is not part of it.
+/// it is read to, and nothing where it does not; the one carriage return a
+/// console ends a line with before it is not part of it, and a second is.
 #[test]
 fn an_answer_is_its_line_where_it_ends_within_the_bound() {
     let bound = usize::try_from(auth::MAX_ANSWER).expect("a length");
@@ -838,6 +886,7 @@ fn an_answer_is_its_line_where_it_ends_within_the_bound() {
     for (typed, read) in [
         ("1\n", "1"),
         ("1\r\n", "1"),
+        ("1\r\r\n", "1\r"),
         ("+1\n", "+1"),
         (" 1 \n", " 1 "),
         (filled.as_str(), filled.trim_end_matches('\n')),

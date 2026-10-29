@@ -376,11 +376,11 @@ fn signed(desk: &Desk, way: &Way) -> Result<String, String> {
 }
 
 /// The terminal, asked what an account sign-in needs to know.
-pub(super) struct Asking;
+struct Asking;
 
 impl Asking {
     /// One line from standard input, bounded at [`MAX_ANSWER`] bytes.
-    pub(super) fn answer() -> String {
+    fn answer() -> String {
         let mut line = String::new();
         let _ = io::stdin().lock().take(MAX_ANSWER).read_line(&mut line);
         line.trim().to_owned()
