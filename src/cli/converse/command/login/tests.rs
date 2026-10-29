@@ -1533,22 +1533,111 @@ fn escape_cancels_a_download_once_and_nothing_else_is_cancelled_by_it() {
 #[test]
 fn a_refusal_quotes_every_instance_name_it_gives_with_its_controls_escaped() {
     use crucible_app::client::agents::AgentsError;
+    use crucible_app::remember::RememberError;
+    use crucible_config::{At, ConfigError};
 
-    let hostile = || Box::<str>::from("space\u{1b}[2J");
-    for refusal in [
-        AgentsError::Running(vec![hostile()]),
-        AgentsError::Unstopped(vec![hostile()]),
-        AgentsError::Unlocated(hostile()),
-        AgentsError::Unclouded {
-            method: "vertex".into(),
-            instance: hostile(),
-        },
+    let hostile = || Box::<str>::from("space\u{1b}[2J\u{202e}");
+    let pathed = || -> Box<str> { format!("externalAgents.{}.executable", hostile()).into() };
+    let unspliceable = || ConfigError::Unspliceable {
+        file: "config.json".into(),
+        at: pathed(),
+        written: "\"/agents/agy\"".into(),
+    };
+    for (refusal, quoted) in [
+        (
+            AgentsError::Running(vec![hostile()]),
+            "\"space\\u{1b}[2J\\u{202e}\"",
+        ),
+        (
+            AgentsError::Unstopped(vec![hostile()]),
+            "\"space\\u{1b}[2J\\u{202e}\"",
+        ),
+        (
+            AgentsError::Unlocated(hostile()),
+            "\"space\\u{1b}[2J\\u{202e}\"",
+        ),
+        (
+            AgentsError::Unclouded {
+                method: "vertex".into(),
+                instance: hostile(),
+            },
+            "\"space\\u{1b}[2J\\u{202e}\"",
+        ),
+        (
+            AgentsError::Remember(RememberError::Unusable(unspliceable())),
+            "\"externalAgents.space\\u{1b}[2J\\u{202e}.executable\"",
+        ),
+        (
+            AgentsError::HoldUnkept(RememberError::Unusable(unspliceable())),
+            "\"externalAgents.space\\u{1b}[2J\\u{202e}.executable\"",
+        ),
+        (
+            AgentsError::Config(ConfigError::WrongType {
+                file: "config.json".into(),
+                path: pathed(),
+                wanted: "a string",
+                at: At::Ambiguous,
+            }),
+            "\"externalAgents.space\\u{1b}[2J\\u{202e}.executable\" wants a string",
+        ),
     ] {
         let said = refused(&refusal);
 
-        assert!(said.contains("\"space\\u{1b}[2J\""), "{said:?}");
-        assert!(!said.chars().any(char::is_control), "{said:?}");
+        assert!(said.contains(quoted), "{said:?}");
+        assert!(!said.contains("space\u{1b}"), "{said:?}");
+        assert!(
+            !said.chars().any(
+                |character| character.is_control() || crucible_types::shown::unshown(character)
+            ),
+            "{said:?}"
+        );
     }
+}
+
+#[test]
+fn a_refusal_passed_on_in_the_doors_words_is_escaped_and_cut_with_the_cut_marked() {
+    use crucible_app::client::agents::AgentsError;
+
+    let refusal = AgentsError::Program(format!("agy\u{202e}{}", "x".repeat(4 * REFUSAL)).into());
+
+    let said = refused(&refusal);
+
+    assert!(
+        said.starts_with("! the release lists no runnable agy\\u{202e}x"),
+        "{said:?}"
+    );
+    assert!(said.ends_with('…'), "{said:?}");
+    assert_eq!(said.chars().count(), "! ".len() + REFUSAL + 1);
+    assert!(!said.contains('\u{202e}'), "{said:?}");
+}
+
+#[test]
+fn a_move_whose_smoke_test_or_pruning_did_not_happen_says_why_with_no_mark_mid_line() {
+    use crucible_app::client::agents::{AgentsError, Outcome as Door};
+
+    let said = carried_out(&Door::Moved {
+        agent: crucible_types::AgentKey::new("antigravity").expect("an agent key"),
+        how: How::Installed,
+        version: "1.2.3".into(),
+        instances: vec!["work".into()],
+        left: Vec::new(),
+        downloaded: true,
+        standing: false,
+        unsmoked: Some("its program\u{202e} did not start".into()),
+        unpruned: Some(Box::new(AgentsError::TooLarge)),
+    })
+    .expect("a move says what came of it");
+
+    assert!(said.starts_with("antigravity 1.2.3 installed; "), "{said}");
+    assert!(
+        said.contains("; it was not smoke-tested: its program\\u{202e} did not start"),
+        "{said}"
+    );
+    assert!(
+        said.contains("; older versions were kept: the release is larger than"),
+        "{said}"
+    );
+    assert!(!said.contains("! "), "{said}");
 }
 
 #[test]

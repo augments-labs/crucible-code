@@ -101,12 +101,14 @@ use crucible_app::content_use;
 use crucible_app::providers::{
     List, Misfit, Providers, Row as Way, Rows, Served, key_variables, offered,
 };
+use crucible_app::remember::RememberError;
 use crucible_app::subscription::Route;
 use crucible_app::switching::LoggedIn;
 use crucible_auth::{AuthError, Kind, LoginAttempt, LoginUpdate, Stopped};
 use crucible_client_api::{
     AgentAction, Agents, Capabilities, Command, InstallProgress, LogoutOutcome, Outcome,
 };
+use crucible_config::ConfigError;
 use crucible_runtime::Cancel;
 use crucible_tui::{
     Bar, Caret, Fill, Glyphs, Heading, Key, Offered, Panel, Part, Pressed, Renderer, Row, Slot,
@@ -224,6 +226,12 @@ const UNKEPT: &str = "! that key is longer than a key can be, so nothing was kep
 
 /// How many characters of a name a refusal quotes, before an ellipsis.
 const NAMED: usize = 256;
+
+/// How many characters of a refusal at the agents door a line says, before an
+/// ellipsis: room for the longest sentence the door gives with the names it
+/// quotes, and short of a screen's worth, so no text the door passes on can
+/// push the rest of the screen out of sight.
+const REFUSAL: usize = 1024;
 
 /// What the box's absence leaves behind, when the window had no room for it.
 ///
@@ -575,7 +583,7 @@ fn carried<T: Terminal>(
     if let (Err(AgentsError::Unstored { .. }), AgentAction::SignIn { instance, method }) =
         (&carried, action)
     {
-        let shown = flattened(instance.as_str());
+        let shown = shown(instance.as_str());
         let key = match secret::ask(walk.renderer, walk.terms.style(), &shown, None, BACK)? {
             Asked::Key(key) => key,
             Asked::Left => {
@@ -891,11 +899,18 @@ fn named(name: &str) -> String {
 /// `text` the catalog, the configuration or an agent gave, escaped and cut as
 /// [`named`] quotes it, unquoted.
 fn shown(text: &str) -> String {
+    within(text, NAMED)
+}
+
+/// `text` with every control and format character written as its escape, as
+/// [`crucible_types::shown::escaped`] writes it, and cut at `most` characters
+/// with an ellipsis marking the cut.
+fn within(text: &str, most: usize) -> String {
     let escaped = crucible_types::shown::escaped(text);
-    if escaped.chars().count() <= NAMED {
+    if escaped.chars().count() <= most {
         return escaped;
     }
-    let mut cut: String = escaped.chars().take(NAMED).collect();
+    let mut cut: String = escaped.chars().take(most).collect();
     cut.push('…');
     cut
 }
@@ -909,13 +924,23 @@ fn names(names: &[Box<str>]) -> String {
         .join(", ")
 }
 
-/// The line a refusal at the agents door is said in.
+/// The line a refusal at the agents door is said in: [`sentence`] after the
+/// mark a refusal's line opens with.
+fn refused(refusal: &AgentsError) -> String {
+    format!("! {}", sentence(refusal))
+}
+
+/// What a refusal at the agents door says, unmarked, so a line saying it
+/// beside something else carries no mark in the middle.
 ///
 /// The door's own sentences name an instance as the configuration spells it,
-/// so every refusal that names one is written out here with it quoted.
-/// Written out by hand, every variant named, so a new one decides whether it
-/// names an instance; one that names none is said as the door says it.
-fn refused(refusal: &AgentsError) -> String {
+/// so every refusal that names one is written out here with it quoted, and so
+/// is one wrapping a configuration error, as [`configured`] says it. Written
+/// out by hand, every variant named, so a new one decides whether it names an
+/// instance; one that names none is said in the door's words. Every sentence
+/// has its control and format characters escaped and is cut at [`REFUSAL`]
+/// characters, as [`within`] does.
+fn sentence(refusal: &AgentsError) -> String {
     let said = match refusal {
         AgentsError::InUse { agent, instances } => format!(
             "{agent} is still the program of {}, so it is not removed",
@@ -951,8 +976,13 @@ fn refused(refusal: &AgentsError) -> String {
             names(instances)
         ),
         AgentsError::Download(DownloadError::Cancelled) => return GIVEN_UP.to_owned(),
-        AgentsError::Config(_)
-        | AgentsError::Unoffered { .. }
+        AgentsError::Config(problem) => configured(problem),
+        AgentsError::Remember(problem) => remembered(problem),
+        AgentsError::HoldUnkept(problem) => format!(
+            "the yes to this agent's route could not be written down, so nothing was started: {}",
+            remembered(problem)
+        ),
+        AgentsError::Unoffered { .. }
         | AgentsError::Unlisted(_)
         | AgentsError::NotInstalled(_)
         | AgentsError::NoPrevious(_)
@@ -963,7 +993,6 @@ fn refused(refusal: &AgentsError) -> String {
         | AgentsError::Store(_)
         | AgentsError::Download(_)
         | AgentsError::Unpacked(_)
-        | AgentsError::Remember(_)
         | AgentsError::Smoke { .. }
         | AgentsError::NoMethod { .. }
         | AgentsError::Conversation(_)
@@ -974,10 +1003,85 @@ fn refused(refusal: &AgentsError) -> String {
         | AgentsError::Credentials(_)
         | AgentsError::Unprofiled(_)
         | AgentsError::Unlaunched(_)
-        | AgentsError::HoldUnkept(_)
         | AgentsError::Unverified(_) => refusal.to_string(),
     };
-    format!("! {}", flattened(said))
+    within(&said, REFUSAL)
+}
+
+/// A configuration file that could not be written, as [`configured`] says
+/// what the file holds.
+fn remembered(problem: &RememberError) -> String {
+    match problem {
+        RememberError::Unusable(problem) => configured(problem),
+        RememberError::Unwritable { .. } | RememberError::Busy { .. } => problem.to_string(),
+    }
+}
+
+/// A configuration error, with the dotted path it names quoted as [`named`]
+/// quotes a name: a path under `externalAgents` holds an instance's name as
+/// the configuration spells it. Written out by hand, every variant named, so
+/// a new one decides whether it carries such a path; one that carries none is
+/// said in its own words.
+fn configured(problem: &ConfigError) -> String {
+    let (file, path) = match problem {
+        ConfigError::UnknownKey { file, path, .. }
+        | ConfigError::WrongType { file, path, .. }
+        | ConfigError::NotAChoice { file, path, .. }
+        | ConfigError::BadRule { file, path, .. }
+        | ConfigError::Relative { file, path, .. }
+        | ConfigError::Unrooted { file, path, .. }
+        | ConfigError::Needed { file, path, .. }
+        | ConfigError::Variant { file, path, .. }
+        | ConfigError::Widening { file, path, .. }
+        | ConfigError::TooMany { file, path, .. }
+        | ConfigError::Sandbox { file, path, .. }
+        | ConfigError::PromptCaching { file, path, .. } => (file, path),
+        ConfigError::Unspliceable { file, at, written } => {
+            return ConfigError::Unspliceable {
+                file: file.clone(),
+                at: named(at).into(),
+                written: written.clone(),
+            }
+            .to_string();
+        }
+        ConfigError::Unremovable { file, at } => {
+            return ConfigError::Unremovable {
+                file: file.clone(),
+                at: named(at).into(),
+            }
+            .to_string();
+        }
+        ConfigError::StillReferenced {
+            file,
+            instance,
+            provider,
+        } => {
+            return ConfigError::StillReferenced {
+                file: file.clone(),
+                instance: named(instance).into(),
+                provider: provider.clone(),
+            }
+            .to_string();
+        }
+        ConfigError::Unreadable { .. }
+        | ConfigError::TooLarge { .. }
+        | ConfigError::Malformed { .. }
+        | ConfigError::ServerName { .. }
+        | ConfigError::ProjectEnv { .. }
+        | ConfigError::TooLate { .. }
+        | ConfigError::Answer { .. }
+        | ConfigError::AnswerInShell { .. }
+        | ConfigError::Homeless { .. } => return problem.to_string(),
+    };
+    // Each of these says its file and its path first, so the path is quoted
+    // where it stands; were one ever to say them otherwise, the path is left
+    // out rather than said bare.
+    let said = problem.to_string();
+    let quoted = named(path);
+    said.strip_prefix(&format!("{file}: {path}")).map_or_else(
+        || format!("{file}: the setting {quoted} could not be used"),
+        |rest| format!("{file}: {quoted}{rest}"),
+    )
 }
 
 /// The line what the agents door did is said in: nothing where nobody went
@@ -1012,10 +1116,10 @@ fn carried_out(outcome: &door::Outcome) -> Option<String> {
                 ));
             }
             if let Some(why) = unsmoked {
-                said.push(format!("it was not smoke-tested: {why}"));
+                said.push(format!("it was not smoke-tested: {}", within(why, REFUSAL)));
             }
             if let Some(unpruned) = unpruned {
-                said.push(format!("older versions were kept: {}", refused(unpruned)));
+                said.push(format!("older versions were kept: {}", sentence(unpruned)));
             }
             said.join("; ")
         }
