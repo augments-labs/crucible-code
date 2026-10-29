@@ -213,7 +213,8 @@ impl fmt::Debug for Startup<'_> {
 /// asked, and [`AppError::Unstarted`] where the runtime the conversation's
 /// turns run on would not start; nothing is written to the disk for a startup
 /// that fails. A test build also refuses, before anything is built, agents
-/// its environment asks for under a name it has no registry for.
+/// its environment asks for under a name it has no registry for, and a
+/// catalog it names in a way it does not take.
 pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     // A test build starts the agents its environment names, so a test of the
     // whole program can run it over agents this release does not ship; a
@@ -222,6 +223,11 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     let agents = crate::proof::registry_from_environment()?;
     #[cfg(not(feature = "proof"))]
     let agents = &crate::backends::REGISTRY;
+    // A test build fetches the catalog its environment names, so a test of
+    // the whole program can install from one it serves; one named in a way it
+    // does not take refuses the start here, before anything fetches.
+    #[cfg(feature = "proof")]
+    crate::proof::catalog_from_environment()?;
     assembled(startup, agents)
 }
 
