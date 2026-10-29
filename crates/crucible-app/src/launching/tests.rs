@@ -2718,10 +2718,23 @@ fn a_link_to_a_part_outside_ascii_is_refused() {
 
     let refused = rooted(&sample, &[".goose"], &home, &crucible);
 
-    assert!(
-        matches!(&refused, Err(Unlaunched::StateName { .. })),
-        "{refused:?}"
-    );
+    // A file system that folds case beyond ASCII, as macOS's does by default,
+    // keeps `.\u{17F}sh` as the directory `.ssh` names, so it may be refused as
+    // that place before its name is looked at.
+    if cfg!(target_os = "macos") {
+        assert!(
+            matches!(
+                &refused,
+                Err(Unlaunched::StateName { .. } | Unlaunched::StatePath { .. })
+            ),
+            "{refused:?}"
+        );
+    } else {
+        assert!(
+            matches!(&refused, Err(Unlaunched::StateName { .. })),
+            "{refused:?}"
+        );
+    }
 }
 
 /// A file system that drops the dots and spaces that end a name does not tell
