@@ -76,14 +76,15 @@
 //!
 //! The child's policy is the conversation's, widened in exactly three ways:
 //! its profile directory, where one is configured, is writable but for the
-//! metadata protected beneath any writable root; where the sandbox is on, the
-//! places under the user's home its catalog entry says it keeps its sign-in
-//! in are writable in the same way, so that a sign-in made under the sandbox
-//! is still there at the next start; and the hosts its row names, for a
-//! catalog row those its entry's profile grants, with the host of the Google
-//! Cloud location its entry names where that location has one of its own, are
-//! reachable where the conversation's commands are confined, since an
-//! unconfined child already reaches the host's network. Every other rule, the
+//! metadata protected beneath any writable root; where the sandbox is on, and
+//! the instance has no profile directory, the places under the user's home its
+//! catalog entry says it keeps its sign-in in are writable in the same way, so
+//! that a sign-in made under the sandbox is still there at the next start; and
+//! the hosts its row names, for a catalog row those its entry's profile grants,
+//! with the host of the Google Cloud location its entry names where that
+//! location has one of its own, are reachable where the conversation's
+//! commands are confined, since an unconfined child already reaches the host's
+//! network. Every other rule, the
 //! protected metadata included, stays as the conversation has it, so a profile
 //! directory inside one, named directly or through a link, is refused rather
 //! than opened. A program in a version of the install store is started with
@@ -93,6 +94,11 @@
 //! entry turns the agent's own updater off with, or where the catalog lists
 //! that release no longer, the one named by the release an update would
 //! install.
+//!
+//! An instance with a profile directory of its own is given that directory and
+//! none of those places: it keeps its sign-in in the directory, through the
+//! variable its entry names, and a place it could also write is the sign-in
+//! another instance of the agent is signed in by.
 //!
 //! The places an entry keeps its sign-in in are joined to the home the child
 //! is given: `HOME`, or `USERPROFILE` on Windows, read from the request that
@@ -1744,7 +1750,8 @@ impl<'a> Launcher<'a> {
     /// and that home is one, an absolute path in the request, each place its
     /// entry keeps its sign-in in is one the child may write, checked by
     /// [`Agent::state_roots`]. A built-in agent, an agent whose entry gives
-    /// its home, and a conversation without the sandbox get none.
+    /// its home, an instance with a profile directory of its own, and a
+    /// conversation without the sandbox get none.
     ///
     /// # Errors
     ///
@@ -1764,7 +1771,13 @@ impl<'a> Launcher<'a> {
             (Some(home), false) => with_home(request, home),
             _ => request,
         };
-        let kept = match child_home(&request, own).filter(|_| self.conversation.enabled()) {
+        // An instance with a directory of its own keeps its sign-in there, in
+        // the variable its entry names, so the places the default sign-in is
+        // kept in are not its to write: it could change the account every
+        // other instance of the agent is signed in to.
+        let kept = match child_home(&request, own)
+            .filter(|_| self.conversation.enabled() && agent.profile.is_none())
+        {
             Some(home) => agent.state_roots(&home, crucible)?,
             None => Vec::new(),
         };

@@ -2614,6 +2614,41 @@ async fn a_sandboxed_catalog_launch_may_write_where_its_entry_keeps_the_sign_in(
     }
 }
 
+/// An instance with a profile directory of its own is given that directory
+/// and none of the places its entry keeps the default sign-in in, which
+/// another instance of the agent signs in by; an instance of the same entry
+/// without one is given them.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_instance_with_its_own_profile_directory_is_given_none_of_the_default_places() {
+    let sample = Sample::new("launch-state-profiled");
+    let home = homed_in(&sample);
+    let peer = standing(&sample);
+    let profile = sample.root().join("profile");
+    let entry = keeping(Some("GOOSE_HOME"), &[".config/goose", ".goose"]);
+    let own = peer_agent_in(row_of(&entry), &peer, Some(&profile));
+    let plain = peer_agent_in(row_of(&entry), &peer, None);
+
+    let separate = asked_for(&sample, &own, true, Some(&home), &peer_granted())
+        .await
+        .expect("the sandbox was asked");
+    let made = [".config/goose", ".goose"].map(|place| home.join(place).exists());
+    let shared = asked_for(&sample, &plain, true, Some(&home), &peer_granted())
+        .await
+        .expect("the sandbox was asked");
+
+    let write = SandboxFilesystemAccess::ReadWrite;
+    assert!(separate.permits_path(&profile.join("auth.json"), write));
+    for place in [".config/goose", ".goose"] {
+        let inside = home.join(place).join("auth.json");
+        assert!(
+            !separate.permits_path(&inside, write),
+            "{place} is writable"
+        );
+        assert!(shared.permits_path(&inside, write), "{place} is not");
+    }
+    assert_eq!(made, [false, false], "a default place was created");
+}
+
 /// A place that was there is left as the user has it: its access is not
 /// changed, only a missing one is made private.
 #[cfg(unix)]
