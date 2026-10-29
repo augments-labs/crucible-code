@@ -113,8 +113,9 @@
 //! since no provider of this build's is reached through a catalog agent: it
 //! asks instead whether to install the version the door would, update its
 //! instance, roll it back to another version the store holds, or sign its
-//! configured instance in by one of the agent's methods. A row says where its instance runs the user's own program rather
-//! than a release crucible installed, or a version the catalog revoked. Every
+//! configured instance in by one of the agent's methods. A row says where its
+//! instance runs the user's own program rather than a release crucible
+//! installed, or a version the catalog revoked. Every
 //! word of the catalog's is quoted before it is shown. A move chosen here, or
 //! the install offered where the agent cannot be started, ends the connect as
 //! [`Account::AgentChosen`] before anything is started, asked of its route or
