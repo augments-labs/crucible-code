@@ -1349,7 +1349,7 @@ removable=(
     crates/crucible-app/src/client/agents.rs crates/crucible-app/src/agent_download.rs
     crates/crucible-app/tests/headless/agents.rs
     crates/crucible-app/tests/headless.rs crates/crucible-app/tests/headless/external.rs
-    crates/crucible-app/tests/headless/external/{catalog_hold,refusing,routing,session,stopping,unlaunchable}.rs
+    crates/crucible-app/tests/headless/external/{catalog_hold,choosing,refusing,routing,session,stopping,unlaunchable}.rs
     crates/crucible-app/Cargo.toml
     # The configuration's access variant and block, their rows and checks.
     crates/crucible-config/src/{lib,shape,remember,error,settings}.rs
