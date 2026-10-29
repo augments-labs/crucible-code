@@ -2946,6 +2946,8 @@ fn a_sandboxed_sign_in_may_write_where_its_entry_keeps_the_sign_in() -> Result<(
     bench.configure(&program, &json!({}))?;
     let home = bench.tree.0.join("user");
     fs::create_dir_all(&home)?;
+    // The places are judged where they lead, so they are looked for there.
+    let home = fs::canonicalize(home)?;
     let asked = Arc::new(Mutex::new(Vec::new()));
     let sandbox = Policies {
         local: Arc::new(LocalSandbox::new().watching_on(runtime.handle().clone())),

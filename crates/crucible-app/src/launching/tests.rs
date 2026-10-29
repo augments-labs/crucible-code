@@ -3524,6 +3524,8 @@ async fn an_instance_with_its_own_profile_directory_is_given_none_of_the_default
     let home = homed_in(&sample);
     let peer = standing(&sample);
     let profile = sample.root().join("profile");
+    fs::create_dir_all(&profile).expect("a profile");
+    let profile = fs::canonicalize(profile).expect("resolved");
     let entry = keeping(Some("GOOSE_HOME"), &[".config/goose", ".goose"]);
     let own = peer_agent_in(row_of(&entry), &peer, Some(&profile));
     let plain = peer_agent_in(row_of(&entry), &peer, None);

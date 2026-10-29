@@ -690,14 +690,11 @@ fn a_catalog_client_passes_the_profile_directory_through_the_variable_its_entry_
         .filter(|(name, _)| name == "HOME")
         .map(|(_, value)| value.as_str())
         .collect();
+    // The one value of the variable is the profile directory, so the shell's
+    // own never reaches the agent through it. Another variable passed on as it
+    // stands may hold the same path, as `USERPROFILE` does on Windows.
     assert_eq!(homes, ["/profiles/work"], "{:?}", request.shown);
     assert!(!request.shown.contains(&"HOME"), "{:?}", request.shown);
-    if let Some(shell) = std::env::var_os("HOME").and_then(|home| home.into_string().ok()) {
-        assert!(
-            request.environment.iter().all(|(_, value)| *value != shell),
-            "the shell's home was passed on"
-        );
-    }
 }
 
 /// A client run from a catalog entry admits the agent the entry names, as the
