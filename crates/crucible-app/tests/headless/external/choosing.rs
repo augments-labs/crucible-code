@@ -113,7 +113,9 @@ fn connecting_on(
 
 /// Each account question in `put`, written out whole: what it asks, each
 /// fact, and each choice with what it says; `tree`'s directory written as
-/// `<tree>` and every separator as `/`, so it reads the same on any machine.
+/// `<tree>`, every separator as `/` and a program's suffix (`.exe` on
+/// Windows, `.par` where Antigravity's release elsewhere names its program)
+/// left out, so it reads the same on any machine.
 fn written_out(put: &[Pending], tree: &Tree) -> Vec<String> {
     let mut roots: Vec<String> = std::fs::canonicalize(&tree.0)
         .into_iter()
@@ -148,7 +150,8 @@ fn written_out(put: &[Pending], tree: &Tree) -> Vec<String> {
                 }
                 Some(
                     text.replace(std::path::MAIN_SEPARATOR, "/")
-                        .replace(".exe", ""),
+                        .replace(".exe", "")
+                        .replace(".par", ""),
                 )
             }
             _ => None,
@@ -371,7 +374,7 @@ choice: Cancel: Change nothing.";
 const NOT_INSTALLED: &str = "asks: Antigravity cannot be started.
 fact: Not installed: no antigravity command on PATH and none at the configured executable.
 fact: Run `crucible agents install antigravity` in a terminal, then choose Check again.
-fact: Agent: antigravity, run as <tree>/home/programs/antigravity/1.3.0/agy_acp_server.par.
+fact: Agent: antigravity, run as <tree>/home/programs/antigravity/1.3.0/agy_acp_server.
 choice: Check again (recommended): Look for the agent's program again.
 choice: Go back: Choose another agent.";
 
