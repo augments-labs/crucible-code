@@ -126,8 +126,9 @@
 //! written and where its links lead, which keeps the user's own files out of
 //! reach whether or not the list names them. Where its links lead must also
 //! lie within the home, so that a link from an allowed name, such as a dotfile
-//! manager's, cannot lead the sandbox to a place nobody listed. A built-in agent has no catalog entry, and the smoke
-//! test of a release signs nothing in, so neither is given any.
+//! manager's, cannot lead the sandbox to a place nobody listed. A built-in
+//! agent has no catalog entry, and the smoke test of a release signs nothing
+//! in, so neither is given any.
 //!
 //! Every start, a turn's or an account step's, is given each key the user
 //! typed for one of the methods its agent signs in by, kept in crucible's
@@ -1208,11 +1209,11 @@ const RUNS_WHAT_CARGO_NAMES: &str = "cargo runs the programs it names, a linker 
 /// Why the startup files of editors and terminals are listed.
 const STARTS_EDITORS: &str = "an editor, a terminal multiplexer or a line reader obeys it each time one starts, so what is written there runs, or sets what runs, as you";
 /// Why a place that does not begin with a name only programs use is refused.
-const AMONG_YOUR_FILES: &str = "is not under a name that only programs use, a hidden one, Library or \
-     AppData, as it is written and where its links lead, so it is among the files you keep yourself";
+const AMONG_YOUR_FILES: &str = "is not under a hidden name, Library or AppData, as it is written or \
+     where its links lead, and would be among the files you keep yourself";
 /// Why a place with a part outside ASCII is refused.
 const NOT_ASCII: &str = "has a part that is not ASCII, which a file system may treat as the name of a place \
-     that is never made writable, so it cannot be judged";
+     that is never made writable, and cannot be judged";
 /// Why the stores of what signs in as the user are listed.
 const SIGNS_IN: &str = "it holds what signs in as you, which an agent could read and use";
 
@@ -1227,9 +1228,9 @@ const SIGNS_IN: &str = "it holds what signs in as you, which an agent could read
 /// control over what an entry may ask for, and not an inventory of every place
 /// that runs as the user: it names the places the common tools of a machine
 /// read and run, each with its reason, and a place that is not named here is
-/// not thereby safe to make writable. A state path must also begin with a hidden
-/// name, `Library` or `AppData`, which keeps the user's own files out of reach
-/// whether or not they are named. A place that runs as the user and is
+/// not thereby safe to make writable. A state path must also begin with a
+/// hidden name, `Library` or `AppData`, which keeps the user's own files out of
+/// reach whether or not they are named. A place that runs as the user and is
 /// commonly there is a place to add.
 ///
 /// - The shell startup and logout files `.bashrc`, `.bash_profile`,
