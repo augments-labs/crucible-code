@@ -2177,35 +2177,72 @@ fn the_places_an_agent_keeps_its_sign_in_become_roots_where_they_lead() {
     );
 }
 
+/// The places the list names with everything beneath them, as they are
+/// written for a user's home.
+const LISTED: &[&str] = &[
+    ".bashrc",
+    ".bash_profile",
+    ".bash_login",
+    ".bash_logout",
+    ".bash_aliases",
+    ".profile",
+    ".zshrc",
+    ".zprofile",
+    ".zshenv",
+    ".zlogin",
+    ".zlogout",
+    ".config/fish",
+    ".xprofile",
+    ".xinitrc",
+    ".xsession",
+    ".xsessionrc",
+    ".pam_environment",
+    ".ssh",
+    ".gnupg",
+    ".aws",
+    ".gitconfig",
+    ".config/git",
+    ".config/environment.d",
+    ".local/bin",
+    "bin",
+    ".cargo/bin",
+    ".cargo/config.toml",
+    ".npmrc",
+    ".docker",
+    ".config/autostart",
+    ".config/systemd",
+    ".local/share/systemd",
+    ".local/share/applications",
+    "Library/LaunchAgents",
+    "Library/LaunchDaemons",
+    "AppData/Roaming/Microsoft/Windows/Start Menu",
+];
+
+/// The directories the list names as themselves only, since the agents' own
+/// directories lie in them.
+const BARE: &[&str] = &[
+    ".config",
+    ".local",
+    ".local/share",
+    ".local/state",
+    ".cache",
+    "Library",
+    "Library/Application Support",
+    "AppData",
+    "AppData/Roaming",
+    "AppData/Local",
+];
+
 /// Each place the list names is refused as it is, and anything within it,
-/// whichever way the entry spells the way there; the bare `.config` and
-/// `.local` only as themselves, since the agents' own directories lie in them.
+/// whichever way the entry spells the way there; the bare directories that
+/// hold every program's data only as themselves, since the agents' own
+/// directories lie in them.
 #[test]
 fn a_place_that_is_or_lies_within_a_listed_place_is_refused() {
     let sample = Sample::new("launch-state-listed");
     let home = homed_in(&sample);
     let crucible = sample.home();
-    let listed = [
-        ".bashrc",
-        ".bash_profile",
-        ".bash_login",
-        ".profile",
-        ".zshrc",
-        ".zprofile",
-        ".zshenv",
-        ".config/fish",
-        ".ssh",
-        ".gnupg",
-        ".aws",
-        ".config",
-        ".local",
-        ".local/bin",
-        ".config/autostart",
-        ".config/systemd",
-        "Library/LaunchAgents",
-        "AppData/Roaming/Microsoft/Windows/Start Menu",
-    ];
-    for place in listed {
+    for place in LISTED.iter().chain(BARE) {
         let refused = rooted(&sample, &[place], &home, &crucible).expect_err(place);
         assert!(
             matches!(
@@ -2220,7 +2257,7 @@ fn a_place_that_is_or_lies_within_a_listed_place_is_refused() {
         let said = refused.to_string();
         assert!(said.contains("externalAgents.work"), "{place}: {said}");
         assert!(said.contains(place), "{place}: {said}");
-        if !matches!(place, ".config" | ".local") {
+        if !BARE.contains(place) {
             let within = format!("{place}/inner/file");
             let refused = rooted(&sample, &[&within], &home, &crucible).expect_err(&within);
             assert!(
@@ -2246,9 +2283,8 @@ fn a_place_that_contains_a_listed_place_is_refused() {
     let crucible = sample.home();
 
     for place in [
-        "Library",
-        "AppData",
-        "AppData/Roaming",
+        ".cargo",
+        "AppData/Roaming/Microsoft",
         "AppData/Roaming/Microsoft/Windows",
     ] {
         let refused = rooted(&sample, &[place], &home, &crucible).expect_err(place);
@@ -2284,6 +2320,20 @@ fn a_place_is_compared_by_components_not_by_prefix() {
         ".local/share/bin",
         "Library/LaunchAgentsX",
         "Libraries",
+        ".zlogins",
+        ".bash_aliases.d",
+        ".gitconfig.d",
+        ".config/gitx",
+        ".local/share/systemdx",
+        ".cargo/registry",
+        ".npmrcs",
+        ".docker-old",
+        "bin2",
+        ".cache/goose",
+        ".local/state/goose",
+        "Library/Application Support/Goose",
+        "AppData/Roaming/Goose",
+        "AppData/Local/Goose",
     ];
 
     for place in beside {
@@ -2314,18 +2364,91 @@ fn a_listed_place_is_refused_whatever_its_case_where_the_filesystem_ignores_it()
     }
 }
 
+/// A file system that drops the dots and spaces that end a name does not tell
+/// a name from one with them added, and one that does not, does.
+#[test]
+fn a_name_is_compared_as_the_file_system_compares_it() {
+    let alike = |a: &str, b: &str, folds, trims| {
+        super::alike(
+            std::ffi::OsStr::new(a),
+            std::ffi::OsStr::new(b),
+            folds,
+            trims,
+        )
+    };
+
+    assert!(alike(".ssh.", ".ssh", true, true));
+    assert!(alike(".ssh ", ".ssh", true, true));
+    assert!(alike(".SSH. .", ".ssh", true, true));
+    assert!(alike(".ssh.", ".ssh.", false, false));
+    assert!(!alike(".ssh.", ".ssh", false, false));
+    assert!(!alike(".ssh ", ".ssh", true, false));
+    assert!(!alike(".SSH", ".ssh", false, true));
+    assert!(!alike(".ssh.x", ".ssh", true, true));
+    assert!(!alike(" .ssh", ".ssh", true, true));
+}
+
+/// A listed place is refused with the dots and spaces Windows drops from the
+/// end of a name, as the file system does not tell it from the place.
+#[cfg(windows)]
+#[test]
+fn a_listed_place_is_refused_with_dots_or_spaces_at_the_end_on_windows() {
+    let sample = Sample::new("launch-state-trailing");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+
+    for place in [".ssh.", ".ssh ", ".Config./Systemd. ", ".bashrc..."] {
+        let refused = rooted(&sample, &[place], &home, &crucible);
+        assert!(
+            matches!(refused, Err(Unlaunched::StatePath { .. })),
+            "{place}: {refused:?}"
+        );
+    }
+}
+
+/// The user documentation names each place the list names, so that what a
+/// user reads is what is refused.
+#[test]
+fn the_documentation_names_every_place_the_list_refuses() {
+    const DOCUMENTED: &str = include_str!("../../../../docs/configuration/configuration.md");
+
+    for place in NEVER_WRITABLE {
+        let named = if place.path.ends_with("Start Menu") {
+            "the Windows Start Menu".to_owned()
+        } else {
+            format!("`{}`", place.path)
+        };
+        assert!(
+            DOCUMENTED.contains(&named),
+            "{} is not documented",
+            place.path
+        );
+    }
+    for place in LISTED.iter().chain(BARE) {
+        assert!(
+            NEVER_WRITABLE.iter().any(|listed| listed.path == *place),
+            "{place} is tested but not listed"
+        );
+    }
+    assert_eq!(
+        NEVER_WRITABLE.len(),
+        LISTED.len() + BARE.len(),
+        "a listed place is not tested"
+    );
+}
+
 /// Crucible's own home, which holds the keys the user typed, is never a root,
 /// nor within one, nor a place that contains it.
 #[test]
 fn the_home_crucible_keeps_its_state_in_is_never_made_writable() {
     let sample = Sample::new("launch-state-crucible");
     let home = homed_in(&sample);
-    let crucible = home.join(".local/share/crucible");
+    let crucible = home.join(".local/share/vault/crucible");
 
     for (place, overlap) in [
-        (".local/share/crucible", Overlap::Is),
-        (".local/share/crucible/auth", Overlap::Within),
-        (".local/share", Overlap::Contains),
+        (".local/share/vault/crucible", Overlap::Is),
+        (".local/share/vault/crucible/auth", Overlap::Within),
+        (".local/share/vault", Overlap::Contains),
     ] {
         let refused = rooted(&sample, &[place], &home, &crucible);
         assert!(

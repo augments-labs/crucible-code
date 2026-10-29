@@ -111,12 +111,13 @@
 //! writable that lies within or contains one on the list of places never made
 //! writable, or the home crucible keeps its state in, however the entry spells
 //! its way there: it is judged by its path components, as it is joined and
-//! again where its links lead, and the refusal names the instance and the
-//! path the entry gave. Where its links lead must also lie within the home,
-//! so that a link from an allowed name, such as a dotfile manager's, cannot
-//! lead the sandbox to a place nobody listed. A built-in agent has no catalog
-//! entry, and the smoke test of a release signs nothing in, so neither is
-//! given any.
+//! again where its links lead, ignoring case where the file system does and,
+//! on Windows, the dots and spaces that end a name, and the refusal names the
+//! instance and the path the entry gave. Where its links lead must also lie
+//! within the home, so that a link from an allowed name, such as a dotfile
+//! manager's, cannot lead the sandbox to a place nobody listed. A built-in
+//! agent has no catalog entry, and the smoke test of a release signs nothing
+//! in, so neither is given any.
 //!
 //! Every start, a turn's or an account step's, is given each key the user
 //! typed for one of the methods its agent signs in by, kept in crucible's
@@ -182,7 +183,7 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
@@ -1135,34 +1136,55 @@ struct Place {
 /// Why a shell's startup files are listed.
 const STARTS_SHELLS: &str =
     "a shell runs it each time one starts, so what is written there runs as you";
+/// Why git's own configuration is listed.
+const RUNS_WHAT_GIT_NAMES: &str = "git runs the programs it names, as you, each time you use it";
+/// Why the files a shell reads as a login ends are listed.
+const ENDS_SHELLS: &str =
+    "a shell runs it each time a login ends, so what is written there runs as you";
 /// Why the places that start programs when the user signs in are listed.
 const STARTS_AT_LOGIN: &str =
     "what is listed there starts each time you sign in to this machine, so it runs as you";
+/// Why the files a session reads as it begins are listed.
+const READ_AT_SIGN_IN: &str = "it is read each time you sign in to a session, so what is written there runs, or sets what runs, as you";
+/// Why the directories programs are found in are listed.
+const ON_SEARCH_PATH: &str = "the programs found there run as you from your search path";
 
 /// The places under a user's home that an agent's state path is never made
 /// writable at, beneath, or around: a path that is one of them, lies within
 /// one, or contains one is refused, since a child that can write there can
 /// run what it writes outside the sandbox, later, as the user, or read what
 /// signs in as the user. Each is relative to the home, and is compared by its
-/// components.
+/// components. The list is kept whole by naming each place and why, and not by
+/// naming the places that are allowed, so a place that runs as the user and is
+/// not named here is a place to add.
 ///
-/// - The shell startup files `.bashrc`, `.bash_profile`, `.bash_login`,
-///   `.profile`, `.zshrc`, `.zprofile` and `.zshenv`, and the directory fish
+/// - The shell startup and logout files `.bashrc`, `.bash_profile`,
+///   `.bash_login`, `.bash_logout`, `.bash_aliases`, `.profile`, `.zshrc`,
+///   `.zprofile`, `.zshenv`, `.zlogin` and `.zlogout`, and the directory fish
 ///   reads its startup from, `.config/fish`: a shell runs them each time one
-///   starts.
+///   starts or a login ends.
+/// - The files a session reads as it begins, `.xprofile`, `.xinitrc`,
+///   `.xsession`, `.xsessionrc` and `.pam_environment`.
 /// - `.ssh`, `.gnupg` and `.aws`: the keys that sign in to other machines, sign
 ///   and decrypt as the user, and the credentials of the user's cloud account.
-/// - The bare `.config` and `.local`, which hold every program's settings and
-///   data, among them the places below. Only the directories themselves are
-///   listed, and what contains them: the directory of an agent lies beneath
-///   them (`.config/goose`, `.local/share/goose`), and so does the home of
-///   every program the user runs.
-/// - `.local/bin`: programs there are found on the user's search path.
-/// - `.config/autostart` and `.config/systemd`: desktop entries and service
-///   units there start when the user signs in.
-/// - `Library/LaunchAgents`: the agents macOS starts when the user signs in.
-/// - `AppData/Roaming/Microsoft/Windows/Start Menu`, which holds the Startup
-///   folder Windows runs the user's programs from when they sign in.
+/// - The configuration of programs that run what it names as the user, among
+///   them `.gitconfig` and `.config/git`, `.cargo/config.toml`, `.npmrc` and
+///   `.docker`, and `.config/environment.d`, which sets the environment of
+///   every program the user starts.
+/// - The directories programs are found in, `bin`, `.local/bin` and
+///   `.cargo/bin`: programs there are found on the user's search path.
+/// - The places that start programs when the user signs in:
+///   `.config/autostart`, `.config/systemd`, `.local/share/systemd`,
+///   `.local/share/applications`, `Library/LaunchAgents`,
+///   `Library/LaunchDaemons` and `AppData/Roaming/Microsoft/Windows/Start Menu`,
+///   which holds the Startup folder Windows runs the user's programs from.
+/// - The bare `.config`, `.local`, `.local/share`, `.local/state`, `.cache`,
+///   `Library`, `Library/Application Support`, `AppData`, `AppData/Roaming`
+///   and `AppData/Local`, which hold every program's settings, data and caches,
+///   among them the places above. Only the directories themselves are listed,
+///   and what contains them: the directory of an agent lies beneath them
+///   (`.config/goose`, `.local/share/goose`), and so does the home of every
+///   program the user runs.
 ///
 /// The home crucible keeps its own state in is refused beside these, since it
 /// holds the keys the user typed.
@@ -1235,7 +1257,7 @@ const NEVER_WRITABLE: &[Place] = &[
     Place {
         path: ".local/bin",
         reach: Reach::Beneath,
-        why: "the programs found there run as you from your search path",
+        why: ON_SEARCH_PATH,
     },
     Place {
         path: ".config/autostart",
@@ -1256,6 +1278,146 @@ const NEVER_WRITABLE: &[Place] = &[
         path: "AppData/Roaming/Microsoft/Windows/Start Menu",
         reach: Reach::Beneath,
         why: STARTS_AT_LOGIN,
+    },
+    Place {
+        path: ".bash_logout",
+        reach: Reach::Beneath,
+        why: ENDS_SHELLS,
+    },
+    Place {
+        path: ".bash_aliases",
+        reach: Reach::Beneath,
+        why: STARTS_SHELLS,
+    },
+    Place {
+        path: ".zlogin",
+        reach: Reach::Beneath,
+        why: STARTS_SHELLS,
+    },
+    Place {
+        path: ".zlogout",
+        reach: Reach::Beneath,
+        why: ENDS_SHELLS,
+    },
+    Place {
+        path: ".xprofile",
+        reach: Reach::Beneath,
+        why: READ_AT_SIGN_IN,
+    },
+    Place {
+        path: ".xinitrc",
+        reach: Reach::Beneath,
+        why: READ_AT_SIGN_IN,
+    },
+    Place {
+        path: ".xsession",
+        reach: Reach::Beneath,
+        why: READ_AT_SIGN_IN,
+    },
+    Place {
+        path: ".xsessionrc",
+        reach: Reach::Beneath,
+        why: READ_AT_SIGN_IN,
+    },
+    Place {
+        path: ".pam_environment",
+        reach: Reach::Beneath,
+        why: READ_AT_SIGN_IN,
+    },
+    Place {
+        path: ".gitconfig",
+        reach: Reach::Beneath,
+        why: RUNS_WHAT_GIT_NAMES,
+    },
+    Place {
+        path: ".config/git",
+        reach: Reach::Beneath,
+        why: RUNS_WHAT_GIT_NAMES,
+    },
+    Place {
+        path: ".config/environment.d",
+        reach: Reach::Beneath,
+        why: "it sets the environment of every program you start, the variables that load code among them",
+    },
+    Place {
+        path: ".local/share/systemd",
+        reach: Reach::Beneath,
+        why: STARTS_AT_LOGIN,
+    },
+    Place {
+        path: ".local/share/applications",
+        reach: Reach::Beneath,
+        why: "the desktop entries there run as you when you open what they handle",
+    },
+    Place {
+        path: "bin",
+        reach: Reach::Beneath,
+        why: ON_SEARCH_PATH,
+    },
+    Place {
+        path: ".cargo/bin",
+        reach: Reach::Beneath,
+        why: ON_SEARCH_PATH,
+    },
+    Place {
+        path: ".cargo/config.toml",
+        reach: Reach::Beneath,
+        why: "cargo runs the programs it names, a linker or a wrapper among them, as you each time you build",
+    },
+    Place {
+        path: ".npmrc",
+        reach: Reach::Beneath,
+        why: "npm takes the registry, the tokens and the script shell it uses from it each time you install",
+    },
+    Place {
+        path: ".docker",
+        reach: Reach::Beneath,
+        why: "docker runs the credential helpers and plugins it names, as you",
+    },
+    Place {
+        path: "Library/LaunchDaemons",
+        reach: Reach::Beneath,
+        why: STARTS_AT_LOGIN,
+    },
+    Place {
+        path: ".local/share",
+        reach: Reach::Itself,
+        why: "it holds the data of every program you run, and the places that start programs when you sign in",
+    },
+    Place {
+        path: ".local/state",
+        reach: Reach::Itself,
+        why: "it holds the state of every program you run",
+    },
+    Place {
+        path: ".cache",
+        reach: Reach::Itself,
+        why: "it holds the caches of every program you run, which each trusts as it finds them",
+    },
+    Place {
+        path: "Library",
+        reach: Reach::Itself,
+        why: "it holds the data and settings of every program you run, and the places that start programs when you sign in",
+    },
+    Place {
+        path: "Library/Application Support",
+        reach: Reach::Itself,
+        why: "it holds the data of every program you run",
+    },
+    Place {
+        path: "AppData",
+        reach: Reach::Itself,
+        why: "it holds the data and settings of every program you run",
+    },
+    Place {
+        path: "AppData/Roaming",
+        reach: Reach::Itself,
+        why: "it holds the settings and data of every program you run, and the places that start programs when you sign in",
+    },
+    Place {
+        path: "AppData/Local",
+        reach: Reach::Itself,
+        why: "it holds the data of every program you run",
     },
 ];
 
@@ -1331,13 +1493,32 @@ fn beneath(home: &Path, path: &str) -> PathBuf {
 }
 
 /// Whether two names of one path component are the same name, as the file
-/// system compares them: by case where it ignores case.
-fn same_name(a: &std::ffi::OsStr, b: &std::ffi::OsStr) -> bool {
-    if cfg!(any(windows, target_os = "macos")) {
+/// system compares them: by case where it ignores case, and on Windows
+/// without the dots and spaces that end a name, which it drops.
+fn same_name(a: &OsStr, b: &OsStr) -> bool {
+    alike(a, b, cfg!(any(windows, target_os = "macos")), cfg!(windows))
+}
+
+/// Whether `a` and `b` name one component to a file system that ignores case
+/// where `folds`, and drops the dots and spaces that end a name where `trims`.
+fn alike(a: &OsStr, b: &OsStr, folds: bool, trims: bool) -> bool {
+    let (a, b) = (ended(a, trims), ended(b, trims));
+    if folds {
         a.eq_ignore_ascii_case(b)
     } else {
         a == b
     }
+}
+
+/// `name` as bytes, without the dots and spaces that end it where `trims`.
+fn ended(name: &OsStr, trims: bool) -> &[u8] {
+    let mut bytes = name.as_encoded_bytes();
+    if trims {
+        while let [rest @ .., b'.' | b' '] = bytes {
+            bytes = rest;
+        }
+    }
+    bytes
 }
 
 /// Whether `path` is `base` or lies beneath it, compared by components and

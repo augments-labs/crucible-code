@@ -252,16 +252,37 @@ places its catalog entry says it keeps its sign-in in, joined to your home
 (`HOME`, or `USERPROFILE` on Windows), so that a sign-in made there is still
 there at the next start; one with a `profileDir` keeps its sign-in there and is
 given none of those places, so it cannot change the account another instance of
-the agent is signed in to. A
-place that is missing is created for you alone. A place whose links lead out of
-your home, as a dotfile manager's link can, is refused. The shell startup files, `.ssh`,
-`.gnupg`, `.aws`, `.config` and `.local` themselves, `.local/bin`,
-`.config/fish`, `.config/autostart`, `.config/systemd`, `Library/LaunchAgents`,
-the Windows Start Menu and crucible's own home are never made writable: an
-agent whose entry names one of them, a place within one, or a place that
-contains one, is refused when it is started, naming the entry and the path. An
-agent whose entry names neither a variable nor a place keeps no sign-in under the
-sandbox, and one started where your home is not set to an absolute path is
+the agent is signed in to. A place that is missing is created for you alone,
+and one that is there is left as it is. A place whose links lead out of your
+home, as a dotfile manager's link can, is refused. Names are compared by their
+parts, ignoring case where your file system does and, on Windows, the dots and
+spaces that end a name. These are never made writable, since what is written
+there runs as you or holds what signs in as you:
+
+- the shell startup and logout files (`.bashrc`, `.bash_profile`,
+  `.bash_login`, `.bash_logout`, `.bash_aliases`, `.profile`, `.zshrc`,
+  `.zprofile`, `.zshenv`, `.zlogin`, `.zlogout`) and `.config/fish`;
+- the files a session reads as it begins (`.xprofile`, `.xinitrc`,
+  `.xsession`, `.xsessionrc`, `.pam_environment`);
+- `.ssh`, `.gnupg` and `.aws`;
+- the configuration of programs that run what it names (`.gitconfig`,
+  `.config/git`, `.cargo/config.toml`, `.npmrc`, `.docker`) and
+  `.config/environment.d`;
+- the directories programs are found in (`bin`, `.local/bin`, `.cargo/bin`);
+- the places that start programs when you sign in (`.config/autostart`,
+  `.config/systemd`, `.local/share/systemd`, `.local/share/applications`,
+  `Library/LaunchAgents`, `Library/LaunchDaemons` and the Windows Start Menu);
+- crucible's own home.
+
+An agent whose entry names one of them, a place within one, or a place that
+contains one, is refused when it is started, naming the entry and the path. The
+directories that hold every program's data (`.config`, `.local`,
+`.local/share`, `.local/state`, `.cache`, `Library`,
+`Library/Application Support`, `AppData`, `AppData/Roaming` and `AppData/Local`)
+are refused as themselves, and as a place that contains one of the above, but a
+directory within one for the agent alone, such as `.config/goose`, is not. An
+agent whose entry names neither a variable nor a place keeps no sign-in under
+the sandbox, and one started where your home is not set to an absolute path is
 given no place to write.
 A `catalog` agent chooses its own model, so `model` and `effort` are refused
 for it. A session one ran is bound to its key, so once the entry names
