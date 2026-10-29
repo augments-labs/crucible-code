@@ -1836,6 +1836,8 @@ fn a_key_method_with_none_kept_asks_for_the_key_once_keeps_it_and_signs_in_again
 
     let (closed, written) = driven(&sample, &action, &mut door);
 
+    // Before any message shows the screen, so none can show the key.
+    assert!(!written.contains(TYPED), "the key typed reached the screen");
     assert_eq!(closed, None);
     assert_eq!(door.asked, 1, "the key box did not stand exactly once");
     assert_eq!(door.sent, vec![action.command(), action.command()]);
@@ -1844,7 +1846,6 @@ fn a_key_method_with_none_kept_asks_for_the_key_once_keeps_it_and_signs_in_again
         written.contains("the agent of \"work\" opened a session by gemini-api-key"),
         "{written}"
     );
-    assert!(!written.contains(TYPED), "the key typed reached the screen");
 }
 
 #[test]
@@ -1856,6 +1857,8 @@ fn a_second_refusal_for_want_of_a_key_is_said_and_not_asked_about_again() {
 
     let (closed, written) = driven(&sample, &action, &mut door);
 
+    // Before any message shows the screen, so none can show the key.
+    assert!(!written.contains(TYPED), "the key typed reached the screen");
     assert_eq!(closed, None);
     assert_eq!(
         door.asked, 1,
@@ -1867,7 +1870,6 @@ fn a_second_refusal_for_want_of_a_key_is_said_and_not_asked_about_again() {
         written.contains("! no key is kept for antigravity to sign in by"),
         "{written}"
     );
-    assert!(!written.contains(TYPED), "the key typed reached the screen");
 }
 
 #[test]
