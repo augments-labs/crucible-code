@@ -132,6 +132,7 @@ pub async fn turn(
         // which door does, not to come back.
         Command::AgentCatalog
         | Command::InstallAgent { .. }
+        | Command::AddAgent { .. }
         | Command::UpdateAgent { .. }
         | Command::RollbackAgent { .. }
         | Command::RemoveAgent { .. }
@@ -208,6 +209,7 @@ pub fn interrupt(request: &Request, cancel: &Cancel) -> Outcome {
         // which door does, not to come back.
         Command::AgentCatalog
         | Command::InstallAgent { .. }
+        | Command::AddAgent { .. }
         | Command::UpdateAgent { .. }
         | Command::RollbackAgent { .. }
         | Command::RemoveAgent { .. }

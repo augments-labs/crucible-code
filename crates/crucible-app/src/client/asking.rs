@@ -175,6 +175,7 @@ pub fn asking(
         // which door does, not to come back.
         Command::AgentCatalog
         | Command::InstallAgent { .. }
+        | Command::AddAgent { .. }
         | Command::UpdateAgent { .. }
         | Command::RollbackAgent { .. }
         | Command::RemoveAgent { .. }

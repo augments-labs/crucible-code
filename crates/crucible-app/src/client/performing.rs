@@ -203,6 +203,7 @@ pub async fn perform(
         // which door does, not to come back.
         Command::AgentCatalog
         | Command::InstallAgent { .. }
+        | Command::AddAgent { .. }
         | Command::UpdateAgent { .. }
         | Command::RollbackAgent { .. }
         | Command::RemoveAgent { .. }
@@ -334,6 +335,7 @@ pub fn keep(request: &Request, desk: &Desk<'_>) -> Performed {
         // which door does, not to come back.
         Command::AgentCatalog
         | Command::InstallAgent { .. }
+        | Command::AddAgent { .. }
         | Command::UpdateAgent { .. }
         | Command::RollbackAgent { .. }
         | Command::RemoveAgent { .. }

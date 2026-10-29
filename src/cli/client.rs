@@ -121,6 +121,7 @@ const fn claimed(command: &Command) -> Capabilities {
         | Command::AskLimits
         | Command::AgentCatalog
         | Command::InstallAgent { .. }
+        | Command::AddAgent { .. }
         | Command::UpdateAgent { .. }
         | Command::RollbackAgent { .. }
         | Command::RemoveAgent { .. }

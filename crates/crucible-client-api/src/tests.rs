@@ -496,6 +496,10 @@ fn commands() -> Vec<Command> {
             agent: name("example-agent"),
             version: name("1.2.3"),
         },
+        Command::AddAgent {
+            agent: name("example-agent"),
+            version: name("1.2.3"),
+        },
         Command::UpdateAgent {
             agent: name("example-agent"),
         },
@@ -1255,48 +1259,49 @@ const fn turn_arm(one: &TurnOutcome) -> (usize, usize) {
 
 const fn command_arm(one: &Command) -> (usize, usize) {
     match one {
-        Command::Prompt(_) => (0, 40),
-        Command::Compact => (1, 40),
-        Command::Cancel => (2, 40),
-        Command::Decide(_) => (3, 40),
-        Command::Clear => (4, 40),
-        Command::Resume(_) => (5, 40),
+        Command::Prompt(_) => (0, 41),
+        Command::Compact => (1, 41),
+        Command::Cancel => (2, 41),
+        Command::Decide(_) => (3, 41),
+        Command::Clear => (4, 41),
+        Command::Resume(_) => (5, 41),
         Command::SelectModel {
             effort: Some(_), ..
-        } => (6, 40),
-        Command::SelectModel { effort: None, .. } => (7, 40),
-        Command::SetEffort(_) => (8, 40),
-        Command::SetMode(_) => (9, 40),
-        Command::CycleMode => (10, 40),
-        Command::Login { .. } => (11, 40),
-        Command::Logout { .. } => (12, 40),
-        Command::InspectCache => (13, 40),
-        Command::CleanCache => (14, 40),
-        Command::Sandbox { enabled: true } => (15, 40),
-        Command::Sandbox { enabled: false } => (16, 40),
-        Command::Theme(Theme::Drawing(_)) => (17, 40),
-        Command::Theme(Theme::Syntax(_)) => (18, 40),
-        Command::Help => (19, 40),
-        Command::ReleaseNotes { version: None } => (20, 40),
-        Command::ReleaseNotes { version: Some(_) } => (21, 40),
-        Command::Exit => (22, 40),
-        Command::SetSpeed(_) => (23, 40),
-        Command::Context => (24, 40),
-        Command::Usage => (25, 40),
-        Command::Setting { .. } => (26, 40),
-        Command::AskLimits => (27, 40),
-        Command::Disconnect { .. } => (28, 40),
-        Command::RemoveIntegration { .. } => (29, 40),
-        Command::SignOut { .. } => (30, 40),
-        Command::Connect { instance: Some(_) } => (31, 40),
-        Command::Connect { instance: None } => (32, 40),
-        Command::AgentCatalog => (33, 40),
-        Command::InstallAgent { .. } => (34, 40),
-        Command::UpdateAgent { .. } => (35, 40),
-        Command::RollbackAgent { .. } => (36, 40),
-        Command::RemoveAgent { .. } => (37, 40),
-        Command::VerifyAgent { .. } => (38, 40),
-        Command::SignInAgent { .. } => (39, 40),
+        } => (6, 41),
+        Command::SelectModel { effort: None, .. } => (7, 41),
+        Command::SetEffort(_) => (8, 41),
+        Command::SetMode(_) => (9, 41),
+        Command::CycleMode => (10, 41),
+        Command::Login { .. } => (11, 41),
+        Command::Logout { .. } => (12, 41),
+        Command::InspectCache => (13, 41),
+        Command::CleanCache => (14, 41),
+        Command::Sandbox { enabled: true } => (15, 41),
+        Command::Sandbox { enabled: false } => (16, 41),
+        Command::Theme(Theme::Drawing(_)) => (17, 41),
+        Command::Theme(Theme::Syntax(_)) => (18, 41),
+        Command::Help => (19, 41),
+        Command::ReleaseNotes { version: None } => (20, 41),
+        Command::ReleaseNotes { version: Some(_) } => (21, 41),
+        Command::Exit => (22, 41),
+        Command::SetSpeed(_) => (23, 41),
+        Command::Context => (24, 41),
+        Command::Usage => (25, 41),
+        Command::Setting { .. } => (26, 41),
+        Command::AskLimits => (27, 41),
+        Command::Disconnect { .. } => (28, 41),
+        Command::RemoveIntegration { .. } => (29, 41),
+        Command::SignOut { .. } => (30, 41),
+        Command::Connect { instance: Some(_) } => (31, 41),
+        Command::Connect { instance: None } => (32, 41),
+        Command::AgentCatalog => (33, 41),
+        Command::InstallAgent { .. } => (34, 41),
+        Command::UpdateAgent { .. } => (35, 41),
+        Command::RollbackAgent { .. } => (36, 41),
+        Command::RemoveAgent { .. } => (37, 41),
+        Command::VerifyAgent { .. } => (38, 41),
+        Command::SignInAgent { .. } => (39, 41),
+        Command::AddAgent { .. } => (40, 41),
     }
 }
 
@@ -2624,7 +2629,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // alone moves that number and this digest, and leaves the revision.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (5, 9_812_617_628_888_060_077),
+        (5, 15_958_461_296_867_727_732),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );
@@ -2967,7 +2972,7 @@ fn limit_asking_crosses_as_a_command_of_its_own() {
     );
 }
 
-/// The seven commands the agents door serves and no conversation does.
+/// The eight commands the agents door serves and no conversation does.
 fn install_commands() -> Vec<Command> {
     commands()
         .into_iter()
@@ -2982,6 +2987,10 @@ fn each_install_command_crosses_as_a_word_of_its_own_and_reads_back_as_it_was_wr
         (
             "install_agent",
             json!({"kind": "install_agent", "agent": "example-agent", "version": "1.2.3"}),
+        ),
+        (
+            "add_agent",
+            json!({"kind": "add_agent", "agent": "example-agent", "version": "1.2.3"}),
         ),
         (
             "update_agent",
@@ -3032,6 +3041,10 @@ fn an_install_command_missing_a_field_or_naming_it_wrongly_is_refused() {
             json!({"kind": "install_agent", "version": "1"}),
             ErrorCode::Malformed,
         ),
+        (
+            json!({"kind": "add_agent", "agent": "x"}),
+            ErrorCode::Malformed,
+        ),
         (json!({"kind": "update_agent"}), ErrorCode::Malformed),
         (
             json!({"kind": "sign_in_agent", "instance": "work"}),
@@ -3059,6 +3072,10 @@ fn an_install_command_missing_a_field_or_naming_it_wrongly_is_refused() {
         ),
         (
             json!({"kind": "install_agent", "agent": "x", "version": ""}),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            json!({"kind": "add_agent", "agent": "", "version": "1"}),
             ErrorCode::InvalidArgument,
         ),
         (
@@ -3201,7 +3218,7 @@ fn the_install_commands_name_the_capability_a_client_has_to_have_claimed_and_no_
     }
 
     let installs = install_commands();
-    assert_eq!(installs.len(), 7);
+    assert_eq!(installs.len(), 8);
     for command in &installs {
         assert_eq!(command.needs(), Some(Capability::Install), "{command:?}");
     }
