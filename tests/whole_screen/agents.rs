@@ -234,8 +234,8 @@ fn an_agent_installed_after_a_yes_shows_its_download_then_the_agents_again() {
             window.types_until("", "Read the terms first");
             // The window holds the whole question in either mode, so every
             // fact is read before the answer: one part of each that sits on
-            // one row at either width, the hosts and the size left out for
-            // the port and the bytes they carry.
+            // one row at either width and leaves out the host's port, which
+            // changes from run to run.
             let asked = window.picture();
             asks(
                 &case,
@@ -244,6 +244,8 @@ fn an_agent_installed_after_a_yes_shows_its_download_then_the_agents_again() {
                 ["Install", "Cancel"],
             );
             for fact in [
+                "bytes to",
+                "hosts it may reach",
                 "Licence Proprietary; terms at",
                 "https://example.com/terms.",
                 "Caution: Read the terms first.",
