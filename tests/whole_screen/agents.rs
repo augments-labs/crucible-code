@@ -1576,3 +1576,74 @@ fn a_second_add_of_the_same_agent_writes_the_next_free_instance() {
         assert_eq!(second.pointer("/agent"), Some(&serde_json::json!("goose")));
     }
 }
+
+/// A window tall enough for the add question to stand whole on the terminal's
+/// own screen too, where a panel has half the window: its question, every
+/// fact and both of its choices.
+const ASKED_WHOLE: (u16, u16) = (80, 50);
+
+/// The configuration file as it stands, with the case named.
+fn configuration(window: &Watched, case: &str) -> String {
+    std::fs::read_to_string(window.home().join("config.json"))
+        .unwrap_or_else(|why| panic!("{case}: the configuration file: {why}"))
+}
+
+#[test]
+fn an_add_left_at_its_question_writes_nothing_and_places_nothing() {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let case = format!("agents-add-left-{mode}");
+        let published = Published::offering(OFFERED);
+        // Nothing holds the program back, so an add taken here would finish
+        // and write before the screen after it stands.
+        published.release();
+        let vendor = Vendor::answering("Not asked.");
+        let mut window = Watched::capturing_agents_published(
+            &case,
+            (ASKED_WHOLE, native),
+            &vendor,
+            None,
+            &published,
+        );
+        window.types_until("/agents\r", "1 of 1 offered");
+        opened(&mut window);
+        takes(&mut window, "Add");
+        window.types_until("", "bytes to download");
+        let asked = window.picture();
+        assert!(
+            asked.contains("Add goose 1.0.0 as the instance goose?"),
+            "{case}: {asked}"
+        );
+        assert!(
+            asked.contains("Leave everything as it is"),
+            "{case}: {asked}"
+        );
+        let before = configuration(&window, &case);
+
+        // Whichever way the question was taken, the panel stands again once
+        // it is over: the agent's screen where it was left, the list an add
+        // stands back up where it was taken as a yes.
+        window.types_and_catches_where("\x1b", "the question over", |picture| {
+            picture.contains("Offered: 1.0.0.") || picture.contains("1 of 1 offered")
+        });
+
+        let after = configuration(&window, &case);
+        let written: serde_json::Value =
+            serde_json::from_str(&after).expect("a configuration in its format");
+        assert_eq!(
+            written.pointer("/externalAgents/goose"),
+            None,
+            "{case}: {written}"
+        );
+        assert_eq!(after, before, "{case}");
+        // An add's lock, its staging and every version it keeps are under
+        // the agent's own directory in the store.
+        let kept = window.home().join("programs").join(OFFERED);
+        assert!(!kept.exists(), "{case}: the store holds {}", kept.display());
+
+        let screen = window.picture();
+        assert!(screen.contains("Agents · goose"), "{case}: {screen}");
+        assert!(screen.contains("Not installed."), "{case}: {screen}");
+        assert!(screen.contains("› Add"), "{case}: {screen}");
+    }
+}
