@@ -1700,3 +1700,213 @@ fn a_sign_in_reads_as_the_agent_opening_a_session_and_promises_nothing_more() {
         assert!(said.contains("\"space\""), "{said}");
     }
 }
+
+/// Writes the configuration the keyed sign-in cases run under into
+/// `sample`'s home: one instance of the agent the build knows, whose methods
+/// are one that takes a key and one that does not.
+fn signing(sample: &Sample) {
+    let profile = sample.root().join("agy-profile");
+    let document = serde_json::json!({"externalAgents": {"work": {
+        "driver": "antigravity",
+        "executable": "agy",
+        "profileDir": profile.to_string_lossy(),
+    }}});
+    sample.user(&document.to_string());
+}
+
+/// What a key typed into the box in these cases is; it is never written into
+/// an assertion or a message.
+const TYPED: &str = "fabricated-agent-key-0123456789";
+
+/// An agents door scripted to say each of `said` in turn, keeping what is
+/// sent and how often the key box stood, and keeping a key in `home` as the
+/// agent screen's door does.
+struct Scripted {
+    said: std::collections::VecDeque<Result<door::Outcome, AgentsError>>,
+    /// What the key box is answered with: the key typed, or Escape.
+    answer: Option<&'static str>,
+    sent: Vec<Command>,
+    asked: usize,
+    home: crucible_config::Home,
+}
+
+impl Scripted {
+    fn new(
+        sample: &Sample,
+        said: Vec<Result<door::Outcome, AgentsError>>,
+        answer: Option<&'static str>,
+    ) -> Self {
+        Self {
+            said: said.into(),
+            answer,
+            sent: Vec::new(),
+            asked: 0,
+            home: sample.found(),
+        }
+    }
+}
+
+impl<T: Terminal> Door<T> for Scripted {
+    fn carry(
+        &mut self,
+        _: &mut Walk<'_, T>,
+        action: &AgentAction,
+    ) -> Result<Option<Result<door::Outcome, AgentsError>>, Fatal> {
+        self.sent.push(action.command());
+        Ok(self.said.pop_front())
+    }
+
+    fn ask(&mut self, _: &mut Walk<'_, T>, _: &str) -> Result<Asked, Fatal> {
+        self.asked += 1;
+        Ok(self
+            .answer
+            .map_or(Asked::Left, |typed| Asked::Key(typed.to_owned())))
+    }
+
+    fn keep(&mut self, instance: &str, method: &str, key: Typed) -> Result<(), AgentsError> {
+        keep_key(&self.home, instance, method, key)
+    }
+}
+
+/// A sign-in of the `work` instance by `method`.
+fn signing_in(method: &str) -> AgentAction {
+    AgentAction::SignIn {
+        instance: crucible_client_api::Name::new("work").expect("a name the contract takes"),
+        method: crucible_client_api::Name::new(method).expect("a name the contract takes"),
+    }
+}
+
+/// What the door says of a sign-in by the key method with no key kept.
+fn unstored() -> Result<door::Outcome, AgentsError> {
+    Err(AgentsError::Unstored {
+        agent: crucible_types::AgentKey::new("antigravity").expect("an agent key"),
+        method: "\"gemini-api-key\"".into(),
+    })
+}
+
+/// What the door says of `work` signed in by `method`.
+fn signed_in(method: &str) -> Result<door::Outcome, AgentsError> {
+    Ok(door::Outcome::SignedIn {
+        instance: "work".into(),
+        method: method.into(),
+        by: Signed::Kept,
+    })
+}
+
+/// Whether `sample`'s store holds a key for the agent's key method.
+fn holds_the_key(sample: &Sample) -> bool {
+    let agent = crucible_types::AgentKey::new("antigravity").expect("an agent key");
+    let name = production()
+        .signing_in(&agent, "gemini-api-key")
+        .expect("the method's credential has a name");
+    sample.store().read().has_key(&name)
+}
+
+/// `scripted` driven over `action` on a screen of its own, the walk's close
+/// and the lines said handed back.
+fn driven(
+    sample: &Sample,
+    action: &AgentAction,
+    scripted: &mut Scripted,
+) -> (Option<Closed>, String) {
+    let terms = named(sample);
+    let mut conversation = asking("claude-test-1");
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut walk = Walk {
+        renderer: &mut renderer,
+        conversation: &mut conversation,
+        terms: &terms,
+        held: &[],
+    };
+    let closed = carried(&mut walk, action, scripted).expect("the terminal");
+    let written = renderer.terminal().written().to_owned();
+    (closed, written)
+}
+
+#[test]
+fn a_key_method_with_none_kept_asks_for_the_key_once_keeps_it_and_signs_in_again() {
+    let sample = Sample::new("login-keyed-sign-in");
+    signing(&sample);
+    let action = signing_in("gemini-api-key");
+    let mut door = Scripted::new(
+        &sample,
+        vec![unstored(), signed_in("gemini-api-key")],
+        Some(TYPED),
+    );
+
+    let (closed, written) = driven(&sample, &action, &mut door);
+
+    assert_eq!(closed, None);
+    assert_eq!(door.asked, 1, "the key box did not stand exactly once");
+    assert_eq!(door.sent, vec![action.command(), action.command()]);
+    assert!(holds_the_key(&sample), "the key typed was not kept");
+    assert!(
+        written.contains("the agent of \"work\" opened a session by gemini-api-key"),
+        "{written}"
+    );
+    assert!(!written.contains(TYPED), "the key typed reached the screen");
+}
+
+#[test]
+fn a_second_refusal_for_want_of_a_key_is_said_and_not_asked_about_again() {
+    let sample = Sample::new("login-keyed-twice");
+    signing(&sample);
+    let action = signing_in("gemini-api-key");
+    let mut door = Scripted::new(&sample, vec![unstored(), unstored()], Some(TYPED));
+
+    let (closed, written) = driven(&sample, &action, &mut door);
+
+    assert_eq!(closed, None);
+    assert_eq!(
+        door.asked, 1,
+        "the key box stood again after the second refusal"
+    );
+    assert_eq!(door.sent.len(), 2, "the sign-in was not sent exactly twice");
+    assert!(holds_the_key(&sample), "the key typed was not kept");
+    assert!(
+        written.contains("! no key is kept for antigravity to sign in by"),
+        "{written}"
+    );
+    assert!(!written.contains(TYPED), "the key typed reached the screen");
+}
+
+#[test]
+fn escape_at_the_key_box_keeps_nothing_and_sends_nothing_more() {
+    let sample = Sample::new("login-keyed-left");
+    signing(&sample);
+    let action = signing_in("gemini-api-key");
+    let mut door = Scripted::new(&sample, vec![unstored(), signed_in("gemini-api-key")], None);
+
+    let (closed, written) = driven(&sample, &action, &mut door);
+
+    assert_eq!(closed, None);
+    assert_eq!(door.asked, 1);
+    assert_eq!(door.sent.len(), 1, "a sign-in was sent after Escape");
+    assert!(!holds_the_key(&sample), "a key was kept after Escape");
+    assert!(written.contains(LEFT), "{written}");
+}
+
+#[test]
+fn a_method_that_takes_no_key_is_never_asked_for_one() {
+    let sample = Sample::new("login-keyless");
+    signing(&sample);
+    let action = signing_in("oauth-personal");
+    let mut door = Scripted::new(&sample, vec![signed_in("oauth-personal")], Some(TYPED));
+
+    let (closed, written) = driven(&sample, &action, &mut door);
+
+    assert_eq!(closed, None);
+    assert_eq!(
+        door.asked, 0,
+        "the key box stood for a method that takes no key"
+    );
+    assert_eq!(door.sent, vec![action.command()]);
+    assert!(
+        !holds_the_key(&sample),
+        "a key was kept for a method that takes none"
+    );
+    assert!(
+        written.contains("the agent of \"work\" opened a session by oauth-personal"),
+        "{written}"
+    );
+}

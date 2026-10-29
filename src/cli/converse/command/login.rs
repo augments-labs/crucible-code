@@ -531,7 +531,7 @@ fn connected<T: Terminal>(walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
         }
 
         if let Performed::Account(Account::AgentChosen(action)) = &performed {
-            match carried(walk, action)? {
+            match carried(walk, action, &mut AtTheDoor)? {
                 Some(closed) => return Ok(closed),
                 None => continue,
             }
@@ -565,18 +565,20 @@ fn connecting<E>(
 }
 
 /// Carries out `action`, the move on an agent the connect handed back, at
-/// the agents door: nothing where the agent screen stands again, else how the
-/// walk closed.
+/// the agents door `door` reaches: nothing where the agent screen stands
+/// again, else how the walk closed.
 ///
 /// A sign-in by a method that takes a key, refused because none is kept,
 /// asks for the key in the key box, has crucible keep it, and is asked for
 /// once more; a second refusal is said, not asked about again. Escape at the
-/// box keeps nothing.
+/// box keeps nothing. The line typed is let go of once the key is made from
+/// it, before anything is kept or sent.
 fn carried<T: Terminal>(
     walk: &mut Walk<'_, T>,
     action: &AgentAction,
+    door: &mut impl Door<T>,
 ) -> Result<Option<Closed>, Fatal> {
-    let Some(mut carried) = carrying(walk, action)? else {
+    let Some(mut carried) = door.carry(walk, action)? else {
         say(walk.renderer, CRAMPED_CONNECT)?;
         return Ok(Some(Closed::Done));
     };
@@ -584,8 +586,8 @@ fn carried<T: Terminal>(
         (&carried, action)
     {
         let shown = shown(instance.as_str());
-        let key = match secret::ask(walk.renderer, walk.terms.style(), &shown, None, BACK)? {
-            Asked::Key(key) => key,
+        let typed = match door.ask(walk, &shown)? {
+            Asked::Key(typed) => typed,
             Asked::Left => {
                 say(walk.renderer, LEFT)?;
                 return Ok(None);
@@ -595,18 +597,17 @@ fn carried<T: Terminal>(
                 return Ok(Some(Closed::Done));
             }
         };
-        let Some(key) = kept_key(&key) else {
+        let made = kept_key(&typed);
+        drop(typed);
+        let Some(key) = made else {
             say(walk.renderer, UNKEPT)?;
             return Ok(None);
         };
-        let kept = crucible_config::Home::find(&|name| std::env::var_os(name))
-            .map_err(AgentsError::Config)
-            .and_then(|home| keep_key(&home, instance.as_str(), method.as_str(), key));
-        if let Err(refusal) = kept {
+        if let Err(refusal) = door.keep(instance.as_str(), method.as_str(), key) {
             say(walk.renderer, &refused(&refusal))?;
             return Ok(None);
         }
-        let Some(again) = carrying(walk, action)? else {
+        let Some(again) = door.carry(walk, action)? else {
             say(walk.renderer, CRAMPED_CONNECT)?;
             return Ok(Some(Closed::Done));
         };
@@ -621,6 +622,49 @@ fn carried<T: Terminal>(
         say(walk.renderer, &line)?;
     }
     Ok(None)
+}
+
+/// What [`carried`] reaches to carry a move out: the agents door, the key box
+/// and the store a typed key is kept in. [`AtTheDoor`] is the agent screen's;
+/// a test scripts its own.
+trait Door<T: Terminal> {
+    /// `action`'s command sent to the door, as [`carrying`] sends it: nothing
+    /// where a question had no room to stand.
+    fn carry(
+        &mut self,
+        walk: &mut Walk<'_, T>,
+        action: &AgentAction,
+    ) -> Result<Option<Result<door::Outcome, AgentsError>>, Fatal>;
+
+    /// The key box, labelled `shown`, standing until it is answered.
+    fn ask(&mut self, walk: &mut Walk<'_, T>, shown: &str) -> Result<Asked, Fatal>;
+
+    /// `key` kept for `instance`'s `method`, where the door finds it.
+    fn keep(&mut self, instance: &str, method: &str, key: Typed) -> Result<(), AgentsError>;
+}
+
+/// The agents door, the key box and the key store of the home crucible
+/// runs in.
+struct AtTheDoor;
+
+impl<T: Terminal> Door<T> for AtTheDoor {
+    fn carry(
+        &mut self,
+        walk: &mut Walk<'_, T>,
+        action: &AgentAction,
+    ) -> Result<Option<Result<door::Outcome, AgentsError>>, Fatal> {
+        carrying(walk, action)
+    }
+
+    fn ask(&mut self, walk: &mut Walk<'_, T>, shown: &str) -> Result<Asked, Fatal> {
+        secret::ask(walk.renderer, walk.terms.style(), shown, None, BACK)
+    }
+
+    fn keep(&mut self, instance: &str, method: &str, key: Typed) -> Result<(), AgentsError> {
+        let home = crucible_config::Home::find(&|name| std::env::var_os(name))
+            .map_err(AgentsError::Config)?;
+        keep_key(&home, instance, method, key)
+    }
 }
 
 /// `action`'s command sent to the agents door, each question it stops on
