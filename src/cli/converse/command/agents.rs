@@ -5,12 +5,11 @@
 //! [`Terms::carry`], which reads it again whatever `updates.check` says, and
 //! stands the answer as a [`Picker`]: one entry an agent, in the door's order,
 //! its key and newest version over its licence and what the install store
-//! holds of it; where the window is wide enough for a preview pane, it says
-//! the marked agent's licence, terms, caution and store whole, which the list
-//! pane beside it is too narrow to. What is typed narrows the entries to the
-//! agents whose key or licence holds it, ASCII case aside. The drawing is the picker's and the
-//! search line is an [`Editor`]; what is here is which entries a query keeps
-//! and what each key moves, in [`Listing`].
+//! holds of it, and a preview pane, where the window is wide enough for one,
+//! holds the marked agent's terms and caution. What is typed narrows the
+//! entries to the agents whose key or licence holds it, ASCII case aside. The
+//! drawing is the picker's and the search line is an [`Editor`]; what is here
+//! is which entries a query keeps and what each key moves, in [`Listing`].
 //!
 //! Taking an entry opens the agent's own screen, which is its provenance: the
 //! versions offered, the licence, the terms link and the caution, the versions
@@ -472,13 +471,19 @@ fn unrefreshed_line(why: &FetchError) -> String {
     )
 }
 
-/// The marked agent's licence, terms and caution and what the store holds of
-/// it, as its screen tells them, folded at `pane` columns: the list pane
-/// beside a preview is narrower than an entry's second line can be, so the
-/// preview says it whole.
+/// The marked agent's terms and caution, folded at `pane` columns.
 fn previewed(listed: &door::Listed, pane: usize) -> Vec<Row> {
-    described(listed)
-        .iter()
+    let mut said = Vec::new();
+    if let Some(terms) = &listed.terms {
+        said.push(format!("Terms: {}", shown(terms)));
+    }
+    if let Some(caution) = &listed.caution {
+        said.push(format!("Caution: {}", shown(caution)));
+    }
+    if said.is_empty() {
+        said.push("No terms or caution are given.".to_owned());
+    }
+    said.iter()
         .flat_map(|line| fold(line, pane.max(1)))
         .map(|part| Row::new().then(Slot::Plain, part))
         .collect()
@@ -634,23 +639,14 @@ fn screen<T: Terminal>(
 /// what the store holds of it, whether a sign-in made under the sandbox is
 /// kept, and what a check against its receipts found, where one was made.
 fn provenance(listed: &door::Listed, verified: Option<&[String]>) -> Vec<String> {
-    let mut told = vec![if listed.offered.is_empty() {
-        "Offered: no version for this platform.".to_owned()
-    } else {
-        format!("Offered: {}.", counted(&listed.offered))
-    }];
-    told.extend(described(listed));
-    if listed.keeps_no_sign_in {
-        told.push(UNKEPT_SIGN_IN.to_owned());
-    }
-    told.extend(verified.unwrap_or_default().iter().cloned());
-    told
-}
-
-/// The licence, the terms and caution where there are any, and what the
-/// store holds of an agent, each line escaped and cut.
-fn described(listed: &door::Listed) -> Vec<String> {
-    let mut told = vec![format!("Licence: {}.", shown(&listed.license))];
+    let mut told = vec![
+        if listed.offered.is_empty() {
+            "Offered: no version for this platform.".to_owned()
+        } else {
+            format!("Offered: {}.", counted(&listed.offered))
+        },
+        format!("Licence: {}.", shown(&listed.license)),
+    ];
     if let Some(terms) = &listed.terms {
         told.push(format!("Terms: {}", shown(terms)));
     }
@@ -665,6 +661,10 @@ fn described(listed: &door::Listed) -> Vec<String> {
             within(why, REASON)
         ),
     });
+    if listed.keeps_no_sign_in {
+        told.push(UNKEPT_SIGN_IN.to_owned());
+    }
+    told.extend(verified.unwrap_or_default().iter().cloned());
     told
 }
 
