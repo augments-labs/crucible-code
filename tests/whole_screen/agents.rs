@@ -223,13 +223,13 @@ fn an_agent_installed_after_a_yes_shows_its_download_then_the_agents_again() {
             // the download stands where it is until this has seen it.
             window.types_until("", "50%");
             let picture = scrubbed(&timeless(&window.picture()), &case);
-            insta::assert_snapshot!(format!("agent_downloading_{}_{mode}", size.0), picture);
+            insta::assert_snapshot!(format!("install_downloading_{}_{mode}", size.0), picture);
 
             published.release();
             window.types_until("", "installed");
             window.types_until("", "Which installed agent");
             let picture = scrubbed(&timeless(&window.picture()), &case);
-            insta::assert_snapshot!(format!("agent_installed_{}_{mode}", size.0), picture);
+            insta::assert_snapshot!(format!("install_done_{}_{mode}", size.0), picture);
         }
     }
 }
