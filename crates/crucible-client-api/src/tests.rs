@@ -603,18 +603,18 @@ fn login_outcomes() -> Vec<Outcome> {
         }),
         Outcome::Login(LoginOutcome::AgentChosen {
             action: AgentAction::Install {
-                agent: name("goose"),
+                agent: name("example-agent"),
                 version: name("1.3.0"),
             },
         }),
         Outcome::Login(LoginOutcome::AgentChosen {
             action: AgentAction::Update {
-                agent: name("goose"),
+                agent: name("example-agent"),
             },
         }),
         Outcome::Login(LoginOutcome::AgentChosen {
             action: AgentAction::Rollback {
-                agent: name("goose"),
+                agent: name("example-agent"),
             },
         }),
         Outcome::Login(LoginOutcome::AgentChosen {
@@ -3094,7 +3094,7 @@ fn a_capability_taken_away_is_the_only_one_that_goes() {
 
 #[test]
 fn an_agent_move_asks_for_it_with_its_own_command() {
-    let (agent, version) = (name("goose"), name("1.3.0"));
+    let (agent, version) = (name("example-agent"), name("1.3.0"));
     let (instance, method) = (name("work"), name("api-key"));
     for (action, command) in [
         (
@@ -3155,24 +3155,24 @@ fn an_agent_move_chosen_crosses_and_reads_back_as_it_was() {
     };
     assert_eq!(
         crossing(AgentAction::Install {
-            agent: name("antigravity"),
+            agent: name("example-agent"),
             version: name("1.3.0"),
         }),
         json!({"kind": "agent_chosen", "action": {
-            "kind": "install", "agent": "antigravity", "version": "1.3.0"
+            "kind": "install", "agent": "example-agent", "version": "1.3.0"
         }})
     );
     assert_eq!(
         crossing(AgentAction::Update {
-            agent: name("goose")
+            agent: name("example-agent")
         }),
-        json!({"kind": "agent_chosen", "action": {"kind": "update", "agent": "goose"}})
+        json!({"kind": "agent_chosen", "action": {"kind": "update", "agent": "example-agent"}})
     );
     assert_eq!(
         crossing(AgentAction::Rollback {
-            agent: name("goose")
+            agent: name("example-agent")
         }),
-        json!({"kind": "agent_chosen", "action": {"kind": "rollback", "agent": "goose"}})
+        json!({"kind": "agent_chosen", "action": {"kind": "rollback", "agent": "example-agent"}})
     );
     assert_eq!(
         crossing(AgentAction::SignIn {
