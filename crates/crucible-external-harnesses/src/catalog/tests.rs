@@ -4,7 +4,7 @@
 //! catalogs a machine has seen since.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Barrier;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -2436,7 +2436,7 @@ fn an_entry_gives_its_agent_its_own_sign_in_arguments_variables_and_hosts() {
     ]
     .map(|(name, value)| (name.into(), value.into()));
 
-    let request = profile.request(ambient);
+    let request = profile.request(ambient, None);
 
     let methods: Vec<&str> = profile.sign_in().iter().map(SignIn::id).collect();
     assert_eq!(methods, ["browser"]);
@@ -2457,6 +2457,91 @@ fn an_entry_gives_its_agent_its_own_sign_in_arguments_variables_and_hosts() {
     .map(|(name, value)| (name.to_owned(), value.to_owned()));
     assert_eq!(environment, expected);
     assert_eq!(request.shown, ["PATH"]);
+}
+
+/// An entry's profile says which variable its agent reads its home from and
+/// where under the user's home it keeps its sign-in, as its entry lists them.
+#[test]
+fn an_entry_says_where_its_agent_keeps_its_home_and_its_sign_in() {
+    let profile = profiled(&catalog()).unwrap_or_else(|why| panic!("{why}"));
+
+    assert_eq!(profile.profile_env(), Some("GOOSE_HOME"));
+    assert_eq!(profile.state_paths(), [Box::<str>::from(".config/goose")]);
+
+    let bare = profiled(&without("/entries/0/profile_env")).unwrap_or_else(|why| panic!("{why}"));
+    assert_eq!(bare.profile_env(), None);
+}
+
+/// A profile directory is given to the agent as the value of the variable its
+/// entry names, exactly as written and not marked as shown, replacing the
+/// target's own value of it; without one, that variable is not set from the
+/// shell either, so no stray value of the user's reaches the agent as though
+/// it were a profile.
+#[test]
+fn a_profile_directory_is_applied_through_the_variable_the_entry_names() {
+    let catalog = with("/entries/0/targets/0/env", json!({"GOOSE_HOME": "/target"}));
+    let profile = profiled(&catalog).unwrap_or_else(|why| panic!("{why}"));
+    let ambient = || {
+        [("PATH", "/usr/bin"), ("GOOSE_HOME", "/shell")]
+            .map(|(name, value)| (name.into(), value.into()))
+    };
+
+    let given = profile.request(ambient(), Some(Path::new("/profiles/work")));
+    let held: Vec<&str> = given
+        .environment
+        .iter()
+        .filter(|(name, _)| name == "GOOSE_HOME")
+        .map(|(_, value)| value.as_str())
+        .collect();
+    assert_eq!(held, ["/profiles/work"]);
+    assert!(!given.shown.contains(&"GOOSE_HOME"));
+
+    let without = profile.request(ambient(), None);
+    let held: Vec<&str> = without
+        .environment
+        .iter()
+        .filter(|(name, _)| name == "GOOSE_HOME")
+        .map(|(_, value)| value.as_str())
+        .collect();
+    assert_eq!(held, ["/target"]);
+}
+
+/// A variable an agent reads its home from that the shell also passes, as
+/// `HOME` is, is the profile directory where there is one, and is not passed
+/// from the shell where there is none.
+#[test]
+fn the_shells_value_of_the_profile_variable_is_never_passed() {
+    let profile = profiled(&with("/entries/0/profile_env", json!("HOME")))
+        .unwrap_or_else(|why| panic!("{why}"));
+    let ambient = || {
+        [("PATH", "/usr/bin"), ("HOME", "/home/user")]
+            .map(|(name, value)| (name.into(), value.into()))
+    };
+
+    let given = profile.request(ambient(), Some(Path::new("/profiles/work")));
+    let mut names: Vec<(&str, &str)> = given
+        .environment
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        [
+            ("GOOSE_MODE", "acp"),
+            ("HOME", "/profiles/work"),
+            ("PATH", "/usr/bin")
+        ]
+    );
+
+    let alone = profile.request(ambient(), None);
+    let mut names: Vec<&str> = alone
+        .environment
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(names, ["GOOSE_MODE", "PATH"]);
 }
 
 /// A host an entry's agent reaches is granted only as the sandbox's parser

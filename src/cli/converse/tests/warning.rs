@@ -230,7 +230,14 @@ fn a_missing_agent_program_is_refused_before_the_warning_is_put() {
         .with_enabled(false);
     let sandbox: Arc<dyn SandboxService> = Arc::new(LocalSandbox::new());
     let runs = Runs::new(
-        Launcher::new(sandbox, runtime.clone(), &policy, &consent, &state),
+        Launcher::new(
+            sandbox,
+            runtime.clone(),
+            &policy,
+            &consent,
+            &state,
+            &std::env::temp_dir().join("crucible-no-such-sessions"),
+        ),
         Arc::new(SandboxEnablement::new(false, false)),
         agent,
         "work",

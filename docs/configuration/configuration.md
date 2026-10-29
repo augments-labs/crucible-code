@@ -227,7 +227,7 @@ choosing that `providers.<name>.access.instance` uses. At most 32.
 | `enabled` | `false` keeps the entry and sends it no new work; a provider whose `access` still names it is refused at start. Defaults to `true`. |
 | `authentication` | How it signs in: `account`, its own login, the only value. |
 | `configDir` | For `claude`: the absolute directory it keeps its sign-in under. |
-| `profileDir` | For `antigravity`: the same, and required, since its usual one is the Antigravity IDE's. For `catalog`: the same. |
+| `profileDir` | For `antigravity`: the same, and required, since its usual one is the Antigravity IDE's. For `catalog`: the same, but only for an agent whose catalog entry names the variable it reads its home from, which crucible sets to this directory; an entry that sets it keeps its sign-in there and, under the sandbox, may write that directory and none of the places the entry keeps the default sign-in in. For any other catalog agent it is refused when the agent is started, naming the entry and saying that agent offers no separate profile. |
 | `model` | For `claude`: the model it is started on, such as `claude-opus-5-5`. Defaults to Anthropic's default model. |
 | `effort` | For `claude`: the rung it is started at, `low`, `medium`, `high`, `xhigh` or `max`. Defaults to the model's default rung. |
 | `cloudProject` | For `antigravity`: the Google Cloud project its business sign-in (`oauth-business`) is billed to, by its project ID: 6 to 30 lowercase letters, digits and hyphens, starting with a letter and not ending with a hyphen. |
@@ -245,6 +245,72 @@ Entries share a profile where they write its directory alike, so two that write
 one directory differently, with and without a trailing `/` or, where both
 directories exist, through a link, are refused, naming both; spell it the same
 way in each.
+A `catalog` agent started without a `profileDir` is not given the home your shell
+has in that variable, so it does not sign in to your own.
+Under the sandbox, a `catalog` agent without a `profileDir` may also write the
+places its catalog entry says it keeps its sign-in in, joined to your home
+(`HOME`, or `USERPROFILE` on Windows), so that a sign-in made there is still
+there at the next start; one with a `profileDir` keeps its sign-in there and is
+given none of those places, so it cannot change the account another instance of
+the agent is signed in to. A place that is missing is created for you alone,
+and one that is there is left as it is, whatever its access. If a place leads
+somewhere else by the time it is made than where it was checked, the agent is
+not started, and neither is it where a place already holds a `.git`, `.agents`,
+`.codex` or `.crucible` directory, which the conversation protects, so that the
+agent could not write it; the refusal names the entry and the place. A place
+whose links lead out of your home, as a dotfile manager's link can, is refused.
+Names are compared by their parts, ignoring case as the
+most forgiving file system would, and, on Windows, the dots and spaces that end
+a name; a place with a part outside ASCII is refused, since two spellings of one
+name cannot be told apart.
+These are never made writable, since what is written there runs as you or holds
+what signs in as you:
+
+- the shell startup and logout files (`.bashrc`, `.bash_profile`,
+  `.bash_login`, `.bash_logout`, `.bash_aliases`, `.profile`, `.zshrc`,
+  `.zprofile`, `.zshenv`, `.zlogin`, `.zlogout`) and `.config/fish`;
+- the files a session reads as it begins (`.xprofile`, `.xinitrc`,
+  `.xsession`, `.xsessionrc`, `.pam_environment`, `.config/user-dirs.dirs`);
+- what a shell, an editor or a terminal reads as one starts (`.cargo/env`,
+  `.bash_completion`, `.bash_completion.d`, `.vimrc`, `.vim`, `.config/nvim`,
+  `.emacs`, `.emacs.d`, `.tmux.conf`, `.inputrc`, `Documents/WindowsPowerShell`
+  and `Documents/PowerShell`);
+- `.ssh`, `.gnupg` and `.aws`;
+- the stores of what signs in as you (`.cargo/credentials.toml`,
+  `.cargo/credentials`, `.netrc`, `.git-credentials`, `.pypirc`, `.config/gh`,
+  `.config/gcloud`, `.azure`, `.password-store`), the profiles of browsers and
+  mail (`.mozilla`, `.config/google-chrome`, `.config/chromium`,
+  `.thunderbird`) and `Library/Keychains`;
+- the configuration of programs that run what it names (`.gitconfig`,
+  `.config/git`, `.cargo/config.toml`, `.cargo/config`, `.npmrc`, `.docker`,
+  `.kube`) and `.config/environment.d`;
+- what interpreters and the message bus run (`.local/lib`,
+  `.local/share/dbus-1`);
+- the directories programs are found in (`bin`, `.local/bin`, `.cargo/bin`,
+  `AppData/Local/Microsoft/WindowsApps`) and `.rustup`, whose toolchains the
+  programs in `.cargo/bin` run;
+- the places that start programs when you sign in (`.config/autostart`,
+  `.config/systemd`, `.local/share/systemd`, `.local/share/applications`,
+  `Library/LaunchAgents`, `Library/LaunchDaemons` and the Windows Start Menu);
+- crucible's own home, and the directory it keeps your session logs in, wherever
+  it is kept.
+
+This list is a floor beneath the signature of the catalog, which vouches for
+what an entry names, and not every place that runs as you or holds what signs
+in as you. A place must also begin with a name that is hidden by its leading
+dot, `Library` or `AppData`, so that none of your own files, such as
+`Documents`, `src` or `go/bin`, can be one an agent keeps its sign-in in, while
+`.goose`, `Library/Application Support/goose` and `AppData/Roaming/goose` can.
+An agent whose entry names one of them, a place within one, a place that
+contains one, or a place that does not begin so, is refused when it is started,
+naming the entry and the path. The directories that hold every program's data
+(`.config`, `.local`, `.local/share`, `.local/state`, `.cache`, `Library`,
+`Library/Application Support`, `AppData`, `AppData/Roaming` and `AppData/Local`)
+are refused as themselves, and as a place that contains one of the above, but a
+directory within one for the agent alone, such as `.config/goose`, is not. An
+agent whose entry names neither a variable nor a place keeps no sign-in under
+the sandbox, and one started where your home is not set to an absolute path is
+given no place to write.
 A `catalog` agent chooses its own model, so `model` and `effort` are refused
 for it. A session one ran is bound to its key, so once the entry names
 another `agent` that session is not resumed on it.

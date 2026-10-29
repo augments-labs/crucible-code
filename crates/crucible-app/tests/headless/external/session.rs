@@ -68,6 +68,7 @@ fn on_antigravity(tree: &Tree, script: &Peer) -> Result<Outside, Failed> {
         policy: SandboxPolicy::standard(&tree.workspace()?)?.with_enabled(false),
         consent,
         state: tree.0.join("state"),
+        sessions: tree.sessions(),
         agent,
         row,
         launched: Arc::default(),

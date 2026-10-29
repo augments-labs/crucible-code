@@ -606,20 +606,17 @@ fn a_permission_asked_after_a_stop_is_never_answered_yes() {
     assert!(matches!(acts.as_slice(), [Act::Ask { .. }]), "{acts:?}");
 }
 
-/// The client of the agent a signed catalog entry reviewed as calling itself
-/// `name` at 1.0.0, working in this directory, its first turn opened.
+/// What a signed catalog entry reviewed as calling the agent `name` at 1.0.0
+/// makes of it, where the entry names `profile_env` as the variable the agent
+/// reads its home from.
 #[cfg(feature = "proof")]
-fn cataloged(name: &str) -> Acp {
+fn profiled(name: &str, profile_env: Option<&str>) -> crate::catalog::CatalogProfile {
     use std::time::SystemTime;
 
     use crate::catalog::{Catalog, CatalogProfile, Held, fixture};
 
     let file = json!({"path": "peer", "size": 1, "sha256": "b".repeat(64), "exec": true});
-    let catalog = json!({
-        "schema": 1,
-        "serial": 1,
-        "revoked": [],
-        "entries": [{
+    let mut entry = json!({
             "key": "peer",
             "registry_id": "fake-peer",
             "version": "1.0.0",
@@ -641,8 +638,11 @@ fn cataloged(name: &str) -> Acp {
                     "files": [file],
                 }],
             }],
-        }],
     });
+    if let (Some(profile_env), Some(entry)) = (profile_env, entry.as_object_mut()) {
+        entry.insert("profile_env".to_owned(), json!(profile_env));
+    }
+    let catalog = json!({"schema": 1, "serial": 1, "revoked": [], "entries": [entry]});
     let signed = fixture::signed(catalog.to_string().as_bytes());
     let catalog = Catalog::verify(
         &signed.index,
@@ -653,14 +653,48 @@ fn cataloged(name: &str) -> Acp {
     )
     .unwrap();
     let entry = catalog.entries().first().unwrap();
-    let profile = CatalogProfile::from_entry(entry, entry.targets.first().unwrap()).unwrap();
-    let mut acp = Acp::cataloged(profile, Allowing::Nothing);
+    CatalogProfile::from_entry(entry, entry.targets.first().unwrap()).unwrap()
+}
+
+/// The client of the agent a signed catalog entry reviewed as calling itself
+/// `name` at 1.0.0, working in this directory, its first turn opened.
+#[cfg(feature = "proof")]
+fn cataloged(name: &str) -> Acp {
+    let mut acp = Acp::cataloged(profiled(name, None), Allowing::Nothing);
     let _ = acp.request(Shape {
         workspace: Some(Path::new("/work")),
         ..Shape::default()
     });
     let _ = acp.open(&TurnRequest::new(TurnId::FIRST, "hello")).unwrap();
     acp
+}
+
+/// A client run from a catalog entry that names the variable its agent reads
+/// its home from gives the agent the profile directory the host asked for
+/// through that variable, and never the shell's own value of it.
+#[cfg(feature = "proof")]
+#[test]
+fn a_catalog_client_passes_the_profile_directory_through_the_variable_its_entry_names() {
+    let mut acp = Acp::cataloged(profiled("fake-peer", Some("HOME")), Allowing::Nothing);
+    let profile = Path::new("/profiles/work");
+
+    let request = acp.request(Shape {
+        profile: Some(profile),
+        workspace: Some(Path::new("/work")),
+        ..Shape::default()
+    });
+
+    let homes: Vec<&str> = request
+        .environment
+        .iter()
+        .filter(|(name, _)| name == "HOME")
+        .map(|(_, value)| value.as_str())
+        .collect();
+    // The one value of the variable is the profile directory, so the shell's
+    // own never reaches the agent through it. Another variable passed on as it
+    // stands may hold the same path, as `USERPROFILE` does on Windows.
+    assert_eq!(homes, ["/profiles/work"], "{:?}", request.shown);
+    assert!(!request.shown.contains(&"HOME"), "{:?}", request.shown);
 }
 
 /// A client run from a catalog entry admits the agent the entry names, as the

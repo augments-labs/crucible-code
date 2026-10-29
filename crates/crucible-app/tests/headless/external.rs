@@ -112,6 +112,8 @@ struct Launching {
     consent: Consent,
     /// Where the catalog's trust state would be kept, which nothing writes.
     state: PathBuf,
+    /// Where the session logs would be kept.
+    sessions: PathBuf,
     agent: Agent,
     row: &'static Row,
     launched: Arc<Mutex<Vec<Launched>>>,
@@ -126,6 +128,7 @@ impl Launching {
             &self.policy,
             &self.consent,
             &self.state,
+            &self.sessions,
         )
     }
 }
@@ -227,6 +230,7 @@ fn launching_on(
         policy,
         consent,
         state: tree.0.join("state"),
+        sessions: tree.sessions(),
         agent,
         row,
         launched: Arc::default(),
