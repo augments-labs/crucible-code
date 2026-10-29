@@ -121,7 +121,15 @@ fn started(
     let policy = SandboxPolicy::standard(&tree.workspace()?)?.with_enabled(false);
     let sandbox = std::sync::Arc::new(LocalSandbox::new().watching_on(handle.clone()));
     let state = tree.0.join("state");
-    let launcher = Launcher::new(sandbox, handle.clone(), &policy, &consent, &state);
+    let sessions = tree.sessions();
+    let launcher = Launcher::new(
+        sandbox,
+        handle.clone(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let control = Control::new().ok_or("a control")?;
     let mut dialect = agent.row().dialect(Mode::Ask, None, None)?;
 

@@ -168,7 +168,15 @@ async fn a_clean_turn_through_a_launch_is_complete_and_speaks_the_dialects_argum
     let consent = granted();
     let policy = conversation(&sample);
     let state = sample.state();
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let registry = Registry::new(&SHIPPED);
     let control = Control::new().expect("a control");
 
@@ -222,7 +230,15 @@ async fn answered_after(sample: &Sample, policy: &SandboxPolicy, waited: Duratio
     );
     let consent = granted();
     let state = sample.state();
-    let launcher = Launcher::new(local(), Handle::current(), policy, &consent, &state);
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let registry = Registry::new(&SHIPPED);
     let control = Control::new().expect("a control");
     let mut host = launcher
@@ -298,7 +314,15 @@ async fn an_account_step_is_still_held_to_the_time_one_command_is_allowed() {
         },
     );
     let state = sample.state();
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let registry = Registry::new(&SHIPPED);
     let control = Control::new().expect("a control");
     let began = std::time::Instant::now();
@@ -693,7 +717,15 @@ async fn a_catalog_row_is_launched_as_its_entry_reviewed_it() {
         let consent = peer_granted();
         let policy = conversation(&sample);
         let state = sample.state();
-        let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
+        let sessions = sample.sessions();
+        let launcher = Launcher::new(
+            local(),
+            Handle::current(),
+            &policy,
+            &consent,
+            &state,
+            &sessions,
+        );
         let mut dialect = agent.row().dialect(Mode::Ask, None, None).expect("asking");
         let control = Control::new().expect("a control");
 
@@ -751,7 +783,15 @@ async fn a_catalog_agent_without_a_statement_is_never_launched() {
     consent.give("agent:peer");
     let policy = conversation(&sample);
     let state = sample.root();
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let control = Control::new().expect("a control");
     let mut dialect = agent.row().dialect(Mode::Ask, None, None).expect("asking");
 
@@ -798,7 +838,15 @@ async fn a_catalog_agent_with_a_statement_asks_its_own_hold_before_anything_is_s
     consent.give("agent:another");
     let policy = conversation(&sample);
     let state = sample.root();
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let control = Control::new().expect("a control");
     let mut dialect = agent.row().dialect(Mode::Ask, None, None).expect("asking");
 
@@ -855,7 +903,15 @@ async fn a_turn_or_a_probe_without_a_yes_starts_nothing() {
     let consent = Consent::new(Routes::production());
     let policy = conversation(&sample);
     let state = sample.state();
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let registry = Registry::new(&SHIPPED);
     let agent = agent(&registry, &peer);
     let control = Control::new().expect("a control");
@@ -881,7 +937,15 @@ async fn a_probe_with_a_yes_reads_the_version() {
     let consent = granted();
     let policy = conversation(&sample);
     let state = sample.state();
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let registry = Registry::new(&SHIPPED);
     let control = Control::new().expect("a control");
 
@@ -910,7 +974,15 @@ async fn a_row_held_back_is_refused_with_its_documentation_and_nothing_internal(
     let consent = granted();
     let policy = conversation(&sample);
     let state = sample.state();
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let registry = Registry::new(&HELD_BACK);
     let control = Control::new().expect("a control");
 
@@ -944,7 +1016,15 @@ async fn a_program_that_is_not_there_is_refused_with_how_to_install_it() {
     let consent = granted();
     let policy = conversation(&sample);
     let state = sample.state();
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let registry = Registry::new(&SHIPPED);
     let control = Control::new().expect("a control");
     // Looked for by name on a `PATH` with nothing on it.
@@ -1031,7 +1111,15 @@ async fn a_spoken_sign_in_hands_its_link_on_and_reads_its_end() {
     let consent = granted();
     let policy = conversation(&sample);
     let state = sample.state();
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let registry = Registry::new(&SHIPPED);
     let control = Control::new().expect("a control");
     let shown = Mutex::new(Vec::new());
@@ -1081,7 +1169,15 @@ async fn a_profile_is_made_private_to_the_user_before_the_agent_starts() {
     let consent = granted();
     let policy = conversation(&sample);
     let state = sample.state();
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let registry = Registry::new(&SHIPPED);
     let control = Control::new().expect("a control");
     let beside = Sample::new("launch-private-profile-beside");
@@ -1110,7 +1206,15 @@ async fn a_profile_the_conversation_protects_is_refused_before_it_is_made() {
     let consent = granted();
     let policy = conversation(&sample);
     let state = sample.state();
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let registry = Registry::new(&SHIPPED);
     let control = Control::new().expect("a control");
     let inside = sample.root().join(".git").join("profile");
@@ -1264,7 +1368,14 @@ fn steps(
     sample: &Sample,
 ) -> Steps {
     Steps::new(
-        Launcher::new(sandbox, Handle::current(), policy, consent, &sample.state()),
+        Launcher::new(
+            sandbox,
+            Handle::current(),
+            policy,
+            consent,
+            &sample.state(),
+            &sample.sessions(),
+        ),
         Arc::new(SandboxEnablement::new(false, false)),
         &STEPPED,
         None,
@@ -1378,6 +1489,7 @@ async fn a_route_starts_no_run_beside_one_it_still_holds() {
             &policy,
             &consent,
             &sample.state(),
+            &sample.sessions(),
         ),
         Arc::new(SandboxEnablement::new(false, false)),
         agent(&registry, &peer),
@@ -1426,6 +1538,7 @@ async fn the_route_opened_at_startup_holds_against_a_later_run_of_its_instance()
                 &policy,
                 &consent,
                 &sample.state(),
+                &sample.sessions(),
             ),
             agent(&registry, &peer),
             entry.name(),
@@ -1437,6 +1550,7 @@ async fn the_route_opened_at_startup_holds_against_a_later_run_of_its_instance()
                 &policy,
                 &consent,
                 &sample.state(),
+                &sample.sessions(),
             ),
             &STEPPED,
             None,
@@ -1624,8 +1738,16 @@ async fn antigravity_status(sample: &Sample, script: &Script) -> (Reading, usize
     consent.give("agent:antigravity");
     let policy = conversation(sample);
     let state = sample.state();
+    let sessions = sample.sessions();
     let steps = Steps::new(
-        Launcher::new(local(), Handle::current(), &policy, &consent, &state),
+        Launcher::new(
+            local(),
+            Handle::current(),
+            &policy,
+            &consent,
+            &state,
+            &sessions,
+        ),
         Arc::new(SandboxEnablement::new(false, false)),
         &ANTIGRAVITY_REGISTRY,
         None,
@@ -1741,8 +1863,16 @@ async fn a_run_is_admitted_as_the_releases_on_offer_when_it_is_launched() {
     let agent = Agent::routed(&route, &ANTIGRAVITY_REGISTRY, |_| None).expect("a row");
     let policy = conversation(&sample);
     let state = sample.state();
+    let sessions = sample.sessions();
     let runs = Runs::new(
-        Launcher::new(local(), Handle::current(), &policy, &consent, &state),
+        Launcher::new(
+            local(),
+            Handle::current(),
+            &policy,
+            &consent,
+            &state,
+            &sessions,
+        ),
         Arc::new(SandboxEnablement::new(false, false)),
         agent,
         "space",
@@ -1816,6 +1946,7 @@ async fn a_run_is_started_with_the_arguments_of_the_release_its_program_is() {
     let consent = Consent::new(Routes::production());
     let policy = conversation(&sample);
     let state = sample.state();
+    let sessions = sample.sessions();
     let arguments = |version: &str| {
         let program = sample
             .root()
@@ -1843,7 +1974,14 @@ async fn a_run_is_started_with_the_arguments_of_the_release_its_program_is() {
         };
         let agent = Agent::routed(&route, &ANTIGRAVITY_REGISTRY, |_| None).expect("a row");
         let runs = Runs::new(
-            Launcher::new(local(), Handle::current(), &policy, &consent, &state),
+            Launcher::new(
+                local(),
+                Handle::current(),
+                &policy,
+                &consent,
+                &state,
+                &sessions,
+            ),
             Arc::new(SandboxEnablement::new(false, false)),
             agent,
             "space",
@@ -1916,6 +2054,7 @@ async fn a_routed_antigravity_run_reaches_the_host_of_the_location_its_route_car
     // Confined, as only a policy that is enforced is given the agent's hosts.
     let policy = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
     let state = sample.state();
+    let sessions = sample.sessions();
     let asked = Arc::new(Mutex::new(Vec::new()));
     let recording = Recording {
         local: local(),
@@ -1927,6 +2066,7 @@ async fn a_routed_antigravity_run_reaches_the_host_of_the_location_its_route_car
         &policy,
         &consent,
         &state,
+        &sessions,
     );
     let control = Control::new().expect("a control");
     let mut dialect = agent.row().dialect(Mode::Ask, None, None).expect("asking");
@@ -2140,15 +2280,27 @@ fn homed_in(sample: &Sample) -> PathBuf {
 }
 
 /// The roots the agent of an entry keeping its sign-in in `paths` is given,
-/// over a child home `home` and crucible's own home at `crucible`.
+/// over a child home `home`, crucible's own home at `crucible` and the session
+/// logs of `sample`'s home.
 fn rooted(
     sample: &Sample,
     paths: &[&str],
     home: &Path,
     crucible: &Path,
 ) -> Result<Vec<PathBuf>, Unlaunched> {
+    rooted_beside(sample, paths, home, crucible, &sample.sessions())
+}
+
+/// [`rooted`], the session logs kept in `sessions`.
+fn rooted_beside(
+    sample: &Sample,
+    paths: &[&str],
+    home: &Path,
+    crucible: &Path,
+    sessions: &Path,
+) -> Result<Vec<PathBuf>, Unlaunched> {
     let entry = keeping(None, paths);
-    peer_agent(row_of(&entry), &sample.root().join("peer")).state_roots(home, crucible)
+    peer_agent(row_of(&entry), &sample.root().join("peer")).state_roots(home, crucible, sessions)
 }
 
 /// The places a catalog agent's sign-in is kept become the roots its child
@@ -2459,6 +2611,77 @@ fn the_home_crucible_keeps_its_state_in_is_never_made_writable() {
     assert!(rooted(&sample, &[".local/share/goose"], &home, &crucible).is_ok());
 }
 
+/// The directory session logs are kept in, which holds what was said in every
+/// conversation, is never a root, nor within one, nor a place that contains it,
+/// wherever the home keeps it, and a link to it is no way in.
+#[test]
+fn the_directory_session_logs_are_kept_in_is_never_made_writable() {
+    let sample = Sample::new("launch-state-sessions");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+    let sessions = home.join(".local/share/crucible/sessions");
+
+    for (place, overlap) in [
+        (".local/share/crucible/sessions", Overlap::Is),
+        (".local/share/crucible/sessions/2026", Overlap::Within),
+        (".local/share/crucible", Overlap::Contains),
+    ] {
+        let refused = rooted_beside(&sample, &[place], &home, &crucible, &sessions);
+        assert!(
+            matches!(&refused, Err(Unlaunched::StatePath { overlap: found, .. }) if *found == overlap),
+            "{place}: {refused:?}"
+        );
+    }
+    let said = rooted_beside(
+        &sample,
+        &[".local/share/crucible/sessions"],
+        &home,
+        &crucible,
+        &sessions,
+    )
+    .expect_err("refused")
+    .to_string();
+    assert!(said.contains("session logs"), "{said}");
+    assert!(
+        rooted_beside(
+            &sample,
+            &[".local/share/goose"],
+            &home,
+            &crucible,
+            &sessions
+        )
+        .is_ok()
+    );
+}
+
+/// A name that is allowed but is a link to the session logs is refused, as it
+/// is where it leads that the sandbox is given.
+#[cfg(unix)]
+#[test]
+fn a_link_to_the_session_logs_is_refused() {
+    use std::os::unix::fs::symlink;
+
+    let sample = Sample::new("launch-state-sessions-link");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+    let sessions = home.join("logs/sessions");
+    fs::create_dir_all(&sessions).expect("the logs");
+    symlink(&sessions, home.join(".goose")).expect("a link");
+
+    let refused = rooted_beside(&sample, &[".goose"], &home, &crucible, &sessions);
+
+    assert!(
+        matches!(
+            &refused,
+            Err(Unlaunched::StatePath {
+                overlap: Overlap::Is,
+                ..
+            })
+        ),
+        "{refused:?}"
+    );
+}
+
 /// An entry's place that does not stay inside the home it is joined to is
 /// refused, as the catalog's reader already refuses it, so a value that never
 /// went through the reader cannot reach elsewhere.
@@ -2473,7 +2696,7 @@ fn a_place_that_leaves_the_home_is_refused() {
         entry.state_paths = vec![place.into()];
         let agent = peer_agent(row_of(&entry), &sample.root().join("peer"));
 
-        let refused = agent.state_roots(&home, &crucible);
+        let refused = agent.state_roots(&home, &crucible, &sample.sessions());
 
         assert!(
             matches!(
@@ -2765,6 +2988,23 @@ async fn asked_for(
     home: Option<&Path>,
     consent: &Consent,
 ) -> Option<SandboxPolicy> {
+    asked_for_beside(sample, agent, confined, home, consent, &sample.sessions()).await
+}
+
+/// [`asked_for`], the launcher told that the session logs are kept in
+/// `sessions`.
+// The launch is described by the four things the tests vary and the two they
+// hold fixed, and a value gathering them would be built at its callers and
+// taken apart here.
+#[allow(clippy::too_many_arguments)]
+async fn asked_for_beside(
+    sample: &Sample,
+    agent: &Agent,
+    confined: bool,
+    home: Option<&Path>,
+    consent: &Consent,
+    sessions: &Path,
+) -> Option<SandboxPolicy> {
     let policy = SandboxPolicy::standard(&sample.workspace())
         .expect("a policy")
         .with_enabled(confined);
@@ -2780,6 +3020,7 @@ async fn asked_for(
         &policy,
         consent,
         &state,
+        sessions,
     );
     if let Some(home) = home {
         launcher = launcher.homed(home);
@@ -2854,6 +3095,7 @@ async fn the_smoke_test_of_a_release_is_given_no_place_under_the_home() {
     let consent = peer_granted();
     let policy = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
     let state = sample.state();
+    let sessions = sample.sessions();
     let asked = Arc::new(Mutex::new(Vec::new()));
     let sandbox = Policies {
         local: local(),
@@ -2865,6 +3107,7 @@ async fn the_smoke_test_of_a_release_is_given_no_place_under_the_home() {
         &policy,
         &consent,
         &state,
+        &sessions,
     )
     .homed(&home);
 
@@ -2893,6 +3136,54 @@ async fn the_smoke_test_of_a_release_is_given_no_place_under_the_home() {
         !home.join(".config/goose").exists() && !home.join(".goose").exists(),
         "a place the entry keeps its sign-in in was made"
     );
+}
+
+/// A launcher told where the session logs are kept starts no agent whose entry
+/// says it keeps its sign-in there, before the sandbox is asked for anything,
+/// and starts one whose entry names another place.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_launch_is_refused_where_the_entry_keeps_its_sign_in_in_the_session_logs() {
+    let sample = Sample::new("launch-state-sessions-launch");
+    let home = homed_in(&sample);
+    let peer = standing(&sample);
+    let sessions = home.join(".local/share/crucible/sessions");
+    let agent = peer_agent(
+        row_of(&keeping(None, &[".local/share/crucible/sessions"])),
+        &peer,
+    );
+    let elsewhere = peer_agent(row_of(&keeping(None, &[".local/share/goose"])), &peer);
+
+    let refused = asked_for_beside(
+        &sample,
+        &agent,
+        true,
+        Some(&home),
+        &peer_granted(),
+        &sessions,
+    )
+    .await;
+    let allowed = asked_for_beside(
+        &sample,
+        &elsewhere,
+        true,
+        Some(&home),
+        &peer_granted(),
+        &sessions,
+    )
+    .await;
+
+    assert!(
+        refused.is_none(),
+        "the sandbox was asked for the session logs"
+    );
+    assert!(
+        allowed.is_some_and(|asked| asked.permits_path(
+            &home.join(".local/share/goose"),
+            SandboxFilesystemAccess::ReadWrite
+        )),
+        "the control launch was not given its place"
+    );
+    assert!(!sessions.exists(), "the session logs were made");
 }
 
 /// An instance with a profile directory of its own is given that directory
@@ -3040,6 +3331,7 @@ async fn a_launch_naming_a_listed_place_is_refused_before_the_sandbox_is_asked()
     let policy = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
     let consent = peer_granted();
     let state = sample.state();
+    let sessions = sample.sessions();
     let asked = Arc::new(Mutex::new(Vec::new()));
     let sandbox = Policies {
         local: local(),
@@ -3051,6 +3343,7 @@ async fn a_launch_naming_a_listed_place_is_refused_before_the_sandbox_is_asked()
         &policy,
         &consent,
         &state,
+        &sessions,
     )
     .homed(&home);
     let control = Control::new().expect("a control");
@@ -3173,7 +3466,15 @@ async fn a_launch_with_a_profile_directory_the_agent_cannot_take_starts_nothing(
     let consent = peer_granted();
     let policy = conversation(&sample);
     let state = sample.root();
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent, &state);
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let control = Control::new().expect("a control");
     let mut dialect = agent.row().dialect(Mode::Ask, None, None).expect("asking");
 

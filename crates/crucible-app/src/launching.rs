@@ -111,16 +111,17 @@
 //! directory that is there is left as it is, its access and what a link in it
 //! leads to alike. It is followed again before anything is created and once
 //! more after, and an agent whose place then leads anywhere else than where it
-//! was judged is not started. No place is made writable that lies within or contains one on the list of places never made
-//! writable, or the home crucible keeps its state in, however the entry spells
-//! its way there: it is judged by its path components, as it is joined and
-//! again where its links lead, ignoring case where the file system does and,
-//! on Windows, the dots and spaces that end a name, and the refusal names the
-//! instance and the path the entry gave. Where its links lead must also lie
-//! within the home, so that a link from an allowed name, such as a dotfile
-//! manager's, cannot lead the sandbox to a place nobody listed. A built-in
-//! agent has no catalog entry, and the smoke test of a release signs nothing
-//! in, so neither is given any.
+//! was judged is not started. No place is made writable that is, lies within
+//! or contains one on the list of places never made writable, the home
+//! crucible keeps its state in, or the directory it keeps its session logs in,
+//! however the entry spells its way there: it is judged by its path
+//! components, as it is joined and again where its links lead, ignoring case
+//! where the file system does and, on Windows, the dots and spaces that end a
+//! name, and the refusal names the instance and the path the entry gave. Where
+//! its links lead must also lie within the home, so that a link from an
+//! allowed name, such as a dotfile manager's, cannot lead the sandbox to a
+//! place nobody listed. A built-in agent has no catalog entry, and the smoke
+//! test of a release signs nothing in, so neither is given any.
 //!
 //! Every start, a turn's or an account step's, is given each key the user
 //! typed for one of the methods its agent signs in by, kept in crucible's
@@ -1201,8 +1202,9 @@ const ON_SEARCH_PATH: &str = "the programs found there run as you from your sear
 ///   (`.config/goose`, `.local/share/goose`), and so does the home of every
 ///   program the user runs.
 ///
-/// The home crucible keeps its own state in is refused beside these, since it
-/// holds the keys the user typed.
+/// The home crucible keeps its own state in and the directory it keeps its
+/// session logs in are refused beside these, since the one holds the keys the
+/// user typed and the other what was said in every conversation.
 const NEVER_WRITABLE: &[Place] = &[
     Place {
         path: ".bashrc",
@@ -1443,6 +1445,10 @@ const STAYS_HOME: &str = "only a place within it is made writable, where links l
 const HOLDS_KEYS: &str =
     "it holds the keys you typed for your agents and the record of the releases revoked";
 
+/// Why the directory crucible keeps its session logs in is never made writable.
+const HOLDS_SESSIONS: &str =
+    "it holds what was said in every conversation, which an agent could read or change";
+
 /// Whether the agent its entry describes keeps its sign-in nowhere crucible
 /// can open to it under the sandbox: its entry names neither a variable it
 /// reads its home from nor a place it keeps its sign-in in.
@@ -1598,8 +1604,8 @@ impl Guarded {
 }
 
 /// Every place no state path under `home` may make writable: those of
-/// [`NEVER_WRITABLE`] and the `crucible` home.
-fn guarded(home: &Path, crucible: &Path) -> Vec<Guarded> {
+/// [`NEVER_WRITABLE`], the `crucible` home and the `sessions` directory.
+fn guarded(home: &Path, crucible: &Path, sessions: &Path) -> Vec<Guarded> {
     let real = resolved(home).ok();
     let listed = NEVER_WRITABLE.iter().map(|place| {
         Guarded::new(
@@ -1610,21 +1616,28 @@ fn guarded(home: &Path, crucible: &Path) -> Vec<Guarded> {
             real.as_deref().map(|real| beneath(real, place.path)),
         )
     });
-    let own = Guarded::new(
-        "crucible's own home".to_owned(),
-        Reach::Beneath,
-        HOLDS_KEYS,
-        crucible.to_path_buf(),
-        None,
-    );
-    listed.chain(std::iter::once(own)).collect()
+    let own = [
+        ("crucible's own home", HOLDS_KEYS, crucible),
+        ("crucible's session logs", HOLDS_SESSIONS, sessions),
+    ]
+    .map(|(place, why, at)| {
+        Guarded::new(
+            place.to_owned(),
+            Reach::Beneath,
+            why,
+            at.to_path_buf(),
+            None,
+        )
+    });
+    listed.chain(own).collect()
 }
 
 impl Agent {
     /// The places under `home` the child of this agent is given to write, as
     /// its catalog entry says it keeps its sign-in in them: each resolved, and
-    /// none that is, lies within or contains a place of [`NEVER_WRITABLE`] or
-    /// `crucible`, the home crucible keeps its own state in. None is checked
+    /// none that is, lies within or contains a place of [`NEVER_WRITABLE`],
+    /// `crucible`, the home crucible keeps its own state in, or `sessions`, the
+    /// directory it keeps its session logs in. None is checked
     /// by how its text begins, and each is checked as it is joined to `home`
     /// and again where its links lead, so a name that is allowed but leads
     /// into a place that is not is refused, as is one that leads out of
@@ -1634,7 +1647,12 @@ impl Agent {
     ///
     /// [`Unlaunched::StatePath`] for a path that does, else
     /// [`Unlaunched::Policy`] for one that cannot be followed.
-    fn state_roots(&self, home: &Path, crucible: &Path) -> Result<Vec<PathBuf>, Unlaunched> {
+    fn state_roots(
+        &self,
+        home: &Path,
+        crucible: &Path,
+        sessions: &Path,
+    ) -> Result<Vec<PathBuf>, Unlaunched> {
         let AgentRow::Catalog(catalog) = &self.row else {
             return Ok(Vec::new());
         };
@@ -1650,7 +1668,7 @@ impl Agent {
             place: place.into(),
             why,
         };
-        let guarded = guarded(home, crucible);
+        let guarded = guarded(home, crucible, sessions);
         let inside = resolved(home)?;
         let mut roots: Vec<PathBuf> = Vec::new();
         for path in written {
@@ -1900,6 +1918,9 @@ pub struct Launcher<'a> {
     /// The directory the catalog's trust state is kept under, which what a
     /// launch is told of the releases on offer is read from as it is then.
     state: &'a Path,
+    /// The directory the session logs are kept under, which no place an agent
+    /// is made able to write may contain, lie within or be.
+    sessions: &'a Path,
     /// The home every catalog agent it starts is given, where it is not the
     /// shell's.
     home: Option<PathBuf>,
@@ -1914,7 +1935,12 @@ impl std::fmt::Debug for Launcher<'_> {
 impl<'a> Launcher<'a> {
     /// Starts children under `service` on `runtime`, each under a policy
     /// widened from `conversation` and held by `consent`, told of the releases
-    /// on offer by the trust state kept under `state`.
+    /// on offer by the trust state kept under `state`, and made able to write
+    /// no place that holds the session logs kept under `sessions`.
+    // Each is a place or a service of its own that the composition root
+    // holds, and a value gathering them would be built at its callers and
+    // taken apart here.
+    #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub fn new(
         service: Arc<dyn SandboxService>,
@@ -1922,6 +1948,7 @@ impl<'a> Launcher<'a> {
         conversation: &'a SandboxPolicy,
         consent: &'a Consent,
         state: &'a Path,
+        sessions: &'a Path,
     ) -> Self {
         Self {
             service,
@@ -1929,6 +1956,7 @@ impl<'a> Launcher<'a> {
             conversation,
             consent,
             state,
+            sessions,
             home: None,
         }
     }
@@ -2052,7 +2080,7 @@ impl<'a> Launcher<'a> {
         let kept = match child_home(&request, own)
             .filter(|_| self.conversation.enabled() && agent.profile.is_none())
         {
-            Some(home) => agent.state_roots(&home, crucible)?,
+            Some(home) => agent.state_roots(&home, crucible, self.sessions)?,
             None => Vec::new(),
         };
         Ok((request, kept))
@@ -2601,6 +2629,8 @@ pub struct Runs {
     consent: Consent,
     /// The directory the catalog's trust state is kept under.
     state: PathBuf,
+    /// The directory the session logs are kept under.
+    sessions: PathBuf,
     /// The agent launched.
     agent: Agent,
     /// The `externalAgents` entry it is.
@@ -2641,6 +2671,7 @@ impl Runs {
             enablement,
             consent: launcher.consent.clone(),
             state: launcher.state.to_owned(),
+            sessions: launcher.sessions.to_owned(),
             agent,
             instance: instance.into(),
             control: controls.of(instance),
@@ -2707,6 +2738,7 @@ impl Relaunch for Runs {
                     &policy,
                     &self.consent,
                     &self.state,
+                    &self.sessions,
                 )
             }
             .launch(
@@ -2751,6 +2783,8 @@ pub struct Steps {
     consent: Consent,
     /// The directory the catalog's trust state is kept under.
     state: PathBuf,
+    /// The directory the session logs are kept under.
+    sessions: PathBuf,
     /// The installed agents a configured entry is read against.
     registry: &'static Registry,
     /// The `PATH` an agent's program is looked for on.
@@ -2790,6 +2824,7 @@ impl Steps {
             enablement,
             consent: launcher.consent.clone(),
             state: launcher.state.to_owned(),
+            sessions: launcher.sessions.to_owned(),
             registry,
             path,
             controls: Controls::default(),
@@ -2873,6 +2908,7 @@ impl Steps {
             enablement: Arc::clone(&self.enablement),
             consent: self.consent.clone(),
             state: self.state.clone(),
+            sessions: self.sessions.clone(),
             agent,
             instance: instance.into(),
             control: self.controls.of(instance),
@@ -2966,6 +3002,7 @@ impl Steps {
                 &policy,
                 &self.consent,
                 &self.state,
+                &self.sessions,
             )
         }
         .account(&chosen, &control, dialect.as_mut(), step, &|_| {})

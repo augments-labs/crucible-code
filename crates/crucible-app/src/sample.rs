@@ -89,6 +89,11 @@ impl Sample {
         self.base.join("home")
     }
 
+    /// Where the session logs are kept for this tree's home.
+    pub(crate) fn sessions(&self) -> PathBuf {
+        self.home().join("sessions")
+    }
+
     /// Where the catalog's trust state is kept for this tree's home: not
     /// created until a catalog is taken in, so that until then nothing is
     /// believed but the snapshot built in.

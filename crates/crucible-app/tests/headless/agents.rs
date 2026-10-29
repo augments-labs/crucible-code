@@ -1771,6 +1771,7 @@ fn launched(
         &policy,
         &consent,
         &state,
+        bench.home.sessions(),
     );
     let control = Control::new().ok_or("a control")?;
     let mut dialect = agent.row().dialect(Mode::Ask, None, None)?;
@@ -1778,7 +1779,14 @@ fn launched(
         .block_on(launcher.launch(&agent, &control, dialect.as_mut(), None))
         .map(drop);
     let steps = Steps::new(
-        Launcher::new(sandbox, handle, &policy, &consent, &state),
+        Launcher::new(
+            sandbox,
+            handle,
+            &policy,
+            &consent,
+            &state,
+            bench.home.sessions(),
+        ),
         Arc::new(SandboxEnablement::new(false, false)),
         registry,
         None,
@@ -1992,12 +2000,20 @@ impl Bench {
                 &policy,
                 &consent,
                 &state,
+                self.home.sessions(),
             ),
             Arc::new(SandboxEnablement::new(confined, false)),
             &REGISTRY,
             None,
         );
-        let mut launcher = Launcher::new(sandbox, handle, &policy, &consent, &state);
+        let mut launcher = Launcher::new(
+            sandbox,
+            handle,
+            &policy,
+            &consent,
+            &state,
+            self.home.sessions(),
+        );
         if let Some(home) = home {
             launcher = launcher.homed(home);
         }
@@ -2244,7 +2260,14 @@ fn asked_from_the_store(name: &str, script: &Peer) -> Result<Reading, Failed> {
     let sandbox: Arc<dyn SandboxService> =
         Arc::new(LocalSandbox::new().watching_on(handle.clone()));
     let state = catalog_fetch::state_in(bench.home.path());
-    let launcher = Launcher::new(sandbox, handle, &policy, &consent, &state);
+    let launcher = Launcher::new(
+        sandbox,
+        handle,
+        &policy,
+        &consent,
+        &state,
+        bench.home.sessions(),
+    );
     let control = Control::new().ok_or("a control")?;
     let mut dialect = agent.row().dialect(Mode::Ask, None, None)?;
     let read = runtime.block_on(launcher.account(
@@ -2376,7 +2399,14 @@ fn a_version_the_catalog_no_longer_lists_is_started_with_its_updater_off() -> Re
     let sandbox: Arc<dyn SandboxService> =
         Arc::new(LocalSandbox::new().watching_on(handle.clone()));
     let state = catalog_fetch::state_in(bench.home.path());
-    let launcher = Launcher::new(sandbox, handle, &policy, &consent, &state);
+    let launcher = Launcher::new(
+        sandbox,
+        handle,
+        &policy,
+        &consent,
+        &state,
+        bench.home.sessions(),
+    );
     let control = Control::new().ok_or("a control")?;
     let mut dialect = agent.row().dialect(Mode::Ask, None, None)?;
 
@@ -3606,7 +3636,14 @@ impl Bench {
         let policy = SandboxPolicy::standard(&self.tree.workspace()?)?.with_enabled(confined);
         let state = catalog_fetch::state_in(self.home.path());
         Ok(Steps::new(
-            Launcher::new(sandbox, runtime.handle().clone(), &policy, &consent, &state),
+            Launcher::new(
+                sandbox,
+                runtime.handle().clone(),
+                &policy,
+                &consent,
+                &state,
+                self.home.sessions(),
+            ),
             Arc::new(SandboxEnablement::new(confined, false)),
             &REGISTRY,
             None,
@@ -3646,7 +3683,14 @@ impl Bench {
         consent.keeps_in(self.user());
         let policy = SandboxPolicy::standard(&self.tree.workspace()?)?.with_enabled(confined);
         let state = catalog_fetch::state_in(self.home.path());
-        let launcher = Launcher::new(sandbox, runtime.handle().clone(), &policy, &consent, &state);
+        let launcher = Launcher::new(
+            sandbox,
+            runtime.handle().clone(),
+            &policy,
+            &consent,
+            &state,
+            self.home.sessions(),
+        );
         let lent = Shelf {
             catalog: self.server.source(),
             home: &self.home,
@@ -3985,7 +4029,14 @@ fn said_from_the_store(bench: &Bench, release: &Value) -> Result<String, Failed>
     let sandbox: Arc<dyn SandboxService> =
         Arc::new(LocalSandbox::new().watching_on(handle.clone()));
     let state = catalog_fetch::state_in(bench.home.path());
-    let launcher = Launcher::new(sandbox, handle, &policy, &consent, &state);
+    let launcher = Launcher::new(
+        sandbox,
+        handle,
+        &policy,
+        &consent,
+        &state,
+        bench.home.sessions(),
+    );
     let control = Control::new().ok_or("a control")?;
     let mut dialect = agent.row().dialect(Mode::Ask, None, None)?;
     let read = runtime.block_on(launcher.account(

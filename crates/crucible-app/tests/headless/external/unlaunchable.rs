@@ -95,6 +95,7 @@ fn unlaunched_as(tree: &Tree, agent: Agent) -> Result<Unlaunched, Failed> {
         policy: SandboxPolicy::standard(&tree.workspace()?)?.with_enabled(false),
         consent: consent.clone(),
         state: tree.0.join("state"),
+        sessions: tree.sessions(),
         agent: agent.clone(),
         row,
         launched: Arc::default(),

@@ -205,7 +205,15 @@ async fn the_claude_code_row_held_back_is_refused_by_its_section_and_starts_noth
         .with_enabled(false);
     let sandbox = Arc::new(LocalSandbox::new().watching_on(Handle::current()));
     let state = sample.state();
-    let launcher = Launcher::new(sandbox, Handle::current(), &policy, &consent, &state);
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        sandbox,
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let route = Route::External {
         serves: Serves::Provider("anthropic"),
         instance: "work".into(),

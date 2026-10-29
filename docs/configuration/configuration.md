@@ -274,7 +274,8 @@ what signs in as you:
 - the places that start programs when you sign in (`.config/autostart`,
   `.config/systemd`, `.local/share/systemd`, `.local/share/applications`,
   `Library/LaunchAgents`, `Library/LaunchDaemons` and the Windows Start Menu);
-- crucible's own home.
+- crucible's own home, and the directory it keeps your session logs in, wherever
+  it is kept.
 
 An agent whose entry names one of them, a place within one, or a place that
 contains one, is refused when it is started, naming the entry and the path. The
