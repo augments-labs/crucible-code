@@ -44,7 +44,7 @@ use crate::cli::Fatal;
 use crate::cli::converse::picking::{self, Picked};
 use crate::cli::converse::region::{self, Ended, Moved, step};
 
-use super::login::{Overseeing, named, names, refused, sentence, shown, within};
+use super::login::{Overseeing, REFUSAL, named, names, refused, sentence, shown, within};
 use super::{Terms, say};
 
 #[cfg(test)]
@@ -95,10 +95,6 @@ const CRAMPED: &str =
 /// What an add whose question had no room to stand says.
 const CRAMPED_ADD: &str =
     "! adding needs an answer first; make the window taller and try /agents again";
-
-/// The most of a reason the door, the store or the fetch gave that a line
-/// repeats, in characters: as much as a refusal at the agents door is.
-const REASON: usize = 1024;
 
 /// The most versions, or files that differ, a line names one by one before
 /// saying how many more there are.
@@ -184,6 +180,7 @@ fn carried<T: Terminal>(
     let mut overseer = Overseeing {
         renderer: &mut *renderer,
         style: terms.style(),
+        title: TITLE,
         doing,
         cramped: false,
     };
@@ -467,7 +464,7 @@ fn offered_count(listed: &door::Listed) -> String {
 fn unrefreshed_line(why: &FetchError) -> String {
     format!(
         "the catalog could not be refreshed, so this is what was believed before: {}",
-        within(&why.to_string(), REASON)
+        within(&why.to_string(), REFUSAL)
     )
 }
 
@@ -658,7 +655,7 @@ fn provenance(listed: &door::Listed, verified: Option<&[String]>) -> Vec<String>
         Ok(versions) => format!("Installed, each with a receipt: {}.", counted(versions)),
         Err(why) => format!(
             "The install store could not be read: {}",
-            within(why, REASON)
+            within(why, REFUSAL)
         ),
     });
     if listed.keeps_no_sign_in {
@@ -788,7 +785,10 @@ fn added(outcome: &door::Outcome) -> Option<String> {
         ));
     }
     if let Some(why) = unsmoked {
-        said.push(format!("It was not smoke-tested: {}.", within(why, REASON)));
+        said.push(format!(
+            "It was not smoke-tested: {}.",
+            within(why, REFUSAL)
+        ));
     }
     if let Some(unpruned) = unpruned {
         said.push(format!("Older versions were kept: {}.", sentence(unpruned)));

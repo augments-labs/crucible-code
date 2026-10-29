@@ -1486,10 +1486,20 @@ fn an_agent_added_after_a_yes_downloads_and_names_the_instance_written() {
             opened(&mut window);
             takes(&mut window, "Add");
             window.types_until("", "bytes to download");
+            // The question and the download stand under this panel's title,
+            // never under the one `/login` gives them.
+            let asked = window.picture();
+            assert!(!asked.contains("Log in"), "{case}: {asked}");
             takes(&mut window, "Add");
             // The host sends half the program and holds the rest back, so
             // the download stands where it is until this has seen it.
             window.types_until("", "50%");
+            let downloading = window.picture();
+            assert!(
+                downloading.contains("Agents · downloading goose"),
+                "{case}: {downloading}"
+            );
+            assert!(!downloading.contains("Log in"), "{case}: {downloading}");
             let picture = scrubbed(&timeless(&window.picture()), &case);
             insta::assert_snapshot!(format!("adding_agent_{}_{mode}", size.0), picture);
 
