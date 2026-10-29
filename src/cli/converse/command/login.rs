@@ -764,12 +764,13 @@ impl Working {
     }
 
     /// What a key does: Escape, or a key that ends the session, gives a
-    /// download up, once. A sign-in waits for the agent, which no key here
-    /// stops.
+    /// download up, once, while it still runs. A sign-in waits for the agent,
+    /// which no key here stops, and so does what follows a download's last
+    /// byte.
     fn pressed(&mut self, pressed: &Pressed) -> Moved {
         match pressed {
             Pressed::Escape | Pressed::Key(Key::Interrupt | Key::Eof)
-                if self.progress.is_some() && !self.cancelling =>
+                if self.downloading() && !self.cancelling =>
             {
                 self.cancel.request();
                 self.cancelling = true;
@@ -778,6 +779,17 @@ impl Working {
             Pressed::Resized => Moved::Redraw,
             _ => Moved::Still,
         }
+    }
+
+    /// Whether a download is under way that a cancel can still give up: one
+    /// has begun and not every byte of it has arrived.
+    fn downloading(&self) -> bool {
+        // A download of no known size reports 0 of 0 from its start, so
+        // nothing here can tell its last byte from its first; it reads as
+        // under way until the door is done with it.
+        self.progress
+            .as_ref()
+            .is_some_and(|progress| progress.total() == 0 || progress.done() < progress.total())
     }
 
     /// The panel at `columns` in `room` rows: a rule and a blank row over the
@@ -800,12 +812,10 @@ impl Working {
                 format!("{more} more rows; make the window taller to see them"),
             ));
         }
-        let footer = if self.cancelling {
-            "cancelling…"
-        } else if self.progress.is_some() {
-            "esc cancels the download"
-        } else {
-            "waiting for it to finish"
+        let footer = match (self.downloading(), self.cancelling) {
+            (true, true) => "cancelling…",
+            (true, false) => "esc cancels the download",
+            (false, _) => "waiting for it to finish",
         };
         let mut laid = Vec::with_capacity(body.len().saturating_add(WORKING_CHROME));
         laid.push(Row::new().then(Slot::Accent, glyphs.horizontal().repeat(columns)));

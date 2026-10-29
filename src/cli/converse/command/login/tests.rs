@@ -1425,7 +1425,7 @@ fn every_state_of_the_working_panel_fits_every_window_it_is_given() {
     let states = [
         ("sized", working(Some((512, 2048)), None, false)),
         ("unsized", working(Some((0, 0)), None, false)),
-        ("cancelling", working(Some((2048, 2048)), None, true)),
+        ("cancelling", working(Some((1024, 2048)), None, true)),
         (
             "short link",
             working(None, Some("https://example.com/sign-in"), false),
@@ -1528,6 +1528,39 @@ fn escape_cancels_a_download_once_and_nothing_else_is_cancelled_by_it() {
     let mut signing_in = working(None, Some("https://example.com/sign-in"), false);
     assert_eq!(signing_in.pressed(&Pressed::Escape), Moved::Still);
     assert!(!signing_in.cancel.requested());
+}
+
+#[test]
+fn a_download_every_byte_of_which_has_arrived_is_not_offered_for_cancelling() {
+    let mut finished = working(Some((2048, 2048)), None, false);
+
+    assert_eq!(finished.pressed(&Pressed::Escape), Moved::Still);
+    assert_eq!(
+        finished.pressed(&Pressed::Key(Key::Interrupt)),
+        Moved::Still
+    );
+    assert!(!finished.cancel.requested() && !finished.cancelling);
+    assert_eq!(footer_of(&finished), "waiting for it to finish");
+
+    let cancelled_then_finished = working(Some((2048, 2048)), None, true);
+    assert_eq!(
+        footer_of(&cancelled_then_finished),
+        "waiting for it to finish"
+    );
+
+    let mut sizeless = working(Some((0, 0)), None, false);
+    assert_eq!(footer_of(&sizeless), "esc cancels the download");
+    assert_eq!(sizeless.pressed(&Pressed::Escape), Moved::Redraw);
+    assert!(sizeless.cancel.requested());
+}
+
+/// The last row `panel` draws in a window with room for all of it.
+fn footer_of(panel: &Working) -> String {
+    panel
+        .laid(80, 24, Glyphs::Ascii)
+        .last()
+        .map(Row::text)
+        .unwrap_or_default()
 }
 
 #[test]

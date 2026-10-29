@@ -65,14 +65,15 @@ offers, named as the agent names it. `/login` carries the one you choose out
 itself and then shows the agent screen again, so the agent's row reads as it
 now stands. An install, update or rollback asks first, saying what it will put
 in place and fetch; a download then shows how far it has come, as a share where
-its size is known and in bytes where it is not, and Escape cancels it, changing
-nothing. While a sign-in waits for you, the link the agent prints is shown for
-you to open. The first time you choose a method that takes a key, `/login` asks
-for the key as hidden input; crucible keeps it for that agent and method and
-asks for it no more, and Escape there keeps nothing. A sign-in read as signed
-in means the agent then opened a session. Escape on a question changes nothing
-and goes back; apart from that one yes and what you choose here, nothing is
-written until the agent reads signed in.
+its size is known and in bytes where it is not, and Escape cancels the
+download while it runs, changing nothing; once all of it has arrived, the panel
+waits for the install to finish. While a sign-in waits for you, the link the
+agent prints is shown for you to open. The first time you choose a method that
+takes a key, `/login` asks for the key as hidden input; crucible keeps it for
+that agent and method and asks for it no more, and Escape there keeps nothing.
+A sign-in read as signed in means the agent then opened a session. Escape on a
+question changes nothing and goes back; apart from that one yes and what you
+choose here, nothing is written until the agent reads signed in.
 
 `/logout` lists each agent named under `externalAgents` after the stored
 credentials, as an external agent instance, and `/logout <name>` takes one
