@@ -2840,6 +2840,61 @@ async fn a_sandboxed_catalog_launch_may_write_where_its_entry_keeps_the_sign_in(
     }
 }
 
+/// The smoke test of a release signs nothing in, so it is given no place its
+/// entry keeps a sign-in in, and nothing of the user's home is among the rules
+/// the sandbox is asked for, though the launcher has a home to join them to.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_smoke_test_of_a_release_is_given_no_place_under_the_home() {
+    let sample = Sample::new("launch-state-smoke");
+    let home = homed_in(&sample);
+    let peer = standing(&sample);
+    let unpacked = sample.root().join("unpacked");
+    fs::create_dir_all(&unpacked).expect("a release");
+    let entry = keeping(None, &[".config/goose", ".goose"]);
+    let consent = peer_granted();
+    let policy = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
+    let state = sample.state();
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let sandbox = Policies {
+        local: local(),
+        asked: Arc::clone(&asked),
+    };
+    let launcher = Launcher::new(
+        Arc::new(sandbox),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+    )
+    .homed(&home);
+
+    let smoked = launcher
+        .smoke(
+            &entry,
+            entry.targets.first().expect("a target"),
+            &unpacked,
+            &peer,
+        )
+        .await;
+
+    assert!(smoked.is_err(), "the recording sandbox started a run");
+    let asked = asked.lock().unwrap_or_else(PoisonError::into_inner).clone();
+    let [asked] = asked.as_slice() else {
+        panic!("the sandbox was asked {} times", asked.len())
+    };
+    let beneath: Vec<&Path> = asked
+        .filesystem()
+        .iter()
+        .map(SandboxFilesystemRule::path)
+        .filter(|rule| rule.starts_with(&home))
+        .collect();
+    assert!(beneath.is_empty(), "rules under the home: {beneath:?}");
+    assert!(
+        !home.join(".config/goose").exists() && !home.join(".goose").exists(),
+        "a place the entry keeps its sign-in in was made"
+    );
+}
+
 /// An instance with a profile directory of its own is given that directory
 /// and none of the places its entry keeps the default sign-in in, which
 /// another instance of the agent signs in by; an instance of the same entry
