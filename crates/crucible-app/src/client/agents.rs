@@ -107,10 +107,12 @@
 //! make room: the refusal is not a disconnect. Both are asked again once the
 //! route has its yes, just before the agent is started, so a run that began or
 //! failed to stop while it was asked is not started beside. The agent is
-//! started on the instance's own control, so a second sign-in of it beside the
-//! first is refused as busy, and one whose stop could not be confirmed leaves
-//! the instance, and every instance on its profile, refused as a run not
-//! confirmed stopped is. The runs are known only to the conversation that made
+//! started on the instance's own control, so the first sign-in of an instance
+//! holds it and a second beside the first is refused by that check as a live
+//! run; it is refused as busy only where both passed the check before either
+//! was started. A sign-in whose stop could not be confirmed leaves the
+//! instance, and every instance on its profile, refused as a run not confirmed
+//! stopped is. The runs are known only to the conversation that made
 //! them, through the steps it lent, so a launcher lent with none is refused as
 //! no conversation. A sign-in link the agent prints is told to
 //! [`Watching::link`] as the agent's wire passed it. A method run at a
