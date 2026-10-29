@@ -4343,3 +4343,146 @@ fn a_run_that_begins_while_the_route_is_asked_is_not_signed_in_beside() -> Resul
     assert!(ended, "the run's stop was not confirmed");
     Ok(())
 }
+
+/// A client of `/login` that picks the next of `picks` at each account
+/// question it is put, declining once they run out, and keeps each question.
+struct Connecting {
+    picks: std::collections::VecDeque<&'static str>,
+    put: Vec<Pending>,
+}
+
+impl Front for Connecting {
+    fn put<'a>(
+        &'a mut self,
+        pending: &'a Pending,
+        _shown: Shown<'a>,
+    ) -> BoxFuture<'a, Option<Decision>> {
+        Box::pin(async move {
+            self.put.push(pending.clone());
+            let id = pending.id();
+            Some(match self.picks.pop_front() {
+                Some(choice) => Decision::Picked {
+                    id,
+                    choice: Said::new(choice).ok()?,
+                },
+                None => Decision::Declined { id },
+            })
+        })
+    }
+
+    fn refused(&mut self, _refusal: Refusal) {}
+}
+
+/// A `/login` connect naming no instance, asked at `bench`'s home by a client
+/// claiming every capability that answers as `front` does; and how many
+/// shipping agents its conversation lists before any other.
+fn connecting(
+    bench: &Bench,
+    front: &mut Connecting,
+) -> Result<(crucible_client_api::Outcome, usize), Failed> {
+    let mut conversation = super::conversation(&bench.tree, super::Script::new(Vec::new()), false)?
+        .consenting(Consent::new(Routes::production()));
+    let shipping = conversation.agents().shipping().count();
+    let mut desk = super::Desk::new(&bench.tree, &[])?;
+    desk.settings = super::written(&bench.tree)?;
+    let (workspace, sessions) = (bench.tree.workspace()?, bench.tree.sessions());
+    let at = crucible_app::client::Desk {
+        switching: desk.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads: |_| false,
+        environment: super::unset,
+        notes: |_| Err(ErrorCode::InvalidArgument.into()),
+    };
+    let request = Request::new(
+        Capabilities::every(),
+        Correlation::new(1),
+        Command::Connect { instance: None },
+    );
+    let performed = on_runtime(crucible_app::client::account(
+        &mut conversation,
+        &request,
+        &at,
+        front,
+    ))?;
+    Ok((performed.response(&request).outcome, shipping))
+}
+
+/// The catalog agents a `/login` connect lists after the shipping ones are
+/// the agents the door lists, in the door's order, for the one trust state.
+#[test]
+fn a_login_connect_lists_the_catalog_agents_the_door_lists_in_its_order() -> Result<(), Failed> {
+    use crucible_client_api::{LoginOutcome, Outcome as Answered};
+
+    let bench = Bench::new("agents-door-login-rows")?;
+    bench.server.publish(
+        1,
+        &[("1.0.0", ONE)],
+        &[entry("claude", "9.0.0", ONE), entry("kiro", "2.0.0", TWO)],
+    );
+    let mut listing = answering(&bench.server, None);
+    let (outcome, _) = bench.ask(Command::AgentCatalog, &mut listing, false)?;
+    let Ok(Outcome::Catalog { agents, .. }) = &outcome else {
+        return Err(format!("a listing, not {}", shape(&outcome)).into());
+    };
+    let door: Vec<&str> = agents.iter().map(|listed| listed.agent.as_str()).collect();
+    let mut front = Connecting {
+        picks: std::collections::VecDeque::new(),
+        put: Vec::new(),
+    };
+
+    let (answered, shipping) = connecting(&bench, &mut front)?;
+
+    assert_eq!(answered, Answered::Login(LoginOutcome::Undecided));
+    let Some(Pending::Account { choices, .. }) = front.put.first() else {
+        return Err("no agent was asked for".into());
+    };
+    let listed: Vec<&str> = choices
+        .iter()
+        .skip(shipping)
+        .map(|choice| choice.name.as_str())
+        .collect();
+    let (cancel, rows) = listed.split_last().ok_or("no choice was offered")?;
+    assert_eq!(*cancel, "Cancel");
+    assert_eq!(rows, door.as_slice());
+    assert_eq!(door, ["goose", "kiro"]);
+    Ok(())
+}
+
+/// The move a `/login` connect ends on, sent to the door as its command, is
+/// one the door puts to the client: the install of the release the connect
+/// named for an Antigravity not installed, which a no leaves undone.
+#[test]
+fn the_door_puts_the_install_a_login_connect_ended_on() -> Result<(), Failed> {
+    use crucible_client_api::{AgentAction, LoginOutcome, Outcome as Answered};
+
+    let bench = Bench::new("agents-door-login-install")?;
+    let mut front = Connecting {
+        picks: ["Antigravity", "Install"].into(),
+        put: Vec::new(),
+    };
+    let (answered, _) = connecting(&bench, &mut front)?;
+    let Answered::Login(LoginOutcome::AgentChosen { action }) = answered else {
+        return Err("the connect ended on no move".into());
+    };
+    assert!(
+        matches!(&action, AgentAction::Install { agent, .. } if agent.as_str() == "antigravity"),
+        "the connect ended on a move other than Antigravity's install"
+    );
+    let mut declining = answering(&bench.server, None);
+
+    let (outcome, _) = bench.ask(action.command(), &mut declining, false)?;
+
+    assert!(
+        matches!(outcome, Ok(Outcome::Undecided)),
+        "{}",
+        shape(&outcome)
+    );
+    let put: Vec<bool> = declining
+        .put
+        .iter()
+        .map(|(pending, _)| matches!(pending, Pending::Install { .. }))
+        .collect();
+    assert_eq!(put, [true]);
+    Ok(())
+}
