@@ -30,7 +30,7 @@ use crucible_app::agent_download::DownloadError;
 use crucible_app::backends::{AgentRow, CatalogRow, REGISTRY, Registry};
 use crucible_app::catalog_fetch::{self, Source};
 use crucible_app::client::agents::{
-    AgentsError, How, Outcome, Shelf, Signed, Typed, Watching, keep_key, run,
+    AgentsError, How, Outcome, Shelf, Signed, Typed, Watching, keep_key, run, sign_in_methods,
 };
 use crucible_app::client::{Front, Shown};
 use crucible_app::content_use::{Consent, Routes};
@@ -3414,6 +3414,67 @@ fn antigravity_offers_its_four_methods_and_a_business_sign_in_names_what_it_need
         shape(&elsewhere)
     );
     assert!(credentials(&bench).contains("\"antigravity@gemini-api-key\""));
+    Ok(())
+}
+
+/// The methods the door signs a configured instance in by are named in the
+/// order its agent's row lists them, read as its sign-in reads them:
+/// Antigravity's four, and a catalog agent's as its release offers them. An
+/// instance the configuration does not name is refused.
+#[test]
+fn the_methods_an_instance_signs_in_by_are_named_in_the_order_its_agent_offers_them()
+-> Result<(), Failed> {
+    let bench = Bench::new("agents-door-sign-in-methods")?;
+    bench
+        .server
+        .catalog(1, &[signing_in("goose", ONE)], &json!([]))?;
+    let document = json!({"externalAgents": {
+        "work": {
+            "driver": "catalog",
+            "agent": "goose",
+            "executable": bench.program("1.0.0").to_string_lossy(),
+        },
+        "google": {
+            "driver": "antigravity",
+            "executable": bench.program("1.0.0").to_string_lossy(),
+            "profileDir": bench.home.path().join("agents").join("antigravity").to_string_lossy(),
+        },
+    }});
+    fs::write(bench.user(), serde_json::to_vec_pretty(&document)?)?;
+    // Asked first, so the catalog is fetched and offers the agent.
+    let (listed, _) = bench.ask(
+        Command::AgentCatalog,
+        &mut answering(&bench.server, None),
+        false,
+    )?;
+    assert!(
+        matches!(listed, Ok(Outcome::Catalog { .. })),
+        "{}",
+        shape(&listed)
+    );
+
+    let named = |instance: &str| -> Result<Vec<String>, AgentsError> {
+        Ok(sign_in_methods(&bench.home, instance)?
+            .into_iter()
+            .map(String::from)
+            .collect())
+    };
+
+    assert_eq!(
+        named("google")?,
+        [
+            "oauth-personal",
+            "oauth-business",
+            "gemini-api-key",
+            "agent-platform",
+        ]
+    );
+    assert_eq!(named("work")?, ["api-key", "browser", "terminal"]);
+    let unnamed = named("else");
+    assert!(
+        matches!(unnamed, Err(AgentsError::NoInstance(_))),
+        "an instance the configuration does not name was not refused as one"
+    );
     Ok(())
 }
 

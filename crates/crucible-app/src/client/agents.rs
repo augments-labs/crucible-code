@@ -1576,6 +1576,35 @@ pub fn keep_key(home: &Home, instance: &str, method: &str, key: Typed) -> Result
     Ok(())
 }
 
+/// The ids of the methods the configured `instance` in `home` signs in by, in
+/// the order its agent's row lists them: the methods a sign-in through this
+/// door finds the one it is asked for among.
+///
+/// Nothing is fetched: the methods are those the trust state offers now, for
+/// the release the instance runs or else the newest.
+///
+/// # Errors
+///
+/// [`AgentsError`] where the configuration cannot be read or names no such
+/// instance, or its agent is one this door signs nothing in for or the trust
+/// state offers no release of.
+pub fn sign_in_methods(home: &Home, instance: &str) -> Result<Vec<Box<str>>, AgentsError> {
+    let settings = Settings::read_home(home)?;
+    let instances = settings.external_agents();
+    let configured = instances
+        .iter()
+        .find(|one| one.name() == instance)
+        .ok_or_else(|| AgentsError::NoInstance(quoted(instance).into()))?;
+    let trust = Trust::load(&catalog_fetch::state_in(home.path()), SystemTime::now());
+    let store = Store::new(home.path().join("programs"));
+    let (row, _) = signing_row(&trust, &store, configured)?;
+    Ok(row
+        .methods()
+        .into_iter()
+        .map(|offered| offered.id)
+        .collect())
+}
+
 /// The Google Cloud project and location the configured `instance`, named
 /// `name`, bills a business sign-in by `method` to, where its entry names
 /// both and the location names a host its agent can be let reach.
@@ -1597,15 +1626,34 @@ fn billed(instance: &ExternalAgent, name: &str, method: &str) -> Result<Cloud, A
 }
 
 /// The row the configured `instance` runs as, its agent's name, and the
-/// method among those it signs in by whose id is `method`: a catalog agent's
-/// row made from the entry `trust` offers for the release it runs in `store`,
-/// or else the newest offered, and Antigravity's built in.
+/// method among those it signs in by whose id is `method`, the row found by
+/// [`signing_row`].
 fn signing(
     trust: &Trust,
     store: &Store,
     instance: &ExternalAgent,
     method: &str,
 ) -> Result<(AgentRow, AgentKey, AuthMethod), AgentsError> {
+    let (row, agent) = signing_row(trust, store, instance)?;
+    let found = row
+        .methods()
+        .into_iter()
+        .find(|offered| *offered.id == *method)
+        .ok_or_else(|| AgentsError::NoMethod {
+            agent: agent.clone(),
+            method: quoted(method).into(),
+        })?;
+    Ok((row, agent, found))
+}
+
+/// The row the configured `instance` runs as and its agent's name: a catalog
+/// agent's row made from the entry `trust` offers for the release it runs in
+/// `store`, or else the newest offered, and Antigravity's built in.
+fn signing_row(
+    trust: &Trust,
+    store: &Store,
+    instance: &ExternalAgent,
+) -> Result<(AgentRow, AgentKey), AgentsError> {
     let row = match instance.driver() {
         Driver::Catalog => {
             let key = instance
@@ -1633,15 +1681,7 @@ fn signing(
     };
     let agent = AgentKey::new(row.named())
         .map_err(|_| AgentsError::Unsigned(quoted(instance.name()).into()))?;
-    let found = row
-        .methods()
-        .into_iter()
-        .find(|offered| *offered.id == *method)
-        .ok_or_else(|| AgentsError::NoMethod {
-            agent: agent.clone(),
-            method: quoted(method).into(),
-        })?;
-    Ok((row, agent, found))
+    Ok((row, agent))
 }
 
 /// What downloading `offer` takes, in bytes, refused where it or what it
