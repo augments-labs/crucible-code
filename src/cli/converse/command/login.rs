@@ -517,7 +517,10 @@ pub(super) fn ended(performed: &Performed) -> Option<(String, bool)> {
         return Some((astray(performed), false));
     };
     Some(match account {
-        Account::Undecided | Account::Unconnected => return None,
+        // Nobody went on with it. A move on an agent is offered only under the
+        // install capability, which `/login` does not claim, since it cannot
+        // yet carry one out.
+        Account::Undecided | Account::Unconnected | Account::AgentChosen(_) => return None,
         Account::Connected => (CONNECTED.to_owned(), true),
         Account::Moved(instance) => (moved_onto(instance), true),
         Account::Unmoved(reason) => (format!("{UNMOVED} ({reason})"), true),
