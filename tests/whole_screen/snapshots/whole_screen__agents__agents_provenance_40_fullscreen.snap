@@ -1,0 +1,45 @@
+---
+source: tests/whole_screen/agents.rs
+expression: picture
+---
+40x40 cursor 39,0 scrolled 0
+|CRUCIBLE                                |
+|/…/workspace                            |
+|                                        |
+|› /agents                               |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|────────────────────────────────────────|
+|                                        |
+|Agents · goose                          |
+|                                        |
+|Offered: 1.0.0.                         |
+|Licence: Apache-2.0.                    |
+|Terms: https://example.com/goose/terms  |
+|Caution: Read the goose terms first.    |
+|Not installed.                          |
+|A sign-in made under the sandbox is not |
+|kept: its entry names no place the agent|
+|keeps one in.                           |
+|                                        |
+|› Add                                   |
+|  Install goose 1.0.0 and add an instan…|
+|                                        |
+|  Go back                               |
+|  Choose another agent.                 |
+|                                        |
+|esc to go back                          |

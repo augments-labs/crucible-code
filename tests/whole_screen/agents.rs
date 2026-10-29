@@ -1369,3 +1369,200 @@ fn a_yes_on_an_agent_panel_lets_the_agent_go_on() {
         assert!(asked.contains("3. No "), "{case}: {asked}");
     }
 }
+
+/// The catalog agent the `/agents` cases browse and add, under a key that is
+/// no built-in driver word.
+const OFFERED: &str = "goose";
+
+/// Takes a window on a host whose catalog offers [`OFFERED`] at every size in
+/// both screen modes, `reaching` walking each from `/agents` opened to the
+/// screen captured, which is named `name`.
+fn browsed(name: &str, reaching: impl Fn(&mut Watched)) {
+    for native in [false, true] {
+        for size in SIZES {
+            let mode = if native { "native" } else { "fullscreen" };
+            let case = format!("agents-{name}-{}-{mode}", size.0);
+            let published = Published::offering(OFFERED);
+            let vendor = Vendor::answering("Not asked.");
+            let mut window = Watched::capturing_agents_published(
+                &case,
+                (size, native),
+                &vendor,
+                None,
+                &published,
+            );
+            window.types_until("/agents\r", "1 of 1 offered");
+            reaching(&mut window);
+            let picture = scrubbed(&timeless(&window.picture()), &case);
+            insta::assert_snapshot!(format!("agents_{name}_{}_{mode}", size.0), picture);
+        }
+    }
+}
+
+/// The agent's own screen, reached by its name typed into the search line,
+/// never by how far down the list it stands.
+fn opened(window: &mut Watched) {
+    window.types_until(OFFERED, "Search  goose");
+    window.types_until("\r", "esc to go back");
+}
+
+/// What the user file holds of the instance `name`, with the case named.
+/// Leaves the list an add stood back up: the first escape clears the search
+/// the add was made from, the second closes the panel, and the line the add
+/// left in the transcript is then on the screen.
+fn left(window: &mut Watched, told: &str) {
+    window.types_until("\x1b", "an agent, or a licence");
+    window.types_until("\x1b", told);
+}
+
+fn instance(window: &Watched, name: &str, case: &str) -> serde_json::Value {
+    let file =
+        std::fs::read_to_string(window.home().join("config.json")).expect("the configuration file");
+    let written: serde_json::Value =
+        serde_json::from_str(&file).expect("a configuration in its format");
+    written
+        .pointer(&format!("/externalAgents/{name}"))
+        .cloned()
+        .unwrap_or_else(|| panic!("{case}: no instance {name} in {written}"))
+}
+
+#[test]
+fn the_agents_the_catalog_offers_are_listed() {
+    browsed("listed", |window| {
+        let picture = window.picture();
+        assert!(picture.contains("goose 1.0.0"), "{picture}");
+        assert!(picture.contains("Apache-2.0"), "{picture}");
+    });
+}
+
+#[test]
+fn typing_narrows_the_agents_to_those_whose_name_or_licence_holds_it() {
+    browsed("narrowed", |window| {
+        window.types_until("apache", "1 of 1 offered");
+        let picture = window.picture();
+        assert!(picture.contains("goose 1.0.0"), "{picture}");
+        window.types_until("\x1b", "an agent, or a licence");
+        window.types_until("mit", "0 of 1 offered");
+        let picture = window.picture();
+        assert!(picture.contains("no agent matches \"mit\""), "{picture}");
+        assert!(!picture.contains("goose 1.0.0"), "{picture}");
+    });
+}
+
+#[test]
+fn an_agent_taken_from_the_list_shows_where_it_comes_from() {
+    browsed("provenance", |window| {
+        opened(window);
+        let picture = window.picture();
+        for told in [
+            "Offered: 1.0.0.",
+            "Terms: https://example.com/goose/terms",
+            "Caution: Read the goose terms first.",
+            "Not installed.",
+        ] {
+            assert!(picture.contains(told), "{told}: {picture}");
+        }
+        assert!(picture.contains("› Add"), "{picture}");
+        assert!(!picture.contains("Verify"), "{picture}");
+    });
+}
+
+#[test]
+fn an_agent_added_after_a_yes_downloads_and_names_the_instance_written() {
+    for native in [false, true] {
+        for size in SIZES {
+            let mode = if native { "native" } else { "fullscreen" };
+            let case = format!("agents-adding-{}-{mode}", size.0);
+            let published = Published::offering(OFFERED);
+            let vendor = Vendor::answering("Not asked.");
+            let mut window = Watched::capturing_agents_published(
+                &case,
+                (size, native),
+                &vendor,
+                None,
+                &published,
+            );
+            window.types_until("/agents\r", "1 of 1 offered");
+            opened(&mut window);
+            takes(&mut window, "Add");
+            window.types_until("", "bytes to download");
+            takes(&mut window, "Add");
+            // The host sends half the program and holds the rest back, so
+            // the download stands where it is until this has seen it.
+            window.types_until("", "50%");
+            let picture = scrubbed(&timeless(&window.picture()), &case);
+            insta::assert_snapshot!(format!("agents_adding_{}_{mode}", size.0), picture);
+
+            published.release();
+            window.types_until("", "installed 1.0");
+            let picture = scrubbed(&timeless(&window.picture()), &case);
+            insta::assert_snapshot!(format!("agents_added_{}_{mode}", size.0), picture);
+            left(&mut window, "Added goose 1.0.0");
+
+            let written = instance(&window, "goose", &case);
+            let mut fields: Vec<&str> = written
+                .as_object()
+                .map(|fields| fields.keys().map(String::as_str).collect())
+                .unwrap_or_default();
+            fields.sort_unstable();
+            assert_eq!(
+                fields,
+                ["agent", "driver", "executable"],
+                "{case}: {written}"
+            );
+            assert_eq!(written.pointer("/agent"), Some(&serde_json::json!("goose")));
+        }
+    }
+}
+
+#[test]
+fn a_second_add_of_the_same_agent_writes_the_next_free_instance() {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let case = format!("agents-added-twice-{mode}");
+        let published = Published::offering(OFFERED);
+        published.release();
+        let vendor = Vendor::answering("Not asked.");
+        let mut window = Watched::capturing_agents_published(
+            &case,
+            (SIZES[0], native),
+            &vendor,
+            None,
+            &published,
+        );
+        window.types_until("/agents\r", "1 of 1 offered");
+        opened(&mut window);
+        takes(&mut window, "Add");
+        window.types_until("", "bytes to download");
+        takes(&mut window, "Add");
+        window.types_until("", "installed 1.0");
+
+        window.types_until("\r", "esc to go back");
+        let screen = window.picture();
+        assert!(
+            screen.contains("Installed, each with a receipt: 1.0.0."),
+            "{case}: {screen}"
+        );
+        assert!(screen.contains("› Add"), "{case}: {screen}");
+        assert!(screen.contains("Verify"), "{case}: {screen}");
+        takes(&mut window, "Add");
+        window.types_until("", "Adds the instance goose-2 to your configuration");
+        let asked = window.picture();
+        assert!(
+            asked.contains("already installed, so nothing is downloaded"),
+            "{case}: {asked}"
+        );
+        takes(&mut window, "Add");
+        window.types_until("", "installed 1.0");
+        left(&mut window, "as the instance \"goose-2\".");
+
+        let first = instance(&window, "goose", &case);
+        let second = instance(&window, "goose-2", &case);
+        assert_eq!(
+            first.pointer("/executable"),
+            second.pointer("/executable"),
+            "{case}"
+        );
+        assert_eq!(second.pointer("/agent"), Some(&serde_json::json!("goose")));
+    }
+}

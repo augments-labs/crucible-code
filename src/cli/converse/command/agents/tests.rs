@@ -135,7 +135,7 @@ fn a_query_that_keeps_nothing_says_so_and_enter_takes_nothing() {
         assert!(!row.chars().any(char::is_control), "{row:?}");
     }
     let rows = rows.join("\n");
-    assert!(rows.contains("no agent or licence holds \"zzz"), "{rows}");
+    assert!(rows.contains("no agent matches \"zzz"), "{rows}");
     assert_eq!(listing.pressed(Pressed::Key(Key::Enter)), Moved::Still);
     assert!(listing.marked().is_none());
 }
@@ -254,7 +254,7 @@ fn an_add_names_the_instance_written_which_is_the_last_the_door_gives() {
 
     assert_eq!(
         said,
-        "Added goose 1.0.0 as the instance \"goose-2\". Also on 1.0.0: \"goose\". \
+        "Added goose 1.0.0 as the instance \"goose-2\". \"goose\" moved onto 1.0.0. \
          \"mine\\u{1b}\" changed meanwhile and were left as they are."
     );
 }

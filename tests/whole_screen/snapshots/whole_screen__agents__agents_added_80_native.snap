@@ -1,0 +1,45 @@
+---
+source: tests/whole_screen/agents.rs
+expression: picture
+---
+80x40 cursor 19,15 scrollback 0
+|╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
+|│                                  │ Recent sessions                           │|
+|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
+|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No earlier session for this workspace     │|
+|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
+|│                                  │ ───────────────────────────────────────── │|
+|│  /…/workspace                    │                                           │|
+|│                                  │ Tips                                      │|
+|│                                  │                                           │|
+|│                                  │ · /          opens the command list       │|
+|│                                  │ · \ enter    adds a line without sending  │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|› /agents                                                                       |
+|⎿ Added goose 1.0.0 as the instance "goose". It was not smoke-tested: the       |
+|  sandbox is off, and a smoke test runs only inside it.                         |
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ Search  goose                                                                │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+| Agents · 1 of 1 offered                                                        |
+|                                                                                |
+|╭──────────────────────────────╮ ╭─────────────────────────────────────────────╮|
+|│ › goose 1.0.0                │ │ Licence: Apache-2.0.                        │|
+|│   Apache-2.0 · installed 1.0 │ │ Terms: https://example.com/goose/terms      │|
+|│                              │ │ Caution: Read the goose terms first.        │|
+|│                              │ │ Installed, each with a receipt: 1.0.0.      │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │ ────────────────────────────────────────────│|
+|│                              │ │ 1 version offered                           │|
+|│                              │ │ Enter to open · Esc to cancel               │|
+|╰──────────────────────────────╯ ╰─────────────────────────────────────────────╯|
+|                                                                                |
+| ↑↓ to walk · enter to open · type to search · esc to cancel                    |
+|                                                                                |
+|                                                                                |
