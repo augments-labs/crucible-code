@@ -3337,21 +3337,41 @@ impl Steps {
         let Some(control) = Control::new() else {
             return unreadable("no control for the agent's program");
         };
-        let policy = self.policy.clone().with_enabled(self.enablement.enabled());
+        let policy = self.policy();
+        self.launcher(&policy)
+            .account(&chosen, &control, dialect.as_mut(), step, &|_| {})
+            .await
+            .unwrap_or_else(|refused| unreadable(&refused.to_string()))
+    }
+
+    /// What `with` returns, lent for as long as it runs the launcher these
+    /// steps start an agent's account step with: over the conversation's own
+    /// sandbox as it is enabled now, its content-use answers, trust state and
+    /// session logs, and the home its catalog agents are given. The agents
+    /// door smoke-tests a switch through it, beside these steps.
+    pub fn lending<R>(&self, with: impl FnOnce(&Launcher<'_>) -> R) -> R {
+        let policy = self.policy();
+        with(&self.launcher(&policy))
+    }
+
+    /// The conversation's policy, as it is enabled now.
+    fn policy(&self) -> SandboxPolicy {
+        self.policy.clone().with_enabled(self.enablement.enabled())
+    }
+
+    /// The launcher these steps start agents with, under `policy`.
+    fn launcher<'a>(&'a self, policy: &'a SandboxPolicy) -> Launcher<'a> {
         Launcher {
             home: self.home.clone(),
             ..Launcher::new(
                 Arc::clone(&self.service),
                 self.runtime.clone(),
-                &policy,
+                policy,
                 &self.consent,
                 &self.state,
                 &self.sessions,
             )
         }
-        .account(&chosen, &control, dialect.as_mut(), step, &|_| {})
-        .await
-        .unwrap_or_else(|refused| unreadable(&refused.to_string()))
     }
 }
 
