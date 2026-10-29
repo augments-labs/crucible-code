@@ -14,7 +14,7 @@ use crucible_external_harnesses::fake_peer::scripts::claude;
 use crucible_external_harnesses::fake_peer::{self, Reply, Script};
 
 use crate::vendor::Vendor;
-use crate::watched::{self, Watched};
+use crate::watched::{self, Published, Watched};
 use crate::{scrubbed, takes, timeless};
 
 /// The widths every screen is captured at, each with rows enough for the
@@ -187,8 +187,51 @@ fn an_agent_whose_program_is_not_installed_says_so() {
             agents(window);
             takes(window, "Antigravity");
             window.types_until("", "Not installed");
+            // `/login` carries an install out, so it is offered, first.
+            assert!(
+                window.picture().contains("› Install"),
+                "{}",
+                window.picture()
+            );
         },
     );
+}
+
+#[test]
+fn an_agent_installed_after_a_yes_shows_its_download_then_the_agents_again() {
+    for native in [false, true] {
+        for size in SIZES {
+            let mode = if native { "native" } else { "fullscreen" };
+            let case = format!("agent-installing-{}-{mode}", size.0);
+            let published = Published::start();
+            let vendor = Vendor::answering("Not asked.");
+            let script = Script::of(Vec::new());
+            let mut window = Watched::capturing_agents_published(
+                &case,
+                (size, native),
+                &vendor,
+                Some(&script),
+                &published,
+            );
+            agents(&mut window);
+            takes(&mut window, "Antigravity");
+            window.types_until("", "Not installed");
+            takes(&mut window, "Install");
+            window.types_until("", "Read the terms first");
+            takes(&mut window, "Install");
+            // The host sends half the program and holds the rest back, so
+            // the download stands where it is until this has seen it.
+            window.types_until("", "50%");
+            let picture = scrubbed(&timeless(&window.picture()), &case);
+            insta::assert_snapshot!(format!("agent_downloading_{}_{mode}", size.0), picture);
+
+            published.release();
+            window.types_until("", "installed");
+            window.types_until("", "Which installed agent");
+            let picture = scrubbed(&timeless(&window.picture()), &case);
+            insta::assert_snapshot!(format!("agent_installed_{}_{mode}", size.0), picture);
+        }
+    }
 }
 
 #[test]
