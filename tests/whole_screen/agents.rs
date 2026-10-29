@@ -235,6 +235,38 @@ fn an_agent_installed_after_a_yes_shows_its_download_then_the_agents_again() {
 }
 
 #[test]
+fn escape_while_an_install_downloads_cancels_it_and_the_agents_stand_again() {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let case = format!("agent-install-cancelled-{mode}");
+        let published = Published::start();
+        let vendor = Vendor::answering("Not asked.");
+        let script = Script::of(Vec::new());
+        let mut window = Watched::capturing_agents_published(
+            &case,
+            (SIZES[0], native),
+            &vendor,
+            Some(&script),
+            &published,
+        );
+        agents(&mut window);
+        takes(&mut window, "Antigravity");
+        window.types_until("", "Not installed");
+        takes(&mut window, "Install");
+        window.types_until("", "Read the terms first");
+        takes(&mut window, "Install");
+        // The host holds the second half back and is never told to send it,
+        // so the download is still running when Escape is pressed.
+        window.types_until("", "50%");
+        window.types_until("\x1b", "download cancelled; nothing was changed");
+        window.types_until("", "Which installed agent");
+        // Nothing was put in place: the agent's row reads as it did before.
+        takes(&mut window, "Antigravity");
+        window.types_until("", "Not installed");
+    }
+}
+
+#[test]
 fn an_agent_whose_program_cannot_be_run_says_so() {
     captured(
         &Capture {
