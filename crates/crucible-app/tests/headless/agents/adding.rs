@@ -291,3 +291,68 @@ fn a_standing_yes_to_updates_still_asks_before_an_add() -> Result<(), Failed> {
     assert_eq!(fs::read(bench.user())?, before);
     Ok(())
 }
+
+#[test]
+fn an_add_of_a_newer_version_moves_the_instance_onto_it_beside_the_one_it_writes()
+-> Result<(), Failed> {
+    let bench = Bench::new("agents-door-add-moving")?;
+    bench.server.publish(1, &[("1.0.0", ONE)], &[]);
+    bench.configure(&bench.program("1.0.0"), &json!({}))?;
+    let mut front = answering(&bench.server, Some("Install"));
+    let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+    assert!(
+        matches!(installed, Ok(Outcome::Moved { .. })),
+        "{}",
+        shape(&installed)
+    );
+    bench
+        .server
+        .publish(2, &[("2.0.0", TWO), ("1.0.0", ONE)], &[]);
+    let before = fs::read_to_string(bench.user())?;
+    let two = bench.program("2.0.0");
+    let onto = two.to_string_lossy();
+    // The two edits the add makes and nothing else: `work`'s executable
+    // spelled as its writer spells it, then the instance spliced in.
+    let from = Value::from(&*bench.program("1.0.0").to_string_lossy()).to_string();
+    assert_eq!(before.matches(&from).count(), 1, "work names 1.0.0 once");
+    let moved = before.replace(&from, &Value::from(&*onto).to_string());
+    let (expected, _) = crucible_config::adding(&moved, "user", &AgentKey::new("goose")?, &onto)?;
+    let mut front = answering(&bench.server, Some("Add"));
+
+    let (outcome, _) = bench.ask(add("2.0.0")?, &mut front, false)?;
+
+    let Ok(Outcome::Moved {
+        how: How::Added,
+        instances,
+        left,
+        downloaded: true,
+        ..
+    }) = &outcome
+    else {
+        return Err(shape(&outcome).into());
+    };
+    let instances: Vec<&str> = instances.iter().map(|instance| &**instance).collect();
+    assert_eq!(instances, ["work", "goose"], "{}", shape(&outcome));
+    assert!(left.is_empty(), "{}", shape(&outcome));
+    assert!(
+        says(&front, "Moves work from 1.0.0 onto 2.0.0.")?,
+        "the question names the move"
+    );
+    assert_eq!(
+        fs::canonicalize(bench.executable()?)?,
+        fs::canonicalize(&two)?,
+        "work starts the 2.0.0 program"
+    );
+    assert_eq!(
+        instance(&bench, "goose")?,
+        written(&two),
+        "the added instance"
+    );
+    assert_eq!(
+        fs::read_to_string(bench.user())?,
+        expected,
+        "only the two edits"
+    );
+    assert_eq!(fs::read(&two)?, TWO, "the 2.0.0 program");
+    Ok(())
+}
