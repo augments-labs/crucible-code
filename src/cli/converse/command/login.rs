@@ -72,14 +72,29 @@
 //! none answers a question its reader never saw. Only that row is not given
 //! a line to type: a connect is answered in panels, and a window with no
 //! room for one does not offer it.
+//!
+//! That connect claims install, so where an agent's program is missing or
+//! out of date, or one of its sign-ins is chosen, it hands back the move,
+//! which this carries out at the application's agents door: an install, an
+//! update or a rollback, under a panel saying how far the download has got,
+//! which Escape gives up; or a sign-in by the method chosen, with the link
+//! the agent prints shown while it waits. A method that takes a key the agent
+//! has none kept for asks for it in the key box, crucible keeps it, and the
+//! sign-in is asked for once more. What came of it is said in a line, a
+//! refusal with every instance name it gives quoted, and the agent screen
+//! stands again with the agent's new state.
 
 use std::borrow::Cow;
 use std::time::Duration;
 
 use crucible_app::Conversation;
+use crucible_app::agent_download::DownloadError;
 use crucible_app::client::accounts::{
     CONNECT_UNSAVED, CONNECTED, DISCONNECTED, HOLD_UNKEPT, NOT_CONFIRMED_STOPPED, REMOVAL_UNSAVED,
     REMOVED, STILL_REFERENCED, THIS_RUN_ONLY, UNMOVED, moved_onto,
+};
+use crucible_app::client::agents::{
+    self as door, AgentsError, How, KEY_BYTES, Signed, Typed, keep_key,
 };
 use crucible_app::client::{Account, Performed, snapshot};
 use crucible_app::content_use;
@@ -89,18 +104,22 @@ use crucible_app::providers::{
 use crucible_app::subscription::Route;
 use crucible_app::switching::LoggedIn;
 use crucible_auth::{AuthError, Kind, LoginAttempt, LoginUpdate, Stopped};
-use crucible_client_api::{Agents, Command, LogoutOutcome, Outcome};
+use crucible_client_api::{
+    AgentAction, Agents, Capabilities, Command, InstallProgress, LogoutOutcome, Outcome,
+};
+use crucible_runtime::Cancel;
 use crucible_tui::{
-    Caret, Glyphs, Heading, Key, Offered, Panel, Pressed, Renderer, Row, Slot, Terminal,
-    characters, clip, fold, pressed,
+    Bar, Caret, Fill, Glyphs, Heading, Key, Offered, Panel, Part, Pressed, Renderer, Row, Slot,
+    Terminal, characters, clip, fold, pressed,
 };
 
 use crate::cli::Fatal;
-use crate::cli::client::{Question, Reply, astray};
+use crate::cli::client::{Carrying, Overseer, Question, Reply, Watched, astray};
 use crate::cli::converse::picking::{self, Picked};
+use crate::cli::converse::region::{self, Ended, Moved};
 use crate::cli::converse::secret::{self, Asked};
+use crate::cli::converse::typing;
 use crate::cli::converse::warning::{self, Answer, Put};
-use crate::cli::converse::{region, typing};
 use crate::cli::draw::flattened;
 use crate::cli::style::Style;
 
@@ -185,6 +204,26 @@ const LEFT: &str = "cancelled, nothing signed in";
 /// What a connect whose question had no room to stand says.
 const CRAMPED_CONNECT: &str =
     "! connecting needs an answer first; make the window taller and try /login again";
+
+/// What `/login`'s agent connect claims: every capability, install among
+/// them, since this is where the move on an agent it may then be offered is
+/// carried out.
+const CARRIED: Capabilities = Capabilities::every();
+
+/// How often the panel over a move being carried out looks again at what
+/// the agents door has said, with no key pressed.
+const BEAT: Duration = Duration::from_millis(250);
+
+/// What a download given up by Escape says: a cancel leaves every file as it
+/// was, and the user asked for it, so it is no refusal.
+const GIVEN_UP: &str = "download cancelled; nothing was changed";
+
+/// What a key refused before anything was kept says. Fixed words: nothing
+/// about the key is said.
+const UNKEPT: &str = "! that key is longer than a key can be, so nothing was kept";
+
+/// How many characters of a name a refusal quotes, before an ellipsis.
+const NAMED: usize = 256;
 
 /// What the box's absence leaves behind, when the window had no room for it.
 ///
@@ -465,40 +504,526 @@ fn walked<T: Terminal>(walk: &mut Walk<'_, T>, rows: &Rows) -> Result<Closed, Fa
 /// which reaches the provider the agent signs in to, each of its questions
 /// drawn here. Back where it ended unconnected, so the first panel stands
 /// again.
+///
+/// A move on an agent it hands back is carried out, and the connect is asked
+/// for again, so the agent screen stands with the agent's new state.
 fn connected<T: Terminal>(walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
     let style = walk.terms.style();
-    let renderer = &mut *walk.renderer;
-    let mut cramped = false;
-    let performed = connecting(walk.terms, walk.conversation, |question| {
-        let replied = answered(renderer, style, question)?;
-        cramped |= replied.is_none();
-        Ok::<_, Fatal>(replied)
-    })?;
-    if cramped {
-        say(walk.renderer, CRAMPED_CONNECT)?;
+    loop {
+        let renderer = &mut *walk.renderer;
+        let mut cramped = false;
+        let performed = connecting(walk.terms, walk.conversation, |question| {
+            let replied = answered(renderer, style, question)?;
+            cramped |= replied.is_none();
+            Ok::<_, Fatal>(replied)
+        })?;
+        if cramped {
+            say(walk.renderer, CRAMPED_CONNECT)?;
+            return Ok(Closed::Done);
+        }
+
+        if let Performed::Account(Account::AgentChosen(action)) = &performed {
+            match carried(walk, action)? {
+                Some(closed) => return Ok(closed),
+                None => continue,
+            }
+        }
+        let Some((line, connected)) = ended(&performed) else {
+            return Ok(Closed::Back);
+        };
+        say(walk.renderer, &line)?;
+        if connected {
+            executing(walk.renderer, walk.conversation, style)?;
+        }
         return Ok(Closed::Done);
     }
-
-    let Some((line, connected)) = ended(&performed) else {
-        return Ok(Closed::Back);
-    };
-    say(walk.renderer, &line)?;
-    if connected {
-        executing(walk.renderer, walk.conversation, style)?;
-    }
-    Ok(Closed::Done)
 }
 
 /// The agent connect the third row asks for, each question it stops on
-/// answered by `answer`. Like every connect the terminal sends, it claims
-/// every capability but install, and is put the questions it was before moves
-/// on an agent were offered.
+/// answered by `answer`. Unlike every other connect the terminal sends, it
+/// claims install as well, which [`CARRIED`] says, so it can be handed back a
+/// move on an agent for [`carried`] to carry out.
 fn connecting<E>(
     terms: &Terms,
     conversation: &mut Conversation,
     answer: impl FnMut(&Question) -> Result<Option<Reply>, E>,
 ) -> Result<Performed, E> {
-    terms.operate(conversation, Command::Connect { instance: None }, answer)
+    terms.operate_claiming(
+        conversation,
+        Command::Connect { instance: None },
+        CARRIED,
+        answer,
+    )
+}
+
+/// Carries out `action`, the move on an agent the connect handed back, at
+/// the agents door: nothing where the agent screen stands again, else how the
+/// walk closed.
+///
+/// A sign-in by a method that takes a key, refused because none is kept,
+/// asks for the key in the key box, has crucible keep it, and is asked for
+/// once more; a second refusal is said, not asked about again. Escape at the
+/// box keeps nothing.
+fn carried<T: Terminal>(
+    walk: &mut Walk<'_, T>,
+    action: &AgentAction,
+) -> Result<Option<Closed>, Fatal> {
+    let Some(mut carried) = carrying(walk, action.command())? else {
+        say(walk.renderer, CRAMPED_CONNECT)?;
+        return Ok(Some(Closed::Done));
+    };
+    if let (Err(AgentsError::Unstored { .. }), AgentAction::SignIn { instance, method }) =
+        (&carried, action)
+    {
+        let shown = flattened(instance.as_str());
+        let key = match secret::ask(walk.renderer, walk.terms.style(), &shown, None, BACK)? {
+            Asked::Key(key) => key,
+            Asked::Left => {
+                say(walk.renderer, LEFT)?;
+                return Ok(None);
+            }
+            Asked::Cramped => {
+                say(walk.renderer, CRAMPED)?;
+                return Ok(Some(Closed::Done));
+            }
+        };
+        let Some(key) = kept_key(&key) else {
+            say(walk.renderer, UNKEPT)?;
+            return Ok(None);
+        };
+        let kept = crucible_config::Home::find(&|name| std::env::var_os(name))
+            .map_err(AgentsError::Config)
+            .and_then(|home| keep_key(&home, instance.as_str(), method.as_str(), key));
+        if let Err(refusal) = kept {
+            say(walk.renderer, &refused(&refusal))?;
+            return Ok(None);
+        }
+        let Some(again) = carrying(walk, action.command())? else {
+            say(walk.renderer, CRAMPED_CONNECT)?;
+            return Ok(Some(Closed::Done));
+        };
+        carried = again;
+    }
+
+    let line = match &carried {
+        Ok(outcome) => carried_out(outcome),
+        Err(refusal) => Some(refused(refusal)),
+    };
+    if let Some(line) = line {
+        say(walk.renderer, &line)?;
+    }
+    Ok(None)
+}
+
+/// `command` sent to the agents door, each question it stops on answered as
+/// the connect's are and the panel saying how far it has got stood between
+/// them: nothing where a question had no room to stand.
+fn carrying<T: Terminal>(
+    walk: &mut Walk<'_, T>,
+    command: Command,
+) -> Result<Option<Result<door::Outcome, AgentsError>>, Fatal> {
+    let mut overseer = Overseeing {
+        renderer: &mut *walk.renderer,
+        style: walk.terms.style(),
+        cramped: false,
+    };
+    let carried = walk
+        .terms
+        .carry(walk.conversation, command, &mut overseer)?;
+    Ok((!overseer.cramped).then_some(carried))
+}
+
+/// The terminal standing over a move at the agents door: it answers the
+/// door's questions as the connect's are, and stands [`Working`] between them.
+struct Overseeing<'a, T: Terminal> {
+    renderer: &'a mut Renderer<T>,
+    style: Style,
+    /// Whether a question had no room to stand.
+    cramped: bool,
+}
+
+impl<T: Terminal> Overseer for Overseeing<'_, T> {
+    type Error = Fatal;
+
+    fn answer(&mut self, question: &Question) -> Result<Option<Reply>, Fatal> {
+        let replied = answered(self.renderer, self.style, question)?;
+        self.cramped |= replied.is_none();
+        Ok(replied)
+    }
+
+    fn stand(&mut self, carrying: &mut Carrying<'_>) -> Result<(), Fatal> {
+        watched(self.renderer, self.style, carrying)
+    }
+}
+
+/// Stands the panel saying what the agents door is doing until it stops to
+/// ask something or is done.
+///
+/// Where the window has no room for the panel, the door goes on, and a beat
+/// is waited for a key: Escape still gives a download up.
+fn watched<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    style: Style,
+    carrying: &mut Carrying<'_>,
+) -> Result<(), Fatal> {
+    if !carrying.working() {
+        return Ok(());
+    }
+    let glyphs = style.glyphs();
+    let mut working = Working::new(carrying.watched(), carrying.cancel().clone());
+    let ended = region::stand_watching(
+        renderer,
+        |_| style,
+        &mut working,
+        |working: &mut Working, columns, room| (working.laid(columns, room, glyphs), None),
+        |pressed, working: &mut Working| working.pressed(&pressed),
+        BEAT,
+        |working: &mut Working| {
+            if !carrying.working() {
+                return Moved::Took;
+            }
+            if working.told(carrying.watched()) {
+                Moved::Redraw
+            } else {
+                Moved::Still
+            }
+        },
+    )?;
+    if ended == Ended::Cramped
+        && renderer.waiting(BEAT)?
+        && let Some(pressed) = renderer.took(pressed()?)?
+    {
+        working.pressed(&pressed);
+    }
+    Ok(())
+}
+
+/// The panel standing over a move being carried out: how far a download has
+/// got, or the link a sign-in waits on, and whether the download is being
+/// given up.
+#[derive(Debug)]
+struct Working {
+    /// How far a download has got, where one has begun.
+    progress: Option<InstallProgress>,
+    /// The link the agent printed last, and whether the door cut it.
+    link: Option<(String, bool)>,
+    /// What gives the download up.
+    cancel: Cancel,
+    /// Whether it has been asked to.
+    cancelling: bool,
+}
+
+impl Working {
+    /// The panel over what the door has said so far, given up through
+    /// `cancel`, and being given up where it already was.
+    fn new(watched: Watched, cancel: Cancel) -> Self {
+        Self {
+            progress: watched.progress,
+            link: watched.link,
+            cancelling: cancel.requested(),
+            cancel,
+        }
+    }
+
+    /// Takes what the door has said now, and says whether the picture changed.
+    fn told(&mut self, watched: Watched) -> bool {
+        let changed = self.progress != watched.progress || self.link != watched.link;
+        self.progress = watched.progress;
+        self.link = watched.link;
+        changed
+    }
+
+    /// What a key does: Escape, or a key that ends the session, gives a
+    /// download up, once. A sign-in waits for the agent, which no key here
+    /// stops.
+    fn pressed(&mut self, pressed: &Pressed) -> Moved {
+        match pressed {
+            Pressed::Escape | Pressed::Key(Key::Interrupt | Key::Eof)
+                if self.progress.is_some() && !self.cancelling =>
+            {
+                self.cancel.request();
+                self.cancelling = true;
+                Moved::Redraw
+            }
+            Pressed::Resized => Moved::Redraw,
+            _ => Moved::Still,
+        }
+    }
+
+    /// The panel at `columns` in `room` rows: a rule and a blank row over the
+    /// body, a blank row and the footer under it, every row cut at the width.
+    /// A body taller than its room keeps its first rows and a row saying how
+    /// many more there are; nothing where not even one row and that one fit.
+    fn laid(&self, columns: usize, room: usize, glyphs: Glyphs) -> Vec<Row> {
+        let Some(left) = room.checked_sub(WORKING_CHROME).filter(|left| *left > 0) else {
+            return Vec::new();
+        };
+        let mut body = self.body(columns, glyphs);
+        if body.len() > left {
+            let Some(fit) = left.checked_sub(1).filter(|fit| *fit > 0) else {
+                return Vec::new();
+            };
+            let more = body.len().saturating_sub(fit);
+            body.truncate(fit);
+            body.push(Row::new().then(
+                Slot::Quiet,
+                format!("{more} more rows; make the window taller to see them"),
+            ));
+        }
+        let footer = if self.cancelling {
+            "cancelling…"
+        } else if self.progress.is_some() {
+            "esc cancels the download"
+        } else {
+            "waiting for the agent"
+        };
+        let mut laid = Vec::with_capacity(body.len().saturating_add(WORKING_CHROME));
+        laid.push(Row::new().then(Slot::Accent, glyphs.horizontal().repeat(columns)));
+        laid.push(Row::new());
+        laid.extend(body);
+        laid.push(Row::new());
+        laid.push(Row::new().then(Slot::Quiet, footer));
+        laid.iter().map(|row| row.clipped(columns)).collect()
+    }
+
+    /// What the panel says, at `columns`: a download's agent and its bar, or
+    /// its bytes where its size is not known; else the link, folded across as
+    /// many rows as it takes; else that the agent is at work.
+    fn body(&self, columns: usize, glyphs: Glyphs) -> Vec<Row> {
+        if let Some(progress) = &self.progress {
+            let lead = Row::new().then(
+                Slot::Strong,
+                format!("{TITLE} {} downloading {}", glyphs.dot(), progress.agent()),
+            );
+            let (done, total) = (progress.done(), progress.total());
+            if total == 0 {
+                return vec![lead, Row::plain(format!("{done} bytes so far"))];
+            }
+            let share = u128::from(done).saturating_mul(100) / u128::from(total);
+            let figure = format!(" {share:>3}%");
+            let cells = columns.saturating_sub(crucible_tui::columns(&figure));
+            let parts = [
+                Part {
+                    slot: Slot::Accent,
+                    fill: Fill::Solid,
+                    size: done,
+                },
+                Part {
+                    slot: Slot::Quiet,
+                    fill: Fill::Shaded,
+                    size: total.saturating_sub(done),
+                },
+            ];
+            let bar = Bar { parts: &parts }
+                .row(cells, glyphs)
+                .then(Slot::Plain, figure);
+            return vec![lead, bar];
+        }
+        let lead = Row::new().then(Slot::Strong, format!("{TITLE} {} agent", glyphs.dot()));
+        let Some((link, cut)) = &self.link else {
+            return vec![lead, Row::new().then(Slot::Quiet, "the agent is at work…")];
+        };
+        let link = crucible_types::shown::escaped(link);
+        let mut body = vec![lead, Row::plain("Open this link to sign in:")];
+        body.extend(
+            fold(&link, columns.max(1))
+                .into_iter()
+                .map(|part| Row::new().then(Slot::Accent, part)),
+        );
+        if *cut {
+            body.push(Row::new().then(
+                Slot::Quiet,
+                "the agent printed more of this link than crucible keeps",
+            ));
+        }
+        body
+    }
+}
+
+/// The rows the working panel draws around its body: the rule and a blank
+/// row over it, a blank row and the footer under it.
+const WORKING_CHROME: usize = 4;
+
+/// The key typed for a method that takes one, as the agents door keeps it:
+/// nothing where it is empty or longer than [`KEY_BYTES`], refused before
+/// anything is sent. Nothing about the key is said either way.
+fn kept_key(key: &str) -> Option<Typed> {
+    let trimmed = key.trim();
+    if trimmed.is_empty() || trimmed.len() > KEY_BYTES {
+        return None;
+    }
+    Some(Typed::new(trimmed.to_owned()))
+}
+
+/// `name`, a name the configuration or the catalog gave, as a line here
+/// quotes it: every control and format character written as its escape and
+/// cut at [`NAMED`] characters, so it can neither draw a line of its own nor
+/// push what is said beside it out of sight.
+fn named(name: &str) -> String {
+    format!("\"{}\"", shown(name))
+}
+
+/// `text` the catalog, the configuration or an agent gave, escaped and cut as
+/// [`named`] quotes it, unquoted.
+fn shown(text: &str) -> String {
+    let escaped = crucible_types::shown::escaped(text);
+    if escaped.chars().count() <= NAMED {
+        return escaped;
+    }
+    let mut cut: String = escaped.chars().take(NAMED).collect();
+    cut.push('…');
+    cut
+}
+
+/// Each of `names`, quoted, one after another.
+fn names(names: &[Box<str>]) -> String {
+    names
+        .iter()
+        .map(|name| named(name))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The line a refusal at the agents door is said in.
+///
+/// The door's own sentences name an instance as the configuration spells it,
+/// so every refusal that names one is written out here with it quoted.
+/// Written out by hand, every variant named, so a new one decides whether it
+/// names an instance; one that names none is said as the door says it.
+fn refused(refusal: &AgentsError) -> String {
+    let said = match refusal {
+        AgentsError::InUse { agent, instances } => format!(
+            "{agent} is still the program of {}, so it is not removed",
+            names(instances)
+        ),
+        AgentsError::NoInstance(instance) => {
+            format!("the configuration names no instance {}", named(instance))
+        }
+        AgentsError::Unsigned(instance) => format!(
+            "{} signs in by no method crucible carries out; sign it in at its own command",
+            named(instance)
+        ),
+        AgentsError::Unclouded { method, instance } => format!(
+            "signing in by {} needs the Google Cloud project and location it is billed to; set \
+             cloudProject and cloudLocation under externalAgents.{} in the configuration file in \
+             your home directory, so nothing was started",
+            shown(method),
+            named(instance)
+        ),
+        AgentsError::Unlocated(instance) => format!(
+            "externalAgents.{}.cloudLocation names a Google Cloud location too long for the name \
+             of the host it is reached at, so the agent could not reach it and nothing was started",
+            named(instance)
+        ),
+        AgentsError::Unstopped(instances) => format!(
+            "run not confirmed stopped: {}. An earlier run of this agent could not be confirmed \
+             to have stopped, so no other is started beside it; restart crucible",
+            names(instances)
+        ),
+        AgentsError::Running(instances) => format!(
+            "live run: {}. The runs of these instances must end first, as disconnecting an \
+             instance ends its run; nothing was started",
+            names(instances)
+        ),
+        AgentsError::Download(DownloadError::Cancelled) => return GIVEN_UP.to_owned(),
+        AgentsError::Config(_)
+        | AgentsError::Unoffered { .. }
+        | AgentsError::Unlisted(_)
+        | AgentsError::NotInstalled(_)
+        | AgentsError::NoPrevious(_)
+        | AgentsError::Unsupported(_)
+        | AgentsError::Program(_)
+        | AgentsError::Kept { .. }
+        | AgentsError::TooLarge
+        | AgentsError::Store(_)
+        | AgentsError::Download(_)
+        | AgentsError::Unpacked(_)
+        | AgentsError::Remember(_)
+        | AgentsError::Smoke { .. }
+        | AgentsError::NoMethod { .. }
+        | AgentsError::Conversation(_)
+        | AgentsError::Unnamed(_)
+        | AgentsError::Unstored { .. }
+        | AgentsError::Keyless(_)
+        | AgentsError::Typed
+        | AgentsError::Credentials(_)
+        | AgentsError::Unprofiled(_)
+        | AgentsError::Unlaunched(_)
+        | AgentsError::HoldUnkept(_)
+        | AgentsError::Unverified(_) => refusal.to_string(),
+    };
+    format!("! {}", flattened(said))
+}
+
+/// The line what the agents door did is said in: nothing where nobody went
+/// on with it.
+///
+/// A sign-in says only that the agent opened a session by the method: the
+/// agent read as signed in on that start, and nothing more is known about the
+/// account it signed in to.
+fn carried_out(outcome: &door::Outcome) -> Option<String> {
+    let said = match outcome {
+        door::Outcome::Refused(refusal) => format!("! {refusal}"),
+        door::Outcome::Undecided => return None,
+        door::Outcome::Moved {
+            agent,
+            how,
+            version,
+            left,
+            unsmoked,
+            unpruned,
+            ..
+        } => {
+            let version = shown(version);
+            let mut said = vec![match how {
+                How::Installed => format!("{agent} {version} installed"),
+                How::Updated => format!("{agent} updated to {version}"),
+                How::RolledBack => format!("{agent} rolled back to {version}"),
+            }];
+            if !left.is_empty() {
+                said.push(format!(
+                    "{} changed meanwhile and were left as they are",
+                    names(left)
+                ));
+            }
+            if let Some(why) = unsmoked {
+                said.push(format!("it was not smoke-tested: {why}"));
+            }
+            if let Some(unpruned) = unpruned {
+                said.push(format!("older versions were kept: {}", refused(unpruned)));
+            }
+            said.join("; ")
+        }
+        door::Outcome::Current { agent, version } => {
+            format!("{agent} is already on {}", shown(version))
+        }
+        door::Outcome::Removed { agent, .. } => format!("{agent} removed"),
+        door::Outcome::SignedIn {
+            instance,
+            method,
+            by,
+        } => {
+            let with = match by {
+                Signed::Agent => "",
+                Signed::Kept => ", with the key crucible keeps",
+            };
+            format!(
+                "the agent of {} opened a session by {}{with}",
+                named(instance),
+                shown(method)
+            )
+        }
+        door::Outcome::Kept { instance, method } => format!(
+            "the key for {} to sign in by {} is kept; the agent is given it when it next starts",
+            named(instance),
+            shown(method)
+        ),
+        door::Outcome::Verified { agent, .. } => format!("{agent} checked against its receipts"),
+        door::Outcome::Catalog { agents, .. } => {
+            format!("the catalog offers {} agents", agents.len())
+        }
+    };
+    Some(flattened(said))
 }
 
 /// The line an account operation ends on, and whether a provider is now
@@ -509,8 +1034,8 @@ pub(super) fn ended(performed: &Performed) -> Option<(String, bool)> {
     };
     Some(match account {
         // Nobody went on with it. A move on an agent is offered only under the
-        // install capability, which no connect the terminal sends claims,
-        // since it cannot yet carry one out.
+        // install capability, which `/login`'s agent connect alone claims, and
+        // it carries the move out before this is asked.
         Account::Undecided | Account::Unconnected | Account::AgentChosen(_) => return None,
         Account::Connected => (CONNECTED.to_owned(), true),
         Account::Moved(instance) => (moved_onto(instance), true),

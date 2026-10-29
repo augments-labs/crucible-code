@@ -1345,7 +1345,10 @@ fn a_fact_an_agent_gave_reaches_the_panel_with_none_of_its_control_bytes() {
 }
 
 #[test]
-fn the_agent_connect_claims_every_capability_but_the_one_whose_moves_it_cannot_carry_out() {
+fn the_login_agent_connect_claims_install_and_the_connect_logout_sends_withholds_it() {
+    // `/login` carries a move on an agent out, so its connect claims install;
+    // `/logout`'s Connect cannot, so the connect it sends claims every other
+    // capability and is never offered one.
     let sample = Sample::new("login-connect-claims");
     let mut terms = in_force(&sample);
     let (client, claims) = crate::cli::client::Client::noting_claims();
@@ -1358,23 +1361,170 @@ fn the_agent_connect_claims_every_capability_but_the_one_whose_moves_it_cannot_c
         Ok::<_, Fatal>(None)
     })
     .expect("nobody answering fails nothing");
+    let elsewhere = terms
+        .operate(
+            &mut conversation,
+            Command::Connect { instance: None },
+            |_| {
+                asked += 1;
+                Ok::<_, Fatal>(None)
+            },
+        )
+        .expect("nobody answering fails nothing");
 
-    assert!(
-        matches!(performed, Performed::Account(Account::Unconnected)),
-        "{:?}",
-        performed.outcome().kind()
-    );
-    assert_eq!(asked, 1, "the agent question was put");
+    for performed in [&performed, &elsewhere] {
+        assert!(
+            matches!(performed, Performed::Account(Account::Unconnected)),
+            "{:?}",
+            performed.outcome().kind()
+        );
+    }
+    assert_eq!(asked, 2, "the agent question was put to each");
     let taken = claims.taken();
-    let [(command, claimed)] = taken.as_slice() else {
-        panic!("one request answered, not {}", taken.len());
+    let [(login, carried), (logout, withheld)] = taken.as_slice() else {
+        panic!("two requests answered, not {}", taken.len());
     };
-    assert_eq!(*command, Command::Connect { instance: None });
-    assert!(!claimed.has(Capability::Install), "{claimed:?}");
-    assert!(claimed.has(Capability::Account), "{claimed:?}");
+    assert_eq!(*login, Command::Connect { instance: None });
+    assert_eq!(*logout, Command::Connect { instance: None });
+    assert_eq!(*carried, Capabilities::every(), "/login claims install too");
+    assert!(!withheld.has(Capability::Install), "{withheld:?}");
     assert_eq!(
-        *claimed,
+        *withheld,
         Capabilities::every().without(Capability::Install),
         "every other capability is still claimed"
     );
+}
+
+/// What the agents door was doing, as the panel standing over it draws it:
+/// `done` of `total` bytes of a download, where it is downloading, the link a
+/// sign-in waits on, where it shows one, and whether a cancel was asked for.
+fn working(download: Option<(u64, u64)>, link: Option<&str>, cancelling: bool) -> Working {
+    let agent = crucible_client_api::Name::new("antigravity").expect("a name the contract takes");
+    Working {
+        progress: download.and_then(|(done, total)| {
+            crucible_client_api::InstallProgress::new(agent.clone(), done, total)
+        }),
+        link: link.map(|link| (link.to_owned(), false)),
+        cancel: Cancel::new(),
+        cancelling,
+    }
+}
+
+#[test]
+fn every_state_of_the_working_panel_fits_every_window_it_is_given() {
+    // The panel's own fit sweep, since it is laid out here and not among the
+    // components the crate's sweep walks: downloading with a size and without,
+    // being cancelled, showing a sign-in link short and long, and working with
+    // nothing to show, each at every width and room it decides anything at,
+    // in either glyph set.
+    let long = format!(
+        "https://accounts.example.com/o/oauth2/auth?{}",
+        "state=x&".repeat(60)
+    );
+    let states = [
+        ("sized", working(Some((512, 2048)), None, false)),
+        ("unsized", working(Some((0, 0)), None, false)),
+        ("cancelling", working(Some((2048, 2048)), None, true)),
+        (
+            "short link",
+            working(None, Some("https://example.com/sign-in"), false),
+        ),
+        ("long link", working(None, Some(&long), false)),
+        ("waiting", working(None, None, false)),
+    ];
+    for (state, panel) in &states {
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            for columns in 1..=200 {
+                for room in 0..=24 {
+                    let laid = panel.laid(columns, room, glyphs);
+                    let at = format!("{state} {glyphs:?} {columns}x{room}");
+                    assert!(laid.len() <= room, "{at}: {} rows", laid.len());
+                    for row in &laid {
+                        assert!(row.columns() <= columns, "{at}: {:?}", row.text());
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_download_shows_its_share_only_where_its_size_is_known() {
+    let text = |panel: &Working| -> String {
+        panel
+            .laid(80, 24, Glyphs::Unicode)
+            .iter()
+            .map(|row| row.text() + "\n")
+            .collect()
+    };
+
+    let sized = text(&working(Some((512, 2048)), None, false));
+    // A size of 0 is one the door does not know, and counts nothing done.
+    let unknown = text(&working(Some((0, 0)), None, false));
+
+    assert!(sized.contains("25%"), "{sized}");
+    assert!(sized.contains("antigravity"), "{sized}");
+    assert!(!unknown.contains('%'), "{unknown}");
+    assert!(unknown.contains("0 bytes so far"), "{unknown}");
+}
+
+#[test]
+fn escape_cancels_a_download_once_and_nothing_else_is_cancelled_by_it() {
+    let mut downloading = working(Some((512, 2048)), None, false);
+    assert_eq!(downloading.pressed(&Pressed::Escape), Moved::Redraw);
+    assert!(downloading.cancel.requested() && downloading.cancelling);
+    assert_eq!(downloading.pressed(&Pressed::Escape), Moved::Still);
+
+    let mut signing_in = working(None, Some("https://example.com/sign-in"), false);
+    assert_eq!(signing_in.pressed(&Pressed::Escape), Moved::Still);
+    assert!(!signing_in.cancel.requested());
+}
+
+#[test]
+fn a_refusal_quotes_every_instance_name_it_gives_with_its_controls_escaped() {
+    use crucible_app::client::agents::AgentsError;
+
+    let hostile = || Box::<str>::from("space\u{1b}[2J");
+    for refusal in [
+        AgentsError::Running(vec![hostile()]),
+        AgentsError::Unstopped(vec![hostile()]),
+        AgentsError::Unlocated(hostile()),
+        AgentsError::Unclouded {
+            method: "vertex".into(),
+            instance: hostile(),
+        },
+    ] {
+        let said = refused(&refusal);
+
+        assert!(said.contains("\"space\\u{1b}[2J\""), "{said:?}");
+        assert!(!said.chars().any(char::is_control), "{said:?}");
+    }
+}
+
+#[test]
+fn a_key_with_nothing_in_it_or_longer_than_the_door_keeps_is_refused_before_anything() {
+    use crucible_app::client::agents::KEY_BYTES;
+
+    assert!(kept_key("").is_none());
+    assert!(kept_key(" \t ").is_none());
+    assert!(kept_key(&"k".repeat(KEY_BYTES + 1)).is_none());
+    assert!(kept_key(&"k".repeat(KEY_BYTES)).is_some());
+}
+
+#[test]
+fn a_sign_in_reads_as_the_agent_opening_a_session_and_promises_nothing_more() {
+    use crucible_app::client::agents::{Outcome as Door, Signed};
+
+    for by in [Signed::Agent, Signed::Kept] {
+        let said = carried_out(&Door::SignedIn {
+            instance: "space".into(),
+            method: "google".into(),
+            by,
+        })
+        .expect("a sign-in says what came of it");
+
+        assert!(said.contains("opened a session"), "{said}");
+        assert!(!said.contains("signed in to"), "{said}");
+        assert!(said.contains("\"space\""), "{said}");
+    }
 }

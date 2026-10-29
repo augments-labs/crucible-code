@@ -814,8 +814,10 @@ fn every_prompt_the_box_holds_is_one_the_contract_carries() {
 #[test]
 fn a_connect_claims_every_capability_but_install_whichever_way_it_names_its_agent() {
     // A client that claims install can be offered a move on an agent in place
-    // of the connect, and the terminal cannot yet carry one out. The request
-    // decides, so no command that sends a connect can claim it back.
+    // of the connect, and only `/login`'s agent connect carries one out: it
+    // claims install itself, beside the carrying out. A connect asked for any
+    // other way, as `/logout`'s is, withholds it whichever way it names its
+    // agent.
     let client = Client::new();
     let named = Name::new("space").expect("a name the contract takes");
 
@@ -858,4 +860,103 @@ fn a_request_that_is_not_a_connect_claims_every_capability() {
             "{command:?}"
         );
     }
+}
+
+#[test]
+fn a_connect_claiming_install_claims_it_and_nothing_else_moves() {
+    let client = Client::new();
+
+    let claimed = client
+        .claiming(Command::Connect { instance: None }, Capabilities::every())
+        .capabilities();
+    let asked = client
+        .asking(Command::Connect { instance: None })
+        .capabilities();
+
+    assert_eq!(claimed, Capabilities::every());
+    assert_eq!(asked, Capabilities::every().without(Capability::Install));
+}
+
+#[test]
+fn an_install_is_put_to_the_terminal_as_its_question_and_answered_with_the_choice_taken() {
+    use crucible_app::client::Confirmation;
+    use crucible_client_api::{Choice, Said, Text};
+
+    let runtime = crate::cli::fake::runtime();
+    let (to, mut from) = tokio::sync::mpsc::channel(1);
+    let mut front = super::Answering {
+        to,
+        client: Client::new(),
+    };
+    let confirmation = Confirmation {
+        asks: "Install antigravity 1.3.0?".to_owned(),
+        facts: vec!["It is 9 bytes.".to_owned()],
+        choices: vec![
+            ("Install".to_owned(), "Fetch it and use it".to_owned()),
+            ("Leave it".to_owned(), "Change nothing".to_owned()),
+        ],
+    };
+    let choice = |name: &str, recommended| Choice {
+        name: Text::cut(name),
+        says: Text::cut(""),
+        recommended,
+    };
+    let pending = Pending::Install {
+        id: PendingId::new(7),
+        asks: Text::cut(&confirmation.asks),
+        facts: Vec::new(),
+        choices: vec![choice("Install", true), choice("Leave it", false)],
+    };
+
+    let decided = std::thread::scope(|scope| {
+        let front = &mut front;
+        let (pending, shown) = (&pending, Shown::Install(&confirmation));
+        let answering = scope.spawn(move || runtime.block_on(front.put(pending, shown)));
+        let put = from
+            .blocking_recv()
+            .expect("the install was put to the terminal");
+        let super::Question::Account(asked) = &put.question else {
+            panic!("the install was put as another question");
+        };
+        assert_eq!(asked.asks, confirmation.asks);
+        assert_eq!(asked.choices, confirmation.choices);
+        put.reply
+            .send(Some(super::Reply::Took(0)))
+            .expect("the front waits for its answer");
+        answering.join().expect("the front answered")
+    });
+
+    assert_eq!(
+        decided,
+        Some(Decision::Picked {
+            id: PendingId::new(7),
+            choice: Said::new("Install").expect("a choice the contract takes"),
+        })
+    );
+}
+
+#[test]
+fn a_refusal_beside_a_run_is_busy_and_no_other_refusal_is() {
+    use crucible_app::client::agents::AgentsError;
+
+    let run = || vec![Box::<str>::from("space")];
+    assert_eq!(super::coded(&AgentsError::Running(run())), ErrorCode::Busy);
+    assert_eq!(
+        super::coded(&AgentsError::Unstopped(run())),
+        ErrorCode::Busy
+    );
+    for other in [
+        AgentsError::NoInstance("space".into()),
+        AgentsError::Typed,
+        AgentsError::TooLarge,
+        AgentsError::Conversation("agent".into()),
+        AgentsError::Unlocated("space".into()),
+    ] {
+        assert_ne!(super::coded(&other), ErrorCode::Busy, "{other:?}");
+    }
+    assert_eq!(
+        super::coded(&AgentsError::Typed),
+        ErrorCode::InvalidArgument
+    );
+    assert_eq!(super::coded(&AgentsError::TooLarge), ErrorCode::Failed);
 }
