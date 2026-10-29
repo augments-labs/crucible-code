@@ -115,16 +115,18 @@
 //! or contains one on the list of places never made writable, the home
 //! crucible keeps its state in, or the directory it keeps its session logs in,
 //! however the entry spells its way there: it is judged by its path
-//! components, as it is joined and again where its links lead, ignoring case
-//! where the file system does and, on Windows, the dots and spaces that end a
-//! name, and the refusal names the instance and the path the entry gave. That
-//! list is a floor beneath the signature of the catalog and not every place
-//! that runs as the user, so a place must also begin with a hidden name,
-//! `Library` or `AppData`, as it is written and where its links lead, which
-//! keeps the user's own files out of reach whether or not the list names them.
-//! Where its links lead must also lie within the home, so that a link from an
-//! allowed name, such as a dotfile manager's, cannot lead the sandbox to a
-//! place nobody listed. A built-in agent has no catalog entry, and the smoke
+//! components, as it is joined and again where its links lead, ignoring ASCII
+//! case on every platform and, on Windows, the dots and spaces that end a
+//! name, so that no spelling a file system might take for a listed place is
+//! allowed, and a part outside ASCII is refused, as written or where its links
+//! lead, since no such comparison of it is made. The refusal names the
+//! instance and the path the entry gave. That list is a floor beneath the
+//! signature of the catalog and not every place that runs as the user, so a
+//! place must also begin with a hidden name, `Library` or `AppData`, as it is
+//! written and where its links lead, which keeps the user's own files out of
+//! reach whether or not the list names them. Where its links lead must also
+//! lie within the home, so that a link from an allowed name, such as a dotfile
+//! manager's, cannot lead the sandbox to a place nobody listed. A built-in agent has no catalog entry, and the smoke
 //! test of a release signs nothing in, so neither is given any.
 //!
 //! Every start, a turn's or an account step's, is given each key the user
@@ -1208,6 +1210,9 @@ const STARTS_EDITORS: &str = "an editor, a terminal multiplexer or a line reader
 /// Why a place that does not begin with a name only programs use is refused.
 const AMONG_YOUR_FILES: &str = "is not under a name that only programs use, a hidden one, Library or \
      AppData, as it is written and where its links lead, so it is among the files you keep yourself";
+/// Why a place with a part outside ASCII is refused.
+const NOT_ASCII: &str = "has a part that is not ASCII, which a file system may treat as the name of a place \
+     that is never made writable, so it cannot be judged";
 /// Why the stores of what signs in as the user are listed.
 const SIGNS_IN: &str = "it holds what signs in as you, which an agent could read and use";
 
@@ -1776,18 +1781,32 @@ fn ended(name: &OsStr, trims: bool) -> &[u8] {
 }
 
 /// Whether `path` is `base` or lies beneath it, compared by components and
-/// not by how their text begins.
+/// not by how their text begins, as the file system compares their names.
 fn is_beneath(path: &Path, base: &Path) -> bool {
+    is_beneath_as(path, base, cfg!(any(windows, target_os = "macos")))
+}
+
+/// Whether `path` is `base` or lies beneath it, compared by components, with
+/// case ignored where `folds`, and on Windows without the dots and spaces
+/// that end a name.
+fn is_beneath_as(path: &Path, base: &Path, folds: bool) -> bool {
     let mut path = path.components();
     base.components().all(|wanted| {
         path.next()
-            .is_some_and(|found| same_name(found.as_os_str(), wanted.as_os_str()))
+            .is_some_and(|found| alike(found.as_os_str(), wanted.as_os_str(), folds, cfg!(windows)))
     })
 }
 
-/// How `path` lies against `place`, which reaches as `reach` says.
+/// How `path` lies against `place`, which reaches as `reach` says. Case is
+/// ignored whatever the file system, since a place that cannot be written must
+/// not be named by a spelling that only some file system takes for it, and a
+/// file system that tells the spellings apart is refused for nothing.
 fn overlap(path: &Path, place: &Path, reach: Reach) -> Option<Overlap> {
-    match (is_beneath(path, place), is_beneath(place, path), reach) {
+    match (
+        is_beneath_as(path, place, true),
+        is_beneath_as(place, path, true),
+        reach,
+    ) {
         (true, true, _) => Some(Overlap::Is),
         (true, false, Reach::Beneath) => Some(Overlap::Within),
         (false, true, _) => Some(Overlap::Contains),
@@ -1887,13 +1906,17 @@ impl Agent {
     /// `home` altogether. That list is a floor and not every place that runs
     /// as the user, so none is kept whose first part, as it is written or
     /// where its links lead within `home`, is not hidden, `Library` or
-    /// `AppData`: the files the user keeps are never a sign-in place.
+    /// `AppData`: the files the user keeps are never a sign-in place. Names
+    /// are compared as the most forgiving file system would, ignoring ASCII
+    /// case on every platform, and none with a part outside ASCII is kept,
+    /// as written or where its links lead, since a file system may fold such a
+    /// part into the name of a place on the list.
     ///
     /// # Errors
     ///
     /// [`Unlaunched::StatePath`] for a path that does, [`Unlaunched::StateName`]
-    /// for one that begins with another name, else [`Unlaunched::Policy`] for
-    /// one that cannot be followed.
+    /// for one that begins with another name or has a part outside ASCII, else
+    /// [`Unlaunched::Policy`] for one that cannot be followed.
     fn state_roots(
         &self,
         home: &Path,
@@ -1931,6 +1954,9 @@ impl Agent {
                 let Component::Normal(name) = component else {
                     return Err(refused(path, Overlap::Outside, "your home", STAYS_HOME));
                 };
+                if !name.as_encoded_bytes().is_ascii() {
+                    return Err(unnamed(path, NOT_ASCII));
+                }
                 first.get_or_insert(name);
                 joined.push(name);
             }
@@ -1961,9 +1987,16 @@ impl Agent {
             // The list is a floor, so a place among the files the user keeps
             // is refused whether or not it is named: by its first part as it
             // is written, and by the first part of where it leads.
-            let led_to = real.components().nth(inside.components().count());
+            let led_to: Vec<&OsStr> = real
+                .components()
+                .skip(inside.components().count())
+                .map(Component::as_os_str)
+                .collect();
+            if !led_to.iter().all(|name| name.as_encoded_bytes().is_ascii()) {
+                return Err(unnamed(path, NOT_ASCII));
+            }
             let programs = |name: Option<&OsStr>| name.is_some_and(is_programs_name);
-            if !programs(first) || !programs(led_to.as_ref().map(|part| part.as_os_str())) {
+            if !programs(first) || !programs(led_to.first().copied()) {
                 return Err(unnamed(path, AMONG_YOUR_FILES));
             }
             if !roots.contains(&real) {

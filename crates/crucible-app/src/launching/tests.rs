@@ -2621,22 +2621,107 @@ fn a_link_from_a_hidden_name_into_the_files_the_user_keeps_is_refused() {
     assert_eq!(library.ok(), Some(vec![home.join("Library/goose")]));
 }
 
-/// A listed place is refused whatever the case an entry spells it in, where
-/// the filesystem does not tell the two apart.
-#[cfg(any(windows, target_os = "macos"))]
+/// A listed place is refused whatever the case an entry spells it in, on every
+/// platform, since a file system that does not tell the two apart would take
+/// the spelling for the place, and one that does is refused for nothing.
 #[test]
-fn a_listed_place_is_refused_whatever_its_case_where_the_filesystem_ignores_it() {
+fn a_listed_place_is_refused_whatever_its_case() {
     let sample = Sample::new("launch-state-case");
     let home = homed_in(&sample);
     let crucible = sample.home();
 
-    for place in [".SSH", ".Config/Systemd", "library/launchagents"] {
+    for place in [
+        ".SSH",
+        ".Config/Systemd",
+        "library/launchagents",
+        ".Cargo/BIN",
+        ".KUBE",
+        "APPDATA/ROAMING/MICROSOFT/WINDOWS/START MENU/Programs",
+    ] {
         let refused = rooted(&sample, &[place], &home, &crucible);
         assert!(
             matches!(refused, Err(Unlaunched::StatePath { .. })),
             "{place}: {refused:?}"
         );
     }
+    // The home crucible keeps its own state in and the session logs are
+    // places too.
+    let own = home.join(".local/share/Vault/crucible");
+    let refused = rooted(&sample, &[".local/share/vault/CRUCIBLE"], &home, &own);
+    assert!(
+        matches!(refused, Err(Unlaunched::StatePath { .. })),
+        "{refused:?}"
+    );
+}
+
+/// Case is ignored in judging a place against the list on every platform, and
+/// in telling where a place lies only as the file system does: a home that
+/// differs by case is another home on a file system that tells the two apart.
+#[test]
+fn case_is_ignored_in_the_list_everywhere_and_in_containment_where_the_file_system_does() {
+    let (home, other) = (Path::new("/home/bob"), Path::new("/home/Bob/.ssh"));
+
+    assert!(is_beneath_as(other, home, true));
+    assert!(!is_beneath_as(other, home, false));
+    assert_eq!(
+        is_beneath(other, home),
+        cfg!(any(windows, target_os = "macos"))
+    );
+    assert!(matches!(
+        overlap(other, &home.join(".ssh"), Reach::Beneath),
+        Some(Overlap::Is)
+    ));
+}
+
+/// A place with a part outside ASCII is refused, whether or not the part
+/// would fold to a listed name, as a file system that folds more than ASCII
+/// takes `.\u{212A}ube`, with the Kelvin sign, for `.kube`, and none is
+/// compared: the refusal names the entry and the place.
+#[test]
+fn a_place_with_a_part_outside_ascii_is_refused() {
+    let sample = Sample::new("launch-state-ascii");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+
+    for place in [
+        ".\u{17F}sh",
+        ".\u{212A}ube",
+        ".doc\u{212A}er",
+        ".caf\u{e9}",
+        ".config/goos\u{e9}",
+        "Library/Application Support/\u{212A}ube",
+    ] {
+        let refused = rooted(&sample, &[place], &home, &crucible).expect_err(place);
+        assert!(
+            matches!(&refused, Unlaunched::StateName { .. }),
+            "{place}: {refused}"
+        );
+        let said = refused.to_string();
+        assert!(said.contains("externalAgents.work"), "{place}: {said}");
+        assert!(said.contains(place), "{place}: {said}");
+        assert!(said.contains("not ASCII"), "{place}: {said}");
+    }
+}
+
+/// A name that is ASCII but leads, by a link, to a part outside ASCII is
+/// judged by where it leads, as that is the name the file system keeps.
+#[cfg(unix)]
+#[test]
+fn a_link_to_a_part_outside_ascii_is_refused() {
+    use std::os::unix::fs::symlink;
+
+    let sample = Sample::new("launch-state-ascii-link");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+    fs::create_dir_all(home.join(".\u{17F}sh")).expect("a directory");
+    symlink(home.join(".\u{17F}sh"), home.join(".goose")).expect("a link");
+
+    let refused = rooted(&sample, &[".goose"], &home, &crucible);
+
+    assert!(
+        matches!(&refused, Err(Unlaunched::StateName { .. })),
+        "{refused:?}"
+    );
 }
 
 /// A file system that drops the dots and spaces that end a name does not tell
