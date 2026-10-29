@@ -4078,7 +4078,8 @@ fn a_kept_key_is_not_signed_in_beside_a_run_not_confirmed_stopped_where_a_launch
 /// instance or of any other instance on its profile, by a method the agent
 /// carries out and by a kept key alike, before the route is asked, a setting or
 /// a key is written or the agent is started; the refusal ends nothing the
-/// conversation runs, and once that run has ended the same sign-ins go ahead.
+/// conversation runs, an instance on another profile is not held back by it,
+/// and once that run has ended the same sign-ins go ahead.
 #[test]
 fn a_sign_in_beside_a_live_run_is_refused_for_every_instance_on_its_profile_until_it_ends()
 -> Result<(), Failed> {
@@ -4129,10 +4130,6 @@ fn a_sign_in_beside_a_live_run_is_refused_for_every_instance_on_its_profile_unti
                 live.iter().any(|live| &**live == "google"),
                 "the refusal does not name the instance with the run"
             );
-            assert!(
-                live.iter().all(|live| &**live != "apart"),
-                "the refusal names an instance on another profile"
-            );
             let said = refused
                 .as_ref()
                 .err()
@@ -4154,6 +4151,25 @@ fn a_sign_in_beside_a_live_run_is_refused_for_every_instance_on_its_profile_unti
             );
         }
     }
+
+    // An instance on another profile is not held back by the run, which is
+    // still live: it gets past the check to the route's question, and a route
+    // with no yes leaves it undecided, with nothing started. The request asks
+    // no permission question of the front, so none is put to it; the outcome
+    // is what shows the question was reached.
+    let mut front = answering(&bench.server, None);
+    let apart = bench.ask_with(
+        (sign_in("apart", "oauth-business")?, &mut front),
+        (Arc::clone(&local), false),
+        (false, Some(&steps)),
+        &runtime,
+    )?;
+    assert!(
+        matches!(&apart, Ok(Outcome::Undecided)),
+        "{}",
+        shape(&apart)
+    );
+    assert_eq!(fake_peer::played(&peer), 1, "a second process was started");
 
     let ended = runtime.block_on(async move { run.close().await.is_ok() });
     assert!(ended, "the run's stop was not confirmed");
