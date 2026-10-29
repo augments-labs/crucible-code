@@ -289,15 +289,18 @@ struct Shared {
     interrupted: AtomicBool,
     /// What a stop request rings.
     bell: Notify,
-    /// Whether a run is live, which is the bound of one process at a time.
+    /// Whether a run is live, which is the bound of one process at a time,
+    /// and what [`Control::running`] reads.
     running: AtomicBool,
     /// Whether a run could not be confirmed to have stopped, which keeps
-    /// `running` held for good.
+    /// `running` held for good, and what [`Control::unstopped`] reads.
     unstopped: AtomicBool,
 }
 
 /// The handle a backend decides and interrupts through, shared by every run
-/// of one agent.
+/// of one agent. It also says whether a run holds it, and whether a run on it
+/// could not be confirmed to have stopped, which a holder of several controls
+/// reads to refuse what would start beside one.
 #[derive(Clone)]
 pub struct Control {
     /// What every run shares.
@@ -393,6 +396,15 @@ impl Control {
     #[must_use]
     pub fn unstopped(&self) -> bool {
         self.shared.unstopped.load(Ordering::SeqCst)
+    }
+
+    /// Whether a run holds this control: one launched on it and not yet ended,
+    /// so that another is refused as busy. A run that could not be confirmed
+    /// to have stopped holds it for good, so this is true of that run too;
+    /// [`Control::unstopped`] says which.
+    #[must_use]
+    pub fn running(&self) -> bool {
+        self.shared.running.load(Ordering::SeqCst)
     }
 
     /// What is open, oldest first.

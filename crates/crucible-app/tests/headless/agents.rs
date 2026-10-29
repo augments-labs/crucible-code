@@ -34,13 +34,14 @@ use crucible_app::client::agents::{
 };
 use crucible_app::client::{Front, Shown};
 use crucible_app::content_use::{Consent, Routes};
-use crucible_app::launching::{Agent, Launcher, Steps, Unlaunched};
+use crucible_app::launching::{Agent, Launcher, Runs, Steps, Unlaunched};
 use crucible_app::outside::Relaunch as _;
 use crucible_client_api::{
     Capabilities, Capability, Command, Correlation, Decision, ErrorCode, InstallProgress, Name,
     Pending, PendingId, Refusal, Request, Said,
 };
 use crucible_config::{Driver, ExternalAgent};
+use crucible_execution::Backend;
 use crucible_external_harnesses::catalog::fixture::signed;
 use crucible_external_harnesses::catalog::{Callback, Catalog, Held, SNAPSHOT, Uncalled, Unlinked};
 use crucible_external_harnesses::fake_peer::{self, Reply as Played, Script as Peer, scripts::acp};
@@ -529,6 +530,7 @@ const fn shape(outcome: &Result<Outcome, AgentsError>) -> &'static str {
         Err(AgentsError::HoldUnkept(_)) => "Err(HoldUnkept)",
         Err(AgentsError::Unverified(_)) => "Err(Unverified)",
         Err(AgentsError::Unstopped(_)) => "Err(Unstopped)",
+        Err(AgentsError::Running(_)) => "Err(Running)",
     }
 }
 
@@ -2456,6 +2458,18 @@ fn credentials(bench: &Bench) -> String {
     fs::read_to_string(bench.home.path().join("auth.json")).unwrap_or_default()
 }
 
+/// Whether the peer installed in `directory` has been started `starts` times,
+/// allowing a start that was just made a moment to be recorded.
+fn started(directory: &Path, starts: usize) -> bool {
+    for _ in 0..100 {
+        if fake_peer::played(directory) == starts {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    false
+}
+
 #[test]
 fn a_key_typed_for_a_method_is_kept_under_the_agent_and_method_and_adopted_without_being_shown()
 -> Result<(), Failed> {
@@ -3235,15 +3249,23 @@ impl Bench {
     }
 
     /// The steps of a conversation on `sandbox` that launched a run of
-    /// `google`, run as `program`, and closed it, and whether the close
-    /// confirmed that the run had stopped.
-    fn ran(
+    /// `google`, run as `program`, and the run, which is live until it is
+    /// closed or dropped.
+    fn running(
         &self,
         sandbox: Arc<dyn SandboxService>,
         program: &Path,
         runtime: &tokio::runtime::Runtime,
-    ) -> Result<(Steps, bool), Failed> {
+    ) -> Result<(Steps, Box<dyn Backend>), Failed> {
         let steps = self.steps(sandbox, false, true, runtime)?;
+        let runs = self.runs_of_google(&steps, program)?;
+        let run = runtime.block_on(runs.launch(Mode::Ask, None, None, None))?;
+        Ok((steps, run))
+    }
+
+    /// The runs `steps` hands out for `google`, run as `program`, none of them
+    /// launched.
+    fn runs_of_google(&self, steps: &Steps, program: &Path) -> Result<Runs, Failed> {
         let entry = ExternalAgent::unwritten(
             "google",
             Driver::Antigravity,
@@ -3253,11 +3275,20 @@ impl Bench {
         )
         .ok_or("an instance of a built-in driver")?;
         let (agent, _) = steps.onto(&entry, Mode::Ask)?;
-        let runs = steps.runs(agent, "google");
-        let confirmed = runtime.block_on(async {
-            let run = runs.launch(Mode::Ask, None, None, None).await?;
-            Ok::<_, Failed>(run.close().await.is_ok())
-        })?;
+        Ok(steps.runs(agent, "google"))
+    }
+
+    /// The steps of a conversation on `sandbox` that launched a run of
+    /// `google`, run as `program`, and closed it, and whether the close
+    /// confirmed that the run had stopped.
+    fn ran(
+        &self,
+        sandbox: Arc<dyn SandboxService>,
+        program: &Path,
+        runtime: &tokio::runtime::Runtime,
+    ) -> Result<(Steps, bool), Failed> {
+        let (steps, run) = self.running(sandbox, program, runtime)?;
+        let confirmed = runtime.block_on(async move { run.close().await.is_ok() });
         Ok((steps, confirmed))
     }
 
@@ -3311,7 +3342,26 @@ impl Bench {
         (yes, steps): (bool, Option<&Steps>),
         runtime: &tokio::runtime::Runtime,
     ) -> Result<Result<Outcome, AgentsError>, Failed> {
+        self.ask_requested(
+            (request(command), front),
+            (sandbox, confined),
+            (yes, steps),
+            runtime,
+        )
+    }
+
+    /// `request` asked of the door as [`Bench::ask_with`] asks a command, and
+    /// answered by any `front`.
+    fn ask_requested(
+        &self,
+        (request, front): (Request, &mut dyn Front),
+        (sandbox, confined): (Arc<dyn SandboxService>, bool),
+        (yes, steps): (bool, Option<&Steps>),
+        runtime: &tokio::runtime::Runtime,
+    ) -> Result<Result<Outcome, AgentsError>, Failed> {
         let consent = consent_for_antigravity(yes)?;
+        // A yes the front gives is written into the user file.
+        consent.keeps_in(self.user());
         let policy = SandboxPolicy::standard(&self.tree.workspace()?)?.with_enabled(confined);
         let state = catalog_fetch::state_in(self.home.path());
         let launcher = Launcher::new(sandbox, runtime.handle().clone(), &policy, &consent, &state);
@@ -3321,7 +3371,6 @@ impl Bench {
             smoke: Some(&launcher),
             steps,
         };
-        let request = request(command);
         let cancel = Cancel::new();
         Ok(runtime.block_on(run(
             &request,
@@ -4022,5 +4071,275 @@ fn a_kept_key_is_not_signed_in_beside_a_run_not_confirmed_stopped_where_a_launch
         fs::read(bench.user())? == user && credentials(&bench) == kept,
         "a refused sign-in wrote the configuration or the credentials"
     );
+    Ok(())
+}
+
+/// A sign-in that would start the agent is refused beside a live run of the
+/// instance or of any other instance on its profile, by a method the agent
+/// carries out and by a kept key alike, before the route is asked, a setting or
+/// a key is written or the agent is started; the refusal ends nothing the
+/// conversation runs, an instance on another profile is not held back by it,
+/// and once that run has ended the same sign-ins go ahead.
+#[test]
+fn a_sign_in_beside_a_live_run_is_refused_for_every_instance_on_its_profile_until_it_ends()
+-> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-sign-in-live")?;
+    bench.server.catalog(1, &[], &json!([]))?;
+    let peer = bench.tree.0.join("work").join("peer");
+    // The first start is the run left live, the second the sign-in once it
+    // has ended; a start beside it would take that one.
+    let program = fake_peer::install(
+        &peer,
+        "antigravity",
+        &Peer::of([acp::opening(&business_initialized()?), business_reply()?]),
+    )?;
+    bench.antigravity_sharing(&program)?;
+    let local: Arc<dyn SandboxService> =
+        Arc::new(LocalSandbox::new().watching_on(runtime.handle().clone()));
+    let (steps, run) = bench.running(Arc::clone(&local), &program, &runtime)?;
+    assert!(started(&peer, 1), "the run was not started");
+    keep_key(
+        &bench.home,
+        "google",
+        "gemini-api-key",
+        Typed::new(KEY.to_owned()),
+    )?;
+    let user = fs::read(bench.user())?;
+    let kept = credentials(&bench);
+    assert!(
+        kept.contains("\"antigravity@gemini-api-key\""),
+        "the key was not kept under the method"
+    );
+
+    for instance in ["google", "spare"] {
+        for method in ["oauth-business", "gemini-api-key"] {
+            // The conversation's route has no yes, so that a sign-in that went
+            // on would ask for one.
+            let mut front = answering(&bench.server, None);
+            let refused = bench.ask_with(
+                (sign_in(instance, method)?, &mut front),
+                (Arc::clone(&local), false),
+                (false, Some(&steps)),
+                &runtime,
+            )?;
+            let Err(AgentsError::Running(live)) = &refused else {
+                return Err(shape(&refused).into());
+            };
+            assert!(
+                live.iter().any(|live| &**live == "google"),
+                "the refusal does not name the instance with the run"
+            );
+            let said = refused
+                .as_ref()
+                .err()
+                .map(ToString::to_string)
+                .unwrap_or_default();
+            assert!(
+                said.contains("must end first"),
+                "the refusal does not say the runs must end first"
+            );
+            assert!(front.put.is_empty(), "a route was asked");
+            assert!(
+                !bench.agy_profile().join("antigravity-acp").exists(),
+                "the agent's settings were written for a refused sign-in"
+            );
+            assert_eq!(fake_peer::played(&peer), 1, "a second process was started");
+            assert!(
+                fs::read(bench.user())? == user && credentials(&bench) == kept,
+                "a refused sign-in wrote the configuration or the credentials"
+            );
+        }
+    }
+
+    // An instance on another profile is not held back by the run, which is
+    // still live: it gets past the check to the route's question, and a route
+    // with no yes leaves it undecided, with nothing started. The request asks
+    // no permission question of the front, so none is put to it; the outcome
+    // is what shows the question was reached.
+    let mut front = answering(&bench.server, None);
+    let apart = bench.ask_with(
+        (sign_in("apart", "oauth-business")?, &mut front),
+        (Arc::clone(&local), false),
+        (false, Some(&steps)),
+        &runtime,
+    )?;
+    assert!(
+        matches!(&apart, Ok(Outcome::Undecided)),
+        "{}",
+        shape(&apart)
+    );
+    assert_eq!(fake_peer::played(&peer), 1, "a second process was started");
+
+    let ended = runtime.block_on(async move { run.close().await.is_ok() });
+    assert!(ended, "the run's stop was not confirmed");
+    let mut front = answering(&bench.server, None);
+    let signed = bench.ask_with(
+        (sign_in("google", "oauth-business")?, &mut front),
+        (local, false),
+        (true, Some(&steps)),
+        &runtime,
+    )?;
+    assert!(
+        matches!(
+            &signed,
+            Ok(Outcome::SignedIn {
+                by: Signed::Agent,
+                ..
+            })
+        ),
+        "{}",
+        shape(&signed)
+    );
+    assert_eq!(fake_peer::played(&peer), 2, "the agent was not started");
+    Ok(())
+}
+
+/// A sign-in is started on its instance's own control, so one whose stop could
+/// not be confirmed leaves the instance holding a run that may still be running:
+/// the next sign-in of the instance and of any instance on its profile is
+/// refused as a run not confirmed stopped is, before the agent is started.
+#[test]
+fn a_sign_in_whose_stop_could_not_be_confirmed_leaves_the_profile_unstopped() -> Result<(), Failed>
+{
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-sign-in-own-unstopped")?;
+    bench.server.catalog(1, &[], &json!([]))?;
+    let peer = bench.tree.0.join("work").join("peer");
+    // The first start is the sign-in left running; a start after it would
+    // take another reply.
+    let program = fake_peer::install(
+        &peer,
+        "antigravity",
+        &Peer::of([business_reply()?, business_reply()?, business_reply()?]),
+    )?;
+    bench.antigravity_sharing(&program)?;
+    let local: Arc<dyn SandboxService> =
+        Arc::new(LocalSandbox::new().watching_on(runtime.handle().clone()));
+    let steps = bench.steps(Arc::clone(&local), false, true, &runtime)?;
+
+    // Whatever it reads, it is the stop of its process that is under test.
+    let mut front = answering(&bench.server, None);
+    let _read = bench.ask_with(
+        (sign_in("google", "oauth-business")?, &mut front),
+        (Arc::new(Stubborn(Arc::clone(&local))), false),
+        (true, Some(&steps)),
+        &runtime,
+    )?;
+    assert_eq!(fake_peer::played(&peer), 1, "the sign-in was not started");
+    let user = fs::read(bench.user())?;
+    let kept = credentials(&bench);
+
+    // The sandbox of these can confirm a stop, so that a refusal is the
+    // instance's and not the sandbox's.
+    for instance in ["google", "spare"] {
+        let mut front = answering(&bench.server, None);
+        let refused = bench.ask_with(
+            (sign_in(instance, "oauth-business")?, &mut front),
+            (Arc::clone(&local), false),
+            (true, Some(&steps)),
+            &runtime,
+        )?;
+        let Err(AgentsError::Unstopped(held)) = &refused else {
+            return Err(shape(&refused).into());
+        };
+        assert!(
+            held.iter().any(|held| &**held == "google"),
+            "the refusal does not name the instance with the run"
+        );
+        assert!(front.put.is_empty(), "a route was asked");
+        assert_eq!(fake_peer::played(&peer), 1, "the agent was started");
+        assert!(
+            fs::read(bench.user())? == user && credentials(&bench) == kept,
+            "a refused sign-in wrote the configuration or the credentials"
+        );
+    }
+    Ok(())
+}
+
+/// A client that says yes to the agent's route, and starts a run of `google`
+/// while the question is out, as a conversation on that agent would meanwhile.
+struct Beginning {
+    runs: Runs,
+    run: Option<Box<dyn Backend>>,
+}
+
+impl Front for Beginning {
+    fn put<'a>(
+        &'a mut self,
+        pending: &'a Pending,
+        shown: Shown<'a>,
+    ) -> BoxFuture<'a, Option<Decision>> {
+        Box::pin(async move {
+            if !matches!(shown, Shown::Warning(_)) {
+                return None;
+            }
+            self.run = self.runs.launch(Mode::Ask, None, None, None).await.ok();
+            Some(Decision::Accepted { id: pending.id() })
+        })
+    }
+
+    fn refused(&mut self, _refusal: Refusal) {}
+}
+
+/// A run that begins while the agent's route is being asked is not started
+/// beside: the sign-in is checked again once the route has its yes, and is
+/// refused naming the instance with the run, before a setting is written or the
+/// agent is started.
+#[test]
+fn a_run_that_begins_while_the_route_is_asked_is_not_signed_in_beside() -> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-sign-in-asking")?;
+    bench.server.catalog(1, &[], &json!([]))?;
+    let peer = bench.tree.0.join("work").join("peer");
+    // The one start is the run begun while the route is asked; a start beside
+    // it would take the second reply.
+    let program = fake_peer::install(
+        &peer,
+        "antigravity",
+        &Peer::of([acp::opening(&business_initialized()?), business_reply()?]),
+    )?;
+    bench.antigravity_sharing(&program)?;
+    let local: Arc<dyn SandboxService> =
+        Arc::new(LocalSandbox::new().watching_on(runtime.handle().clone()));
+    let steps = bench.steps(Arc::clone(&local), false, true, &runtime)?;
+    let mut front = Beginning {
+        runs: bench.runs_of_google(&steps, &program)?,
+        run: None,
+    };
+    let asked = Request::new(
+        Capabilities::none()
+            .with(Capability::Install)
+            .with(Capability::Permissions),
+        Correlation::new(1),
+        sign_in("spare", "oauth-business")?,
+    );
+
+    // The conversation's route has no yes, so that the sign-in asks for one.
+    let refused = bench.ask_requested(
+        (asked, &mut front),
+        (Arc::clone(&local), false),
+        (false, Some(&steps)),
+        &runtime,
+    )?;
+
+    let Err(AgentsError::Running(live)) = &refused else {
+        return Err(shape(&refused).into());
+    };
+    assert!(
+        live.iter().any(|live| &**live == "google"),
+        "the refusal does not name the instance with the run"
+    );
+    let run = front
+        .run
+        .take()
+        .ok_or("no run began while the route was asked")?;
+    assert!(started(&peer, 1), "the run was not started");
+    assert!(
+        !bench.agy_profile().join("antigravity-acp").exists(),
+        "the agent's settings were written for a refused sign-in"
+    );
+    let ended = runtime.block_on(async move { run.close().await.is_ok() });
+    assert!(ended, "the run's stop was not confirmed");
     Ok(())
 }

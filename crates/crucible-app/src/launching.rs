@@ -127,17 +127,26 @@
 //! An account step on any instance the configuration names, the conversation's
 //! route or not, is taken through [`Steps`], under the same policy at that
 //! moment and the same gates, and so is the run of a session an agent ran,
-//! picked back up on that agent from elsewhere. An account step runs on a
-//! control of its own, so it takes no part in the one-at-a-time bound of its
-//! entry's runs, and a status check beside a live run is never refused as busy.
-//! Of the control those runs share it reads one thing, whether a run could not
-//! be confirmed stopped, and where one could not it is refused, before any
-//! process, as a run launched beside that one would be; `Steps::unstopped`
-//! says which of a set of entries are so held, for an operation that would take
-//! a step for all of them. A step whose own stop could not be confirmed holds
-//! back none of the entry's runs. What it read is all it returns: a step that
-//! could not be started reads as unreadable, saying why, so a caller claims
-//! nothing the step did not establish.
+//! picked back up on that agent from elsewhere. An account step that does not
+//! sign in, a status read or a sign-out, runs on a control of its own, so it
+//! takes no part in the one-at-a-time bound of its entry's runs, and a status
+//! check beside a live run is never refused as busy. Of the control those runs
+//! share it reads one thing, whether a run could not be confirmed stopped, and
+//! where one could not it is refused, before any process, as a run launched
+//! beside that one would be; `Steps::unstopped` says which of a set of entries
+//! are so held, for an operation that would take a step for all of them. Such a
+//! step whose own stop could not be confirmed holds back none of the entry's
+//! runs. What it read is all it returns: a step that could not be started
+//! reads as unreadable, saying why, so a caller claims nothing the step did not
+//! establish.
+//!
+//! A step that signs in is held against the entry's runs instead: `Steps`
+//! lends the control they share, so it is started only where no run holds it,
+//! a run, or another such step, of the entry is refused as busy while it runs,
+//! and one whose stop could not be confirmed leaves every later run of the
+//! entry refused as an unconfirmed run does. `Steps::running` says which of a
+//! set of entries have a run live, as `Steps::unstopped` says which could not
+//! be confirmed stopped, for an operation that must not start beside either.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -1674,8 +1683,10 @@ fn claims() -> Capabilities {
 }
 
 /// The control each `externalAgents` entry's runs are launched on, made when
-/// the entry's first is asked for. An entry is one the configuration names, so
-/// there are no more than it has. Clones share the controls.
+/// the entry's first is asked for, and the one a step that signs the entry in
+/// is started on, so that it is held against those runs and they against it.
+/// An entry is one the configuration names, so there are no more than it has.
+/// Clones share the controls.
 #[derive(Clone, Default)]
 pub struct Controls(Arc<Mutex<HashMap<Box<str>, Control>>>);
 
@@ -1707,6 +1718,17 @@ impl Controls {
             .unwrap_or_else(PoisonError::into_inner)
             .get(instance)
             .is_some_and(Control::unstopped)
+    }
+
+    /// Whether a run of the entry `instance` holds its control, which a run
+    /// that could not be confirmed stopped does for good; an entry no run has
+    /// been asked for yet has no control, and no such run.
+    fn running(&self, instance: &str) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(instance)
+            .is_some_and(Control::running)
     }
 }
 
@@ -1872,8 +1894,10 @@ pub struct Steps {
     /// The `PATH` an agent's program is looked for on.
     path: Option<OsString>,
     /// What every [`Runs`] this hands out for an `externalAgents` entry is
-    /// launched on, and what an account step of the entry reads whether one of
-    /// them could not be confirmed stopped from.
+    /// launched on, what [`Steps::control`] lends a step that must be held
+    /// against them, and what an account step of the entry reads whether one
+    /// of them could not be confirmed stopped from, and [`Steps::running`]
+    /// whether one is live.
     controls: Controls,
 }
 
@@ -1999,6 +2023,28 @@ impl Steps {
             .map(ExternalAgent::name)
             .filter(|name| self.controls.unstopped(name))
             .collect()
+    }
+
+    /// The names among `entries` of those with a run live, which a step that
+    /// signs in is refused beside; none where no run of theirs has been asked
+    /// for yet. A run that could not be confirmed stopped is live for good, so
+    /// [`Steps::unstopped`] is read first to tell the two apart.
+    #[must_use]
+    pub(crate) fn running<'a>(&self, entries: &'a [ExternalAgent]) -> Vec<&'a str> {
+        entries
+            .iter()
+            .map(ExternalAgent::name)
+            .filter(|name| self.controls.running(name))
+            .collect()
+    }
+
+    /// The control every run of the entry `instance` is launched on, for an
+    /// account step that must be held against them: started on it, the step
+    /// is refused beside a run of the entry as busy, and a run of the entry
+    /// beside it; none once this process has numbered every control it can.
+    #[must_use]
+    pub(crate) fn control(&self, instance: &str) -> Option<Control> {
+        self.controls.of(instance)
     }
 
     /// Why a start of the configured `agent`, whose registry row is `row`,
