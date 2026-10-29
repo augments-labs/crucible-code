@@ -20,7 +20,9 @@
 //! name. A variable a loader reads was refused when the catalog was read. The
 //! passed values may be shown where what the agent says is kept; the target's
 //! are not marked so, so one long enough to be a credential is withheld there
-//! as a credential would be.
+//! as a credential would be. Where the entry names the variable the agent
+//! reads its home from, the profile directory a launch gives is that
+//! variable's value, as given, and the shell's value of it is never passed.
 //!
 //! An entry whose admitted name or version is as long as an answer to
 //! initializing is cut to gives no profile, so an answer is compared only
@@ -50,6 +52,7 @@
 
 use std::ffi::OsString;
 use std::net::{IpAddr, SocketAddr};
+use std::path::Path;
 
 use crucible_execution::Failure;
 use crucible_sandbox::{
@@ -107,18 +110,23 @@ pub struct CatalogProfile {
     env: Vec<Variable>,
     /// The hosts it reaches.
     reach: Vec<SandboxDomainPattern>,
-    /// How it is signed in, held apart so a profile stays small where it is
-    /// carried by value.
+    /// How it is signed in and where it keeps that, held apart so a profile
+    /// stays small where it is carried by value.
     signing: Box<Signing>,
 }
 
-/// How an agent the catalog reviewed is signed in.
+/// How an agent the catalog reviewed is signed in, and where it keeps that.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Signing {
     /// Every sign-in method its entry lists, in the order given.
     methods: Vec<AuthMethod>,
     /// The hosts a sign-in link it prints may open.
     hosts: Vec<SandboxDomainPattern>,
+    /// The variable it reads its home from, which a profile directory is
+    /// given to it through.
+    profile_env: Option<Box<str>>,
+    /// Where under the user's home it keeps its sign-in.
+    state_paths: Vec<Box<str>>,
 }
 
 /// Why an entry gives no profile to run.
@@ -192,6 +200,8 @@ impl CatalogProfile {
             signing: Box::new(Signing {
                 methods: entry.auth_methods.clone(),
                 hosts: sign_in_hosts,
+                profile_env: entry.profile_env.clone(),
+                state_paths: entry.state_paths.clone(),
             }),
         })
     }
@@ -243,6 +253,27 @@ impl CatalogProfile {
     #[must_use]
     pub fn reach(&self) -> &[SandboxDomainPattern] {
         &self.reach
+    }
+
+    /// The variable it reads its home from, which a profile directory is given
+    /// to it through; none where it offers no separate profile.
+    #[must_use]
+    pub fn profile_env(&self) -> Option<&str> {
+        self.signing.profile_env.as_deref()
+    }
+
+    /// Where under the user's home it keeps its sign-in, relative to that
+    /// home, as its entry lists them.
+    #[must_use]
+    pub fn state_paths(&self) -> &[Box<str>] {
+        &self.signing.state_paths
+    }
+
+    /// Whether its target sets the variable `name`, in which case the
+    /// shell's value of it is not what the agent is started with.
+    #[must_use]
+    pub fn sets(&self, name: &str) -> bool {
+        self.env.iter().any(|variable| named(name, &variable.name))
     }
 
     /// Every sign-in method its entry lists, in the order given, however each
@@ -316,14 +347,24 @@ impl CatalogProfile {
 
     /// What it is started with: its own arguments, and the variables of the
     /// `ambient` environment it is passed with those its target sets.
+    ///
+    /// Where its entry names the variable it reads its home from, `profile`,
+    /// the directory the launch gives it, is that variable's value exactly as
+    /// given, replacing the target's own, and the shell's value of that
+    /// variable is never passed, so that an agent started without a profile
+    /// directory does not take the user's own home for one. A directory that
+    /// is not text cannot be carried in a variable, and none is configured
+    /// as one.
     pub(crate) fn request(
         &self,
         ambient: impl IntoIterator<Item = (OsString, OsString)>,
+        profile: Option<&Path>,
     ) -> Request {
+        let held = self.signing.profile_env.as_deref();
         let set = |name: &str| self.env.iter().any(|variable| named(name, &variable.name));
         let shell = passed(ambient)
             .into_iter()
-            .filter(|(name, _)| !set(name))
+            .filter(|(name, _)| !set(name) && !held.is_some_and(|held| named(name, held)))
             .collect();
         let mut request =
             Request::showing(self.args.iter().map(ToString::to_string).collect(), shell);
@@ -332,6 +373,12 @@ impl CatalogProfile {
                 .iter()
                 .map(|variable| (variable.name.to_string(), variable.value.to_string())),
         );
+        if let (Some(name), Some(directory)) = (held, profile.and_then(Path::to_str)) {
+            request.environment.retain(|(set, _)| !named(set, name));
+            request
+                .environment
+                .push((name.to_owned(), directory.to_owned()));
+        }
         request
     }
 }

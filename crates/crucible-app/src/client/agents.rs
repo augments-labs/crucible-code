@@ -121,7 +121,14 @@
 //! names neither is refused naming both keys, and one whose location's host
 //! no sandbox policy can name is refused naming that key, each before anything
 //! is asked, written or started; otherwise the two are written in the agent's
-//! profile once its route has its yes, just before it starts.
+//! profile once its route has its yes, just before it starts. A sign-in on an
+//! instance that names a `profileDir` its agent's entry has no variable for is
+//! refused as a start of it is, naming the instance, and nothing is made or
+//! started, since the agent would never read that directory. Where the sandbox
+//! is on, the agent is let write the places its entry says it keeps its
+//! sign-in in, so that what it signs in stays; a listing says of an agent whose
+//! entry names neither such a place nor a variable that a sign-in made under
+//! the sandbox is not kept ([`Listed::keeps_no_sign_in`]).
 
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
@@ -214,6 +221,10 @@ pub struct Listed {
     /// The versions the install store holds with a receipt, or why the
     /// agent's directory in the store could not be read.
     pub installed: Result<Vec<Box<str>>, Box<str>>,
+    /// Whether its entry names neither a variable for a profile directory
+    /// nor a place it keeps its sign-in in, so that a sign-in made under the
+    /// sandbox is not kept.
+    pub keeps_no_sign_in: bool,
 }
 
 /// Which move a confirmed switch was.
@@ -689,6 +700,7 @@ impl Door<'_> {
                         .collect()
                 })
                 .map_err(|unread| unread.to_string().into());
+            let keeps_no_sign_in = launching::keeps_no_sign_in(&offer.entry);
             agents.push(Listed {
                 agent: key.clone(),
                 offered: vec![offer.pin.version],
@@ -696,6 +708,7 @@ impl Door<'_> {
                 terms: offer.entry.terms,
                 caution: offer.entry.caution,
                 installed,
+                keeps_no_sign_in,
             });
         }
         Outcome::Catalog {

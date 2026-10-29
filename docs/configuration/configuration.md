@@ -227,7 +227,7 @@ choosing that `providers.<name>.access.instance` uses. At most 32.
 | `enabled` | `false` keeps the entry and sends it no new work; a provider whose `access` still names it is refused at start. Defaults to `true`. |
 | `authentication` | How it signs in: `account`, its own login, the only value. |
 | `configDir` | For `claude`: the absolute directory it keeps its sign-in under. |
-| `profileDir` | For `antigravity`: the same, and required, since its usual one is the Antigravity IDE's. For `catalog`: the same. |
+| `profileDir` | For `antigravity`: the same, and required, since its usual one is the Antigravity IDE's. For `catalog`: the same, but only for an agent whose catalog entry names the variable it reads its home from, which crucible sets to this directory. For any other catalog agent it is refused when the agent is started, naming the entry and saying that agent offers no separate profile. |
 | `model` | For `claude`: the model it is started on, such as `claude-opus-5-5`. Defaults to Anthropic's default model. |
 | `effort` | For `claude`: the rung it is started at, `low`, `medium`, `high`, `xhigh` or `max`. Defaults to the model's default rung. |
 | `cloudProject` | For `antigravity`: the Google Cloud project its business sign-in (`oauth-business`) is billed to, by its project ID: 6 to 30 lowercase letters, digits and hyphens, starting with a letter and not ending with a hyphen. |
@@ -245,6 +245,20 @@ Entries share a profile where they write its directory alike, so two that write
 one directory differently, with and without a trailing `/` or, where both
 directories exist, through a link, are refused, naming both; spell it the same
 way in each.
+A `catalog` agent started without a `profileDir` is not given the home your shell
+has in that variable, so it does not sign in to your own.
+Under the sandbox, a `catalog` agent may also write the places its catalog entry
+says it keeps its sign-in in, joined to your home (`HOME`, or `USERPROFILE` on
+Windows), so that a sign-in made there is still there at the next start. A
+place that is missing is created for you alone. The shell startup files, `.ssh`,
+`.gnupg`, `.aws`, `.config` and `.local` themselves, `.local/bin`,
+`.config/fish`, `.config/autostart`, `.config/systemd`, `Library/LaunchAgents`,
+the Windows Start Menu and crucible's own home are never made writable: an
+agent whose entry names one of them, a place within one, or a place that
+contains one, is refused when it is started, naming the entry and the path. An
+agent whose entry names neither a variable nor a place keeps no sign-in under the
+sandbox, and one started where your home is not set to an absolute path is
+given no place to write.
 A `catalog` agent chooses its own model, so `model` and `effort` are refused
 for it. A session one ran is bound to its key, so once the entry names
 another `agent` that session is not resumed on it.

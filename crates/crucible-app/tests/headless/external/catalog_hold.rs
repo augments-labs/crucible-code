@@ -27,6 +27,14 @@ use crate::{Failed, Tree};
 /// The row a signed catalog gives the agent keyed `goose`, its entry carrying
 /// `statement` as its statement of content use where one is given.
 fn goose_row(statement: Option<serde_json::Value>) -> Result<CatalogRow, Failed> {
+    goose_row_with(statement, &serde_json::json!({}))
+}
+
+/// [`goose_row`], its entry also carrying every field of the object `more`.
+pub(super) fn goose_row_with(
+    statement: Option<serde_json::Value>,
+    more: &serde_json::Value,
+) -> Result<CatalogRow, Failed> {
     let file =
         serde_json::json!({"path": "goose", "size": 1, "sha256": "b".repeat(64), "exec": true});
     let mut entry = serde_json::json!({
@@ -56,6 +64,9 @@ fn goose_row(statement: Option<serde_json::Value>) -> Result<CatalogRow, Failed>
             .as_object_mut()
             .ok_or("an entry is an object")?
             .insert("content_use".into(), statement);
+    }
+    if let (Some(into), Some(from)) = (entry.as_object_mut(), more.as_object()) {
+        into.extend(from.clone());
     }
     let catalog = serde_json::json!({
         "schema": 1,

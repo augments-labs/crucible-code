@@ -50,9 +50,9 @@ use crucible_http::ProxyEnv;
 use crucible_runtime::{BoxFuture, Cancel};
 use crucible_sandbox::{
     SandboxBackendIdentity, SandboxCapabilities, SandboxCapability, SandboxCommand,
-    SandboxEnablement, SandboxError, SandboxFeature, SandboxInput, SandboxInspection,
-    SandboxLaunch, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy, SandboxProcess,
-    SandboxRequest, SandboxService, SandboxSession, SandboxUsage, SandboxViolation,
+    SandboxEnablement, SandboxError, SandboxFeature, SandboxFilesystemAccess, SandboxInput,
+    SandboxInspection, SandboxLaunch, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy,
+    SandboxProcess, SandboxRequest, SandboxService, SandboxSession, SandboxUsage, SandboxViolation,
 };
 use crucible_sandbox_local::LocalSandbox;
 use crucible_tools::Mode;
@@ -1953,6 +1953,30 @@ impl Bench {
         release: &Value,
         runtime: &tokio::runtime::Runtime,
     ) -> Result<Result<Outcome, AgentsError>, Failed> {
+        let sandbox: Arc<dyn SandboxService> =
+            Arc::new(LocalSandbox::new().watching_on(runtime.handle().clone()));
+        self.ask_launching(
+            (command, front),
+            (confined, yes),
+            release,
+            (runtime, sandbox, None),
+        )
+    }
+
+    /// [`Bench::ask_smoking`], its sandbox the one given, and the lent
+    /// launcher giving the agents it starts `home` as theirs where one is
+    /// named.
+    fn ask_launching(
+        &self,
+        (command, front): (Command, &mut Answering<'_>),
+        (confined, yes): (bool, bool),
+        release: &Value,
+        (runtime, sandbox, home): (
+            &tokio::runtime::Runtime,
+            Arc<dyn SandboxService>,
+            Option<&Path>,
+        ),
+    ) -> Result<Result<Outcome, AgentsError>, Failed> {
         let row = row_of(release)?;
         let consent = Consent::new(Routes::production().cataloging(row.warned().ok().cloned()));
         if yes {
@@ -1960,8 +1984,6 @@ impl Bench {
         }
         let policy = SandboxPolicy::standard(&self.tree.workspace()?)?.with_enabled(confined);
         let handle = runtime.handle().clone();
-        let sandbox: Arc<dyn SandboxService> =
-            Arc::new(LocalSandbox::new().watching_on(handle.clone()));
         let state = catalog_fetch::state_in(self.home.path());
         let steps = Steps::new(
             Launcher::new(
@@ -1975,7 +1997,10 @@ impl Bench {
             &REGISTRY,
             None,
         );
-        let launcher = Launcher::new(sandbox, handle, &policy, &consent, &state);
+        let mut launcher = Launcher::new(sandbox, handle, &policy, &consent, &state);
+        if let Some(home) = home {
+            launcher = launcher.homed(home);
+        }
         let lent = Shelf {
             catalog: self.server.source(),
             home: &self.home,
@@ -2712,6 +2737,263 @@ fn a_method_the_agent_carries_out_is_asked_for_by_name_once_its_route_has_a_yes(
             .is_some_and(|(asked, opened)| asked < opened),
         "the sign-in was not read by opening a session after it: {heard}"
     );
+    Ok(())
+}
+
+/// What the refusal of the instance `work` of goose, naming a profile
+/// directory its entry has no variable for, says.
+const NO_SEPARATE_PROFILE: &str = "externalAgents.work sets profileDir, but goose offers no \
+                                   separate profile; remove profileDir from externalAgents.work.";
+
+/// The user file naming the instance `work` of goose, started as
+/// `executable`, with `profile` as its profile directory.
+fn profiled(executable: &Path, profile: &Path) -> Value {
+    json!({
+        "externalAgents": {
+            "work": {
+                "driver": "catalog",
+                "agent": "goose",
+                "executable": executable.to_string_lossy(),
+                "profileDir": profile.to_string_lossy(),
+            }
+        }
+    })
+}
+
+/// `release`, its entry given the field `name` as `to`, whether or not it had
+/// one.
+fn with_field(mut release: Value, name: &str, to: Value) -> Value {
+    if let Some(object) = release.as_object_mut() {
+        object.insert(name.into(), to);
+    }
+    release
+}
+
+/// `release`, its entry naming the variable the agent reads its profile
+/// directory from.
+fn reading_its_profile_from_a_variable(release: Value) -> Value {
+    with_field(release, "profile_env", json!("GOOSE_PATH_ROOT"))
+}
+
+#[test]
+fn a_sign_in_on_an_instance_naming_a_profile_directory_its_entry_has_no_variable_for_starts_nothing()
+-> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-sign-in-no-profile")?;
+    let release = signing_in("goose", ONE);
+    bench
+        .server
+        .catalog(1, std::slice::from_ref(&release), &json!([]))?;
+    let made = Tree::new("agents-door-sign-in-no-profile-peer")?;
+    let program = fake_peer::install(
+        &made.0,
+        "goose",
+        &Peer::once(
+            Played::new()
+                .hear(1)
+                .say(acp::initialized("goose", "1.0.0", "browser")),
+        ),
+    )?;
+    let profile = bench.tree.0.join("profile");
+    bench.configure(&program, &profiled(&program, &profile))?;
+
+    let signed = bench.ask_smoking(
+        (
+            sign_in("work", "browser")?,
+            &mut answering(&bench.server, None),
+        ),
+        (false, true),
+        &release,
+        &runtime,
+    )?;
+
+    assert!(
+        matches!(&signed, Err(AgentsError::Unlaunched(refused)) if refused.to_string() == NO_SEPARATE_PROFILE),
+        "{}",
+        shape(&signed)
+    );
+    assert_eq!(fake_peer::played(&made.0), 0, "the agent was started");
+    assert!(!profile.exists(), "its profile directory was made");
+    Ok(())
+}
+
+#[test]
+fn a_sign_in_on_an_instance_naming_a_profile_directory_its_entry_gives_a_variable_for_goes_on()
+-> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-sign-in-profile")?;
+    let release = reading_its_profile_from_a_variable(signing_in("goose", ONE));
+    bench
+        .server
+        .catalog(1, std::slice::from_ref(&release), &json!([]))?;
+    let made = Tree::new("agents-door-sign-in-profile-peer")?;
+    let program = fake_peer::install(
+        &made.0,
+        "goose",
+        &Peer::once(
+            Played::new()
+                .hear(1)
+                .say(acp::initialized("goose", "1.0.0", "browser"))
+                .hear(1)
+                .say(acp::response(1, &json!({})))
+                .hear(1)
+                .say(acp::opened(2)),
+        ),
+    )?;
+    let profile = bench.tree.0.join("profile");
+    bench.configure(&program, &profiled(&program, &profile))?;
+
+    let signed = bench.ask_smoking(
+        (
+            sign_in("work", "browser")?,
+            &mut answering(&bench.server, None),
+        ),
+        (false, true),
+        &release,
+        &runtime,
+    )?;
+
+    assert!(
+        matches!(
+            &signed,
+            Ok(Outcome::SignedIn {
+                by: Signed::Agent,
+                ..
+            })
+        ),
+        "{}",
+        shape(&signed)
+    );
+    assert!(profile.is_dir(), "its profile directory was not made");
+    Ok(())
+}
+
+/// A sandbox that keeps the policy each start asked of it, and starts none.
+struct Policies {
+    local: Arc<dyn SandboxService>,
+    asked: Arc<Mutex<Vec<SandboxPolicy>>>,
+}
+
+impl SandboxService for Policies {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        self.local.probe()
+    }
+
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            if let Ok(mut asked) = self.asked.lock() {
+                asked.push(request.policy().clone());
+            }
+            Err(SandboxError::BackendUnavailable {
+                reason: "this sandbox only records what it is asked".into(),
+            })
+        })
+    }
+}
+
+/// A sign-in made under the sandbox is let write where its entry says the
+/// agent keeps it, under the home the agent is given, made private to the
+/// user where it was missing, and nowhere else of that home.
+#[test]
+fn a_sandboxed_sign_in_may_write_where_its_entry_keeps_the_sign_in() -> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-sign-in-state")?;
+    let release = with_field(
+        signing_in("goose", ONE),
+        "state_paths",
+        json!([".goose", ".config/goose"]),
+    );
+    bench
+        .server
+        .catalog(1, std::slice::from_ref(&release), &json!([]))?;
+    let made = Tree::new("agents-door-sign-in-state-peer")?;
+    let program = fake_peer::install(&made.0, "goose", &Peer::once(Played::new()))?;
+    bench.configure(&program, &json!({}))?;
+    let home = bench.tree.0.join("user");
+    fs::create_dir_all(&home)?;
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let sandbox = Policies {
+        local: Arc::new(LocalSandbox::new().watching_on(runtime.handle().clone())),
+        asked: Arc::clone(&asked),
+    };
+
+    // The sandbox starts nothing, so the sign-in itself is not read.
+    let signed = bench.ask_launching(
+        (
+            sign_in("work", "browser")?,
+            &mut answering(&bench.server, None),
+        ),
+        (true, true),
+        &release,
+        (&runtime, Arc::new(sandbox), Some(&home)),
+    )?;
+
+    assert!(signed.is_err(), "{}", shape(&signed));
+    assert_eq!(fake_peer::played(&made.0), 0, "the agent was started");
+    let asked = asked.lock().map_err(|_| "the recorded policies")?.clone();
+    let [policy] = asked.as_slice() else {
+        return Err(format!("{} starts asked the sandbox", asked.len()).into());
+    };
+    for root in [".goose", ".config/goose"] {
+        assert!(
+            policy.permits_path(
+                &home.join(root).join("auth.json"),
+                SandboxFilesystemAccess::ReadWrite
+            ),
+            "{root} is not writable"
+        );
+        assert!(home.join(root).is_dir(), "{root} was not made");
+    }
+    for beside in [".bashrc", ".ssh/id", ".config/other"] {
+        assert!(
+            !policy.permits_path(&home.join(beside), SandboxFilesystemAccess::ReadWrite),
+            "{beside} is writable"
+        );
+    }
+    Ok(())
+}
+
+/// A listing says of each agent whether its entry names a variable for a
+/// profile directory, or a place it keeps its sign-in in; where it names
+/// neither, a sign-in made under the sandbox is not kept.
+#[test]
+fn a_listing_says_which_agents_keep_no_sign_in_under_the_sandbox() -> Result<(), Failed> {
+    let bench = Bench::new("agents-door-list-keeps-no-sign-in")?;
+    bench.server.catalog(
+        1,
+        &[
+            goose("1.0.0", ONE),
+            with_field(
+                entry("kiro", "2.0.0", TWO),
+                "profile_env",
+                json!("KIRO_HOME"),
+            ),
+            with_field(
+                entry("zed", "3.0.0", TWO),
+                "state_paths",
+                json!([".config/zed"]),
+            ),
+        ],
+        &json!([]),
+    )?;
+    bench.configure(Path::new("goose"), &json!({}))?;
+    let mut front = answering(&bench.server, None);
+
+    let (outcome, _) = bench.ask(Command::AgentCatalog, &mut front, false)?;
+
+    let Ok(Outcome::Catalog { agents, .. }) = outcome else {
+        return Err(format!("a listing, not {}", shape(&outcome)).into());
+    };
+    let rows: Vec<(&str, bool)> = agents
+        .iter()
+        .map(|listed| (listed.agent.as_str(), listed.keeps_no_sign_in))
+        .collect();
+    assert_eq!(rows, [("goose", true), ("kiro", false), ("zed", false)]);
     Ok(())
 }
 

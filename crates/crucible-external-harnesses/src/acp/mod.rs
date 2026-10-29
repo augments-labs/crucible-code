@@ -796,7 +796,7 @@ impl Dialect for Acp {
                 environment: Vec::new(),
                 shown: Vec::new(),
             },
-            Reviewed::Catalog(profile) => profile.request(std::env::vars_os()),
+            Reviewed::Catalog(profile) => profile.request(std::env::vars_os(), shape.profile),
         }
     }
 
