@@ -394,6 +394,22 @@ else
         failed=1
     fi
 fi
+# A panel the terminal lays out itself, rather than one of the crate's
+# components, is not walked by that sweep, so the tests beside it carry a
+# sweep of their own. A row is `file panel`: `file` lays `panel` out against a
+# width and a room, and its tests sweep it under a comment naming the panel's
+# own fit sweep.
+own='src/cli/converse/command/login.rs Working'
+while IFS=' ' read -r file panel; do
+    tests="${file%.rs}/tests.rs"
+    if ! grep -qE "^struct $panel \{" "$file"; then
+        printf '    FAIL %s no longer lays out %s; this check measured nothing\n' "$file" "$panel"
+        failed=1
+    elif ! grep -q "panel's own fit sweep" "$tests" || ! grep -qE "fn [a-z_]+\(.*\) -> $panel \{" "$tests"; then
+        printf '    FAIL %s lays %s out and %s holds no fit sweep of its own over it\n' "$file" "$panel" "$tests"
+        failed=1
+    fi
+done <<<"$own"
 
 section "whole-screen cases reach /login rows by name"
 # A case that walks to a /login row by pressing Down a counted number of times
@@ -1358,9 +1374,12 @@ removable=(
     schema/crucible-code-schema.json
     # The client contract's account commands and their variants.
     crates/crucible-client-api/src/{command,outcome,pending,snapshot,wire,tests}.rs
-    # The terminal's choosers and the whole-screen cases over them.
-    src/cli/converse/command/{login,logout}.rs
+    # The terminal's choosers, the client part that carries out the agent move
+    # /login is handed back, and the whole-screen cases over them with the
+    # screens of an agent installed from a test catalog.
+    src/cli/converse/command/{login,logout}.rs src/cli/client.rs
     tests/whole_screen/{agents,main,watched}.rs scripts/screen-baseline.json
+    tests/whole_screen/snapshots/whole_screen__agents__install_{downloading,done}_{40,80}_{fullscreen,native}.snap
     Cargo.toml Cargo.lock scripts/sh/repo-checks.sh
     docs/providers/{agents,index,providers,content-use}.md
     docs/configuration/configuration.md docs/reference/cli.md
@@ -1750,7 +1769,11 @@ done <<<"$decided"
 # client that claimed the capability they need, asking it before anything is
 # fetched or changed, and refuses every other. The terminal's client builds
 # none: it names every command once, to decide from the command alone what a
-# request for it claims, so a new command decides that too.
+# request for it claims where its sender names no claim, so a new command
+# decides that too. `/login` names the one connect that claims install, and
+# the install, update, rollback or sign-in it then sends is the move that
+# connect handed back, the application's own command built on this host,
+# handed to the agents door as it came.
 naming='crates/crucible-app/src/client/accounts.rs
 crates/crucible-app/src/client/agents.rs
 crates/crucible-app/src/client/asking.rs
