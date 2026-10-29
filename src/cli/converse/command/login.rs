@@ -689,13 +689,13 @@ fn carrying<T: Terminal>(
 
 /// The terminal standing over a move at the agents door: it answers the
 /// door's questions as the connect's are, and stands [`Working`] between them.
-struct Overseeing<'a, T: Terminal> {
-    renderer: &'a mut Renderer<T>,
-    style: Style,
+pub(super) struct Overseeing<'a, T: Terminal> {
+    pub(super) renderer: &'a mut Renderer<T>,
+    pub(super) style: Style,
     /// What the panel says is under way, as [`doing`] says it.
-    doing: String,
+    pub(super) doing: String,
     /// Whether a question had no room to stand.
-    cramped: bool,
+    pub(super) cramped: bool,
 }
 
 impl<T: Terminal> Overseer for Overseeing<'_, T> {
@@ -947,20 +947,20 @@ fn kept_key(key: &str) -> Option<Typed> {
 /// quotes it: every control and format character written as its escape and
 /// cut at [`NAMED`] characters, so it can neither draw a line of its own nor
 /// push what is said beside it out of sight.
-fn named(name: &str) -> String {
+pub(super) fn named(name: &str) -> String {
     format!("\"{}\"", shown(name))
 }
 
 /// `text` the catalog, the configuration or an agent gave, escaped and cut as
 /// [`named`] quotes it, unquoted.
-fn shown(text: &str) -> String {
+pub(super) fn shown(text: &str) -> String {
     within(text, NAMED)
 }
 
 /// `text` with every control and format character written as its escape, as
 /// [`crucible_types::shown::escaped`] writes it, and cut at `most` characters
 /// with an ellipsis marking the cut.
-fn within(text: &str, most: usize) -> String {
+pub(super) fn within(text: &str, most: usize) -> String {
     let escaped = crucible_types::shown::escaped(text);
     if escaped.chars().count() <= most {
         return escaped;
@@ -971,7 +971,7 @@ fn within(text: &str, most: usize) -> String {
 }
 
 /// Each of `names`, quoted, one after another.
-fn names(names: &[Box<str>]) -> String {
+pub(super) fn names(names: &[Box<str>]) -> String {
     names
         .iter()
         .map(|name| named(name))
@@ -983,7 +983,7 @@ fn names(names: &[Box<str>]) -> String {
 /// mark a refusal's line opens with, but for a download given up, which the
 /// user asked for and is said unmarked, as [`GIVEN_UP`]. Written out by hand,
 /// every variant named, so a new one decides whether its line is marked.
-fn refused(refusal: &AgentsError) -> String {
+pub(super) fn refused(refusal: &AgentsError) -> String {
     match refusal {
         AgentsError::Download(DownloadError::Cancelled) => sentence(refusal),
         AgentsError::InUse { .. }
@@ -1033,7 +1033,7 @@ fn refused(refusal: &AgentsError) -> String {
 /// given up is said in the fixed words of [`GIVEN_UP`]; every other sentence
 /// has its control and format characters escaped and is cut at [`REFUSAL`]
 /// characters, as [`within`] does.
-fn sentence(refusal: &AgentsError) -> String {
+pub(super) fn sentence(refusal: &AgentsError) -> String {
     let said = match refusal {
         AgentsError::InUse { agent, instances } => format!(
             "{agent} is still the program of {}, so it is not removed",

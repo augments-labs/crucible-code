@@ -43,6 +43,7 @@ use crate::cli::style::Style;
 use super::region::{self, Moved};
 use super::{Held, Terms, mode, picking, warning};
 
+mod agents;
 mod cache;
 mod clear;
 mod context;
@@ -86,6 +87,8 @@ pub(super) enum Command {
     Login,
     /// An account or API key Crucible stored, removed.
     Logout,
+    /// The coding agents the agent catalog offers, searched, and one added.
+    Agents,
     /// The permission mode: the one in force, or the one named.
     Mode,
     /// Inspect and configure operating-system confinement.
@@ -111,7 +114,7 @@ pub(super) enum Command {
 /// The ones that only say something first and the one that ends the session
 /// last. A list is read to find what you did not know to look for, and nobody
 /// is looking up how to leave.
-const EVERY: [Command; 18] = [
+const EVERY: [Command; 19] = [
     Command::Help,
     Command::ReleaseNotes,
     Command::Context,
@@ -121,6 +124,7 @@ const EVERY: [Command; 18] = [
     Command::Fast,
     Command::Login,
     Command::Logout,
+    Command::Agents,
     Command::Mode,
     Command::Sandbox,
     Command::Theme,
@@ -299,6 +303,7 @@ impl Command {
             Self::Fast => "/fast",
             Self::Login => "/login",
             Self::Logout => "/logout",
+            Self::Agents => "/agents",
             Self::Mode => "/mode",
             Self::Sandbox => "/sandbox",
             Self::Theme => "/theme",
@@ -326,6 +331,7 @@ impl Command {
             // does not know yet which of them is theirs.
             Self::Login => "sign in to a provider account",
             Self::Logout => "remove a stored account or API key",
+            Self::Agents => "browse and add coding agents",
             // The ring itself rather than a sentence about it. `/mode` is the
             // one command that takes a word after it, and the words it takes
             // are the useful half of what there is to say.
@@ -390,6 +396,9 @@ impl Command {
             Self::Logout => {
                 MidTurn::Refused("removes the key the request now in flight is signed with")
             }
+            Self::Agents => MidTurn::Refused(
+                "installs an agent and writes your configuration; open it between turns",
+            ),
             Self::Resume => MidTurn::Refused("leaves this session for an earlier one, mid-answer"),
             Self::Cache => MidTurn::Refused("inspects provider state held by the running request"),
             Self::Compact => {
@@ -941,6 +950,11 @@ fn answer<T: Terminal>(
             command: Command::Logout,
             rest,
         } => logout::run(rest, renderer, conversation, terms, held.answers.keys)?,
+
+        Wanted::Known {
+            command: Command::Agents,
+            ..
+        } => agents::run(renderer, conversation, terms, held.answers.keys)?,
 
         Wanted::Known {
             command: Command::Mode,
