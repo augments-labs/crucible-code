@@ -1400,3 +1400,134 @@ fn pointing_leaves_an_instance_whose_program_changed_since_it_was_shown_and_name
     );
     assert!(written.contains(&own));
 }
+
+/// An added instance is named for its agent where no instance is, and
+/// otherwise for its agent and the first count from two that none is, a gap
+/// left by one taken out included. Names of other agents' instances are no
+/// part of it.
+#[test]
+fn the_free_name_for_an_instance_is_its_agent_then_the_first_count_from_two() {
+    let goose = AgentKey::new("goose").expect("an agent key");
+    for (taken, free) in [
+        (&[][..], "goose"),
+        (&["work", "goose-2"][..], "goose"),
+        (&["goose"][..], "goose-2"),
+        (&["goose", "goose-2"][..], "goose-3"),
+        (&["goose", "goose-3"][..], "goose-2"),
+    ] {
+        assert_eq!(free_name(&goose, taken.iter().copied()), free, "{taken:?}");
+    }
+}
+
+/// An added instance is written under the first name the file leaves free,
+/// with its driver, its agent and its program and nothing else, and every
+/// other byte of the file is where it was.
+#[test]
+fn adding_a_catalog_agent_writes_one_instance_under_the_first_free_name_and_nothing_else() {
+    let goose = AgentKey::new("goose").expect("an agent key");
+    let executable = rooted("/h/programs/goose/1.0.0/goose");
+    let spelled = Value::from(executable.as_str());
+    let block = |name: &str| {
+        format!(
+            "\"{name}\": {{\"agent\":\"goose\",\"driver\":\"catalog\",\"executable\":{spelled}}}"
+        )
+    };
+
+    // A file with nothing in it is started with the one instance.
+    let (fresh, named) = adding("", FILE, &goose, &executable).unwrap();
+    assert_eq!(named, "goose");
+    assert_eq!(
+        fresh,
+        format!(
+            "{{\n  \"externalAgents\": {{\n    {}\n  }}\n}}\n",
+            block("goose")
+        )
+    );
+
+    let text = "{\n  \"provider\": \"anthropic\",\n  \"externalAgents\": {\n    \"work\": {\"driver\": \"claude\", \"executable\": \"claude\"}\n  }\n}\n";
+    let (first, named) = adding(text, FILE, &goose, &executable).unwrap();
+    assert_eq!(named, "goose");
+    let held = "{\n  \"provider\": \"anthropic\",\n  \"externalAgents\": {\n    \"work\": {\"driver\": \"claude\", \"executable\": \"claude\"}";
+    assert_eq!(
+        first,
+        format!("{held},\n    {}\n  }}\n}}\n", block("goose"))
+    );
+
+    // A second is named past the first, and the first is left as it was.
+    let (second, named) = adding(&first, FILE, &goose, &executable).unwrap();
+    assert_eq!(named, "goose-2");
+    assert_eq!(
+        second,
+        format!(
+            "{held},\n    {},\n    {}\n  }}\n}}\n",
+            block("goose"),
+            block("goose-2")
+        )
+    );
+
+    let settings = Settings::resolve(vec![Document::sample(&second, Origin::User)]);
+    let mut added: Vec<(String, bool, Driver, Serves, String)> = settings
+        .external_agents()
+        .into_iter()
+        .filter(|agent| agent.name() != "work")
+        .map(|agent| {
+            (
+                agent.name().to_owned(),
+                agent.enabled(),
+                agent.driver(),
+                agent.serves(),
+                agent.executable().to_owned(),
+            )
+        })
+        .collect();
+    added.sort_by(|one, other| one.0.cmp(&other.0));
+    assert_eq!(
+        added,
+        ["goose", "goose-2"].map(|name| (
+            name.to_owned(),
+            true,
+            Driver::Catalog,
+            Serves::Agent(goose.clone()),
+            executable.clone()
+        ))
+    );
+
+    // The names are read from the file, so a gap in them is filled.
+    let gapped = format!(
+        "{{\"externalAgents\": {{{}, {}}}}}",
+        block("goose"),
+        block("goose-3")
+    );
+    let (filled, named) = adding(&gapped, FILE, &goose, &executable).unwrap();
+    assert_eq!(named, "goose-2");
+    assert_eq!(
+        filled,
+        format!(
+            "{{\"externalAgents\": {{{}, {}, {}}}}}",
+            block("goose"),
+            block("goose-3"),
+            block("goose-2")
+        )
+    );
+}
+
+#[test]
+fn adding_an_instance_past_the_most_a_file_may_name_is_refused() {
+    let goose = AgentKey::new("goose").expect("an agent key");
+    let executable = rooted("/h/programs/goose/1.0.0/goose");
+    let mut text = String::new();
+    for _ in 0..crate::settings::access::INSTANCES {
+        text = adding(&text, FILE, &goose, &executable).unwrap().0;
+    }
+
+    let refused = adding(&text, FILE, &goose, &executable);
+
+    assert!(
+        matches!(refused, Err(ConfigError::TooMany { .. })),
+        "{refused:?}"
+    );
+    assert!(matches!(
+        adding("{", FILE, &goose, &executable),
+        Err(ConfigError::Malformed { .. })
+    ));
+}

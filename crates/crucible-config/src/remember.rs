@@ -10,11 +10,15 @@
 //! Nothing here opens a file. This crate says what a document may hold; the
 //! wiring above it reads and writes.
 
+use std::collections::BTreeSet;
+
 use crucible_models::{Effort, Speed};
 use crucible_tools::Minted;
+use crucible_types::AgentKey;
 use serde_json::Value;
 
 use crate::error::ConfigError;
+use crate::settings::Driver;
 use crate::settings::access::ExternalAgent;
 use crate::shape::rows::{Row, Values};
 use crate::shape::whole;
@@ -717,6 +721,68 @@ pub fn installing(
     }
     let installed = spliced_at(text, file, &["externalAgents", instance], &at, &block)?;
     connecting(&installed, file, provider, instance)
+}
+
+/// The name an added instance of `agent` takes, out of the names `taken`:
+/// the agent's own where none is that, else the agent's and the first count
+/// from two that none is.
+///
+/// The one place the rule is written, so the name a question shows and the
+/// name [`adding`] writes differ only where the names taken did.
+#[must_use]
+pub fn free_name<'a>(agent: &AgentKey, taken: impl IntoIterator<Item = &'a str>) -> String {
+    let taken: BTreeSet<&str> = taken.into_iter().collect();
+    let mut name = agent.as_str().to_owned();
+    let mut count: usize = 1;
+    while taken.contains(name.as_str()) {
+        count += 1;
+        name = format!("{agent}-{count}");
+    }
+    name
+}
+
+/// The text of a configuration file with one more instance of the catalog
+/// agent `agent`, started as `executable`, and the name it is written under:
+/// the [`free_name`] of the instances `text` names, so a name written since a
+/// question showed one is passed over rather than written twice.
+///
+/// The instance names its driver, its agent and its program and nothing
+/// else, so it takes new work as any instance does. Every other byte is
+/// where it was, and the text is read back as the user's file before it is
+/// returned.
+///
+/// # Errors
+///
+/// Refuses malformed or invalid configuration, either as it is or as it would
+/// be, which an instance past the most one file may name is, and
+/// [`ConfigError::Unspliceable`] where the answer cannot be written without
+/// rewriting.
+pub fn adding(
+    text: &str,
+    file: &str,
+    agent: &AgentKey,
+    executable: &str,
+) -> Result<(String, String), ConfigError> {
+    let checked = if text.trim().is_empty() { "{}" } else { text };
+    let document = crate::document::Document::parse(checked, file, crate::document::Origin::User)?;
+    let instance = free_name(
+        agent,
+        document
+            .value()
+            .get("externalAgents")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flat_map(|agents| agents.keys().map(String::as_str)),
+    );
+    let block = serde_json::json!({
+        "driver": Driver::Catalog.name(),
+        "agent": agent.as_str(),
+        "executable": executable,
+    });
+    let at = format!("externalAgents.{instance}");
+    let written = spliced_at(text, file, &["externalAgents", &instance], &at, &block)?;
+    crate::document::Document::parse(&written, file, crate::document::Origin::User)?;
+    Ok((written, instance))
 }
 
 /// The text of a configuration file where each installed agent `moved` names
