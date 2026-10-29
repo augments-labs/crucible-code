@@ -2071,3 +2071,40 @@ fn coordinating(choosing: &Path, agent: &ExternalAgent) -> Result<Coordinator, C
     };
     Ok(Coordinator::restore(journal, agent.name(), admission)?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn method(id: &str, name: &str) -> AuthMethod {
+        AuthMethod {
+            id: id.into(),
+            name: name.into(),
+            description: None,
+            method: Method::Agent,
+        }
+    }
+
+    /// A method named like a choice the signed-out question already gives,
+    /// or like a method before it, is not offered, whatever the whitespace
+    /// around its name and whatever its case.
+    #[test]
+    fn a_method_named_like_a_fixed_choice_or_an_earlier_one_is_not_offered() {
+        let instance =
+            ExternalAgent::unwritten("work", Driver::Antigravity, "antigravity", None, None)
+                .unwrap();
+        let methods = vec![
+            method("trailing", "Cancel "),
+            method("lower", "cancel"),
+            method("again", " CHECK AGAIN"),
+            method("key", "API key"),
+            method("same", "api key "),
+        ];
+
+        let (offered, more) = sign_ins(&instance, methods, &[CHECK_AGAIN, "Cancel"]);
+
+        let named: Vec<&str> = offered.iter().map(|(name, ..)| name.as_str()).collect();
+        assert_eq!(named, ["API key"]);
+        assert!(!more);
+    }
+}
