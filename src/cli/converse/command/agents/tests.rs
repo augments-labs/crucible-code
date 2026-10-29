@@ -351,7 +351,7 @@ fn a_check_is_told_on_the_screen_after_what_the_store_holds() {
 fn listing(agents: usize, closing: bool, typed: &str) -> Listing {
     let offered: Vec<String> = (0..20).map(|minor| format!("1.{minor}.0")).collect();
     let offered: Vec<&str> = offered.iter().map(String::as_str).collect();
-    let licence = "Apache-2.0 WITH LLVM-exception OR MIT OR BSD-3-Clause ".repeat(4);
+    let licence = "Apache-2.0 WITH LLVM-exception OR MIT OR Zlib OR Unlicense ".repeat(4);
     let listed: Vec<door::Listed> = (0..agents)
         .map(|at| {
             let mut agent = listed(&format!("agent-{at}"), &offered, &licence, &["1.0.0"]);

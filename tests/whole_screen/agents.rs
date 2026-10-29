@@ -1491,12 +1491,12 @@ fn an_agent_added_after_a_yes_downloads_and_names_the_instance_written() {
             // the download stands where it is until this has seen it.
             window.types_until("", "50%");
             let picture = scrubbed(&timeless(&window.picture()), &case);
-            insta::assert_snapshot!(format!("agents_adding_{}_{mode}", size.0), picture);
+            insta::assert_snapshot!(format!("adding_agent_{}_{mode}", size.0), picture);
 
             published.release();
             window.types_until("", "installed 1.0");
             let picture = scrubbed(&timeless(&window.picture()), &case);
-            insta::assert_snapshot!(format!("agents_added_{}_{mode}", size.0), picture);
+            insta::assert_snapshot!(format!("added_agent_{}_{mode}", size.0), picture);
             left(&mut window, "Added goose 1.0.0");
 
             let written = instance(&window, "goose", &case);
