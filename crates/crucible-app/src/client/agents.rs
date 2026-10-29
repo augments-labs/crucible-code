@@ -1019,7 +1019,7 @@ impl Door<'_> {
         })
     }
 
-    /// The question an install or update puts.
+    /// The question an install, add or update puts.
     fn installing(
         offer: &Offer,
         how: How,
@@ -1033,9 +1033,14 @@ impl Door<'_> {
         // never reaches.
         let total = sized(offer).unwrap_or(0);
         let (key, version) = (entry.key.as_str(), quoted(&offer.pin.version));
-        let (asks, choice) = match how {
-            How::Updated => (format!("Update {key} to {version}?"), "Update"),
-            How::Installed | How::RolledBack | How::Added => {
+        let (asks, choice) = match (how, &plan.adding) {
+            (How::Updated, _) => (format!("Update {key} to {version}?"), "Update"),
+            (How::Added, Some(name)) => (
+                format!("Add {key} {version} as the instance {}?", quoted(name)),
+                "Add",
+            ),
+            // The plan of an add always holds the name it shows.
+            (How::Installed | How::RolledBack | How::Added, _) => {
                 (format!("Install {key} {version}?"), "Install")
             }
         };

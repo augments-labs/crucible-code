@@ -9,6 +9,7 @@ use std::fs;
 use std::path::Path;
 
 use crucible_app::client::agents::{AgentsError, How, Outcome};
+use crucible_client_api::Pending;
 use crucible_config::ConfigError;
 use crucible_types::AgentKey;
 use serde_json::{Value, json};
@@ -56,6 +57,16 @@ fn without(bench: &Bench, instance: &str) -> Result<Value, Failed> {
     Ok(value)
 }
 
+/// What the one install question `front` was put asks, and the names of the
+/// choices it offers.
+fn asked(front: &Answering<'_>) -> Result<(String, Vec<String>), Failed> {
+    let [(Pending::Install { asks, choices, .. }, _)] = front.put.as_slice() else {
+        return Err(format!("one install confirmation, not {:?}", front.put).into());
+    };
+    let choices = choices.iter().map(|choice| choice.name.as_str().to_owned());
+    Ok((asks.as_str().to_owned(), choices.collect()))
+}
+
 /// Whether one of the facts `front` was put says `said`.
 fn says(front: &Answering<'_>, said: &str) -> Result<bool, Failed> {
     Ok(facts(front)?.iter().any(|fact| fact.contains(said)))
@@ -69,11 +80,18 @@ fn an_add_writes_an_instance_under_the_agent_key_then_one_under_the_next_free_na
     bench.configure(&bench.program("1.0.0"), &json!({}))?;
     let before = without(&bench, "goose")?;
     let written = written(&bench.program("1.0.0"));
-    let mut front = answering(&bench.server, Some("Install"));
+    let mut front = answering(&bench.server, Some("Add"));
 
     let (first, _) = bench.ask(add("1.0.0")?, &mut front, false)?;
 
     assert_eq!(added(&first), Some(("goose", true)), "{}", shape(&first));
+    assert_eq!(
+        asked(&front)?,
+        (
+            "Add goose 1.0.0 as the instance goose?".to_owned(),
+            vec!["Add".to_owned(), "Cancel".to_owned()]
+        )
+    );
     assert!(says(&front, "Adds the instance goose to")?);
     assert_eq!(fs::read(bench.program("1.0.0"))?, ONE);
     assert_eq!(instance(&bench, "goose")?, written);
@@ -81,7 +99,7 @@ fn an_add_writes_an_instance_under_the_agent_key_then_one_under_the_next_free_na
 
     // The version is kept now, so the second add downloads nothing.
     bench.server.forget();
-    let mut front = answering(&bench.server, Some("Install"));
+    let mut front = answering(&bench.server, Some("Add"));
     let (second, _) = bench.ask(add("1.0.0")?, &mut front, false)?;
 
     assert_eq!(
@@ -93,6 +111,7 @@ fn an_add_writes_an_instance_under_the_agent_key_then_one_under_the_next_free_na
     assert_eq!(bench.server.asked(), CATALOG);
     assert!(says(&front, "already installed, so nothing is downloaded")?);
     assert!(says(&front, "Adds the instance goose-2 to")?);
+    assert_eq!(asked(&front)?.0, "Add goose 1.0.0 as the instance goose-2?");
     assert_eq!(instance(&bench, "goose-2")?, written);
     assert_eq!(instance(&bench, "goose")?, written);
     Ok(())
@@ -132,7 +151,7 @@ fn an_add_whose_name_was_taken_while_it_was_asked_writes_the_next_free_one() -> 
     // Another instance named goose, written beside work while it is asked.
     let edited =
         json!({"externalAgents": {"work": written(&bench.program("1.0.0")), "goose": theirs}});
-    let mut front = answering(&bench.server, Some("Install"));
+    let mut front = answering(&bench.server, Some("Add"));
     front.meanwhile = Some((bench.user(), serde_json::to_vec_pretty(&edited)?));
 
     let (outcome, _) = bench.ask(add("1.0.0")?, &mut front, false)?;
@@ -168,7 +187,7 @@ fn an_add_the_user_file_has_no_room_for_keeps_the_version_and_writes_nothing() -
         full = more;
     }
     fs::write(bench.user(), &full)?;
-    let mut front = answering(&bench.server, Some("Install"));
+    let mut front = answering(&bench.server, Some("Add"));
 
     let (outcome, _) = bench.ask(add("1.0.0")?, &mut front, false)?;
 
@@ -215,7 +234,7 @@ fn an_add_the_user_file_has_no_room_for_moves_no_instance_onto_the_version_it_ke
         Err(ConfigError::TooMany { .. })
     ));
     fs::write(bench.user(), &full)?;
-    let mut front = answering(&bench.server, Some("Install"));
+    let mut front = answering(&bench.server, Some("Add"));
 
     let (outcome, _) = bench.ask(add("2.0.0")?, &mut front, false)?;
 
