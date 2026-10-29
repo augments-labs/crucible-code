@@ -1531,3 +1531,26 @@ fn adding_an_instance_past_the_most_a_file_may_name_is_refused() {
         Err(ConfigError::Malformed { .. })
     ));
 }
+
+#[test]
+fn adding_into_agents_the_text_does_not_hold_plainly_is_refused_and_writes_nothing() {
+    let goose = AgentKey::new("goose").expect("an agent key");
+    let executable = rooted("/h/programs/goose/1.0.0/goose");
+    let work = serde_json::json!({"driver": "catalog", "agent": "goose", "executable": executable});
+    for text in [
+        // Written twice: the parser keeps the last, which a scan of the text
+        // cannot tell from the first.
+        format!(
+            r#"{{"externalAgents": {{"work": {work}}}, "externalAgents": {{"home": {work}}}}}"#
+        ),
+        // Spelled with an escape: the parser reads it, a scan does not find it.
+        format!(r#"{{"external\u0041gents": {{"work": {work}}}}}"#),
+    ] {
+        let refused = adding(&text, FILE, &goose, &executable);
+
+        assert!(
+            matches!(refused, Err(ConfigError::Unspliceable { .. })),
+            "{text}: {refused:?}"
+        );
+    }
+}
