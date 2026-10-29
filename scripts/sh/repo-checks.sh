@@ -1204,9 +1204,10 @@ done <<<"$sandbox_state"
 section "the agents a test build starts stay out of a release"
 # A test of the whole program runs the binary over agents this release does not
 # ship, or over none, by naming them in one variable that `crucible-app`'s
-# `proof` module reads. A build that ships must have no reader of it, so the
-# name is allowed only where it is read and in the whole-screen cases that set
-# it, the module is compiled only under `proof`, and `proof` is turned on the
+# `proof` module reads, and over a catalog it serves by naming that in a second.
+# A build that ships must have no reader of either, so each name is allowed only
+# where it is read and in the whole-screen cases that set it, the module is
+# compiled only under `proof`, and `proof` is turned on the
 # way `per-checkout-state` is above: by a dev-dependency and by nothing a
 # release build resolves. Its own one edge, to the fake peer's `proof`, is the
 # only feature it may turn on.
@@ -1216,18 +1217,19 @@ section "the agents a test build starts stay out of a release"
 # key that is not the catalog owner's. Its module is declared only under the
 # harness crate's own `proof`, and that feature is turned on by a
 # dev-dependency or by the application's `proof` above, and by nothing else.
-seam_name="CRUCIBLE_CODE_PROOF_REGISTRY"
 seam_reader="crates/crucible-app/src/proof.rs"
-named=$(grep -rlF --include='*.rs' "$seam_name" crates src tests || true)
-if ! grep -Fxq "$seam_reader" <<<"$named"; then
-    printf '    FAIL %s does not read %s; this check measured nothing\n' "$seam_reader" "$seam_name"
-    failed=1
-fi
-while IFS= read -r file; do
-    [[ -z "$file" || "$file" == "$seam_reader" || "$file" == tests/whole_screen/* ]] && continue
-    printf '    FAIL %s names %s; only %s and tests/whole_screen/ may\n' "$file" "$seam_name" "$seam_reader"
-    failed=1
-done <<<"$named"
+for seam_name in CRUCIBLE_CODE_PROOF_REGISTRY CRUCIBLE_CODE_PROOF_CATALOG; do
+    named=$(grep -rlF --include='*.rs' "$seam_name" crates src tests || true)
+    if ! grep -Fxq "$seam_reader" <<<"$named"; then
+        printf '    FAIL %s does not read %s; this check measured nothing\n' "$seam_reader" "$seam_name"
+        failed=1
+    fi
+    while IFS= read -r file; do
+        [[ -z "$file" || "$file" == "$seam_reader" || "$file" == tests/whole_screen/* ]] && continue
+        printf '    FAIL %s names %s; only %s and tests/whole_screen/ may\n' "$file" "$seam_name" "$seam_reader"
+        failed=1
+    done <<<"$named"
+done
 for seam in "crates/crucible-app/src/lib.rs proof" \
     "crates/crucible-external-harnesses/src/catalog/mod.rs fixture"; do
     seam_root=${seam% *}

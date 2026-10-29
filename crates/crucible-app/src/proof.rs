@@ -8,7 +8,8 @@
 //! The first chooses the agents the binary can start: `fake` lists every agent
 //! this build knows how to run as though this release shipped it, and `empty`
 //! lists none. The second names a catalog of agents the test serves itself, as
-//! its address and the one key the test signed it with, apart by a space. It
+//! its address on this machine's loopback and the one key the test signed it
+//! with, apart by a space. It
 //! takes effect where the published catalog's source is built, so every fetch
 //! of the catalog in that process asks the test's: the one an agents command
 //! makes, and the one beside the release check where that is armed. Either
@@ -119,7 +120,8 @@ impl Served {
 /// # Errors
 ///
 /// [`AppError::ProofCatalog`] where `value` is not an `http` or `https`
-/// address and a key, apart by one space, each with no space of its own.
+/// address on this machine's loopback (`127.0.0.1`, `[::1]` or `localhost`)
+/// and a key, apart by one space, each with no space of its own.
 pub fn catalog_from(value: Option<&OsStr>) -> Result<Option<Served>, AppError> {
     let Some(value) = value else {
         return Ok(None);
@@ -131,14 +133,41 @@ pub fn catalog_from(value: Option<&OsStr>) -> Result<Option<Served>, AppError> {
         .to_str()
         .and_then(|text| text.split_once(' '))
         .ok_or_else(refused)?;
-    let addressed = base.starts_with("http://") || base.starts_with("https://");
-    if !addressed || key.is_empty() || key.contains(' ') {
+    if !looped(base) || key.is_empty() || key.contains(' ') {
         return Err(refused());
     }
     Ok(Some(Served {
         base: base.to_owned(),
         key: key.to_owned(),
     }))
+}
+
+/// The hosts a catalog a test serves can be named at: this machine's loopback,
+/// so a variable set by anything else cannot point a test build at the network.
+const LOOPBACK: [&str; 3] = ["127.0.0.1", "[::1]", "localhost"];
+
+/// Whether `base` is an `http` or `https` address whose host is one of
+/// [`LOOPBACK`], written exactly so, with no port or a port of digits alone.
+///
+/// Anything else between the host and the path, a user's name or a second
+/// host among it, is refused rather than read the way a URL parser would.
+fn looped(base: &str) -> bool {
+    let Some(rest) = base
+        .strip_prefix("http://")
+        .or_else(|| base.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    LOOPBACK
+        .iter()
+        .filter_map(|host| authority.strip_prefix(host))
+        .any(|port| {
+            port.is_empty()
+                || port.strip_prefix(':').is_some_and(|digits| {
+                    !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+                })
+        })
 }
 
 /// The catalog this process's environment names, as [`catalog_from`] reads

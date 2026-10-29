@@ -1,13 +1,25 @@
 use std::ffi::OsStr;
+use std::process::{Command, Stdio};
+use std::sync::Arc;
 
-use crucible_config::Driver;
+use crucible_auth::StoredCredentials;
+use crucible_builtins::{Background, Ledger, Plan};
+use crucible_config::{Driver, Settings};
+use crucible_runtime::BoxFuture;
+use crucible_tools::{Mode, Put, Revealed};
+use crucible_types::{Answered, Question};
 
 use crucible_external_harnesses::catalog::{KEYS, Keys};
 
-use super::{CATALOG, FAKE_ROWS, Served, catalog, catalog_from, registry, registry_from};
+use super::{CATALOG, FAKE_ROWS, Served, VARIABLE, catalog, catalog_from, registry, registry_from};
 use crate::AppError;
 use crate::backends::REGISTRY;
 use crate::catalog_fetch::{HOSTS, PUBLISHED, Source};
+use crate::providers::NOTHING_TO_ASK;
+use crate::sample::Sample;
+use crate::services::Services;
+use crate::startup::{Resuming, Startup, assemble};
+use crate::subscription::Subscriptions;
 
 /// A key's shape, as a minisign public key's base64 line has it; nothing
 /// verifies under it.
@@ -119,5 +131,123 @@ fn a_catalog_named_any_other_way_is_refused_naming_the_variable() {
         assert!(problem.to_string().contains(CATALOG), "{problem}");
         let source = Source::published(&|name| (name == CATALOG).then(|| value.clone()));
         assert_eq!(source.base, PUBLISHED, "{value:?}");
+    }
+}
+
+#[test]
+fn a_catalog_is_named_only_on_this_machines_loopback() {
+    for base in [
+        "http://127.0.0.1:9/catalog/",
+        "https://[::1]:9/",
+        "http://localhost/catalog/",
+    ] {
+        let value = format!("{base} {KEY}");
+
+        let named = catalog_from(Some(OsStr::new(&value))).expect("a loopback catalog");
+        assert_eq!(named.map(|served| served.base), Some(base.to_owned()));
+    }
+    for base in [
+        "https://catalog.example/catalog/",
+        "http://10.0.0.1:9/catalog/",
+        "http://127.0.0.1.catalog.example/",
+        "http://127.0.0.1@catalog.example/",
+        "http://localhost:9@catalog.example/",
+        "http://localhost:/catalog/",
+        "http://[::1]:9x/",
+    ] {
+        let value = format!("{base} {KEY}");
+
+        let Err(problem) = catalog_from(Some(OsStr::new(&value))) else {
+            panic!("{base:?} named a catalog off this machine");
+        };
+        assert!(
+            matches!(problem, AppError::ProofCatalog { .. }),
+            "{problem:?}"
+        );
+        let source = Source::published(&|name| (name == CATALOG).then(|| value.clone()));
+        assert_eq!(source.base, PUBLISHED, "{base:?}");
+    }
+}
+
+/// The test [`a_start_whose_environment_names_a_catalog_it_does_not_take_is_refused`]
+/// starts this binary again as.
+const STARTED: &str = "proof::tests::the_start_a_catalog_named_in_the_environment_refuses";
+
+#[test]
+fn a_start_whose_environment_names_a_catalog_it_does_not_take_is_refused() {
+    // Setting a variable in this process is `unsafe` in edition 2024, which
+    // this workspace denies, so the start is made in this test binary started
+    // again with the variable set.
+    let ended = Command::new(std::env::current_exe().expect("the test binary"))
+        .args(["--exact", STARTED, "--nocapture", "--test-threads=1"])
+        .env(CATALOG, "not-an-address")
+        .env_remove(VARIABLE)
+        .stdin(Stdio::null())
+        .output()
+        .expect("the second process");
+
+    let said = String::from_utf8_lossy(&ended.stdout);
+    assert!(ended.status.success(), "{said}");
+    assert!(
+        said.contains("1 passed"),
+        "the start was never made: {said}"
+    );
+}
+
+/// Starts a conversation as the program does, under whatever this process's
+/// environment names a catalog as, and expects the start refused over it.
+///
+/// A test in its own right only so that the test binary can be started as this
+/// process; run any other way, with no catalog named, it finds nothing to do.
+#[test]
+fn the_start_a_catalog_named_in_the_environment_refuses() {
+    if std::env::var_os(CATALOG).is_none() {
+        return;
+    }
+    let sample = Sample::new("proof-catalog-refused");
+    let (logs, workspace) = (sample.logs(), sample.workspace());
+
+    let started = assemble(&Startup {
+        providers: &crate::providers::providers()
+            .expect("the built-in providers register")
+            .snapshot(),
+        provider: None,
+        unasked: NOTHING_TO_ASK,
+        model: None,
+        effort: None,
+        resuming: Resuming::No,
+        mode: Mode::Ask,
+        leaving: &Background::new(),
+        services: &Services::new(),
+        settings: &Settings::default(),
+        sessions: &logs,
+        state: &sample.state(),
+        workspace: &workspace,
+        ledger: &Ledger::new(),
+        revealed: &Revealed::new(),
+        plan: &Plan::new(),
+        asking: Arc::new(Nobody),
+        hosting: &[],
+        terminal: true,
+        from: &|_| None,
+        stored: &StoredCredentials::default(),
+        subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
+    });
+
+    let Err(problem) = started else {
+        panic!("a start whose environment names a catalog it does not take went ahead");
+    };
+    assert!(
+        matches!(problem, AppError::ProofCatalog { .. }),
+        "{problem:?}"
+    );
+}
+
+/// Asked nothing: a start that is refused puts no question.
+struct Nobody;
+
+impl Put for Nobody {
+    fn put<'a>(&'a self, _questions: &'a [Question]) -> BoxFuture<'a, Option<Vec<Answered>>> {
+        Box::pin(async { None })
     }
 }

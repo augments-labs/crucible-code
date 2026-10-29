@@ -225,7 +225,7 @@ pub enum AppError {
     /// [`crate::proof`].
     #[cfg(feature = "proof")]
     #[error(
-        "a test build's catalog was asked for as {value:?}; {} takes an address and a key, apart by one space",
+        "a test build's catalog was asked for as {value:?}; {} takes a loopback address and a key, apart by one space",
         crate::proof::CATALOG
     )]
     ProofCatalog {
