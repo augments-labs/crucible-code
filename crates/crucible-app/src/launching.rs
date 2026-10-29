@@ -1845,6 +1845,15 @@ const fn within(step: Account) -> Duration {
 /// How long a sign-in waits for the user to finish it in their browser.
 const SIGNING_IN: Duration = Duration::from_mins(5);
 
+/// Whether `policy` lets a child write `root` by a rule of its own for exactly
+/// that place, and not only by a rule for a place that contains it: what the
+/// sandbox is given is the place that was judged.
+fn grants(policy: &SandboxPolicy, root: &Path) -> bool {
+    policy.filesystem().iter().any(|rule| {
+        matches!(rule.access(), SandboxFilesystemAccess::ReadWrite) && same_path(rule.path(), root)
+    }) && policy.permits_path(root, SandboxFilesystemAccess::ReadWrite)
+}
+
 /// Whether `a` and `b` are one path, compared by components as the file
 /// system compares their names.
 fn same_path(a: &Path, b: &Path) -> bool {
@@ -2130,11 +2139,7 @@ impl<'a> Launcher<'a> {
         for root in &kept {
             // Made only where the child may write it, as the profile is, and
             // only where it was judged: the rule is the place that was.
-            let granted = policy.filesystem().iter().any(|rule| {
-                matches!(rule.access(), SandboxFilesystemAccess::ReadWrite)
-                    && same_path(rule.path(), root)
-            });
-            if !granted || !policy.permits_path(root, SandboxFilesystemAccess::ReadWrite) {
+            if !grants(&policy, root) {
                 return Err(SandboxPolicyError::InvalidPath.into());
             }
         }

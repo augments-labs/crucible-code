@@ -2682,6 +2682,46 @@ fn a_link_to_the_session_logs_is_refused() {
     );
 }
 
+/// A policy lets a child write a root only by a rule for that place: a rule
+/// for a place that contains it, for the place with less access, or for
+/// another place, is not what was judged.
+#[test]
+fn a_root_is_granted_only_by_a_rule_for_exactly_that_place() {
+    let sample = Sample::new("launch-state-granted");
+    let home = homed_in(&sample);
+    let root = home.join(".config/goose");
+    fs::create_dir_all(&root).expect("a root");
+    let rule = |at: &Path, access| {
+        SandboxFilesystemRule::new(at, access, SandboxFilesystemProvenance::Runtime)
+            .expect("a rule")
+    };
+    let policy = |mut rules: Vec<SandboxFilesystemRule>| {
+        rules.push(rule(&sample.root(), SandboxFilesystemAccess::ReadWrite));
+        SandboxPolicy::new(
+            true,
+            rules,
+            sample.root(),
+            SandboxNetworkPolicy::Closed,
+            SandboxResourceLimits::confining(),
+        )
+        .expect("a policy")
+    };
+
+    let exact = policy(vec![rule(&root, SandboxFilesystemAccess::ReadWrite)]);
+    let wider = policy(vec![rule(&home, SandboxFilesystemAccess::ReadWrite)]);
+    let lesser = policy(vec![rule(&root, SandboxFilesystemAccess::ReadOnly)]);
+    let another = policy(vec![rule(
+        &home.join(".config"),
+        SandboxFilesystemAccess::ReadWrite,
+    )]);
+
+    assert!(grants(&exact, &root));
+    assert!(wider.permits_path(&root, SandboxFilesystemAccess::ReadWrite));
+    assert!(!grants(&wider, &root), "a rule for the home grants it");
+    assert!(!grants(&lesser, &root), "a read-only rule grants it");
+    assert!(!grants(&another, &root), "a rule for its parent grants it");
+}
+
 /// An entry's place that does not stay inside the home it is joined to is
 /// refused, as the catalog's reader already refuses it, so a value that never
 /// went through the reader cannot reach elsewhere.
