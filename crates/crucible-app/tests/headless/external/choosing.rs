@@ -4,9 +4,11 @@
 //! A client that claims the install capability is offered the release of an
 //! agent not installed, each agent the catalog offers after the shipping
 //! ones, with that agent's own moves, and a sign-in by each method of an
-//! agent read signed out; the move chosen ends the connect, with nothing
-//! started or written. A client that does not claim it is put the questions
-//! it was put before any of this was offered.
+//! agent read signed out. The move chosen ends the connect: one chosen before
+//! the agent's status is read with nothing started, asked of its route or
+//! written, and a sign-in after the route's yes and that read, with nothing
+//! more. A client that does not claim it is put the questions it was put
+//! before any of this was offered.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -462,8 +464,9 @@ fn antigravity_row() -> Result<&'static Row, Failed> {
 }
 
 /// A conversation whose instance `space` of Antigravity is played by the peer
-/// reading signed out at each of `runs` status checks, its route already
-/// given its yes; and the user file naming that instance.
+/// reading signed out at each of `runs` status checks, its route unanswered,
+/// a yes to it written into the user file a connect is asked with; and that
+/// file, naming the instance.
 fn signed_out_antigravity(tree: &Tree, runs: usize) -> Result<(Conversation, String), Failed> {
     use crucible_external_harnesses::acp::SignIn;
     use crucible_external_harnesses::antigravity::Manifest;
@@ -485,7 +488,7 @@ fn signed_out_antigravity(tree: &Tree, runs: usize) -> Result<(Conversation, Str
     let program = fake_peer::install(&peer, "antigravity", &Peer::of(vec![signed_out; runs]))?;
     let row = antigravity_row()?;
     let consent = Consent::new(Routes::production());
-    consent.give(row.route);
+    consent.keeps_in(crate::Desk::new(tree, &[])?.choosing);
     let runtime = runtime()?;
     let sandbox: Arc<dyn SandboxService> =
         Arc::new(LocalSandbox::new().watching_on(runtime.clone()));
@@ -530,28 +533,19 @@ fn signed_out_antigravity(tree: &Tree, runs: usize) -> Result<(Conversation, Str
 }
 
 /// An agent read signed out offers a client that claims the install
-/// capability a sign-in by each method it gives, before checking again;
-/// choosing one ends the connect on that sign-in, writing nothing. A client
-/// that does not claim it is offered only to check again or cancel.
+/// capability a sign-in by each method it gives, before checking again.
+/// Choosing one ends the connect on that sign-in after the route's yes, which
+/// is written down, and after the agent was started once to read its status;
+/// the choice itself writes and starts nothing more. A client that does not
+/// claim it is offered only to check again or cancel.
 #[test]
 fn an_agent_read_signed_out_offers_its_sign_in_methods() -> Result<(), Failed> {
     let tree = Tree::new("external-choosing-sign-in")?;
     let (mut conversation, before) = signed_out_antigravity(&tree, 2)?;
-    let mut unclaimed = Picking::of([Some("Cancel")]);
+    let peer = tree.0.join("peer");
+    let route = antigravity_row()?.route;
+    let mut picking = Picking::of([Some("Accept"), Some("Gemini API key")]);
 
-    let (outcome, file) = connecting_on(
-        &tree,
-        &mut conversation,
-        (&before, Some("space")),
-        uninstalling(),
-        &mut unclaimed,
-    )?;
-
-    assert_eq!(outcome, Outcome::Login(LoginOutcome::Undecided));
-    assert_eq!(offered(&unclaimed.put), [vec![CHECK_AGAIN, "Cancel"]]);
-    assert_eq!(file, before);
-
-    let mut picking = Picking::of([Some("Gemini API key")]);
     let (outcome, file) = connecting_on(
         &tree,
         &mut conversation,
@@ -568,6 +562,14 @@ fn an_agent_read_signed_out_offers_its_sign_in_methods() -> Result<(), Failed> {
         outcome,
         Outcome::Login(LoginOutcome::AgentChosen { action })
     );
+    assert!(
+        matches!(
+            picking.put.first(),
+            Some(Pending::Warning { route: asked, .. }) if asked.as_str() == route
+        ),
+        "the route is asked before anything of the agent's is started: {:?}",
+        picking.put
+    );
     assert_eq!(
         offered(&picking.put),
         [vec![
@@ -579,12 +581,43 @@ fn an_agent_read_signed_out_offers_its_sign_in_methods() -> Result<(), Failed> {
             "Cancel",
         ]]
     );
+    assert_eq!(
+        fake_peer::played(&peer),
+        1,
+        "the agent is started once, to read its status"
+    );
+    let mut written: Value = serde_json::from_str(&file)?;
+    let accepted = written
+        .as_object_mut()
+        .and_then(|file| file.remove("contentUse"))
+        .ok_or("a yes written into the user file")?;
+    assert_eq!(accepted, json!({ "accepted": [route] }));
+    assert_eq!(
+        written,
+        serde_json::from_str::<Value>(&before)?,
+        "nothing but the yes is written"
+    );
+
+    // The route has its yes now, so the client that does not claim install
+    // is put the signed-out question at once.
+    let mut unclaimed = Picking::of([Some("Cancel")]);
+    let (outcome, file) = connecting_on(
+        &tree,
+        &mut conversation,
+        (&before, Some("space")),
+        uninstalling(),
+        &mut unclaimed,
+    )?;
+
+    assert_eq!(outcome, Outcome::Login(LoginOutcome::Undecided));
+    assert_eq!(offered(&unclaimed.put), [vec![CHECK_AGAIN, "Cancel"]]);
+    assert_eq!(file, before);
+    assert_eq!(fake_peer::played(&peer), 2);
     let (asks, facts, _) = question(&picking.put, 0).ok_or("the sign-in question")?;
     assert_eq!(asks, "space is not signed in.");
     let (unclaimed_asks, unclaimed_facts, _) =
         question(&unclaimed.put, 0).ok_or("the sign-in question")?;
     assert_eq!((asks, facts), (unclaimed_asks, unclaimed_facts));
-    assert_eq!(file, before);
     Ok(())
 }
 

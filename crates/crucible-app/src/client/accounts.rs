@@ -54,10 +54,10 @@
 //! | connect, an agent whose provider this build does not offer | nothing | [`ErrorCode::UnknownProvider`] |
 //! | connect, no instance named, no agent shipping | nothing | [`ErrorCode::InvalidArgument`] |
 //! | connect, no instance named | an agent not found, then cancel | [`LoginOutcome::Undecided`] |
-//! | connect, of a client claiming install, the agent not installed and its release one crucible installs | install | [`LoginOutcome::AgentChosen`], that install, nothing started or written |
-//! | connect, no instance named, of a client claiming install | a catalog agent, then install, update or roll back | [`LoginOutcome::AgentChosen`], that move, nothing started or written |
-//! | connect, no instance named, of a client claiming install | a catalog agent, then a sign-in method of its instance | [`LoginOutcome::AgentChosen`], that sign-in, nothing started or written |
-//! | connect, of a client claiming install, the agent read signed out, its instance in the file | a sign-in method | [`LoginOutcome::AgentChosen`], that sign-in, nothing written |
+//! | connect, of a client claiming install, the agent not installed and its release one crucible installs | install | [`LoginOutcome::AgentChosen`], that install, nothing started, asked of its route or written |
+//! | connect, no instance named, of a client claiming install | a catalog agent, then install, update or roll back | [`LoginOutcome::AgentChosen`], that move, nothing started, asked of its route or written |
+//! | connect, no instance named, of a client claiming install | a catalog agent, then a sign-in method of its instance | [`LoginOutcome::AgentChosen`], that sign-in, nothing started, asked of its route or written |
+//! | connect, of a client claiming install, the agent read signed out, its instance in the file | a sign-in method | [`LoginOutcome::AgentChosen`], that sign-in, after the route's yes where it was asked and the agent's status read, nothing more |
 //!
 //! A removal whose write fails after the conversation's run on the instance
 //! was stopped is told that the instance is stopped for this run only: the
@@ -116,9 +116,13 @@
 //! the store holds, or sign its configured instance in by one of the agent's
 //! methods. A row says where its instance runs the user's own program rather
 //! than a release crucible installed, or a version the catalog revoked. Every
-//! word of the catalog's is quoted before it is shown. A move chosen ends the
-//! connect as [`Account::AgentChosen`] before anything is started, asked or
-//! written; the client carries it out through the agents door.
+//! word of the catalog's is quoted before it is shown. A move chosen here, or
+//! the install offered where the agent cannot be started, ends the connect as
+//! [`Account::AgentChosen`] before anything is started, asked of its route or
+//! written; a sign-in chosen once the agent read signed out ends it the same
+//! way, after the route's yes and the status read below. The choice itself
+//! changes nothing further: the client carries it out through the agents
+//! door.
 //!
 //! A connect reaches the one provider the agent signs in to, which the
 //! client does not name. For a client that did not say it answers account
@@ -230,8 +234,11 @@ pub enum Account {
     SignOutHoldUnkept(RememberError),
     /// Nobody went on with a connect, so nothing changed.
     Unconnected,
-    /// A move on an agent was chosen in place of the connect, so nothing
-    /// changed: nothing was started, asked of its route or written.
+    /// A move on an agent was chosen in place of the connect, and the choice
+    /// itself changed nothing. Chosen where the agent cannot be started, or
+    /// from the catalog's agents, it came before anything was started, asked
+    /// of its route or written; a sign-in chosen once the agent read signed
+    /// out came after the route's yes, where it was asked, and the status read.
     AgentChosen(AgentAction),
     /// It did not begin, or could not be kept as it went.
     Contended(Contended),

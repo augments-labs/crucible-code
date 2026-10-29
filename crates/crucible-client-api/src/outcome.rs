@@ -432,10 +432,15 @@ pub enum LoginOutcome {
         /// Why the provider will not be the next run's, where it will not.
         unwritten: Option<Problem>,
     },
-    /// A move on an agent was chosen in place of a connect, so nothing
-    /// changed: nothing was written or started. It is offered only to a client
-    /// that claimed [`Capability::Install`](crate::Capability::Install), which
-    /// asks for the move with the command [`AgentAction::command`] gives.
+    /// A move on an agent was chosen in place of a connect, and the choice
+    /// itself changed nothing. One chosen where the agent cannot be started,
+    /// or from the catalog's agents, ended the connect before anything was
+    /// started, asked of its route or written. A sign-in chosen once the
+    /// agent read signed out came after its route's yes, written where it was
+    /// asked, and after the agent was started to read its status. It is
+    /// offered only to a client that claimed
+    /// [`Capability::Install`](crate::Capability::Install), which asks for the
+    /// move with the command [`AgentAction::command`] gives.
     AgentChosen {
         /// The move chosen.
         action: AgentAction,
