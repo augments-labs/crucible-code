@@ -217,7 +217,8 @@ const CARRIED: Capabilities = Capabilities::every();
 const BEAT: Duration = Duration::from_millis(250);
 
 /// What a download given up by Escape says: a cancel leaves every file as it
-/// was, and the user asked for it, so it is no refusal.
+/// was, and the user asked for it, so it is no refusal and [`refused`] says it
+/// with no mark.
 const GIVEN_UP: &str = "download cancelled; nothing was changed";
 
 /// What a key refused before anything was kept says. Fixed words: nothing
@@ -979,9 +980,45 @@ fn names(names: &[Box<str>]) -> String {
 }
 
 /// The line a refusal at the agents door is said in: [`sentence`] after the
-/// mark a refusal's line opens with.
+/// mark a refusal's line opens with, but for a download given up, which the
+/// user asked for and is said unmarked, as [`GIVEN_UP`]. Written out by hand,
+/// every variant named, so a new one decides whether its line is marked.
 fn refused(refusal: &AgentsError) -> String {
-    format!("! {}", sentence(refusal))
+    match refusal {
+        AgentsError::Download(DownloadError::Cancelled) => sentence(refusal),
+        AgentsError::InUse { .. }
+        | AgentsError::NoInstance(_)
+        | AgentsError::Unsigned(_)
+        | AgentsError::Unclouded { .. }
+        | AgentsError::Unlocated(_)
+        | AgentsError::Unstopped(_)
+        | AgentsError::Running(_)
+        | AgentsError::Config(_)
+        | AgentsError::Remember(_)
+        | AgentsError::HoldUnkept(_)
+        | AgentsError::Unoffered { .. }
+        | AgentsError::Unlisted(_)
+        | AgentsError::NotInstalled(_)
+        | AgentsError::NoPrevious(_)
+        | AgentsError::Unsupported(_)
+        | AgentsError::Program(_)
+        | AgentsError::Kept { .. }
+        | AgentsError::TooLarge
+        | AgentsError::Store(_)
+        | AgentsError::Download(_)
+        | AgentsError::Unpacked(_)
+        | AgentsError::Smoke { .. }
+        | AgentsError::NoMethod { .. }
+        | AgentsError::Conversation(_)
+        | AgentsError::Unnamed(_)
+        | AgentsError::Unstored { .. }
+        | AgentsError::Keyless(_)
+        | AgentsError::Typed
+        | AgentsError::Credentials(_)
+        | AgentsError::Unprofiled(_)
+        | AgentsError::Unlaunched(_)
+        | AgentsError::Unverified(_) => format!("! {}", sentence(refusal)),
+    }
 }
 
 /// What a refusal at the agents door says, unmarked, so a line saying it
@@ -991,7 +1028,8 @@ fn refused(refusal: &AgentsError) -> String {
 /// so every refusal that names one is written out here with it quoted, and so
 /// is one wrapping a configuration error, as [`configured`] says it. Written
 /// out by hand, every variant named, so a new one decides whether it names an
-/// instance; one that names none is said in the door's words. Every sentence
+/// instance; one that names none is said in the door's words. A download
+/// given up is said in the fixed words of [`GIVEN_UP`]; every other sentence
 /// has its control and format characters escaped and is cut at [`REFUSAL`]
 /// characters, as [`within`] does.
 fn sentence(refusal: &AgentsError) -> String {

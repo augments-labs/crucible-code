@@ -1645,6 +1645,19 @@ fn a_refusal_passed_on_in_the_doors_words_is_escaped_and_cut_with_the_cut_marked
 }
 
 #[test]
+fn a_download_given_up_is_said_with_no_mark_and_one_that_failed_is_marked() {
+    use crucible_app::agent_download::DownloadError;
+    use crucible_app::client::agents::AgentsError;
+
+    let given_up = AgentsError::Download(DownloadError::Cancelled);
+    let failed = AgentsError::Download(DownloadError::Tls);
+
+    assert_eq!(refused(&given_up), GIVEN_UP);
+    assert_eq!(sentence(&given_up), GIVEN_UP);
+    assert_eq!(refused(&failed), format!("! {}", sentence(&failed)));
+}
+
+#[test]
 fn a_move_whose_smoke_test_or_pruning_did_not_happen_says_why_with_no_mark_mid_line() {
     use crucible_app::client::agents::{AgentsError, Outcome as Door};
 

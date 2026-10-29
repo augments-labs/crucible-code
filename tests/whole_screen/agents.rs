@@ -259,6 +259,21 @@ fn escape_while_an_install_downloads_cancels_it_and_the_agents_stand_again() {
         // so the download is still running when Escape is pressed.
         window.types_until("", "50%");
         window.types_until("\x1b", "download cancelled; nothing was changed");
+        // The whole row: the user asked for the cancel, so it is said as the
+        // command's answer, after the gutter native mode draws an answer under,
+        // and not as a refusal, which opens with "! ".
+        let answered = if native {
+            "⎿ download cancelled; nothing was changed"
+        } else {
+            "download cancelled; nothing was changed"
+        };
+        let picture = window.picture();
+        assert!(
+            picture
+                .lines()
+                .any(|row| row.trim_matches('|').trim_end() == answered),
+            "the cancel is not said as the command's answer\n{picture}"
+        );
         window.types_until("", "Which installed agent");
         // Nothing was put in place: the agent's row reads as it did before.
         takes(&mut window, "Antigravity");
