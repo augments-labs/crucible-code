@@ -960,7 +960,7 @@ fn a_move_whose_overseer_fails_is_cancelled_and_waited_for_before_the_failure_is
     // bounded so that a cancel which never reaches it fails this rather
     // than hanging it.
     let mut overseer = Undrawn { cancel: None };
-    let overseen = super::overseen(&Client::new(), &mut overseer, |_, watching| {
+    let answered = super::overseen(&Client::new(), &mut overseer, |_, watching| {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while !watching.cancel.requested() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(5));
@@ -968,7 +968,7 @@ fn a_move_whose_overseer_fails_is_cancelled_and_waited_for_before_the_failure_is
         watching.cancel.requested()
     });
 
-    assert_eq!(overseen, Err("the panel could not be drawn"));
+    assert_eq!(answered, Err("the panel could not be drawn"));
     let cancel = overseer
         .cancel
         .expect("the panel was to stand over the move");

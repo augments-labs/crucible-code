@@ -1785,12 +1785,12 @@ fn unstored() -> Result<door::Outcome, AgentsError> {
 }
 
 /// What the door says of `work` signed in by `method`.
-fn signed_in(method: &str) -> Result<door::Outcome, AgentsError> {
-    Ok(door::Outcome::SignedIn {
+fn signed_in(method: &str) -> door::Outcome {
+    door::Outcome::SignedIn {
         instance: "work".into(),
         method: method.into(),
         by: Signed::Kept,
-    })
+    }
 }
 
 /// Whether `sample`'s store holds a key for the agent's key method.
@@ -1830,7 +1830,7 @@ fn a_key_method_with_none_kept_asks_for_the_key_once_keeps_it_and_signs_in_again
     let action = signing_in("gemini-api-key");
     let mut door = Scripted::new(
         &sample,
-        vec![unstored(), signed_in("gemini-api-key")],
+        vec![unstored(), Ok(signed_in("gemini-api-key"))],
         Some(TYPED),
     );
 
@@ -1877,7 +1877,11 @@ fn escape_at_the_key_box_keeps_nothing_and_sends_nothing_more() {
     let sample = Sample::new("login-keyed-left");
     signing(&sample);
     let action = signing_in("gemini-api-key");
-    let mut door = Scripted::new(&sample, vec![unstored(), signed_in("gemini-api-key")], None);
+    let mut door = Scripted::new(
+        &sample,
+        vec![unstored(), Ok(signed_in("gemini-api-key"))],
+        None,
+    );
 
     let (closed, written) = driven(&sample, &action, &mut door);
 
@@ -1893,7 +1897,7 @@ fn a_method_that_takes_no_key_is_never_asked_for_one() {
     let sample = Sample::new("login-keyless");
     signing(&sample);
     let action = signing_in("oauth-personal");
-    let mut door = Scripted::new(&sample, vec![signed_in("oauth-personal")], Some(TYPED));
+    let mut door = Scripted::new(&sample, vec![Ok(signed_in("oauth-personal"))], Some(TYPED));
 
     let (closed, written) = driven(&sample, &action, &mut door);
 
