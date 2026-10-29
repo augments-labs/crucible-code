@@ -256,8 +256,10 @@ the agent is signed in to. A place that is missing is created for you alone,
 and one that is there is left as it is, whatever its access. If a place leads
 somewhere else by the time it is made than where it was checked, the agent is
 not started. A place whose links lead out of your home, as a dotfile manager's
-link can, is refused. Names are compared by their parts, ignoring case where
-your file system does and, on Windows, the dots and spaces that end a name.
+link can, is refused. Names are compared by their parts, ignoring case as the
+most forgiving file system would, and, on Windows, the dots and spaces that end
+a name; a place with a part outside ASCII is refused, since two spellings of one
+name cannot be told apart.
 These are never made writable, since what is written there runs as you or holds
 what signs in as you:
 
@@ -265,22 +267,41 @@ what signs in as you:
   `.bash_login`, `.bash_logout`, `.bash_aliases`, `.profile`, `.zshrc`,
   `.zprofile`, `.zshenv`, `.zlogin`, `.zlogout`) and `.config/fish`;
 - the files a session reads as it begins (`.xprofile`, `.xinitrc`,
-  `.xsession`, `.xsessionrc`, `.pam_environment`);
+  `.xsession`, `.xsessionrc`, `.pam_environment`, `.config/user-dirs.dirs`);
+- what a shell, an editor or a terminal reads as one starts (`.cargo/env`,
+  `.bash_completion`, `.bash_completion.d`, `.vimrc`, `.vim`, `.config/nvim`,
+  `.emacs`, `.emacs.d`, `.tmux.conf`, `.inputrc`, `Documents/WindowsPowerShell`
+  and `Documents/PowerShell`);
 - `.ssh`, `.gnupg` and `.aws`;
+- the stores of what signs in as you (`.cargo/credentials.toml`,
+  `.cargo/credentials`, `.netrc`, `.git-credentials`, `.pypirc`, `.config/gh`,
+  `.config/gcloud`, `.azure`, `.password-store`), the profiles of browsers and
+  mail (`.mozilla`, `.config/google-chrome`, `.config/chromium`,
+  `.thunderbird`) and `Library/Keychains`;
 - the configuration of programs that run what it names (`.gitconfig`,
-  `.config/git`, `.cargo/config.toml`, `.npmrc`, `.docker`) and
-  `.config/environment.d`;
-- the directories programs are found in (`bin`, `.local/bin`, `.cargo/bin`);
+  `.config/git`, `.cargo/config.toml`, `.cargo/config`, `.npmrc`, `.docker`,
+  `.kube`) and `.config/environment.d`;
+- what interpreters and the message bus run (`.local/lib`,
+  `.local/share/dbus-1`);
+- the directories programs are found in (`bin`, `.local/bin`, `.cargo/bin`,
+  `AppData/Local/Microsoft/WindowsApps`) and `.rustup`, whose toolchains the
+  programs in `.cargo/bin` run;
 - the places that start programs when you sign in (`.config/autostart`,
   `.config/systemd`, `.local/share/systemd`, `.local/share/applications`,
   `Library/LaunchAgents`, `Library/LaunchDaemons` and the Windows Start Menu);
 - crucible's own home, and the directory it keeps your session logs in, wherever
   it is kept.
 
-An agent whose entry names one of them, a place within one, or a place that
-contains one, is refused when it is started, naming the entry and the path. The
-directories that hold every program's data (`.config`, `.local`,
-`.local/share`, `.local/state`, `.cache`, `Library`,
+This list is a floor beneath the signature of the catalog, which vouches for
+what an entry names, and not every place that runs as you or holds what signs
+in as you. A place must also begin with a name that is hidden by its leading
+dot, `Library` or `AppData`, so that none of your own files, such as
+`Documents`, `src` or `go/bin`, can be one an agent keeps its sign-in in, while
+`.goose`, `Library/Application Support/goose` and `AppData/Roaming/goose` can.
+An agent whose entry names one of them, a place within one, a place that
+contains one, or a place that does not begin so, is refused when it is started,
+naming the entry and the path. The directories that hold every program's data
+(`.config`, `.local`, `.local/share`, `.local/state`, `.cache`, `Library`,
 `Library/Application Support`, `AppData`, `AppData/Roaming` and `AppData/Local`)
 are refused as themselves, and as a place that contains one of the above, but a
 directory within one for the agent alone, such as `.config/goose`, is not. An

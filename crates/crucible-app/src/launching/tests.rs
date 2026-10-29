@@ -2368,6 +2368,39 @@ const LISTED: &[&str] = &[
     "Library/LaunchAgents",
     "Library/LaunchDaemons",
     "AppData/Roaming/Microsoft/Windows/Start Menu",
+    ".cargo/config",
+    ".cargo/env",
+    ".cargo/credentials.toml",
+    ".cargo/credentials",
+    ".rustup",
+    ".local/lib",
+    ".local/share/dbus-1",
+    ".bash_completion",
+    ".bash_completion.d",
+    ".config/user-dirs.dirs",
+    ".vimrc",
+    ".vim",
+    ".config/nvim",
+    ".emacs",
+    ".emacs.d",
+    ".tmux.conf",
+    ".inputrc",
+    ".kube",
+    ".netrc",
+    ".git-credentials",
+    ".pypirc",
+    ".config/gh",
+    ".config/gcloud",
+    ".azure",
+    ".password-store",
+    ".mozilla",
+    ".config/google-chrome",
+    ".config/chromium",
+    ".thunderbird",
+    "Library/Keychains",
+    "Documents/WindowsPowerShell",
+    "Documents/PowerShell",
+    "AppData/Local/Microsoft/WindowsApps",
 ];
 
 /// The directories the list names as themselves only, since the agents' own
@@ -2471,16 +2504,19 @@ fn a_place_is_compared_by_components_not_by_prefix() {
         ".local/binary",
         ".local/share/bin",
         "Library/LaunchAgentsX",
-        "Libraries",
         ".zlogins",
         ".bash_aliases.d",
         ".gitconfig.d",
         ".config/gitx",
         ".local/share/systemdx",
         ".cargo/registry",
+        ".cargo/configs",
         ".npmrcs",
         ".docker-old",
-        "bin2",
+        ".vimrcs",
+        ".kubes",
+        ".mozillax",
+        ".local/libs",
         ".cache/goose",
         ".local/state/goose",
         "Library/Application Support/Goose",
@@ -2496,6 +2532,93 @@ fn a_place_is_compared_by_components_not_by_prefix() {
             "{place}: {roots:?}"
         );
     }
+}
+
+/// The list is a floor and not every place that runs as the user, so a place
+/// is refused that does not begin with a hidden name, `Library` or `AppData`,
+/// whether or not the list names it: the files the user keeps are never a
+/// place an agent keeps its sign-in in.
+#[test]
+fn a_place_among_the_files_the_user_keeps_is_refused_by_its_first_name() {
+    let sample = Sample::new("launch-state-unhidden");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+
+    for place in [
+        "src",
+        "go/bin",
+        "goose",
+        "bin2",
+        "Libraries",
+        "Documents/notes",
+        "Desktop/.goose",
+        "work/.config/goose",
+    ] {
+        let refused = rooted(&sample, &[place], &home, &crucible).expect_err(place);
+        assert!(
+            matches!(&refused, Unlaunched::StateName { .. }),
+            "{place}: {refused}"
+        );
+        let said = refused.to_string();
+        assert!(said.contains("externalAgents.work"), "{place}: {said}");
+        assert!(said.contains(place), "{place}: {said}");
+        assert!(said.contains("files you keep yourself"), "{place}: {said}");
+    }
+    // A directory that holds a listed place is refused for the place.
+    let documents = rooted(&sample, &["Documents"], &home, &crucible);
+    assert!(
+        matches!(
+            &documents,
+            Err(Unlaunched::StatePath {
+                overlap: Overlap::Contains,
+                ..
+            })
+        ),
+        "{documents:?}"
+    );
+    for place in [
+        ".goose",
+        ".config/goose",
+        "Library/Application Support/goose",
+        "AppData/Roaming/goose",
+    ] {
+        let roots = rooted(&sample, &[place], &home, &crucible);
+        assert_eq!(
+            roots.as_deref().ok(),
+            Some([home.join(place)].as_slice()),
+            "{place}: {roots:?}"
+        );
+    }
+}
+
+/// A hidden name that is a link into the files the user keeps is judged by
+/// where it leads, as that is what the sandbox is given, and one that leads to
+/// another hidden place is allowed.
+#[cfg(unix)]
+#[test]
+fn a_link_from_a_hidden_name_into_the_files_the_user_keeps_is_refused() {
+    use std::os::unix::fs::symlink;
+
+    let sample = Sample::new("launch-state-unhidden-link");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+    for place in ["Documents/goose", ".local/share/goose", "Library/goose"] {
+        fs::create_dir_all(home.join(place)).expect("a directory");
+    }
+    symlink(home.join("Documents/goose"), home.join(".goose")).expect("a link");
+    symlink(home.join(".local/share/goose"), home.join(".agent")).expect("a link");
+    symlink(home.join("Library/goose"), home.join(".library")).expect("a link");
+
+    let kept = rooted(&sample, &[".goose"], &home, &crucible);
+    let hidden = rooted(&sample, &[".agent"], &home, &crucible);
+    let library = rooted(&sample, &[".library"], &home, &crucible);
+
+    assert!(
+        matches!(&kept, Err(Unlaunched::StateName { .. })),
+        "{kept:?}"
+    );
+    assert_eq!(hidden.ok(), Some(vec![home.join(".local/share/goose")]));
+    assert_eq!(library.ok(), Some(vec![home.join("Library/goose")]));
 }
 
 /// A listed place is refused whatever the case an entry spells it in, where

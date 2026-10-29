@@ -117,8 +117,12 @@
 //! however the entry spells its way there: it is judged by its path
 //! components, as it is joined and again where its links lead, ignoring case
 //! where the file system does and, on Windows, the dots and spaces that end a
-//! name, and the refusal names the instance and the path the entry gave. Where
-//! its links lead must also lie within the home, so that a link from an
+//! name, and the refusal names the instance and the path the entry gave. That
+//! list is a floor beneath the signature of the catalog and not every place
+//! that runs as the user, so a place must also begin with a hidden name,
+//! `Library` or `AppData`, as it is written and where its links lead, which
+//! keeps the user's own files out of reach whether or not the list names them.
+//! Where its links lead must also lie within the home, so that a link from an
 //! allowed name, such as a dotfile manager's, cannot lead the sandbox to a
 //! place nobody listed. A built-in agent has no catalog entry, and the smoke
 //! test of a release signs nothing in, so neither is given any.
@@ -327,6 +331,23 @@ pub enum Unlaunched {
         /// The place it overlaps.
         place: Box<str>,
         /// Why that place is never made writable.
+        why: &'static str,
+    },
+    /// A place its catalog entry says it keeps its sign-in in, as it is written
+    /// or where its links lead, does not begin with a name that only programs
+    /// use, so it would be among the files the user keeps.
+    #[error(
+        "externalAgents.{instance}: {agent}'s catalog entry keeps its sign-in in {path}, which \
+         {why}, so it is not started."
+    )]
+    StateName {
+        /// The instance, quoted.
+        instance: String,
+        /// The agent, as its entry names it.
+        agent: String,
+        /// The path the entry gives, quoted.
+        path: String,
+        /// Why it is refused.
         why: &'static str,
     },
     /// A place its catalog entry says it keeps its sign-in in leads somewhere
@@ -1164,15 +1185,31 @@ const STARTS_AT_LOGIN: &str =
 const READ_AT_SIGN_IN: &str = "it is read each time you sign in to a session, so what is written there runs, or sets what runs, as you";
 /// Why the directories programs are found in are listed.
 const ON_SEARCH_PATH: &str = "the programs found there run as you from your search path";
+/// Why the configuration of cargo is listed.
+const RUNS_WHAT_CARGO_NAMES: &str = "cargo runs the programs it names, a linker or a wrapper among them, as you each time you build";
+/// Why the startup files of editors and terminals are listed.
+const STARTS_EDITORS: &str = "an editor, a terminal multiplexer or a line reader obeys it each time one starts, so what is written there runs, or sets what runs, as you";
+/// Why a place that does not begin with a name only programs use is refused.
+const AMONG_YOUR_FILES: &str = "is not under a name that only programs use, a hidden one, Library or \
+     AppData, as it is written and where its links lead, so it is among the files you keep yourself";
+/// Why the stores of what signs in as the user are listed.
+const SIGNS_IN: &str = "it holds what signs in as you, which an agent could read and use";
 
 /// The places under a user's home that an agent's state path is never made
 /// writable at, beneath, or around: a path that is one of them, lies within
 /// one, or contains one is refused, since a child that can write there can
 /// run what it writes outside the sandbox, later, as the user, or read what
 /// signs in as the user. Each is relative to the home, and is compared by its
-/// components. The list is kept whole by naming each place and why, and not by
-/// naming the places that are allowed, so a place that runs as the user and is
-/// not named here is a place to add.
+/// components.
+///
+/// The list is a floor beneath the signature of the catalog, which is the
+/// control over what an entry may ask for, and not an inventory of every place
+/// that runs as the user: it names the places the common tools of a machine
+/// read and run, each with its reason, and a place that is not named here is
+/// not thereby safe to make writable. A state path must also begin with a hidden
+/// name, `Library` or `AppData`, which keeps the user's own files out of reach
+/// whether or not they are named. A place that runs as the user and is
+/// commonly there is a place to add.
 ///
 /// - The shell startup and logout files `.bashrc`, `.bash_profile`,
 ///   `.bash_login`, `.bash_logout`, `.bash_aliases`, `.profile`, `.zshrc`,
@@ -1184,11 +1221,26 @@ const ON_SEARCH_PATH: &str = "the programs found there run as you from your sear
 /// - `.ssh`, `.gnupg` and `.aws`: the keys that sign in to other machines, sign
 ///   and decrypt as the user, and the credentials of the user's cloud account.
 /// - The configuration of programs that run what it names as the user, among
-///   them `.gitconfig` and `.config/git`, `.cargo/config.toml`, `.npmrc` and
-///   `.docker`, and `.config/environment.d`, which sets the environment of
-///   every program the user starts.
-/// - The directories programs are found in, `bin`, `.local/bin` and
-///   `.cargo/bin`: programs there are found on the user's search path.
+///   them `.gitconfig` and `.config/git`, `.cargo/config.toml` and
+///   `.cargo/config`, `.npmrc`, `.docker` and `.kube`, and
+///   `.config/environment.d`, which sets the environment of every program the
+///   user starts.
+/// - What a shell, an editor or a terminal reads as one starts:
+///   `.cargo/env`, `.bash_completion` and `.bash_completion.d`,
+///   `.config/user-dirs.dirs`, `.vimrc`, `.vim`, `.config/nvim`, `.emacs`,
+///   `.emacs.d`, `.tmux.conf` and `.inputrc`, and the PowerShell profile
+///   directories `Documents/WindowsPowerShell` and `Documents/PowerShell`.
+/// - What interpreters and the message bus run: `.local/lib`, where Python
+///   reads its path files, and `.local/share/dbus-1`.
+/// - The directories programs are found in, `bin`, `.local/bin`, `.cargo/bin`
+///   and `AppData/Local/Microsoft/WindowsApps`, and `.rustup`, whose
+///   toolchains the proxies in `.cargo/bin` run: programs there are found on
+///   the user's search path.
+/// - The stores of what signs in as the user: `.cargo/credentials.toml`,
+///   `.cargo/credentials`, `.netrc`, `.git-credentials`, `.pypirc`,
+///   `.config/gh`, `.config/gcloud`, `.azure`, `.password-store`, the
+///   profiles of browsers and mail (`.mozilla`, `.config/google-chrome`,
+///   `.config/chromium`, `.thunderbird`) and `Library/Keychains`.
 /// - The places that start programs when the user signs in:
 ///   `.config/autostart`, `.config/systemd`, `.local/share/systemd`,
 ///   `.local/share/applications`, `Library/LaunchAgents`,
@@ -1379,7 +1431,7 @@ const NEVER_WRITABLE: &[Place] = &[
     Place {
         path: ".cargo/config.toml",
         reach: Reach::Beneath,
-        why: "cargo runs the programs it names, a linker or a wrapper among them, as you each time you build",
+        why: RUNS_WHAT_CARGO_NAMES,
     },
     Place {
         path: ".npmrc",
@@ -1395,6 +1447,171 @@ const NEVER_WRITABLE: &[Place] = &[
         path: "Library/LaunchDaemons",
         reach: Reach::Beneath,
         why: STARTS_AT_LOGIN,
+    },
+    Place {
+        path: ".cargo/config",
+        reach: Reach::Beneath,
+        why: RUNS_WHAT_CARGO_NAMES,
+    },
+    Place {
+        path: ".cargo/env",
+        reach: Reach::Beneath,
+        why: STARTS_SHELLS,
+    },
+    Place {
+        path: ".cargo/credentials.toml",
+        reach: Reach::Beneath,
+        why: SIGNS_IN,
+    },
+    Place {
+        path: ".cargo/credentials",
+        reach: Reach::Beneath,
+        why: SIGNS_IN,
+    },
+    Place {
+        path: ".rustup",
+        reach: Reach::Beneath,
+        why: "the toolchains there are the programs the proxies on your search path run, as you",
+    },
+    Place {
+        path: ".local/lib",
+        reach: Reach::Beneath,
+        why: "interpreters run what is written there, a Python path file among them, each time one starts, as you",
+    },
+    Place {
+        path: ".local/share/dbus-1",
+        reach: Reach::Beneath,
+        why: "the message bus runs the programs its service files name, as you, when a program asks for them",
+    },
+    Place {
+        path: ".bash_completion",
+        reach: Reach::Beneath,
+        why: STARTS_SHELLS,
+    },
+    Place {
+        path: ".bash_completion.d",
+        reach: Reach::Beneath,
+        why: STARTS_SHELLS,
+    },
+    Place {
+        path: ".config/user-dirs.dirs",
+        reach: Reach::Beneath,
+        why: READ_AT_SIGN_IN,
+    },
+    Place {
+        path: ".vimrc",
+        reach: Reach::Beneath,
+        why: STARTS_EDITORS,
+    },
+    Place {
+        path: ".vim",
+        reach: Reach::Beneath,
+        why: STARTS_EDITORS,
+    },
+    Place {
+        path: ".config/nvim",
+        reach: Reach::Beneath,
+        why: STARTS_EDITORS,
+    },
+    Place {
+        path: ".emacs",
+        reach: Reach::Beneath,
+        why: STARTS_EDITORS,
+    },
+    Place {
+        path: ".emacs.d",
+        reach: Reach::Beneath,
+        why: STARTS_EDITORS,
+    },
+    Place {
+        path: ".tmux.conf",
+        reach: Reach::Beneath,
+        why: STARTS_EDITORS,
+    },
+    Place {
+        path: ".inputrc",
+        reach: Reach::Beneath,
+        why: STARTS_EDITORS,
+    },
+    Place {
+        path: ".kube",
+        reach: Reach::Beneath,
+        why: "kubectl runs the credential plugins its configuration names, as you, and the configuration holds the credentials of your clusters",
+    },
+    Place {
+        path: ".netrc",
+        reach: Reach::Beneath,
+        why: SIGNS_IN,
+    },
+    Place {
+        path: ".git-credentials",
+        reach: Reach::Beneath,
+        why: SIGNS_IN,
+    },
+    Place {
+        path: ".pypirc",
+        reach: Reach::Beneath,
+        why: SIGNS_IN,
+    },
+    Place {
+        path: ".config/gh",
+        reach: Reach::Beneath,
+        why: SIGNS_IN,
+    },
+    Place {
+        path: ".config/gcloud",
+        reach: Reach::Beneath,
+        why: SIGNS_IN,
+    },
+    Place {
+        path: ".azure",
+        reach: Reach::Beneath,
+        why: SIGNS_IN,
+    },
+    Place {
+        path: ".password-store",
+        reach: Reach::Beneath,
+        why: SIGNS_IN,
+    },
+    Place {
+        path: ".mozilla",
+        reach: Reach::Beneath,
+        why: SIGNS_IN,
+    },
+    Place {
+        path: ".config/google-chrome",
+        reach: Reach::Beneath,
+        why: SIGNS_IN,
+    },
+    Place {
+        path: ".config/chromium",
+        reach: Reach::Beneath,
+        why: SIGNS_IN,
+    },
+    Place {
+        path: ".thunderbird",
+        reach: Reach::Beneath,
+        why: SIGNS_IN,
+    },
+    Place {
+        path: "Library/Keychains",
+        reach: Reach::Beneath,
+        why: SIGNS_IN,
+    },
+    Place {
+        path: "Documents/WindowsPowerShell",
+        reach: Reach::Beneath,
+        why: STARTS_SHELLS,
+    },
+    Place {
+        path: "Documents/PowerShell",
+        reach: Reach::Beneath,
+        why: STARTS_SHELLS,
+    },
+    Place {
+        path: "AppData/Local/Microsoft/WindowsApps",
+        reach: Reach::Beneath,
+        why: ON_SEARCH_PATH,
     },
     Place {
         path: ".local/share",
@@ -1632,6 +1849,16 @@ fn guarded(home: &Path, crucible: &Path, sessions: &Path) -> Vec<Guarded> {
     listed.chain(own).collect()
 }
 
+/// Whether `name`, the first part of a place under the home, is one only
+/// programs use: hidden by its leading dot, or `Library` or `AppData`, which
+/// hold the data of every program on macOS and Windows.
+fn is_programs_name(name: &OsStr) -> bool {
+    name.as_encoded_bytes().first() == Some(&b'.')
+        || ["Library", "AppData"]
+            .into_iter()
+            .any(|kept| same_name(name, OsStr::new(kept)))
+}
+
 impl Agent {
     /// The places under `home` the child of this agent is given to write, as
     /// its catalog entry says it keeps its sign-in in them: each resolved, and
@@ -1641,12 +1868,16 @@ impl Agent {
     /// by how its text begins, and each is checked as it is joined to `home`
     /// and again where its links lead, so a name that is allowed but leads
     /// into a place that is not is refused, as is one that leads out of
-    /// `home` altogether.
+    /// `home` altogether. That list is a floor and not every place that runs
+    /// as the user, so none is kept whose first part, as it is written or
+    /// where its links lead within `home`, is not hidden, `Library` or
+    /// `AppData`: the files the user keeps are never a sign-in place.
     ///
     /// # Errors
     ///
-    /// [`Unlaunched::StatePath`] for a path that does, else
-    /// [`Unlaunched::Policy`] for one that cannot be followed.
+    /// [`Unlaunched::StatePath`] for a path that does, [`Unlaunched::StateName`]
+    /// for one that begins with another name, else [`Unlaunched::Policy`] for
+    /// one that cannot be followed.
     fn state_roots(
         &self,
         home: &Path,
@@ -1668,15 +1899,23 @@ impl Agent {
             place: place.into(),
             why,
         };
+        let unnamed = |path: &str, why| Unlaunched::StateName {
+            instance: quoted(&self.instance),
+            agent: quoted(self.row.named()),
+            path: quoted(path),
+            why,
+        };
         let guarded = guarded(home, crucible, sessions);
         let inside = resolved(home)?;
         let mut roots: Vec<PathBuf> = Vec::new();
         for path in written {
             let mut joined = home.to_path_buf();
+            let mut first = None;
             for component in Path::new(&**path).components() {
                 let Component::Normal(name) = component else {
                     return Err(refused(path, Overlap::Outside, "your home", STAYS_HOME));
                 };
+                first.get_or_insert(name);
                 joined.push(name);
             }
             let real = resolved(&joined)?;
@@ -1702,6 +1941,14 @@ impl Agent {
             // manager's link does, is a place nobody listed.
             if !is_beneath(&real, &inside) || is_beneath(&inside, &real) {
                 return Err(refused(path, Overlap::Outside, "your home", STAYS_HOME));
+            }
+            // The list is a floor, so a place among the files the user keeps
+            // is refused whether or not it is named: by its first part as it
+            // is written, and by the first part of where it leads.
+            let led_to = real.components().nth(inside.components().count());
+            let programs = |name: Option<&OsStr>| name.is_some_and(is_programs_name);
+            if !programs(first) || !programs(led_to.as_ref().map(|part| part.as_os_str())) {
+                return Err(unnamed(path, AMONG_YOUR_FILES));
             }
             if !roots.contains(&real) {
                 roots.push(real);
