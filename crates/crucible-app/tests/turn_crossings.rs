@@ -251,9 +251,11 @@ const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
     // The drawing thread, answering a command, taking back what a plan asked
     // between turns answered (waited for only where no key is read; a reader
     // of keys takes it once it has come, or gives it up at a key), asking the
-    // backend the sandbox panel shows, and joining a turn that ended; and an
+    // backend the sandbox panel shows, and joining a turn that ended; an
     // account operation, polled between the questions it stops on, each
-    // drawn and answered here while it waits.
+    // drawn and answered here while it waits; and the agents door `/login`
+    // carries a move out at, run on a thread the drawing thread spawns and
+    // joins while it stands the panel over the door.
     (
         "src/cli/client.rs",
         "let performed = self.runtime.block_on(perform(conversation, request, &desk));",
@@ -267,6 +269,11 @@ const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
     (
         "src/cli/client.rs",
         "let performed = match self.runtime.block_on(&mut out.answer) {",
+        1,
+    ),
+    (
+        "src/cli/client.rs",
+        "runtime.block_on(door::run(request, &lent, &mut front, watching))",
         1,
     ),
     (
