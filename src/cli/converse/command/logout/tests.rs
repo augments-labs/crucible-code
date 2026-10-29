@@ -41,8 +41,8 @@ fn the_list_reads_in_the_order_this_build_names_them_rather_than_the_store_s() {
 #[test]
 fn the_agent_connect_claims_every_capability_but_the_one_whose_moves_it_cannot_carry_out() {
     // A client that claims install can be offered a move on an agent in place
-    // of the connect, and this panel, like `/login`'s, has no way to carry one
-    // out. The terminal withholds it from every connect, whoever sends it.
+    // of the connect, and this panel has no way to carry one out, so the
+    // connect it sends withholds install. `/login`'s connect claims it.
     let mut terms = crate::cli::converse::tests::plain();
     let (client, claims) = crate::cli::client::Client::noting_claims();
     terms.client = client;
