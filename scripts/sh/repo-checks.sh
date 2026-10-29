@@ -1748,12 +1748,15 @@ done <<<"$decided"
 # can be changed from, and it is added here by somebody who looked at where its
 # commands come from. The agents door performs the catalog's commands for a
 # client that claimed the capability they need, asking it before anything is
-# fetched or changed, and refuses every other.
+# fetched or changed, and refuses every other. The terminal's client builds
+# none: it names every command once, to decide from the command alone what a
+# request for it claims, so a new command decides that too.
 naming='crates/crucible-app/src/client/accounts.rs
 crates/crucible-app/src/client/agents.rs
 crates/crucible-app/src/client/asking.rs
 crates/crucible-app/src/client/performing.rs
 crates/crucible-app/src/client/turning.rs
+src/cli/client.rs
 src/cli/converse.rs
 src/cli/converse/command.rs
 src/cli/converse/command/login.rs
