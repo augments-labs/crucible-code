@@ -128,7 +128,7 @@ use crate::cli::style::Style;
 use super::{Terms, about, say};
 
 /// The few words at the top of every `/login` panel.
-const TITLE: &str = "Log in";
+pub(super) const TITLE: &str = "Log in";
 
 /// The row that leads to the accounts, and what it says.
 const ACCOUNT_ROUTE_SHOWN: &str = "Your account with subscription";
@@ -228,11 +228,12 @@ const UNKEPT: &str = "! that key is longer than a key can be, so nothing was kep
 /// How many characters of a name a refusal quotes, before an ellipsis.
 const NAMED: usize = 256;
 
-/// How many characters of a refusal at the agents door a line says, before an
-/// ellipsis: room for the longest sentence the door gives with the names it
-/// quotes, and short of a screen's worth, so no text the door passes on can
-/// push the rest of the screen out of sight.
-const REFUSAL: usize = 1024;
+/// How many characters of a refusal at the agents door, or of a reason it,
+/// the store or the fetch gives, a line says, before an ellipsis: room for the
+/// longest sentence the door gives with the names it quotes, and short of a
+/// screen's worth, so no text the door passes on can push the rest of the
+/// screen out of sight.
+pub(super) const REFUSAL: usize = 1024;
 
 /// What the box's absence leaves behind, when the window had no room for it.
 ///
@@ -522,7 +523,7 @@ fn connected<T: Terminal>(walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
         let renderer = &mut *walk.renderer;
         let mut cramped = false;
         let performed = connecting(walk.terms, walk.conversation, |question| {
-            let replied = answered(renderer, style, question)?;
+            let replied = answered(renderer, style, TITLE, question)?;
             cramped |= replied.is_none();
             Ok::<_, Fatal>(replied)
         })?;
@@ -678,6 +679,7 @@ fn carrying<T: Terminal>(
     let mut overseer = Overseeing {
         renderer: &mut *walk.renderer,
         style: walk.terms.style(),
+        title: TITLE,
         doing: doing(action),
         cramped: false,
     };
@@ -689,26 +691,29 @@ fn carrying<T: Terminal>(
 
 /// The terminal standing over a move at the agents door: it answers the
 /// door's questions as the connect's are, and stands [`Working`] between them.
-struct Overseeing<'a, T: Terminal> {
-    renderer: &'a mut Renderer<T>,
-    style: Style,
+pub(super) struct Overseeing<'a, T: Terminal> {
+    pub(super) renderer: &'a mut Renderer<T>,
+    pub(super) style: Style,
+    /// The few words over each question and over the panel: those of the
+    /// command the move was taken from.
+    pub(super) title: &'static str,
     /// What the panel says is under way, as [`doing`] says it.
-    doing: String,
+    pub(super) doing: String,
     /// Whether a question had no room to stand.
-    cramped: bool,
+    pub(super) cramped: bool,
 }
 
 impl<T: Terminal> Overseer for Overseeing<'_, T> {
     type Error = Fatal;
 
     fn answer(&mut self, question: &Question) -> Result<Option<Reply>, Fatal> {
-        let replied = answered(self.renderer, self.style, question)?;
+        let replied = answered(self.renderer, self.style, self.title, question)?;
         self.cramped |= replied.is_none();
         Ok(replied)
     }
 
     fn stand(&mut self, carrying: &mut Carrying<'_>) -> Result<(), Fatal> {
-        watched(self.renderer, self.style, &self.doing, carrying)
+        watched(self.renderer, self.style, self.title, &self.doing, carrying)
     }
 }
 
@@ -727,14 +732,15 @@ fn doing(action: &AgentAction) -> String {
     }
 }
 
-/// Stands the panel saying what the agents door is doing until it stops to
-/// ask something or is done.
+/// Stands the panel under `title` saying what the agents door is doing until
+/// it stops to ask something or is done.
 ///
 /// Where the window has no room for the panel, the door goes on, and a beat
 /// is waited for a key: Escape still gives a download up.
 fn watched<T: Terminal>(
     renderer: &mut Renderer<T>,
     style: Style,
+    title: &'static str,
     doing: &str,
     carrying: &mut Carrying<'_>,
 ) -> Result<(), Fatal> {
@@ -742,7 +748,7 @@ fn watched<T: Terminal>(
         return Ok(());
     }
     let glyphs = style.glyphs();
-    let mut working = Working::new(doing, carrying.watched(), carrying.cancel().clone());
+    let mut working = Working::new(title, doing, carrying.watched(), carrying.cancel().clone());
     let ended = region::stand_watching(
         renderer,
         |_| style,
@@ -775,6 +781,8 @@ fn watched<T: Terminal>(
 /// given up.
 #[derive(Debug)]
 struct Working {
+    /// The few words the panel's first row opens with.
+    title: &'static str,
     /// What is under way, said until the door reports more.
     doing: String,
     /// How far a download has got, where one has begun.
@@ -788,10 +796,12 @@ struct Working {
 }
 
 impl Working {
-    /// The panel over `doing` and what the door has said of it so far, given
-    /// up through `cancel`, and being given up where it already was.
-    fn new(doing: &str, watched: Watched, cancel: Cancel) -> Self {
+    /// The panel under `title` over `doing` and what the door has said of it
+    /// so far, given up through `cancel`, and being given up where it already
+    /// was.
+    fn new(title: &'static str, doing: &str, watched: Watched, cancel: Cancel) -> Self {
         Self {
+            title,
             doing: doing.to_owned(),
             progress: watched.progress,
             link: watched.link,
@@ -878,7 +888,12 @@ impl Working {
         if let Some(progress) = &self.progress {
             let lead = Row::new().then(
                 Slot::Strong,
-                format!("{TITLE} {} downloading {}", glyphs.dot(), progress.agent()),
+                format!(
+                    "{} {} downloading {}",
+                    self.title,
+                    glyphs.dot(),
+                    progress.agent()
+                ),
             );
             let (done, total) = (progress.done(), progress.total());
             if total == 0 {
@@ -906,7 +921,7 @@ impl Working {
         }
         let lead = Row::new().then(
             Slot::Strong,
-            format!("{TITLE} {} {}", glyphs.dot(), self.doing),
+            format!("{} {} {}", self.title, glyphs.dot(), self.doing),
         );
         let Some((link, cut)) = &self.link else {
             return vec![lead];
@@ -947,20 +962,20 @@ fn kept_key(key: &str) -> Option<Typed> {
 /// quotes it: every control and format character written as its escape and
 /// cut at [`NAMED`] characters, so it can neither draw a line of its own nor
 /// push what is said beside it out of sight.
-fn named(name: &str) -> String {
+pub(super) fn named(name: &str) -> String {
     format!("\"{}\"", shown(name))
 }
 
 /// `text` the catalog, the configuration or an agent gave, escaped and cut as
 /// [`named`] quotes it, unquoted.
-fn shown(text: &str) -> String {
+pub(super) fn shown(text: &str) -> String {
     within(text, NAMED)
 }
 
 /// `text` with every control and format character written as its escape, as
 /// [`crucible_types::shown::escaped`] writes it, and cut at `most` characters
 /// with an ellipsis marking the cut.
-fn within(text: &str, most: usize) -> String {
+pub(super) fn within(text: &str, most: usize) -> String {
     let escaped = crucible_types::shown::escaped(text);
     if escaped.chars().count() <= most {
         return escaped;
@@ -971,7 +986,7 @@ fn within(text: &str, most: usize) -> String {
 }
 
 /// Each of `names`, quoted, one after another.
-fn names(names: &[Box<str>]) -> String {
+pub(super) fn names(names: &[Box<str>]) -> String {
     names
         .iter()
         .map(|name| named(name))
@@ -983,7 +998,7 @@ fn names(names: &[Box<str>]) -> String {
 /// mark a refusal's line opens with, but for a download given up, which the
 /// user asked for and is said unmarked, as [`GIVEN_UP`]. Written out by hand,
 /// every variant named, so a new one decides whether its line is marked.
-fn refused(refusal: &AgentsError) -> String {
+pub(super) fn refused(refusal: &AgentsError) -> String {
     match refusal {
         AgentsError::Download(DownloadError::Cancelled) => sentence(refusal),
         AgentsError::InUse { .. }
@@ -1033,7 +1048,7 @@ fn refused(refusal: &AgentsError) -> String {
 /// given up is said in the fixed words of [`GIVEN_UP`]; every other sentence
 /// has its control and format characters escaped and is cut at [`REFUSAL`]
 /// characters, as [`within`] does.
-fn sentence(refusal: &AgentsError) -> String {
+pub(super) fn sentence(refusal: &AgentsError) -> String {
     let said = match refusal {
         AgentsError::InUse { agent, instances } => format!(
             "{agent} is still the program of {}, so it is not removed",
@@ -1315,12 +1330,13 @@ pub(super) fn executing<T: Terminal>(
     Ok(())
 }
 
-/// Draws `question` as a panel and reads keys until it is answered: nothing
-/// where it had no room to stand. Escape answers the way that leaves
-/// everything as it is, which a question puts last.
+/// Draws `question` as a panel under `title` and reads keys until it is
+/// answered: nothing where it had no room to stand. Escape answers the way
+/// that leaves everything as it is, which a question puts last.
 pub(super) fn answered<T: Terminal>(
     renderer: &mut Renderer<T>,
     style: Style,
+    title: &'static str,
     question: &Question,
 ) -> Result<Option<Reply>, Fatal> {
     Ok(match question {
@@ -1335,7 +1351,7 @@ pub(super) fn answered<T: Terminal>(
                 .map(|(name, says)| Offered { name, says })
                 .collect();
             let panel = Panel {
-                title: TITLE,
+                title,
                 said: Some(&confirmation.asks),
                 source: None,
                 told: &told,

@@ -1401,6 +1401,7 @@ fn the_login_agent_connect_claims_install_and_the_connect_logout_sends_withholds
 fn working(download: Option<(u64, u64)>, link: Option<&str>, cancelling: bool) -> Working {
     let agent = crucible_client_api::Name::new("antigravity").expect("a name the contract takes");
     Working {
+        title: TITLE,
         doing: "installing antigravity 1.3.0".to_owned(),
         progress: download.and_then(|(done, total)| {
             crucible_client_api::InstallProgress::new(agent.clone(), done, total)

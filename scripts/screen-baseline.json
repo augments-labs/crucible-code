@@ -2,7 +2,7 @@
   "harness": {
     "tests/whole_screen/screen.rs": "50ba111632e53d8a38402f258586548babe76be99832fbea1aa141d582323852",
     "tests/whole_screen/vendor.rs": "47b1c989828849cf2b712646681e350c048b59fe1fbc2b8838bfb3663db6dd3c",
-    "tests/whole_screen/watched.rs": "d34821d0807111b365a208bb17d10acac60b560e74bd490dc6bdeec2db57a4c2"
+    "tests/whole_screen/watched.rs": "30d81e1a74200e02f449162f1a7d44e59e346e57c581f165ad0ed2e04b236c05"
   },
   "captures": [
     {
@@ -200,7 +200,7 @@
       "opened": [
         "Watched::open(\"commands\", 80, 24)"
       ],
-      "sha256": "252abdbdeee3cc94e6b115dbf711895f66accf40e419b52ef5fb00b049d2aa41"
+      "sha256": "c3e4e07db1f41aae8d930b04cbc7f5e16e40dad9df857ad54b7ae658649229d3"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_slash_typed_mid_turn_opens_the_command_list.snap",
@@ -209,7 +209,7 @@
         "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"list-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "8c6ebf96549b781e5a4ed373cbfe28b88e42d3e2376aae5d3ff3c7aab0d25e73"
+      "sha256": "e0b5da3ec24869834c836ef20ab80a16091884f9dad7a43b796e59ea310ce5d7"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_take_back_the_box_has_no_room_for_says_so_beside_the_title.snap",
@@ -244,6 +244,78 @@
         "Watched::open(\"resized\", 80, 24)"
       ],
       "sha256": "25a30c0b71efffa4b9f68233397f884bfe265a991eb752cbb2a1561ea3953af5"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__added_agent_40_fullscreen.snap",
+      "case": "an_agent_added_after_a_yes_downloads_and_names_the_instance_written",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
+      ],
+      "sha256": "3ca0d300d4b14ab70cae823ebeed83a3fdb3c43c3471d00fcd257ffd6ff20985"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__added_agent_40_native.snap",
+      "case": "an_agent_added_after_a_yes_downloads_and_names_the_instance_written",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
+      ],
+      "sha256": "aeba9f5b408e19f56c34cb66079080b7050736abce8e8c7daaf4a255e4264ece"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__added_agent_80_fullscreen.snap",
+      "case": "an_agent_added_after_a_yes_downloads_and_names_the_instance_written",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
+      ],
+      "sha256": "1d8bdacef24944f38b9d0f20f571fe5d70078c205025d4daf48a7e16565cb7d2"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__added_agent_80_native.snap",
+      "case": "an_agent_added_after_a_yes_downloads_and_names_the_instance_written",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
+      ],
+      "sha256": "c78b48b0eca5f8a69288799b252bb4d35c6db540f055d3c087a09108716db2db"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__adding_agent_40_fullscreen.snap",
+      "case": "an_agent_added_after_a_yes_downloads_and_names_the_instance_written",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
+      ],
+      "sha256": "a0325adceeef43ca67f71ec586fcf1ee0b63917b57be658ec8c2f8eed1afeb0d"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__adding_agent_40_native.snap",
+      "case": "an_agent_added_after_a_yes_downloads_and_names_the_instance_written",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
+      ],
+      "sha256": "3a459ee71eb018304c26ff2f754c7ad32a2e2d32c2d502193e2c0b19ada77226"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__adding_agent_80_fullscreen.snap",
+      "case": "an_agent_added_after_a_yes_downloads_and_names_the_instance_written",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
+      ],
+      "sha256": "d7a7556c00fc41f8a67f7edecba9a44c24d088e1d2345a8312809e31de0cff3c"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__adding_agent_80_native.snap",
+      "case": "an_agent_added_after_a_yes_downloads_and_names_the_instance_written",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
+      ],
+      "sha256": "6f09c7a9b291cf5f5d6529bf64bd86a6d2e0bb8480c78e0f344e99a817f43d59"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_agents_40_fullscreen.snap",
@@ -676,6 +748,114 @@
         "Watched::capturing_agents( &case, size, native, &vendor, (script.as_ref(), capture.configured), )"
       ],
       "sha256": "a8a940b9c3f4720dee93f125a357d9600f00017da8901699146558a39cc87101"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agents_listed_40_fullscreen.snap",
+      "case": "the_agents_the_catalog_offers_are_listed",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
+      ],
+      "sha256": "e52738783445c681fd3aa6825b2b9ea7c2610c261540cd463db12d85acafa0c3"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agents_listed_40_native.snap",
+      "case": "the_agents_the_catalog_offers_are_listed",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
+      ],
+      "sha256": "3a480a323e5709df9dd5ee91a5b4fccfc1a71d2dc6430b07c4f35e3d7a598a2f"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agents_listed_80_fullscreen.snap",
+      "case": "the_agents_the_catalog_offers_are_listed",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
+      ],
+      "sha256": "d54ad8276c03fbdd0f17f81d122f8309f2d7be1867b8b9b8e50b7e91406bcb14"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agents_listed_80_native.snap",
+      "case": "the_agents_the_catalog_offers_are_listed",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
+      ],
+      "sha256": "4222381f7ae82cd95087743bc3456442c92a122ba24a1103e4b8ba3e18a5169d"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agents_narrowed_40_fullscreen.snap",
+      "case": "typing_narrows_the_agents_to_those_whose_name_or_licence_holds_it",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
+      ],
+      "sha256": "f5ab16117af3292b335d7f0541711491fcb01ba719cdb667479e60353f84afe6"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agents_narrowed_40_native.snap",
+      "case": "typing_narrows_the_agents_to_those_whose_name_or_licence_holds_it",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
+      ],
+      "sha256": "eb0cdfb5c37d5b81a509ea26df0fda54a31cda24be568fec7ea719e495db6f26"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agents_narrowed_80_fullscreen.snap",
+      "case": "typing_narrows_the_agents_to_those_whose_name_or_licence_holds_it",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
+      ],
+      "sha256": "2eff3951b4a998a8724796309762880fe4a0f7311971c67070f699e2f475bf1f"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agents_narrowed_80_native.snap",
+      "case": "typing_narrows_the_agents_to_those_whose_name_or_licence_holds_it",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
+      ],
+      "sha256": "26191b78bdb3ef2281a81c491e1090a15bc41cdc8d8100e1ddf455f8c905e82b"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agents_provenance_40_fullscreen.snap",
+      "case": "an_agent_taken_from_the_list_shows_where_it_comes_from",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
+      ],
+      "sha256": "1c2874df141eca292bfdbe48dc4d9029039b8f197b359823506027c44ee29b41"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agents_provenance_40_native.snap",
+      "case": "an_agent_taken_from_the_list_shows_where_it_comes_from",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
+      ],
+      "sha256": "3997098e4d82657f5b7c042c3c1de83506754ea5604de509971f01cfcc8dcbaa"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agents_provenance_80_fullscreen.snap",
+      "case": "an_agent_taken_from_the_list_shows_where_it_comes_from",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
+      ],
+      "sha256": "e6ded3e2eda91257617741f477f625518b7bd4cf0f262dd04bdb187042e0d4e1"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__agents__agents_provenance_80_native.snap",
+      "case": "an_agent_taken_from_the_list_shows_where_it_comes_from",
+      "opened": [
+        "Vendor::answering(\"Not asked.\")",
+        "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
+      ],
+      "sha256": "e34991bb041c3c937a9e0b991df66ca32e304fb6f11d9f4363030e813480ecb2"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__install_done_40_fullscreen.snap",
@@ -1504,7 +1684,7 @@
         "Vendor::answering(&crate::a_long_answer())",
         "Watched::native(case, 80, 24, vendor)"
       ],
-      "sha256": "9205d57e607dc5674ecad336c072de7812638886d829908a8be612e87a4b4e6c"
+      "sha256": "851e96c9bc31a8a6dd4e9293df694b2f4b3e4f8e621c6b35bd340e487d3345aa"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__theme_takes_at_most_half_the_window_in_native_mode.snap",

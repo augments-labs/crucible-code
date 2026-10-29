@@ -1,0 +1,45 @@
+---
+source: tests/whole_screen/agents.rs
+expression: picture
+---
+40x40 cursor 9,15 scrollback 0
+|CRUCIBLE                                |
+|/…/workspace                            |
+|                                        |
+|› /agents                               |
+|⎿ Added goose 1.0.0 as the instance     |
+|  "goose". It was not smoke-tested: the |
+|  sandbox is off, and a smoke test runs |
+|  only inside it.                       |
+|╭──────────────────────────────────────╮|
+|│ Search  goose                        │|
+|╰──────────────────────────────────────╯|
+| Agents · 1 of 1 offered                |
+|                                        |
+|╭──────────────────────────────────────╮|
+|│ › goose 1.0.0                        │|
+|│   Apache-2.0 · installed             │|
+|│                                      │|
+|│                                      │|
+|│                                      │|
+|│                                      │|
+|│                                      │|
+|│                                      │|
+|│                                      │|
+|│                                      │|
+|│                                      │|
+|╰──────────────────────────────────────╯|
+|                                        |
+| ↑↓ · enter · esc                       |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |

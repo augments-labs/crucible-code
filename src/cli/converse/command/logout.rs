@@ -370,7 +370,7 @@ fn acting<T: Terminal>(
     let style = terms.style();
     let mut cramped = false;
     let performed = terms.operate(conversation, command, |question| {
-        let replied = answered(renderer, style, question)?;
+        let replied = answered(renderer, style, super::login::TITLE, question)?;
         cramped |= replied.is_none();
         Ok::<_, Fatal>(replied)
     })?;

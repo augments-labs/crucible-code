@@ -399,7 +399,8 @@ fi
 # sweep of their own. A row is `file panel`: `file` lays `panel` out against a
 # width and a room, and its tests sweep it under a comment naming the panel's
 # own fit sweep.
-own='src/cli/converse/command/login.rs Working'
+own='src/cli/converse/command/login.rs Working
+src/cli/converse/command/agents.rs Listing'
 while IFS=' ' read -r file panel; do
     tests="${file%.rs}/tests.rs"
     if ! grep -qE "^struct $panel \{" "$file"; then
@@ -1377,10 +1378,11 @@ removable=(
     schema/crucible-code-schema.json
     # The client contract's account commands and their variants.
     crates/crucible-client-api/src/{command,outcome,pending,snapshot,wire,tests}.rs
-    # The terminal's choosers, the client part that carries out the agent move
-    # /login is handed back, and the whole-screen cases over them with the
-    # screens of an agent installed from a test catalog.
-    src/cli/converse/command/{login,logout}.rs src/cli/client.rs
+    # The terminal's choosers, the /agents list and the agent screen it opens,
+    # the client part that carries out the agent move /login is handed back,
+    # and the whole-screen cases over them with the screens of an agent
+    # installed from a test catalog.
+    src/cli/converse/command/{agents,login,logout}.rs src/cli/client.rs
     tests/whole_screen/{agents,main,watched}.rs scripts/screen-baseline.json
     tests/whole_screen/snapshots/whole_screen__agents__install_{downloading,done}_{40,80}_{fullscreen,native}.snap
     Cargo.toml Cargo.lock scripts/sh/repo-checks.sh
@@ -1780,7 +1782,9 @@ done <<<"$decided"
 # decides that too. `/login` names the one connect that claims install, and the
 # install, update, rollback or sign-in it then sends is the move that connect
 # handed back, the application's own command built on this host, handed to the
-# agents door as it came.
+# agents door as it came. `/agents` names the catalog read, a verify and an add,
+# each built from the row marked and the key pressed on this host, and hands
+# each to the agents door as it is.
 naming='crates/crucible-app/src/client/accounts.rs
 crates/crucible-app/src/client/agents.rs
 crates/crucible-app/src/client/asking.rs
@@ -1789,6 +1793,7 @@ crates/crucible-app/src/client/turning.rs
 src/cli/client.rs
 src/cli/converse.rs
 src/cli/converse/command.rs
+src/cli/converse/command/agents.rs
 src/cli/converse/command/login.rs
 src/cli/converse/command/logout.rs
 src/cli/converse/command/sandbox.rs

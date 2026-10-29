@@ -267,19 +267,24 @@ pub(crate) fn piped_agents(
     child.wait_with_output().expect("crucible ends")
 }
 
-/// The release a published catalog offers of Antigravity, in place of the
-/// one this build's own catalog names: a program of this many bytes, served
-/// half at first.
+/// The release a published catalog offers of each agent, Antigravity's in
+/// place of the one this build's own catalog names: a program of this many
+/// bytes, served half at first.
 const RELEASE: usize = 1000;
+
+/// The version a published catalog offers an agent at that this build's own
+/// catalog does not name.
+const OFFERED: &str = "1.0.0";
 
 /// A host on this machine standing where the agent catalog is published, as
 /// crucible's test build is pointed at it.
 ///
 /// It serves one catalog, signed with this process's test key, offering
-/// Antigravity at the version this build's own catalog offers, as a program
-/// the catalog keeps on this host and names by its digest. The program
-/// is sent half at first and the rest only once [`Published::release`] is
-/// called, so the download stands on the screen until a case has seen it.
+/// Antigravity at the version this build's own catalog offers, and from
+/// [`Published::offering`] one agent more, each as a program the catalog
+/// keeps on this host and names by its digest. A program is sent half at
+/// first and the rest only once [`Published::release`] is called, so the
+/// download stands on the screen until a case has seen it.
 #[derive(Debug)]
 pub(crate) struct Published {
     port: u16,
@@ -294,34 +299,53 @@ pub(crate) struct Published {
 impl Published {
     /// Starts the host, listening on a port of this machine's choosing.
     pub(crate) fn start() -> Self {
+        Self::serving(Vec::new())
+    }
+
+    /// Starts the host, its catalog offering the agent `key` too, a catalog
+    /// agent under a key that is no built-in driver word, at [`OFFERED`].
+    pub(crate) fn offering(key: &str) -> Self {
+        let program = released(format!("{key}, as reviewed\n").as_bytes());
+        Self::serving(vec![(offered(key, OFFERED, &program), program)])
+    }
+
+    /// Starts the host, its catalog offering Antigravity and then each of
+    /// `more`, an entry beside the program it names.
+    fn serving(more: Vec<(serde_json::Value, Vec<u8>)>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("a port on this machine");
         let port = listener.local_addr().expect("its address").port();
-        let program: Vec<u8> = b"agy-acp-server, as reviewed\n"
-            .iter()
-            .cycle()
-            .take(RELEASE)
-            .copied()
-            .collect();
-        let asset = format!("/catalog/{}", digest(&program));
+        let program = released(b"agy-acp-server, as reviewed\n");
         let version = SNAPSHOT
             .entries()
             .iter()
             .find(|entry| entry.key.as_str() == "antigravity")
             .map(|entry| entry.version.to_string())
             .expect("this build's catalog offers Antigravity");
+        let offers: Vec<(serde_json::Value, Vec<u8>)> =
+            std::iter::once((antigravity(&version, &program), program))
+                .chain(more)
+                .collect();
         let catalog = serde_json::json!({
             "schema": 1,
             "serial": SNAPSHOT.serial() + 1,
-            "entries": [antigravity(&version, &program)],
+            "entries": offers.iter().map(|(entry, _)| entry).collect::<Vec<_>>(),
             "revoked": [],
         });
         let signed = signed(&serde_json::to_vec(&catalog).expect("a catalog in JSON"));
         let key = key_line(signed.keys);
-        let routes: Arc<Vec<(String, Vec<u8>)>> = Arc::new(vec![
-            ("/catalog/index.json".to_owned(), signed.index),
-            ("/catalog/index.json.minisig".to_owned(), signed.signature),
-            (asset, program),
-        ]);
+        let routes: Arc<Vec<(String, Vec<u8>)>> = Arc::new(
+            [
+                ("/catalog/index.json".to_owned(), signed.index),
+                ("/catalog/index.json.minisig".to_owned(), signed.signature),
+            ]
+            .into_iter()
+            .chain(
+                offers
+                    .into_iter()
+                    .map(|(_, program)| (format!("/catalog/{}", digest(&program)), program)),
+            )
+            .collect(),
+        );
         let released = Arc::new(AtomicBool::new(false));
         let done = Arc::new(AtomicBool::new(false));
         let (releasing, finishing) = (Arc::clone(&released), Arc::clone(&done));
@@ -431,6 +455,11 @@ fn answer(
     let _ = stream.shutdown(Shutdown::Write);
 }
 
+/// A release's program: `seed` repeated to [`RELEASE`] bytes.
+fn released(seed: &[u8]) -> Vec<u8> {
+    seed.iter().cycle().take(RELEASE).copied().collect()
+}
+
 /// `bytes`' SHA-256, in lower case hexadecimal.
 fn digest(bytes: &[u8]) -> String {
     use sha2::Digest as _;
@@ -481,6 +510,46 @@ fn antigravity(version: &str, program: &[u8]) -> serde_json::Value {
                 "decompressed": program.len(),
                 "files": [{
                     "path": command,
+                    "size": program.len(),
+                    "sha256": digest(program),
+                    "exec": true
+                }],
+                "replaced_by": {"sha256": digest(program), "size": program.len()}
+            }]
+        }]
+    })
+}
+
+/// The agent `key` at `version`, in [`antigravity`]'s shape with a licence,
+/// terms and caution of its own, its program, `program`, kept on the
+/// catalog's own host and fetched from there by its digest.
+fn offered(key: &str, version: &str, program: &[u8]) -> serde_json::Value {
+    let registry = format!("{key}-acp");
+    serde_json::json!({
+        "key": key,
+        "registry_id": registry,
+        "version": version,
+        "kind": "binary",
+        "license": "Apache-2.0",
+        "terms": format!("https://example.com/{key}/terms"),
+        "caution": format!("Read the {key} terms first."),
+        "review": "https://example.com/review",
+        "admits": {"name": registry, "version": version},
+        "targets": [{
+            "platform": platform(),
+            "cmd": key,
+            "args": [],
+            "env": {},
+            "hosts": ["downloads.example.com"],
+            "artifacts": [{
+                "url": format!("https://downloads.example.com/{key}"),
+                "sha256": "a".repeat(64),
+                "size": program.len(),
+                "format": "bare",
+                "unpacked": program.len(),
+                "decompressed": program.len(),
+                "files": [{
+                    "path": key,
                     "size": program.len(),
                     "sha256": digest(program),
                     "exec": true

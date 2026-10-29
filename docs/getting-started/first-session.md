@@ -1057,6 +1057,7 @@ back to correct.
 | `/fast` | Asks the model in force for its vendor's [fast form](../providers/fast.md), at its price, or for standard |
 | `/login` | Signs in with your provider account |
 | `/logout` | Signs out from your provider account |
+| `/agents` | Lists the coding agents the catalog offers, and adds one |
 | `/mode` | The [permission mode](../permissions/modes.md) in force, or the one you name |
 | `/sandbox` | Shows the [sandbox](../security/sandboxing.md) in force, and turns it on or off |
 | `/theme` | Picks the colours crucible draws with, and the one code is drawn in |
