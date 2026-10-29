@@ -995,6 +995,7 @@ fn refused(refusal: &AgentsError) -> String {
         | AgentsError::Running(_)
         | AgentsError::Config(_)
         | AgentsError::Remember(_)
+        | AgentsError::Unadded { .. }
         | AgentsError::HoldUnkept(_)
         | AgentsError::Unoffered { .. }
         | AgentsError::Unlisted(_)
@@ -1073,6 +1074,15 @@ fn sentence(refusal: &AgentsError) -> String {
         AgentsError::HoldUnkept(problem) => format!(
             "the yes to this agent's route could not be written down, so nothing was started: {}",
             remembered(problem)
+        ),
+        AgentsError::Unadded {
+            agent,
+            version,
+            why,
+        } => format!(
+            "{agent} {} is installed, but no instance was written for it: {}",
+            shown(version),
+            remembered(why)
         ),
         AgentsError::Unoffered { .. }
         | AgentsError::Unlisted(_)
@@ -1200,6 +1210,7 @@ fn carried_out(outcome: &door::Outcome) -> Option<String> {
                 How::Installed => format!("{agent} {version} installed"),
                 How::Updated => format!("{agent} updated to {version}"),
                 How::RolledBack => format!("{agent} rolled back to {version}"),
+                How::Added => format!("{agent} {version} added"),
             }];
             if !left.is_empty() {
                 said.push(format!(

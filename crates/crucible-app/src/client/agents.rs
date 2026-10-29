@@ -1,5 +1,6 @@
-//! The agents door: listing, installing, updating, rolling back, removing and
-//! verifying the agents the reviewed catalog offers, with no conversation.
+//! The agents door: listing, installing, adding, updating, rolling back,
+//! removing and verifying the agents the reviewed catalog offers, with no
+//! conversation.
 //!
 //! A front end with a conversation and one with none come through the same
 //! door, lent a [`Shelf`]: where the catalog is published and the keys it is
@@ -21,7 +22,7 @@
 //! What is offered is then read from the trust state, never from the network
 //! answer itself.
 //!
-//! An install, update, rollback or removal changes nothing before it is
+//! An install, add, update, rollback or removal changes nothing before it is
 //! answered. It is put to the client as [`Pending::Install`], whose facts are
 //! the release's version and size, every host the download may contact, its
 //! licence, terms and caution, what it is started with, the instances whose
@@ -49,7 +50,16 @@
 //! only where its `executable` still names what the question showed, so an
 //! instance edited meanwhile keeps the edit and is said to; and the store is
 //! pruned to what the user file names then and one version before. A cancel, or a download or unpack
-//! that fails, removes the staging and leaves the version named before. A
+//! that fails, removes the staging and leaves the version named before. An
+//! add is an install that then writes one more instance of the agent: its
+//! question names the instance by the first name the user file leaves free
+//! (the agent key, then the key with `-2`, `-3` and on), and once the version
+//! is in place and the instances are moved, `externalAgents.<name>` is written
+//! with its `driver`, `agent` and `executable` alone, in one further update of
+//! the user file. The name is chosen again from the file read under its lock,
+//! so one taken meanwhile gives the next free one, and the outcome names the
+//! one written. A write refused then leaves the version kept and says no
+//! instance was written ([`AgentsError::Unadded`]). A
 //! rollback names the newest other version the store holds that no
 //! revocation names, the same program in it, and fetches nothing; a removal
 //! is refused while an instance still runs a version from the store.
@@ -64,7 +74,8 @@
 //! numbers included, is asked about as it is without the setting. Every other
 //! step runs and refuses as it does after a yes, and the outcome says the
 //! update was taken under that setting and why it was not smoke-tested where
-//! it was not. A first install, a rollback and a removal are always asked.
+//! it was not. A first install, an add, a rollback and a removal are always
+//! asked.
 //!
 //! A switch is smoke-tested before any instance is moved onto it only where a
 //! conversation lent its launcher and that launcher's sandbox is on with the
@@ -236,6 +247,9 @@ pub enum How {
     Updated,
     /// The version before, named again.
     RolledBack,
+    /// A version installed, and one more instance of the agent written that
+    /// runs it.
+    Added,
 }
 
 /// What came of one command at the agents door.
@@ -263,7 +277,8 @@ pub enum Outcome {
         how: How,
         /// The version now named.
         version: Box<str>,
-        /// The instances whose `executable` now names it.
+        /// The instances whose `executable` now names it. For
+        /// [`How::Added`], the last is the instance written.
         instances: Vec<Box<str>>,
         /// The instances that would have moved and were left as they are,
         /// because their `executable` named something else by the time it
@@ -416,6 +431,17 @@ pub enum AgentsError {
     /// The user's configuration could not be written.
     #[error(transparent)]
     Remember(#[from] RememberError),
+    /// The version was put in place for an instance to be added, and the
+    /// instance could not be written; the version stays kept.
+    #[error("{agent} {version} is installed, but no instance was written for it: {why}")]
+    Unadded {
+        /// The agent.
+        agent: AgentKey,
+        /// The version in place.
+        version: Box<str>,
+        /// Why the user's file refused it.
+        why: Box<RememberError>,
+    },
     /// The version put in place did not pass its smoke test, so no instance
     /// was moved onto it.
     #[error(
@@ -549,6 +575,7 @@ pub async fn run(
         // A listing names no agent, and a sign-in names an instance instead.
         Command::AgentCatalog | Command::SignInAgent { .. } => None,
         Command::InstallAgent { agent, .. }
+        | Command::AddAgent { agent, .. }
         | Command::UpdateAgent { agent }
         | Command::RollbackAgent { agent }
         | Command::RemoveAgent { agent }
@@ -582,7 +609,7 @@ pub async fn run(
         return Ok(door.listing(unrefreshed));
     };
     match command {
-        Command::InstallAgent { version, .. } => {
+        Command::InstallAgent { version, .. } | Command::AddAgent { version, .. } => {
             let offer = door
                 .trust
                 .offers(Some(&agent))
@@ -592,7 +619,12 @@ pub async fn run(
                     agent: agent.clone(),
                     version: version.as_str().into(),
                 })?;
-            door.switch(&offer, How::Installed, front, watching).await
+            let how = if matches!(command, Command::AddAgent { .. }) {
+                How::Added
+            } else {
+                How::Installed
+            };
+            door.switch(&offer, how, front, watching).await
         }
         Command::UpdateAgent { .. } => {
             let mut offers = door.trust.offers(Some(&agent));
@@ -904,6 +936,11 @@ impl Door<'_> {
             kept,
             reached,
             smoking: self.smoking(agent),
+            // The name the question shows; the one written is chosen again
+            // from the file under its lock.
+            adding: (how == How::Added).then(|| {
+                crucible_config::free_name(agent, self.instances.iter().map(ExternalAgent::name))
+            }),
         };
         // Only an update can stand on the user's file; any other move is asked.
         let standing =
@@ -963,7 +1000,18 @@ impl Door<'_> {
             self.store.commit(staging, &version, &files, provenance)?;
         }
         Self::smoke(&plan.smoking, (&offer.entry, target), &root, &program).await?;
-        let (instances, left) = self.point(&moving, &program)?;
+        let (mut instances, left) = self.point(&moving, &program)?;
+        if plan.adding.is_some() {
+            let added =
+                remember::adding(&self.user, agent, &program.to_string_lossy()).map_err(|why| {
+                    AgentsError::Unadded {
+                        agent: agent.clone(),
+                        version: offer.pin.version.clone(),
+                        why: Box::new(why),
+                    }
+                })?;
+            instances.push(added.into());
+        }
         Ok(Outcome::Moved {
             agent: agent.clone(),
             how,
@@ -993,7 +1041,9 @@ impl Door<'_> {
         let (key, version) = (entry.key.as_str(), quoted(&offer.pin.version));
         let (asks, choice) = match how {
             How::Updated => (format!("Update {key} to {version}?"), "Update"),
-            How::Installed | How::RolledBack => (format!("Install {key} {version}?"), "Install"),
+            How::Installed | How::RolledBack | How::Added => {
+                (format!("Install {key} {version}?"), "Install")
+            }
         };
         let mut facts = vec![if kept {
             format!("{key} {version} is already installed, so nothing is downloaded.")
@@ -1046,6 +1096,12 @@ impl Door<'_> {
             format!("Started with the environment {}.", set.join(", "))
         });
         facts.push(moves(&entry.key, &offer.pin.version, moving));
+        if let Some(name) = &plan.adding {
+            facts.push(format!(
+                "Adds the instance {} to your configuration, running {version}.",
+                quoted(name)
+            ));
+        }
         facts.push(Self::smoked(&plan.smoking));
         Confirmation {
             asks,
@@ -1601,12 +1657,14 @@ fn sized(offer: &Offer) -> Result<u64, AgentsError> {
 type Written = (Vec<Box<str>>, Vec<Box<str>>);
 
 /// What a switch found before it asked: whether the version is already in
-/// place, every host its download may contact, and the launcher it is
-/// smoke-tested with, or why it is not.
+/// place, every host its download may contact, the launcher it is
+/// smoke-tested with, or why it is not, and for an add the name the instance
+/// would be written under.
 struct Plan<'a> {
     kept: bool,
     reached: Vec<String>,
     smoking: Result<&'a Launcher<'a>, String>,
+    adding: Option<String>,
 }
 
 /// Every file the target's artifacts list, as they would be committed.
