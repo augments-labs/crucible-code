@@ -2456,6 +2456,45 @@ fn a_home_reached_through_a_link_has_its_roots_where_the_link_leads() {
     );
 }
 
+/// A name that is allowed but whose link leads out of the home is refused,
+/// since where it leads is what the sandbox is given, and so is a link along
+/// a nested path that leads out, though its parent stays inside.
+#[cfg(unix)]
+#[test]
+fn a_link_that_leads_out_of_the_home_is_refused() {
+    use std::os::unix::fs::symlink;
+
+    let sample = Sample::new("launch-state-link-out");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+    let elsewhere = home.with_file_name("elsewhere-bin");
+    fs::create_dir_all(&elsewhere).expect("a directory");
+    symlink(&elsewhere, home.join(".goose")).expect("a link");
+    fs::create_dir_all(home.join(".a")).expect("a directory");
+    symlink(&elsewhere, home.join(".a/b")).expect("a link");
+
+    let inside = rooted(&sample, &[".a"], &home, &crucible);
+    let out = rooted(&sample, &[".goose"], &home, &crucible);
+    let nested = rooted(&sample, &[".a", ".a/b"], &home, &crucible);
+
+    assert_eq!(inside.as_deref().ok(), Some([home.join(".a")].as_slice()));
+    for (place, refused) in [(".goose", out), (".a/b", nested)] {
+        let Err(
+            refused @ Unlaunched::StatePath {
+                overlap: Overlap::Outside,
+                ..
+            },
+        ) = refused
+        else {
+            panic!("{place}: {refused:?}")
+        };
+        let said = refused.to_string();
+        assert!(said.contains("externalAgents.work"), "{place}: {said}");
+        assert!(said.contains(place), "{place}: {said}");
+        assert!(said.contains("your home"), "{place}: {said}");
+    }
+}
+
 /// A program for an agent to be found at, which no sandbox here starts.
 fn standing(sample: &Sample) -> PathBuf {
     installed(sample, &Script::of([Reply::lines(["1.0.0"])]))

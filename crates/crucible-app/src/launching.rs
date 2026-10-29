@@ -106,8 +106,11 @@
 //! writable, or the home crucible keeps its state in, however the entry spells
 //! its way there: it is judged by its path components, as it is joined and
 //! again where its links lead, and the refusal names the instance and the
-//! path the entry gave. A built-in agent has no catalog entry, and the smoke test of
-//! a release signs nothing in, so neither is given any.
+//! path the entry gave. Where its links lead must also lie within the home,
+//! so that a link from an allowed name, such as a dotfile manager's, cannot
+//! lead the sandbox to a place nobody listed. A built-in agent has no catalog
+//! entry, and the smoke test of a release signs nothing in, so neither is
+//! given any.
 //!
 //! Every start, a turn's or an account step's, is given each key the user
 //! typed for one of the methods its agent signs in by, kept in crucible's
@@ -1250,6 +1253,9 @@ const NEVER_WRITABLE: &[Place] = &[
     },
 ];
 
+/// Why a state path that leaves the home it is joined to is refused.
+const STAYS_HOME: &str = "only a place within it is made writable, where links lead as well";
+
 /// Why the home crucible keeps its state in is never made writable.
 const HOLDS_KEYS: &str =
     "it holds the keys you typed for your agents and the record of the releases revoked";
@@ -1419,7 +1425,8 @@ impl Agent {
     /// `crucible`, the home crucible keeps its own state in. None is checked
     /// by how its text begins, and each is checked as it is joined to `home`
     /// and again where its links lead, so a name that is allowed but leads
-    /// into a place that is not is refused.
+    /// into a place that is not is refused, as is one that leads out of
+    /// `home` altogether.
     ///
     /// # Errors
     ///
@@ -1442,17 +1449,13 @@ impl Agent {
             why,
         };
         let guarded = guarded(home, crucible);
+        let inside = resolved(home)?;
         let mut roots: Vec<PathBuf> = Vec::new();
         for path in written {
             let mut joined = home.to_path_buf();
             for component in Path::new(&**path).components() {
                 let Component::Normal(name) = component else {
-                    return Err(refused(
-                        path,
-                        Overlap::Outside,
-                        "your home",
-                        "a place the entry names is within it",
-                    ));
+                    return Err(refused(path, Overlap::Outside, "your home", STAYS_HOME));
                 };
                 joined.push(name);
             }
@@ -1473,6 +1476,12 @@ impl Agent {
                 .min_by_key(|(overlap, _)| *overlap);
             if let Some((overlap, guard)) = closest {
                 return Err(refused(path, overlap, &guard.place, guard.why));
+            }
+            // Where its links lead is what the sandbox is given, so a name
+            // that is allowed but leads out of the home, as a dotfile
+            // manager's link does, is a place nobody listed.
+            if !is_beneath(&real, &inside) || is_beneath(&inside, &real) {
+                return Err(refused(path, Overlap::Outside, "your home", STAYS_HOME));
             }
             if !roots.contains(&real) {
                 roots.push(real);

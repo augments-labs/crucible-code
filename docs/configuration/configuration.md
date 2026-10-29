@@ -250,7 +250,8 @@ has in that variable, so it does not sign in to your own.
 Under the sandbox, a `catalog` agent may also write the places its catalog entry
 says it keeps its sign-in in, joined to your home (`HOME`, or `USERPROFILE` on
 Windows), so that a sign-in made there is still there at the next start. A
-place that is missing is created for you alone. The shell startup files, `.ssh`,
+place that is missing is created for you alone. A place whose links lead out of
+your home, as a dotfile manager's link can, is refused. The shell startup files, `.ssh`,
 `.gnupg`, `.aws`, `.config` and `.local` themselves, `.local/bin`,
 `.config/fish`, `.config/autostart`, `.config/systemd`, `Library/LaunchAgents`,
 the Windows Start Menu and crucible's own home are never made writable: an
