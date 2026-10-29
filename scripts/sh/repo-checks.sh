@@ -1782,7 +1782,9 @@ done <<<"$decided"
 # decides that too. `/login` names the one connect that claims install, and the
 # install, update, rollback or sign-in it then sends is the move that connect
 # handed back, the application's own command built on this host, handed to the
-# agents door as it came.
+# agents door as it came. `/agents` names the catalog read, a verify and an add,
+# each built from the row marked and the key pressed on this host, and hands
+# each to the agents door as it is.
 naming='crates/crucible-app/src/client/accounts.rs
 crates/crucible-app/src/client/agents.rs
 crates/crucible-app/src/client/asking.rs
@@ -1791,6 +1793,7 @@ crates/crucible-app/src/client/turning.rs
 src/cli/client.rs
 src/cli/converse.rs
 src/cli/converse/command.rs
+src/cli/converse/command/agents.rs
 src/cli/converse/command/login.rs
 src/cli/converse/command/logout.rs
 src/cli/converse/command/sandbox.rs
