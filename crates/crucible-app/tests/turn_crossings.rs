@@ -204,18 +204,22 @@ fn nothing_shipped_glob_imports_what_a_turn_could_wait_through() {
 
 /// Every line mentioning `block_on` a shipped file may hold, trimmed, with how
 /// many times that file may hold it, and none of them is reached by a turn: the
-/// runtime owner's documentation of why it is built multi-thread, the five
-/// waits made from outside every turn — startup writing what a session picked
-/// up owes before any turn exists, the drawing thread answering a command,
-/// taking back what a plan answered, asking the backend the sandbox panel
-/// shows, and joining a turn that has ended — the two waits of `crucible
-/// update`, a command that runs before any conversation exists and starts
-/// none, the one of `crucible agents install` and the one of `crucible agents probe`, which are such commands too, the runner's test helper that drives a turn to its end on a runtime
-/// of the test's own, the two performance probes waiting, on their own main
-/// thread, for each call they time on a runtime of the probe's own, and the
-/// lines inside the `#[cfg(test)] mod tests` of the sandbox's redaction and of
-/// the worker-task check, which only a test build compiles. The count makes the
-/// same line written once more in that file, wherever, one too many.
+/// runtime owner's documentation of why it is built multi-thread; the seven
+/// waits made from outside every turn, which are startup writing what a session
+/// picked up owes before any turn exists, the drawing thread answering a
+/// command, polling an account operation between the questions it stops on,
+/// taking back what a plan answered, asking the backend the sandbox panel shows
+/// and joining a turn that has ended, and the agents door `/login` carries a
+/// move out at, waited for on a thread the drawing thread spawns and joins; the
+/// two waits of `crucible update`, a command that runs before any conversation
+/// exists and starts none; the one of `crucible agents install` and the one of
+/// `crucible agents probe`, which are such commands too; the runner's test
+/// helper that drives a turn to its end on a runtime of the test's own; the two
+/// performance probes waiting, on their own main thread, for each call they
+/// time on a runtime of the probe's own; and the lines inside the `#[cfg(test)]
+/// mod tests` of the sandbox's redaction and of the worker-task check, which
+/// only a test build compiles. The count makes the same line written once more
+/// in that file, wherever, one too many.
 const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
     (
         "crates/crucible-app/src/runtime.rs",
@@ -273,7 +277,7 @@ const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
     ),
     (
         "src/cli/client.rs",
-        "runtime.block_on(door::run(request, &lent, &mut front, watching))",
+        "runtime.block_on(door::run(request, &lent, front, watching))",
         1,
     ),
     (
