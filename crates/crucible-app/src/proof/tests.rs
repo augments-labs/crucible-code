@@ -187,7 +187,8 @@ fn a_start_whose_environment_names_a_catalog_it_does_not_take_is_refused() {
         .expect("the second process");
 
     let said = String::from_utf8_lossy(&ended.stdout);
-    assert!(ended.status.success(), "{said}");
+    let why = String::from_utf8_lossy(&ended.stderr);
+    assert!(ended.status.success(), "{said}{why}");
     assert!(
         said.contains("1 passed"),
         "the start was never made: {said}"
