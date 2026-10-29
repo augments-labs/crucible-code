@@ -57,7 +57,7 @@ use crucible_app::startup::{self, Startup, assemble, served};
 use crucible_app::subscription::Subscriptions;
 use crucible_auth::Store;
 use crucible_builtins::{Background, Ledger, Plan};
-use crucible_config::{Driver, Home, Settings};
+use crucible_config::{Home, Settings};
 use crucible_models::Effort;
 use crucible_runtime::Cancel;
 use crucible_tools::Revealed;
@@ -189,11 +189,12 @@ completion SHELL writes a completion script for bash, zsh, fish, powershell \
 or elvish, made from this command line as it is, and stops. It reads no \
 configuration and opens no terminal.
 
-agents install DRIVER downloads the release of an installed coding agent \
-the agent catalog offers, antigravity's agent server, checks its size and \
-SHA-256 against the catalog's pin, unpacks it under crucible's home and \
-stops; a release already there is kept. /login then runs that release for an \
-agent it sets up.
+agents search lists the coding agents the agent catalog offers and stops. \
+agents install, add, update, rollback and remove each ask on this terminal \
+before anything is downloaded or changed, and stop; with no terminal to ask \
+on, nothing changes. agents verify checks an installed agent's files against \
+what was installed, and agents sign-in signs a configured instance in. /login \
+then runs an installed release for an agent it sets up.
 
 update says whether a release later than this one is out and, where \
 install.sh installed crucible, downloads it, checks it against the release's \
@@ -308,8 +309,8 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Install a coding agent crucible can run, where this build downloads
-    /// its release for you, and stop.
+    /// Search, install, update, remove or sign in the coding agents the agent
+    /// catalog offers, and stop.
     Agents {
         #[command(subcommand)]
         action: AgentsAction,
@@ -323,12 +324,57 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum AgentsAction {
+    /// List the agents the agent catalog offers, with the versions it offers
+    /// and those installed, and stop.
+    Search {
+        /// Keep only the agents whose name holds this, ignoring case.
+        text: Option<String>,
+    },
     /// Download the release of an agent the agent catalog offers, check it is that
     /// release and put it where crucible runs it from, and stop.
     Install {
-        /// The agent, as externalAgents names its driver.
-        #[arg(value_parser = agents::driver)]
-        driver: Driver,
+        /// The agent, as the agent catalog names it.
+        agent: String,
+        /// The release, where not the newest the catalog offers this platform.
+        version: Option<String>,
+    },
+    /// Install an agent's release as `install` does, write one more instance of
+    /// it into your configuration, and stop.
+    Add {
+        /// The agent, as the agent catalog names it.
+        agent: String,
+        /// The release, where not the newest the catalog offers this platform.
+        version: Option<String>,
+    },
+    /// Move an installed agent to the release the agent catalog now offers for
+    /// it, and stop.
+    Update {
+        /// The agent, as the agent catalog names it.
+        agent: String,
+    },
+    /// Move an installed agent back to the release it was on before, and stop.
+    Rollback {
+        /// The agent, as the agent catalog names it.
+        agent: String,
+    },
+    /// Remove an installed agent's program from this host, and stop.
+    Remove {
+        /// The agent, as the agent catalog names it.
+        agent: String,
+    },
+    /// Check an installed agent's files against what was recorded when it was
+    /// installed, and stop.
+    Verify {
+        /// The agent, as the agent catalog names it.
+        agent: String,
+    },
+    /// Sign a configured instance of an agent in, and stop.
+    SignIn {
+        /// The instance, as externalAgents names it.
+        instance: String,
+        /// The sign-in method, where its agent offers more than one.
+        #[arg(long)]
+        method: Option<String>,
     },
     /// Unpack a download the agent catalog describes by the rules an install
     /// holds it to, write the file list it unpacked to as JSON, and stop.
@@ -600,37 +646,7 @@ pub(crate) fn start() -> ExitCode {
         (Some(Command::Update { check, dry_run }), _, _) => {
             return update::updated(*check, *dry_run);
         }
-        (
-            Some(Command::Agents {
-                action: AgentsAction::Install { driver },
-            }),
-            _,
-            _,
-        ) => return agents::install(*driver),
-        (
-            Some(Command::Agents {
-                action:
-                    AgentsAction::UnpackCheck {
-                        entry,
-                        artifact,
-                        out,
-                    },
-            }),
-            _,
-            _,
-        ) => return agents::unpack_check(entry, artifact, out),
-        (
-            Some(Command::Agents {
-                action:
-                    AgentsAction::Probe {
-                        root,
-                        entry,
-                        unconfined,
-                    },
-            }),
-            _,
-            _,
-        ) => return agents::probe(root, entry, *unconfined),
+        (Some(Command::Agents { action }), _, _) => return agents::acted(action),
         (Some(Command::Mcp { action }), _, _) => declared(action),
         (
             Some(Command::Sessions {

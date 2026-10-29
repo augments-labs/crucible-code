@@ -1,14 +1,20 @@
-//! What `crucible agents install`, `crucible agents unpack-check` and
-//! `crucible agents probe` write.
+//! What the `crucible agents` commands write: those asked of the agents door
+//! against a catalog a host on this machine publishes and signs at test time,
+//! and `unpack-check` and `probe`.
 
+use std::collections::HashMap;
 use std::fs;
-use std::io;
-use std::net::TcpListener;
+use std::io::{self, Read as _};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clap::Parser as _;
+use crucible_app::catalog_fetch::Source;
+use crucible_external_harnesses::catalog::SNAPSHOT;
+use crucible_external_harnesses::catalog::fixture::signed;
 use crucible_external_harnesses::fake_peer::scripts::acp;
 use crucible_external_harnesses::fake_peer::{self, Reply, Script};
 use crucible_external_harnesses::release::proof;
@@ -195,44 +201,79 @@ fn unpack_check_refuses_in_one_line_and_leaves_nothing_unpacked() {
     );
 }
 
+/// An agent is named as the catalog names it, a built-in one included, and a
+/// version only where one is wanted.
 #[test]
-fn a_driver_is_named_as_externalagents_names_it() {
-    assert_eq!(driver("antigravity"), Ok(Driver::Antigravity));
-    assert_eq!(driver("claude"), Ok(Driver::Claude));
+fn an_agent_is_named_as_the_catalog_names_it() {
+    let parsed = |words: &[&str]| {
+        Cli::try_parse_from(["crucible", "agents"].iter().chain(words))
+            .expect("the command")
+            .command
+    };
+
+    let Some(Command::Agents {
+        action: AgentsAction::Install { agent, version },
+    }) = parsed(&["install", "antigravity"])
+    else {
+        panic!("install antigravity is not an install");
+    };
+    assert_eq!((agent.as_str(), version), ("antigravity", None));
+    let Some(Command::Agents {
+        action: AgentsAction::Add { agent, version },
+    }) = parsed(&["add", "goose", "1.0.0"])
+    else {
+        panic!("add goose 1.0.0 is not an add");
+    };
     assert_eq!(
-        driver("Antigravity"),
-        Err("expected one of claude, antigravity".to_owned())
+        (agent.as_str(), version.as_deref()),
+        ("goose", Some("1.0.0"))
+    );
+    let Some(Command::Agents {
+        action: AgentsAction::SignIn { instance, method },
+    }) = parsed(&["sign-in", "work", "--method", "api-key"])
+    else {
+        panic!("sign-in work --method api-key is not a sign-in");
+    };
+    assert_eq!(
+        (instance.as_str(), method.as_deref()),
+        ("work", Some("api-key"))
     );
 }
 
-/// A catalog agent is not installed by its driver, which names no agent of
-/// its own, so `catalog` is refused with the command that adds one, and only
-/// the built-in drivers are listed.
+/// `catalog` is no driver of its own to install: it reaches the door, which
+/// finds no agent the catalog names so and refuses it, naming it.
 #[test]
 fn a_catalog_agent_is_added_rather_than_installed() {
-    let refused = driver("catalog").expect_err("catalog is not installed by its driver");
-    assert!(refused.contains("crucible agents add"), "{refused}");
-    assert!(refused.contains("claude, antigravity"), "{refused}");
+    let bench = Bench::new("install-catalog");
+    bench.host.publish(1, &[goose("1.0.0", ONE)]);
+
+    for words in [
+        &["install", "catalog"][..],
+        &["install", "catalog", "1.0.0"],
+    ] {
+        let answer = bench.carried(&action(words), Some(installs), &mut unasked);
+
+        let Answer::Refused(refused) = &answer else {
+            panic!("{words:?} was not refused: {answer:?}");
+        };
+        assert!(
+            refused.contains("of catalog for this platform"),
+            "{refused}"
+        );
+    }
+    assert!(!bench.heard().contains("Which one?"), "nothing was asked");
 }
 
 #[test]
 fn an_install_says_where_the_release_is_and_how_to_use_it() {
-    let installed = Installed {
-        version: "1.3.0".into(),
-        executable: PathBuf::from("/home/me/.crucible/programs/antigravity/1.3.0/agy"),
-        kept: false,
-    };
+    let at = Path::new("/home/me/.crucible/programs/antigravity/1.3.0/agy");
     assert_eq!(
-        answered(Driver::Antigravity, &installed),
+        installed("antigravity", "1.3.0", Some(at), true),
         "Installed antigravity 1.3.0 at /home/me/.crucible/programs/antigravity/1.3.0/agy. \
          /login offers it under Use an installed coding agent.\n"
     );
-    let kept = Installed {
-        kept: true,
-        ..installed
-    };
     assert_eq!(
-        answered(Driver::Antigravity, &kept),
+        installed("antigravity", "1.3.0", Some(at), false),
         "antigravity 1.3.0 is already installed at \
          /home/me/.crucible/programs/antigravity/1.3.0/agy.\n"
     );
@@ -240,7 +281,7 @@ fn an_install_says_where_the_release_is_and_how_to_use_it() {
 
 #[test]
 fn a_terminal_is_told_each_new_percent_on_one_line() {
-    let mut progress = Progress::new(Driver::Antigravity, true);
+    let mut progress = Progress::new("antigravity".to_owned(), true);
     assert_eq!(progress.ended(), "");
     assert_eq!(
         progress.heard(1_000_000, 4_000_000),
@@ -256,13 +297,578 @@ fn a_terminal_is_told_each_new_percent_on_one_line() {
 
 #[test]
 fn anything_else_is_told_once_that_the_download_began() {
-    let mut progress = Progress::new(Driver::Antigravity, false);
+    let mut progress = Progress::new("antigravity".to_owned(), false);
     assert_eq!(
         progress.heard(1_000_000, 4_000_000),
         "Downloading antigravity (4 MB)…\n"
     );
     assert_eq!(progress.heard(4_000_000, 4_000_000), "");
     assert_eq!(progress.ended(), "");
+}
+
+/// A host on this machine standing where the catalog is published, answering
+/// each path it was given bytes for and every other with a 404.
+struct Host {
+    port: u16,
+    routes: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    done: Arc<AtomicBool>,
+}
+
+impl Host {
+    fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a port");
+        let port = listener.local_addr().expect("its address").port();
+        let routes: Arc<Mutex<HashMap<String, Vec<u8>>>> = Arc::default();
+        let done = Arc::new(AtomicBool::new(false));
+        let (routing, finishing) = (Arc::clone(&routes), Arc::clone(&done));
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                if finishing.load(Ordering::Acquire) {
+                    break;
+                }
+                let routes = Arc::clone(&routing);
+                std::thread::spawn(move || replied(stream, &routes));
+            }
+        });
+        Self { port, routes, done }
+    }
+
+    fn serve(&self, path: &str, body: Vec<u8>) {
+        self.routes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(path.to_owned(), body);
+    }
+
+    /// The catalog on this host, signed with the test key, whose redirects
+    /// reach this host alone.
+    fn source(&self) -> Source {
+        let listed: &'static str = Box::leak(self.named().into_boxed_str());
+        Source {
+            base: format!("http://{}/catalog/", self.named()),
+            keys: signed(b"{}").keys,
+            hosts: Box::leak(Box::new([listed])),
+            ..Source::published(&|_| None)
+        }
+    }
+
+    /// This host as an address names it.
+    fn named(&self) -> String {
+        format!("127.0.0.1:{}", self.port)
+    }
+
+    /// Publishes `entries`, a release in each kept on this host by its
+    /// digest, as a catalog newer by `serial` than the one built in.
+    fn publish(&self, serial: u64, entries: &[(serde_json::Value, &[u8])]) {
+        for (_, program) in entries {
+            self.serve(&format!("/catalog/{}", digest(program)), program.to_vec());
+        }
+        let catalog = serde_json::json!({
+            "schema": 1,
+            "serial": SNAPSHOT.serial() + serial,
+            "entries": entries.iter().map(|(entry, _)| entry).collect::<Vec<_>>(),
+            "revoked": [],
+        });
+        let signed = signed(&serde_json::to_vec(&catalog).expect("the catalog"));
+        self.serve("/catalog/index.json", signed.index);
+        self.serve("/catalog/index.json.minisig", signed.signature);
+    }
+}
+
+impl Drop for Host {
+    fn drop(&mut self) {
+        self.done.store(true, Ordering::Release);
+        let _ = TcpStream::connect(("127.0.0.1", self.port));
+    }
+}
+
+/// Answers the one request `stream` carries from `routes`.
+fn replied(mut stream: TcpStream, routes: &Mutex<HashMap<String, Vec<u8>>>) {
+    use std::io::Write as _;
+
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+    let mut head = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    while !head.windows(4).any(|end| end == b"\r\n\r\n") {
+        match stream.read(&mut buffer) {
+            Ok(0) | Err(_) => return,
+            Ok(read) => head.extend_from_slice(buffer.get(..read).unwrap_or_default()),
+        }
+    }
+    let text = String::from_utf8_lossy(&head).into_owned();
+    let path = text
+        .lines()
+        .next()
+        .and_then(|line| line.split(' ').nth(1))
+        .unwrap_or_default()
+        .to_owned();
+    let body = routes
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&path)
+        .cloned();
+    let (status, body) = body.map_or(("404 Not Found", Vec::new()), |body| ("200 OK", body));
+    let _ = write!(
+        stream,
+        "HTTP/1.1 {status}\r\nconnection: close\r\ncontent-length: {}\r\n\r\n",
+        body.len()
+    );
+    let _ = stream.write_all(&body);
+    let _ = stream.flush();
+    let _ = stream.shutdown(Shutdown::Write);
+}
+
+fn digest(bytes: &[u8]) -> String {
+    use sha2::{Digest as _, Sha256};
+
+    Sha256::digest(bytes)
+        .iter()
+        .fold(String::new(), |mut text, byte| {
+            use std::fmt::Write as _;
+            let _ = write!(text, "{byte:02x}");
+            text
+        })
+}
+
+/// How this machine's platform is spelled in a catalog.
+fn platform() -> String {
+    let os = match std::env::consts::OS {
+        "macos" => "darwin",
+        other => other,
+    };
+    format!("{os}-{}", std::env::consts::ARCH)
+}
+
+/// `key` at `version`, whose program `program` was built at review and is
+/// kept on the catalog's own host.
+fn entry(key: &str, version: &str, program: &[u8]) -> serde_json::Value {
+    serde_json::json!({
+        "key": key,
+        "registry_id": format!("{key}-acp"),
+        "version": version,
+        "kind": "binary",
+        "license": "Apache-2.0",
+        "terms": "https://example.com/terms",
+        "caution": "Read the terms first.",
+        "review": "https://github.com/augments-labs/crucible-agent-catalog/pull/12",
+        "admits": {"name": key, "version": version},
+        "targets": [{
+            "platform": platform(),
+            "cmd": "goose",
+            "args": ["acp"],
+            "env": {"GOOSE_NO_UPDATE": "1"},
+            "hosts": ["downloads.example.com"],
+            "artifacts": [{
+                "url": "https://downloads.example.com/goose",
+                "sha256": "a".repeat(64),
+                "size": 1000,
+                "format": "bare",
+                "unpacked": program.len(),
+                "decompressed": program.len(),
+                "files": [{
+                    "path": "goose",
+                    "size": program.len(),
+                    "sha256": digest(program),
+                    "exec": true
+                }],
+                "replaced_by": {"sha256": digest(program), "size": program.len()}
+            }]
+        }]
+    })
+}
+
+const ONE: &[u8] = b"goose 1.0.0, as reviewed";
+const TWO: &[u8] = b"goose 2.0.0, as reviewed, and longer";
+
+/// `goose` at `version`, built from `program`, as [`Host::publish`] takes it.
+fn goose(version: &str, program: &'static [u8]) -> (serde_json::Value, &'static [u8]) {
+    (entry("goose", version, program), program)
+}
+
+/// `goose` at 1.0.0, offering a key, a sign-in the agent runs and one at a
+/// terminal, in that order.
+fn signing_in() -> (serde_json::Value, &'static [u8]) {
+    let (mut release, program) = goose("1.0.0", ONE);
+    if let Some(object) = release.as_object_mut() {
+        object.insert(
+            "auth_methods".into(),
+            serde_json::json!([
+                {"id": "api-key", "kind": "env_var", "name": "API key", "var": "GOOSE_API_KEY"},
+                {"id": "browser", "kind": "agent", "name": "Sign in with a browser"},
+                {"id": "terminal", "kind": "terminal", "name": "Sign in at a terminal",
+                 "command": "goose", "args": ["login"], "env": {}, "route": "piped"},
+            ]),
+        );
+        object.insert(
+            "sign_in_hosts".into(),
+            serde_json::json!(["accounts.vendor.example"]),
+        );
+        object.insert(
+            "content_use".into(),
+            serde_json::json!({
+                "text": "The vendor may use what you send to improve goose.",
+                "source": "https://vendor.example/terms/data",
+                "date": "24 Oct 2026",
+                "origins": ["https://api.vendor.example"],
+            }),
+        );
+    }
+    (release, program)
+}
+
+/// A home of the test's own, the host its catalog is published on, the
+/// runtime the door is waited for on, and what has been said on standard
+/// error.
+struct Bench {
+    home: Home,
+    host: Host,
+    runtime: tokio::runtime::Runtime,
+    heard: Mutex<String>,
+    _scratch: Scratch,
+}
+
+impl Bench {
+    fn new(name: &str) -> Self {
+        let scratch = Scratch::new(name);
+        let path = scratch
+            .0
+            .canonicalize()
+            .expect("the scratch directory")
+            .join("home");
+        fs::create_dir_all(&path).expect("the home");
+        let home = Home::find(&|name| {
+            (name == crucible_config::HOME).then(|| path.clone().into_os_string())
+        })
+        .expect("the home");
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        Self {
+            home,
+            host: Host::start(),
+            runtime,
+            heard: Mutex::new(String::new()),
+            _scratch: scratch,
+        }
+    }
+
+    /// `action` carried out, its question answered by `answer` where there
+    /// is one, and a key asked of `key`.
+    fn carried(
+        &self,
+        action: &AgentsAction,
+        answer: Option<fn() -> String>,
+        key: &mut dyn FnMut(&str) -> Result<Option<Typed>, Unstored>,
+    ) -> Answer {
+        let said = |text: &str| {
+            self.heard
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push_str(text);
+        };
+        Desk {
+            home: &self.home,
+            shelf: Shelf {
+                catalog: self.host.source(),
+                home: &self.home,
+                smoke: None,
+                steps: None,
+            },
+            runtime: self.runtime.handle(),
+            said: &said,
+            terminal: false,
+            answer,
+        }
+        .carried(action, key)
+    }
+
+    /// What has been said on standard error since it was last asked.
+    fn heard(&self) -> String {
+        std::mem::take(&mut *self.heard.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// `text` with this test's home and host written as placeholders and its
+    /// paths with `/`, as it reads on any machine.
+    fn shown(&self, text: &str) -> String {
+        text.replace(&self.home.path().display().to_string(), "<home>")
+            .replace(&self.host.named(), "<host>")
+            .replace('\\', "/")
+    }
+
+    /// Where version `version` of goose's program is put.
+    fn program(&self, version: &str) -> PathBuf {
+        self.home
+            .path()
+            .join("programs")
+            .join("goose")
+            .join(version)
+            .join("goose")
+    }
+
+    /// Writes the user file with `instances`.
+    fn configure(&self, instances: &serde_json::Value) {
+        let document = serde_json::json!({ "externalAgents": instances });
+        fs::write(
+            crucible_config::user(&self.home),
+            serde_json::to_vec_pretty(&document).expect("the document"),
+        )
+        .expect("the user file");
+    }
+}
+
+/// `crucible agents` and `words`, as the command line parses them.
+fn action(words: &[&str]) -> AgentsAction {
+    match Cli::try_parse_from(["crucible", "agents"].iter().chain(words))
+        .expect("the command")
+        .command
+    {
+        Some(Command::Agents { action }) => action,
+        other => panic!("not an agents command: {other:?}"),
+    }
+}
+
+/// A person answering a question with its first choice.
+fn installs() -> String {
+    "1".to_owned()
+}
+
+/// A person answering an install's question with its second choice, Cancel.
+fn cancels() -> String {
+    "2".to_owned()
+}
+
+/// A key source asked for nothing: a sign-in asked of it fails the test.
+fn unasked(_: &str) -> Result<Option<Typed>, Unstored> {
+    panic!("a key was asked for")
+}
+
+/// The text `answer` carries, where it did what it was asked.
+fn done(answer: Answer) -> String {
+    match answer {
+        Answer::Done(text) => text,
+        other => panic!("not done: {other:?}"),
+    }
+}
+
+/// With no session, an install asks on this terminal, lands the program where
+/// it says it did once the question is answered yes, and says so; an update of
+/// an instance run from it then says it is already current there. A version
+/// the command does not name is the newest the catalog offers.
+#[test]
+fn an_install_with_no_session_lands_the_program_where_it_says() {
+    let bench = Bench::new("install");
+    bench.host.publish(1, &[goose("1.0.0", ONE)]);
+
+    let said = done(bench.carried(&action(&["install", "goose"]), Some(installs), &mut unasked));
+
+    let program = bench.program("1.0.0");
+    assert_eq!(fs::read(&program).ok().as_deref(), Some(ONE));
+    assert!(
+        said.contains(&format!(" at {}.", program.display())),
+        "the install says where the program is: {said}"
+    );
+    insta::assert_snapshot!("install_asked", bench.shown(&bench.heard()));
+    insta::assert_snapshot!("install_done", bench.shown(&said));
+    bench.configure(&serde_json::json!({
+        "work": {
+            "driver": "catalog",
+            "agent": "goose",
+            "executable": program.to_string_lossy(),
+        },
+    }));
+
+    let again = done(bench.carried(&action(&["update", "goose"]), Some(installs), &mut unasked));
+    assert!(
+        !bench.heard().contains("Which one?"),
+        "nothing is asked of a current agent"
+    );
+    insta::assert_snapshot!("install_current", bench.shown(&again));
+}
+
+/// An install answered Cancel, or asked where there is no terminal to ask on,
+/// changes nothing and says so; with no terminal nothing is asked at all.
+#[test]
+fn an_install_cancelled_or_unasked_changes_nothing() {
+    let bench = Bench::new("install-cancelled");
+    bench.host.publish(1, &[goose("1.0.0", ONE)]);
+
+    let cancelled = bench.carried(&action(&["install", "goose"]), Some(cancels), &mut unasked);
+
+    assert!(
+        matches!(&cancelled, Answer::Refused(refused) if refused.contains("nothing was changed")),
+        "{cancelled:?}"
+    );
+    assert!(
+        bench.heard().contains("Which one?"),
+        "the question was asked"
+    );
+    let unasked_here = bench.carried(&action(&["install", "goose", "1.0.0"]), None, &mut unasked);
+    let Answer::Refused(refused) = &unasked_here else {
+        panic!("an install with no terminal was not refused: {unasked_here:?}");
+    };
+    assert!(refused.contains("nothing was changed"), "{refused}");
+    assert!(
+        refused.contains("asks its question on a terminal"),
+        "{refused}"
+    );
+    assert!(!bench.heard().contains("Which one?"), "nothing was asked");
+    assert!(!bench.program("1.0.0").exists(), "nothing was installed");
+}
+
+/// `search` lists each agent the catalog offers, its versions newest first and
+/// what is installed, keeping only those named like the text it is given.
+#[test]
+fn search_lists_what_each_agent_offers_and_has_installed() {
+    let bench = Bench::new("search");
+    bench.host.publish(
+        1,
+        &[
+            goose("2.0.0", TWO),
+            goose("1.0.0", ONE),
+            (entry("codex", "0.1.0", b"codex 0.1.0"), b"codex 0.1.0"),
+        ],
+    );
+    done(bench.carried(
+        &action(&["install", "goose", "1.0.0"]),
+        Some(installs),
+        &mut unasked,
+    ));
+
+    let listed = done(bench.carried(&action(&["search"]), None, &mut unasked));
+    let matched = done(bench.carried(&action(&["search", "GOO"]), None, &mut unasked));
+    let unmatched = done(bench.carried(&action(&["search", "nothing"]), None, &mut unasked));
+
+    insta::assert_snapshot!("search", format!("{listed}--\n{matched}--\n{unmatched}"));
+}
+
+/// `verify` says each installed version is as it was installed, and ends 1
+/// naming the file where one is not; `remove` then asks and takes it.
+#[test]
+fn verify_ends_differing_where_a_file_changed_and_remove_takes_it() {
+    let bench = Bench::new("verify");
+    bench.host.publish(1, &[goose("1.0.0", ONE)]);
+    done(bench.carried(&action(&["install", "goose"]), Some(installs), &mut unasked));
+
+    let intact = done(bench.carried(&action(&["verify", "goose"]), None, &mut unasked));
+    assert_eq!(intact, "goose 1.0.0 is as it was installed.\n");
+    let program = bench.program("1.0.0");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).expect("writable");
+    }
+    #[cfg(not(unix))]
+    {
+        let mut permissions = fs::metadata(&program).expect("the program").permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        fs::set_permissions(&program, permissions).expect("writable");
+    }
+    fs::write(&program, b"another program").expect("the program changed");
+    let changed = bench.carried(&action(&["verify", "goose"]), None, &mut unasked);
+    let Answer::Differs(differs) = &changed else {
+        panic!("a changed file was not found: {changed:?}");
+    };
+    assert_eq!(
+        differs,
+        "goose 1.0.0 differs from what was installed at goose.\n"
+    );
+
+    let removed = done(bench.carried(&action(&["remove", "goose"]), Some(installs), &mut unasked));
+    assert_eq!(removed, "Removed goose 1.0.0.\n");
+    assert!(!program.exists(), "the program was removed");
+}
+
+/// With no method named, a sign-in beside an instance whose agent signs in by
+/// several is refused, naming the instance and each of them, and asks for no
+/// key.
+#[test]
+fn a_sign_in_naming_no_method_beside_several_is_refused_with_their_names() {
+    let bench = Bench::new("sign-in-methods");
+    bench.configure(&serde_json::json!({
+        "google": {
+            "driver": "antigravity",
+            "executable": bench.home.path().join("agy").to_string_lossy(),
+            "profileDir": bench.home.path().join("agents").join("antigravity").to_string_lossy(),
+        },
+    }));
+
+    let answer = bench.carried(&action(&["sign-in", "google"]), None, &mut unasked);
+
+    let Answer::Refused(refused) = &answer else {
+        panic!("a sign-in with several methods was not refused: {answer:?}");
+    };
+    assert_eq!(
+        refused,
+        "google signs in by several methods: oauth-personal, oauth-business, \
+         gemini-api-key, agent-platform; name one with --method"
+    );
+}
+
+/// A key a sign-in needs and finds none kept for is asked for once and kept,
+/// and is never said; a sign-in after it finds it kept and asks nothing.
+#[test]
+fn a_key_is_asked_for_once_kept_and_never_said() {
+    const KEY: &str = "goose-key-never-shown-0123456789";
+    let bench = Bench::new("sign-in-key");
+    bench.host.publish(1, &[signing_in()]);
+    bench.configure(&serde_json::json!({
+        "work": {
+            "driver": "catalog",
+            "agent": "goose",
+            "executable": bench.program("1.0.0").to_string_lossy(),
+        },
+    }));
+    let asked = AtomicUsize::new(0);
+    let mut key = |_: &str| {
+        asked.fetch_add(1, Ordering::Relaxed);
+        Ok(Some(Typed::new(KEY.to_owned())))
+    };
+    let sign_in = action(&["sign-in", "work", "--method", "api-key"]);
+
+    let first = bench.carried(&sign_in, None, &mut key);
+    let again = bench.carried(&sign_in, None, &mut key);
+
+    let kept = "Kept the key for work to sign in by api-key; its agent is given it the next time \
+                it starts.\n";
+    for answer in [&first, &again] {
+        assert!(
+            matches!(answer, Answer::Done(said) if said == kept),
+            "the key was not kept"
+        );
+    }
+    assert_eq!(
+        asked.load(Ordering::Relaxed),
+        1,
+        "the key was asked for once"
+    );
+    let heard = bench.heard();
+    let answered = format!("{first:?}{again:?}");
+    assert!(
+        !heard.contains(KEY) && !answered.contains(KEY),
+        "the key was said"
+    );
+}
+
+/// A key is asked for only where standard input, output and error are each a
+/// terminal, and is otherwise refused with what to do instead.
+#[test]
+fn a_key_is_asked_for_only_on_a_terminal() {
+    for ends in [
+        [false, true, true],
+        [true, false, true],
+        [true, true, false],
+    ] {
+        let Err(Unstored::Refused(refused)) = prompted(ends, "work") else {
+            panic!("a key was asked for with {ends:?} terminals");
+        };
+        assert!(
+            refused.contains("run `crucible agents sign-in` on a terminal"),
+            "{refused}"
+        );
+    }
 }
 
 /// What `probe` prints for the fake peer in a sandbox that closes the network,

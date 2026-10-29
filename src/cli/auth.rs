@@ -120,7 +120,7 @@ pub(super) fn login(word: &str, piped: bool) -> ExitCode {
 
 /// Why a login stored nothing.
 #[derive(Debug)]
-enum Unstored {
+pub(super) enum Unstored {
     /// It was refused, for the reason given.
     Refused(String),
     /// The process was told to stop from outside while the key's prompt
@@ -261,7 +261,7 @@ fn typed(desk: &Desk, way: &Way) -> Result<String, Unstored> {
 /// nothing, and only then is the signal obeyed, by the caller. Obeyed where
 /// it landed, it would end the process with the terminal still raw and the
 /// shell after it showing nothing that is typed.
-fn hidden(shown: &str) -> Result<Option<String>, Unstored> {
+pub(super) fn hidden(shown: &str) -> Result<Option<String>, Unstored> {
     let ending = Ending::listening(true);
     let hiding = ending.hiding();
     let outcome = match Raw::enter() {
@@ -376,11 +376,11 @@ fn signed(desk: &Desk, way: &Way) -> Result<String, String> {
 }
 
 /// The terminal, asked what an account sign-in needs to know.
-struct Asking;
+pub(super) struct Asking;
 
 impl Asking {
     /// One line from standard input, bounded at [`MAX_ANSWER`] bytes.
-    fn answer() -> String {
+    pub(super) fn answer() -> String {
         let mut line = String::new();
         let _ = io::stdin().lock().take(MAX_ANSWER).read_line(&mut line);
         line.trim().to_owned()

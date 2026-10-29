@@ -21,7 +21,7 @@ Commands:
   extensions  Say what is installed in crucible's extensions directory, without running any of it, and stop
   sessions    Say which sessions were recorded for this directory, without opening any of them, and stop
   update      Say whether a later release is out, or install it in place of this one where install.sh installed it, and stop
-  agents      Install a coding agent crucible can run, where this build downloads its release for you, and stop
+  agents      Search, install, update, remove or sign in the coding agents the agent catalog offers, and stop
   completion  Write a completion script for a shell to standard output, and stop
   help        Print this message or the help of the given subcommand(s)
 
@@ -66,7 +66,7 @@ sandbox inspect prints the confinement a command in this directory would run und
 
 completion SHELL writes a completion script for bash, zsh, fish, powershell or elvish, made from this command line as it is, and stops. It reads no configuration and opens no terminal.
 
-agents install DRIVER downloads the release of an installed coding agent the agent catalog offers, antigravity's agent server, checks its size and SHA-256 against the catalog's pin, unpacks it under crucible's home and stops; a release already there is kept. /login then runs that release for an agent it sets up.
+agents search lists the coding agents the agent catalog offers and stops. agents install, add, update, rollback and remove each ask on this terminal before anything is downloaded or changed, and stop; with no terminal to ask on, nothing changes. agents verify checks an installed agent's files against what was installed, and agents sign-in signs a configured instance in. /login then runs an installed release for an agent it sets up.
 
 update says whether a release later than this one is out and, where install.sh installed crucible, downloads it, checks it against the release's SHA256SUMS, makes it the active release and stops; a release that does not then run as itself is rolled back. update --check only says, and exits 3 when a later release is out; update --dry-run says what would be installed. Asking is what updates: updates.check does not stop it, and a build cargo made, a copy put in place by hand and a Windows install are refused with the way each is updated instead.
 
@@ -84,7 +84,7 @@ Commands:
   extensions  Say what is installed in crucible's extensions directory, without running any of it, and stop
   sessions    Say which sessions were recorded for this directory, without opening any of them, and stop
   update      Say whether a later release is out, or install it in place of this one where install.sh installed it, and stop
-  agents      Install a coding agent crucible can run, where this build downloads its release for you, and stop
+  agents      Search, install, update, remove or sign in the coding agents the agent catalog offers, and stop
   completion  Write a completion script for a shell to standard output, and stop
   help        Print this message or the help of the given subcommand(s)
 

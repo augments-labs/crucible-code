@@ -1,0 +1,5 @@
+---
+source: src/cli/agents/tests.rs
+expression: bench.shown(&said)
+---
+Installed goose 1.0.0 at <home>/programs/goose/1.0.0/goose. /login offers it under Use an installed coding agent.

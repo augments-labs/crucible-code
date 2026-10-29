@@ -40,7 +40,14 @@ const COMMANDS: &[&[&str]] = &[
     &["sessions", "list"],
     &["update"],
     &["agents"],
+    &["agents", "search"],
     &["agents", "install"],
+    &["agents", "add"],
+    &["agents", "update"],
+    &["agents", "rollback"],
+    &["agents", "remove"],
+    &["agents", "verify"],
+    &["agents", "sign-in"],
     &["agents", "unpack-check"],
     &["agents", "probe"],
     &["completion"],
@@ -210,10 +217,12 @@ fn completes_flag(shell: Shell, script: &str, path: &[String], flag: &str) -> bo
         .fold(String::new(), |joined, word| joined + ";" + word);
     match shell {
         Shell::Bash => {
+            // A hyphen inside a word, as in `sign-in`, is spelled there as the
+            // gap between two words is.
             let arm = if path.is_empty() {
                 "crucible".to_owned()
             } else {
-                format!("crucible__subcmd__{}", path.join("__subcmd__"))
+                format!("crucible__subcmd__{}", path.join("__subcmd__")).replace('-', "__subcmd__")
             };
             // The arm's `opts` line is the line before its `if`.
             between(&format!("\n        {arm})\n"), "\n            if")

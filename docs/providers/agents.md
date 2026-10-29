@@ -211,7 +211,10 @@ when chosen. It says on the same screen, a line a version, that every file is
 as recorded, or how many differ, naming up to eight of them.
 
 Installing another version, updating, rolling back, removing and signing in
-stay on `/login`'s agent screen, described above. `/agents` cannot be opened
+stay on `/login`'s agent screen, described above.
+[`crucible agents`](../reference/cli.md#coding-agents-the-catalog-offers)
+lists, adds, checks, installs, updates, rolls back, removes and signs in from
+the command line too, with no conversation. `/agents` cannot be opened
 while a turn runs, since it installs an agent and writes your configuration.
 
 ## Claude Code
@@ -347,8 +350,9 @@ macOS, Linux and Windows for `x86_64` and `aarch64`. The releases on offer are
 those of the catalog crucible most lately believed and of the one built into
 it, which lists 1.3.0, less any the catalog has revoked, so a version reviewed
 after your crucible was made is run without a new crucible. [`crucible agents
-install antigravity`](../reference/cli.md#agents-install-driver) downloads the
-newest of them for your platform, checks it is that release and puts it under
+install antigravity`](../reference/cli.md#agents-install-agent-version) asks on
+the terminal, then downloads the newest of them for your platform, checks it is
+that release and puts it under
 `programs/antigravity/` and its version in crucible's home. Where no entry
 names Antigravity, `/login` sets one up run as that release, unless an
 `antigravity` command is on your `PATH`, and where the release is not there yet
