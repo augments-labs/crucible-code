@@ -9,8 +9,9 @@
 #[cfg(test)]
 mod tests;
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 use crucible_types::shown::{Escaping, escaped};
 use serde_core::Serialize as _;
@@ -57,6 +58,17 @@ impl Spot<'_> {
         path: "",
         at: At::Ambiguous,
     };
+}
+
+/// The profile directory one agent instance wrote, as it wrote it.
+#[derive(Clone, Copy)]
+struct Profile<'a> {
+    /// The `externalAgents` entry that wrote it.
+    instance: &'a str,
+    /// The key it was written under, which its driver chose.
+    key: &'static str,
+    /// The directory, exactly as the file spells it.
+    directory: &'a str,
 }
 
 /// One document being checked: the text it came from, what to call it, and
@@ -532,8 +544,9 @@ impl Reader<'_> {
 
     /// Refuses a provider's access, or an agent instance, that writes a key
     /// its variant does not read; an instance whose program or profile is
-    /// named by a path that is not rooted; and a catalog instance whose
-    /// `agent` is missing or could not be a catalog agent's key.
+    /// named by a path that is not rooted; a catalog instance whose `agent` is
+    /// missing or could not be a catalog agent's key; and two instances that
+    /// write one profile directory two ways.
     ///
     /// Not a shape rule: the shape has one declaration per block, and which of
     /// its keys apply is decided by another key in it. Here rather than in the
@@ -576,6 +589,7 @@ impl Reader<'_> {
         }
 
         let instances = value.get("externalAgents").and_then(Value::as_object);
+        let mut profiles = Vec::new();
         for (name, record) in instances.into_iter().flatten() {
             let at = At::of(name, self.text);
             let written = record.get("driver").and_then(Value::as_str);
@@ -665,15 +679,73 @@ impl Reader<'_> {
                     at,
                 });
             }
-            if let Some(found) = record.get(key).and_then(Value::as_str)
-                && !Path::new(found).is_absolute()
-            {
-                return Err(ConfigError::Relative {
-                    file: self.file.into(),
-                    path: format!("externalAgents.{name}.{key}").into(),
-                    found: found.into(),
-                    at,
+            if let Some(found) = record.get(key).and_then(Value::as_str) {
+                if !Path::new(found).is_absolute() {
+                    return Err(ConfigError::Relative {
+                        file: self.file.into(),
+                        path: format!("externalAgents.{name}.{key}").into(),
+                        found: found.into(),
+                        at,
+                    });
+                }
+                profiles.push(Profile {
+                    instance: name,
+                    key,
+                    directory: found,
                 });
+            }
+        }
+        self.one_spelling(&profiles)
+    }
+
+    /// Refuses two instances that write one profile directory two ways.
+    ///
+    /// The credential scope an instance signs in under is the agent it is
+    /// bound to together with its profile directory as written, which is
+    /// `scope` in the app's client accounts, and the journal of an account
+    /// operation on it is named by that same pair. This check keeps that pair
+    /// whole: a directory written two ways would be two scopes over one set of
+    /// credentials, each blind to the other's sign-in, sign-out and journal.
+    /// The refusal does not depend on the instances' drivers, since there is
+    /// no reason to spell one directory two ways. The file is refused rather
+    /// than the value rewritten, because a changed spelling would orphan the
+    /// journal an earlier version left behind. Instances written alike share
+    /// their profile, as intended, and an instance is never refused for the
+    /// way it spells its own.
+    ///
+    /// Two values that differ as written name one directory when they are
+    /// equal component by component, which a trailing or repeated separator
+    /// or a `.` component does not change, or when both exist and resolve on
+    /// disk to the same one, as through a link. Called after every entry has
+    /// passed its own checks, so each value is a rooted path.
+    ///
+    /// This is the one check in the walk that reads the disk: it resolves a
+    /// directory only to compare it with one written differently, once for
+    /// each distinct value, and creates nothing. A directory that is absent
+    /// or cannot be resolved is not known to be one directory, and is not
+    /// refused.
+    fn one_spelling(&self, profiles: &[Profile<'_>]) -> Result<(), ConfigError> {
+        let mut resolved = BTreeMap::new();
+        for (index, first) in profiles.iter().enumerate() {
+            for second in profiles.iter().skip(index + 1) {
+                if first.directory == second.directory {
+                    continue;
+                }
+                let one = Path::new(first.directory) == Path::new(second.directory)
+                    || resolve(first.directory, &mut resolved)
+                        .is_some_and(|real| resolve(second.directory, &mut resolved) == Some(real));
+                if one {
+                    return Err(ConfigError::Variant {
+                        file: self.file.into(),
+                        path: format!("externalAgents.{}.{}", second.instance, second.key).into(),
+                        at: At::of(second.instance, self.text),
+                        problem: format!(
+                            "this is the directory externalAgents.{}.{} names, spelled another way; spell the directory the same way in each, since instances share a profile only where they write it alike",
+                            first.instance, first.key
+                        )
+                        .into(),
+                    });
+                }
             }
         }
         Ok(())
@@ -817,6 +889,21 @@ impl Reader<'_> {
             at: spot.at,
         }
     }
+}
+
+/// Where `directory` is on disk, with every link followed, or `None` where it
+/// cannot be said because nothing is there or it cannot be read.
+///
+/// Remembered in `resolved`, so a directory several instances write is asked of
+/// the disk once.
+fn resolve<'a>(
+    directory: &'a str,
+    resolved: &mut BTreeMap<&'a str, Option<PathBuf>>,
+) -> Option<PathBuf> {
+    resolved
+        .entry(directory)
+        .or_insert_with(|| std::fs::canonicalize(directory).ok())
+        .clone()
 }
 
 /// Keys reserved by JSON Schema itself, which a document may carry anywhere and
@@ -1168,7 +1255,9 @@ fn written(document: &Value) -> String {
 /// valid is a startup that would not stop on its files. Nothing is written,
 /// launched or dialled on the way: the files are opened for reading, the home
 /// directory is found from the environment without touching the disk, and what
-/// comes back is sentences.
+/// comes back is sentences. The one thing read beside the files is where a
+/// profile directory is, and only for two agent instances that write it
+/// differently, to tell whether they name one.
 #[must_use]
 pub fn check(home: &crate::home::Home, workspace: &Path) -> CheckReport {
     let mut files = Vec::with_capacity(3);
