@@ -935,6 +935,46 @@ fn an_install_is_put_to_the_terminal_as_its_question_and_answered_with_the_choic
     );
 }
 
+/// An overseer whose panel cannot be drawn: it fails the first time it is to
+/// stand one, having kept hold of the cancel the move would be given up by.
+struct Undrawn {
+    cancel: Option<Cancel>,
+}
+
+impl super::Overseer for Undrawn {
+    type Error = &'static str;
+
+    fn answer(&mut self, _: &super::Question) -> Result<Option<super::Reply>, Self::Error> {
+        Ok(None)
+    }
+
+    fn stand(&mut self, carrying: &mut super::Carrying<'_>) -> Result<(), Self::Error> {
+        self.cancel = Some(carrying.cancel().clone());
+        Err("the panel could not be drawn")
+    }
+}
+
+#[test]
+fn a_move_whose_overseer_fails_is_cancelled_and_waited_for_before_the_failure_is_answered() {
+    // The door stands in for a download that goes on until it is given up,
+    // bounded so that a cancel which never reaches it fails this rather
+    // than hanging it.
+    let mut overseer = Undrawn { cancel: None };
+    let overseen = super::overseen(&Client::new(), &mut overseer, |_, watching| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !watching.cancel.requested() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        watching.cancel.requested()
+    });
+
+    assert_eq!(overseen, Err("the panel could not be drawn"));
+    let cancel = overseer
+        .cancel
+        .expect("the panel was to stand over the move");
+    assert!(cancel.requested(), "the move was not given up");
+}
+
 #[test]
 fn a_refusal_beside_a_run_is_busy_and_no_other_refusal_is() {
     use crucible_app::client::agents::AgentsError;

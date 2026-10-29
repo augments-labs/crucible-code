@@ -497,64 +497,17 @@ impl Terms {
         let carried = match crucible_config::Home::find(&|name| std::env::var_os(name)) {
             Err(homeless) => Ok(Err(AgentsError::Config(homeless))),
             Ok(home) => {
-                let told = Mutex::new(Watched::default());
-                let cancel = Cancel::new();
-                let over = AtomicBool::new(false);
-                // One question is out at a time: the door awaits each answer.
-                let (to, from) = mpsc::channel(1);
-                let front = Answering {
-                    to,
-                    client: self.client.clone(),
-                };
                 let steps = conversation.steps();
-                let (request, runtime) = (&request, &self.runtime);
-                let (home, told_, cancel_, over_) = (&home, &told, &cancel, &over);
-                std::thread::scope(|scope| {
-                    let worker = scope.spawn(move || {
-                        let _over = Over(over_);
-                        let mut front = front;
-                        let mut progress = |progress: InstallProgress| {
-                            told_
-                                .lock()
-                                .unwrap_or_else(PoisonError::into_inner)
-                                .progress = Some(progress);
-                        };
-                        let mut carried = |smoke: Option<&Launcher<'_>>| {
-                            let watching = Watching {
-                                progress: &mut progress,
-                                cancel: cancel_,
-                                link: &|link| {
-                                    let link = (link.as_str().to_owned(), link.incomplete());
-                                    told_.lock().unwrap_or_else(PoisonError::into_inner).link =
-                                        Some(link);
-                                },
-                            };
-                            let lent = shelf(home, smoke, steps);
-                            runtime.block_on(door::run(request, &lent, &mut front, watching))
-                        };
-                        match steps {
-                            Some(steps) => steps.lending(|launcher| carried(Some(launcher))),
-                            None => carried(None),
-                        }
-                    });
-                    let mut carrying = Carrying {
-                        from,
-                        held: None,
-                        told: told_,
-                        cancel: cancel_,
-                        over: over_,
+                let (request, runtime, home) = (&request, &self.runtime, &home);
+                overseen(&self.client, overseer, move |front, watching| {
+                    let carried = |smoke: Option<&Launcher<'_>>| {
+                        let lent = shelf(home, smoke, steps);
+                        runtime.block_on(door::run(request, &lent, front, watching))
                     };
-                    let stood = stood(overseer, &mut carrying);
-                    if stood.is_err() {
-                        cancel_.request();
+                    match steps {
+                        Some(steps) => steps.lending(|launcher| carried(Some(launcher))),
+                        None => carried(None),
                     }
-                    // Nobody is left to answer: a question still out, or put
-                    // from here on, is answered by nobody.
-                    drop(carrying);
-                    let carried = worker
-                        .join()
-                        .unwrap_or_else(|panicked| std::panic::resume_unwind(panicked));
-                    stood.map(|()| carried)
                 })
             }
         }?;
@@ -573,6 +526,71 @@ impl Terms {
 
         Ok(carried)
     }
+}
+
+/// Runs `door`, the half of [`Terms::carry`] that is the agents door, on a
+/// thread of its own, lent the front that puts each question it stops on to
+/// `overseer` and the watching `overseer` stands over, and stands `overseer`
+/// over it from this, the drawing thread, until it is over.
+///
+/// # Errors
+///
+/// Whatever `overseer` fails with. The download is cancelled, any question
+/// out is left unanswered, and the door is waited for before this returns.
+fn overseen<O: Overseer, R: Send>(
+    client: &Client,
+    overseer: &mut O,
+    door: impl FnOnce(&mut Answering, Watching<'_>) -> R + Send,
+) -> Result<R, O::Error> {
+    let told = Mutex::new(Watched::default());
+    let cancel = Cancel::new();
+    let over = AtomicBool::new(false);
+    // One question is out at a time: the door awaits each answer.
+    let (to, from) = mpsc::channel(1);
+    let front = Answering {
+        to,
+        client: client.clone(),
+    };
+    let (told_, cancel_, over_) = (&told, &cancel, &over);
+    std::thread::scope(|scope| {
+        let worker = scope.spawn(move || {
+            let _over = Over(over_);
+            let mut front = front;
+            let mut progress = |progress: InstallProgress| {
+                told_
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .progress = Some(progress);
+            };
+            let watching = Watching {
+                progress: &mut progress,
+                cancel: cancel_,
+                link: &|link| {
+                    let link = (link.as_str().to_owned(), link.incomplete());
+                    told_.lock().unwrap_or_else(PoisonError::into_inner).link = Some(link);
+                },
+            };
+            door(&mut front, watching)
+        });
+        let mut carrying = Carrying {
+            from,
+            held: None,
+            told: told_,
+            cancel: cancel_,
+            over: over_,
+        };
+        let stood = stood(overseer, &mut carrying);
+        if stood.is_err() {
+            cancel_.request();
+        }
+        // Nobody is left to answer: a question still out, or put from here
+        // on, is answered by nobody.
+        drop(carrying);
+        let carried = worker
+            .join()
+            .unwrap_or_else(|panicked| std::panic::resume_unwind(panicked));
+        stood.map(|()| carried)
+    })
 }
 
 /// Who stands over a move [`Terms::carry`] carries out: it answers each
