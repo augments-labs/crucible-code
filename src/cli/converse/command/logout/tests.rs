@@ -37,3 +37,40 @@ fn the_list_reads_in_the_order_this_build_names_them_rather_than_the_store_s() {
 
     assert_eq!(held, every);
 }
+
+#[test]
+fn the_agent_connect_claims_every_capability_but_the_one_whose_moves_it_cannot_carry_out() {
+    // A client that claims install can be offered a move on an agent in place
+    // of the connect, and this panel, like `/login`'s, has no way to carry one
+    // out. The terminal withholds it from every connect, whoever sends it.
+    let mut terms = crate::cli::converse::tests::plain();
+    let (client, claims) = crate::cli::client::Client::noting_claims();
+    terms.client = client;
+    let mut conversation = crate::cli::converse::tests::silent();
+    let instance = Name::new("space").expect("a name the contract takes");
+
+    terms
+        .operate(&mut conversation, asked(Act::Connect, instance), |_| {
+            Ok::<_, Fatal>(None)
+        })
+        .expect("nobody answering fails nothing");
+
+    let taken = claims.taken();
+    let [(command, claimed)] = taken.as_slice() else {
+        panic!("one request answered, not {}", taken.len());
+    };
+    assert!(
+        matches!(command, Command::Connect { instance: Some(_) }),
+        "{command:?}"
+    );
+    assert!(
+        !claimed.has(crucible_client_api::Capability::Install),
+        "{claimed:?}"
+    );
+    assert_eq!(
+        *claimed,
+        crucible_client_api::Capabilities::every()
+            .without(crucible_client_api::Capability::Install),
+        "every other capability is still claimed"
+    );
+}

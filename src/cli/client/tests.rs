@@ -17,8 +17,9 @@ use std::sync::{Arc, Mutex, mpsc};
 use crucible_app::Conversation;
 use crucible_app::client::{self, Front, Shown, snapshot};
 use crucible_client_api::{
-    Capabilities, Command, Correlation, Decision, ErrorCode, Lasting, Outcome, Pending, PendingId,
-    Prompt, Refusal, Request, Response, ResumeOutcome, Ruling, Snapshot, Stop, TurnOutcome,
+    Capabilities, Capability, Command, Correlation, Decision, ErrorCode, Lasting, Name, Outcome,
+    Pending, PendingId, Prompt, Refusal, Request, Response, ResumeOutcome, Ruling, Snapshot, Stop,
+    TurnOutcome,
 };
 use crucible_models::Delta;
 use crucible_runner::{EventEnvelope, Tools};
@@ -235,6 +236,52 @@ impl Journal {
 
     pub(crate) fn noted(&self) -> Vec<Noted> {
         self.0.lock().expect("the journal").clone()
+    }
+}
+
+/// The capabilities each request a client was answered for claimed, beside
+/// its command, in the order they were answered.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Claims(Arc<Mutex<Vec<(Command, Capabilities)>>>);
+
+impl Claims {
+    fn claimed(&self, request: &Request) {
+        self.0
+            .lock()
+            .expect("the claims")
+            .push((request.command().clone(), request.capabilities()));
+    }
+
+    pub(crate) fn taken(&self) -> Vec<(Command, Capabilities)> {
+        self.0.lock().expect("the claims").clone()
+    }
+}
+
+impl Witness for Claims {
+    fn answered(&self, request: &Request, _: &Conversation, _: Outcome) {
+        self.claimed(request);
+    }
+
+    fn apart(&self, request: &Request, _: Outcome) {
+        self.claimed(request);
+    }
+
+    fn put(&self, _: &Pending) {}
+
+    fn decided(&self, _: &Decision) {}
+}
+
+impl Client {
+    /// A client whose requests' claims are noted, beside where they are
+    /// noted.
+    pub(crate) fn noting_claims() -> (Self, Claims) {
+        let claims = Claims::default();
+        let client = Self {
+            witness: Some(Arc::new(claims.clone())),
+            ..Self::default()
+        };
+
+        (client, claims)
     }
 }
 
@@ -762,4 +809,53 @@ fn every_prompt_the_box_holds_is_one_the_contract_carries() {
     // Two ceilings with two owners. A line the box took and the contract then
     // refused would be a prompt lost after it was typed.
     const { assert!(crucible_client_api::bounds::PROMPT_BYTES >= Editor::MAX_BYTES) };
+}
+
+#[test]
+fn a_connect_claims_every_capability_but_install_whichever_way_it_names_its_agent() {
+    // A client that claims install can be offered a move on an agent in place
+    // of the connect, and the terminal cannot yet carry one out. The request
+    // decides, so no command that sends a connect can claim it back.
+    let client = Client::new();
+    let named = Name::new("space").expect("a name the contract takes");
+
+    for command in [
+        Command::Connect { instance: None },
+        Command::Connect {
+            instance: Some(named),
+        },
+    ] {
+        let claimed = client.asking(command.clone()).capabilities();
+
+        assert!(
+            !claimed.has(Capability::Install),
+            "{command:?}: {claimed:?}"
+        );
+        assert_eq!(
+            claimed,
+            Capabilities::every().without(Capability::Install),
+            "{command:?} claims every other capability"
+        );
+    }
+}
+
+#[test]
+fn a_request_that_is_not_a_connect_claims_every_capability() {
+    let client = Client::new();
+    let named = || Name::new("space").expect("a name the contract takes");
+
+    for command in [
+        Command::Cancel,
+        Command::Usage,
+        Command::Logout { provider: named() },
+        Command::Disconnect { instance: named() },
+        Command::SignOut { instance: named() },
+        Command::RemoveIntegration { instance: named() },
+    ] {
+        assert_eq!(
+            client.asking(command.clone()).capabilities(),
+            Capabilities::every(),
+            "{command:?}"
+        );
+    }
 }

@@ -469,15 +469,11 @@ fn connected<T: Terminal>(walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
     let style = walk.terms.style();
     let renderer = &mut *walk.renderer;
     let mut cramped = false;
-    let performed = walk.terms.operate(
-        walk.conversation,
-        Command::Connect { instance: None },
-        |question| {
-            let replied = answered(renderer, style, question)?;
-            cramped |= replied.is_none();
-            Ok::<_, Fatal>(replied)
-        },
-    )?;
+    let performed = connecting(walk.terms, walk.conversation, |question| {
+        let replied = answered(renderer, style, question)?;
+        cramped |= replied.is_none();
+        Ok::<_, Fatal>(replied)
+    })?;
     if cramped {
         say(walk.renderer, CRAMPED_CONNECT)?;
         return Ok(Closed::Done);
@@ -493,6 +489,18 @@ fn connected<T: Terminal>(walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
     Ok(Closed::Done)
 }
 
+/// The agent connect the third row asks for, each question it stops on
+/// answered by `answer`. Like every connect the terminal sends, it claims
+/// every capability but install, and is put the questions it was before moves
+/// on an agent were offered.
+fn connecting<E>(
+    terms: &Terms,
+    conversation: &mut Conversation,
+    answer: impl FnMut(&Question) -> Result<Option<Reply>, E>,
+) -> Result<Performed, E> {
+    terms.operate(conversation, Command::Connect { instance: None }, answer)
+}
+
 /// The line an account operation ends on, and whether a provider is now
 /// reached through an agent: nothing where nobody went on with it.
 pub(super) fn ended(performed: &Performed) -> Option<(String, bool)> {
@@ -500,7 +508,10 @@ pub(super) fn ended(performed: &Performed) -> Option<(String, bool)> {
         return Some((astray(performed), false));
     };
     Some(match account {
-        Account::Undecided | Account::Unconnected => return None,
+        // Nobody went on with it. A move on an agent is offered only under the
+        // install capability, which no connect the terminal sends claims,
+        // since it cannot yet carry one out.
+        Account::Undecided | Account::Unconnected | Account::AgentChosen(_) => return None,
         Account::Connected => (CONNECTED.to_owned(), true),
         Account::Moved(instance) => (moved_onto(instance), true),
         Account::Unmoved(reason) => (format!("{UNMOVED} ({reason})"), true),

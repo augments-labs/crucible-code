@@ -105,7 +105,7 @@ const KEYS: [&str; 79] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 59] = [
+const MORE_KEYS: [&str; 60] = [
     "added",
     "done",
     "install",
@@ -165,6 +165,7 @@ const MORE_KEYS: [&str; 59] = [
     "choice",
     "external",
     "onto",
+    "action",
 ];
 
 /// The field names of the inspection document, kept apart for the same reason.
@@ -599,6 +600,28 @@ fn login_outcomes() -> Vec<Outcome> {
             provider: marked(),
             retained: retained(),
             unwritten: None,
+        }),
+        Outcome::Login(LoginOutcome::AgentChosen {
+            action: AgentAction::Install {
+                agent: name("example-agent"),
+                version: name("1.3.0"),
+            },
+        }),
+        Outcome::Login(LoginOutcome::AgentChosen {
+            action: AgentAction::Update {
+                agent: name("example-agent"),
+            },
+        }),
+        Outcome::Login(LoginOutcome::AgentChosen {
+            action: AgentAction::Rollback {
+                agent: name("example-agent"),
+            },
+        }),
+        Outcome::Login(LoginOutcome::AgentChosen {
+            action: AgentAction::SignIn {
+                instance: name("work"),
+                method: name("api-key"),
+            },
         }),
         Outcome::Logout(LogoutOutcome::CacheHeld(problem())),
         Outcome::Logout(LogoutOutcome::Unforgotten {
@@ -1389,32 +1412,33 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
             SpeedOutcome::Taken { unwritten: None } => (4, 5),
         },
         Outcome::Login(login) => match login {
-            LoginOutcome::Unusable(_) => (0, 14),
-            LoginOutcome::Elsewhere => (1, 14),
-            LoginOutcome::CacheHeld(_) => (2, 14),
+            LoginOutcome::Unusable(_) => (0, 15),
+            LoginOutcome::Elsewhere => (1, 15),
+            LoginOutcome::CacheHeld(_) => (2, 15),
             LoginOutcome::Serving {
                 unwritten: Some(_), ..
-            } => (3, 14),
+            } => (3, 15),
             LoginOutcome::Serving {
                 unwritten: None, ..
-            } => (4, 14),
-            LoginOutcome::AgentConnected { onto: None, .. } => (5, 14),
-            LoginOutcome::AgentConnected { onto: Some(_), .. } => (6, 14),
-            LoginOutcome::ConnectUnsaved { .. } => (7, 14),
-            LoginOutcome::Undecided => (8, 14),
+            } => (4, 15),
+            LoginOutcome::AgentConnected { onto: None, .. } => (5, 15),
+            LoginOutcome::AgentConnected { onto: Some(_), .. } => (6, 15),
+            LoginOutcome::ConnectUnsaved { .. } => (7, 15),
+            LoginOutcome::Undecided => (8, 15),
             LoginOutcome::NextLaunch {
                 unwritten: Some(_), ..
-            } => (9, 14),
+            } => (9, 15),
             LoginOutcome::NextLaunch {
                 unwritten: None, ..
-            } => (10, 14),
-            LoginOutcome::Stored { .. } => (11, 14),
+            } => (10, 15),
+            LoginOutcome::Stored { .. } => (11, 15),
             LoginOutcome::MovedOff {
                 unwritten: Some(_), ..
-            } => (12, 14),
+            } => (12, 15),
             LoginOutcome::MovedOff {
                 unwritten: None, ..
-            } => (13, 14),
+            } => (13, 15),
+            LoginOutcome::AgentChosen { .. } => (14, 15),
         },
         Outcome::Logout(logout) => logout_arm(logout),
         Outcome::Cache(cache) => match cache {
@@ -2600,7 +2624,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // alone moves that number and this digest, and leaves the revision.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (5, 14_591_922_859_633_523_051),
+        (5, 9_812_617_628_888_060_077),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );
@@ -3052,6 +3076,113 @@ fn an_install_command_missing_a_field_or_naming_it_wrongly_is_refused() {
             "{command}"
         );
     }
+}
+
+#[test]
+fn a_capability_taken_away_is_the_only_one_that_goes() {
+    for one in Capability::EVERY {
+        let without = Capabilities::every().without(one);
+        assert!(!without.has(one), "{one:?}");
+        for other in Capability::EVERY.into_iter().filter(|other| *other != one) {
+            assert!(without.has(other), "{one:?} took {other:?}");
+        }
+        assert_eq!(without.with(one), Capabilities::every(), "{one:?}");
+        assert_eq!(Capabilities::none().without(one), Capabilities::none());
+        assert_eq!(without.without(one), without, "{one:?}");
+    }
+}
+
+#[test]
+fn an_agent_move_asks_for_it_with_its_own_command() {
+    let (agent, version) = (name("example-agent"), name("1.3.0"));
+    let (instance, method) = (name("work"), name("api-key"));
+    for (action, command) in [
+        (
+            AgentAction::Install {
+                agent: agent.clone(),
+                version: version.clone(),
+            },
+            Command::InstallAgent {
+                agent: agent.clone(),
+                version,
+            },
+        ),
+        (
+            AgentAction::Update {
+                agent: agent.clone(),
+            },
+            Command::UpdateAgent {
+                agent: agent.clone(),
+            },
+        ),
+        (
+            AgentAction::Rollback {
+                agent: agent.clone(),
+            },
+            Command::RollbackAgent { agent },
+        ),
+        (
+            AgentAction::SignIn {
+                instance: instance.clone(),
+                method: method.clone(),
+            },
+            Command::SignInAgent { instance, method },
+        ),
+    ] {
+        assert_eq!(action.command(), command, "{action:?}");
+        assert_eq!(
+            action.command().needs(),
+            Some(Capability::Install),
+            "{action:?}"
+        );
+    }
+}
+
+#[test]
+fn an_agent_move_chosen_crosses_and_reads_back_as_it_was() {
+    let crossing = |action: AgentAction| {
+        let response = Response {
+            correlation: Some(Correlation::new(7)),
+            outcome: Outcome::Login(LoginOutcome::AgentChosen { action }),
+        };
+        let frame = response.encode().unwrap();
+        assert_eq!(Response::decode(&frame).unwrap(), response);
+        let value: Value = serde_json::from_slice(&frame).unwrap();
+        value
+            .pointer("/outcome/login")
+            .cloned()
+            .expect("a login outcome")
+    };
+    assert_eq!(
+        crossing(AgentAction::Install {
+            agent: name("example-agent"),
+            version: name("1.3.0"),
+        }),
+        json!({"kind": "agent_chosen", "action": {
+            "kind": "install", "agent": "example-agent", "version": "1.3.0"
+        }})
+    );
+    assert_eq!(
+        crossing(AgentAction::Update {
+            agent: name("example-agent")
+        }),
+        json!({"kind": "agent_chosen", "action": {"kind": "update", "agent": "example-agent"}})
+    );
+    assert_eq!(
+        crossing(AgentAction::Rollback {
+            agent: name("example-agent")
+        }),
+        json!({"kind": "agent_chosen", "action": {"kind": "rollback", "agent": "example-agent"}})
+    );
+    assert_eq!(
+        crossing(AgentAction::SignIn {
+            instance: name("work"),
+            method: name("api-key"),
+        }),
+        json!({"kind": "agent_chosen", "action": {
+            "kind": "sign_in", "instance": "work", "method": "api-key"
+        }})
+    );
 }
 
 #[test]

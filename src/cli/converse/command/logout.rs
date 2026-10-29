@@ -291,6 +291,18 @@ enum Act {
     Remove,
 }
 
+/// The command `act` on `instance` is asked of the application as.
+fn asked(act: Act, instance: Name) -> Command {
+    match act {
+        Act::Connect => Command::Connect {
+            instance: Some(instance),
+        },
+        Act::Disconnect => Command::Disconnect { instance },
+        Act::SignOut => Command::SignOut { instance },
+        Act::Remove => Command::RemoveIntegration { instance },
+    }
+}
+
 /// Offers what can be done with `agent`, and carries out what is taken
 /// through the application, drawing each question it puts.
 fn acting<T: Terminal>(
@@ -352,12 +364,7 @@ fn acting<T: Terminal>(
     };
     let command = match act {
         None => return say(renderer, UNROOMED),
-        Some(Act::Connect) => Command::Connect {
-            instance: Some(instance),
-        },
-        Some(Act::Disconnect) => Command::Disconnect { instance },
-        Some(Act::SignOut) => Command::SignOut { instance },
-        Some(Act::Remove) => Command::RemoveIntegration { instance },
+        Some(act) => asked(act, instance),
     };
 
     let style = terms.style();

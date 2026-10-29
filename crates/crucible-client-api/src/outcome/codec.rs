@@ -6,10 +6,10 @@
 use serde_json::Value;
 
 use super::{
-    CacheOutcome, CleanOutcome, ClearOutcome, EffortOutcome, Forced, Group, LoginOutcome,
-    LogoutOutcome, ModelOutcome, NotesOutcome, Problem, Release, Resource, ResumeOutcome, Retained,
-    RoomOutcome, SandboxOutcome, SettingOutcome, SpeedOutcome, Standing, Stop, ThemeOutcome,
-    TurnOutcome, maybe_problem,
+    AgentAction, CacheOutcome, CleanOutcome, ClearOutcome, EffortOutcome, Forced, Group,
+    LoginOutcome, LogoutOutcome, ModelOutcome, NotesOutcome, Problem, Release, Resource,
+    ResumeOutcome, Retained, RoomOutcome, SandboxOutcome, SettingOutcome, SpeedOutcome, Standing,
+    Stop, ThemeOutcome, TurnOutcome, maybe_problem,
 };
 use crate::bounds::Name;
 use crate::error::{ErrorCode, Refusal};
@@ -319,6 +319,9 @@ impl LoginOutcome {
                 "unwritten",
                 unwritten.as_ref(),
             ),
+            Self::AgentChosen { action } => {
+                Writing::kind("agent_chosen").with("action", action.written())
+            }
         }
         .finish()
     }
@@ -357,10 +360,52 @@ impl LoginOutcome {
                 retained: Retained::from(&mut fields)?,
                 unwritten: maybe_problem(&mut fields, "unwritten")?,
             },
+            "agent_chosen" => Self::AgentChosen {
+                action: AgentAction::read(fields.take("action")?)?,
+            },
             _ => return Err(ErrorCode::Malformed.into()),
         };
         fields.done()?;
         Ok(login)
+    }
+}
+
+impl AgentAction {
+    fn written(&self) -> Value {
+        match self {
+            Self::Install { agent, version } => Writing::kind("install")
+                .with("agent", agent.as_str())
+                .with("version", version.as_str()),
+            Self::Update { agent } => Writing::kind("update").with("agent", agent.as_str()),
+            Self::Rollback { agent } => Writing::kind("rollback").with("agent", agent.as_str()),
+            Self::SignIn { instance, method } => Writing::kind("sign_in")
+                .with("instance", instance.as_str())
+                .with("method", method.as_str()),
+        }
+        .finish()
+    }
+
+    fn read(value: Value) -> Result<Self, Refusal> {
+        let mut fields = Fields::of(value)?;
+        let action = match fields.kind()?.as_str() {
+            "install" => Self::Install {
+                agent: fields.name("agent")?,
+                version: fields.name("version")?,
+            },
+            "update" => Self::Update {
+                agent: fields.name("agent")?,
+            },
+            "rollback" => Self::Rollback {
+                agent: fields.name("agent")?,
+            },
+            "sign_in" => Self::SignIn {
+                instance: fields.name("instance")?,
+                method: fields.name("method")?,
+            },
+            _ => return Err(ErrorCode::Malformed.into()),
+        };
+        fields.done()?;
+        Ok(action)
     }
 }
 

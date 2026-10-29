@@ -50,6 +50,8 @@ use super::{Failed, Nobody, Script, Tree, saying};
 
 #[path = "external/catalog_hold.rs"]
 mod catalog_hold;
+#[path = "external/choosing.rs"]
+mod choosing;
 #[path = "external/refusing.rs"]
 mod refusing;
 #[path = "external/routing.rs"]
@@ -3621,7 +3623,7 @@ fn a_connect_to_an_agent_not_installed_says_so_and_writes_nothing() -> Result<()
 
     assert_eq!(outcome, Outcome::Login(LoginOutcome::Undecided));
     let put = offered(&picking.put);
-    let missing = vec![CHECK_AGAIN, "Go back"];
+    let missing = vec!["Install", CHECK_AGAIN, "Go back"];
     let agents = vec!["Claude Code", "Antigravity", "Cancel"];
     assert_eq!(put, [agents.clone(), missing.clone(), missing, agents]);
     let told = picking.put.get(1).is_some_and(|put| match put {

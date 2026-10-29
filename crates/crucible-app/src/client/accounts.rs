@@ -54,6 +54,10 @@
 //! | connect, an agent whose provider this build does not offer | nothing | [`ErrorCode::UnknownProvider`] |
 //! | connect, no instance named, no agent shipping | nothing | [`ErrorCode::InvalidArgument`] |
 //! | connect, no instance named | an agent not found, then cancel | [`LoginOutcome::Undecided`] |
+//! | connect, of a client claiming install, the agent not installed and its release one crucible installs | install | [`LoginOutcome::AgentChosen`], that install, nothing started, asked of its route or written |
+//! | connect, no instance named, of a client claiming install | a catalog agent, then install, update or roll back | [`LoginOutcome::AgentChosen`], that move, nothing started, asked of its route or written |
+//! | connect, no instance named, of a client claiming install | a catalog agent, then a sign-in method of its instance | [`LoginOutcome::AgentChosen`], that sign-in, nothing started, asked of its route or written |
+//! | connect, of a client claiming install, the agent read signed out, its instance in the file | a sign-in method | [`LoginOutcome::AgentChosen`], that sign-in, after the route's yes where it was asked and the agent's status read, nothing more |
 //!
 //! A removal whose write fails after the conversation's run on the instance
 //! was stopped is told that the instance is stopped for this run only: the
@@ -99,6 +103,27 @@
 //! is given one named after it, run as its usual command, written to the user
 //! file only with the route.
 //!
+//! A client that claims [`Capability::Install`] is offered moves on an agent
+//! as well, and one that does not is put exactly the questions it was put
+//! before there were any. An agent not installed whose release crucible
+//! installs is offered that install first. After the shipping agents come
+//! the agents the catalog offers, read from the trust state beside the user's
+//! configuration file as it is believed now, with nothing fetched, and
+//! listed as the agents door lists them. Choosing one never connects it,
+//! since no provider of this build's is reached through a catalog agent: it
+//! asks instead whether to install the version the door would, update its
+//! instance, roll it back to another version the store holds, or sign its
+//! configured instance in by one of the agent's methods. A row says where its
+//! instance runs the user's own program rather than a release crucible
+//! installed, or a version the catalog revoked. Every
+//! word of the catalog's is quoted before it is shown. A move chosen here, or
+//! the install offered where the agent cannot be started, ends the connect as
+//! [`Account::AgentChosen`] before anything is started, asked of its route or
+//! written; a sign-in chosen once the agent read signed out ends it the same
+//! way, after the route's yes and the status read below. The choice itself
+//! changes nothing further: the client carries it out through the agents
+//! door.
+//!
 //! A connect reaches the one provider the agent signs in to, which the
 //! client does not name. For a client that did not say it answers account
 //! questions it is undecided at once, before the agent is started, even where
@@ -109,11 +134,14 @@
 //! signed in. Signed in, it is already connected, and nothing more is asked;
 //! not signed in, or not read either way, the client is told so, with the
 //! command that signs the agent in where it has one, and may check again,
-//! [`CHECKS`] times in all. Nothing is written before the agent reads signed
-//! in: then the provider's `access` names the instance, the provider is the
-//! one asked, and the instance is enabled, in one update of the user file,
-//! under the scope's journal, the instance's own settings first where they
-//! are new.
+//! [`CHECKS`] times in all. Read signed out, it offers a client claiming
+//! [`Capability::Install`] a sign-in by each of the agent's methods the
+//! agents door carries out, where the instance is in the user file, and says
+//! otherwise that they are offered once it is. Nothing is written before the
+//! agent reads signed in: then the provider's `access` names the instance,
+//! the provider is the one asked, and the instance is enabled, in one update
+//! of the user file, under the scope's journal, the instance's own settings
+//! first where they are new.
 //!
 //! The conversation then moves onto the instance in a new session, bound to
 //! its route, with nothing carried over, whichever provider or route it was
@@ -122,24 +150,28 @@
 //! already on the instance stays where it is.
 
 use std::borrow::Cow;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crucible_client_api::{
-    Capability, Command, ErrorCode, LoginOutcome, LogoutOutcome, Name, Outcome, Problem, Refusal,
-    Request, Text,
+    AgentAction, Capability, Command, ErrorCode, LoginOutcome, LogoutOutcome, Name, Outcome,
+    Problem, Refusal, Request, Text,
 };
-use crucible_config::{ConfigError, ExternalAgent};
+use crucible_config::{ConfigError, Driver, ExternalAgent};
 use crucible_execution::Authentication;
 use crucible_execution::{Admission, Ending, Failure};
+use crucible_external_harnesses::catalog::{AuthMethod, Method, Trust};
+use crucible_external_harnesses::store::{Receipt, Store, StoreError, Version};
 use crucible_external_harnesses::{
     Account as Step, Contended, Coordinator, Discovery, Ended, Journal, Reading, Stage, Work,
 };
+use crucible_types::AgentKey;
 
+use super::agents::LISTED;
 use super::deciding::{Confirmation, Front, confirmed};
 use super::performing::{Desk, Performed};
 use crate::Conversation;
 use crate::backends::AgentRow;
-use crate::launching::Unlaunched;
+use crate::launching::{Unlaunched, quoted};
 use crate::remember::{self, RememberError};
 
 /// What came of an account operation, in the application's own values.
@@ -202,6 +234,12 @@ pub enum Account {
     SignOutHoldUnkept(RememberError),
     /// Nobody went on with a connect, so nothing changed.
     Unconnected,
+    /// A move on an agent was chosen in place of the connect, and the choice
+    /// itself changed nothing. Chosen where the agent cannot be started, or
+    /// from the catalog's agents, it came before anything was started, asked
+    /// of its route or written; a sign-in chosen once the agent read signed
+    /// out came after the route's yes, where it was asked, and the status read.
+    AgentChosen(AgentAction),
     /// It did not begin, or could not be kept as it went.
     Contended(Contended),
 }
@@ -275,6 +313,11 @@ impl Account {
                 problem: Problem::failed(problem),
             },
             Self::Unconnected => return Outcome::Login(LoginOutcome::Undecided),
+            Self::AgentChosen(action) => {
+                return Outcome::Login(LoginOutcome::AgentChosen {
+                    action: action.clone(),
+                });
+            }
             Self::Contended(Contended::Busy) => {
                 return Outcome::Refused(ErrorCode::Busy.into());
             }
@@ -462,9 +505,12 @@ pub async fn account(
                 if conversation.agents().shipping().next().is_none() {
                     return Performed::Refused(ErrorCode::InvalidArgument.into());
                 }
-                let Some((agent, row, written)) = choose(conversation, request, desk, front).await
-                else {
-                    return Performed::Account(Account::Unconnected);
+                let (agent, row, written) = match choose(conversation, request, desk, front).await {
+                    Some(Picked::Through(chosen)) => chosen,
+                    Some(Picked::Moving(action)) => {
+                        return Performed::Account(Account::AgentChosen(action));
+                    }
+                    None => return Performed::Account(Account::Unconnected),
                 };
                 let Some(provider) = served(desk, row) else {
                     return Performed::Refused(ErrorCode::UnknownProvider.into());
@@ -715,6 +761,7 @@ async fn launch_asked(
             .await,
         );
     };
+    // A sign-out offers no move on the agent in place of itself.
     if found(
         conversation,
         desk,
@@ -722,9 +769,10 @@ async fn launch_asked(
         capabilities,
         agent,
         (&row, &shown_as(conversation, &row)),
+        None,
     )
     .await
-        != Some(true)
+        != Some(Looked::Startable)
     {
         return Some(Account::Undecided);
     }
@@ -876,6 +924,18 @@ struct Connecting<'a> {
 /// names the instance.
 type Chosen = (ExternalAgent, &'static crate::backends::Row, bool);
 
+/// What the client picked when asked which agent to connect.
+enum Picked {
+    /// An instance to connect through.
+    Through(Chosen),
+    /// A move on an agent, in place of the connect.
+    Moving(AgentAction),
+}
+
+/// A move offered as a choice: its name, what it does, and what the connect
+/// ends with once it is chosen.
+type Offered = (String, String, AgentAction);
+
 /// Asks `front` which shipping agent to connect, and which
 /// configured instance of it where there are several, then looks for its
 /// program without starting it; answers nothing where the client cancelled
@@ -887,15 +947,30 @@ type Chosen = (ExternalAgent, &'static crate::backends::Row, bool);
 /// with the route. An agent whose
 /// program is not found is said to be so, and may be looked for again or
 /// another picked, [`CHECKS`] times in all for each.
+///
+/// A client that claims [`Capability::Install`] is offered more, and the
+/// move it chooses ends the connect: the release of an agent not installed
+/// may be installed, and each agent the catalog offers is listed after the
+/// shipping ones, as the agents door lists them, with a question of its own,
+/// since no provider of this build's is reached through one. A row whose
+/// release crucible installs says where its instance runs the user's own
+/// program, or a version the catalog revoked. What the catalog offers is
+/// read from the trust state beside the user's configuration file as it is
+/// believed now: nothing is fetched. A client that does not claim it is
+/// asked as though none of this were there.
 async fn choose(
     conversation: &Conversation,
     request: &Request,
     desk: &Desk<'_>,
     front: &mut dyn Front,
-) -> Option<Chosen> {
+) -> Option<Picked> {
     let capabilities = request.capabilities();
     let rows: Vec<&'static crate::backends::Row> = conversation.agents().shipping().collect();
     let shown = |row: &'static crate::backends::Row| shown_as(conversation, &AgentRow::Built(row));
+    let releases = Releases::of(capabilities, desk);
+    let (cataloged, more) = releases
+        .as_ref()
+        .map_or_else(Default::default, |releases| listed(&releases.trust));
     for _ in 0..CHECKS {
         let mut choices: Vec<(String, String)> = rows
             .iter()
@@ -905,19 +980,37 @@ async fn choose(
                     || format!("Run {agent}."),
                     |serves| format!("Reach {serves} through {agent}."),
                 );
-                (agent, said)
+                let note = releases
+                    .as_ref()
+                    .and_then(|releases| releases.built(desk, row, conversation.steps()));
+                (agent, noting(said, note))
             })
             .collect();
+        let keys = releases.as_ref().map_or_else(Vec::new, |releases| {
+            catalog_rows(desk, releases, &cataloged, &mut choices)
+        });
         choices.push(("Cancel".to_owned(), "Change nothing.".to_owned()));
+        let mut facts = vec![
+            "Crucible looks for the agent's program; nothing is started or written yet.".to_owned(),
+        ];
+        if more {
+            facts.push("More agents are offered than are listed.".to_owned());
+        }
         let agents = Confirmation {
             asks: "Which installed agent should Crucible use?".to_owned(),
-            facts: vec![
-                "Crucible looks for the agent's program; nothing is started or written yet."
-                    .to_owned(),
-            ],
+            facts,
             choices,
         };
-        let row = *rows.get(confirmed(capabilities, front, &agents).await?)?;
+        let picked = confirmed(capabilities, front, &agents).await?;
+        let Some(&row) = rows.get(picked) else {
+            // Past the shipping agents, a catalog agent's row, and past those,
+            // Cancel.
+            let key = keys.get(picked.checked_sub(rows.len())?)?;
+            match manage(desk, front, capabilities, releases.as_ref()?, key).await? {
+                Some(action) => return Some(Picked::Moving(action)),
+                None => continue,
+            }
+        };
         let Some((agent, written)) = instance(
             desk,
             front,
@@ -929,49 +1022,441 @@ async fn choose(
         else {
             continue;
         };
-        if found(
+        let install = installable(releases.as_ref(), row);
+        match found(
             conversation,
             desk,
             front,
             capabilities,
             &agent,
             (&AgentRow::Built(row), &shown(row)),
+            install.as_ref(),
         )
         .await?
         {
-            return Some((agent, row, written));
+            Looked::Startable => return Some(Picked::Through((agent, row, written))),
+            Looked::Moving(action) => return Some(Picked::Moving(action)),
+            Looked::Back => {}
         }
     }
     None
 }
 
-/// The instance of `row`'s agent, shown as `agent`, a connect goes through:
-/// the one configured, one asked for of several, or one named after the
-/// agent where none is, its command looked for on the `PATH` of `steps`;
-/// `Some(None)` where the client went back to the list
-/// of agents, and nothing where it cancelled or answered nothing.
-async fn instance(
+/// `said`, followed by `note` where there is one.
+fn noting(said: String, note: Option<String>) -> String {
+    match note {
+        Some(note) => format!("{said} {note}"),
+        None => said,
+    }
+}
+
+/// What the notes and moves offered to a client that claims
+/// [`Capability::Install`] are read from, as the agents door reads them: the
+/// catalog's trust state in crucible's home, the directory beside the user's
+/// configuration file, as it is believed now, and crucible's store of the
+/// releases it installs there.
+struct Releases {
+    home: PathBuf,
+    trust: Trust,
+    store: Store,
+}
+
+impl Releases {
+    /// Read for a client that claims [`Capability::Install`]; nothing for
+    /// one that does not, or where the user file is in no directory.
+    fn of(capabilities: crucible_client_api::Capabilities, desk: &Desk<'_>) -> Option<Self> {
+        if !capabilities.has(Capability::Install) {
+            return None;
+        }
+        let home = desk.switching.choosing.parent()?;
+        Some(Self {
+            home: home.to_path_buf(),
+            trust: crate::catalog_fetch::trust_in(home),
+            store: Store::new(home.join("programs")),
+        })
+    }
+
+    /// The agent `row` runs, where crucible installs its release.
+    fn installs(&self, row: &crate::backends::Row) -> Option<AgentKey> {
+        (row.pinned)(&self.trust)?;
+        AgentKey::new(row.driver.name()).ok()
+    }
+
+    /// What a choice says of an instance of the agent `key` run as
+    /// `executable`: that it runs the user's own program, which lies in no
+    /// version of the agent in the store, or a version the catalog revoked;
+    /// nothing otherwise.
+    fn note(&self, key: &AgentKey, executable: &str) -> Option<String> {
+        let Some(version) = self.store.version_of(key, Path::new(executable)) else {
+            return Some("Runs your own program, not a release Crucible installed.".to_owned());
+        };
+        self.trust
+            .revoked(key, version.version(), version.lock_revision())
+            .then(|| {
+                format!(
+                    "Runs version {}, which the agent catalog revoked.",
+                    quoted(version.version())
+                )
+            })
+    }
+
+    /// What the row of the shipping agent `row` says, where crucible installs
+    /// its release: of the one instance of it configured, or, where none is,
+    /// of the one a connect would make, its command looked for on the `PATH`
+    /// of `steps`. Nothing where several are, whose own choices say it.
+    fn built(
+        &self,
+        desk: &Desk<'_>,
+        row: &'static crate::backends::Row,
+        steps: Option<&crate::launching::Steps>,
+    ) -> Option<String> {
+        let key = self.installs(row)?;
+        let configured: Vec<ExternalAgent> = desk
+            .switching
+            .settings
+            .external_agents()
+            .into_iter()
+            .filter(|configured| configured.driver() == row.driver)
+            .collect();
+        match configured.as_slice() {
+            [one] => self.note(&key, one.executable()),
+            [] => self.note(&key, &would_run(&self.home, row, &self.trust, steps)),
+            _ => None,
+        }
+    }
+}
+
+/// The catalog agents a connect naming no instance lists after the shipping
+/// agents, as the agents door lists them: each agent `trust` offers, once, by
+/// its key, with the first version offered, but one whose key is a word a
+/// built-in driver is spelled with; at most [`LISTED`], and whether more are
+/// offered than are listed.
+fn listed(trust: &Trust) -> (Vec<(AgentKey, Box<str>)>, bool) {
+    let mut agents: Vec<(AgentKey, Box<str>)> = Vec::new();
+    let mut more = false;
+    for offer in trust.offers(None) {
+        let key = offer.entry.key;
+        let built = Driver::ALL
+            .iter()
+            .any(|driver| driver.name() == key.as_str());
+        if built || agents.iter().any(|(listed, _)| *listed == key) {
+            continue;
+        }
+        if agents.len() == LISTED {
+            more = true;
+            continue;
+        }
+        agents.push((key, offer.pin.version));
+    }
+    (agents, more)
+}
+
+/// Adds to `choices` a row for each catalog agent in `cataloged`, named by
+/// its key and saying the version the catalog offers first, with the note on
+/// the one instance of it configured, where one is; but not one whose name is
+/// a choice already. Answers the agent of each row added, in order.
+fn catalog_rows<'a>(
     desk: &Desk<'_>,
-    front: &mut dyn Front,
-    capabilities: crucible_client_api::Capabilities,
-    (row, agent): (&'static crate::backends::Row, &str),
-    steps: Option<&crate::launching::Steps>,
-) -> Option<Option<(ExternalAgent, bool)>> {
-    let mut configured: Vec<ExternalAgent> = desk
-        .switching
+    releases: &Releases,
+    cataloged: &'a [(AgentKey, Box<str>)],
+    choices: &mut Vec<(String, String)>,
+) -> Vec<&'a AgentKey> {
+    let mut keys = Vec::new();
+    for (key, version) in cataloged {
+        let name = quoted(key.as_str());
+        if name == "Cancel" || choices.iter().any(|(taken, _)| *taken == name) {
+            continue;
+        }
+        let said = format!(
+            "Manage {name}, which the catalog offers at {}.",
+            quoted(version)
+        );
+        let note = match instances_of(desk, key).as_slice() {
+            [one] => releases.note(key, one.executable()),
+            _ => None,
+        };
+        choices.push((name, noting(said, note)));
+        keys.push(key);
+    }
+    keys
+}
+
+/// The instances the configuration names of the catalog agent `key`.
+fn instances_of(desk: &Desk<'_>, key: &AgentKey) -> Vec<ExternalAgent> {
+    desk.switching
         .settings
         .external_agents()
         .into_iter()
-        .filter(|configured| configured.driver() == row.driver)
-        .collect();
+        .filter(|one| one.driver() == Driver::Catalog && one.agent() == Some(key))
+        .collect()
+}
+
+/// Asks `front` what Crucible should do with the catalog agent `key`, which
+/// no provider of this build's is reached through, so it is never connected.
+///
+/// The instance it speaks of is chosen as [`instance`] chooses one, among the
+/// instances of `key`: the one configured, one asked for of several, or none.
+/// It says which versions crucible's store holds of the agent, that instance
+/// or that there is none, and the instance's note; then offers the moves that
+/// apply, as [`moves`] finds them, a sign-in by each method the agent's entry
+/// gives for a configured instance, and going back. Answers the move chosen,
+/// `Some(None)` where the client went back to the list of agents, and nothing
+/// where it cancelled or answered nothing.
+async fn manage(
+    desk: &Desk<'_>,
+    front: &mut dyn Front,
+    capabilities: crucible_client_api::Capabilities,
+    releases: &Releases,
+    key: &AgentKey,
+) -> Option<Option<AgentAction>> {
+    let shown = quoted(key.as_str());
+    let noted = |one: &ExternalAgent| releases.note(key, one.executable());
+    let instance = match among(front, capabilities, &shown, instances_of(desk, key), &noted).await?
+    {
+        Configured::One(one) => Some(one),
+        Configured::Unconfigured => None,
+        Configured::Back => return Some(None),
+    };
+    let installed = releases.store.installed(key);
+    let running = instance
+        .as_ref()
+        .and_then(|one| releases.store.version_of(key, Path::new(one.executable())));
+    let mut facts = vec![held(&installed)];
+    facts.push(instance.as_ref().map_or_else(
+        || "No instance of it is configured, so there is nothing to sign in.".to_owned(),
+        |one| format!("Agent: {}, run as {}.", one.name(), one.executable()),
+    ));
+    facts.extend(instance.as_ref().and_then(noted));
+    let mut offered = moves(releases, key, &installed, running.as_ref());
+    if let Some(one) = &instance {
+        let named: Vec<String> = offered.iter().map(|(name, ..)| name.clone()).collect();
+        let mut taken: Vec<&str> = named.iter().map(String::as_str).collect();
+        taken.push("Go back");
+        let methods = methods_of(&releases.trust, key, running.as_ref());
+        let (signing, more) = sign_ins(one, methods, &taken);
+        if more {
+            facts.push(MORE_METHODS.to_owned());
+        }
+        offered.extend(signing);
+    }
+    let (mut choices, actions): (Vec<(String, String)>, Vec<AgentAction>) = offered
+        .into_iter()
+        .map(|(name, says, action)| ((name, says), action))
+        .unzip();
+    choices.push(("Go back".to_owned(), "Choose another agent.".to_owned()));
+    let question = Confirmation {
+        asks: format!("What should Crucible do with {shown}?"),
+        facts,
+        choices,
+    };
+    let picked = confirmed(capabilities, front, &question).await?;
+    Some(actions.into_iter().nth(picked))
+}
+
+/// What a question about a catalog agent says of the versions crucible's
+/// store holds of it, as `installed` read them: at most [`LISTED`] of them.
+fn held(installed: &Result<Vec<Receipt>, StoreError>) -> String {
+    match installed {
+        Ok(receipts) if receipts.is_empty() => {
+            "Crucible's store holds no version of it.".to_owned()
+        }
+        Ok(receipts) => {
+            let mut versions: Vec<String> = receipts
+                .iter()
+                .take(LISTED)
+                .map(|receipt| quoted(&receipt.version))
+                .collect();
+            if receipts.len() > LISTED {
+                versions.push("and more".to_owned());
+            }
+            format!("Crucible's store holds {}.", versions.join(", "))
+        }
+        Err(unread) => format!(
+            "Crucible's store of it could not be read: {}.",
+            quoted(&unread.to_string())
+        ),
+    }
+}
+
+/// The moves on the catalog agent `key` that apply, as the agents door
+/// carries them out, in order: an install of the version it would install,
+/// the first offered, where the store holds none; an update, where the
+/// instance spoken of runs `running`, a version from the store, other than
+/// the first offered; and a roll back, where it runs one and the store holds
+/// another the catalog did not revoke.
+///
+/// An update and a roll back name the version running and the direction
+/// alone. The door picks the version either moves to when it carries the move
+/// out, from what every instance runs and what `agents.update` stands at,
+/// which the one instance spoken of here cannot say.
+fn moves(
+    releases: &Releases,
+    key: &AgentKey,
+    installed: &Result<Vec<Receipt>, StoreError>,
+    running: Option<&Version>,
+) -> Vec<Offered> {
+    let Ok(agent) = Name::new(key.as_str()) else {
+        return Vec::new();
+    };
+    let shown = quoted(key.as_str());
+    let offers = releases.trust.offers(Some(key));
+    let first = offers.first().map(|offer| &offer.pin);
+    let mut offered = Vec::new();
+    if let (Ok([]), Some(first)) = (installed.as_deref(), first)
+        && let Ok(version) = Name::new(&first.version)
+    {
+        offered.push((
+            "Install".to_owned(),
+            format!("Install {shown} {}.", quoted(&first.version)),
+            AgentAction::Install {
+                agent: agent.clone(),
+                version,
+            },
+        ));
+    }
+    if let (Some(running), Some(first)) = (running, first)
+        && (running.version() != &*first.version || running.lock_revision() != first.lock_revision)
+    {
+        offered.push((
+            "Update".to_owned(),
+            format!("Update {shown} from {}.", quoted(running.version())),
+            AgentAction::Update {
+                agent: agent.clone(),
+            },
+        ));
+    }
+    let other = |running: &&Version| {
+        installed.as_ref().is_ok_and(|receipts| {
+            receipts.iter().any(|receipt| {
+                (&*receipt.version != running.version()
+                    || receipt.lock_revision != running.lock_revision())
+                    && !releases
+                        .trust
+                        .revoked(key, &receipt.version, receipt.lock_revision)
+            })
+        })
+    };
+    if let Some(running) = running.filter(other) {
+        offered.push((
+            "Roll back".to_owned(),
+            format!("Roll back {shown} from {}.", quoted(running.version())),
+            AgentAction::Rollback { agent },
+        ));
+    }
+    offered
+}
+
+/// The sign-in methods the entry of the catalog agent `key` gives, as the
+/// agents door reads them: from the release `running` where the catalog
+/// offers it, else from the first offered.
+fn methods_of(trust: &Trust, key: &AgentKey, running: Option<&Version>) -> Vec<AuthMethod> {
+    let offers = trust.offers(Some(key));
+    let offer = offers
+        .iter()
+        .find(|offer| {
+            running.is_some_and(|version| {
+                version.version() == &*offer.pin.version
+                    && version.lock_revision() == offer.pin.lock_revision
+            })
+        })
+        .or_else(|| offers.first());
+    offer
+        .and_then(|offer| crate::backends::CatalogRow::new(&offer.entry, &offer.pin.target).ok())
+        .map_or_else(Vec::new, |row| AgentRow::Catalog(row).methods())
+}
+
+/// What a question offering sign-in methods says where it lists fewer than
+/// the agent gives.
+const MORE_METHODS: &str = "More sign-in methods are offered than are listed.";
+
+/// One choice for each of `methods` the agents door carries out for the
+/// configured `instance`, by the agent's own program or with a key kept for
+/// it, named as the agent names the method, quoted; but not one whose name
+/// reads as one in `taken` or one named before it, as [`folded`] reads them,
+/// nor one a contract name cannot be made of. At most [`LISTED`], and whether
+/// more were offered than are listed.
+fn sign_ins(
+    instance: &ExternalAgent,
+    methods: Vec<AuthMethod>,
+    taken: &[&str],
+) -> (Vec<Offered>, bool) {
+    let mut offered: Vec<Offered> = Vec::new();
+    let mut more = false;
+    for method in methods {
+        let says = match (&method.method, &method.description) {
+            // The agents door does not run a sign-in at a terminal.
+            (Method::Terminal { .. }, _) => continue,
+            (Method::Agent | Method::EnvVar { .. }, Some(description)) => quoted(description),
+            (Method::Agent, None) => "Sign in through the agent's own program.".to_owned(),
+            (Method::EnvVar { .. }, None) => {
+                "Sign in with a key Crucible keeps for the agent.".to_owned()
+            }
+        };
+        let name = quoted(&method.name);
+        let reads = folded(&name);
+        if taken.iter().any(|fixed| folded(fixed) == reads)
+            || offered.iter().any(|(named, ..)| folded(named) == reads)
+        {
+            continue;
+        }
+        let (Ok(instance), Ok(method)) = (Name::new(instance.name()), Name::new(&method.id)) else {
+            continue;
+        };
+        if offered.len() == LISTED {
+            more = true;
+            continue;
+        }
+        offered.push((name, says, AgentAction::SignIn { instance, method }));
+    }
+    (offered, more)
+}
+
+/// A choice's name as it is told from another: without the whitespace around
+/// it, and lowercased, so that "Cancel " and "cancel" read as "Cancel" does.
+fn folded(name: &str) -> String {
+    name.trim().to_lowercase()
+}
+
+/// The install of `row`'s release the agents door would make, which a
+/// connect offers where the agent's program is not installed: the release
+/// the trust state `releases` reads pins for this platform. Nothing for an
+/// agent whose release crucible does not install, or without `releases`, as
+/// for a client that does not claim [`Capability::Install`].
+fn installable(releases: Option<&Releases>, row: &crate::backends::Row) -> Option<AgentAction> {
+    let pinned = (row.pinned)(&releases?.trust)?;
+    Some(AgentAction::Install {
+        agent: Name::new(row.driver.name()).ok()?,
+        version: Name::new(&pinned.version).ok()?,
+    })
+}
+
+/// What was chosen among an agent's configured instances.
+enum Configured {
+    /// The one configured, or the one picked of several.
+    One(ExternalAgent),
+    /// None is configured.
+    Unconfigured,
+    /// The client went back to the list of agents.
+    Back,
+}
+
+/// The instance among `configured`, of the agent shown as `agent`, that a
+/// question about the agent speaks of: the one configured, or one asked for
+/// of several, each choice saying what `noted` says of it; nothing where the
+/// client cancelled or answered nothing.
+async fn among(
+    front: &mut dyn Front,
+    capabilities: crucible_client_api::Capabilities,
+    agent: &str,
+    mut configured: Vec<ExternalAgent>,
+    noted: &dyn Fn(&ExternalAgent) -> Option<String>,
+) -> Option<Configured> {
     if configured.len() > 1 {
         let mut choices: Vec<(String, String)> = configured
             .iter()
             .map(|one| {
-                (
-                    one.name().to_owned(),
-                    format!("Run as {}; {}", one.executable(), profiled(one)),
-                )
+                let said = format!("Run as {}; {}", one.executable(), profiled(one));
+                (one.name().to_owned(), noting(said, noted(one)))
             })
             .collect();
         choices.push(("Go back".to_owned(), "Choose another agent.".to_owned()));
@@ -981,10 +1466,57 @@ async fn instance(
             choices,
         };
         let picked = confirmed(capabilities, front, &instances).await?;
-        return Some((picked < configured.len()).then(|| (configured.swap_remove(picked), true)));
+        return Some(if picked < configured.len() {
+            Configured::One(configured.swap_remove(picked))
+        } else {
+            Configured::Back
+        });
     }
-    if let Some(only) = configured.pop() {
-        return Some(Some((only, true)));
+    Some(
+        configured
+            .pop()
+            .map_or(Configured::Unconfigured, Configured::One),
+    )
+}
+
+/// The instance of `row`'s agent, shown as `agent`, a connect goes through:
+/// the one configured, one asked for of several, or one named after the
+/// agent where none is, its command looked for on the `PATH` of `steps`;
+/// `Some(None)` where the client went back to the list
+/// of agents, and nothing where it cancelled or answered nothing. Asked of a
+/// client that claims [`Capability::Install`], each of several says its note,
+/// where crucible installs the agent's release.
+async fn instance(
+    desk: &Desk<'_>,
+    front: &mut dyn Front,
+    capabilities: crucible_client_api::Capabilities,
+    (row, agent): (&'static crate::backends::Row, &str),
+    steps: Option<&crate::launching::Steps>,
+) -> Option<Option<(ExternalAgent, bool)>> {
+    let configured: Vec<ExternalAgent> = desk
+        .switching
+        .settings
+        .external_agents()
+        .into_iter()
+        .filter(|configured| configured.driver() == row.driver)
+        .collect();
+    // Only a choice among several says a note, so only then is it read.
+    let releases = (configured.len() > 1)
+        .then(|| Releases::of(capabilities, desk))
+        .flatten();
+    let key = releases
+        .as_ref()
+        .and_then(|releases| releases.installs(row));
+    let noted = |one: &ExternalAgent| {
+        releases
+            .as_ref()
+            .zip(key.as_ref())
+            .and_then(|(releases, key)| releases.note(key, one.executable()))
+    };
+    match among(front, capabilities, agent, configured, &noted).await? {
+        Configured::One(one) => return Some(Some((one, true))),
+        Configured::Back => return Some(None),
+        Configured::Unconfigured => {}
     }
     let name = row.driver.name();
     let home = desk.switching.choosing.parent()?;
@@ -995,21 +1527,31 @@ async fn instance(
     } else {
         None
     };
-    // One whose release crucible installs is run as that release, installed
-    // or not yet, unless its command is on the `PATH`, as one installed by
-    // hand is.
+    let trust = crate::catalog_fetch::trust_in(home);
+    let executable = would_run(home, row, &trust, steps);
+    // A row is a built-in driver's, so its instance names no catalog agent.
+    let agent = ExternalAgent::unwritten(name, row.driver, &executable, profile.as_deref(), None)?;
+    Some(Some((agent, false)))
+}
+
+/// The program an instance of `row`'s agent named after it is run as: the
+/// release crucible installs under `home`, installed or not yet, where
+/// `trust` offers one, unless its command is on the `PATH` of `steps`, as one
+/// installed by hand is; otherwise its command.
+fn would_run(
+    home: &Path,
+    row: &'static crate::backends::Row,
+    trust: &Trust,
+    steps: Option<&crate::launching::Steps>,
+) -> String {
     let command = AgentRow::Built(row).command();
     let by_hand =
         steps.is_some_and(|steps| matches!(steps.discover(&command), Discovery::Found(_)));
-    let trust = crate::catalog_fetch::trust_in(home);
-    let managed = crate::installing::executable(home, row, &trust).filter(|_| !by_hand);
-    let executable = managed
+    let managed = crate::installing::executable(home, row, trust).filter(|_| !by_hand);
+    managed
         .as_deref()
-        .and_then(std::path::Path::to_str)
-        .unwrap_or(&command);
-    // A row is a built-in driver's, so its instance names no catalog agent.
-    let agent = ExternalAgent::unwritten(name, row.driver, executable, profile.as_deref(), None)?;
-    Some(Some((agent, false)))
+        .and_then(Path::to_str)
+        .map_or(command, str::to_owned)
 }
 
 /// How `row`'s agent is named to a person: as its route is warned about,
@@ -1038,12 +1580,25 @@ fn unfound_in(desk: &Desk<'_>, row: &AgentRow, shown: &str) -> Option<[String; 2
     }
 }
 
+/// What a look for an agent's program came to.
+#[derive(Debug, PartialEq, Eq)]
+enum Looked {
+    /// The launcher would start it.
+    Startable,
+    /// The client went back to the list of agents.
+    Back,
+    /// The client chose this move on the agent in place of the connect.
+    Moving(AgentAction),
+}
+
 /// Whether the launcher would start `agent`, of the row given and shown as
 /// named: told where it would not, the program not installed, with the command
 /// that installs it for an agent whose release crucible installs, or the row
-/// withheld, the client may look again until it would or go back; nothing
-/// where it cancelled or answered nothing. It decides as a start does, so what
-/// is said here is what a start would refuse.
+/// withheld, the client may look again until it would or go back, or, where
+/// the program is not installed and `install` is given, choose that install
+/// instead, offered first; nothing where it cancelled or answered nothing. It
+/// decides as a start does, so what is said here is what a start would
+/// refuse.
 // Each is an input of its own to the check, and a value gathering them would be
 // built at each caller and taken apart here.
 #[allow(clippy::too_many_arguments)]
@@ -1054,21 +1609,40 @@ async fn found(
     capabilities: crucible_client_api::Capabilities,
     agent: &ExternalAgent,
     (row, shown): (&AgentRow, &str),
-) -> Option<bool> {
+    install: Option<&AgentAction>,
+) -> Option<Looked> {
     for _ in 0..CHECKS {
         // What a start would refuse, as the launcher decides it, so that what
         // is said here and what a start does cannot differ.
-        let [said, next] = match conversation.steps() {
+        let ([said, next], absent) = match conversation.steps() {
             Some(steps) => match steps.refusal(row, agent) {
-                None => return Some(true),
-                Some(Unlaunched::NotInstalled(sentences)) => sentences,
-                Some(other) => [other.to_string(), "Choose another agent.".to_owned()],
+                None => return Some(Looked::Startable),
+                Some(Unlaunched::NotInstalled(sentences)) => (sentences, true),
+                Some(other) => (
+                    [other.to_string(), "Choose another agent.".to_owned()],
+                    false,
+                ),
             },
             None => match unfound_in(desk, row, shown) {
-                Some(sentences) => sentences,
-                None => return Some(true),
+                Some(sentences) => (sentences, true),
+                None => return Some(Looked::Startable),
             },
         };
+        // An install is offered only for a program that is not there.
+        let install = install.filter(|_| absent);
+        let mut choices = Vec::new();
+        if let Some(AgentAction::Install { version, .. }) = install {
+            choices.push((
+                "Install".to_owned(),
+                format!("Install {shown} {}.", quoted(version.as_str())),
+            ));
+        }
+        let again = choices.len();
+        choices.push((
+            CHECK_AGAIN.to_owned(),
+            "Look for the agent's program again.".to_owned(),
+        ));
+        choices.push(("Go back".to_owned(), "Choose another agent.".to_owned()));
         // Why it cannot start is a fact, which the terminal keeps however short
         // its window, rather than the question it gives up first.
         let missing = Confirmation {
@@ -1078,18 +1652,16 @@ async fn found(
                 next,
                 format!("Agent: {}, run as {}.", agent.name(), agent.executable()),
             ],
-            choices: vec![
-                (
-                    CHECK_AGAIN.to_owned(),
-                    "Look for the agent's program again.".to_owned(),
-                ),
-                ("Go back".to_owned(), "Choose another agent.".to_owned()),
-            ],
+            choices,
         };
-        match confirmed(capabilities, front, &missing).await? {
-            0 => {}
-            _ => return Some(false),
+        let picked = confirmed(capabilities, front, &missing).await?;
+        if picked == again {
+            continue;
         }
+        return Some(match install {
+            Some(action) if picked < again => Looked::Moving(action.clone()),
+            _ => Looked::Back,
+        });
     }
     None
 }
@@ -1121,7 +1693,8 @@ async fn connect(
         && let Some(warned) = consent.asks(row.route).cloned()
     {
         // A launch that is refused whatever the answer is not asked about.
-        if found(
+        let install = installable(Releases::of(capabilities, desk).as_ref(), row);
+        match found(
             conversation,
             desk,
             front,
@@ -1131,11 +1704,13 @@ async fn connect(
                 &AgentRow::Built(row),
                 &shown_as(conversation, &AgentRow::Built(row)),
             ),
+            install.as_ref(),
         )
         .await
-            != Some(true)
         {
-            return Account::Unconnected;
+            Some(Looked::Startable) => {}
+            Some(Looked::Moving(action)) => return Account::AgentChosen(action),
+            Some(Looked::Back) | None => return Account::Unconnected,
         }
         if !super::deciding::warned(capabilities, front, &warned).await {
             return Account::Unconnected;
@@ -1150,24 +1725,34 @@ async fn connect(
             Some(steps) => steps.account(agent, Step::Status).await,
             None => unstepped(),
         };
-        let question = match &status {
+        let (question, moves) = match &status {
             // Signed in, it is already connected: there is nothing to ask.
             Reading::Signed(Authentication::SignedIn) => {
                 return moved(conversation, desk, provider, agent, written).await;
             }
-            Reading::Signed(Authentication::SignedOut) => signed_out(agent, row),
+            Reading::Signed(Authentication::SignedOut) => signed_out(
+                agent,
+                row,
+                capabilities.has(Capability::Install).then_some(written),
+            ),
             Reading::Signed(
                 Authentication::Unknown | Authentication::Expired | Authentication::Unverifiable,
             )
             // The agent answered here, so it left no failure to give as the
             // reason.
-            | Reading::Version(_) => unverified(agent, None),
-            Reading::Unreadable(failure) => unverified(agent, Some(failure)),
+            | Reading::Version(_) => (unverified(agent, None), Vec::new()),
+            Reading::Unreadable(failure) => (unverified(agent, Some(failure)), Vec::new()),
         };
-        match confirmed(capabilities, front, &question).await {
-            // Checking again.
-            Some(0) => {}
-            _ => return Account::Unconnected,
+        // Checking again is the first choice after the moves.
+        let again = moves.len();
+        let Some(picked) = confirmed(capabilities, front, &question).await else {
+            return Account::Unconnected;
+        };
+        if let Some(action) = moves.into_iter().nth(picked) {
+            return Account::AgentChosen(action);
+        }
+        if picked != again {
+            return Account::Unconnected;
         }
     }
     Account::Unconnected
@@ -1238,8 +1823,20 @@ fn commit(desk: &Desk<'_>, provider: &str, agent: &ExternalAgent, written: bool)
     Account::Connected
 }
 
-/// What the person is told where `agent`, of the row `row`, reads signed out.
-fn signed_out(agent: &ExternalAgent, row: &crate::backends::Row) -> Confirmation {
+/// What the person is told where `agent`, of the row `row`, reads signed out,
+/// and the move each choice before Check again ends the connect with.
+///
+/// A client that claims [`Capability::Install`], which gives whether the
+/// instance is `written` in the user file, is offered first a sign-in by each
+/// method of the agent's that the agents door carries out, where the instance
+/// is written, since the door signs in only an instance the configuration
+/// names; where it is not, it is told they are offered once it is. A client
+/// that does not claim it gives `None` and is offered no move.
+fn signed_out(
+    agent: &ExternalAgent,
+    row: &'static crate::backends::Row,
+    written: Option<bool>,
+) -> (Confirmation, Vec<AgentAction>) {
     let name = agent.name();
     let how = match (row.sign_in)(agent.profile().map(Path::new)) {
         Some(command) => {
@@ -1247,21 +1844,40 @@ fn signed_out(agent: &ExternalAgent, row: &crate::backends::Row) -> Confirmation
         }
         None => "Sign in: open the agent and sign in there, then choose Check again.".to_owned(),
     };
-    Confirmation {
-        asks: format!("{name} is not signed in."),
-        facts: vec![
-            format!("Agent: {name}, run as {}.", agent.executable()),
-            profiled(agent),
-            how,
-        ],
-        choices: vec![
-            (
-                CHECK_AGAIN.to_owned(),
-                "Read the agent's sign-in again.".to_owned(),
-            ),
-            ("Cancel".to_owned(), "Change nothing.".to_owned()),
-        ],
+    let mut facts = vec![
+        format!("Agent: {name}, run as {}.", agent.executable()),
+        profiled(agent),
+        how,
+    ];
+    let methods = written.map_or_else(Vec::new, |_| AgentRow::Built(row).methods());
+    let (offered, more) = match written {
+        Some(true) => sign_ins(agent, methods, &[CHECK_AGAIN, "Cancel"]),
+        Some(false) if !methods.is_empty() => {
+            facts.push(
+                "Sign-in methods are offered once the instance is in the configuration.".to_owned(),
+            );
+            (Vec::new(), false)
+        }
+        _ => (Vec::new(), false),
+    };
+    if more {
+        facts.push(MORE_METHODS.to_owned());
     }
+    let (mut choices, moves): (Vec<(String, String)>, Vec<AgentAction>) = offered
+        .into_iter()
+        .map(|(named, says, action)| ((named, says), action))
+        .unzip();
+    choices.push((
+        CHECK_AGAIN.to_owned(),
+        "Read the agent's sign-in again.".to_owned(),
+    ));
+    choices.push(("Cancel".to_owned(), "Change nothing.".to_owned()));
+    let question = Confirmation {
+        asks: format!("{name} is not signed in."),
+        facts,
+        choices,
+    };
+    (question, moves)
 }
 
 /// What the person is told where `agent`'s sign-in could not be read, with
@@ -1455,4 +2071,41 @@ fn coordinating(choosing: &Path, agent: &ExternalAgent) -> Result<Coordinator, C
         Admission::Disabled
     };
     Ok(Coordinator::restore(journal, agent.name(), admission)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn method(id: &str, name: &str) -> AuthMethod {
+        AuthMethod {
+            id: id.into(),
+            name: name.into(),
+            description: None,
+            method: Method::Agent,
+        }
+    }
+
+    /// A method named like a choice the signed-out question already gives,
+    /// or like a method before it, is not offered, whatever the whitespace
+    /// around its name and whatever its case.
+    #[test]
+    fn a_method_named_like_a_fixed_choice_or_an_earlier_one_is_not_offered() {
+        let instance =
+            ExternalAgent::unwritten("work", Driver::Antigravity, "antigravity", None, None)
+                .unwrap();
+        let methods = vec![
+            method("trailing", "Cancel "),
+            method("lower", "cancel"),
+            method("again", " CHECK AGAIN"),
+            method("key", "API key"),
+            method("same", "api key "),
+        ];
+
+        let (offered, more) = sign_ins(&instance, methods, &[CHECK_AGAIN, "Cancel"]);
+
+        let named: Vec<&str> = offered.iter().map(|(name, ..)| name.as_str()).collect();
+        assert_eq!(named, ["API key"]);
+        assert!(!more);
+    }
 }

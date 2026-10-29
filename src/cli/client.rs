@@ -18,7 +18,11 @@
 //! itself, takes it off a channel, draws it and sends the answer back. The
 //! panel is drawn from the question whole, as the host holds it.
 //!
-//! A terminal has somebody at it and a screen, so it claims every capability.
+//! A terminal has somebody at it and a screen, so it claims every capability,
+//! but in a connect, which claims every one but [`Capability::Install`]: a
+//! client that claims it can be offered a move on an agent in place of the
+//! connect, and the terminal cannot yet carry one out. The request decides,
+//! whichever command sends it, so no sender chooses its own claim.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -38,8 +42,8 @@ use crucible_app::content_use::Warned;
 use crucible_app::launching::{Launcher, Steps};
 use crucible_app::providers::Providers;
 use crucible_client_api::{
-    Capabilities, Command, Correlation, Decision, Name, Outcome, Pending, Refusal, Request, Said,
-    Theme,
+    Capabilities, Capability, Command, Correlation, Decision, Name, Outcome, Pending, Refusal,
+    Request, Said, Theme,
 };
 use crucible_runtime::{BoxFuture, Cancel};
 
@@ -68,6 +72,53 @@ pub(crate) trait Witness: std::fmt::Debug + Send + Sync {
     fn decided(&self, decision: &Decision);
 }
 
+/// What the terminal claims in a request asking for `command`: every
+/// capability, but in a connect, every one but [`Capability::Install`].
+///
+/// A client that claims install can be offered a move on an agent in place of
+/// a connect, and the terminal cannot yet carry one out. Decided on the
+/// command alone, so whichever command sends a connect, it claims the same.
+/// Every command is named, so a new one decides what it claims.
+const fn claimed(command: &Command) -> Capabilities {
+    match command {
+        Command::Connect { .. } => Capabilities::every().without(Capability::Install),
+        Command::Prompt(_)
+        | Command::Compact
+        | Command::Cancel
+        | Command::Decide(_)
+        | Command::Clear
+        | Command::Resume(_)
+        | Command::SelectModel { .. }
+        | Command::SetEffort(_)
+        | Command::SetSpeed(_)
+        | Command::SetMode(_)
+        | Command::CycleMode
+        | Command::Login { .. }
+        | Command::Logout { .. }
+        | Command::Disconnect { .. }
+        | Command::RemoveIntegration { .. }
+        | Command::SignOut { .. }
+        | Command::InspectCache
+        | Command::CleanCache
+        | Command::Sandbox { .. }
+        | Command::Theme(_)
+        | Command::Setting { .. }
+        | Command::Help
+        | Command::ReleaseNotes { .. }
+        | Command::Context
+        | Command::Usage
+        | Command::AskLimits
+        | Command::AgentCatalog
+        | Command::InstallAgent { .. }
+        | Command::UpdateAgent { .. }
+        | Command::RollbackAgent { .. }
+        | Command::RemoveAgent { .. }
+        | Command::VerifyAgent { .. }
+        | Command::SignInAgent { .. }
+        | Command::Exit => Capabilities::every(),
+    }
+}
+
 /// The requests this process has made, numbered as they are made.
 ///
 /// Cloned to the worker a turn runs on: both sides number from one count, so
@@ -85,11 +136,12 @@ impl Client {
         Self::default()
     }
 
-    /// The next request, asking for `command`.
+    /// The next request, asking for `command` and claiming what [`claimed`]
+    /// says the terminal claims for it.
     pub(crate) fn asking(&self, command: Command) -> Request {
         let number = self.sent.fetch_add(1, Ordering::Relaxed).saturating_add(1);
 
-        Request::new(Capabilities::every(), Correlation::new(number), command)
+        Request::new(claimed(&command), Correlation::new(number), command)
     }
 
     /// Asks the turn `cancel` belongs to to stop.
