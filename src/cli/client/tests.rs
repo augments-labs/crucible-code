@@ -17,8 +17,9 @@ use std::sync::{Arc, Mutex, mpsc};
 use crucible_app::Conversation;
 use crucible_app::client::{self, Front, Shown, snapshot};
 use crucible_client_api::{
-    Capabilities, Command, Correlation, Decision, ErrorCode, Lasting, Outcome, Pending, PendingId,
-    Prompt, Refusal, Request, Response, ResumeOutcome, Ruling, Snapshot, Stop, TurnOutcome,
+    Capabilities, Capability, Command, Correlation, Decision, ErrorCode, Lasting, Name, Outcome,
+    Pending, PendingId, Prompt, Refusal, Request, Response, ResumeOutcome, Ruling, Snapshot, Stop,
+    TurnOutcome,
 };
 use crucible_models::Delta;
 use crucible_runner::{EventEnvelope, Tools};
@@ -808,4 +809,53 @@ fn every_prompt_the_box_holds_is_one_the_contract_carries() {
     // Two ceilings with two owners. A line the box took and the contract then
     // refused would be a prompt lost after it was typed.
     const { assert!(crucible_client_api::bounds::PROMPT_BYTES >= Editor::MAX_BYTES) };
+}
+
+#[test]
+fn a_connect_claims_every_capability_but_install_whichever_way_it_names_its_agent() {
+    // A client that claims install can be offered a move on an agent in place
+    // of the connect, and the terminal cannot yet carry one out. The request
+    // decides, so no command that sends a connect can claim it back.
+    let client = Client::new();
+    let named = Name::new("space").expect("a name the contract takes");
+
+    for command in [
+        Command::Connect { instance: None },
+        Command::Connect {
+            instance: Some(named),
+        },
+    ] {
+        let claimed = client.asking(command.clone()).capabilities();
+
+        assert!(
+            !claimed.has(Capability::Install),
+            "{command:?}: {claimed:?}"
+        );
+        assert_eq!(
+            claimed,
+            Capabilities::every().without(Capability::Install),
+            "{command:?} claims every other capability"
+        );
+    }
+}
+
+#[test]
+fn a_request_that_is_not_a_connect_claims_every_capability() {
+    let client = Client::new();
+    let named = || Name::new("space").expect("a name the contract takes");
+
+    for command in [
+        Command::Cancel,
+        Command::Usage,
+        Command::Logout { provider: named() },
+        Command::Disconnect { instance: named() },
+        Command::SignOut { instance: named() },
+        Command::RemoveIntegration { instance: named() },
+    ] {
+        assert_eq!(
+            client.asking(command.clone()).capabilities(),
+            Capabilities::every(),
+            "{command:?}"
+        );
+    }
 }

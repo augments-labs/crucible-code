@@ -89,7 +89,7 @@ use crucible_app::providers::{
 use crucible_app::subscription::Route;
 use crucible_app::switching::LoggedIn;
 use crucible_auth::{AuthError, Kind, LoginAttempt, LoginUpdate, Stopped};
-use crucible_client_api::{Agents, Capabilities, Capability, Command, LogoutOutcome, Outcome};
+use crucible_client_api::{Agents, Command, LogoutOutcome, Outcome};
 use crucible_tui::{
     Caret, Glyphs, Heading, Key, Offered, Panel, Pressed, Renderer, Row, Slot, Terminal,
     characters, clip, fold, pressed,
@@ -489,25 +489,16 @@ fn connected<T: Terminal>(walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
     Ok(Closed::Done)
 }
 
-/// What `/login`'s agent connect claims: every capability but
-/// [`Capability::Install`]. A client that claims it can be offered a move on
-/// an agent in place of the connect, and the terminal cannot yet carry one
-/// out, so `/login` withholds it and is put the questions it was before.
-const CONNECTING: Capabilities = Capabilities::every().without(Capability::Install);
-
 /// The agent connect the third row asks for, each question it stops on
-/// answered by `answer`.
+/// answered by `answer`. Like every connect the terminal sends, it claims
+/// every capability but install, and is put the questions it was before moves
+/// on an agent were offered.
 fn connecting<E>(
     terms: &Terms,
     conversation: &mut Conversation,
     answer: impl FnMut(&Question) -> Result<Option<Reply>, E>,
 ) -> Result<Performed, E> {
-    terms.operate_claiming(
-        conversation,
-        CONNECTING,
-        Command::Connect { instance: None },
-        answer,
-    )
+    terms.operate(conversation, Command::Connect { instance: None }, answer)
 }
 
 /// The line an account operation ends on, and whether a provider is now
@@ -518,8 +509,8 @@ pub(super) fn ended(performed: &Performed) -> Option<(String, bool)> {
     };
     Some(match account {
         // Nobody went on with it. A move on an agent is offered only under the
-        // install capability, which `/login` does not claim, since it cannot
-        // yet carry one out.
+        // install capability, which no connect the terminal sends claims,
+        // since it cannot yet carry one out.
         Account::Undecided | Account::Unconnected | Account::AgentChosen(_) => return None,
         Account::Connected => (CONNECTED.to_owned(), true),
         Account::Moved(instance) => (moved_onto(instance), true),

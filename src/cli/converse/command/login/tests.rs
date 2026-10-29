@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crucible_auth::Store;
 use crucible_builtins::{Ledger, Plan};
+use crucible_client_api::{Capabilities, Capability};
 use crucible_runner::{Agent, Model, Runner, Tools};
 use crucible_runtime::Cancel;
 use crucible_tools::Revealed;
