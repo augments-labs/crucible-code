@@ -744,3 +744,46 @@ fn a_catalog_method_s_name_is_escaped_in_the_question() -> Result<(), Failed> {
     assert_eq!(file, before);
     Ok(())
 }
+
+/// A sign-in method the catalog names like a choice the question already
+/// gives, or like a method before it, is not offered: names are told apart
+/// without the whitespace around them and whatever their case, so a method
+/// cannot pass for "Go back" or "Install" by a trailing space or a capital.
+#[test]
+fn a_catalog_method_named_like_a_fixed_choice_is_not_offered() -> Result<(), Failed> {
+    let tree = Tree::new("external-choosing-lookalike")?;
+    let mut release = entry("goose", "1.0.0", ONE);
+    if let Some(object) = release.as_object_mut() {
+        object.insert(
+            "auth_methods".into(),
+            json!([
+                {"id": "back", "kind": "agent", "name": "Go back "},
+                {"id": "lower", "kind": "agent", "name": "go back"},
+                {"id": "install", "kind": "agent", "name": " INSTALL"},
+                {"id": "api-key", "kind": "env_var", "name": "API key", "var": "GOOSE_API_KEY"},
+                {"id": "again", "kind": "env_var", "name": "api key ", "var": "GOOSE_KEY"},
+            ]),
+        );
+        object.insert("sign_in_hosts".into(), json!(["accounts.vendor.example"]));
+    }
+    trusting(&tree, &[release])?;
+    let before = goose_file("goose")?;
+    let mut picking = Picking::of([Some("goose"), Some("API key")]);
+
+    let (outcome, file) =
+        connecting_unstepped(&tree, (&before, None), Asking::every(), &mut picking)?;
+
+    let action = AgentAction::SignIn {
+        instance: Name::new("work")?,
+        method: Name::new("api-key")?,
+    };
+    assert_eq!(
+        outcome,
+        Outcome::Login(LoginOutcome::AgentChosen { action })
+    );
+    let (_, _, choices) = question(&picking.put, 1).ok_or("the agent's question")?;
+    let named: Vec<&str> = choices.iter().map(|(name, _)| *name).collect();
+    assert_eq!(named, ["Install", "API key", "Go back"]);
+    assert_eq!(file, before);
+    Ok(())
+}

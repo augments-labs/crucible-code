@@ -1370,9 +1370,10 @@ const MORE_METHODS: &str = "More sign-in methods are offered than are listed.";
 
 /// One choice for each of `methods` the agents door carries out for the
 /// configured `instance`, by the agent's own program or with a key kept for
-/// it, named as the agent names the method, quoted; but not one whose name is
-/// in `taken` or was named before it, nor one a contract name cannot be made
-/// of. At most [`LISTED`], and whether more were offered than are listed.
+/// it, named as the agent names the method, quoted; but not one whose name
+/// reads as one in `taken` or one named before it, as [`folded`] reads them,
+/// nor one a contract name cannot be made of. At most [`LISTED`], and whether
+/// more were offered than are listed.
 fn sign_ins(
     instance: &ExternalAgent,
     methods: Vec<AuthMethod>,
@@ -1391,7 +1392,10 @@ fn sign_ins(
             }
         };
         let name = quoted(&method.name);
-        if taken.contains(&name.as_str()) || offered.iter().any(|(named, ..)| *named == name) {
+        let reads = folded(&name);
+        if taken.iter().any(|fixed| folded(fixed) == reads)
+            || offered.iter().any(|(named, ..)| folded(named) == reads)
+        {
             continue;
         }
         let (Ok(instance), Ok(method)) = (Name::new(instance.name()), Name::new(&method.id)) else {
@@ -1404,6 +1408,12 @@ fn sign_ins(
         offered.push((name, says, AgentAction::SignIn { instance, method }));
     }
     (offered, more)
+}
+
+/// A choice's name as it is told from another: without the whitespace around
+/// it, and lowercased, so that "Cancel " and "cancel" read as "Cancel" does.
+fn folded(name: &str) -> String {
+    name.trim().to_lowercase()
 }
 
 /// The install of `row`'s release the agents door would make, which a
