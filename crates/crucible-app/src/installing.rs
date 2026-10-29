@@ -1,5 +1,6 @@
-//! `crucible agents install`, which puts the release of an agent the catalog
-//! offers where crucible runs it from.
+//! The release of an agent the catalog offers, where crucible runs it from:
+//! where it is kept, what a refusal says where its program is missing, and
+//! [`install`], which puts it there.
 //!
 //! Which release that is, is what the trust state a caller loaded offers for the
 //! agent's row: the newest of the catalog most lately believed and the snapshot
@@ -15,12 +16,13 @@
 //! application's hold, as every request a run makes does; it carries nothing
 //! from a session. A release already in place is kept, and nothing is asked
 //! for it, and an agent's entry `/login` writes names it as its executable.
-//! Like [`crate::update`], this is a local command rather than a
-//! request of the client contract, and it reads no configuration. It is the
-//! precedent the agents door replaces: [`crate::client::agents`] installs,
-//! updates, rolls back and removes a catalog agent as a client's request, asks
-//! before a byte is fetched, and writes the `executable` of every instance it
-//! moves into the user's configuration file, which its shelf's home names.
+//! Like [`crate::update`], [`install`] is no request of the client contract,
+//! and it reads no configuration. It is the precedent the agents door
+//! replaced: `crucible agents install` is a request to
+//! [`crate::client::agents`], which installs, updates, rolls back and removes a
+//! catalog agent as a client's request, asks before a byte is fetched, and
+//! writes the `executable` of every instance it moves into the user's
+//! configuration file, which its shelf's home names.
 //!
 //! [`unpack_check`] is the catalog intake's way to the same unpacker an
 //! install of a catalog agent goes through: it reads an artifact as the

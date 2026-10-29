@@ -18,6 +18,7 @@ use crucible_external_harnesses::catalog::fixture::signed;
 use crucible_external_harnesses::fake_peer::scripts::acp;
 use crucible_external_harnesses::fake_peer::{self, Reply, Script};
 use crucible_external_harnesses::release::proof;
+use crucible_external_harnesses::store::{Store, Version};
 use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxBackendIdentity, SandboxCapabilities, SandboxError, SandboxRequest, SandboxSession,
@@ -262,6 +263,23 @@ fn a_catalog_agent_is_added_rather_than_installed() {
         );
     }
     assert!(!bench.heard().contains("Which one?"), "nothing was asked");
+}
+
+/// A version is looked for in the directory the install store keeps it in,
+/// with its package tree's revision and without one.
+#[test]
+fn a_version_is_looked_for_where_the_install_store_keeps_it() {
+    let programs = PathBuf::from("home").join("programs");
+    let store = Store::new(programs.clone());
+    let agent = AgentKey::new("goose").expect("a key");
+    for revision in [None, Some(7)] {
+        let version = Version::new("1.0.0", revision).expect("a version");
+        assert_eq!(
+            kept(&programs, &agent, "1.0.0", revision),
+            store.directory(&agent, &version),
+            "revision {revision:?}"
+        );
+    }
 }
 
 #[test]
@@ -717,6 +735,142 @@ fn an_install_cancelled_or_unasked_changes_nothing() {
     assert!(!bench.program("1.0.0").exists(), "nothing was installed");
 }
 
+/// Under `agents.update = "reviewed"` in the user's own file, an update is
+/// taken with no question and no terminal, and says so, naming the instances
+/// it moved and why it was not smoke-tested.
+#[test]
+fn an_update_taken_without_asking_says_so_and_what_it_moved() {
+    let bench = Bench::new("update-reviewed");
+    bench.host.publish(1, &[goose("1.0.0", ONE)]);
+    done(bench.carried(
+        &action(&["install", "goose", "1.0.0"]),
+        Some(installs),
+        &mut unasked,
+    ));
+    let document = serde_json::json!({
+        "agents": {"update": "reviewed"},
+        "externalAgents": {
+            "work": {
+                "driver": "catalog",
+                "agent": "goose",
+                "executable": bench.program("1.0.0").to_string_lossy(),
+            },
+        },
+    });
+    fs::write(
+        crucible_config::user(&bench.home),
+        serde_json::to_vec_pretty(&document).expect("the document"),
+    )
+    .expect("the user file");
+    bench
+        .host
+        .publish(2, &[goose("2.0.0", TWO), goose("1.0.0", ONE)]);
+    bench.heard();
+
+    let said = done(bench.carried(&action(&["update", "goose"]), None, &mut unasked));
+
+    assert!(!bench.heard().contains("Which one?"), "nothing was asked");
+    assert_eq!(fs::read(bench.program("2.0.0")).ok().as_deref(), Some(TWO));
+    assert_eq!(
+        bench.shown(&said),
+        "Updated goose to 2.0.0 at <home>/programs/goose/2.0.0/goose.\n\
+         Taken without asking, under agents.update = \"reviewed\".\n\
+         Moved onto it: work.\n\
+         Not smoke-tested: no conversation lent a launcher to start it with.\n"
+    );
+}
+
+/// A line longer than an answer is read to: `1`, then more than the bound of
+/// spaces before its newline.
+fn past_the_bound() -> String {
+    let spaces = usize::try_from(auth::MAX_ANSWER).expect("a length");
+    format!("1{}\n", " ".repeat(spaces))
+}
+
+/// What a person typed, as a test says it, and a reader of it.
+type Typing = (&'static str, fn() -> String);
+
+/// An install's question is answered yes only by a choice's number alone,
+/// ending its line within the bound an answer is read to: anything else is
+/// no, and changes nothing.
+#[test]
+fn only_a_choice_s_number_alone_on_its_line_answers_an_install() {
+    let bench = Bench::new("install-answers");
+    bench.host.publish(1, &[goose("1.0.0", ONE)]);
+    let install = action(&["install", "goose", "1.0.0"]);
+    let declines: [Typing; 6] = [
+        ("+1", || answer_in(&mut &b"+1\n"[..])),
+        ("01", || answer_in(&mut &b"01\n"[..])),
+        (" 1", || answer_in(&mut &b" 1\n"[..])),
+        ("1x", || answer_in(&mut &b"1x\n"[..])),
+        ("1 past the bound", || {
+            answer_in(&mut past_the_bound().as_bytes())
+        }),
+        ("1 with no newline", || answer_in(&mut &b"1"[..])),
+    ];
+
+    for (typed, answer) in declines {
+        let answered = bench.carried(&install, Some(answer), &mut unasked);
+        assert!(
+            matches!(&answered, Answer::Refused(refused)
+                if refused == "nothing was confirmed, so nothing was changed"),
+            "{typed:?} was not a no: {answered:?}"
+        );
+        assert!(
+            bench.heard().contains("Which one?"),
+            "{typed:?} was not asked"
+        );
+        assert!(!bench.program("1.0.0").exists(), "{typed:?} installed");
+    }
+
+    done(bench.carried(&install, Some(|| answer_in(&mut &b"1\n"[..])), &mut unasked));
+    assert_eq!(fs::read(bench.program("1.0.0")).ok().as_deref(), Some(ONE));
+}
+
+/// An answer is its line up to the newline, which must come within the bound
+/// it is read to, and nothing where it does not; a console's carriage return
+/// before it is not part of it.
+#[test]
+fn an_answer_is_its_line_where_it_ends_within_the_bound() {
+    let bound = usize::try_from(auth::MAX_ANSWER).expect("a length");
+    let filled = format!("1{}\n", " ".repeat(bound.saturating_sub(2)));
+    let past = past_the_bound();
+    for (typed, read) in [
+        ("1\n", "1"),
+        ("1\r\n", "1"),
+        ("+1\n", "+1"),
+        (" 1 \n", " 1 "),
+        (filled.as_str(), filled.trim_end_matches('\n')),
+        ("1", ""),
+        ("", ""),
+        (past.as_str(), ""),
+    ] {
+        assert_eq!(answer_in(&mut typed.as_bytes()), read, "{typed:?}");
+    }
+}
+
+/// A choice is named only by its number alone, counting from one.
+#[test]
+fn a_choice_is_named_by_its_number_alone() {
+    assert_eq!(chosen("1", 2), Some(0));
+    assert_eq!(chosen("2", 2), Some(1));
+    for answered in [
+        "",
+        "0",
+        "3",
+        "+1",
+        "01",
+        " 1",
+        "1 ",
+        "1x",
+        "-1",
+        "\u{661}",
+        "99999999999999999999999",
+    ] {
+        assert_eq!(chosen(answered, 2), None, "{answered:?}");
+    }
+}
+
 /// `search` lists each agent the catalog offers, its versions newest first and
 /// what is installed, keeping only those named like the text it is given.
 #[test]
@@ -856,19 +1010,34 @@ fn a_key_is_asked_for_once_kept_and_never_said() {
 /// terminal, and is otherwise refused with what to do instead.
 #[test]
 fn a_key_is_asked_for_only_on_a_terminal() {
-    for ends in [
-        [false, true, true],
-        [true, false, true],
-        [true, true, false],
-    ] {
-        let Err(Unstored::Refused(refused)) = prompted(ends, "work") else {
-            panic!("a key was asked for with {ends:?} terminals");
-        };
-        assert!(
-            refused.contains("run `crucible agents sign-in` on a terminal"),
-            "{refused}"
-        );
+    for stdin in [false, true] {
+        for stdout in [false, true] {
+            for stderr in [false, true] {
+                assert_eq!(
+                    promptable(stdin, stdout, stderr),
+                    (stdin, stdout, stderr) == (true, true, true),
+                    "stdin {stdin}, stdout {stdout}, stderr {stderr}"
+                );
+            }
+        }
     }
+    let Err(Unstored::Refused(refused)) = prompted(false, "work") else {
+        panic!("a key was asked for off a terminal");
+    };
+    assert!(
+        refused.contains("run `crucible agents sign-in` on a terminal"),
+        "{refused}"
+    );
+}
+
+/// An install's question is asked only where standard input and standard
+/// error are both terminals, whatever standard output is.
+#[test]
+fn a_question_is_asked_only_where_it_is_written_and_answered_on_a_terminal() {
+    assert!(askable(true, true));
+    assert!(!askable(false, true));
+    assert!(!askable(true, false));
+    assert!(!askable(false, false));
 }
 
 /// What `probe` prints for the fake peer in a sandbox that closes the network,

@@ -3425,9 +3425,19 @@ fn antigravity_offers_its_four_methods_and_a_business_sign_in_names_what_it_need
 fn the_methods_an_instance_signs_in_by_are_named_in_the_order_its_agent_offers_them()
 -> Result<(), Failed> {
     let bench = Bench::new("agents-door-sign-in-methods")?;
-    bench
-        .server
-        .catalog(1, &[signing_in("goose", ONE)], &json!([]))?;
+    // Offered in an order no sort would give them.
+    let mut release = signing_in("goose", ONE);
+    set(
+        &mut release,
+        "/auth_methods",
+        json!([
+            {"id": "terminal", "kind": "terminal", "name": "Sign in at a terminal",
+             "command": "goose", "args": ["login"], "env": {}, "route": "piped"},
+            {"id": "api-key", "kind": "env_var", "name": "API key", "var": "GOOSE_API_KEY"},
+            {"id": "browser", "kind": "agent", "name": "Sign in with a browser"},
+        ]),
+    );
+    bench.server.catalog(1, &[release], &json!([]))?;
     let document = json!({"externalAgents": {
         "work": {
             "driver": "catalog",
@@ -3469,7 +3479,7 @@ fn the_methods_an_instance_signs_in_by_are_named_in_the_order_its_agent_offers_t
             "agent-platform",
         ]
     );
-    assert_eq!(named("work")?, ["api-key", "browser", "terminal"]);
+    assert_eq!(named("work")?, ["terminal", "api-key", "browser"]);
     let unnamed = named("else");
     assert!(
         matches!(unnamed, Err(AgentsError::NoInstance(_))),

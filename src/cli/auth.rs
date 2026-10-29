@@ -40,7 +40,7 @@ use super::ending::{Ending, Told};
 mod tests;
 
 /// The longest answer read to a question on the terminal, in bytes.
-const MAX_ANSWER: u64 = 256;
+pub(super) const MAX_ANSWER: u64 = 256;
 
 /// Why a piped key was refused when standard input is a terminal.
 const UNPIPED: &str = "--api-key-stdin reads a key piped to crucible, and standard input is a \

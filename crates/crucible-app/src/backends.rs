@@ -90,7 +90,7 @@ pub struct Row {
     /// in from its own window and has no such command.
     pub sign_in: fn(Option<&std::path::Path>) -> Option<Text>,
     /// The release of it crucible downloads for the user on the platform it
-    /// runs on, which `crucible agents install` puts in crucible's home: the
+    /// runs on, which a connect offers to put in crucible's home: the
     /// newest that `trust` offers and that is one archive of two files; `None`
     /// for an agent the user installs themselves, and while nothing is
     /// offered.

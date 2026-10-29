@@ -591,8 +591,10 @@ puts in place, its size, the hosts it is fetched from, its licence, terms and
 caution, how it is started and which configured instances it moves. The
 choices follow, numbered, such as
 `1. Install: Put 1.0.0 in place and move the instances named onto it` and
-`2. Cancel: Leave everything as it is`. Type a choice's number and Enter; any
-other answer, Enter alone included, is no, and nothing changes. Where standard
+`2. Cancel: Leave everything as it is`. Type the choice's number alone, such
+as `1`, and Enter. Any other answer is no, and nothing changes: Enter alone, a
+number with a sign, a leading zero or a space beside it, a line longer than
+255 bytes, or input that ends before Enter. Where standard
 input or standard error is not a terminal, nothing is asked and nothing
 changes: there is no flag that answers for you and no answer read from a pipe.
 The command then ends 1, saying nothing was changed because it asks its
@@ -608,7 +610,11 @@ in crucible's home, in a directory of its own with a receipt that says where it
 came from, and is there whole or not at all. While it downloads, a terminal is
 shown the percent that has arrived; any other standard error is told once that
 the download began. What was done, and where, goes to standard output, and a
-refusal is one line on standard error.
+refusal is one line on standard error. An install, update or rollback names
+the configured instances it moved on a line of its own, such as `Moved onto
+it: work, goose-2.`, and it or an add then says it was not smoke-tested, since
+no conversation lends these commands a way to start the agent: `Not
+smoke-tested: no conversation lent a launcher to start it with.`
 
 ### `agents search [TEXT]`
 
@@ -650,8 +656,9 @@ where none runs the agent from the store, it is refused. Where your own
 configuration file says
 [`agents.update = "reviewed"`](../configuration/configuration.md#agents), an
 update that setting allows is taken without the question, so it needs no
-terminal; every other check still runs. It ends 0 once the instances are
-moved, and 1 otherwise.
+terminal, and says so on a line of its own: `Taken without asking, under
+agents.update = "reviewed".` Every other check still runs. It ends 0 once the
+instances are moved, and 1 otherwise.
 
 ### `agents rollback AGENT`
 

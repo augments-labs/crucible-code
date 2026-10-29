@@ -6,8 +6,12 @@
 //! [`super::client::shelf`] with nothing to start an agent with. The door asks
 //! before anything is fetched or changed, and the question is asked here, on
 //! this process's own terminal: written to standard error and answered on
-//! standard input. Where either is not a terminal nothing is asked, so nothing
-//! changes. A sign-in that finds no key kept for its method asks for one at
+//! standard input, by a choice's number alone on a line that ends within
+//! [`auth::MAX_ANSWER`] bytes, anything else being no. Where either is not a
+//! terminal nothing is asked, so nothing changes; an update the user's own
+//! file lets the door take without asking says that it was taken so, and a
+//! move says which instances it moved and why it was not smoke-tested, where
+//! it was not. A sign-in that finds no key kept for its method asks for one at
 //! the prompt `crucible auth login` hides a key at, and hands it to the door to
 //! keep. How far a download has come goes to standard error, on one line
 //! rewritten in place where standard error is a terminal and as one line where
@@ -27,7 +31,7 @@
 //! output, and a refusal to standard error, written [`failing`].
 
 use std::fmt::Write as _;
-use std::io::{self, IsTerminal as _, Write as _};
+use std::io::{self, BufRead, IsTerminal as _, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -51,7 +55,7 @@ use crucible_types::shown::escaped;
 use tokio::runtime::Handle;
 
 use super::AgentsAction;
-use super::auth::{self, Asking, Unstored};
+use super::auth::{self, Unstored};
 use super::ending::Told;
 use super::failure::failing;
 use super::visible;
@@ -91,8 +95,7 @@ fn served(action: &AgentsAction) -> ExitCode {
         let _ = io::stderr().write_all(text.as_bytes());
     };
     let terminal = io::stderr().is_terminal();
-    let answer =
-        (io::stdin().is_terminal() && terminal).then_some(Asking::answer as fn() -> String);
+    let answer = askable(io::stdin().is_terminal(), terminal).then_some(answer as fn() -> String);
     let (answer, stopped) = serving(|services| match services.runtime().handle() {
         Ok(runtime) => Desk {
             home: &home,
@@ -131,6 +134,18 @@ fn served(action: &AgentsAction) -> ExitCode {
     }
 }
 
+/// Whether an install's question is asked: where standard input, which
+/// answers it, and standard error, where it is written, are both terminals.
+fn askable(stdin: bool, stderr: bool) -> bool {
+    stdin && stderr
+}
+
+/// Whether a key is asked for at the prompt that hides it: where standard
+/// input, output and error are each a terminal.
+fn promptable(stdin: bool, stdout: bool, stderr: bool) -> bool {
+    stdin && stdout && stderr
+}
+
 /// Why a key cannot be asked for here, where standard input, output or error
 /// is not a terminal.
 const UNPROMPTED: &str = "the key is asked for at a prompt that hides it, which needs standard \
@@ -142,20 +157,19 @@ const UNPROMPTED: &str = "the key is asked for at a prompt that hides it, which 
 /// read from an argument or a pipe.
 fn typed(instance: &str) -> Result<Option<Typed>, Unstored> {
     prompted(
-        [
+        promptable(
             io::stdin().is_terminal(),
             io::stdout().is_terminal(),
             io::stderr().is_terminal(),
-        ],
+        ),
         instance,
     )
 }
 
-/// The key for `instance`, asked for at the hidden prompt where `terminals`,
-/// whether standard input, output and error are each one, are all true, and
-/// refused without a word asked where any is not.
-fn prompted(terminals: [bool; 3], instance: &str) -> Result<Option<Typed>, Unstored> {
-    if terminals.contains(&false) {
+/// The key for `instance`, asked for at the hidden prompt where it is
+/// `promptable`, and refused without a word asked where it is not.
+fn prompted(promptable: bool, instance: &str) -> Result<Option<Typed>, Unstored> {
+    if !promptable {
         return Err(Unstored::Refused(UNPROMPTED.to_owned()));
     }
     Ok(auth::hidden(instance)?.map(Typed::new))
@@ -408,8 +422,8 @@ impl Desk<'_> {
                 instances,
                 left,
                 downloaded,
-                standing: _,
-                unsmoked: _,
+                standing,
+                unsmoked,
                 unpruned,
             } => {
                 let program = self.at(&agent, &version);
@@ -432,6 +446,16 @@ impl Desk<'_> {
                         format!("Rolled {} back to {version}{at}.\n", agent.as_str())
                     }
                 };
+                if standing {
+                    said.push_str("Taken without asking, under agents.update = \"reviewed\".\n");
+                }
+                // An add's sentence names the instance it wrote.
+                if how != How::Added && !instances.is_empty() {
+                    let _ = writeln!(said, "Moved onto it: {}.", joined(&instances));
+                }
+                if let Some(why) = unsmoked {
+                    let _ = writeln!(said, "Not smoke-tested: {}.", escaped(&why));
+                }
                 if !left.is_empty() {
                     let _ = writeln!(
                         said,
@@ -517,27 +541,32 @@ impl Desk<'_> {
     /// Where the install store keeps the program `agent` is started as at
     /// `version`, as the trust state offers that version now, or nothing where
     /// it no longer offers it.
-    ///
-    /// A version's directory is named as the store names it: the version, and
-    /// `+` and its package tree's revision where it has one.
     fn at(&self, agent: &AgentKey, version: &str) -> Option<PathBuf> {
         let offer = trust_in(self.home.path())
             .offers(Some(agent))
             .into_iter()
             .find(|offer| *offer.pin.version == *version)?;
-        let directory = match offer.pin.lock_revision {
-            Some(revision) => format!("{version}+{revision}"),
-            None => version.to_owned(),
-        };
         Some(
-            self.home
-                .path()
-                .join("programs")
-                .join(agent.as_str())
-                .join(directory)
-                .join(&*offer.pin.target.cmd),
+            kept(
+                &self.home.path().join("programs"),
+                agent,
+                version,
+                offer.pin.lock_revision,
+            )
+            .join(&*offer.pin.target.cmd),
         )
     }
+}
+
+/// The directory the install store in `programs` keeps `version` of `agent`
+/// in, named as the store names it: the version, and `+` and its package
+/// tree's `revision` where it has one.
+fn kept(programs: &Path, agent: &AgentKey, version: &str, revision: Option<u64>) -> PathBuf {
+    let named = match revision {
+        Some(revision) => format!("{version}+{revision}"),
+        None => version.to_owned(),
+    };
+    programs.join(agent.as_str()).join(named)
 }
 
 /// What an install of `agent` at `version`, whose program is `at`, is
@@ -704,8 +733,32 @@ fn question(confirmation: &Confirmation) -> String {
     asked
 }
 
-/// The choice of `count` that `answered` numbers, counting from one.
+/// The answer to a question, as [`answer_in`] reads it from standard input.
+fn answer() -> String {
+    answer_in(&mut io::stdin().lock())
+}
+
+/// The line `input` gives, without its newline, read to at most
+/// [`auth::MAX_ANSWER`] bytes; nothing, which is no, where it gave no newline
+/// within them, having been cut or having ended without one. A carriage return
+/// before the newline, as a console ends a line with, is not part of it.
+fn answer_in(input: &mut impl BufRead) -> String {
+    let mut line = String::new();
+    if input.take(auth::MAX_ANSWER).read_line(&mut line).is_err() {
+        return String::new();
+    }
+    match line.strip_suffix('\n') {
+        Some(ended) => ended.strip_suffix('\r').unwrap_or(ended).to_owned(),
+        None => String::new(),
+    }
+}
+
+/// The choice of `count` that `answered` numbers, counting from one: only
+/// digits, the first of them not `0`, naming one of them.
 fn chosen(answered: &str, count: usize) -> Option<usize> {
+    if answered.starts_with('0') || !answered.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
     answered
         .parse::<usize>()
         .ok()?
