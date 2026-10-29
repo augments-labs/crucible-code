@@ -364,7 +364,9 @@ pub enum SpeedOutcome {
     },
 }
 
-/// How adopting a stored credential ended.
+/// How adopting a stored credential, or connecting through an installed
+/// agent, ended; or the move on an agent a client that takes part in installs
+/// chose in its place.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoginOutcome {
     /// The credential is stored and cannot be used.
@@ -430,6 +432,69 @@ pub enum LoginOutcome {
         /// Why the provider will not be the next run's, where it will not.
         unwritten: Option<Problem>,
     },
+    /// A move on an agent was chosen in place of a connect, so nothing
+    /// changed: nothing was written or started. It is offered only to a client
+    /// that claimed [`Capability::Install`](crate::Capability::Install), which
+    /// asks for the move with the command [`AgentAction::command`] gives.
+    AgentChosen {
+        /// The move chosen.
+        action: AgentAction,
+    },
+}
+
+/// A move on an installed agent a client can ask the host for: the four the
+/// agents door carries out, each named as the catalog or the configuration
+/// names what it moves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentAction {
+    /// Install this version of this catalog agent.
+    Install {
+        /// The agent, by the name the catalog gives it.
+        agent: Name,
+        /// The version, as the catalog spells it.
+        version: Name,
+    },
+    /// Move this installed catalog agent to the version the catalog now
+    /// offers for it.
+    Update {
+        /// The agent, by the name the catalog gives it.
+        agent: Name,
+    },
+    /// Move this installed catalog agent back to the version it was on before.
+    Rollback {
+        /// The agent, by the name the catalog gives it.
+        agent: Name,
+    },
+    /// Adopt a sign-in stored for this instance by this method.
+    SignIn {
+        /// The instance, by the name the configuration gives it.
+        instance: Name,
+        /// The method, by the name the agent gives it.
+        method: Name,
+    },
+}
+
+impl AgentAction {
+    /// The command that asks for this move.
+    #[must_use]
+    pub fn command(&self) -> Command {
+        match self {
+            Self::Install { agent, version } => Command::InstallAgent {
+                agent: agent.clone(),
+                version: version.clone(),
+            },
+            Self::Update { agent } => Command::UpdateAgent {
+                agent: agent.clone(),
+            },
+            Self::Rollback { agent } => Command::RollbackAgent {
+                agent: agent.clone(),
+            },
+            Self::SignIn { instance, method } => Command::SignInAgent {
+                instance: instance.clone(),
+                method: method.clone(),
+            },
+        }
+    }
 }
 
 /// What still authenticates a provider once its stored credential is gone.
