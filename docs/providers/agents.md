@@ -176,13 +176,14 @@ catalog whatever [`updates`](../configuration/configuration.md#updates) says,
 since you asked. Each agent stands on two rows: its key and newest version,
 over its licence and what is installed of it, such as `Apache-2.0 · not
 installed` or `installed 1.0.0`. In a window 70 columns or wider, a pane beside
-the list says the marked agent's terms link and caution. Typing narrows the list to the agents whose key or licence
-holds what is typed, ignoring case, and the heading says how many are left of
-how many are offered, such as `Agents · 1 of 3 offered`; with no match the list
-says `no agent matches "the text"`. Where the catalog could not be fetched, the
-list says so, with why, and is the catalog crucible believed before. A window
-with no keys to read, or no room for the list, has the agents printed one to a
-line instead.
+the list says the marked agent's terms link and caution. Typing narrows the
+list to the agents whose key or licence holds what is typed, ignoring case, and
+the heading says how many are left of how many are offered, such as
+`Agents · 1 of 3 offered`; with no match the list says
+`no agent matches "the text"`. Where the catalog could not be fetched, the list
+says so, with why, and is the catalog crucible believed before. A window with
+no keys to read, or no room for the list, has the agents printed one to a line
+instead.
 
 Taking an agent opens its own screen, which says where it comes from: the
 versions offered, its licence, its terms link and caution where the catalog
