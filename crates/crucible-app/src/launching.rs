@@ -106,9 +106,12 @@
 //! variable is unset or not absolute, or the entry's own target or profile
 //! variable sets it, no place is joined and the agent keeps no sign-in under
 //! the sandbox. Each place joined becomes a writable root where its links
-//! lead, created private to the user where it is missing and left as it is
-//! where it is not, once the policy permits writing there. No place is made
-//! writable that lies within or contains one on the list of places never made
+//! lead, once the policy permits writing there. Only what is missing of it is
+//! created, each directory owner-only from the moment it exists, and a
+//! directory that is there is left as it is, its access and what a link in it
+//! leads to alike. It is followed again before anything is created and once
+//! more after, and an agent whose place then leads anywhere else than where it
+//! was judged is not started. No place is made writable that lies within or contains one on the list of places never made
 //! writable, or the home crucible keeps its state in, however the entry spells
 //! its way there: it is judged by its path components, as it is joined and
 //! again where its links lead, ignoring case where the file system does and,
@@ -324,6 +327,18 @@ pub enum Unlaunched {
         place: Box<str>,
         /// Why that place is never made writable.
         why: &'static str,
+    },
+    /// A place its catalog entry says it keeps its sign-in in leads somewhere
+    /// else than where it was judged while the launch was being prepared.
+    #[error(
+        "externalAgents.{instance}: a place {agent}'s catalog entry keeps its sign-in in led \
+         somewhere else than where it was judged while it was prepared, so it is not started."
+    )]
+    StateMoved {
+        /// The instance, quoted.
+        instance: String,
+        /// The agent, as its entry names it.
+        agent: String,
     },
     /// Its profile directory could not be made private to the user.
     #[error("the profile directory could not be made private to you: {0}")]
@@ -1678,6 +1693,40 @@ impl Agent {
     }
 }
 
+impl Agent {
+    /// Makes each of `roots` exist through `make`, which creates what is
+    /// missing of one and changes nothing that is there.
+    ///
+    /// What the sandbox is given is the place that was judged, so each root is
+    /// followed again before anything is made through it, and once more after,
+    /// and the launch is refused where one now leads anywhere else.
+    ///
+    /// # Errors
+    ///
+    /// [`Unlaunched::StateMoved`] for a root that leads elsewhere than it was
+    /// judged to, else [`Unlaunched::StateRoot`] for one `make` cannot make.
+    fn made(
+        &self,
+        roots: &[PathBuf],
+        make: impl Fn(&Path) -> std::io::Result<()>,
+    ) -> Result<(), Unlaunched> {
+        let moved = || Unlaunched::StateMoved {
+            instance: quoted(&self.instance),
+            agent: quoted(self.row.named()),
+        };
+        if !roots.iter().all(|root| unmoved(root)) {
+            return Err(moved());
+        }
+        for root in roots {
+            make(root).map_err(Unlaunched::StateRoot)?;
+        }
+        if !roots.iter().all(|root| unmoved(root)) {
+            return Err(moved());
+        }
+        Ok(())
+    }
+}
+
 /// The location the entry `agent` names, where it names one.
 fn located_in(agent: &ExternalAgent) -> Option<Box<str>> {
     agent.cloud().map(|cloud| cloud.location().into())
@@ -1777,6 +1826,50 @@ const fn within(step: Account) -> Duration {
 
 /// How long a sign-in waits for the user to finish it in their browser.
 const SIGNING_IN: Duration = Duration::from_mins(5);
+
+/// Whether `a` and `b` are one path, compared by components as the file
+/// system compares their names.
+fn same_path(a: &Path, b: &Path) -> bool {
+    is_beneath(a, b) && is_beneath(b, a)
+}
+
+/// Whether `root` now leads where it was judged to: to itself, once its links
+/// are followed.
+fn unmoved(root: &Path) -> bool {
+    resolved(root).is_ok_and(|now| same_path(&now, root))
+}
+
+/// Creates what is missing of `root`, each directory owner-only from the
+/// moment it exists, and changes nothing that is there: not its access, and
+/// not what a link leads to. A directory that appears between the look and the
+/// creation is left as its maker made it.
+fn created(root: &Path) -> std::io::Result<()> {
+    let mut missing = Vec::new();
+    let mut existing = root;
+    while std::fs::symlink_metadata(existing).is_err() {
+        let Some(parent) = existing.parent() else {
+            break;
+        };
+        missing.push(existing);
+        existing = parent;
+    }
+    #[cfg(unix)]
+    let builder = {
+        use std::os::unix::fs::DirBuilderExt;
+        let mut builder = std::fs::DirBuilder::new();
+        builder.mode(0o700);
+        builder
+    };
+    #[cfg(not(unix))]
+    let builder = std::fs::DirBuilder::new();
+    for part in missing.into_iter().rev() {
+        match builder.create(part) {
+            Err(why) if why.kind() != std::io::ErrorKind::AlreadyExists => return Err(why),
+            Ok(()) | Err(_) => {}
+        }
+    }
+    Ok(())
+}
 
 /// Makes `profile` a directory only its owner can enter, creating it, and any
 /// missing parent, that way.
@@ -2007,8 +2100,13 @@ impl<'a> Launcher<'a> {
             request = updating_off(request, stored.updater_off.as_ref());
         }
         for root in &kept {
-            // Made only where the child may write it, as the profile is.
-            if !policy.permits_path(root, SandboxFilesystemAccess::ReadWrite) {
+            // Made only where the child may write it, as the profile is, and
+            // only where it was judged: the rule is the place that was.
+            let granted = policy.filesystem().iter().any(|rule| {
+                matches!(rule.access(), SandboxFilesystemAccess::ReadWrite)
+                    && same_path(rule.path(), root)
+            });
+            if !granted || !policy.permits_path(root, SandboxFilesystemAccess::ReadWrite) {
                 return Err(SandboxPolicyError::InvalidPath.into());
             }
         }
@@ -2034,12 +2132,7 @@ impl<'a> Launcher<'a> {
                 "a business sign-in's settings are written in the agent's profile directory, and none is configured",
             )));
         }
-        for root in &kept {
-            // A place that is there is the user's and is left as it is.
-            if std::fs::symlink_metadata(root).is_err() {
-                private(root).map_err(Unlaunched::StateRoot)?;
-            }
-        }
+        agent.made(&kept, created)?;
         let mut launch = Launch::new(program, policy, held).asking(request);
         if let Some(profile) = &agent.profile {
             launch = launch.in_profile(profile.clone());

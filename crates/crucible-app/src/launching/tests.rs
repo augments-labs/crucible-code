@@ -2618,6 +2618,109 @@ fn a_link_that_leads_out_of_the_home_is_refused() {
     }
 }
 
+/// An agent whose entry keeps its sign-in in no place, to make roots for.
+fn without_places(sample: &Sample) -> Agent {
+    peer_agent(row_of(&keeping(None, &[])), &sample.root().join("peer"))
+}
+
+/// Only what is missing of a place is made, each directory private to the user
+/// as it comes to be, and a directory that is there is not touched, whatever
+/// its access.
+#[cfg(unix)]
+#[test]
+fn only_what_is_missing_of_a_place_is_made_and_made_private() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sample = Sample::new("launch-state-created");
+    let home = homed_in(&sample);
+    let mode = |place: &str| {
+        fs::metadata(home.join(place))
+            .expect("there")
+            .permissions()
+            .mode()
+            & 0o777
+    };
+    fs::create_dir_all(home.join(".config")).expect("a directory");
+    fs::set_permissions(home.join(".config"), fs::Permissions::from_mode(0o755)).expect("opened");
+
+    created(&home.join(".config/goose/inner")).expect("made");
+
+    assert_eq!(mode(".config"), 0o755);
+    assert_eq!(mode(".config/goose"), 0o700);
+    assert_eq!(mode(".config/goose/inner"), 0o700);
+    fs::set_permissions(
+        home.join(".config/goose"),
+        fs::Permissions::from_mode(0o750),
+    )
+    .expect("opened");
+    created(&home.join(".config/goose/inner")).expect("there");
+    assert_eq!(mode(".config/goose"), 0o750);
+}
+
+/// A root whose parent became a link after it was judged is not made through
+/// the link, and the launch is refused.
+#[cfg(unix)]
+#[test]
+fn a_root_whose_parent_became_a_link_is_not_made_through_it() {
+    use std::os::unix::fs::symlink;
+
+    let sample = Sample::new("launch-state-moved-before");
+    let home = homed_in(&sample);
+    let elsewhere = home.with_file_name("elsewhere");
+    fs::create_dir_all(&elsewhere).expect("a directory");
+    let judged = home.join("cache/goose");
+    symlink(&elsewhere, home.join("cache")).expect("a link");
+
+    let made = without_places(&sample).made(std::slice::from_ref(&judged), created);
+
+    assert!(
+        matches!(made, Err(Unlaunched::StateMoved { .. })),
+        "{made:?}"
+    );
+    assert!(!elsewhere.join("goose").exists(), "made through the link");
+}
+
+/// A root that became a link while it was being made is refused, as the place
+/// the sandbox would be given is not the one that was judged.
+#[cfg(unix)]
+#[test]
+fn a_root_that_became_a_link_as_it_was_made_is_refused() {
+    use std::os::unix::fs::symlink;
+
+    let sample = Sample::new("launch-state-moved-after");
+    let home = homed_in(&sample);
+    let elsewhere = home.with_file_name("elsewhere");
+    fs::create_dir_all(&elsewhere).expect("a directory");
+    let judged = home.join(".goose");
+
+    let made = without_places(&sample).made(std::slice::from_ref(&judged), |root| {
+        created(root)?;
+        fs::remove_dir(root)?;
+        symlink(&elsewhere, root)
+    });
+
+    assert!(
+        matches!(made, Err(Unlaunched::StateMoved { .. })),
+        "{made:?}"
+    );
+    let said = made.expect_err("refused").to_string();
+    assert!(said.contains("externalAgents.work"), "{said}");
+}
+
+/// Roots that stay where they were judged are made, and one that was there
+/// is not an error.
+#[test]
+fn roots_that_stay_where_they_were_judged_are_made() {
+    let sample = Sample::new("launch-state-made");
+    let home = homed_in(&sample);
+    fs::create_dir_all(home.join(".goose")).expect("a place");
+    let roots = [home.join(".config/goose"), home.join(".goose")];
+
+    without_places(&sample).made(&roots, created).expect("made");
+
+    assert!(roots.iter().all(|root| root.is_dir()));
+}
+
 /// A program for an agent to be found at, which no sandbox here starts.
 fn standing(sample: &Sample) -> PathBuf {
     installed(sample, &Script::of([Reply::lines(["1.0.0"])]))

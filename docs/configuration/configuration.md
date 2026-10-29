@@ -253,11 +253,13 @@ places its catalog entry says it keeps its sign-in in, joined to your home
 there at the next start; one with a `profileDir` keeps its sign-in there and is
 given none of those places, so it cannot change the account another instance of
 the agent is signed in to. A place that is missing is created for you alone,
-and one that is there is left as it is. A place whose links lead out of your
-home, as a dotfile manager's link can, is refused. Names are compared by their
-parts, ignoring case where your file system does and, on Windows, the dots and
-spaces that end a name. These are never made writable, since what is written
-there runs as you or holds what signs in as you:
+and one that is there is left as it is, whatever its access. If a place leads
+somewhere else by the time it is made than where it was checked, the agent is
+not started. A place whose links lead out of your home, as a dotfile manager's
+link can, is refused. Names are compared by their parts, ignoring case where
+your file system does and, on Windows, the dots and spaces that end a name.
+These are never made writable, since what is written there runs as you or holds
+what signs in as you:
 
 - the shell startup and logout files (`.bashrc`, `.bash_profile`,
   `.bash_login`, `.bash_logout`, `.bash_aliases`, `.profile`, `.zshrc`,
