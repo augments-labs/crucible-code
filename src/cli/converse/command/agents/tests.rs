@@ -258,6 +258,48 @@ fn the_closing_lines_say_more_are_offered_and_that_the_catalog_was_not_refreshed
     );
 }
 
+/// What `printed` says of `listing` on a window `columns` wide, a row each.
+fn said(listing: &Listing, columns: usize) -> Vec<String> {
+    let mut renderer = Renderer::new(crucible_tui::Recording::new(columns, 24));
+    printed(&mut renderer, listing).expect("the terminal to be written");
+    renderer.terminal().picture().said()
+}
+
+#[test]
+fn with_no_list_to_stand_each_agent_is_printed_on_a_line_of_its_own_escaped_and_cut() {
+    let long = format!("MIT\n{}", "x".repeat(300));
+    let listing = Listing::new(
+        vec![
+            listed("goose", &["1.0.0"], "Apache-2.0", &[]),
+            listed("opencode", &["0.9.1", "0.9.0"], "MIT", &["0.9.1", "0.9.0"]),
+            listed("aider", &["2.1\u{1b}[2J"], &long, &[]),
+        ],
+        true,
+        None,
+    );
+
+    // Wide enough that no line folds, so a row is a line said.
+    let rows = said(&listing, 400);
+    let cut = format!("MIT\\n{}…", "x".repeat(256 - "MIT\\n".len()));
+    assert_eq!(
+        rows,
+        [
+            "goose 1.0.0 · Apache-2.0 · not installed".to_owned(),
+            // Folded rather than cut, so it names the versions held.
+            "opencode 0.9.1 · MIT · installed 0.9.1, 0.9.0".to_owned(),
+            format!("aider 2.1\\u{{1b}}[2J · {cut} · not installed"),
+            MORE.to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn an_empty_catalog_says_that_none_is_offered() {
+    let listing = Listing::new(Vec::new(), false, None);
+
+    assert_eq!(said(&listing, 80), [NONE_OFFERED]);
+}
+
 #[test]
 fn an_add_names_the_instance_written_which_is_the_last_the_door_gives() {
     let said = added(&door::Outcome::Moved {
