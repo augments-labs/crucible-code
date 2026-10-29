@@ -4,9 +4,11 @@
 //! Opening it asks the agents door for the catalog through
 //! [`Terms::carry`], which reads it again whatever `updates.check` says, and
 //! stands the answer as a [`Picker`]: one entry an agent, in the door's order,
-//! its key and newest version over its licence and what the install store
-//! holds of it, and a preview pane, where the window is wide enough for one,
-//! holds the marked agent's terms and caution. What is typed narrows the
+//! its key and newest version over its licence and one word for whether the
+//! install store holds a version of it, never which, since the picker cuts a
+//! long line and a version cut short reads as another. A preview pane, where
+//! the window is wide enough for one, holds the marked agent's licence, terms
+//! and caution and the versions the store holds. What is typed narrows the
 //! entries to the agents whose key or licence holds it, ASCII case aside. The
 //! drawing is the picker's and the search line is an [`Editor`]; what is here
 //! is which entries a query keeps and what each key moves, in [`Listing`].
@@ -73,6 +75,10 @@ const NONE_OFFERED: &str = "no agent is offered by the catalog";
 
 /// The closing line of a list the door cut.
 const MORE: &str = "more agents are offered than are shown here";
+
+/// What an agent the store holds a version of says, on its entry; which
+/// versions are on its preview and its screen.
+const INSTALLED: &str = "installed";
 
 /// What an agent the store holds no version of says, on its entry.
 const UNINSTALLED: &str = "not installed";
@@ -190,14 +196,22 @@ fn carried<T: Terminal>(
 
 /// The catalog as lines, for a window with no keys to read or no room to
 /// stand the list: each agent on one, then the closing lines.
+///
+/// A line is folded rather than cut, and there is no preview to open, so
+/// each names the versions the store holds where its entry says only that
+/// one is.
 fn printed<T: Terminal>(renderer: &mut Renderer<T>, listing: &Listing) -> Result<(), Fatal> {
     if listing.agents.is_empty() {
         say(renderer, NONE_OFFERED)?;
     }
     for entry in &listing.agents {
+        let installed = match &entry.listed.installed {
+            Ok(versions) if !versions.is_empty() => format!("{INSTALLED} {}", counted(versions)),
+            _ => entry.installed.to_owned(),
+        };
         say(
             renderer,
-            &format!("{} · {} · {}", entry.title, entry.licence, entry.installed),
+            &format!("{} · {} · {installed}", entry.title, entry.licence),
         )?;
     }
     for line in &listing.notice {
@@ -237,8 +251,8 @@ struct Entry {
     title: String,
     /// Its licence.
     licence: String,
-    /// Which versions the store holds of it, or that it could not be read.
-    installed: String,
+    /// Whether the store holds a version of it, or that it could not be read.
+    installed: &'static str,
 }
 
 impl Listing {
@@ -290,7 +304,7 @@ impl Listing {
             .map(|entry| Kept {
                 title: &entry.title,
                 when: &entry.licence,
-                branch: &entry.installed,
+                branch: entry.installed,
                 place: "",
             })
             .collect();
@@ -427,12 +441,13 @@ fn titled(listed: &door::Listed) -> String {
     }
 }
 
-/// Which versions the store holds of an agent, on its entry.
-fn held(listed: &door::Listed) -> String {
+/// Whether the store holds a version of an agent, on its entry: never which,
+/// since a version cut short there would read as another.
+fn held(listed: &door::Listed) -> &'static str {
     match &listed.installed {
-        Ok(versions) if versions.is_empty() => UNINSTALLED.to_owned(),
-        Ok(versions) => format!("installed {}", counted(versions)),
-        Err(_) => UNREAD.to_owned(),
+        Ok(versions) if versions.is_empty() => UNINSTALLED,
+        Ok(_) => INSTALLED,
+        Err(_) => UNREAD,
     }
 }
 
@@ -468,19 +483,12 @@ fn unrefreshed_line(why: &FetchError) -> String {
     )
 }
 
-/// The marked agent's terms and caution, folded at `pane` columns.
+/// The marked agent's licence, terms and caution and the versions the store
+/// holds of it, as its screen tells them, folded at `pane` columns: an entry
+/// says only whether a version is held, so the preview says which.
 fn previewed(listed: &door::Listed, pane: usize) -> Vec<Row> {
-    let mut said = Vec::new();
-    if let Some(terms) = &listed.terms {
-        said.push(format!("Terms: {}", shown(terms)));
-    }
-    if let Some(caution) = &listed.caution {
-        said.push(format!("Caution: {}", shown(caution)));
-    }
-    if said.is_empty() {
-        said.push("No terms or caution are given.".to_owned());
-    }
-    said.iter()
+    described(listed)
+        .iter()
         .flat_map(|line| fold(line, pane.max(1)))
         .map(|part| Row::new().then(Slot::Plain, part))
         .collect()
@@ -636,14 +644,23 @@ fn screen<T: Terminal>(
 /// what the store holds of it, whether a sign-in made under the sandbox is
 /// kept, and what a check against its receipts found, where one was made.
 fn provenance(listed: &door::Listed, verified: Option<&[String]>) -> Vec<String> {
-    let mut told = vec![
-        if listed.offered.is_empty() {
-            "Offered: no version for this platform.".to_owned()
-        } else {
-            format!("Offered: {}.", counted(&listed.offered))
-        },
-        format!("Licence: {}.", shown(&listed.license)),
-    ];
+    let mut told = vec![if listed.offered.is_empty() {
+        "Offered: no version for this platform.".to_owned()
+    } else {
+        format!("Offered: {}.", counted(&listed.offered))
+    }];
+    told.extend(described(listed));
+    if listed.keeps_no_sign_in {
+        told.push(UNKEPT_SIGN_IN.to_owned());
+    }
+    told.extend(verified.unwrap_or_default().iter().cloned());
+    told
+}
+
+/// The licence, the terms and caution where there are any, and what the
+/// store holds of an agent, each line escaped and cut.
+fn described(listed: &door::Listed) -> Vec<String> {
+    let mut told = vec![format!("Licence: {}.", shown(&listed.license))];
     if let Some(terms) = &listed.terms {
         told.push(format!("Terms: {}", shown(terms)));
     }
@@ -658,10 +675,6 @@ fn provenance(listed: &door::Listed, verified: Option<&[String]>) -> Vec<String>
             within(why, REFUSAL)
         ),
     });
-    if listed.keeps_no_sign_in {
-        told.push(UNKEPT_SIGN_IN.to_owned());
-    }
-    told.extend(verified.unwrap_or_default().iter().cloned());
     told
 }
 

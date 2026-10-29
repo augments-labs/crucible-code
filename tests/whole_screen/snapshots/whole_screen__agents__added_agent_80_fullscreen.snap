@@ -9,10 +9,10 @@ expression: picture
 | Agents · 1 of 1 offered                                                        |
 |                                                                                |
 |╭──────────────────────────────╮ ╭─────────────────────────────────────────────╮|
-|│ › goose 1.0.0                │ │ Terms: https://example.com/goose/terms      │|
-|│   Apache-2.0 · installed 1.0 │ │ Caution: Read the goose terms first.        │|
-|│                              │ │                                             │|
-|│                              │ │                                             │|
+|│ › goose 1.0.0                │ │ Licence: Apache-2.0.                        │|
+|│   Apache-2.0 · installed     │ │ Terms: https://example.com/goose/terms      │|
+|│                              │ │ Caution: Read the goose terms first.        │|
+|│                              │ │ Installed, each with a receipt: 1.0.0.      │|
 |│                              │ │                                             │|
 |│                              │ │                                             │|
 |│                              │ │                                             │|

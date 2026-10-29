@@ -1504,7 +1504,7 @@ fn an_agent_added_after_a_yes_downloads_and_names_the_instance_written() {
             insta::assert_snapshot!(format!("adding_agent_{}_{mode}", size.0), picture);
 
             published.release();
-            window.types_until("", "installed 1.0");
+            window.types_until("", "Apache-2.0 · installed");
             let picture = scrubbed(&timeless(&window.picture()), &case);
             insta::assert_snapshot!(format!("added_agent_{}_{mode}", size.0), picture);
             left(&mut window, "Added goose 1.0.0");
@@ -1545,7 +1545,7 @@ fn a_second_add_of_the_same_agent_writes_the_next_free_instance() {
         takes(&mut window, "Add");
         window.types_until("", "bytes to download");
         takes(&mut window, "Add");
-        window.types_until("", "installed 1.0");
+        window.types_until("", "Apache-2.0 · installed");
 
         window.types_until("\r", "esc to go back");
         let screen = window.picture();
@@ -1563,7 +1563,7 @@ fn a_second_add_of_the_same_agent_writes_the_next_free_instance() {
             "{case}: {asked}"
         );
         takes(&mut window, "Add");
-        window.types_until("", "installed 1.0");
+        window.types_until("", "Apache-2.0 · installed");
         left(&mut window, "as the instance \"goose-2\".");
 
         let first = instance(&window, "goose", &case);

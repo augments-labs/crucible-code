@@ -69,8 +69,29 @@ fn an_entry_is_its_key_and_newest_version_over_its_licence_and_what_is_held() {
     assert!(rows.contains("goose 1.0.0"), "{rows}");
     assert!(rows.contains("Apache-2.0 · not installed"), "{rows}");
     assert!(rows.contains("opencode 0.9.1"), "{rows}");
-    assert!(rows.contains("MIT · installed 0.9.0"), "{rows}");
+    assert!(rows.contains("MIT · installed"), "{rows}");
+    // An entry names no version it holds: one cut short would read as
+    // another, and the preview and the agent's screen say them whole.
+    assert!(!rows.contains("installed 0.9"), "{rows}");
     assert_eq!(kept(&listing), ["goose", "opencode", "aider"]);
+}
+
+#[test]
+fn the_preview_holds_the_licence_the_versions_held_the_terms_and_the_caution() {
+    let mut agent = listed("opencode", &["0.9.1", "0.9.0"], "MIT", &["0.9.1", "0.9.0"]);
+    agent.terms = Some("https://example.com/opencode/terms".into());
+    agent.caution = Some("Read the opencode terms first.".into());
+    let mut listing = Listing::new(vec![agent], false, None);
+
+    let rows = drawn(&mut listing, 100, 30).join("\n");
+    for told in [
+        "Licence: MIT.",
+        "Installed, each with a receipt: 0.9.1, 0.9.0.",
+        "Terms: https://example.com/opencode/terms",
+        "Caution: Read the opencode terms first.",
+    ] {
+        assert!(rows.contains(told), "{told}: {rows}");
+    }
 }
 
 #[test]
