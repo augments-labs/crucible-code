@@ -515,6 +515,7 @@ fn signed_out_antigravity(tree: &Tree, runs: usize) -> Result<(Conversation, Str
         policy: SandboxPolicy::standard(&tree.workspace()?)?.with_enabled(false),
         consent: consent.clone(),
         state: tree.0.join("state"),
+        sessions: tree.sessions(),
         agent,
         row,
         launched: Arc::default(),
