@@ -2,7 +2,7 @@
 source: tests/whole_screen/agents.rs
 expression: picture
 ---
-40x40 cursor 9,15 scrollback 0
+40x40 cursor 13,15 scrollback 0
 |CRUCIBLE                                |
 |/…/workspace                            |
 |                                        |
@@ -11,6 +11,10 @@ expression: picture
 |  "goose". It was not smoke-tested: the |
 |  sandbox is off, and a smoke test runs |
 |  only inside it.                       |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
 |╭──────────────────────────────────────╮|
 |│ Search  goose                        │|
 |╰──────────────────────────────────────╯|
@@ -31,10 +35,6 @@ expression: picture
 |╰──────────────────────────────────────╯|
 |                                        |
 | ↑↓ · enter · esc                       |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
 |                                        |
 |                                        |
 |                                        |

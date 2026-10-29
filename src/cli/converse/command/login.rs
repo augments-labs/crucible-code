@@ -1333,6 +1333,11 @@ pub(super) fn executing<T: Terminal>(
 /// Draws `question` as a panel under `title` and reads keys until it is
 /// answered: nothing where it had no room to stand. Escape answers the way
 /// that leaves everything as it is, which a question puts last.
+///
+/// The application's question is laid out in the whole window in either mode
+/// rather than in the share a list is held to in native mode, so every fact
+/// it states is on screen while it is answered; one taller than the window
+/// gives up rows as any panel does.
 pub(super) fn answered<T: Terminal>(
     renderer: &mut Renderer<T>,
     style: Style,
@@ -1359,7 +1364,7 @@ pub(super) fn answered<T: Terminal>(
                 chosen: 0,
                 footer: BACK,
             };
-            match picking::pick(renderer, style, panel)? {
+            match picking::ask(renderer, style, panel)? {
                 Picked::Took(at) => Some(Reply::Took(at)),
                 Picked::Left => Some(Reply::Took(shown.len().saturating_sub(1))),
                 Picked::Cramped => None,

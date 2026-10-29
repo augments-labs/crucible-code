@@ -79,15 +79,17 @@ const NOTCH: i32 = 3;
 /// reader who wants the paragraph above gets there without letting go.
 const CREEP: Duration = Duration::from_millis(60);
 
-/// The most of a native window a panel standing over or in place of the box
-/// may take: half, rounded down.
+/// The most of a native window [`Renderer::room`] gives a panel standing over
+/// or in place of the box: half, rounded down.
 ///
 /// Half, so that what the panel stands over can still be read while it is
 /// open — and, in native mode, so that it is still there when the panel
 /// closes. The same share the prompt is held to (`crate::bands`), kept apart
 /// from it because they are two rules: that one is about a prompt being
 /// written, this one is about the rows a panel would otherwise push into the
-/// terminal's scrollback for good.
+/// terminal's scrollback for good. A caller may lay a question out in the
+/// whole window instead, where every fact it states has to be read before it
+/// is answered; the rows that pushes off the top stay in the scrollback.
 const PANEL_SHARE: usize = 2;
 
 /// Where the cursor rests inside a band.
@@ -2038,7 +2040,8 @@ impl<T: Terminal> Renderer<T> {
         self.size.rows
     }
 
-    /// How many rows what stands over or in place of the box gets.
+    /// How many rows what stands over or in place of the box gets, unless
+    /// its caller lays it out in the whole window.
     ///
     /// The whole window on the full screen, since nothing else holds a row of
     /// it for the length of a session. Half the window, rounded down, in native
@@ -2047,7 +2050,10 @@ impl<T: Terminal> Renderer<T> {
     /// is held to a share and scrolls inside it instead. The one place the
     /// share is worked out, so every component that asks is held to the same
     /// one — a panel the share cannot hold at all is the caller's to stand
-    /// taller, at the least it can be drawn in.
+    /// taller, at the least it can be drawn in. A caller may lay a question out
+    /// in the whole window, [`Renderer::rows`], instead, where every fact it
+    /// states has to be read before it is answered; the rows that pushes off
+    /// the top stay in the scrollback.
     #[must_use]
     pub fn room(&self) -> usize {
         if self.native.is_some() {
