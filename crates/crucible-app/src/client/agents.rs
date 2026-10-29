@@ -54,12 +54,12 @@
 //! add is an install that then writes one more instance of the agent: its
 //! question names the instance by the first name the user file leaves free
 //! (the agent key, then the key with `-2`, `-3` and on), and once the version
-//! is in place and the instances are moved, `externalAgents.<name>` is written
-//! with its `driver`, `agent` and `executable` alone, in one further update of
-//! the user file. The name is chosen again from the file read under its lock,
-//! so one taken meanwhile gives the next free one, and the outcome names the
-//! one written. A write refused then leaves the version kept and says no
-//! instance was written ([`AgentsError::Unadded`]). A
+//! is in place, `externalAgents.<name>` is written with its `driver`, `agent`
+//! and `executable` alone, in the same update of the user file that moves the
+//! instances. The name is chosen again from the file read under its lock, so
+//! one taken meanwhile gives the next free one, and the outcome names the one
+//! written. A write refused then leaves the version kept and the user file as
+//! it was, no instance moved and none added ([`AgentsError::Unadded`]). A
 //! rollback names the newest other version the store holds that no
 //! revocation names, the same program in it, and fetches nothing; a removal
 //! is refused while an instance still runs a version from the store.
@@ -432,8 +432,9 @@ pub enum AgentsError {
     #[error(transparent)]
     Remember(#[from] RememberError),
     /// The version was put in place for an instance to be added, and the
-    /// instance could not be written; the version stays kept.
-    #[error("{agent} {version} is installed, but no instance was written for it: {why}")]
+    /// user file refused the one update that adds it and moves the instances;
+    /// the version stays kept, and the file is as it was.
+    #[error("{agent} {version} is installed, but your configuration was not changed: {why}")]
     Unadded {
         /// The agent.
         agent: AgentKey,
@@ -1000,18 +1001,11 @@ impl Door<'_> {
             self.store.commit(staging, &version, &files, provenance)?;
         }
         Self::smoke(&plan.smoking, (&offer.entry, target), &root, &program).await?;
-        let (mut instances, left) = self.point(&moving, &program)?;
-        if plan.adding.is_some() {
-            let added =
-                remember::adding(&self.user, agent, &program.to_string_lossy()).map_err(|why| {
-                    AgentsError::Unadded {
-                        agent: agent.clone(),
-                        version: offer.pin.version.clone(),
-                        why: Box::new(why),
-                    }
-                })?;
-            instances.push(added.into());
-        }
+        let (instances, left) = if plan.adding.is_some() {
+            self.add(agent, &offer.pin.version, &moving, &program)?
+        } else {
+            self.point(&moving, &program)?
+        };
         Ok(Outcome::Moved {
             agent: agent.clone(),
             how,
@@ -1129,18 +1123,31 @@ impl Door<'_> {
             return Ok((Vec::new(), Vec::new()));
         }
         let program = program.to_string_lossy();
-        let moved: Vec<(&str, &str, &str)> = moving
-            .iter()
-            .map(|(instance, _)| (instance.name(), instance.executable(), &*program))
-            .collect();
-        let left = remember::pointing(&self.user, &moved)?;
-        let written = moving
-            .iter()
-            .map(|(instance, _)| instance.name())
-            .filter(|name| !left.iter().any(|kept| kept == name))
-            .map(Into::into)
-            .collect();
-        Ok((written, left.into_iter().map(Into::into).collect()))
+        let left = remember::pointing(&self.user, &moved(moving, &program))?;
+        Ok(written(moving, left))
+    }
+
+    /// What [`Self::point`] writes, and one more instance of `agent` started
+    /// as `program`, in the same update of the user file; gives the instances
+    /// written, the one added last, and those left. A refusal writes neither,
+    /// and says `version` is kept.
+    fn add(
+        &self,
+        agent: &AgentKey,
+        version: &str,
+        moving: &[(&ExternalAgent, Version)],
+        program: &Path,
+    ) -> Result<Written, AgentsError> {
+        let program = program.to_string_lossy();
+        let (left, added) = remember::adding(&self.user, &moved(moving, &program), agent, &program)
+            .map_err(|why| AgentsError::Unadded {
+                agent: agent.clone(),
+                version: version.into(),
+                why: Box::new(why),
+            })?;
+        let (mut instances, left) = written(moving, left);
+        instances.push(added.into());
+        Ok((instances, left))
     }
 
     /// Prunes the store of `agent` to `program`, the one just put in place,
@@ -1655,6 +1662,30 @@ fn sized(offer: &Offer) -> Result<u64, AgentsError> {
 /// The instances a switch wrote onto the new program, and those it left as
 /// they are because they named something else by then.
 type Written = (Vec<Box<str>>, Vec<Box<str>>);
+
+/// What a switch writes for each of `moving`: its name, the program the
+/// question showed it starting, and `program`.
+fn moved<'a>(
+    moving: &'a [(&ExternalAgent, Version)],
+    program: &'a str,
+) -> Vec<(&'a str, &'a str, &'a str)> {
+    moving
+        .iter()
+        .map(|(instance, _)| (instance.name(), instance.executable(), program))
+        .collect()
+}
+
+/// The instances of `moving` a switch wrote, every one but those `left`,
+/// beside those left.
+fn written(moving: &[(&ExternalAgent, Version)], left: Vec<String>) -> Written {
+    let wrote = moving
+        .iter()
+        .map(|(instance, _)| instance.name())
+        .filter(|name| !left.iter().any(|kept| kept == name))
+        .map(Into::into)
+        .collect();
+    (wrote, left.into_iter().map(Into::into).collect())
+}
 
 /// What a switch found before it asked: whether the version is already in
 /// place, every host its download may contact, the launcher it is

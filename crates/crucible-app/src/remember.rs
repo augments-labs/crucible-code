@@ -9,8 +9,8 @@
 //! it looking like. This opens it, and puts the answer back. A writer that
 //! changes the installed agents or how a provider is reached hands back both
 //! as the file then states them, which the run reads for the rest of it; one
-//! the agents door calls, which no run reads after, hands back the instances
-//! it wrote.
+//! the agents door calls, which no run reads after, hands back what the door
+//! reports: the instances left as they were, and the one an add wrote.
 
 use std::fs::{self, File, TryLockError};
 use std::io::{self, Read as _, Write as _};
@@ -301,24 +301,35 @@ pub fn pointing(file: &Path, moved: &[(&str, &str, &str)]) -> Result<Vec<String>
     })
 }
 
-/// Writes into `file` one more instance of the catalog agent `agent`,
-/// started as `executable`, under the first name `file` leaves free when it is
-/// read under its lock, and changes nothing else in it; gives the name
-/// written.
+/// Writes into `file`, in one update, what [`pointing`] writes for `moved`
+/// and one more instance of the catalog agent `agent`, started as
+/// `executable`, under the first name `file` leaves free when it is read under
+/// its lock, and changes nothing else in it; gives the instances left as they
+/// are because they name something else by now, and the name written. Where
+/// either is refused, neither is written.
 ///
 /// # Errors
 ///
 /// [`RememberError::Busy`] when another crucible holds the file,
 /// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
-/// [`RememberError::Unusable`] when what it already says is not configuration,
-/// or would not be with the instance in it.
+/// [`RememberError::Unusable`] when what it already says is not configuration
+/// or names no such instance, or would not be configuration with the instance
+/// in it.
 pub fn adding(
     file: &Path,
+    moved: &[(&str, &str, &str)],
     agent: &crucible_types::AgentKey,
     executable: &str,
-) -> Result<String, RememberError> {
+) -> Result<(Vec<String>, String), RememberError> {
     answered(file, |text, named| {
-        crucible_config::adding(text, named, agent, executable)
+        // Nothing to move in a file that may not be there yet.
+        let (moved, left) = if moved.is_empty() {
+            (text.to_owned(), Vec::new())
+        } else {
+            crucible_config::pointing(text, named, moved)?
+        };
+        let (written, instance) = crucible_config::adding(&moved, named, agent, executable)?;
+        Ok((written, (left, instance)))
     })
 }
 

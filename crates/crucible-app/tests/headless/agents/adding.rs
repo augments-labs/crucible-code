@@ -1,17 +1,20 @@
 //! The agents door adds a catalog agent as one more instance: under the
 //! agent's key first, then under the next name the user file leaves free when
-//! it is written, and only after a yes; a no fetches and writes nothing, and
-//! a file with no room for it keeps the version and writes nothing.
+//! it is written, and only after a yes, which a standing yes to updates does
+//! not stand in for; a no fetches and writes nothing, and a file with no room
+//! for it keeps the version and writes nothing, not even the moves the add
+//! would have made.
 
 use std::fs;
 use std::path::Path;
 
 use crucible_app::client::agents::{AgentsError, How, Outcome};
+use crucible_config::ConfigError;
 use crucible_types::AgentKey;
 use serde_json::{Value, json};
 
 use super::{
-    Answering, Bench, CATALOG, Failed, ONE, TWO, add, answering, facts,
+    Answering, Bench, CATALOG, Failed, ONE, TWO, add, answering, facts, install,
     reviewed_with_one_installed, shape,
 };
 
@@ -176,6 +179,58 @@ fn an_add_the_user_file_has_no_room_for_keeps_the_version_and_writes_nothing() -
     );
     assert_eq!(fs::read(bench.program("1.0.0"))?, ONE);
     assert_eq!(fs::read_to_string(bench.user())?, full);
+    Ok(())
+}
+
+#[test]
+fn an_add_the_user_file_has_no_room_for_moves_no_instance_onto_the_version_it_keeps()
+-> Result<(), Failed> {
+    let bench = Bench::new("agents-door-add-full-moving")?;
+    bench.server.publish(1, &[("1.0.0", ONE)], &[]);
+    bench.configure(&bench.program("1.0.0"), &json!({}))?;
+    let mut front = answering(&bench.server, Some("Install"));
+    let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+    assert!(
+        matches!(installed, Ok(Outcome::Moved { .. })),
+        "{}",
+        shape(&installed)
+    );
+    bench
+        .server
+        .publish(2, &[("2.0.0", TWO), ("1.0.0", ONE)], &[]);
+    // Filled to as many instances as a file may name with ones started from
+    // outside the store, so `work` is the one instance an add would move.
+    let goose = AgentKey::new("goose")?;
+    let elsewhere = bench.home.path().join("elsewhere").join("goose");
+    let elsewhere = elsewhere.to_string_lossy();
+    let mut full = fs::read_to_string(bench.user())?;
+    for _ in 0..64 {
+        let Ok((more, _)) = crucible_config::adding(&full, "user", &goose, &elsewhere) else {
+            break;
+        };
+        full = more;
+    }
+    assert!(matches!(
+        crucible_config::adding(&full, "user", &goose, &elsewhere),
+        Err(ConfigError::TooMany { .. })
+    ));
+    fs::write(bench.user(), &full)?;
+    let mut front = answering(&bench.server, Some("Install"));
+
+    let (outcome, _) = bench.ask(add("2.0.0")?, &mut front, false)?;
+
+    assert!(
+        matches!(&outcome, Err(AgentsError::Unadded { version, .. }) if &**version == "2.0.0"),
+        "{}",
+        shape(&outcome)
+    );
+    assert!(says(&front, "Moves work from 1.0.0 onto 2.0.0.")?);
+    assert_eq!(fs::read_to_string(bench.user())?, full);
+    assert_eq!(
+        bench.executable()?,
+        bench.program("1.0.0").to_string_lossy()
+    );
+    assert_eq!(fs::read(bench.program("2.0.0"))?, TWO);
     Ok(())
 }
 

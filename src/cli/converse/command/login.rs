@@ -1080,7 +1080,7 @@ fn sentence(refusal: &AgentsError) -> String {
             version,
             why,
         } => format!(
-            "{agent} {} is installed, but no instance was written for it: {}",
+            "{agent} {} is installed, but your configuration was not changed: {}",
             shown(version),
             remembered(why)
         ),
