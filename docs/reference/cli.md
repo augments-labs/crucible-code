@@ -737,8 +737,9 @@ says of itself, and `--help` leaves it out. `ROOT` is the directory a release
 was unpacked into and `ENTRY` is one catalog entry that lists the program to
 start there for this platform. A program that is the interpreter a release pins
 is given its arguments and `launch.py` at the top of `ROOT` before the agent's,
-and is not started where that file is not there. The program is started in the
-sandbox with the network closed and `ROOT` read-only, sent `initialize` and
+and is not started where that file is not there or where the entry's
+`interpreter_args` are not exactly `-I`. The program is started in the sandbox
+with the network closed and `ROOT` read-only, sent `initialize` and
 nothing else, and stopped; it is given 30 seconds to answer. It is never signed
 in, and no credential is read. On standard output it writes JSON: `sandbox`
 (`closed`), `agentInfo`, `authMethods` (each with its `id`, `name` and `kind`,
