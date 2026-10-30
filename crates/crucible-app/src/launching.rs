@@ -810,12 +810,14 @@ impl Agent {
             .or_else(|| offers.first());
         let root = store.directory(&key, &version);
         let leading = match offer {
-            Some(offer) => interpreting(&offer.pin.target, program.path(), &root).map_err(
-                |why| Unlaunched::Launcher {
-                    agent: key.to_string(),
-                    why,
-                },
-            )?,
+            Some(offer) => {
+                interpreting(&offer.pin.target, program.path(), &root).map_err(|why| {
+                    Unlaunched::Launcher {
+                        agent: key.to_string(),
+                        why,
+                    }
+                })?
+            }
             None => Vec::new(),
         };
         Ok((
@@ -958,8 +960,7 @@ fn interpreting(
         .filter(|_| normal && program.ends_with(cmd))
         .ok_or(Unlaunchable::Missing)?;
     // Followed, so a launcher that is a link cannot lead out of the version.
-    let launcher =
-        std::fs::canonicalize(top.join(LAUNCHER)).map_err(|_| Unlaunchable::Missing)?;
+    let launcher = std::fs::canonicalize(top.join(LAUNCHER)).map_err(|_| Unlaunchable::Missing)?;
     let placed = std::fs::canonicalize(version)
         .map(|version| version.join(LAUNCHER))
         .map_err(|_| Unlaunchable::Missing)?;
@@ -972,7 +973,7 @@ fn interpreting(
         .map_err(|_| Unlaunchable::Untext)?;
     Ok(interpreter_args
         .iter()
-        .map(|argument| argument.to_string())
+        .map(ToString::to_string)
         .chain(std::iter::once(launcher))
         .collect())
 }

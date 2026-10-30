@@ -3857,7 +3857,9 @@ fn interpreted() -> Target {
 #[test]
 fn a_pinned_interpreter_is_given_its_arguments_then_its_launcher_and_nothing_else_is() {
     let sample = Sample::new("launch-interpreted");
-    let version = fs::canonicalize(sample.root()).expect("a root").join("1.0.0");
+    let version = fs::canonicalize(sample.root())
+        .expect("a root")
+        .join("1.0.0");
     fs::create_dir_all(version.join("python/bin")).expect("a directory");
     let program = version.join("python/bin/python3");
     fs::write(&program, b"").expect("an interpreter");
@@ -3894,8 +3896,7 @@ fn a_launcher_that_leads_out_of_its_version_is_not_given() {
     let program = version.join("python/bin/python3");
     fs::write(&program, b"").expect("an interpreter");
     fs::write(root.join("elsewhere.py"), b"").expect("a script");
-    std::os::unix::fs::symlink(root.join("elsewhere.py"), version.join(LAUNCHER))
-        .expect("a link");
+    std::os::unix::fs::symlink(root.join("elsewhere.py"), version.join(LAUNCHER)).expect("a link");
 
     assert_eq!(
         interpreting(&interpreted(), &program, &version),

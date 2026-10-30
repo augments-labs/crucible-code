@@ -377,6 +377,7 @@ fn an_agent_is_kept_under_its_driver_in_crucible_home() {
 #[test]
 fn unpack_check_surveys_a_wheel_into_its_site_directory() {
     use sha2::{Digest as _, Sha256};
+    use std::fmt::Write as _;
 
     let sample = Sample::new("unpack-check-wheel");
     let root = sample.root();
@@ -387,10 +388,12 @@ fn unpack_check_surveys_a_wheel_into_its_site_directory() {
             ("peer-1.0.dist-info/METADATA", b"Name: peer\n".as_slice()),
         ],
     );
-    let sha256: String = Sha256::digest(&wheel)
+    let sha256 = Sha256::digest(&wheel)
         .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+        .fold(String::new(), |mut text, byte| {
+            let _ = write!(text, "{byte:02x}");
+            text
+        });
     let described = serde_json::json!({
         "url": "https://example.invalid/peer-1.0-py3-none-any.whl",
         "sha256": sha256,
@@ -422,6 +425,10 @@ fn unpack_check_surveys_a_wheel_into_its_site_directory() {
     installed.sort_unstable();
     assert_eq!(paths, installed);
     for (path, bytes) in &installs {
-        assert_eq!(fs::read(out.join(path)).ok().as_ref(), Some(bytes), "{path}");
+        assert_eq!(
+            fs::read(out.join(path)).ok().as_ref(),
+            Some(bytes),
+            "{path}"
+        );
     }
 }

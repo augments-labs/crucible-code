@@ -344,9 +344,10 @@ fn an_entry_point_the_launcher_cannot_be_written_for_is_refused_before_the_quest
 #[test]
 fn a_wheel_that_is_not_its_pin_or_lands_where_another_artifact_wrote_commits_nothing()
 -> Result<(), Failed> {
+    type Altered = fn(&Server, &mut Value, &[u8]);
     let played = peer(&answers("1.0.0"))?;
     let wheel = wheel();
-    let cases: [(&str, fn(&Server, &mut Value, &[u8]), &str); 2] = [
+    let cases: [(&str, Altered, &str); 2] = [
         (
             "a wheel of other bytes at its pinned size",
             |server, _, wheel| {
