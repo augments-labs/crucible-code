@@ -1784,12 +1784,16 @@ done <<<"$decided"
 # handed back, the application's own command built on this host, handed to the
 # agents door as it came. `/agents` names the catalog read, a verify and an add,
 # each built from the row marked and the key pressed on this host, and hands
-# each to the agents door as it is.
+# each to the agents door as it is. `crucible agents` names the catalog read and
+# every move and sign-in it has subcommands for, each built from the words of
+# its own command line on this host, and hands each to the agents door as it
+# is, with no conversation.
 naming='crates/crucible-app/src/client/accounts.rs
 crates/crucible-app/src/client/agents.rs
 crates/crucible-app/src/client/asking.rs
 crates/crucible-app/src/client/performing.rs
 crates/crucible-app/src/client/turning.rs
+src/cli/agents.rs
 src/cli/client.rs
 src/cli/converse.rs
 src/cli/converse/command.rs

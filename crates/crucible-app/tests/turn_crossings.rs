@@ -212,8 +212,10 @@ fn nothing_shipped_glob_imports_what_a_turn_could_wait_through() {
 /// and joining a turn that has ended, and the agents door `/login` carries a
 /// move out at, waited for on a thread the drawing thread spawns and joins; the
 /// two waits of `crucible update`, a command that runs before any conversation
-/// exists and starts none; the one of `crucible agents install` and the one of
-/// `crucible agents probe`, which are such commands too; the runner's test
+/// exists and starts none; the one of the `crucible agents` subcommands that
+/// ask the agents door, the one in `installing`'s download, which no command
+/// reaches now, and the one of `crucible agents probe`, which are such commands
+/// too; the runner's test
 /// helper that drives a turn to its end on a runtime of the test's own; the two
 /// performance probes waiting, on their own main thread, for each call they
 /// time on a runtime of the probe's own; and the lines inside the `#[cfg(test)]
@@ -303,8 +305,17 @@ const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
         "runtime.block_on(download(http, source, url, into, ceiling))?;",
         1,
     ),
-    // `crucible agents install`, which a command line reaches before any
-    // conversation exists and which starts none: downloading the release.
+    // The `crucible agents` subcommands that ask the agents door, which a
+    // command line reaches before any conversation exists and which start
+    // none: carrying the one command out.
+    (
+        "src/cli/agents.rs",
+        ".block_on(door::run(&request, &self.shelf, &mut front, watching))",
+        1,
+    ),
+    // `installing`'s download of a release, which `crucible agents install`
+    // reached before it asked the agents door, and which no command reaches
+    // now.
     (
         "crates/crucible-app/src/installing.rs",
         ".block_on(async { timeout(DOWNLOAD_LIFETIME, fetched(http, pin, file, progress)).await });",
