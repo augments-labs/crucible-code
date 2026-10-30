@@ -441,11 +441,14 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// A release a test can publish: an archive of two small members and the pin
-/// it was published as.
+/// it was published as, a catalog agent's archive, and a wheel.
 #[cfg(feature = "proof")]
 pub mod proof {
+    use std::fmt::Write as _;
     use std::io::{Cursor, Write as _};
 
+    use base64::Engine as _;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use flate2::Compression;
     use flate2::write::GzEncoder;
     use sha2::{Digest as _, Sha256};
@@ -557,6 +560,43 @@ pub mod proof {
             },
         };
         (archive, pin)
+    }
+
+    /// A wheel of `members`, each a file made with mode `0644` and named as
+    /// the wheel names it, then the `RECORD` of the `.dist-info` directory
+    /// `dist_info` that agrees with them; and each file it installs, under
+    /// `site/`, with its bytes, as a catalog lists them.
+    ///
+    /// # Panics
+    ///
+    /// When the archive cannot be written in memory, which leaves the test
+    /// asking for it nothing to report.
+    #[must_use]
+    #[allow(clippy::expect_used)]
+    pub fn wheel(dist_info: &str, members: &[(&str, &[u8])]) -> (Vec<u8>, Vec<(String, Vec<u8>)>) {
+        let record_name = format!("{dist_info}/RECORD");
+        let mut record = String::new();
+        for (name, bytes) in members {
+            let hash = URL_SAFE_NO_PAD.encode(Sha256::digest(bytes));
+            let _ = writeln!(record, "{name},sha256={hash},{}", bytes.len());
+        }
+        let _ = writeln!(record, "{record_name},,");
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default()
+            .system(zip::System::Unix)
+            .compression_method(CompressionMethod::Deflated)
+            .unix_permissions(0o644);
+        let mut installed = Vec::new();
+        let all = members
+            .iter()
+            .copied()
+            .chain([(record_name.as_str(), record.as_bytes())]);
+        for (name, bytes) in all {
+            writer.start_file(name, options).expect("a member");
+            writer.write_all(bytes).expect("its bytes");
+            installed.push((format!("site/{name}"), bytes.to_vec()));
+        }
+        (writer.finish().expect("a wheel").into_inner(), installed)
     }
 }
 

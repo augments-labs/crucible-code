@@ -719,14 +719,16 @@ catalog writes it, with its address, size, SHA-256, format, ceilings and the
 members it keeps, and no file list yet; `ARTIFACT` is the download. The
 download is checked against the size and SHA-256 first, then unpacked into
 `OUT`, a directory it makes that only you can reach and that must not already
-be there. It refuses a name that is not plain relative ASCII, a name longer
-than 4096 bytes, with a part longer than 255 or with more than 64 parts, a
-name Windows takes for a device, a device, a sparse file, a link that does not
-resolve to a file inside `OUT`, more than 65536 files and directories, and
-anything past the artifact's ceilings; a leading `./` is dropped from a name.
-On standard output it writes the artifact's `unpacked` and `decompressed`
-sizes and its `files` as JSON, as the catalog records them. A refusal says why on standard error, with the cause the reader
-found, and removes `OUT`. It downloads nothing and reads no configuration.
+be there; a wheel's files go under `OUT/site/`, where an install puts them, and
+its `RECORD` must agree with them. It refuses a name that is not plain relative
+ASCII, a name longer than 4096 bytes, with a part longer than 255 or with more
+than 64 parts, a name Windows takes for a device, a device, a sparse file, a
+link that does not resolve to a file inside `OUT`, more than 65536 files and
+directories, and anything past the artifact's ceilings; a leading `./` is
+dropped from a name. On standard output it writes the artifact's `unpacked` and
+`decompressed` sizes and its `files` as JSON, as the catalog records them. A
+refusal says why on standard error, with the cause the reader found, and
+removes `OUT`. It downloads nothing and reads no configuration.
 
 ### `agents probe ROOT ENTRY [--unconfined]`
 
