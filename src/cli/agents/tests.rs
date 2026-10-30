@@ -255,11 +255,11 @@ fn a_catalog_agent_is_added_rather_than_installed() {
         let answer = bench.carried(&action(words), Some(installs), &mut unasked);
 
         let Answer::Refused(refused) = &answer else {
-            panic!("{words:?} was not refused: {answer:?}");
+            panic!("{words:?} was not refused: {}", shape(&answer));
         };
         assert!(
             refused.contains("of catalog for this platform"),
-            "{refused}"
+            "the refusal names catalog and this platform"
         );
     }
     assert!(!bench.heard().contains("Which one?"), "nothing was asked");
@@ -680,11 +680,23 @@ fn unasked(_: &str) -> Result<Option<Typed>, Unstored> {
     panic!("a key was asked for")
 }
 
+/// What a command came to, named by its variant alone, so a failure says
+/// which came back and prints nothing it carries: what the door read, an
+/// agent's account step among it, is never written into a failure.
+const fn shape(answer: &Answer) -> &'static str {
+    match answer {
+        Answer::Done(_) => "Done",
+        Answer::Differs(_) => "Differs",
+        Answer::Refused(_) => "Refused",
+        Answer::Stopped(_) => "Stopped",
+    }
+}
+
 /// The text `answer` carries, where it did what it was asked.
 fn done(answer: Answer) -> String {
     match answer {
         Answer::Done(text) => text,
-        other => panic!("not done: {other:?}"),
+        other => panic!("not done: {}", shape(&other)),
     }
 }
 
@@ -703,7 +715,7 @@ fn an_install_with_no_session_lands_the_program_where_it_says() {
     assert_eq!(fs::read(&program).ok().as_deref(), Some(ONE));
     assert!(
         said.contains(&format!(" at {}.", program.display())),
-        "the install says where the program is: {said}"
+        "the install says where the program is"
     );
     insta::assert_snapshot!("install_asked", bench.shown(&bench.heard()));
     insta::assert_snapshot!("install_done", bench.shown(&said));
@@ -734,7 +746,8 @@ fn an_install_cancelled_or_unasked_changes_nothing() {
 
     assert!(
         matches!(&cancelled, Answer::Refused(refused) if refused.contains("nothing was changed")),
-        "{cancelled:?}"
+        "a Cancel was not refused as changing nothing: {}",
+        shape(&cancelled)
     );
     assert!(
         bench.heard().contains("Which one?"),
@@ -742,12 +755,18 @@ fn an_install_cancelled_or_unasked_changes_nothing() {
     );
     let unasked_here = bench.carried(&action(&["install", "goose", "1.0.0"]), None, &mut unasked);
     let Answer::Refused(refused) = &unasked_here else {
-        panic!("an install with no terminal was not refused: {unasked_here:?}");
+        panic!(
+            "an install with no terminal was not refused: {}",
+            shape(&unasked_here)
+        );
     };
-    assert!(refused.contains("nothing was changed"), "{refused}");
+    assert!(
+        refused.contains("nothing was changed"),
+        "the refusal says nothing was changed"
+    );
     assert!(
         refused.contains("asks its question on a terminal"),
-        "{refused}"
+        "the refusal says the question is asked on a terminal"
     );
     assert!(!bench.heard().contains("Which one?"), "nothing was asked");
     assert!(!bench.program("1.0.0").exists(), "nothing was installed");
@@ -862,7 +881,8 @@ fn only_a_choice_s_number_alone_on_its_line_answers_an_install() {
         assert!(
             matches!(&answered, Answer::Refused(refused)
                 if refused == "nothing was confirmed, so nothing was changed"),
-            "{typed:?} was not a no: {answered:?}"
+            "{typed:?} was not a no: {}",
+            shape(&answered)
         );
         assert!(
             bench.heard().contains("Which one?"),
@@ -972,7 +992,7 @@ fn verify_ends_differing_where_a_file_changed_and_remove_takes_it() {
     fs::write(&program, b"another program").expect("the program changed");
     let changed = bench.carried(&action(&["verify", "goose"]), None, &mut unasked);
     let Answer::Differs(differs) = &changed else {
-        panic!("a changed file was not found: {changed:?}");
+        panic!("a changed file was not found: {}", shape(&changed));
     };
     assert_eq!(
         differs,
@@ -1001,7 +1021,10 @@ fn a_sign_in_naming_no_method_beside_several_is_refused_with_their_names() {
     let answer = bench.carried(&action(&["sign-in", "google"]), None, &mut unasked);
 
     let Answer::Refused(refused) = &answer else {
-        panic!("a sign-in with several methods was not refused: {answer:?}");
+        panic!(
+            "a sign-in with several methods was not refused: {}",
+            shape(&answer)
+        );
     };
     assert_eq!(
         refused,
