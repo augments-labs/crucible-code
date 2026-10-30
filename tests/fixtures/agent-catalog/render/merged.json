@@ -324,6 +324,106 @@
         }
       ],
       "version": "1.0.0"
+    },
+    {
+      "admits": {
+        "name": "pyagent",
+        "version": "1.4.0"
+      },
+      "auth_methods": [
+        {
+          "id": "browser",
+          "kind": "agent",
+          "name": "Sign in with a browser"
+        }
+      ],
+      "key": "pyagent",
+      "kind": "uvx",
+      "license": "MIT",
+      "reach": [],
+      "registry_id": "py-agent",
+      "review": "https://github.com/augments-labs/crucible-agent-catalog/pull/6",
+      "sign_in_hosts": [],
+      "state_paths": [],
+      "targets": [
+        {
+          "args": [
+            "acp"
+          ],
+          "artifacts": [
+            {
+              "decompressed": 40,
+              "format": "tar.gz",
+              "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+              "size": 30,
+              "unpacked": 24,
+              "url": "https://python.example/cpython-3.12.7-x86_64-unknown-linux-gnu-install_only.tar.gz",
+              "files": [
+                {
+                  "kind": "dir",
+                  "path": "python"
+                },
+                {
+                  "exec": true,
+                  "kind": "file",
+                  "path": "python/bin/python3.12",
+                  "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+                  "size": 16
+                },
+                {
+                  "exec": false,
+                  "kind": "file",
+                  "path": "python/lib/python3.12/os.py",
+                  "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+                  "size": 8
+                }
+              ]
+            },
+            {
+              "decompressed": 20,
+              "format": "wheel",
+              "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+              "size": 20,
+              "unpacked": 20,
+              "url": "https://files.pythonhosted.org/packages/aa/bb/pyagent-1.4.0-py3-none-any.whl",
+              "files": [
+                {
+                  "exec": false,
+                  "kind": "file",
+                  "path": "site/pyagent/__init__.py",
+                  "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+                  "size": 10
+                },
+                {
+                  "exec": false,
+                  "kind": "file",
+                  "path": "site/pyagent/acp.py",
+                  "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+                  "size": 10
+                }
+              ]
+            }
+          ],
+          "cmd": "python/bin/python3.12",
+          "entry_point": "pyagent.acp:main",
+          "env": {},
+          "hosts": [
+            "python.example",
+            "files.pythonhosted.org"
+          ],
+          "interpreter_args": [
+            "-I"
+          ],
+          "platform": "linux-x86_64",
+          "probe": {
+            "capabilities": {},
+            "confined": true,
+            "conformance": "not run",
+            "sandbox": "closed"
+          }
+        }
+      ],
+      "version": "1.4.0"
     }
   ],
   "format": 1,

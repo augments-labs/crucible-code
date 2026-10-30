@@ -2861,7 +2861,21 @@ fn a_catalog_the_intake_renders_verifies_under_the_key_that_signed_it() {
         .iter()
         .map(|entry| entry.key.as_str())
         .collect();
-    assert_eq!(keys, ["big", "fake"]);
+    assert_eq!(keys, ["big", "fake", "pyagent"]);
+    let [.., python] = catalog.entries() else {
+        panic!("an interpreter entry");
+    };
+    assert_eq!(python.kind, Kind::Uvx);
+    let [target] = python.targets.as_slice() else {
+        panic!("one target");
+    };
+    assert_eq!(
+        target.launch,
+        Launch::Uvx {
+            interpreter_args: vec!["-I".into()],
+            entry_point: "pyagent.acp:main".into(),
+        }
+    );
     let revoked: Vec<(&str, &str)> = catalog
         .revoked()
         .iter()

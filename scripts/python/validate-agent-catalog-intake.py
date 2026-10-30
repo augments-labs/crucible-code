@@ -7,19 +7,29 @@ the intake (each download, the addresses it was redirected through, and the
 `unpack-check` and `probe` output) is laid out here in a scratch directory,
 from the `unpack-check` and `probe` fixtures the Rust tests hold to the real
 output, so no network is reached and `crucible` is never run.
+
+A `uvx` agent's interpreter archive and wheels are built here, in the scratch
+directory, with `tarfile` and `zipfile`, so no binary is committed; the
+`unpack-check` listing written beside each is in the shape
+`unpack-check/binary.json` pins to the real output, with each wheel's paths
+under `site/` and the interpreter's under `python/`.
 """
 
 from __future__ import annotations
 
 import argparse
 import copy
+import gzip
 import hashlib
 import importlib.util
+import io
 import json
 import pathlib
 import subprocess
 import sys
+import tarfile
 import tempfile
+import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 INTAKE = ROOT / "scripts/python/agent-catalog-intake.py"
@@ -27,6 +37,7 @@ FIXTURES = ROOT / "tests/fixtures/agent-catalog"
 REGISTRY = FIXTURES / "intake/registry.json"
 CHOICES = FIXTURES / "intake/choices.json"
 RUNNERS = FIXTURES / "intake/runners.json"
+INTERPRETERS = FIXTURES / "intake/interpreters.json"
 UNPACKED = json.loads((FIXTURES / "unpack-check/binary.json").read_text())
 PROBED = json.loads((FIXTURES / "probe/fake-peer.json").read_text())
 UNCONFINED = json.loads((FIXTURES / "probe/unconfined.json").read_text())
@@ -304,7 +315,7 @@ def check_review(data: dict, assets: pathlib.Path) -> None:
     dropped(data, "unprobed-agent", None, "no probe output", "darwin-aarch64")
     dropped(data, "leaky-agent", None, "linux-x86_64", "without a sandbox", "confined")
     dropped(data, "reachy-agent", None, "10.0.0.1")
-    dropped(data, "npx-agent", None, "binary")
+    dropped(data, "npx-agent", None, "binary", "uvx")
     dropped(data, "unkeyed-agent", None, "no key")
     dropped(data, "x`` <b>@here", None, "registry id")
     dropped(data, "split-agent", None, "auth_methods[1].command", "darwin-aarch64")
@@ -659,6 +670,7 @@ def check_budget(scratch: pathlib.Path) -> None:
     namespace = argparse.Namespace(
         registry=REGISTRY, choices=CHOICES, runners=RUNNERS, observed=scratch / "observed",
         deny=ROOT / "deny.toml", assets=scratch / "budget-assets", out=scratch / "budget.json", merged=None,
+        interpreters=None,
     )
     module.RUN_BYTES = 3000
     assert module.review(namespace) == 0
@@ -753,6 +765,503 @@ def check_publish(scratch: pathlib.Path) -> None:
     refuses(checked("shapeless", {"entries": "none"}), "not review data")
 
 
+PYPI = "https://files.pythonhosted.org/packages/"
+PYTHON = "3.12"
+OWN = "pyagent-1.4.0-py3-none-any.whl"
+CONSOLE = "[console_scripts]\npyagent = pyagent.acp:main\n"
+
+
+def sha(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+def listed(members: dict[str, tuple[bytes, bool]], dirs: tuple = (), links: tuple = ()) -> dict:
+    """An unpack-check output for the files `members` gives by path, with
+    their bytes and exec flags, the directories `dirs` and the links `links`."""
+    files: list[dict] = [{"kind": "dir", "path": path} for path in dirs]
+    files += [
+        {"exec": runnable, "kind": "file", "path": path, "sha256": sha(content), "size": len(content)}
+        for path, (content, runnable) in members.items()
+    ]
+    files += [{"kind": "link", "path": path, "target": target} for path, target in links]
+    unpacked = sum(len(content) for content, _ in members.values())
+    return {"decompressed": unpacked, "files": files, "unpacked": unpacked}
+
+
+def interpreter(platform: str, *, program: bool = True, runnable: bool = True, stray: bool = False) -> tuple[bytes, dict]:
+    """A python-build-standalone `install_only` archive for `platform`, with
+    more files than a catalog lists inline, and its unpack-check output."""
+    windows = platform.startswith("windows-")
+    members: dict[str, tuple[bytes, bool]] = {}
+    if program:
+        name = "python/python.exe" if windows else f"python/bin/python{PYTHON}"
+        members[name] = (f"interpreter for {platform}\n".encode(), runnable and not windows)
+    for index in range(300):
+        members[f"python/lib/python{PYTHON}/m{index:03}.py"] = (f"# {index}\n".encode(), False)
+    if stray:
+        members["lib/stray.py"] = (b"# outside\n", False)
+    links = () if windows or not program else (("python/bin/python3", f"python{PYTHON}"),)
+    dirs = ("python", "python/lib", f"python/lib/python{PYTHON}") + (() if windows else ("python/bin",))
+    held = io.BytesIO()
+    with gzip.GzipFile(fileobj=held, mode="wb", mtime=0) as zipped, tarfile.open(fileobj=zipped, mode="w") as tar:
+        for path in dirs:
+            info = tarfile.TarInfo(path)
+            info.type, info.mode = tarfile.DIRTYPE, 0o755
+            tar.addfile(info)
+        for path, (content, executable) in members.items():
+            info = tarfile.TarInfo(path)
+            info.size, info.mode = len(content), 0o755 if executable else 0o644
+            tar.addfile(info, io.BytesIO(content))
+        for path, target in links:
+            info = tarfile.TarInfo(path)
+            info.type, info.linkname = tarfile.SYMTYPE, target
+            tar.addfile(info)
+    return held.getvalue(), listed(members, dirs, links)
+
+
+def installed(member: str) -> str:
+    """Where a wheel's member is installed, as `unpack-check` lists it."""
+    top, _, rest = member.partition("/")
+    if top.endswith(".data"):
+        return "site/" + rest.partition("/")[2]
+    return "site/" + member
+
+
+def wheel(
+    name: str,
+    version: str,
+    *,
+    console: str | None = None,
+    extra: dict[str, bytes] | None = None,
+) -> tuple[bytes, dict]:
+    """A wheel of `name` at `version`, its entry points `console` where given,
+    and its unpack-check output."""
+    dist = f"{name}-{version}.dist-info"
+    members = {
+        f"{name}/__init__.py": f"# {name}\n".encode(),
+        f"{dist}/METADATA": f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n".encode(),
+        f"{dist}/WHEEL": b"Wheel-Version: 1.0\nRoot-Is-Purelib: true\n",
+    }
+    if console is not None:
+        members[f"{dist}/entry_points.txt"] = console.encode()
+    members.update(extra or {})
+    members[f"{dist}/RECORD"] = b""
+    held = io.BytesIO()
+    with zipfile.ZipFile(held, "w", zipfile.ZIP_DEFLATED) as archive_file:
+        for member, content in members.items():
+            archive_file.writestr(zipfile.ZipInfo(member, date_time=(1980, 1, 1, 0, 0, 0)), content)
+    return held.getvalue(), listed({installed(member): (content, False) for member, content in members.items()})
+
+
+def own(**changed: object) -> dict:
+    """The agent's own wheel as a report item, from PyPI."""
+    built = wheel("pyagent", "1.4.0", console=CONSOLE, extra={
+        "pyagent-1.4.0.data/purelib/pyagent_extra.py": b"# a module under purelib is installed\n",
+    })
+    item = {"url": PYPI + "aa/bb/" + OWN, "name": "pyagent", "version": "1.4.0", "wheel": built}
+    item.update(changed)
+    return item
+
+
+def dependency(file: str, *, name: str = "rpds-py", version: str = "0.20.0", **changed: object) -> dict:
+    item = {"url": PYPI + "cc/dd/" + file, "name": name, "version": version, "wheel": wheel("rpds_py", "0.20.0")}
+    item.update(changed)
+    return item
+
+
+def sdist(file: str, name: str, version: str) -> dict:
+    return {"url": PYPI + "ee/ff/" + file, "name": name, "version": version, "wheel": None}
+
+
+def lay_out_uvx(
+    observed: pathlib.Path,
+    agent: str,
+    platform: str,
+    items: list[dict],
+    *,
+    built: tuple[bytes, dict] | None = None,
+    interpreter_chain: list[str] | None = None,
+    report_version: object = "1",
+) -> None:
+    """What the untrusted job leaves for one `uvx` target; `built` stands for
+    the interpreter's bytes and listing, the pinned ones by default."""
+    pins = json.loads(INTERPRETERS.read_text())
+    place = observed / agent / platform
+    (place / "interpreter").mkdir(parents=True)
+    content, listing = built or interpreter(platform)
+    (place / "interpreter/artifact").write_bytes(content)
+    chain = interpreter_chain or [pins[platform]["url"]]
+    (place / "interpreter/fetched.json").write_text(json.dumps({"chain": chain}))
+    (place / "interpreter/unpack-check.json").write_text(json.dumps(listing))
+    report = {
+        "environment": {"python_version": PYTHON},
+        "install": [
+            {
+                "download_info": {"archive_info": {"hashes": {"sha256": "0" * 64}}, "url": item["url"]},
+                "is_direct": False,
+                "metadata": {"metadata_version": "2.1", "name": item["name"], "version": item["version"]},
+                "requested": index == 0,
+            }
+            for index, item in enumerate(items)
+        ],
+        "pip_version": "24.2",
+        "version": report_version,
+    }
+    (place / "resolved.json").write_text(json.dumps(report))
+    for index, item in enumerate(items):
+        if item["wheel"] is None:
+            continue
+        held = place / "wheels" / str(index)
+        held.mkdir(parents=True)
+        content, listing = item["wheel"]
+        (held / "artifact").write_bytes(content)
+        (held / "fetched.json").write_text(json.dumps({"chain": item.get("chain", [item["url"]])}))
+        (held / "unpack-check.json").write_text(json.dumps(item.get("listing", listing)))
+    (place / "probe.json").write_text(json.dumps(PROBED))
+
+
+def pinned_interpreters(scratch: pathlib.Path) -> pathlib.Path:
+    """The committed pins, each holding the hash of the archive built here."""
+    pins = json.loads(INTERPRETERS.read_text())
+    for platform, pin in pins.items():
+        pin["sha256"] = sha(interpreter(platform)[0])
+    return written(scratch, "interpreters.json", pins)
+
+
+def uvx_registry(scratch: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
+    """A registry of `uvx` agents and what the untrusted job left for them;
+    every target not laid out here is left with nothing observed."""
+    observed = scratch / "observed"
+    agents: list[dict] = []
+    choices: dict[str, dict] = {}
+
+    def agent(agent_id: str, distribution: dict | None = None, **uvx: object) -> None:
+        spec: dict = {"package": "pyagent==1.4.0", "args": ["acp"]}
+        spec.update(uvx)
+        agents.append({
+            "id": agent_id, "name": agent_id, "version": "1.4.0", "license": "MIT",
+            "distribution": distribution if distribution is not None else {"uvx": spec},
+        })
+        choices[agent_id] = {"key": agent_id.removesuffix("-agent")}
+
+    def target(agent_id: str, items: list[dict], platform: str = "linux-x86_64", **kept: object) -> None:
+        lay_out_uvx(observed, agent_id, platform, items, **kept)
+
+    rpds = "rpds_py-0.20.0-cp312-cp312-"
+    agent("py-agent", env={"PYAGENT_QUIET": "1"})
+    choices["py-agent"]["key"] = "pyagent"
+    target(
+        "py-agent",
+        [own(), dependency(rpds + "manylinux_2_17_x86_64.manylinux2014_x86_64.whl", name="Rpds.Py")],
+        interpreter_chain=[json.loads(INTERPRETERS.read_text())["linux-x86_64"]["url"], "https://objects.python.example/blob/1"],
+    )
+    target("py-agent", [own(), dependency(rpds + "macosx_11_0_arm64.whl")], "darwin-aarch64")
+    target("py-agent", [own(), dependency(rpds + "win_amd64.whl")], "windows-x86_64")
+    # A dependency built for another machine: this target alone is dropped.
+    target("py-agent", [own(), dependency(rpds + "manylinux_2_17_x86_64.whl")], "linux-aarch64")
+
+    # Each part of `.data` but purelib and platlib, one on each target.
+    agent("data-agent")
+    for platform, member in (
+        ("linux-x86_64", "pyagent-1.4.0.data/scripts/pyagent"),
+        ("darwin-aarch64", "pyagent-1.4.0.data/headers/pyagent.h"),
+        ("windows-x86_64", "pyagent-1.4.0.data/data/share/pyagent.txt"),
+    ):
+        data_wheel = wheel("pyagent", "1.4.0", console=CONSOLE, extra={member: b"# not a module\n"})
+        target("data-agent", [own(wheel=data_wheel)], platform)
+
+    agent("sdist-agent")
+    target("sdist-agent", [sdist("pyagent-1.4.0.tar.gz", "pyagent", "1.4.0")])
+    target("sdist-agent", [own(), sdist("oldlib-0.1.tar.gz", "oldlib", "0.1"), sdist("other-2.0.zip", "Other", "2.0")], "darwin-aarch64")
+
+    dep = rpds + "manylinux_2_17_x86_64.whl"
+    cases: list[tuple[str, list[dict], dict]] = [
+        ("host-agent", [own(), dependency(dep, url="https://pypi.example/packages/cc/dd/" + dep)], {}),
+        ("http-agent", [own(), dependency(dep, url="http://files.pythonhosted.org/packages/cc/dd/" + dep)], {}),
+        ("percent-agent", [own(), dependency("rpds%5Fpy-0.20.0-cp312-cp312-manylinux_2_17_x86_64.whl")], {}),
+        ("grammar-agent", [own(), dependency("rpds_py-0.20.0-manylinux_2_17_x86_64.whl")], {}),
+        ("named-agent", [own(), dependency(dep, name="rpds-pi")], {}),
+        ("versioned-agent", [own(), dependency(dep, version="0.20.1")], {}),
+        ("glibc-agent", [own(), dependency(rpds + "manylinux_2_35_x86_64.whl")], {}),
+        ("musl-agent", [own(), dependency(rpds + "musllinux_1_2_x86_64.whl")], {}),
+        ("chain-agent", [own(), dependency(dep, chain=[PYPI + "cc/dd/other.whl"])], {}),
+        ("hop-agent", [own(), dependency(dep, chain=[PYPI + "cc/dd/" + dep, "http://192.0.2.9/x.whl"])], {}),
+        ("pin-agent", [own()], {"built": (b"not the pinned interpreter\n", interpreter("linux-x86_64")[1])}),
+        ("fetch-agent", [own()], {"interpreter_chain": ["https://python.example/elsewhere-install_only.tar.gz"]}),
+        ("report-agent", [own()], {"report_version": "2"}),
+        ("missing-agent", [dependency(dep)], {}),
+        ("unlisted-agent", [own(wheel=wheel("pyagent", "1.4.0"))], {}),
+        ("extras-ep-agent", [own(wheel=wheel("pyagent", "1.4.0", console="[console_scripts]\npyagent = pyagent.acp:main [cli]\n"))], {}),
+        ("spaced-ep-agent", [own(wheel=wheel("pyagent", "1.4.0", console="[console_scripts]\npyagent = pyagent acp:main\n"))], {}),
+        ("repeated-ep-agent", [own(wheel=wheel("pyagent", "1.4.0", console=CONSOLE + "pyagent = other:main\n"))], {}),
+        ("unnamed-ep-agent", [own(wheel=wheel("pyagent", "1.4.0", console="[console_scripts]\npyagent-cli = pyagent.acp:main\n"))], {}),
+        ("dotted-ep-agent", [own(wheel=wheel("pyagent", "1.4.0", console="[console_scripts]\npyagent = pyagent..acp:main\n"))], {}),
+        ("overlap-agent", [own(), dependency(dep, wheel=(wheel("rpds_py", "0.20.0")[0], listed({"site/pyagent/__init__.py": (b"x", False)})))], {}),
+        ("outside-agent", [own(), dependency(dep, wheel=(wheel("rpds_py", "0.20.0")[0], listed({"lib/rpds.py": (b"x", False)})))], {}),
+        ("stray-agent", [own()], {"built": (interpreter("linux-x86_64")[0], interpreter("linux-x86_64", stray=True)[1])}),
+        ("noexec-agent", [own()], {"built": (interpreter("linux-x86_64")[0], interpreter("linux-x86_64", runnable=False)[1])}),
+        ("noprogram-agent", [own()], {"built": (interpreter("linux-x86_64")[0], interpreter("linux-x86_64", program=False)[1])}),
+        ("datadir-agent", [own(wheel=wheel("pyagent", "1.4.0", console=CONSOLE, extra={"PyAgent-1.4.0.DATA/scripts/x": b"x"}))], {}),
+    ]
+    for agent_id, items, kept in cases:
+        agent(agent_id)
+        target(agent_id, items, **kept)
+    # A pin that is not one package at one version is refused before anything is read.
+    for agent_id, package in (
+        ("range-agent", "pyagent>=1.4.0"),
+        ("extra-agent", "pyagent[cli]==1.4.0"),
+        ("url-agent", "pyagent @ https://example.com/pyagent.whl"),
+        ("marker-agent", "pyagent==1.4.0; python_version > '3'"),
+        ("bare-agent", "pyagent"),
+        ("edge-agent", "-pyagent==1.4.0"),
+    ):
+        agent(agent_id, package=package)
+    agent("loader-agent", env={"LD_PRELOAD": "/tmp/hook.so"})
+    agent("listed-agent", args="acp")
+    # A binary agent that also names uvx is taken in as a binary agent.
+    agent("both-agent", {
+        "binary": {"linux-x86_64": {"archive": "https://downloads.both.example/both.tar.gz", "cmd": "./agent"}},
+        "uvx": {"package": "pyagent==1.4.0", "args": ["acp"]},
+    })
+    place = observed / "both-agent" / "linux-x86_64"
+    place.mkdir(parents=True)
+    (place / "artifact").write_bytes(archive("both-agent", "linux-x86_64"))
+    (place / "fetched.json").write_text(json.dumps({"chain": ["https://downloads.both.example/both.tar.gz"]}))
+    (place / "unpack-check.json").write_text(json.dumps(UNPACKED))
+    (place / "probe.json").write_text(json.dumps(PROBED))
+    registry = written(scratch, "uvx-registry.json", {"version": "1.0.0", "agents": agents})
+    return registry, written(scratch, "uvx-choices.json", choices)
+
+
+def check_uvx(scratch: pathlib.Path) -> None:
+    """A `uvx` agent is pinned per target as an interpreter and the wheels pip
+    resolved for it; each target that cannot be is dropped alone, naming why."""
+    scratch = scratch / "uvx"
+    registry, choices = uvx_registry(scratch)
+    pins = pinned_interpreters(scratch)
+    data, assets = review(scratch, "--interpreters", pins, registry=registry, choices=choices)
+    entries = {entry["key"]: entry for entry in data["entries"]}
+    assert sorted(entries) == ["both", "pyagent"], sorted(entries)
+    assert entries["both"]["kind"] == "binary", "an agent that lists a binary is a binary agent"
+
+    entry = entries["pyagent"]
+    assert entry["kind"] == "uvx" and entry["registry_id"] == "py-agent", entry["kind"]
+    assert entry["admits"] == PROBED["agentInfo"], entry["admits"]
+    targets = {target["platform"]: target for target in entry["targets"]}
+    assert sorted(targets) == ["darwin-aarch64", "linux-x86_64", "windows-x86_64"], sorted(targets)
+    pinned = json.loads(INTERPRETERS.read_text())
+    for platform, target in targets.items():
+        windows = platform.startswith("windows-")
+        assert target["cmd"] == ("python/python.exe" if windows else "python/bin/python3.12"), target["cmd"]
+        assert target["interpreter_args"] == ["-I"], target["interpreter_args"]
+        assert target["args"] == ["acp"] and target["env"] == {"PYAGENT_QUIET": "1"}, target
+        assert target["entry_point"] == "pyagent.acp:main", target["entry_point"]
+        assert target["probe"]["sandbox"] == "closed", target["probe"]
+        python, *wheels = target["artifacts"]
+        assert python["url"] == pinned[platform]["url"] and python["format"] == "tar.gz", python
+        assert python["sha256"] == sha(interpreter(platform)[0]), "the interpreter is the bytes its pin names"
+        listing = python["files"]
+        assert sorted(listing) == ["sha256", "size"], "an interpreter's long file list is a file-list asset"
+        kept = (assets / listing["sha256"]).read_bytes()
+        assert sha(kept) == listing["sha256"] and len(kept) == listing["size"], listing
+        assert len(json.loads(kept)) == len(interpreter(platform)[1]["files"]), "the asset holds every file"
+        assert [artifact["format"] for artifact in wheels] == ["wheel", "wheel"], wheels
+        assert wheels[0]["url"] == PYPI + "aa/bb/" + OWN, "the wheels follow in the report's order"
+        assert wheels[0]["files"] == own()["wheel"][1]["files"], "a wheel's short file list is listed inline"
+        assert "site/pyagent_extra.py" in {file["path"] for file in wheels[0]["files"]}, "purelib is installed"
+        for artifact in target["artifacts"]:
+            assert "mirror_licence" not in artifact, "an interpreter and its wheels are never marked for mirroring"
+    assert targets["linux-x86_64"]["hosts"] == [
+        "python.example", "objects.python.example", "files.pythonhosted.org",
+    ], targets["linux-x86_64"]["hosts"]
+
+    # The evaluator's first case: a wheel for another machine drops that target only.
+    dropped(data, "py-agent", "linux-aarch64", "rpds_py-0.20.0-cp312-cp312-manylinux_2_17_x86_64.whl", "tags")
+    dropped(data, "py-agent", "windows-aarch64", "no interpreter is pinned")
+    dropped(data, "py-agent", "freebsd-x86_64", "no interpreter is pinned")
+
+    # The evaluator's second case: a part of `.data` the client does not install.
+    dropped(data, "data-agent", "linux-x86_64", OWN, "pyagent-1.4.0.data/scripts/pyagent", "under scripts")
+    dropped(data, "data-agent", "darwin-aarch64", "under headers")
+    dropped(data, "data-agent", "windows-x86_64", "under data,")
+    dropped(data, "data-agent", None, "no target")
+    dropped(data, "datadir-agent", "linux-x86_64", "under scripts")
+
+    # The evaluator's third case: a source distribution marks its target for a build.
+    builds = {
+        item["platform"]: item.get("build")
+        for item in data["dropped"]
+        if item["registry_id"] == "sdist-agent" and "platform" in item
+    }
+    assert builds["linux-x86_64"] == [
+        {"package": "pyagent", "url": PYPI + "ee/ff/pyagent-1.4.0.tar.gz", "version": "1.4.0"},
+    ], builds
+    assert builds["darwin-aarch64"] == [
+        {"package": "oldlib", "url": PYPI + "ee/ff/oldlib-0.1.tar.gz", "version": "0.1"},
+        {"package": "Other", "url": PYPI + "ee/ff/other-2.0.zip", "version": "2.0"},
+    ], builds
+    assert builds["windows-x86_64"] is None, "a target with no report is not marked for a build"
+    dropped(data, "sdist-agent", "linux-x86_64", "waits for a build at review")
+    dropped(data, "sdist-agent", "darwin-aarch64", "waits for a build at review")
+    assert not [item for item in data["dropped"] if item["registry_id"] == "py-agent" and "build" in item]
+
+    dropped(data, "host-agent", "linux-x86_64", "pypi.example", "files.pythonhosted.org/packages/")
+    dropped(data, "http-agent", "linux-x86_64", "http://files.pythonhosted.org", "files.pythonhosted.org/packages/")
+    dropped(data, "percent-agent", "linux-x86_64", "%")
+    dropped(data, "grammar-agent", "linux-x86_64", "not a wheel's file name")
+    dropped(data, "named-agent", "linux-x86_64", "rpds-pi", "agree")
+    dropped(data, "versioned-agent", "linux-x86_64", "0.20.1", "agree")
+    dropped(data, "glibc-agent", "linux-x86_64", "manylinux_2_35", "tags")
+    dropped(data, "musl-agent", "linux-x86_64", "musllinux", "tags")
+    dropped(data, "chain-agent", "linux-x86_64", "does not begin at the report's address")
+    dropped(data, "hop-agent", "linux-x86_64", "http://192.0.2.9")
+    dropped(data, "pin-agent", "linux-x86_64", "the interpreter", "not the bytes")
+    dropped(data, "fetch-agent", "linux-x86_64", "the interpreter", "does not begin at the pinned address")
+    dropped(data, "report-agent", "linux-x86_64", "report", "not 1")
+    dropped(data, "missing-agent", "linux-x86_64", "installs no pyagent 1.4.0")
+    dropped(data, "unlisted-agent", "linux-x86_64", "entry_points.txt")
+    dropped(data, "extras-ep-agent", "linux-x86_64", "console script", "module:attr")
+    dropped(data, "spaced-ep-agent", "linux-x86_64", "console script", "module:attr")
+    dropped(data, "repeated-ep-agent", "linux-x86_64", "entry_points.txt")
+    dropped(data, "unnamed-ep-agent", "linux-x86_64", "no console script pyagent")
+    dropped(data, "dotted-ep-agent", "linux-x86_64", "console script", "module:attr")
+    dropped(data, "overlap-agent", "linux-x86_64", "site/pyagent/__init__.py", "two of its artifacts")
+    dropped(data, "outside-agent", "linux-x86_64", "lib/rpds.py", "site/")
+    dropped(data, "stray-agent", "linux-x86_64", "lib/stray.py", "python/")
+    dropped(data, "noexec-agent", "linux-x86_64", "python/bin/python3.12", "not runnable")
+    dropped(data, "noprogram-agent", "linux-x86_64", "python/bin/python3.12", "not a file")
+    for agent_id in ("range-agent", "extra-agent", "url-agent", "marker-agent", "bare-agent", "edge-agent"):
+        dropped(data, agent_id, None, "name==version")
+    dropped(data, "loader-agent", None, "LD_PRELOAD")
+    dropped(data, "listed-agent", None, "args")
+
+    # With no pins at all, no platform has an interpreter.
+    unpinned, _ = review(scratch, name="unpinned.json", registry=registry, choices=choices)
+    assert "pyagent" not in {entry["key"] for entry in unpinned["entries"]}, "no pin, no uvx target"
+    dropped(unpinned, "py-agent", "linux-x86_64", "no interpreter is pinned")
+
+    # The diff shows the whole start beside cmd, and says nothing is mirrored.
+    ran = intake("diff", scratch / "review.json")
+    assert ran.returncode == 0, ran.stderr
+    lines = ran.stdout.splitlines()
+    assert "- interpreter args: ` -I `" in lines, ran.stdout
+    assert "- entry point: ` pyagent.acp:main `" in lines, ran.stdout
+    assert any("never mirrored" in line for line in lines), ran.stdout
+    old = copy.deepcopy(data)
+    for listed_entry in old["entries"]:
+        if listed_entry["key"] == "pyagent":
+            listed_entry["version"] = "1.3.0"
+            for listed_target in listed_entry["targets"]:
+                listed_target["entry_point"] = "pyagent.old:main"
+    ran = intake("diff", "--old", written(scratch, "uvx-old.json", old), scratch / "review.json")
+    assert ran.returncode == 0, ran.stderr
+    assert any("entry point" in line and "pyagent.old:main" in line and "was" in line for line in ran.stdout.splitlines())
+
+
+def check_uvx_interpreters(scratch: pathlib.Path) -> None:
+    """The reviewer's pins are refused whole where any one breaks a rule."""
+    pins = json.loads(INTERPRETERS.read_text())
+    url = pins["linux-x86_64"]["url"]
+    for name, changed, words in (
+        ("http", {"url": url.replace("https://", "http://")}, "install_only"),
+        ("suffix", {"url": url.replace("-install_only.tar.gz", "-full.tar.zst")}, "install_only"),
+        ("digest", {"sha256": "A" * 64}, "sha256"),
+        ("python", {"python": "3"}, "3.M"),
+        ("pythonx", {"python": "3.x"}, "3.M"),
+        ("extra", {"mirror": True}, "mirror"),
+    ):
+        held = copy.deepcopy(pins)
+        held["linux-x86_64"].update(changed)
+        ran = intake(
+            "review", "--registry", REGISTRY, "--choices", CHOICES, "--runners", RUNNERS,
+            "--observed", scratch / "observed", "--deny", ROOT / "deny.toml",
+            "--assets", scratch / "none", "--out", scratch / f"pins-{name}.json",
+            "--interpreters", written(scratch, f"pins-{name}-in.json", held),
+        )
+        assert ran.returncode == 1 and words in ran.stderr, f"{name}: {ran.returncode} {ran.stderr!r} lacks {words!r}"
+        assert "Traceback" not in ran.stderr and not (scratch / f"pins-{name}.json").exists(), ran.stderr
+    for name, text, words in (
+        ("twice", '{"linux-x86_64": {}, "linux-x86_64": {}}', "twice"),
+        ("freebsd", json.dumps({"freebsd-x86_64": pins["linux-x86_64"]}), "freebsd-x86_64"),
+        ("list", "[]", "platform"),
+    ):
+        path = scratch / f"pins-{name}-in.json"
+        path.write_text(text)
+        ran = intake(
+            "review", "--registry", REGISTRY, "--choices", CHOICES, "--runners", RUNNERS,
+            "--observed", scratch / "observed", "--deny", ROOT / "deny.toml",
+            "--assets", scratch / "none", "--out", scratch / f"pins-{name}.json", "--interpreters", path,
+        )
+        assert ran.returncode == 1 and words in ran.stderr, f"{name}: {ran.returncode} {ran.stderr!r} lacks {words!r}"
+        assert "Traceback" not in ran.stderr, ran.stderr
+
+
+def check_uvx_tags() -> None:
+    """Each wheel tag an interpreter of 3.12 accepts on a platform, beside the
+    nearest one it refuses."""
+    fits = load_intake().fits
+    for tags, platform, held in (
+        ("py3-none-any", "linux-x86_64", True),
+        ("py2.py3-none-any", "linux-x86_64", True),
+        ("py2-none-any", "linux-x86_64", False),
+        ("py312-none-any", "linux-x86_64", True),
+        ("py313-none-any", "linux-x86_64", False),
+        ("cp312-cp312-manylinux_2_34_x86_64", "linux-x86_64", True),
+        ("cp312-cp312-manylinux_2_35_x86_64", "linux-x86_64", False),
+        ("cp312-cp312-manylinux2014_x86_64", "linux-x86_64", True),
+        ("cp312-cp312-manylinux1_x86_64", "linux-x86_64", True),
+        ("cp312-cp312-manylinux2014_aarch64", "linux-x86_64", False),
+        ("cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64", "linux-aarch64", True),
+        ("cp312-cp312-manylinux2010_aarch64", "linux-aarch64", False),
+        ("cp312-cp312-musllinux_1_2_x86_64", "linux-x86_64", False),
+        ("cp312-cp312-linux_x86_64", "linux-x86_64", False),
+        ("cp313-cp313-manylinux_2_17_x86_64", "linux-x86_64", False),
+        ("cp312-cp312d-manylinux_2_17_x86_64", "linux-x86_64", False),
+        ("cp313-cp313t-manylinux_2_17_x86_64", "linux-x86_64", False),
+        ("cp312-none-any", "linux-x86_64", True),
+        ("cp312-abi3-win_amd64", "windows-x86_64", True),
+        ("cp32-abi3-win_amd64", "windows-x86_64", True),
+        ("cp31-abi3-win_amd64", "windows-x86_64", False),
+        ("cp311-cp311-win_amd64", "windows-x86_64", False),
+        ("cp311-abi3-win_arm64", "windows-aarch64", True),
+        ("cp312-cp312-win32", "windows-x86_64", False),
+        ("cp312-cp312-win_amd64", "windows-aarch64", False),
+        ("cp312-cp312-macosx_11_0_arm64", "darwin-aarch64", True),
+        ("cp312-cp312-macosx_12_0_arm64", "darwin-aarch64", False),
+        ("cp312-cp312-macosx_10_9_universal2", "darwin-aarch64", True),
+        ("cp312-cp312-macosx_10_12_x86_64", "darwin-x86_64", True),
+        ("cp312-cp312-macosx_10_13_x86_64", "darwin-x86_64", False),
+        ("cp312-cp312-macosx_10_9_intel", "darwin-x86_64", True),
+        ("cp312-cp312-macosx_10_9_arm64", "darwin-x86_64", False),
+        ("py3-none-any", "freebsd-x86_64", True),
+        ("cp312-cp312-freebsd_14_0_amd64", "freebsd-x86_64", False),
+    ):
+        assert fits(tags, platform, 12) is held, f"{tags} on {platform}: expected {held}"
+
+
+def check_uvx_render(scratch: pathlib.Path) -> None:
+    """The committed catalog carries a `uvx` entry, and a `uvx` entry missing
+    what the client reads to start it is refused before anything is written."""
+    catalog = json.loads((RENDER / "catalog.json").read_text())
+    entry = next(entry for entry in catalog["entries"] if entry["kind"] == "uvx")
+    target = entry["targets"][0]
+    assert target["interpreter_args"] == ["-I"] and ":" in target["entry_point"], target
+    merged = json.loads((RENDER / "merged.json").read_text())
+    index = next(index for index, entry in enumerate(merged["entries"]) if entry["kind"] == "uvx")
+    for name, change, words in (
+        ("no-args", lambda t: t.pop("interpreter_args"), "interpreter_args"),
+        ("text-args", lambda t: t.update(interpreter_args="-I"), "interpreter_args"),
+        ("number-args", lambda t: t.update(interpreter_args=[1]), "interpreter_args"),
+        ("no-entry", lambda t: t.pop("entry_point"), "entry_point"),
+        ("bare-entry", lambda t: t.update(entry_point="pyagent"), "entry_point"),
+        ("empty-module", lambda t: t.update(entry_point=":main"), "entry_point"),
+        ("empty-attr", lambda t: t.update(entry_point="pyagent:"), "entry_point"),
+    ):
+        data = copy.deepcopy(merged)
+        change(data["entries"][index]["targets"][0])
+        refused(scratch, f"uvx-{name}.json", words, merged=written(scratch, f"m-uvx-{name}.json", data))
+
+
 def main() -> int:
     failures = []
     with tempfile.TemporaryDirectory(prefix="intake-") as held:
@@ -771,6 +1280,10 @@ def main() -> int:
             ("render refuses", lambda: check_render_refuses(scratch)),
             ("render previous and entries", lambda: check_render_previous_and_entries(scratch)),
             ("publish", lambda: check_publish(scratch)),
+            ("uvx", lambda: check_uvx(scratch)),
+            ("uvx interpreters", lambda: check_uvx_interpreters(scratch)),
+            ("uvx tags", check_uvx_tags),
+            ("uvx render", lambda: check_uvx_render(scratch)),
         ]
         for name, check in checks:
             try:
