@@ -5,22 +5,23 @@
 //! [`Preload`] is [`PRELOAD`] at the top of the version, a fixed `CommonJS` file
 //! the pinned Node is given with `--require` ahead of the agent's script. It
 //! registers synchronous module hooks, which `require` and `import` both go
-//! through, and refuses a package name (a specifier that is not relative,
-//! absolute, a `file:` or `node:` URL or a built-in module; a `.\` begins a
-//! relative path on Windows alone, as Node takes it) whose resolution lands
-//! outside its own directory once links are followed, so a module planted in
-//! a `node_modules` above the store, in `HOME/.node_modules` or in
-//! `HOME/.node_libraries` is never loaded. Any other URL, a `data:` one
-//! included, resolves to no file in the tree and is refused the same way.
-//! Package names are all it confines: a relative, absolute or `file:`
-//! specifier the agent's own code names is loaded wherever it leads, and a
-//! Node the agent starts without passing on its `execArgv` runs without the
-//! preload; the sandbox the agent runs in, not the preload, bounds what its
-//! own code reaches. The refusal is the error a missing
-//! module raises, `MODULE_NOT_FOUND` for `require` and `ERR_MODULE_NOT_FOUND`
-//! for `import`, so an optional dependency taken in a `try` degrades as it
-//! would were it absent, and it names the specifier alone, never a path above
-//! the tree. A Node without `module.registerHooks` stops at the preload rather
+//! through, and refuses a package name whose resolution lands outside its
+//! own directory once links are followed, so a module planted in a
+//! `node_modules` above the store, in `HOME/.node_modules` or in
+//! `HOME/.node_libraries` is never loaded. A package name is any specifier
+//! that is not relative, absolute, a `file:` URL with a path (one that begins
+//! `file:/`), a `node:` URL or a built-in module, as Node's `require` takes
+//! them: a `.\` begins a relative path on Windows alone, and `file:x` names a
+//! package. Any other URL, a `data:` one included, resolves to no file in the
+//! tree and is refused the same way. Package names are all it confines: a
+//! relative or absolute path or a `file:` URL the agent's own code names is
+//! loaded wherever it leads, and a Node the agent starts without passing on
+//! its `execArgv` runs without the preload; the sandbox the agent runs in, not
+//! the preload, bounds what its own code reaches. The refusal is the error a
+//! missing module raises, `MODULE_NOT_FOUND` for `require` and
+//! `ERR_MODULE_NOT_FOUND` for `import`, so an optional dependency taken in a
+//! `try` degrades as it would were it absent, and it names the specifier
+//! alone, never a path above the tree. A Node without `module.registerHooks` stops at the preload rather
 //! than start the agent unconfined. A worker, or a child `node` started by
 //! `fork`, takes the parent's `process.execArgv`, which holds the `--require`,
 //! so it is confined the same way. The preload is started only with no other
@@ -82,7 +83,8 @@ function bare(specifier) {
   return !(
     relative.test(specifier) ||
     path.isAbsolute(specifier) ||
-    specifier.startsWith('file:') ||
+    // `file:` with no path after it is a package name to `require`.
+    /^file:\//.test(specifier) ||
     specifier.startsWith('node:') ||
     builtins.has(specifier)
   );

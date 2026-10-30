@@ -9,7 +9,9 @@ and imports a module named `planted`, which is installed in a `node_modules`
 above the store and in `HOME/.node_modules`, where Node's walk up would find
 it. It requires and imports `linkout` too, a link in the tree into a version
 beside it whose name extends the tree's own, requires `.\\planted`, which on
-POSIX names a file planted above the store, and imports a `data:` URL. Each
+POSIX names a file planted above the store, requires `file:planted`, which
+there names one too, imports a `data:` URL, and imports the `file:` URL of a
+module inside the tree, which still loads. Each
 planted copy writes a marker file when it runs. The script does the same again
 in a worker and in a child started by `fork`.
 
@@ -89,6 +91,7 @@ module.exports = async function probe() {
     optional: caught(() => require('optional-dep')),
     planted: caught(() => require('planted')),
     backslashed: caught(() => require('.\\planted')),
+    filed: caught(() => require('file:planted')),
     linked: caught(() => require('linkout')),
     inside: caught(() => require('inside')),
   };
@@ -109,6 +112,12 @@ module.exports = async function probe() {
     seen.imported_data = { code: 'loaded' };
   } catch (error) {
     seen.imported_data = { code: error.code, message: error.message };
+  }
+  try {
+    await import(require('node:url').pathToFileURL(require.resolve('inside')).href);
+    seen.imported_inside_url = { code: 'loaded' };
+  } catch (error) {
+    seen.imported_inside_url = { code: error.code, message: error.message };
   }
   try {
     await import('inside');
@@ -231,6 +240,12 @@ def layout(root: pathlib.Path, preload: str, name: str) -> tuple[pathlib.Path, p
             PLANTED % (json.dumps(str(markers)), json.dumps("above-store-backslash")),
             encoding="utf-8",
         )
+        # A file whose name begins `file:`, which `require('file:planted')`
+        # walks up to as a package: only a `file:` URL with a path is one.
+        (root / "node_modules" / "file:planted.js").write_text(
+            PLANTED % (json.dumps(str(markers)), json.dumps("above-store-file")),
+            encoding="utf-8",
+        )
     return version / name, agent / "cli.js", markers
 
 
@@ -284,7 +299,8 @@ def confined(node: str, preload: pathlib.Path, script: pathlib.Path, root: pathl
         problems += refused(got, "imported_data", "ERR_MODULE_NOT_FOUND", DATA, where)
         if os.name != "nt":
             problems += refused(got, "backslashed", "MODULE_NOT_FOUND", ".\\planted", where)
-        for field in ["inside", "imported_inside"]:
+            problems += refused(got, "filed", "MODULE_NOT_FOUND", "file:planted", where)
+        for field in ["inside", "imported_inside", "imported_inside_url"]:
             if (got.get(field) or {}).get("code") != "loaded":
                 problems.append(f"{where}: the module inside the tree did not load: {got.get(field)}")
     return problems
