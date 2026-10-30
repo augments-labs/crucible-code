@@ -34,12 +34,16 @@
 //! cut is not put to a client that does not draw the whole value, and a no, a
 //! cancel, or nobody, leaves every file as it was. What is checked before that
 //! question is put is everything that can refuse the release without a byte
-//! fetched: its kind and its file lists; that the program it is started as is
-//! one of its files and runs; its download hosts, and that every address and
-//! mirror it is pinned at is on one of them; its size, summed with checked
-//! arithmetic, against the most a release may be and the room the install
-//! store has; and, for a version already in place, that its receipt is of the
-//! artifacts and the files the catalog pins, refused otherwise.
+//! fetched from its own hosts: its kind; its download hosts, and that every
+//! address and mirror it is pinned at is on one of them; its file lists, where
+//! a list the catalog keeps as an asset is first fetched from the catalog's
+//! own host by [`catalog_fetch::asset`] and read as one given inline, a list
+//! that does not arrive as listed or does not read refusing the release; that
+//! the program it is started as is one of its files and runs; its size, summed
+//! with checked arithmetic, against the most a release may be and the room
+//! the install store has; and, for a version already in place, that its
+//! receipt is of the artifacts and the files the catalog pins, refused
+//! otherwise.
 //!
 //! After a yes, the release the question named is the one installed: each
 //! artifact is downloaded within its pin by [`crate::agent_download`] into a
@@ -154,8 +158,8 @@ use crucible_client_api::{
 use crucible_config::{AgentUpdate, Cloud, ConfigError, Driver, ExternalAgent, Home, Settings};
 use crucible_execution::{Authentication, Failure};
 use crucible_external_harnesses::catalog::{
-    AuthMethod, Entry, File, FileKind, Files, Kind, Launch, Method, Offer, Target, Trust,
-    Unprofiled,
+    AuthMethod, CatalogError, Entry, File, FileKind, Files, Kind, Launch, Method, Offer, Target,
+    Trust, Unprofiled, file_list,
 };
 use crucible_external_harnesses::release::{RELEASE_BYTES, UnpackError, Unpacker};
 use crucible_external_harnesses::store::{
@@ -428,6 +432,14 @@ pub enum AgentsError {
     /// An artifact is not what its file list says.
     #[error(transparent)]
     Unpacked(#[from] UnpackError),
+    /// A file list the catalog keeps as an asset did not arrive from the
+    /// catalog's host as the catalog lists it.
+    #[error("the release's file list could not be fetched from the catalog: {0}")]
+    FileListUnfetched(FetchError),
+    /// A file list the catalog keeps as an asset arrived, and is not a list
+    /// of files the catalog could hold.
+    #[error("the release's file list could not be read: {0}")]
+    FileListUnread(CatalogError),
     /// The user's configuration could not be written.
     #[error(transparent)]
     Remember(#[from] RememberError),
@@ -625,7 +637,7 @@ pub async fn run(
             } else {
                 How::Installed
             };
-            door.switch(&offer, how, front, watching).await
+            door.switch(offer, how, front, watching).await
         }
         Command::UpdateAgent { .. } => {
             let mut offers = door.trust.offers(Some(&agent));
@@ -650,7 +662,7 @@ pub async fn run(
                     version: offer.pin.version,
                 });
             }
-            door.switch(&offer, How::Updated, front, watching).await
+            door.switch(offer, How::Updated, front, watching).await
         }
         Command::RollbackAgent { .. } => door.rollback(&agent, front).await,
         Command::RemoveAgent { .. } => door.remove(&agent, front).await,
@@ -881,35 +893,29 @@ impl Door<'_> {
     /// store runs it for onto it.
     async fn switch(
         &self,
-        offer: &Offer,
+        mut offer: Offer,
         how: How,
         front: &mut dyn Front,
         watching: Watching<'_>,
     ) -> Result<Outcome, AgentsError> {
-        let agent = &offer.entry.key;
-        let target = &offer.pin.target;
-        if offer.entry.kind != Kind::Binary || target.launch != Launch::Binary {
+        if offer.entry.kind != Kind::Binary || offer.pin.target.launch != Launch::Binary {
             return Err(AgentsError::Unsupported(
                 "the release is started by a pinned interpreter or Node",
             ));
         }
-        if target
-            .artifacts
-            .iter()
-            .any(|artifact| matches!(artifact.files, Files::Asset(_)))
-        {
-            return Err(AgentsError::Unsupported(
-                "the release's file list is kept as a catalog asset",
-            ));
-        }
         let mut reached: Vec<String> = Vec::new();
-        for artifact in &target.artifacts {
-            for place in agent_download::reachable(&self.shelf.catalog, &target.hosts, artifact)? {
+        let hosts = &offer.pin.target.hosts;
+        for artifact in &offer.pin.target.artifacts {
+            for place in agent_download::reachable(&self.shelf.catalog, hosts, artifact)? {
                 if !reached.contains(&place) {
                     reached.push(place);
                 }
             }
         }
+        fetch_file_lists(&self.shelf.catalog, &mut offer).await?;
+        let offer = &offer;
+        let agent = &offer.entry.key;
+        let target = &offer.pin.target;
         let listed = listed(target);
         runnable(&listed, &target.cmd)?;
         let total = sized(offer)?;
@@ -1745,7 +1751,26 @@ struct Plan<'a> {
     adding: Option<String>,
 }
 
-/// Every file the target's artifacts list, as they would be committed.
+/// Each file list `offer` keeps as a catalog asset, fetched from the
+/// catalog's own host and read in its place, so the rest of a switch reads it
+/// as it reads a list given inline. The `AssetRef` is the one the trust state
+/// gave, and the list is held by `offer`, for the one call.
+async fn fetch_file_lists(source: &Source, offer: &mut Offer) -> Result<(), AgentsError> {
+    for artifact in &mut offer.pin.target.artifacts {
+        let Files::Asset(asset) = &artifact.files else {
+            continue;
+        };
+        let bytes = catalog_fetch::asset(source, asset)
+            .await
+            .map_err(AgentsError::FileListUnfetched)?;
+        let files = file_list(&offer.entry, &bytes).map_err(AgentsError::FileListUnread)?;
+        artifact.files = Files::Listed(files);
+    }
+    Ok(())
+}
+
+/// Every file the target's artifacts list, as they would be committed; a
+/// list still kept as a catalog asset gives none until it is fetched.
 fn listed(target: &Target) -> Vec<File> {
     target
         .artifacts
