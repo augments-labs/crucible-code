@@ -28,7 +28,12 @@ what is left once either is spent waits for the next run.
   platform, `<id>/<platform>/`, holding `artifact` (the download), `fetched.json`
   (`{"chain": [...]}`, every address it was fetched through, the registry's
   first), `unpack-check.json` and `probe.json`; neither directory may be a
-  link. A `uvx` agent's directory instead holds `resolved.json` (pip's
+  link. Where the download is a `.tar.bz2`, `repacked` beside it is the job's
+  repack of it, by `repack` below, and `unpack-check.json` lists that repack.
+  A FreeBSD runtime's directory holds the pinned `.pkg` as `artifact`, its
+  `fetched.json`, whose chain begins at the pin, the bundle `bundle` below
+  made of it as `repacked`, `unpack-check.json` listing that bundle, and the
+  bundle's SBOM as `sbom.json`. A `uvx` agent's directory instead holds `resolved.json` (pip's
   `--report` for the package on that platform's pinned interpreter, of which
   only `version`, and each package's `download_info.url`, `metadata.name` and
   `metadata.version`, are read), `interpreter/` and `wheels/<n>/` (`n` the
@@ -41,15 +46,24 @@ what is left once either is spent waits for the next run.
   (`lock.json`, `npm.json` and `unpack-check.json`, below) and `probe.json`.
   Node's own downloads are under `node/`: `SHASUMS256.txt.asc` and its
   `fetched.json`, and `<platform>/` holding the `artifact` and `fetched.json`
-  of each build, so an agent whose registry id is `node`, or is another's,
+  of each build, or on `freebsd-x86_64` the FreeBSD runtime, so an agent whose registry id is `node`, or is another's,
   once case is folded, is dropped;
 - `--interpreters`, where given: the reviewer's interpreter pins, by
   platform, each `{"url", "sha256", "python"}`: the `https` address of a
   python-build-standalone `install_only` build, its SHA-256, and the `3.M` it
-  runs. A `uvx` target on a platform with no pin is dropped;
+  runs; on `freebsd-x86_64` the pin is instead a FreeBSD package,
+  `{"url", "sha256", "abi", "python"}`: the `https` address on
+  `pkg.freebsd.org` of a `.pkg` under `/<abi>/`, plain, its SHA-256, its ABI,
+  `FreeBSD:<major>:amd64`, and the `3.M` it runs, bundled as below, where
+  only a wheel tagged `any` fits. A `uvx` target on a platform with no pin is
+  dropped;
 - `--node`, where given: the reviewer's Node pin, `{"version": "X.Y.Z"}`,
-  an even major line from 22, and 22.15.0 or later on line 22. With no pin,
-  every `npx` target is dropped. Giving it needs `gpg` on `PATH`;
+  an even major line from 22, and 22.15.0 or later on line 22, with, where
+  given, `"freebsd-x86_64": {"url", "sha256", "abi", "version"}`, a FreeBSD
+  package as the interpreter pin's is, whose `version` is in the pin's major
+  line and 22.15.0 or later. With no pin, every `npx` target is dropped, and
+  with no FreeBSD package, every one on `freebsd-x86_64`. Giving it needs
+  `gpg` on `PATH`;
 - `--node-keys`, where given: the directory of the keys a Node release may be
   signed under, each `<fingerprint>.asc` and a `fingerprints` list of the
   primary fingerprints accepted; the keys vendored beside this script where
@@ -100,6 +114,58 @@ repacked from an artifact is gated the same way, and where it passes it is
 the artifact's `replaced_by`, the asset installed in its place, by the hash
 and size its record binds.
 
+A `.tar.bz2` download, which the client does not unpack, is repacked by
+`review` itself from the bytes it hashed, as `repack` writes it, and dropped
+unless that repack is the job's `repacked` byte for byte, so the listing is of
+the bytes that ship; one not marked for mirroring is dropped, since it cannot
+be repacked. The artifact keeps the download's address, hash and size, its
+`format` is `tar.gz`, its listing is the repack's, and the licence gate runs
+over the repack, from the input named by the download's SHA-256; a failing
+record drops the target, which has no route to install but its repack. A
+FreeBSD runtime is taken the same way from its pinned `.pkg`, with the
+bundle's SBOM as the gate's input, and every file of the bundle kept; a
+FreeBSD runtime missing or refused drops only the targets on
+`freebsd-x86_64`. `review` cannot rebuild a FreeBSD bundle as it rebuilds a
+repack: the bundle is the untrusted job's output, held only by the pinned
+`.pkg`, the client's listing of it, the licence gate, and the FreeBSD probe.
+A passing repack or bundle is written under `--assets` by its SHA-256, the
+run holding at most 1 GiB of them together, and one past that is dropped.
+
+`repack` writes the tar.gz `review` makes of a `.tar.bz2` (`--input`) to
+`--out`, whole or not at all: a GNU tar, which the client's tar reader reads,
+its long names in GNU long name headers, in one gzip stream at level 9 whose
+header carries mtime 0 and no file name. Each member keeps its order, name,
+kind, permission bits and content; its owner and group are 0, their names
+empty, and its mtime 0, so two repacks of one download are the same bytes
+where the same zlib writes them. The download must be one bzip2 stream with
+nothing after it, of at most 1 GiB, unpacking to at most 4 GiB, and every
+member is held to what the client's unpacker accepts: a regular file, a
+directory or a symbolic link with a relative target, no hard link, device,
+FIFO, sparse member or global extended header, at most 65,536 members, every
+name one the client writes, and none written twice once case is folded.
+
+`bundle` checks and packs the runtime the FreeBSD step staged (`--staged`):
+the program, alone in `bin/`, the libraries it bundles in `lib/`, CPython's
+standard library under `lib/python3.M/`, and each package's licence files
+under `licenses/<package>/`. `--ldd` is what `ldd` printed for the program
+and every staged library once their run path is `$ORIGIN/../lib`, read
+within 1 MiB and parsed once, a line that does not parse refusing the run;
+every library it names must resolve into the staged `lib/` or the base
+system's `/lib/` or `/usr/lib/`, and one `not found`, under `/usr/local/` or
+anywhere else cannot be bundled and refuses the run. A file in `lib/` no
+`ldd` line needs, and a staged file no listed package installs, refuse it
+too. `--packages` is the package list the step's `pkg query` gave, within
+16 MiB: `{"packages": [{"name", "version", "licenses", "logic", "files"}]}`,
+`licenses` the ports licence names, `logic` one of `single`, `and` or `or`,
+and `files` the absolute paths it installs. `--abi` is the package ABI,
+`FreeBSD:<major>:amd64`. It writes the staged directory as `repack` writes a
+tar.gz to `--out`, and to `--sbom` a CycloneDX JSON SBOM of the packages,
+which `licence-gate` reads, each package's licences an expression through
+the ports names `APACHE20`, `ART20`, `BSD2CLAUSE`, `BSD3CLAUSE`,
+`BSD4CLAUSE`, `BSL`, `ISCL`, `MIT`, `MPL20`, `OPENSSL`, `PSFL` and `ZLIB`,
+and any other name `NOASSERTION`, which the gate refuses; both whole, or
+neither. It runs neither `ldd` nor `pkg`, and reaches no network.
+
 A `uvx` agent's package is pinned as `name==version`, and each platform the
 runner matrix names is a target of its own: the pinned interpreter, started
 with `-I`, and every package pip's report installs on it, each a wheel from
@@ -134,7 +200,7 @@ fingerprint is listed, and only the
 build must be the bytes that list gives it, fetched through `nodejs.org`
 alone; its `bin/node` (`node.exe` on Windows) and `LICENSE` are all a client
 keeps of it, and Node is never mirrored. Node publishes no FreeBSD build, so
-that target is dropped. The tree is npm's lock, in lockfile version 3, of
+on `freebsd-x86_64` Node is the pinned FreeBSD package, bundled as below. The tree is npm's lock, in lockfile version 3, of
 which only each package's location, name, version, `resolved`, `integrity`,
 `inBundle`, `hasInstallScript`, `dev`, `optional`, `os`, `cpu` and `libc`
 are read; a `dev` package is never installed. Every location is
@@ -303,8 +369,11 @@ from __future__ import annotations
 
 import argparse
 import base64
+import bz2
 import configparser
+import gzip
 import hashlib
+import io
 import json
 import os
 import pathlib
@@ -314,6 +383,7 @@ import stat
 import struct
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import tomllib
@@ -420,6 +490,37 @@ COMPONENT_TEXTS_BYTES = 1 << 20
 NOTICE_BYTES = 16 << 20
 # What one `review` holds of every NOTICE and licence text it ships.
 GATE_HELD_BYTES = 64 << 20
+# A repack's ceilings: the bytes it writes, as many as a download may be; the
+# bytes a `.tar.bz2` may unpack to, the client's own ceiling on a release; the
+# one compression level it writes at; and what one `review` holds of every
+# repack and FreeBSD bundle it ships.
+REPACK_BYTES = 1 << 30
+REPACK_DECOMPRESSED = 4 << 30
+REPACK_LEVEL = 9
+REPACK_HELD_BYTES = 1 << 30
+# A FreeBSD bundle's inputs: what `ldd` printed, and the package list.
+LDD_BYTES = 1 << 20
+PACKAGES_BYTES = 16 << 20
+# The FreeBSD a runtime is bundled for, by its package ABI, and the one host
+# its package is fetched from.
+FREEBSD_ABI = re.compile(r"FreeBSD:[1-9][0-9]{0,2}:amd64")
+PKG_HOST = "pkg.freebsd.org"
+# The SPDX licence each FreeBSD ports licence name stands for. A name not
+# here is `NOASSERTION`, which the licence gate refuses.
+PORTS_LICENCES = {
+    "APACHE20": "Apache-2.0",
+    "ART20": "Artistic-2.0",
+    "BSD2CLAUSE": "BSD-2-Clause",
+    "BSD3CLAUSE": "BSD-3-Clause",
+    "BSD4CLAUSE": "BSD-4-Clause",
+    "BSL": "BSL-1.0",
+    "ISCL": "ISC",
+    "MIT": "MIT",
+    "MPL20": "MPL-2.0",
+    "OPENSSL": "OpenSSL",
+    "PSFL": "PSF-2.0",
+    "ZLIB": "Zlib",
+}
 PACKAGE_PROGRAMS = 64
 TREE_PROGRAMS = 1024
 NAME_COMPONENT_BYTES = 255
@@ -439,7 +540,8 @@ NODE_FLOOR = (22, 15, 0)
 NODE_VERSION = re.compile(r"(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})")
 NODE_DIST = "https://nodejs.org/dist/"
 # Node's build for each platform, by the name its release gives it, and the
-# archive it comes as. Node publishes no FreeBSD build.
+# archive it comes as. Node publishes no FreeBSD build, so on FreeBSD it runs
+# on the FreeBSD package the reviewer pins, bundled.
 NODE_BUILDS = {
     "linux-x86_64": ("linux-x64", "tar.gz"),
     "linux-aarch64": ("linux-arm64", "tar.gz"),
@@ -511,6 +613,8 @@ PLATFORM_TAGS: dict[str, dict] = {
     "darwin-x86_64": {"macos": (10, 12), "machines": {"x86_64", "intel", "universal2"}},
     "windows-x86_64": {"exact": {"win_amd64"}},
     "windows-aarch64": {"exact": {"win_arm64"}},
+    # A FreeBSD bundle's CPython runs a wheel built for no platform alone.
+    "freebsd-x86_64": {"exact": set()},
 }
 
 
@@ -800,7 +904,9 @@ def format_of(url: str) -> str:
         return "tar.gz"
     if path.endswith(".zip"):
         return "zip"
-    if path.endswith((".tar.bz2", ".tar.xz", ".tar.zst", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar")):
+    if path.endswith(".tar.bz2"):
+        return "tar.bz2"
+    if path.endswith((".tar.xz", ".tar.zst", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar")):
         raise Dropped(f"{clipped(url)} is an archive of a kind this intake does not take in")
     return "bare"
 
@@ -1030,7 +1136,10 @@ def target(
     assets: dict[str, bytes],
 ) -> dict:
     """One registry target as the catalog will list it, before its probe; an
-    artifact marked for mirroring carries the licence gate's record."""
+    artifact marked for mirroring carries the licence gate's record. A
+    `.tar.bz2`, which the client does not unpack, is repacked here from the
+    download, and installs as that repack where the job's is the same bytes
+    and the gate passes over it."""
     if not PLATFORM.fullmatch(platform):
         raise Dropped("is not a platform the catalog names")
     spec = obj(spec, "the target")
@@ -1042,17 +1151,38 @@ def target(
     if pinned is not None:
         pinned = digest(pinned.lower() if isinstance(pinned, str) else pinned, "the registry's sha256")
     format = format_of(url)
+    if format == "tar.bz2" and mirrored is None:
+        raise Dropped("is a .tar.bz2 under a licence not on deny.toml's list, so it cannot be repacked")
     if platform not in runners:
         raise Dropped("no runner in the matrix probes this platform")
     place = place_of(observed, agent, platform)
-    sha256, size = hashed(place / "artifact")
-    if pinned is not None and pinned != sha256:
-        raise Dropped("the download is not the bytes the registry pinned")
+    made = b""
+    with opened(place / "artifact") as download:
+        sha256, size = digested(download)
+        if pinned is not None and pinned != sha256:
+            raise Dropped("the download is not the bytes the registry pinned")
+        if format == "tar.bz2":
+            # Repacked from the very bytes just hashed, never from the job's.
+            download.seek(0)
+            made = repacked(download)
     hosts = chained(place, url, "the registry's address")
+    if format == "tar.bz2":
+        try:
+            theirs = read(place / "repacked", REPACK_BYTES, "the job's repack")
+        except Refused as refused:
+            raise Dropped(str(refused)) from None
+        if theirs != made:
+            raise Dropped("the job's repack is not the bytes this review's repack of the download is")
     listing = unpacked_at(place)
     runnable(listing[0], cmd, platform)
-    artifact = artifact_of(url, format, sha256, size, listing, assets)
-    if mirrored is not None:
+    if format == "tar.bz2":
+        artifact = artifact_of(url, "tar.gz", sha256, size, listing, assets)
+        artifact["mirror_licence"] = mirrored
+        source = None if gate.sboms is None else gate.sboms / f"{sha256}.json"
+        gate.replacing(artifact, source, made, assets)
+    else:
+        artifact = artifact_of(url, format, sha256, size, listing, assets)
+    if mirrored is not None and "licence_gate" not in artifact:
         artifact["mirror_licence"] = mirrored
         artifact["licence_gate"] = gate.of(sha256, place / "artifact", assets)
     return {
@@ -1065,10 +1195,37 @@ def target(
     }
 
 
+def freebsd_pin(pin: object, where: str, fields: set[str]) -> dict:
+    """A FreeBSD runtime's pin, holding `fields` and no other: the `https`
+    address on `PKG_HOST` of a `.pkg` under its ABI's directory, plain, its
+    SHA-256 and the ABI, `FreeBSD:<major>:amd64`."""
+    if not isinstance(pin, dict):
+        raise Refused(f"{where} is not an object")
+    extra = sorted(set(pin) - fields)
+    if extra:
+        raise Refused(f"{where} holds {named(extra)}, which no pin holds")
+    abi = pin.get("abi")
+    if not isinstance(abi, str) or not FREEBSD_ABI.fullmatch(abi):
+        raise Refused(f"{where}: its abi {clipped(abi)} is not a FreeBSD package ABI on amd64, FreeBSD:<major>:amd64")
+    url = pin.get("url")
+    try:
+        _, name = address(url, where)
+        path = plain(url)
+    except Dropped as failed:
+        raise Refused(str(failed)) from None
+    if name != PKG_HOST or not path.startswith(f"/{abi}/") or not path.endswith(".pkg"):
+        raise Refused(f"{where} names {clipped(url)}, which is not an https address of a .pkg under /{abi}/ on {PKG_HOST}")
+    sha256 = pin.get("sha256")
+    if not isinstance(sha256, str) or not SHA256.fullmatch(sha256):
+        raise Refused(f"{where}: its sha256 is not a SHA-256 in lowercase hexadecimal")
+    return {"abi": abi, "sha256": sha256, "url": url}
+
+
 def interpreters_of(path: pathlib.Path | None) -> dict[str, dict]:
     """The reviewer's interpreter pins, by platform: each a python-build-standalone
-    `install_only` build's address, its SHA-256 and the `3.M` it runs. With no
-    pins, no platform has an interpreter."""
+    `install_only` build's address, its SHA-256 and the `3.M` it runs, and on
+    `freebsd-x86_64` a FreeBSD package's, as `freebsd_pin` holds it, with its
+    ABI and the `3.M` it runs. With no pins, no platform has an interpreter."""
     if path is None:
         return {}
     value = read_json(path, SMALL_BYTES, "the interpreter pins")
@@ -1082,6 +1239,13 @@ def interpreters_of(path: pathlib.Path | None) -> dict[str, dict]:
                 "a wheel's tags are read for"
             )
         where = f"the interpreter pin for {platform}"
+        if platform == "freebsd-x86_64":
+            held[platform] = freebsd_pin(pin, where, {"url", "sha256", "python", "abi"})
+            python = pin.get("python")
+            if not isinstance(python, str) or not PYTHON.fullmatch(python):
+                raise Refused(f"{where}: its python {clipped(python)} is not a version 3.M")
+            held[platform].update({"minor": int(python[2:]), "python": python})
+            continue
         if not isinstance(pin, dict):
             raise Refused(f"{where} is not an object")
         extra = sorted(set(pin) - {"url", "sha256", "python"})
@@ -1381,6 +1545,33 @@ def plain(url: str) -> str:
     return path
 
 
+def runtime_bundle(
+    place: pathlib.Path, pin: dict, cmd: str, platform: str, gate: Gate, assets: dict[str, bytes]
+) -> tuple[dict, list[str], list[dict]]:
+    """A FreeBSD runtime as the job left it under `place`: the package `pin`
+    names as `artifact`, fetched from its address, and the bundle made of it
+    as `repacked`, listed by `unpack-check.json`, with its SBOM as
+    `sbom.json`. The artifact is the package's address, hash and size,
+    installed as the bundle where the licence gate passes over it. Returns
+    the artifact, the hosts it came through and its listing."""
+    sha256, size = hashed(place / "artifact")
+    if sha256 != pin["sha256"]:
+        raise Dropped("the download is not the bytes the pin names")
+    hosts = chained(place, pin["url"], "the pinned address")
+    try:
+        bundle = read(place / "repacked", REPACK_BYTES, "the bundle")
+    except Refused as refused:
+        raise Dropped(str(refused)) from None
+    listing = unpacked_at(place)
+    for listed in listing[0]:
+        if listed["path"].split("/")[0] not in ("bin", "lib", "licenses"):
+            raise Dropped(f"lists {clipped(listed['path'])}, which is not under bin/, lib/ or licenses/")
+    runnable(listing[0], cmd, platform)
+    artifact = artifact_of(pin["url"], "tar.gz", sha256, size, listing, assets)
+    gate.replacing(artifact, place / "sbom.json", bundle, assets)
+    return artifact, hosts, listing[0]
+
+
 def uvx_target(
     observed: pathlib.Path,
     agent: str,
@@ -1388,11 +1579,13 @@ def uvx_target(
     package: str,
     released: str,
     interpreters: dict[str, dict],
+    gate: Gate,
     assets: dict[str, bytes],
 ) -> dict:
     """One platform of a `uvx` agent as the catalog will list it, before its
     probe: the interpreter pinned for it and every wheel pip's report installs
-    on it, each the bytes that were downloaded and checked."""
+    on it, each the bytes that were downloaded and checked. On FreeBSD the
+    interpreter is the pinned package, bundled, as `runtime_bundle` takes it."""
     pin = interpreters.get(platform)
     if pin is None:
         raise Dropped("no interpreter is pinned for this platform")
@@ -1430,10 +1623,15 @@ def uvx_target(
     if build:
         raise Build(build)
     windows = platform.startswith("windows-")
+    freebsd = platform == "freebsd-x86_64"
     cmd = "python/python.exe" if windows else f"python/bin/python{pin['python']}"
+    if freebsd:
+        cmd = f"bin/python{pin['python']}"
 
     def python() -> tuple[dict, list[str], list[dict]]:
         inner = place_of(observed, agent, platform, "interpreter")
+        if freebsd:
+            return runtime_bundle(inner, pin, cmd, platform, gate, assets)
         sha256, size = hashed(inner / "artifact")
         if sha256 != pin["sha256"]:
             raise Dropped("the download is not the bytes the interpreter pin names")
@@ -1515,15 +1713,18 @@ def method(value: object, index: int) -> dict:
     return held
 
 
-def node_of(path: pathlib.Path | None) -> str | None:
-    """The reviewer's Node pin, `{"version": "X.Y.Z"}`, held to `NODE_FLOOR`.
-    With no pin, no npm target has a Node to run on."""
+def node_of(path: pathlib.Path | None) -> tuple[str | None, dict | None]:
+    """The reviewer's Node pin, `{"version": "X.Y.Z"}`, held to `NODE_FLOOR`,
+    and its FreeBSD package where it pins one under `freebsd-x86_64`, as
+    `freebsd_pin` holds it, with the package's `version`, in the pin's major
+    line and at or above `NODE_FLOOR`. With no pin, no npm target has a Node
+    to run on, and with no FreeBSD package, none on FreeBSD."""
     if path is None:
-        return None
+        return None, None
     value = read_json(path, SMALL_BYTES, "the Node pin")
     if not isinstance(value, dict):
         raise Refused("the Node pin is not an object")
-    extra = sorted(set(value) - {"version"})
+    extra = sorted(set(value) - {"version", "freebsd-x86_64"})
     if extra:
         raise Refused(f"the Node pin holds {named(extra)}, which no pin holds")
     pinned = value.get("version")
@@ -1536,7 +1737,21 @@ def node_of(path: pathlib.Path | None) -> str | None:
             f"Node {pinned} is not a long-term-support release with module.registerHooks: "
             "the pin is an even major line from 22, and 22.15.0 or later on line 22"
         )
-    return pinned
+    if "freebsd-x86_64" not in value:
+        return pinned, None
+    where = "the Node pin for freebsd-x86_64"
+    freebsd = freebsd_pin(value["freebsd-x86_64"], where, {"url", "sha256", "abi", "version"})
+    packaged = value["freebsd-x86_64"].get("version")
+    held = NODE_VERSION.fullmatch(packaged) if isinstance(packaged, str) else None
+    if held is None:
+        raise Refused(f"{where}: its version {clipped(packaged)} is not a version X.Y.Z")
+    packaged_parts = tuple(int(part) for part in held.groups())
+    if packaged_parts[0] != parts[0]:
+        raise Refused(f"{where}: Node {packaged} is not in the major line of the pinned Node {pinned}")
+    if packaged_parts < NODE_FLOOR:
+        raise Refused(f"{where}: Node {packaged} is older than {'.'.join(map(str, NODE_FLOOR))}, the oldest a pin may name")
+    freebsd["version"] = packaged
+    return pinned, freebsd
 
 
 def release_keys(path: pathlib.Path) -> tuple[set[str], list[bytes]]:
@@ -1650,10 +1865,19 @@ class Node:
     none, and each platform's download of it as an artifact, made once and
     shared by every npm agent."""
 
-    def __init__(self, pinned: str | None, sums: dict[str, str] | None, failure: str | None) -> None:
+    def __init__(
+        self,
+        pinned: str | None,
+        sums: dict[str, str] | None,
+        failure: str | None,
+        freebsd: dict | None = None,
+        gate: Gate | None = None,
+    ) -> None:
         self.pinned = pinned
         self.sums = sums
         self.failure = failure
+        self.freebsd = freebsd
+        self.gate = gate
         self.made: dict[str, tuple] = {}
 
     def artifact(self, observed: pathlib.Path, platform: str, assets: dict[str, bytes]) -> tuple[dict, list[str], str]:
@@ -1679,6 +1903,17 @@ class Node:
 
     def build(self, observed: pathlib.Path, platform: str) -> tuple[dict, list[str], str, dict[str, bytes]]:
         build = NODE_BUILDS.get(platform)
+        if platform == "freebsd-x86_64":
+            if self.freebsd is None or self.gate is None:
+                raise Dropped(f"Node publishes no build for {platform}, and no FreeBSD package is pinned")
+            pin, gate = self.freebsd, self.gate
+
+            def bundled() -> tuple[dict, list[str], str, dict[str, bytes]]:
+                held: dict[str, bytes] = {}
+                artifact, hosts, _ = runtime_bundle(place_of(observed, "node", platform), pin, "bin/node", platform, gate, held)
+                return artifact, hosts, "bin/node", held
+
+            return staged(f"Node {pin['version']} for FreeBSD", bundled)
         if build is None:
             raise Dropped(f"Node publishes no build for {platform}")
         name, format = build
@@ -1714,7 +1949,12 @@ def copy_of(value: object) -> object:
 
 
 def node_release(
-    observed: pathlib.Path, pinned: str | None, gpg: str | None, keys: tuple[set[str], list[bytes]] | None
+    observed: pathlib.Path,
+    pinned: str | None,
+    gpg: str | None,
+    keys: tuple[set[str], list[bytes]] | None,
+    freebsd: dict | None = None,
+    gate: Gate | None = None,
 ) -> Node:
     """The run's Node: its checksums once the signed list the job left is
     verified and was fetched from Node's own address, or why not."""
@@ -1727,11 +1967,11 @@ def node_release(
             signed = read(place / "SHASUMS256.txt.asc", SHASUMS_BYTES, "SHASUMS256.txt.asc")
         except Refused as refused:
             raise Dropped(str(refused)) from None
-        return Node(pinned, node_sums(gpg, keys, signed), None)
+        return Node(pinned, node_sums(gpg, keys, signed), None, freebsd, gate)
     except Spent:
         raise
     except Dropped as failed:
-        return Node(pinned, None, str(failed))
+        return Node(pinned, None, str(failed), freebsd, gate)
 
 
 def npx_package(value: object) -> tuple[str, str]:
@@ -2905,7 +3145,7 @@ def entry(
                 made = npm_target(observed, agent_id, platform, resolution, node, decided, assets)
                 targets.append({"args": args, "env": env, **made})
             else:
-                made = uvx_target(observed, agent_id, platform, name, pinned_version, interpreters, assets)
+                made = uvx_target(observed, agent_id, platform, name, pinned_version, interpreters, gate, assets)
                 targets.append({"args": args, "env": env, **made})
         except Exception as failed:  # whatever one target breaks, the others go on
             row = {"platform": clipped(platform), "reason": reason(failed), "registry_id": agent_id}
@@ -3213,10 +3453,10 @@ def gate_components(held: bytes) -> list[tuple[str, str, list[str], str]]:
 
 
 def licence_gate(
-    source: pathlib.Path, allowed: set[str], texts: pathlib.Path, asset: pathlib.Path
+    source: pathlib.Path, allowed: set[str], texts: pathlib.Path, asset: pathlib.Path | bytes
 ) -> tuple[dict, dict[str, bytes]]:
     """The gate over a build's whole input `source`: its record, and where it
-    passes the files that ship beside `asset`, `NOTICE` and
+    passes the files that ship beside `asset`, a file or the bytes of one, `NOTICE` and
     `LICENSES/<id>.txt`. Every component must be used under licences
     `allowed` lists, each with its text under `texts`."""
     try:
@@ -3254,7 +3494,10 @@ def licence_gate(
             notice += f"\n==== {licence} ====\n\n".encode() + content + (b"" if content.endswith(b"\n") else b"\n")
             if len(notice) > NOTICE_BYTES:
                 raise Ungated(f"the NOTICE would be larger than {NOTICE_BYTES} bytes")
-        sha256, size = hashed(asset)
+        if isinstance(asset, bytes):
+            sha256, size = hashlib.sha256(asset).hexdigest(), len(asset)
+        else:
+            sha256, size = hashed(asset)
     except Spent:
         raise
     except (Ungated, Refused, Dropped) as failed:
@@ -3281,7 +3524,8 @@ class Gate:
     """The licence gate as `review` runs it, over each mirror-marked
     artifact's input in `sboms`, named `<artifact sha256>.json`. What it
     keeps of every NOTICE and licence text until the run writes them is held
-    within `GATE_HELD_BYTES` for the run, each distinct file counted once."""
+    within `GATE_HELD_BYTES` for the run, and what it keeps of every repack
+    and bundle within `REPACK_HELD_BYTES`, each distinct file counted once."""
 
     def __init__(self, allowed: set[str], sboms: pathlib.Path | None, texts: pathlib.Path | None) -> None:
         if sboms is not None and texts is None:
@@ -3289,6 +3533,8 @@ class Gate:
         self.allowed, self.sboms, self.texts = allowed, sboms, texts
         self.held: set[str] = set()
         self.held_bytes = 0
+        self.repacked: set[str] = set()
+        self.repacked_bytes = 0
 
     def of(self, sha256: str, asset: pathlib.Path, assets: dict[str, bytes]) -> dict:
         """The record for the artifact `asset`, whose hash is `sha256`; the
@@ -3297,17 +3543,52 @@ class Gate:
         if source is None or self.texts is None or not os.path.lexists(source):
             return dict(UNGATED)
         record, files = licence_gate(source, self.allowed, self.texts, asset)
-        named = {hashlib.sha256(content).hexdigest(): content for content in files.values()}
-        more = sum(len(content) for sha, content in named.items() if sha not in self.held)
-        if self.held_bytes + more > GATE_HELD_BYTES:
+        named = self.beside(files)
+        if named is None:
             return {
                 "passed": False,
                 "reason": f"its NOTICE would bring what this review holds past {GATE_HELD_BYTES} bytes",
             }
+        self.held_bytes += sum(len(content) for sha, content in named.items() if sha not in self.held)
         self.held.update(named)
-        self.held_bytes += more
         assets.update(named)
         return record
+
+    def beside(self, files: dict[str, bytes]) -> dict[str, bytes] | None:
+        """The NOTICE and licence texts `files` by their hashes, or none
+        where keeping them would bring what this review holds past
+        `GATE_HELD_BYTES`."""
+        named = {hashlib.sha256(content).hexdigest(): content for content in files.values()}
+        more = sum(len(content) for sha, content in named.items() if sha not in self.held)
+        return None if self.held_bytes + more > GATE_HELD_BYTES else named
+
+    def replacing(self, artifact: dict, source: pathlib.Path | None, output: bytes, assets: dict[str, bytes]) -> None:
+        """Gate `output`, a repack or bundle that installs in `artifact`'s
+        place, over its whole input `source`, and record it with `replaced`;
+        where it passes, `output`, its NOTICE and its licence texts are kept
+        as assets. A failing record drops the artifact, which has no route
+        to install but `output`."""
+        if source is None or not os.path.lexists(source):
+            raise Dropped(UNGATED["reason"])
+        if self.texts is None:
+            raise Dropped("no licence texts were given, so nothing could ship beside it")
+        sha256 = hashlib.sha256(output).hexdigest()
+        more = 0 if sha256 in self.repacked else len(output)
+        if self.repacked_bytes + more > REPACK_HELD_BYTES:
+            raise Dropped(f"its repack would bring what this review holds of repacks past {REPACK_HELD_BYTES} bytes")
+        record, files = licence_gate(source, self.allowed, self.texts, output)
+        if record["passed"] is not True:
+            raise Dropped(record["reason"])
+        named = self.beside(files)
+        if named is None:
+            raise Dropped(f"its NOTICE would bring what this review holds past {GATE_HELD_BYTES} bytes")
+        self.held_bytes += sum(len(content) for sha, content in named.items() if sha not in self.held)
+        self.held.update(named)
+        self.repacked.add(sha256)
+        self.repacked_bytes += more
+        replaced(artifact, record)
+        assets.update(named)
+        assets[sha256] = output
 
 
 def replaced(artifact: dict, record: dict) -> None:
@@ -3341,6 +3622,501 @@ def licence_gate_command(arguments: argparse.Namespace) -> int:
     return 0
 
 
+class OneBz2:
+    """The one bzip2 stream `file` holds, decompressed as it is read, no more
+    than `ARTIFACT_BYTES` of it read; whatever follows that stream is left for
+    `ended` to refuse."""
+
+    def __init__(self, file) -> None:
+        self.file = file
+        self.decompressor = bz2.BZ2Decompressor()
+        self.taken = 0
+
+    def read(self, count: int = -1) -> bytes:
+        count = 1 << 20 if count < 0 else count
+        held = b""
+        while len(held) < count and not self.decompressor.eof:
+            chunk = b""
+            if self.decompressor.needs_input:
+                chunk = self.file.read(1 << 16)
+                if not chunk:
+                    raise Dropped("the archive ends before its bzip2 stream does")
+                spend(len(chunk))
+                self.taken += len(chunk)
+                if self.taken > ARTIFACT_BYTES:
+                    raise Dropped(f"the archive is larger than {ARTIFACT_BYTES} bytes")
+            try:
+                held += self.decompressor.decompress(chunk, count - len(held))
+            except (OSError, EOFError):
+                raise Dropped("is not a bzip2-compressed tar this intake can read") from None
+        return held
+
+    def ended(self) -> bool:
+        """Whether the stream is whole and nothing follows it."""
+        return self.decompressor.eof and not self.decompressor.unused_data and not self.file.read(1)
+
+
+class Member(tarfile.TarInfo):
+    """A member of a `.tar.bz2`, its headers held, before `tarfile` reads
+    them, to what the client's tar reader takes: a GNU long name or link of
+    at most `LONG_NAME_BYTES`, an extended header of at most
+    `EXTENDED_BYTES` whose `size` is its member's, no header describing one
+    member twice, and no global or Solaris extended header and no sparse
+    member, which the client would read otherwise than `tarfile` does."""
+
+    def _proc_member(self, archive):
+        described = archive.__dict__.setdefault("described", set())
+        if self.type in (tarfile.GNUTYPE_LONGNAME, tarfile.GNUTYPE_LONGLINK, tarfile.XHDTYPE):
+            ceiling = EXTENDED_BYTES if self.type == tarfile.XHDTYPE else LONG_NAME_BYTES
+            if self.size > ceiling:
+                kind = "an extended header" if self.type == tarfile.XHDTYPE else "a long name or link"
+                raise Dropped(f"the archive holds {kind} of more than {ceiling} bytes")
+            if self.type in described:
+                raise Dropped("the archive describes one member twice")
+            described.add(self.type)
+        else:
+            described.clear()
+            if self.type == tarfile.XGLTYPE:
+                raise Dropped("the archive holds a global extended header, which the client does not apply")
+            if self.type == tarfile.SOLARIS_XHDTYPE:
+                raise Dropped("the archive holds a Solaris extended header, which the client does not read")
+            if self.type == tarfile.GNUTYPE_SPARSE:
+                raise Dropped("the archive holds a sparse member, which the client refuses")
+        return super()._proc_member(archive)
+
+    def _proc_gnusparse_00(self, next, raw_headers):
+        raise Dropped("the archive holds a sparse member, which the client refuses")
+
+    def _proc_gnusparse_01(self, next, pax_headers):
+        raise Dropped("the archive holds a sparse member, which the client refuses")
+
+    def _proc_gnusparse_10(self, next, pax_headers, tarfile):
+        raise Dropped("the archive holds a sparse member, which the client refuses")
+
+    def _apply_pax_info(self, pax_headers, encoding, errors) -> None:
+        if any(key.startswith("GNU.sparse.") for key in pax_headers):
+            raise Dropped("the archive holds a sparse member, which the client refuses")
+        given = pax_headers.get("size")
+        if given is not None and not (given.isdigit() and int(given) == self.size):
+            raise Dropped("the archive's extended header gives a member another size than its header")
+        super()._apply_pax_info(pax_headers, encoding, errors)
+
+
+class Sink(io.BytesIO):
+    """What a repack writes, refused past `REPACK_BYTES`."""
+
+    def write(self, data) -> int:
+        if self.tell() + len(data) > REPACK_BYTES:
+            raise Dropped(f"the repack would be larger than {REPACK_BYTES} bytes")
+        return super().write(data)
+
+
+class Packing:
+    """A deterministic tar.gz, as a repack and a FreeBSD bundle are written:
+    a GNU tar, which the client's tar reader reads, its long names in GNU
+    long name headers, in one gzip stream at `REPACK_LEVEL` whose header
+    names no file and carries mtime 0. Each member keeps its name, kind,
+    mode's permission bits and content; its owner and group are 0, their
+    names empty, and its mtime 0. Each is held to the client's rules, so a
+    repack never turns a refusal into a pass: at most `TARBALL_MEMBERS`, a
+    name and a link's target of at most `LONG_NAME_BYTES` - 1 bytes, a name
+    the client writes, a link's target relative, and no name written twice,
+    or as a file and a directory, once case is folded."""
+
+    def __init__(self) -> None:
+        self.sink = Sink()
+        self.gzip = gzip.GzipFile(filename="", mode="wb", fileobj=self.sink, compresslevel=REPACK_LEVEL, mtime=0)
+        self.tar = tarfile.open(fileobj=self.gzip, mode="w", format=tarfile.GNU_FORMAT, encoding="utf-8")
+        self.members = 0
+        # The names written and the directories above them, once folded, as
+        # a tree of components: each node's child by its component folded,
+        # and each node's component as spelled and its kind, `None` for a
+        # directory only a name below it implies.
+        self.children: dict[tuple[int, str], int] = {}
+        self.spelled: list[str] = [""]
+        self.kinds: list[str | None] = ["dir"]
+        self.name_bytes = 0
+
+    def add(self, name: str, kind: str, mode: int, *, content=None, size: int = 0, link: str = "") -> None:
+        self.members += 1
+        if self.members > TARBALL_MEMBERS:
+            raise Dropped(f"the archive holds more than {TARBALL_MEMBERS} members")
+        for value in (name, link):
+            if len(value.encode(errors="surrogateescape")) > LONG_NAME_BYTES - 1:
+                raise Dropped(f"the archive holds a name or link longer than {LONG_NAME_BYTES - 1} bytes")
+        name = npm_written(name)
+        if kind == "link" and (not link or link.startswith("/") or any(mark in link for mark in "\\:\0")):
+            raise Dropped(f"{shown(clipped(name))} links to {shown(clipped(link))}, which is not a relative link")
+        node = 0
+        parts = name.split("/")
+        for depth, part in enumerate(parts, 1):
+            last = depth == len(parts)
+            child = self.children.get((node, part.casefold()))
+            if child is None:
+                if len(self.kinds) > TREE_NAMES:
+                    raise Dropped(f"the archive writes more than {TREE_NAMES} names, each directory above a file counted")
+                self.name_bytes += len(part)
+                if self.name_bytes > TARBALL_NAME_BYTES:
+                    raise Dropped(f"the archive's names hold more than {TARBALL_NAME_BYTES} bytes")
+                child = self.children[(node, part.casefold())] = len(self.kinds)
+                self.spelled.append(part)
+                self.kinds.append(kind if last else None)
+            elif (
+                self.spelled[child] != part
+                or self.kinds[child] not in (None, "dir")
+                or (last and (self.kinds[child] is not None or kind != "dir"))
+            ):
+                raise Dropped(f"the archive writes {shown(clipped(name))} twice, or as a file and a directory, "
+                              "once case is folded, or under a directory spelled in another case")
+            elif last:
+                self.kinds[child] = kind
+            node = child
+        info = tarfile.TarInfo(name)
+        info.type = {"file": tarfile.REGTYPE, "dir": tarfile.DIRTYPE, "link": tarfile.SYMTYPE}[kind]
+        info.mode = mode & 0o777
+        info.uid = info.gid = 0
+        info.uname = info.gname = ""
+        info.mtime = 0
+        info.linkname = link
+        info.size = size if kind == "file" else 0
+        self.tar.addfile(info, content if kind == "file" else None)
+
+    def made(self) -> bytes:
+        self.tar.close()
+        self.gzip.close()
+        return self.sink.getvalue()
+
+
+def repacked(file) -> bytes:
+    """The `.tar.bz2` `file` repacked as `Packing` writes a tar.gz, its
+    members in their order; refused where it is not one bzip2 stream with
+    nothing after it, its compressed bytes are more than `ARTIFACT_BYTES`, it
+    unpacks to more than `REPACK_DECOMPRESSED`, or a member is anything but a
+    file, a directory or a symbolic link: a hard link, a device, a FIFO or a
+    sparse member is refused, as the client refuses it."""
+    stream = OneBz2(file)
+    unzipped = Bounded(stream, REPACK_DECOMPRESSED, "the archive")
+    packing = Packing()
+    try:
+        with tarfile.open(fileobj=unzipped, mode="r|", tarinfo=Member, encoding="utf-8", errors="surrogateescape") as tar:
+            for member in tar:
+                if member.type in (tarfile.REGTYPE, tarfile.AREGTYPE):
+                    packing.add(member.name, "file", member.mode, content=tar.extractfile(member), size=member.size)
+                elif member.type == tarfile.DIRTYPE:
+                    packing.add(member.name, "dir", member.mode)
+                elif member.type == tarfile.SYMTYPE:
+                    packing.add(member.name, "link", member.mode, link=member.linkname)
+                else:
+                    kind = {
+                        tarfile.LNKTYPE: "a hard link",
+                        tarfile.CHRTYPE: "a device",
+                        tarfile.BLKTYPE: "a device",
+                        tarfile.FIFOTYPE: "a FIFO",
+                    }.get(member.type, "of a kind the client refuses")
+                    raise Dropped(f"the archive holds {shown(clipped(member.name))}, {kind}, which the client refuses")
+        while unzipped.read(1 << 20):
+            pass
+        if not stream.ended():
+            raise Dropped("the archive goes on past its one bzip2 stream")
+    except Dropped:
+        raise
+    except Exception:  # whatever bzip2 or tar cannot read is an archive the client would not unpack
+        raise Dropped("is not a bzip2-compressed tar this intake can read") from None
+    return packing.made()
+
+
+def written_whole(path: pathlib.Path, content: bytes) -> None:
+    """Write `content` to `path` whole or not at all: to a file beside it,
+    renamed over it once written."""
+    held = None
+    try:
+        descriptor, name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+        held = pathlib.Path(name)
+        with os.fdopen(descriptor, "wb") as file:
+            file.write(content)
+        held.chmod(0o644)
+        os.replace(held, path)
+        held = None
+    except OSError as failed:
+        raise Refused(f"{clipped(path)} could not be written: {clipped(failed.strerror)}") from None
+    finally:
+        if held is not None:
+            held.unlink(missing_ok=True)
+
+
+def repack_command(arguments: argparse.Namespace) -> int:
+    try:
+        descriptor = os.open(arguments.input, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as failed:
+        raise Refused(f"{clipped(arguments.input)} cannot be read: {clipped(failed.strerror)}") from None
+    try:
+        with os.fdopen(descriptor, "rb") as file:
+            if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
+                raise Dropped("it is not a regular file")
+            made = repacked(file)
+    except Dropped as failed:
+        raise Refused(f"{clipped(arguments.input)} cannot be repacked: {failed}") from None
+    written_whole(arguments.out, made)
+    return 0
+
+
+def staged_tree(staged: pathlib.Path) -> dict[str, tuple[str, int]]:
+    """Every name under the staged directory `staged`, relative to it and in
+    order, with its kind and mode, no link followed: refused where one is
+    anything but a file, a directory or a symbolic link, or there are more
+    than `TARBALL_MEMBERS`."""
+    found: dict[str, tuple[str, int]] = {}
+
+    def walk(directory: pathlib.Path, prefix: str) -> None:
+        try:
+            names = sorted(os.listdir(directory))
+        except OSError:
+            raise Refused(f"the staged directory {clipped(prefix or '.')} cannot be read") from None
+        for name in names:
+            path = f"{prefix}{name}"
+            held = os.lstat(directory / name)
+            if len(found) >= TARBALL_MEMBERS:
+                raise Refused(f"the staged directory holds more than {TARBALL_MEMBERS} names")
+            if stat.S_ISREG(held.st_mode):
+                found[path] = ("file", held.st_mode)
+            elif stat.S_ISLNK(held.st_mode):
+                found[path] = ("link", held.st_mode)
+            elif stat.S_ISDIR(held.st_mode):
+                found[path] = ("dir", held.st_mode)
+                walk(directory / name, f"{path}/")
+            else:
+                raise Refused(f"the staged {clipped(path)} is a fifo, a device or a socket, not a file, "
+                              "a directory or a link")
+
+    walk(staged, "")
+    return found
+
+
+# One line `ldd` prints under a file it was given: a library it resolves, one
+# it does not find, or the virtual object the kernel maps.
+LDD_FOUND = re.compile(r"\t([^\s=]+) => (/[^\0]*) \((0x[0-9a-f]+)\)")
+LDD_MISSING = re.compile(r"\t([^\s=]+) => not found \(0\)")
+LDD_VDSO = re.compile(r"\t\[vdso\] \((0x[0-9a-f]+)\)")
+
+
+def ldd_needs(text_read: bytes, root: str, tree: dict[str, tuple[str, int]]) -> tuple[set[str], set[str]]:
+    """What `ldd` printed, `text_read`, parsed once: each staged file it was
+    given, by a line `<staged path>:` with `root` the staged directory's real
+    path, and every library each one resolves, into the staged `lib/` or the
+    base system's `/lib/` or `/usr/lib/`. Returns the staged files it printed
+    for and the staged names its libraries resolve to. A line that does not
+    parse, a file given twice or not staged, and a library resolved anywhere
+    else or not found are refused."""
+    try:
+        lines = text_read.decode().split("\n")
+    except UnicodeDecodeError:
+        raise Refused("what ldd printed is not UTF-8") from None
+    if lines[-1] == "":
+        lines.pop()
+    sections: set[str] = set()
+    needed: set[str] = set()
+    current = None
+    for number_of, line in enumerate(lines, 1):
+        if not line.startswith("\t"):
+            if not line.endswith(":") or not line.startswith(root + "/"):
+                if line.endswith(":") and line.startswith("/"):
+                    raise Refused(f"ldd printed for {clipped(line[:-1])}, which is not a staged file")
+                raise Refused(f"what ldd printed does not parse at line {number_of}: {clipped(line)}")
+            current = line[len(root) + 1:-1]
+            if tree.get(current, ("",))[0] != "file":
+                raise Refused(f"ldd printed for {clipped(current)}, which is not a staged file")
+            if current in sections:
+                raise Refused(f"ldd printed for {clipped(current)} twice")
+            sections.add(current)
+            continue
+        if current is None:
+            raise Refused(f"what ldd printed does not parse at line {number_of}: {clipped(line)}")
+        if LDD_VDSO.fullmatch(line):
+            continue
+        missing = LDD_MISSING.fullmatch(line)
+        if missing is not None:
+            raise Refused(f"{clipped(missing[1])} cannot be bundled: ldd finds it nowhere for {clipped(current)}")
+        found = LDD_FOUND.fullmatch(line)
+        if found is None:
+            raise Refused(f"what ldd printed does not parse at line {number_of}: {clipped(line)}")
+        resolved_to = os.path.normpath(found[2])
+        if resolved_to.startswith(root + "/lib/"):
+            rel = resolved_to[len(root) + 1:]
+            if "/" not in rel[len("lib/"):] and tree.get(rel, ("",))[0] in ("file", "link"):
+                needed.add(rel)
+                continue
+        elif resolved_to.startswith(("/lib/", "/usr/lib/")) and not resolved_to.startswith(root + "/"):
+            continue
+        raise Refused(f"{clipped(found[1])} cannot be bundled: ldd resolves it to {clipped(found[2])}, which is "
+                      "neither a library staged in the bundle's lib/ nor one of the base system's /lib/ or /usr/lib/")
+    return sections, needed
+
+
+def bundle_packages(value: object) -> list[dict]:
+    """The packages the FreeBSD step fetched, as `pkg query` gave them:
+    `{"packages": [{"name", "version", "licenses", "logic", "files"}]}`."""
+    if not isinstance(value, dict) or set(value) != {"packages"} or not isinstance(value["packages"], list):
+        raise Refused('the package list is not {"packages": [...]}')
+    if not value["packages"] or len(value["packages"]) > ITEMS:
+        raise Refused(f"the package list holds no package, or more than {ITEMS}")
+    held = []
+    names: set[str] = set()
+    files_listed = 0
+    for index, item in enumerate(value["packages"]):
+        where = f"package {index}"
+        if not isinstance(item, dict):
+            raise Refused(f"{where} is not an object")
+        extra = sorted(set(item) - {"name", "version", "licenses", "logic", "files"})
+        if extra:
+            raise Refused(f"{where} holds {named(extra)}, which no package holds")
+        name = item.get("name")
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}", name):
+            raise Refused(f"{where}'s name is not a package's name")
+        where = f"package {name}"
+        if name in names:
+            raise Refused(f"the package list lists {where} twice")
+        names.add(name)
+        given = item.get("version")
+        if not isinstance(given, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._,+-]{0,63}", given):
+            raise Refused(f"{where}'s version is not a package's version")
+        licences = item.get("licenses")
+        if not isinstance(licences, list) or len(licences) > ITEMS or not all(
+            isinstance(licence, str) and re.fullmatch(r"[A-Za-z0-9._+-]{1,64}", licence) for licence in licences
+        ):
+            raise Refused(f"{where}'s licenses are not a list of at most {ITEMS} licence names")
+        logic = item.get("logic")
+        if logic not in ("single", "and", "or"):
+            raise Refused(f"{where}'s licence logic is not single, and or or")
+        if logic == "single" and len(licences) > 1:
+            raise Refused(f"{where} gives {len(licences)} licences under single logic, which takes one")
+        files = item.get("files")
+        if not isinstance(files, list):
+            raise Refused(f"{where}'s files are not a list")
+        files_listed += len(files)
+        if files_listed > LISTED_ENTRIES:
+            raise Refused(f"the package list lists more than {LISTED_ENTRIES} files")
+        for path in files:
+            if not isinstance(path, str) or not path.startswith("/") or "\0" in path or len(path) > TEXT_BYTES:
+                raise Refused(f"{where} lists {clipped(path)}, which is not an absolute path")
+        held.append({"files": files, "licences": licences, "logic": logic, "name": name, "version": given})
+    return held
+
+
+def ports_expression(licences: list[str], logic: str) -> str:
+    """The SPDX expression of a package's ports licences under `logic`, each
+    through `PORTS_LICENCES`; one the table does not hold, and none at all,
+    is `NOASSERTION`, which the licence gate refuses."""
+    if not licences:
+        return "NOASSERTION"
+    joined = " OR " if logic == "or" else " AND "
+    return joined.join(PORTS_LICENCES.get(licence, "NOASSERTION") for licence in licences)
+
+
+def bundle_command(arguments: argparse.Namespace) -> int:
+    """The FreeBSD step's staged runtime checked and written as a tar.gz and
+    an SBOM, both whole or neither; see the module documentation."""
+    abi = arguments.abi
+    if not FREEBSD_ABI.fullmatch(abi):
+        raise Refused(f"the ABI {clipped(abi)} is not a FreeBSD ABI on amd64, FreeBSD:<major>:amd64")
+    staged = arguments.staged
+    root = os.path.realpath(staged)
+    tree = staged_tree(staged)
+    for path, (kind, _) in tree.items():
+        top, _, below = path.partition("/")
+        if top not in ("bin", "lib", "licenses") or (not below and kind != "dir"):
+            raise Refused(f"the staged directory holds {clipped(path)}, which is not under bin/, lib/ or licenses/")
+    programs = [path for path in tree if path.startswith("bin/")]
+    if len(programs) != 1 or tree[programs[0]][0] != "file":
+        raise Refused(f"bin/ holds {len(programs)} names, and a staged runtime is one program, a file")
+    packages = bundle_packages(read_json(arguments.packages, PACKAGES_BYTES, "the package list"))
+    names = {package["name"] for package in packages}
+    # What the base of each listed file is, after every one of its components:
+    # `/usr/local/lib/libfoo.so.1` installs `lib/libfoo.so.1` and so on.
+    installed: set[str] = set()
+    for package in packages:
+        for path in package["files"]:
+            parts = path.split("/")
+            installed.update("/".join(parts[at:]) for at in range(1, len(parts)))
+    python = None
+    for path, (kind, _) in tree.items():
+        parts = path.split("/")
+        if parts[0] == "licenses":
+            if len(parts) >= 2 and parts[1] not in names:
+                raise Refused(f"{clipped('/'.join(parts[:2]))} names no listed package")
+            if len(parts) == 2 and kind != "dir":
+                raise Refused(f"{clipped(path)} is not a package's directory of licence files")
+        elif parts[0] == "lib" and len(parts) > 2 or (parts[0] == "lib" and kind == "dir" and len(parts) == 2):
+            if not PYTHON.fullmatch(parts[1].removeprefix("python")) or not parts[1].startswith("python"):
+                raise Refused(f"{clipped(path)} is neither a library in lib/ nor under CPython's lib/python3.M/")
+            if python not in (None, parts[1]):
+                raise Refused("lib/ holds the standard library of two CPythons")
+            python = parts[1]
+    printed = read(arguments.ldd, LDD_BYTES, "what ldd printed")
+    sections, needed = ldd_needs(printed, root, tree)
+    # A staged library a link names is needed where the link is.
+    for path in sorted(needed):
+        current = path
+        for _ in range(LINK_STEPS):
+            if tree.get(current, ("",))[0] != "link":
+                break
+            target = os.path.normpath(os.path.join(os.path.dirname(current), os.readlink(staged / current)))
+            if target.startswith("lib/") and target in tree:
+                needed.add(target)
+            current = target
+    for path, (kind, _) in tree.items():
+        parts = path.split("/")
+        if parts[0] == "lib" and len(parts) == 2 and kind != "dir" and path not in needed:
+            raise Refused(f"no ldd line needs {clipped(path)}, so it is not bundled")
+    loaded = [programs[0]] + [
+        path for path, (kind, _) in tree.items()
+        if kind == "file" and path.startswith("lib/") and (path.count("/") == 1 or path.endswith(".so"))
+    ]
+    for path in loaded:
+        if path not in sections:
+            raise Refused(f"ldd printed nothing for {clipped(path)}, so what it loads is not known")
+    for path, (kind, _) in tree.items():
+        if path.startswith(("bin/", "lib/")) and kind != "dir" and path not in installed:
+            raise Refused(f"no listed package installs {clipped(path)}")
+    try:
+        packing = Packing()
+        for path, (kind, mode) in tree.items():
+            if kind == "file":
+                with opened(staged / path) as file:
+                    size = os.fstat(file.fileno()).st_size
+                    packing.add(path, "file", mode, content=file, size=size)
+            elif kind == "link":
+                packing.add(path, "link", mode, link=os.readlink(staged / path))
+            else:
+                packing.add(path, "dir", mode)
+        made = packing.made()
+    except Dropped as failed:
+        raise Refused(f"the staged runtime cannot be bundled: {failed}") from None
+    except OSError as failed:
+        raise Refused(f"the staged runtime cannot be read: {clipped(failed.strerror)}") from None
+    sbom = {
+        "bomFormat": "CycloneDX",
+        "components": [
+            {
+                "licenses": [{"expression": ports_expression(package["licences"], package["logic"])}],
+                "name": package["name"],
+                "type": "library",
+                "version": package["version"],
+            }
+            for package in sorted(packages, key=lambda package: package["name"])
+        ],
+        "metadata": {"properties": [{"name": "freebsd:abi", "value": abi}]},
+        "specVersion": "1.6",
+        "version": 1,
+    }
+    written_whole(arguments.out, made)
+    try:
+        written_whole(arguments.sbom, json.dumps(sbom, indent=2, sort_keys=True).encode() + b"\n")
+    except Refused:
+        arguments.out.unlink(missing_ok=True)
+        raise
+    return 0
+
+
 def review(arguments: argparse.Namespace) -> int:
     global BUDGET
     BUDGET = None
@@ -3355,7 +4131,7 @@ def review(arguments: argparse.Namespace) -> int:
     gate = Gate(allowed, arguments.sboms, arguments.texts)
     merged = merged_of(arguments.merged)
     interpreters = interpreters_of(arguments.interpreters)
-    pinned_node = node_of(arguments.node)
+    pinned_node, freebsd_node = node_of(arguments.node)
     gpg = keys = None
     if pinned_node is not None:
         gpg = shutil.which("gpg")
@@ -3364,7 +4140,7 @@ def review(arguments: argparse.Namespace) -> int:
         keys = release_keys(arguments.node_keys or pathlib.Path(__file__).resolve().parent / "node-release-keys")
     dispositions = dispositions_of(arguments.dispositions)
     BUDGET = Budget()
-    node = node_release(arguments.observed, pinned_node, gpg, keys)
+    node = node_release(arguments.observed, pinned_node, gpg, keys, freebsd_node, gate)
     entries = []
     dropped: list[dict] = []
     assets: dict[str, bytes] = {}
@@ -3937,6 +4713,15 @@ def gate_of(record: object) -> str:
     return f"not a record the gate writes: {shown(json.dumps(record, sort_keys=True))}"
 
 
+def replaced_of(output: object) -> str:
+    """What installs in an artifact's place, as the reviewer reads it."""
+    if output is None:
+        return "nothing, so the artifact installs as it is"
+    if isinstance(output, dict) and set(output) == {"sha256", "size"}:
+        return f"{shown(output['sha256'])} of {shown(output['size'])} bytes"
+    return f"not an output the gate binds: {shown(json.dumps(output, sort_keys=True))}"
+
+
 def artifact_lines(artifact: dict, old: dict | None) -> list[str]:
     if old is None:
         lines = [
@@ -3947,11 +4732,14 @@ def artifact_lines(artifact: dict, old: dict | None) -> list[str]:
         ]
         if "licence_gate" in artifact:
             lines.append(f"- artifact licence gate: {gate_of(artifact['licence_gate'])}")
+        if "replaced_by" in artifact:
+            lines.append(f"- artifact replaced by {replaced_of(artifact['replaced_by'])}")
         return lines
     lines = []
     for field in ARTIFACT_FIELDS:
         lines += compared(f"artifact {field}", artifact.get(field), old.get(field), shown)
     lines += compared("artifact licence gate", artifact.get("licence_gate"), old.get("licence_gate"), gate_of)
+    lines += compared("artifact replaced by", artifact.get("replaced_by"), old.get("replaced_by"), replaced_of)
     lines += compared("artifact files", artifact.get("files"), old.get("files"), files_of)
     return lines + changed_files(artifact.get("files"), old.get("files"))
 
@@ -4276,10 +5064,21 @@ def main() -> int:
     rechecking.add_argument("--assets", type=pathlib.Path, required=True, help="the directory holding the lock assets")
     rechecking.add_argument("--results", type=pathlib.Path, help="the registry's status for each tarball, by SHA-512")
     rechecking.add_argument("--out", type=pathlib.Path, required=True)
+    repacking = commands.add_parser("repack", help="repack a .tar.bz2 as the tar.gz review makes of it")
+    repacking.add_argument("--input", type=pathlib.Path, required=True, help="the .tar.bz2 download")
+    repacking.add_argument("--out", type=pathlib.Path, required=True, help="where the tar.gz is written")
+    bundling = commands.add_parser("bundle", help="check and pack a staged FreeBSD runtime with its SBOM")
+    bundling.add_argument("--staged", type=pathlib.Path, required=True, help="the staged bin/, lib/ and licenses/")
+    bundling.add_argument("--ldd", type=pathlib.Path, required=True, help="what ldd printed for the staged files")
+    bundling.add_argument("--packages", type=pathlib.Path, required=True, help="the package list pkg query gave")
+    bundling.add_argument("--abi", required=True, help="the FreeBSD package ABI, as FreeBSD:<major>:amd64")
+    bundling.add_argument("--out", type=pathlib.Path, required=True, help="where the tar.gz is written")
+    bundling.add_argument("--sbom", type=pathlib.Path, required=True, help="where the CycloneDX SBOM is written")
     arguments = parser.parse_args()
     commands_run = {
         "review": review, "diff": diff, "render": render, "publish-check": publish_check,
         "lock": lock, "tree": tree, "recheck": recheck, "licence-gate": licence_gate_command,
+        "repack": repack_command, "bundle": bundle_command,
     }
     try:
         return commands_run[arguments.command](arguments)
