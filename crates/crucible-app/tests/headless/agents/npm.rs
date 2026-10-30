@@ -3,8 +3,10 @@
 //! count, the whole size, every host the install reaches, the licence, each
 //! install script left unrun and how the agent is started; Node and every
 //! tarball are fetched only after the yes, each tarball held to its SHA-512,
-//! and the version is committed with its tree, its preload and an empty
-//! `.bin`, which only their owner may change, whole or not at all. A tarball
+//! and the version is committed with its tree, its preload and `.bin`, holding
+//! a stub for each program the tree declares, which only their owner may
+//! change, whole or not at all. The question counts the tree's packages under
+//! each licence. A tarball
 //! that is not its pin commits nothing, a tarball the registry answers 410 for
 //! says the version can likely no longer be installed, a tree the store has no
 //! room for fetches no tarball, and an offer that gives Node arguments of its
@@ -19,14 +21,14 @@ use crucible_app::agent_download::DownloadError;
 use crucible_app::client::agents::{AgentsError, How, Outcome};
 use crucible_client_api::{Pending, Text};
 use crucible_external_harnesses::fake_peer;
-use crucible_external_harnesses::release::{BIN, PRELOAD, Preload, proof};
+use crucible_external_harnesses::release::{BIN, PRELOAD, Preload, Stub, proof};
 use crucible_external_harnesses::store::StoreError;
 use serde_json::{Value, json};
 
 use super::uvx::{unchanged, version, versioned};
 use super::{
     Bench, CATALOG, Failed, Reply, Server, answering, answers, artifact, asset_path, digest,
-    install, peer, platform, row_of, set, shape, stating,
+    facts, install, peer, platform, row_of, set, shape, stating,
 };
 
 /// Node's path in the version, as the catalog lists it.
@@ -91,13 +93,41 @@ fn noded(server: &Server, played: &Played, tree: &Tree, node_args: &Value) -> Va
 /// starts it, whose one instance would run its Node; and the fake peer and the
 /// tree it is released as.
 fn bench(name: &str) -> Result<(Bench, Played, Tree), Failed> {
+    bench_of(name, tree())
+}
+
+/// [`bench`], released as `tree`.
+fn bench_of(name: &str, tree: Tree) -> Result<(Bench, Played, Tree), Failed> {
     let bench = Bench::new(name)?;
     let played = peer(&answers("1.0.0"))?;
-    let tree = tree();
     let release = noded(&bench.server, &played, &tree, &json!([]));
     bench.server.catalog(1, &[release], &json!([]))?;
     bench.configure(&version(&bench).join(node()), &json!({}))?;
     Ok((bench, played, tree))
+}
+
+/// `tree` with `fields` given to each package its lock lists, by its index,
+/// and the packages of `bundled` added to it, bundled in its first.
+fn amended(tree: &Tree, fields: &[(usize, Value)], bundled: &[Value]) -> Result<Tree, Failed> {
+    let mut lock: Value = serde_json::from_slice(&tree.lock)?;
+    let packages = lock
+        .pointer_mut("/packages")
+        .and_then(Value::as_array_mut)
+        .ok_or("the lock's packages")?;
+    for (index, given) in fields {
+        let (Some(package), Some(given)) = (
+            packages.get_mut(*index).and_then(Value::as_object_mut),
+            given.as_object(),
+        ) else {
+            return Err(format!("no package {index} to give fields to").into());
+        };
+        package.extend(given.clone());
+    }
+    packages.extend(bundled.iter().cloned());
+    Ok(Tree {
+        lock: serde_json::to_vec(&lock)?,
+        tarball: tree.tarball.clone(),
+    })
 }
 
 /// The catalog, then the lock, as the fake host was asked for them.
@@ -416,4 +446,147 @@ fn a_release_that_gives_node_arguments_of_its_own_is_refused_before_anything_is_
     assert!(front.put.is_empty());
     assert_eq!(bench.server.asked(), CATALOG);
     unchanged(&bench, &before, "Node arguments of its own")
+}
+
+/// The question counts the packages of the tree under each licence its lock
+/// gives, the most common first, a package that gives none counted as such,
+/// and names no more than eight licences before it says how many more.
+#[test]
+fn the_question_counts_the_packages_of_the_tree_under_each_licence() -> Result<(), Failed> {
+    let inside = |name: &str, license: Option<&str>| {
+        let mut package = json!({
+            "location": format!("node_modules/peer/node_modules/{name}"),
+            "name": name,
+            "version": "1.0.0",
+            "in_bundle": true,
+        });
+        if let (Some(fields), Some(license)) = (package.as_object_mut(), license) {
+            fields.insert("license".to_owned(), json!(license));
+        }
+        package
+    };
+    let mut bundled = vec![
+        inside("a", Some("MIT")),
+        inside("b", Some("MIT")),
+        inside("c", Some("Apache-2.0")),
+        inside("d", Some("Apache-2.0")),
+        inside("e", None),
+        inside("f", None),
+    ];
+    let single = [
+        "Zlib",
+        "Unlicense",
+        "ISC",
+        "CC0-1.0",
+        "BSD-3-Clause",
+        "BSD-2-Clause",
+        "0BSD",
+        "(MIT OR Apache-2.0)",
+    ];
+    for (at, license) in single.iter().enumerate() {
+        bundled.push(inside(&format!("single{at}"), Some(license)));
+    }
+    let tree = amended(&tree(), &[(0, json!({"license": "MIT"}))], &bundled)?;
+    let (bench, _, _) = bench_of("agents-door-npm-licences", tree)?;
+    let mut front = answering(&bench.server, None);
+
+    let (outcome, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+
+    assert!(
+        matches!(outcome, Ok(Outcome::Undecided)),
+        "{}",
+        shape(&outcome)
+    );
+    let facts = facts(&front)?;
+    let expected = [
+        "3 packages of its tree under MIT.",
+        "2 packages of its tree under Apache-2.0.",
+        "2 packages of its tree under no licence given.",
+        "1 package of its tree under (MIT OR Apache-2.0).",
+        "1 package of its tree under 0BSD.",
+        "1 package of its tree under BSD-2-Clause.",
+        "1 package of its tree under BSD-3-Clause.",
+        "1 package of its tree under CC0-1.0.",
+        "And 3 more licences.",
+    ];
+    let first = facts
+        .iter()
+        .position(|fact| fact.as_str() == expected[0])
+        .ok_or("the licence the most packages are under is counted first")?;
+    let counted: Vec<&str> = facts
+        .iter()
+        .skip(first)
+        .take(expected.len())
+        .map(String::as_str)
+        .collect();
+    assert_eq!(counted, expected);
+    Ok(())
+}
+
+/// Each program the tree declares is given a stub in `.bin`, which starts the
+/// pinned Node on its script under the preload, and the receipt names it.
+#[test]
+fn each_program_the_tree_declares_is_given_a_stub_in_bin_that_the_receipt_names()
+-> Result<(), Failed> {
+    let declared = amended(&tree(), &[(0, json!({"bin": {"peer": "./bin/peer.js"}}))], &[])?;
+    let (bench, _, tree) = bench_of("agents-door-npm-stubs", declared)?;
+    bench.server.serve(TARBALL, Reply::Body(tree.tarball));
+    let mut front = answering(&bench.server, Some("Install"));
+
+    let (outcome, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+
+    assert!(outcome.is_ok(), "{}", shape(&outcome));
+    let root = version(&bench);
+    let script = root
+        .join("node_modules")
+        .join("peer")
+        .join("bin")
+        .join("peer.js");
+    let started = (root.join(node()), root.join(PRELOAD));
+    let stub = if cfg!(windows) {
+        Stub::windows("peer", &started.0, &started.1, &script)?
+    } else {
+        Stub::unix("peer", &started.0, &started.1, &script)?
+    };
+    assert_eq!(
+        fs::read(root.join(stub.path())).ok().as_deref(),
+        Some(stub.bytes()),
+        "the stub in .bin"
+    );
+    assert_eq!(fs::read_dir(root.join(BIN))?.count(), 1, "one stub in .bin");
+    let receipt: Value = serde_json::from_slice(&fs::read(root.join(".receipt"))?)?;
+    let named = receipt
+        .pointer("/files")
+        .and_then(Value::as_array)
+        .and_then(|files| {
+            files
+                .iter()
+                .find(|file| file.pointer("/path").and_then(Value::as_str) == Some(stub.path()))
+        });
+    assert!(named.is_some(), "the receipt names the stub");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = fs::metadata(root.join(stub.path()))?.permissions().mode() & 0o777;
+        assert_eq!(mode & 0o022, 0, "the stub is {mode:o}");
+        assert_eq!(mode & 0o100, 0o100, "the stub is {mode:o}");
+    }
+
+    // Asked again, the version in place is the one its receipt names, stub
+    // and all, so nothing is fetched.
+    bench.server.forget();
+    let mut again = answering(&bench.server, Some("Install"));
+    let (kept, _) = bench.ask(install("1.0.0")?, &mut again, false)?;
+    assert!(
+        matches!(
+            &kept,
+            Ok(Outcome::Moved {
+                downloaded: false,
+                ..
+            })
+        ),
+        "{}",
+        shape(&kept)
+    );
+    Ok(())
 }

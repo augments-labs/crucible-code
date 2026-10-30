@@ -535,6 +535,7 @@ const fn shape(outcome: &Result<Outcome, AgentsError>) -> &'static str {
         Err(AgentsError::Store(_)) => "Err(Store)",
         Err(AgentsError::Download(_)) => "Err(Download)",
         Err(AgentsError::Unpacked(_)) => "Err(Unpacked)",
+        Err(AgentsError::Stub(_)) => "Err(Stub)",
         Err(AgentsError::FileListUnfetched(_)) => "Err(FileListUnfetched)",
         Err(AgentsError::FileListUnread(_)) => "Err(FileListUnread)",
         Err(AgentsError::Remember(_)) => "Err(Remember)",

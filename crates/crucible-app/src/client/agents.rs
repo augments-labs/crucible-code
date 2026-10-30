@@ -43,9 +43,11 @@
 //! and that every address and mirror it is pinned at is on one of them; for a
 //! release a pinned Node starts, its package lock, fetched from the catalog's
 //! own host by [`catalog_fetch::asset`] and read, and every tarball it pins on
-//! a host the target lists, so the question names the package count, every
-//! install script and what the reviewer decided of it, at most sixteen and
-//! then how many more, and the hosts the registry is reached through; its
+//! a host the target lists, so the question names the package count, how
+//! many packages are under each licence the lock gives, at most eight and
+//! then how many more, every install script and what the reviewer decided of
+//! it, at most sixteen and then how many more, and the hosts the registry is
+//! reached through; its
 //! file lists, where a list the catalog keeps as an asset is first fetched
 //! from the catalog's own host by [`catalog_fetch::asset`] and read as one
 //! given inline, a list that does not arrive as listed or does not read
@@ -55,7 +57,8 @@
 //! store has, where the tarballs stand as one more download; and, for a
 //! version already in place, that its receipt is of the artifacts and the
 //! files the catalog pins, with the launcher of a release a pinned
-//! interpreter starts, or the preload and `.bin` of one a pinned Node starts,
+//! interpreter starts, or the preload, `.bin` and the stub in it of each
+//! program of one a pinned Node starts,
 //! refused otherwise. A tree's own files are known from its receipt only as
 //! lying where its lock installs a package, which the question says, since
 //! its lock lists none of them; a receipt is bounded, so a tree of very many
@@ -73,8 +76,10 @@
 //! tarballs downloaded after its artifacts by [`agent_download::tarballs`]
 //! into a directory of the staging's own, unpacked from there to where its
 //! lock installs each package and that directory removed, then the preload
-//! written at the top of the version and `.bin` made empty beside it, each
-//! named in the receipt. Only then is every instance whose
+//! written at the top of the version and `.bin` beside it, holding a stub for
+//! each program the tree declares, each named in the receipt; a program
+//! whose script no tarball wrote is refused before anything is committed.
+//! Only then is every instance whose
 //! `executable` lies in the agent's directory in the store written to the new
 //! program, in one update of the user file, each
 //! only where its `executable` still names what the question showed, so an
@@ -172,6 +177,7 @@
 //! the sandbox is not kept ([`Listed::keeps_no_sign_in`]).
 
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -188,8 +194,8 @@ use crucible_external_harnesses::catalog::{
     Format, Launch, Method, Offer, Script, Target, Trust, Unprofiled, file_list,
 };
 use crucible_external_harnesses::release::{
-    BIN, LAUNCHER, LaunchScript, NpmTree, PRELOAD, Preload, RELEASE_BYTES, UnpackError, Unpacker,
-    Wheels,
+    BIN, LAUNCHER, LaunchScript, NpmTree, PRELOAD, Preload, RELEASE_BYTES, Stub, StubError,
+    UnpackError, Unpacker, Wheels,
 };
 use crucible_external_harnesses::store::{
     Listing, Mismatch, Provenance, Receipt, Store, StoreError, Version,
@@ -464,6 +470,10 @@ pub enum AgentsError {
     /// `-I`.
     #[error(transparent)]
     Unpacked(#[from] UnpackError),
+    /// A program a package tree declares could not be given a stub in
+    /// `.bin`.
+    #[error(transparent)]
+    Stub(#[from] StubError),
     /// A file list the catalog keeps as an asset did not arrive from the
     /// catalog's host as the catalog lists it.
     #[error("the release's file list could not be fetched from the catalog: {0}")]
@@ -964,10 +974,18 @@ impl Door<'_> {
         let target = &offer.pin.target;
         let mut listed = listed(target);
         runnable(&listed, &target.cmd)?;
+        let (total, fitted) = sized(offer, tree.as_ref())?;
+        let version = Version::new(&offer.pin.version, offer.pin.lock_revision)?;
+        let root = self.store.directory(agent, &version);
+        let program = root.join(&*target.cmd);
         // The launcher is committed with the version, so a receipt of it in
-        // place names it too; so are the preload and the empty `.bin` beside
-        // a tree.
+        // place names it too; so are the preload and `.bin` beside a tree,
+        // and the stub in it of each program the tree declares.
         listed.extend(script.as_ref().map(LaunchScript::file));
+        let stubs = match &tree {
+            Some(tree) => stubs(tree, &root, &program)?,
+            None => Vec::new(),
+        };
         if tree.is_some() {
             listed.extend([
                 Preload::file(),
@@ -976,9 +994,8 @@ impl Door<'_> {
                     kind: FileKind::Dir,
                 },
             ]);
+            listed.extend(stubs.iter().map(Stub::file));
         }
-        let (total, fitted) = sized(offer, tree.as_ref())?;
-        let version = Version::new(&offer.pin.version, offer.pin.lock_revision)?;
         let kept = match self.store.receipt(agent, &version)? {
             Some(receipt) if same(&receipt, target, &listed, tree.as_ref()) => true,
             Some(_) => {
@@ -995,8 +1012,6 @@ impl Door<'_> {
             self.store.fits_while_downloading(&fitted)?;
         }
         let moving = self.moving(agent);
-        let root = self.store.directory(agent, &version);
-        let program = root.join(&*target.cmd);
 
         let plan = Plan {
             kept,
@@ -1090,6 +1105,7 @@ impl Door<'_> {
                     )
                     .await?,
                 );
+                files.extend(stubbed(&stubs, staging.directory())?);
             }
             let provenance = Provenance {
                 listing: Listing {
@@ -1199,6 +1215,9 @@ impl Door<'_> {
             Some(terms) => format!("Licence {license}; terms at {}.", quoted(terms)),
             None => format!("Licence {license}."),
         });
+        if let Some(tree) = plan.tree {
+            facts.extend(licences(tree));
+        }
         if let Some(caution) = &entry.caution {
             facts.push(format!("Caution: {}", quoted(caution)));
         }
@@ -1221,7 +1240,8 @@ impl Door<'_> {
         if matches!(target.launch, Launch::Npm { .. }) {
             facts.push(format!(
                 "Node is given the preload first, which refuses a package the version's tree \
-                 does not hold, and {BIN}, empty in this build, last on its PATH."
+                 does not hold, and {BIN}, a stub for each program the tree declares, last on \
+                 its PATH."
             ));
         }
         facts.push(if target.env.is_empty() {
@@ -1950,6 +1970,44 @@ fn unrun(scripts: &[Script]) -> Vec<String> {
 /// The most install scripts a question names one by one.
 const SCRIPTS: usize = 16;
 
+/// How many packages of `tree` are under each licence its lock gives, those
+/// that give none counted together, the most packages first and then by
+/// licence, a package that gives none after one that does: no more than
+/// [`LICENCES`] of them, then how many more.
+fn licences(tree: &NpmTree) -> Vec<String> {
+    let mut counted: HashMap<Option<&str>, usize> = HashMap::new();
+    for package in tree.packages() {
+        *counted.entry(package.license.as_deref()).or_default() += 1;
+    }
+    let mut counted: Vec<(Option<&str>, usize)> = counted.into_iter().collect();
+    counted.sort_by(|(one, many), (other, more)| {
+        more.cmp(many)
+            .then(one.is_none().cmp(&other.is_none()))
+            .then(one.cmp(other))
+    });
+    let mut facts: Vec<String> = counted
+        .iter()
+        .take(LICENCES)
+        .map(|(license, count)| {
+            let packages = if *count == 1 { "package" } else { "packages" };
+            match license {
+                Some(license) => {
+                    format!("{count} {packages} of its tree under {}.", quoted(license))
+                }
+                None => format!("{count} {packages} of its tree under no licence given."),
+            }
+        })
+        .collect();
+    let more = counted.len().saturating_sub(LICENCES);
+    if more > 0 {
+        facts.push(format!("And {more} more licences."));
+    }
+    facts
+}
+
+/// The most licences a question counts the packages under one by one.
+const LICENCES: usize = 8;
+
 /// The files of `tree` installed into `staging`: each tarball
 /// downloaded by [`agent_download::tarballs`] into a directory of the
 /// staging's own, unpacked from there and the directory removed, so it is not
@@ -1997,6 +2055,51 @@ async fn noded(
         },
     ]);
     Ok(files)
+}
+
+/// Writes each of `stubs` into the `.bin` of the version staged at `root`,
+/// made new, so nothing the tree unpacked is written through, writable by its
+/// owner alone and runnable where it is a script `sh` runs, whatever the umask
+/// would allow; gives each as the receipt names it.
+fn stubbed(stubs: &[Stub], root: &Path) -> Result<Vec<File>, AgentsError> {
+    let mut files = Vec::with_capacity(stubs.len());
+    for stub in stubs {
+        let file = stub.file();
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(
+            &mut options,
+            if matches!(file.kind, FileKind::File { exec: true, .. }) {
+                0o755
+            } else {
+                0o644
+            },
+        );
+        let mut written = options
+            .open(root.join(stub.path()))
+            .map_err(DownloadError::Write)?;
+        std::io::Write::write_all(&mut written, stub.bytes()).map_err(DownloadError::Write)?;
+        files.push(file);
+    }
+    Ok(files)
+}
+
+/// The stub in `.bin` of each program `tree` declares, for the version at
+/// `root` whose pinned Node is `node`: a `.cmd` file on Windows, and an `sh`
+/// script on every other system.
+fn stubs(tree: &NpmTree, root: &Path, node: &Path) -> Result<Vec<Stub>, AgentsError> {
+    let preload = root.join(PRELOAD);
+    let mut stubs = Vec::new();
+    for (name, script) in tree.programs() {
+        let script = script.split('/').fold(root.to_path_buf(), |at, part| at.join(part));
+        stubs.push(if cfg!(windows) {
+            Stub::windows(name, node, &preload, &script)?
+        } else {
+            Stub::unix(name, node, &preload, &script)?
+        });
+    }
+    Ok(stubs)
 }
 
 /// The directory of the staging a tree's tarballs are downloaded into.

@@ -239,7 +239,10 @@ registry is asked what to install. Before the question, the lock is fetched
 from the catalog's own host, and every tarball it pins must be on a host the
 catalog lists for the agent, `registry.npmjs.org` among them; the question then
 says how many packages the tree holds, the whole download, Node and every
-tarball together, every host the install may reach, the licence, each install
+tarball together, every host the install may reach, the licence, how many of
+the tree's packages are under each licence the lock gives, such as `3 packages
+of its tree under MIT.`, the most common first, a package that gives none
+counted as such, at most eight and then how many more, each install
 script in the tree and what the reviewer decided of it (none is run: one that
 does nothing the agent needs, one a platform package does the work of, one
 whose result is built at review, or one whose loss the agent works without), at
@@ -250,13 +253,22 @@ eight at a time, each held to the size and SHA-512 its lock pins from the first
 byte, with no copy to fall back on; each is unpacked to where the lock installs
 its package, and none is kept. The install writes `preload.cjs` at the top of
 the version, which Node is given before the agent's script and which refuses a
-package the version's tree does not hold, and an empty `.bin`, which goes last
-on the agent's `PATH`; only you may change either. A tarball that is not its pin, or that the registry no
-longer has, puts nothing in place; a host that answers 404 or 410 is said to be
+package the version's tree does not hold, and `.bin`, which goes last on the
+agent's `PATH` and holds a stub for each program the tree's packages declare,
+which starts the pinned Node on that program's script under the preload, so a
+dependency's command started by its bare name runs from the tree; only you may
+change any of them. A package whose program's name is not one file name,
+whose script leaves the package or is not a file its tarball holds, or two
+programs whose names differ only in case, refuse the version; where two
+packages declare one name, the one at the top of the tree runs it, as npm
+installs it, and the version is refused where none at the top settles it. A
+tarball that is not its pin, or that the registry no longer has, puts nothing
+in place; a host that answers 404 or 410 is said to be
 likely permanent, since the version can likely no longer be installed. An entry
 that gives Node arguments of its own, or has an install script run at install,
 is refused before anything is asked. A version already installed is known by
-its receipt: Node's files, the preload and `.bin` as the catalog pins them, and
+its receipt: Node's files, the preload, `.bin` and its stubs as the catalog
+pins them, and
 the tree's files only as lying where the lock installs a package, which the
 question says.
 
