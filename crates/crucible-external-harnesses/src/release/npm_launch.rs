@@ -263,7 +263,11 @@ fn program(name: &str) -> Result<String, StubError> {
 /// order, each refused where it is not text or holds one of `unquotable`.
 fn paths<'a>(given: [&'a Path; 3], unquotable: &[char]) -> Result<[&'a str; 3], StubError> {
     let mut texts = [""; 3];
-    for ((text, path), what) in texts.iter_mut().zip(given).zip(["Node", "preload", "script"]) {
+    for ((text, path), what) in texts
+        .iter_mut()
+        .zip(given)
+        .zip(["Node", "preload", "script"])
+    {
         *text = path.to_str().ok_or(StubError::Untext(what))?;
         if text.contains(unquotable) {
             return Err(StubError::Unquotable(what));

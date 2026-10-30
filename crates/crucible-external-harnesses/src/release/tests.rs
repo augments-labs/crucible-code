@@ -4672,7 +4672,10 @@ fn a_windows_stub_double_quotes_each_path_and_doubles_every_percent() {
 
     assert_eq!(stub.path(), ".bin/agent.cmd");
     assert_eq!(std::str::from_utf8(stub.bytes()), Ok(text));
-    assert_eq!(stub.file(), listed(".bin/agent.cmd", text.as_bytes(), false));
+    assert_eq!(
+        stub.file(),
+        listed(".bin/agent.cmd", text.as_bytes(), false)
+    );
 }
 
 /// No quoting a `.cmd` has holds a `"`, a line end or a NUL, so a path with

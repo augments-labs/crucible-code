@@ -29,7 +29,9 @@
 //! path is written or where it leads, in another agent's directory or in no
 //! version of its own; a program that is the pinned interpreter of such a
 //! version whose launcher is not at the top of it or whose catalog entry does
-//! not give it exactly `-I`, or that lies in such a version holding a
+//! not give it exactly `-I`, or the pinned Node of one whose preload is not at
+//! the top of it, whose script is not a file inside it or whose catalog entry
+//! gives Node any option, or that lies in such a version holding a
 //! launcher once the catalog no longer says a pinned interpreter starts it;
 //! and a route with no yes, with what to ask. A
 //! catalog row always ships, since it is listed only for an entry the catalog
@@ -85,6 +87,18 @@
 //! version holding anything at the launcher's place, a link included, is
 //! refused rather than started as a program of its own, since its
 //! interpreter, given no launcher, would run what the workspace holds.
+//!
+//! A program that is the Node a release pins is given `--require` and the
+//! absolute path of the preload that confines it to its version, `preload.cjs`
+//! at the top of the version found as a launcher is, then the absolute path of
+//! the agent's script, the catalog's `bin` under the version with its links
+//! followed, which must be a file that stays inside it, and only then the
+//! agent's own arguments. The catalog's `node_args` must be empty, since any
+//! Node option could load code ahead of the preload. The version's `.bin`,
+//! where its dependencies' programs are, goes last on the agent's `PATH`,
+//! after every directory the shell gave, so it never shadows one; nothing else
+//! Node reads to find code, `NODE_OPTIONS`, `NODE_PATH` or an `npm_`
+//! variable, is set.
 //!
 //! A profile directory is given to a catalog agent through the variable its
 //! entry names, which is the whole of how the agent is told of it. On macOS and
@@ -230,7 +244,7 @@ use crucible_external_harnesses::acp::{Acp, Allowing};
 use crucible_external_harnesses::catalog::{
     self, CatalogProfile, Entry, Method, Target, Trust, Unprofiled, Unusable, Variable,
 };
-use crucible_external_harnesses::release::{LAUNCHER, LaunchScript};
+use crucible_external_harnesses::release::{BIN, LAUNCHER, LaunchScript, PRELOAD, Preload};
 use crucible_external_harnesses::store::Store;
 use crucible_external_harnesses::{
     Account, Act, Control, Dialect, Discovery, Held, Host, Launch, PREPARING, Program, Ran,
@@ -303,10 +317,11 @@ pub enum Unlaunched {
         reason: Option<Box<str>>,
     },
     /// Its program lies in a version of crucible's install store that is
-    /// started through a launcher, as a pinned interpreter's is, and cannot
-    /// be started so: the launcher cannot be given to it, its catalog entry
-    /// does not give the interpreter exactly `-I`, or the catalog no longer
-    /// says how that version is started.
+    /// started through a launcher, as a pinned interpreter's is, or under a
+    /// preload, as a pinned Node's is, and cannot be started so: the launcher
+    /// or the preload and script cannot be given to it, its catalog entry
+    /// does not give the interpreter exactly `-I` or gives Node an option, or
+    /// the catalog no longer says how that version is started.
     #[error("{agent} cannot be started: {why}.")]
     Launcher {
         /// The agent, as its row names it.
@@ -435,21 +450,27 @@ pub enum Unlaunched {
     Refused(#[from] Refusal),
 }
 
-/// Why the launcher a pinned interpreter runs cannot be given to it.
+/// Why what a pinned interpreter or a pinned Node runs cannot be given to it.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Unlaunchable {
     /// Its program does not lie where the catalog's `cmd` puts it in its
-    /// version, or no file is at the launcher's place at the top of that
-    /// version once links are followed.
+    /// version, or once links are followed no file is at the launcher's or
+    /// the preload's place at the top of that version, or a pinned Node's
+    /// script is not a file inside it.
     #[error(
-        "its launcher, {launcher}, is not a file at the top of the version its program lies in",
-        launcher = LAUNCHER
+        "its launcher, {launcher}, or its preload, {preload}, and script are not files in the          version its program lies in",
+        launcher = LAUNCHER,
+        preload = PRELOAD
     )]
     Missing,
-    /// The launcher's path is not text an interpreter can be given.
+    /// The path of its launcher, its preload, its script or its `.bin` is not
+    /// text it can be given, or the `.bin`'s holds the separator a `PATH`
+    /// splits on.
     #[error(
-        "the path of its launcher, {launcher}, is not text an interpreter can be given",
-        launcher = LAUNCHER
+        "the path of its launcher, {launcher}, or of its preload, {preload}, script or {bin},          is not text it can be given",
+        launcher = LAUNCHER,
+        preload = PRELOAD,
+        bin = BIN
     )]
     Untext,
     /// Its version holds something at the launcher's place, and the catalog
@@ -467,6 +488,10 @@ pub enum Unlaunchable {
          launcher isolated"
     )]
     Unisolated,
+    /// Its catalog entry gives Node options, any of which could load code
+    /// from anywhere ahead of the preload that confines it.
+    #[error("its catalog entry's node_args are not empty, and Node is started under no option")]
+    NodeArgs,
 }
 
 /// An agent as it was selected: its row, and what its program was found to
@@ -842,30 +867,35 @@ impl Agent {
             agent: key.to_string(),
             why,
         };
-        let leading = match offer {
-            Some(offer) => {
-                interpreting(&offer.pin.target, program.path(), &root).map_err(unlaunchable)?
-            }
-            None => Vec::new(),
-        };
         // A version installed for a pinned interpreter holds its launcher, and
         // its interpreter given no launcher would run what the workspace
-        // holds; one whose catalog no longer says so is not started at all.
+        // holds; one whose catalog no longer says a pinned interpreter starts
+        // it is not started at all, whatever else the catalog now says.
         // Anything there counts, a link too, and so does a place that cannot
         // be read.
         let holds_launcher = !matches!(
             std::fs::symlink_metadata(root.join(LAUNCHER)),
             Err(problem) if problem.kind() == std::io::ErrorKind::NotFound
         );
-        if leading.is_empty() && holds_launcher {
+        let interpreted = offer
+            .is_some_and(|offer| matches!(offer.pin.target.launch, catalog::Launch::Uvx { .. }));
+        if holds_launcher && !interpreted {
             return Err(unlaunchable(Unlaunchable::Unlisted));
         }
+        let (leading, bin) = match offer {
+            Some(offer) => (
+                interpreting(&offer.pin.target, program.path(), &root).map_err(unlaunchable)?,
+                binning(&offer.pin.target, &root).map_err(unlaunchable)?,
+            ),
+            None => (Vec::new(), None),
+        };
         Ok((
             program,
             Some(Stored {
                 root,
                 updater_off: offer.and_then(|offer| offer.entry.updater_off.clone()),
                 leading,
+                bin,
             }),
         ))
     }
@@ -896,6 +926,9 @@ pub struct Stored {
     /// What its program is given ahead of the agent's own arguments, as
     /// [`interpreting`] decides for the same release.
     leading: Vec<String>,
+    /// The `.bin` put last on its `PATH`, as [`binning`] decides for the
+    /// same release.
+    bin: Option<String>,
 }
 
 /// The most of one string the catalog, the configuration or an agent gave
@@ -967,33 +1000,81 @@ pub(crate) fn updating_off(mut request: Request, variable: Option<&Variable>) ->
 /// given ahead of the agent's own arguments; a turn, a smoke test and a
 /// probe each take it from here.
 ///
-/// A program that runs itself is given nothing, and so is one a pinned Node
-/// runs, which nothing installs yet. A pinned interpreter is given the
+/// A program that runs itself is given nothing. A pinned interpreter is given the
 /// catalog's `interpreter_args`, which must be exactly `-I`, and then the
 /// absolute path of its launcher, [`LAUNCHER`] at the top of the version:
 /// that top is `program` with the
 /// components of `cmd` taken off, never a path the catalog gives, and the
 /// launcher, its links followed, must be the file at the top of `version`.
-/// Nothing is run, and nothing else on the machine is looked at, to find it.
+/// A pinned Node is given `--require` and the absolute path of its preload,
+/// [`PRELOAD`] found at the top of the version as a launcher is, then the
+/// absolute path of the script at the catalog's `bin` under `version`, its
+/// links followed, which must be a file inside `version`; its `node_args`
+/// must be empty, as [`Preload::admits`] decides.
+/// Nothing is run, and nothing else on the machine is looked at, to find
+/// any of it.
 ///
 /// # Errors
 ///
-/// [`Unlaunchable`] where `interpreter_args` are not exactly `-I`, the
-/// launcher is not there, or its path is not text.
+/// [`Unlaunchable`] where `interpreter_args` are not exactly `-I` or
+/// `node_args` are not empty, the launcher, the preload or the script is not
+/// there, or a path is not text.
 fn interpreting(
     target: &Target,
     program: &Path,
     version: &Path,
 ) -> Result<Vec<String>, Unlaunchable> {
-    let catalog::Launch::Uvx {
-        interpreter_args, ..
-    } = &target.launch
-    else {
-        return Ok(Vec::new());
-    };
-    if !LaunchScript::admits(interpreter_args) {
-        return Err(Unlaunchable::Unisolated);
+    match &target.launch {
+        catalog::Launch::Binary => Ok(Vec::new()),
+        catalog::Launch::Uvx {
+            interpreter_args, ..
+        } => {
+            if !LaunchScript::admits(interpreter_args) {
+                return Err(Unlaunchable::Unisolated);
+            }
+            let launcher = topmost(target, program, version, LAUNCHER)?;
+            Ok(interpreter_args
+                .iter()
+                .map(ToString::to_string)
+                .chain(std::iter::once(launcher))
+                .collect())
+        }
+        catalog::Launch::Npm { node_args, bin, .. } => {
+            if !Preload::admits(node_args) {
+                return Err(Unlaunchable::NodeArgs);
+            }
+            let preload = topmost(target, program, version, PRELOAD)?;
+            // Followed, so a script that is a link cannot lead out of the
+            // version, nor a `bin` that climbs.
+            let canonical = std::fs::canonicalize(version).map_err(|_| Unlaunchable::Missing)?;
+            let script =
+                std::fs::canonicalize(canonical.join(&**bin)).map_err(|_| Unlaunchable::Missing)?;
+            if !script.starts_with(&canonical) || !script.is_file() {
+                return Err(Unlaunchable::Missing);
+            }
+            let script = script
+                .into_os_string()
+                .into_string()
+                .map_err(|_| Unlaunchable::Untext)?;
+            Ok(vec!["--require".to_owned(), preload, script])
+        }
     }
+}
+
+/// The absolute path of the file `name` at the top of `version`, which is
+/// `program` with the components of `target`'s `cmd` taken off, as text.
+///
+/// # Errors
+///
+/// [`Unlaunchable::Missing`] where `program` does not lie where `cmd` puts it
+/// or that file, its links followed, is not the file at the top of `version`;
+/// [`Unlaunchable::Untext`] where its path is not text.
+fn topmost(
+    target: &Target,
+    program: &Path,
+    version: &Path,
+    name: &str,
+) -> Result<String, Unlaunchable> {
     let cmd = Path::new(&*target.cmd);
     let depth = cmd.components().count();
     let normal = cmd
@@ -1004,23 +1085,79 @@ fn interpreting(
         .nth(depth)
         .filter(|_| normal && program.ends_with(cmd))
         .ok_or(Unlaunchable::Missing)?;
-    // Followed, so a launcher that is a link cannot lead out of the version.
-    let launcher = std::fs::canonicalize(top.join(LAUNCHER)).map_err(|_| Unlaunchable::Missing)?;
+    // Followed, so a file that is a link cannot lead out of the version.
+    let found = std::fs::canonicalize(top.join(name)).map_err(|_| Unlaunchable::Missing)?;
     let placed = std::fs::canonicalize(version)
-        .map(|version| version.join(LAUNCHER))
+        .map(|version| version.join(name))
         .map_err(|_| Unlaunchable::Missing)?;
-    if launcher != placed || !launcher.is_file() {
+    if found != placed || !found.is_file() {
         return Err(Unlaunchable::Missing);
     }
-    let launcher = launcher
+    found
         .into_os_string()
         .into_string()
-        .map_err(|_| Unlaunchable::Untext)?;
-    Ok(interpreter_args
-        .iter()
-        .map(ToString::to_string)
-        .chain(std::iter::once(launcher))
-        .collect())
+        .map_err(|_| Unlaunchable::Untext)
+}
+
+/// The absolute path of the `.bin` of the version at `version` that a pinned
+/// Node runs `target`'s agent from, which is put last on its `PATH`; none for
+/// any other.
+///
+/// # Errors
+///
+/// [`Unlaunchable::Untext`] where that path is not text a `PATH` can hold.
+fn binning(target: &Target, version: &Path) -> Result<Option<String>, Unlaunchable> {
+    match &target.launch {
+        catalog::Launch::Binary | catalog::Launch::Uvx { .. } => Ok(None),
+        catalog::Launch::Npm { .. } => {
+            let bin = std::fs::canonicalize(version)
+                .map_err(|_| Unlaunchable::Missing)?
+                .join(BIN)
+                .into_os_string()
+                .into_string()
+                .map_err(|_| Unlaunchable::Untext)?;
+            // One that held the separator would put a directory of its own
+            // choosing on the agent's `PATH`.
+            if bin.contains(PATH_SEPARATOR) {
+                return Err(Unlaunchable::Untext);
+            }
+            Ok(Some(bin))
+        }
+    }
+}
+
+/// What a `PATH` splits its directories on.
+const PATH_SEPARATOR: char = if cfg!(windows) { ';' } else { ':' };
+
+/// `request` with `bin`, where there is one, last on its `PATH`: after every
+/// directory the shell gave, so it finds a program no sooner than the agent
+/// would have without it, and never as an empty entry, which some take for
+/// the directory a program is started in.
+fn binned(mut request: Request, bin: Option<&str>) -> Request {
+    let Some(bin) = bin else {
+        return request;
+    };
+    let path = request.environment.iter_mut().find(|(name, _)| {
+        if cfg!(windows) {
+            name.eq_ignore_ascii_case("PATH")
+        } else {
+            name == "PATH"
+        }
+    });
+    match path {
+        Some((_, value)) if !value.is_empty() => {
+            value.push(PATH_SEPARATOR);
+            value.push_str(bin);
+        }
+        Some((_, value)) => bin.clone_into(value),
+        None => request
+            .environment
+            .push(("PATH".to_owned(), bin.to_owned())),
+    }
+    if !request.shown.contains(&"PATH") {
+        request.shown.push("PATH");
+    }
+    request
 }
 
 /// `request` with `leading` ahead of its arguments.
@@ -2633,9 +2770,12 @@ impl<'a> Launcher<'a> {
         )?;
         if let Some(stored) = &stored {
             policy = read_only(&policy, &stored.root)?;
-            request = led(
-                updating_off(request, stored.updater_off.as_ref()),
-                &stored.leading,
+            request = binned(
+                led(
+                    updating_off(request, stored.updater_off.as_ref()),
+                    &stored.leading,
+                ),
+                stored.bin.as_deref(),
             );
         }
         for root in &kept {
@@ -2745,8 +2885,8 @@ pub enum Unprobeable {
          disposable machine, run again with `--unconfined` to run `initialize` alone"
     )]
     Unclosable(String),
-    /// Its program is a pinned interpreter, and the launcher it runs cannot
-    /// be given to it.
+    /// Its program is a pinned interpreter or a pinned Node, and what it runs
+    /// cannot be given to it.
     #[error(transparent)]
     Launcher(#[from] Unlaunchable),
     /// The sandbox policy is not a valid one.
@@ -2800,6 +2940,7 @@ pub(crate) async fn probing(
         return Err(unfound());
     };
     let leading = interpreting(target, &root.join(&*target.cmd), &root)?;
+    let bin = binning(target, &root)?;
     let unclosable = unclosable(service.as_ref()).await;
     if let (Some(reason), false) = (&unclosable, unconfined) {
         return Err(Unprobeable::Unclosable(reason.clone()));
@@ -2826,12 +2967,15 @@ pub(crate) async fn probing(
     // Without the sandbox its limits go with it, as for a command.
     .with_enabled(unclosable.is_none());
     let mut dialect = Acp::cataloged(profile, Allowing::Nothing);
-    let request = led(
-        dialect.request(Shape {
-            workspace: Some(&root),
-            ..Shape::default()
-        }),
-        &leading,
+    let request = binned(
+        led(
+            dialect.request(Shape {
+                workspace: Some(&root),
+                ..Shape::default()
+            }),
+            &leading,
+        ),
+        bin.as_deref(),
     );
     let control = Control::new().ok_or(Unprobeable::Control)?;
     let launch = Launch::new(program, policy, Held::granted(PROBING)).asking(request);
@@ -2883,8 +3027,8 @@ pub enum Unsmoked {
     /// Its program is not one that runs.
     #[error("its program {0} is not an executable")]
     Program(String),
-    /// Its program is a pinned interpreter, and the launcher it runs cannot
-    /// be given to it.
+    /// Its program is a pinned interpreter or a pinned Node, and what it runs
+    /// cannot be given to it.
     #[error(transparent)]
     Launcher(#[from] Unlaunchable),
     /// The sandbox policy is not a valid one.
@@ -2954,6 +3098,7 @@ impl Launcher<'_> {
         };
         let root = resolved(root)?;
         let leading = interpreting(target, program, &root)?;
+        let bin = binning(target, &root)?;
         let readable = SandboxFilesystemRule::new(
             &root,
             SandboxFilesystemAccess::ReadOnly,
@@ -2978,15 +3123,18 @@ impl Launcher<'_> {
             },
         )?;
         let mut dialect = Smoking(Acp::cataloged(profile, Allowing::Nothing));
-        let request = led(
-            updating_off(
-                dialect.request(Shape {
-                    workspace: Some(&root),
-                    ..Shape::default()
-                }),
-                entry.updater_off.as_ref(),
+        let request = binned(
+            led(
+                updating_off(
+                    dialect.request(Shape {
+                        workspace: Some(&root),
+                        ..Shape::default()
+                    }),
+                    entry.updater_off.as_ref(),
+                ),
+                &leading,
             ),
-            &leading,
+            bin.as_deref(),
         );
         let control = Control::new().ok_or(Unsmoked::Control)?;
         let launch = Launch::new(found, policy, held).asking(request);

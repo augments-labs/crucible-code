@@ -3991,3 +3991,220 @@ fn a_pinned_interpreter_given_anything_but_exactly_dash_i_is_not_given_its_launc
         "the refusal does not name the field"
     );
 }
+
+/// `peer`'s first target, as a pinned Node at `node/bin/node` starts it with
+/// its script at `node_modules/peer/cli.js`.
+fn noded() -> Target {
+    let mut target = interpreted();
+    target.cmd = "node/bin/node".into();
+    target.launch = catalog::Launch::Npm {
+        node_args: Vec::new(),
+        bin: "node_modules/peer/cli.js".into(),
+        lock: catalog::Lock {
+            asset: catalog::AssetRef {
+                sha256: "0".repeat(64).into(),
+                size: 1,
+            },
+            unpack_rules: 1,
+        },
+        scripts: Vec::new(),
+    };
+    target
+}
+
+/// A version laid out as a pinned Node's is, under `sample`: its Node, its
+/// preload and its agent's script, each an empty file. Its canonical path and
+/// its Node's.
+fn node_version(sample: &Sample) -> (PathBuf, PathBuf) {
+    let version = fs::canonicalize(sample.root())
+        .expect("a root")
+        .join("1.0.0");
+    fs::create_dir_all(version.join("node/bin")).expect("a directory");
+    fs::create_dir_all(version.join("node_modules/peer")).expect("a directory");
+    let node = version.join("node/bin/node");
+    fs::write(&node, b"").expect("a Node");
+    fs::write(version.join(PRELOAD), b"").expect("a preload");
+    fs::write(version.join("node_modules/peer/cli.js"), b"").expect("a script");
+    (version, node)
+}
+
+#[test]
+fn a_pinned_node_is_given_its_preload_then_its_script_and_nothing_else() {
+    let sample = Sample::new("launch-noded");
+    let (version, node) = node_version(&sample);
+
+    let given = interpreting(&noded(), &node, &version);
+
+    assert_eq!(
+        given,
+        Ok(vec![
+            "--require".to_owned(),
+            version.join(PRELOAD).to_string_lossy().into_owned(),
+            version
+                .join("node_modules/peer/cli.js")
+                .to_string_lossy()
+                .into_owned(),
+        ])
+    );
+}
+
+/// Any Node option at all is refused, though everything is in place, and the
+/// refusal names the field and not what the catalog put in it.
+#[test]
+fn a_pinned_node_given_any_option_is_not_started() {
+    let sample = Sample::new("launch-noded-options");
+    let (version, node) = node_version(&sample);
+    let given: [&[&str]; 4] = [
+        &["--require", "/elsewhere.js"],
+        &["--import", "/elsewhere.mjs"],
+        &["--inspect"],
+        &["--no-warnings"],
+    ];
+
+    let found: Vec<_> = given
+        .iter()
+        .map(|arguments| {
+            let mut target = noded();
+            if let catalog::Launch::Npm { node_args, .. } = &mut target.launch {
+                *node_args = arguments
+                    .iter()
+                    .map(|argument| (*argument).into())
+                    .collect();
+            }
+            interpreting(&target, &node, &version)
+        })
+        .collect();
+
+    assert_eq!(found, vec![Err(Unlaunchable::NodeArgs); given.len()]);
+    let said = Unlaunchable::NodeArgs.to_string();
+    assert!(
+        said.contains("node_args") && !said.contains("elsewhere"),
+        "{said}"
+    );
+}
+
+/// The preload must be the file at the top of the version and the script a
+/// file inside it, each once links are followed; a Node that is not where
+/// `cmd` puts it in the version finds neither.
+#[test]
+fn a_pinned_node_whose_preload_or_script_is_missing_or_outside_its_version_is_not_started() {
+    let sample = Sample::new("launch-noded-missing");
+    let (version, node) = node_version(&sample);
+    let with_bin = |bin: &str| {
+        let mut target = noded();
+        if let catalog::Launch::Npm { bin: given, .. } = &mut target.launch {
+            *given = bin.into();
+        }
+        target
+    };
+    fs::write(sample.root().join("elsewhere.js"), b"").expect("a script outside");
+
+    let climbing = interpreting(&with_bin("../elsewhere.js"), &node, &version);
+    let directory = interpreting(&with_bin("node_modules/peer"), &node, &version);
+    let absent = interpreting(&with_bin("node_modules/peer/gone.js"), &node, &version);
+    let misplaced = interpreting(&noded(), &version.join("bin/node"), &version);
+    fs::remove_file(version.join(PRELOAD)).expect("removed");
+    let unpreloaded = interpreting(&noded(), &node, &version);
+    fs::create_dir(version.join(PRELOAD)).expect("a directory");
+    let preload_directory = interpreting(&noded(), &node, &version);
+
+    for (case, found) in [
+        ("climbing", climbing),
+        ("directory", directory),
+        ("absent", absent),
+        ("misplaced", misplaced),
+        ("unpreloaded", unpreloaded),
+        ("preload directory", preload_directory),
+    ] {
+        assert_eq!(found, Err(Unlaunchable::Missing), "{case}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_preload_or_script_that_leads_out_of_its_version_is_not_given() {
+    let sample = Sample::new("launch-noded-out");
+    let (version, node) = node_version(&sample);
+    let root = fs::canonicalize(sample.root()).expect("a root");
+    fs::write(root.join("elsewhere.js"), b"").expect("a script outside");
+    let script = version.join("node_modules/peer/cli.js");
+
+    fs::remove_file(&script).expect("removed");
+    std::os::unix::fs::symlink(root.join("elsewhere.js"), &script).expect("a link");
+    let scripted = interpreting(&noded(), &node, &version);
+    fs::remove_file(&script).expect("removed");
+    fs::write(&script, b"").expect("a script");
+    fs::remove_file(version.join(PRELOAD)).expect("removed");
+    std::os::unix::fs::symlink(root.join("elsewhere.js"), version.join(PRELOAD)).expect("a link");
+    let preloaded = interpreting(&noded(), &node, &version);
+
+    assert_eq!(scripted, Err(Unlaunchable::Missing));
+    assert_eq!(preloaded, Err(Unlaunchable::Missing));
+}
+
+/// A pinned Node's agent finds its dependencies' programs in the version's
+/// `.bin`, after everything the shell's `PATH` gave, never ahead of it; an
+/// agent started any other way is given no `.bin`.
+#[test]
+fn a_pinned_nodes_bin_goes_last_on_path_and_only_for_it() {
+    let sample = Sample::new("launch-noded-bin");
+    let (version, _) = node_version(&sample);
+    let bin = version.join(BIN).to_string_lossy().into_owned();
+    let separator = if cfg!(windows) { ';' } else { ':' };
+    let request = |environment: &[(&str, &str)]| Request {
+        arguments: vec!["acp".to_owned()],
+        environment: environment
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect(),
+        shown: Vec::new(),
+    };
+    let ran = entry_keeping(None, None, &[]);
+
+    let noded_bin = binning(&noded(), &version);
+    let others = [
+        binning(&interpreted(), &version),
+        binning(ran.targets.first().expect("a target"), &version),
+    ];
+    let onto = binned(request(&[("HOME", "/h"), ("PATH", "/usr/bin")]), Some(&bin));
+    let fresh = binned(request(&[("HOME", "/h")]), Some(&bin));
+    let untouched = binned(request(&[("PATH", "/usr/bin")]), None);
+
+    assert_eq!(noded_bin, Ok(Some(bin.clone())));
+    assert_eq!(others, [Ok(None), Ok(None)]);
+    assert_eq!(
+        onto.environment,
+        vec![
+            ("HOME".to_owned(), "/h".to_owned()),
+            ("PATH".to_owned(), format!("/usr/bin{separator}{bin}")),
+        ]
+    );
+    assert_eq!(onto.arguments, vec!["acp".to_owned()]);
+    assert_eq!(
+        fresh.environment,
+        vec![
+            ("HOME".to_owned(), "/h".to_owned()),
+            ("PATH".to_owned(), bin.clone()),
+        ]
+    );
+    assert!(fresh.shown.contains(&"PATH"), "{:?}", fresh.shown);
+    assert_eq!(
+        untouched.environment,
+        vec![("PATH".to_owned(), "/usr/bin".to_owned())]
+    );
+}
+
+/// A `.bin` whose path holds the separator a `PATH` splits on would put a
+/// directory of its own choosing on it, so it is refused as not text a
+/// `PATH` can hold.
+#[test]
+fn a_bin_whose_path_holds_the_path_separator_is_refused() {
+    let sample = Sample::new("launch-noded-separator");
+    let separator = if cfg!(windows) { ";" } else { ":" };
+    let version = fs::canonicalize(sample.root())
+        .expect("a root")
+        .join(format!("1{separator}0"));
+    fs::create_dir_all(&version).expect("a directory");
+
+    assert_eq!(binning(&noded(), &version), Err(Unlaunchable::Untext));
+}
