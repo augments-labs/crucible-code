@@ -18,8 +18,8 @@ use crucible_types::AgentKey;
 
 use super::npm::{TREE_BYTES, TREE_FILES, TREE_PATH_BYTES};
 use super::{
-    LAUNCHER, LaunchScript, Member, NpmError, NpmTree, OwnedPin, Pin, Staged, UnpackError,
-    Unpacked, Unpacker, Wheels, hex, unpack,
+    LAUNCHER, LaunchScript, Member, NpmError, NpmTree, OwnedPin, PRELOAD, Pin, Preload, Staged,
+    Stub, StubError, UnpackError, Unpacked, Unpacker, Wheels, hex, unpack,
 };
 use crate::catalog::{Admits, Artifact, AssetRef, File, FileKind, Files, Format, Launch, Target};
 use crate::tests::Owned;
@@ -4595,4 +4595,178 @@ fn a_lock_larger_than_a_catalog_asset_is_refused_before_it_is_read() {
     lock.truncate(ceiling);
     let read = NpmTree::parse(&lock);
     assert_eq!(read.map(|tree| tree.packages().len()).ok(), Some(0));
+}
+
+/// The preload is one fixed file at the top of the version, listed as the
+/// receipt records it, not runnable, and it registers the module hooks.
+#[test]
+fn the_preload_is_a_fixed_file_at_the_top_of_the_version() {
+    let text = std::str::from_utf8(Preload::bytes()).unwrap_or_default();
+
+    assert_eq!(PRELOAD, "preload.cjs");
+    assert_eq!(Preload::file(), listed(PRELOAD, Preload::bytes(), false));
+    assert!(text.starts_with("// Written by crucible"), "{text}");
+    assert!(text.contains("Module.registerHooks({"), "{text}");
+    assert!(text.contains("'MODULE_NOT_FOUND'"), "{text}");
+    assert!(text.contains("'ERR_MODULE_NOT_FOUND'"), "{text}");
+}
+
+/// The preload is started only under no other Node option: one the catalog
+/// gave could load code from anywhere.
+#[test]
+fn the_preload_admits_no_node_option_at_all() {
+    let given = |arguments: &[&str]| -> Vec<Box<str>> {
+        arguments
+            .iter()
+            .map(|argument| (*argument).into())
+            .collect()
+    };
+    let refused: [&[&str]; 6] = [
+        &["--require", "/elsewhere.js"],
+        &["--import", "/elsewhere.mjs"],
+        &["--inspect"],
+        &["--experimental-loader", "/elsewhere.mjs"],
+        &["--no-warnings"],
+        &[""],
+    ];
+
+    assert!(Preload::admits(&[]));
+    for arguments in refused {
+        assert!(!Preload::admits(&given(arguments)), "{arguments:?}");
+    }
+}
+
+#[test]
+fn a_unix_stub_runs_the_pinned_node_on_the_real_script_with_each_path_single_quoted() {
+    let stub = Stub::unix(
+        "agent",
+        Path::new("/home/it's/programs/a/1.0.0/node/bin/node"),
+        Path::new("/home/it's/programs/a/1.0.0/preload.cjs"),
+        Path::new("/home/it's/programs/a/1.0.0/node_modules/a/cli.js"),
+    )
+    .expect("a stub");
+    let text = "#!/bin/sh\n\
+        exec '/home/it'\\''s/programs/a/1.0.0/node/bin/node' \
+        --require '/home/it'\\''s/programs/a/1.0.0/preload.cjs' \
+        '/home/it'\\''s/programs/a/1.0.0/node_modules/a/cli.js' \"$@\"\n";
+
+    assert_eq!(stub.path(), ".bin/agent");
+    assert_eq!(std::str::from_utf8(stub.bytes()), Ok(text));
+    assert_eq!(stub.file(), listed(".bin/agent", text.as_bytes(), true));
+}
+
+/// A `.cmd` takes `&` and `^` literally inside double quotes, and expands `%`
+/// whatever the quoting, so `%` alone is doubled.
+#[test]
+fn a_windows_stub_double_quotes_each_path_and_doubles_every_percent() {
+    let stub = Stub::windows(
+        "agent",
+        Path::new(r"C:\Users\a%b^c&d\programs\a\1.0.0\node\node.exe"),
+        Path::new(r"C:\Users\a%b^c&d\programs\a\1.0.0\preload.cjs"),
+        Path::new(r"C:\Users\a%b^c&d\programs\a\1.0.0\node_modules\a\cli.js"),
+    )
+    .expect("a stub");
+    let text = "@\"C:\\Users\\a%%b^c&d\\programs\\a\\1.0.0\\node\\node.exe\" \
+        --require \"C:\\Users\\a%%b^c&d\\programs\\a\\1.0.0\\preload.cjs\" \
+        \"C:\\Users\\a%%b^c&d\\programs\\a\\1.0.0\\node_modules\\a\\cli.js\" %*\r\n";
+
+    assert_eq!(stub.path(), ".bin/agent.cmd");
+    assert_eq!(std::str::from_utf8(stub.bytes()), Ok(text));
+    assert_eq!(stub.file(), listed(".bin/agent.cmd", text.as_bytes(), false));
+}
+
+/// No quoting a `.cmd` has holds a `"`, a line end or a NUL, so a path with
+/// one is refused, naming which path and nothing of it; `sh` quoting holds
+/// all but the NUL.
+#[test]
+fn a_path_no_quoting_holds_is_refused() {
+    let node = Path::new("/v/node/bin/node");
+    let preload = Path::new("/v/preload.cjs");
+    let script = Path::new("/v/node_modules/a/cli.js");
+    let windows: Vec<String> = ["\"", "\r", "\n", "\0"]
+        .iter()
+        .map(|bad| {
+            let script = format!("/v/node_modules/a{bad}b/cli.js");
+            match Stub::windows("agent", node, preload, Path::new(&script)) {
+                Err(refused @ StubError::Unquotable("script")) => refused.to_string(),
+                other => format!("{other:?}"),
+            }
+        })
+        .collect();
+    let unix_nul = Stub::unix("agent", Path::new("/v/no\0de"), preload, script);
+    let unix_line = Stub::unix("agent", node, preload, Path::new("/v/a\nb\r\"c.js"));
+
+    for said in &windows {
+        assert!(
+            said.contains("script") && !said.contains("/v/"),
+            "the refusal names which path and not the path: {said}"
+        );
+    }
+    assert!(
+        matches!(unix_nul, Err(StubError::Unquotable("Node"))),
+        "{unix_nul:?}"
+    );
+    assert!(unix_line.is_ok(), "{unix_line:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_path_that_is_not_text_is_refused() {
+    use std::os::unix::ffi::OsStrExt as _;
+    let preload = Path::new(std::ffi::OsStr::from_bytes(b"/v/\xffpreload.cjs"));
+    let node = Path::new("/v/node/bin/node");
+    let script = Path::new("/v/node_modules/a/cli.js");
+
+    let unix = Stub::unix("agent", node, preload, script);
+    let windows = Stub::windows("agent", node, preload, script);
+
+    assert!(
+        matches!(unix, Err(StubError::Untext("preload"))),
+        "{unix:?}"
+    );
+    assert!(
+        matches!(windows, Err(StubError::Untext("preload"))),
+        "{windows:?}"
+    );
+}
+
+/// A program's name comes from a package in the tree, so it is held to the
+/// rules a name the release unpacker writes is, and to one component, before
+/// any stub is made of it.
+#[test]
+fn a_program_name_that_is_not_one_safe_file_name_is_refused() {
+    let node = Path::new("/v/node/bin/node");
+    let preload = Path::new("/v/preload.cjs");
+    let script = Path::new("/v/node_modules/a/cli.js");
+    let accepted = ["agent", "tsc", "x.js", "@a", "a-b_c"];
+    let refused = [
+        "", ".", "..", "a/b", "../a", "a\\b", "a:b", "C:", "con", "NUL.txt", "lpt1", "a.", "a ",
+        "a\nb", "a\0b", "\u{e9}", "a*b", "a\"b",
+    ];
+
+    for name in accepted {
+        let unix = Stub::unix(name, node, preload, script);
+        let windows = Stub::windows(name, node, preload, script);
+        assert_eq!(
+            (
+                unix.as_ref().map(Stub::path).ok(),
+                windows.as_ref().map(Stub::path).ok()
+            ),
+            (
+                Some(format!(".bin/{name}").as_str()),
+                Some(format!(".bin/{name}.cmd").as_str())
+            )
+        );
+    }
+    for name in refused {
+        for made in [
+            Stub::unix(name, node, preload, script),
+            Stub::windows(name, node, preload, script),
+        ] {
+            assert!(
+                matches!(made, Err(StubError::Name(UnpackError::Name { .. }))),
+                "{name:?}: {made:?}"
+            );
+        }
+    }
 }
