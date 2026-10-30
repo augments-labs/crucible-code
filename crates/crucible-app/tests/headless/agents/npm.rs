@@ -3,11 +3,12 @@
 //! count, the whole size, every host the install reaches, the licence, each
 //! install script left unrun and how the agent is started; Node and every
 //! tarball are fetched only after the yes, each tarball held to its SHA-512,
-//! and the version is committed with its tree, its preload and an empty `.bin`,
-//! which only their owner may change, whole or not at all. A tarball that is not its pin commits nothing, a
-//! tarball the registry answers 410 for says the version can likely no longer
-//! be installed, and an offer that gives Node arguments of its own is refused
-//! before anything is asked.
+//! and the version is committed with its tree, its preload and an empty
+//! `.bin`, which only their owner may change, whole or not at all. A tarball
+//! that is not its pin commits nothing, a tarball the registry answers 410 for
+//! says the version can likely no longer be installed, a tree the store has no
+//! room for fetches no tarball, and an offer that gives Node arguments of its
+//! own is refused before anything is asked.
 //!
 //! The registry here is the fake host's `registry/`, which a test build alone
 //! fetches a registry address from, and only for a catalog on this machine.
@@ -19,12 +20,13 @@ use crucible_app::client::agents::{AgentsError, How, Outcome};
 use crucible_client_api::{Pending, Text};
 use crucible_external_harnesses::fake_peer;
 use crucible_external_harnesses::release::{BIN, PRELOAD, Preload, proof};
+use crucible_external_harnesses::store::StoreError;
 use serde_json::{Value, json};
 
 use super::uvx::{unchanged, version, versioned};
 use super::{
     Bench, CATALOG, Failed, Reply, Server, answering, answers, artifact, asset_path, digest,
-    install, peer, platform, row_of, shape, stating,
+    install, peer, platform, row_of, set, shape, stating,
 };
 
 /// Node's path in the version, as the catalog lists it.
@@ -302,6 +304,64 @@ fn a_release_a_pinned_node_starts_is_installed_after_the_yes_and_started_under_i
         shape(&kept)
     );
     assert_eq!(bench.server.asked(), catalog_and_lock(&tree));
+    Ok(())
+}
+
+/// A tree the install store has no room for, beside what it already keeps,
+/// is refused before a single tarball is fetched, though the rest of the
+/// release would fit.
+#[test]
+fn a_tree_the_store_has_no_room_for_is_refused_before_any_tarball_is_fetched() -> Result<(), Failed>
+{
+    let (bench, played, tree) = bench("agents-door-npm-room")?;
+    bench
+        .server
+        .serve(TARBALL, Reply::Body(tree.tarball.clone()));
+    let mut front = answering(&bench.server, Some("Install"));
+    let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+    assert!(installed.is_ok(), "{}", shape(&installed));
+    // The version kept says it holds nearly all the store may.
+    let receipt = version(&bench).join(".receipt");
+    let mut kept: Value = serde_json::from_slice(&fs::read(&receipt)?)?;
+    let held = kept
+        .pointer_mut("/files")
+        .and_then(Value::as_array_mut)
+        .and_then(|files| {
+            files
+                .iter_mut()
+                .find(|file| file.pointer("/size").is_some())
+        })
+        .ok_or("a file the receipt sizes")?;
+    set(held, "/size", json!(15_u64 << 30));
+    fs::write(&receipt, serde_json::to_vec(&kept)?)?;
+    // The newer tree unpacks to more than the room left, which Node alone
+    // would fit in.
+    let mut lock: Value = serde_json::from_slice(&tree.lock)?;
+    set(&mut lock, "/packages/0/unpacked", json!(2_u64 << 30));
+    let larger = Tree {
+        lock: serde_json::to_vec(&lock)?,
+        tarball: tree.tarball.clone(),
+    };
+    let mut newer = noded(&bench.server, &played, &larger, &json!([]));
+    set(&mut newer, "/version", json!("2.0.0"));
+    set(&mut newer, "/admits/version", json!("2.0.0"));
+    let older = noded(&bench.server, &played, &tree, &json!([]));
+    bench.server.catalog(2, &[newer, older], &json!([]))?;
+    bench.server.forget();
+    let mut front = answering(&bench.server, Some("Install"));
+
+    let (outcome, _) = bench.ask(install("2.0.0")?, &mut front, false)?;
+
+    assert!(
+        matches!(outcome, Err(AgentsError::Store(StoreError::Full { .. }))),
+        "{}",
+        shape(&outcome)
+    );
+    assert!(
+        !bench.server.asked().iter().any(|path| path == TARBALL),
+        "a tarball was fetched"
+    );
+    assert!(!bench.program("2.0.0").exists());
     Ok(())
 }
 
