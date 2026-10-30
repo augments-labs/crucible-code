@@ -679,7 +679,7 @@ def check_budget(scratch: pathlib.Path) -> None:
     namespace = argparse.Namespace(
         registry=REGISTRY, choices=CHOICES, runners=RUNNERS, observed=scratch / "observed",
         deny=ROOT / "deny.toml", assets=scratch / "budget-assets", out=scratch / "budget.json", merged=None,
-        interpreters=None, node=None, node_keys=None, dispositions=None,
+        interpreters=None, node=None, node_keys=None, dispositions=None, sboms=None, texts=None,
     )
     module.RUN_BYTES = 3000
     assert module.review(namespace) == 0
@@ -697,10 +697,35 @@ def check_budget(scratch: pathlib.Path) -> None:
     assert not namespace.out.exists()
 
 
+def gate_record(asset: bytes, notice: bytes = b"a NOTICE", licence: bytes = b"a licence text") -> dict:
+    """A passing licence-gate record, in the shape the gate writes, for `asset`."""
+    return {
+        "asset": {"sha256": hashlib.sha256(asset).hexdigest(), "size": len(asset)},
+        "components": 1,
+        "licences": [{"id": "MIT", "sha256": hashlib.sha256(licence).hexdigest(), "size": len(licence)}],
+        "notice": {"sha256": hashlib.sha256(notice).hexdigest(), "size": len(notice)},
+        "passed": True,
+    }
+
+
+def publish_checked(scratch: pathlib.Path, name: str, data: dict, *assets: tuple[str, bytes]) -> subprocess.CompletedProcess[str]:
+    held = scratch / f"publish-{name}"
+    (held / "assets").mkdir(parents=True)
+    for asset, content in assets:
+        (held / "assets" / asset).write_bytes(content)
+    (held / "merged.json").write_text(json.dumps(data))
+    return intake("publish-check", "--merged", held / "merged.json", "--assets", held / "assets")
+
+
+def publish_refuses(ran: subprocess.CompletedProcess[str], words: str) -> None:
+    assert ran.returncode == 1 and words in ran.stderr, f"{ran.returncode} {ran.stderr!r} lacks {words!r}"
+    assert "Traceback" not in ran.stderr, ran.stderr
+
+
 def check_publish(scratch: pathlib.Path) -> None:
     """The publishing job uploads only assets whose hash the merged data holds,
     and an artifact copy only where its entry carries a passing licence-gate
-    record; an asset that is in the data passes."""
+    record for those very bytes; an asset that is in the data passes."""
     merged = json.loads((RENDER / "merged.json").read_text())
     big = next(entry for entry in merged["entries"] if entry["key"] == "big")
     artifact = big["targets"][0]["artifacts"][0]
@@ -710,16 +735,12 @@ def check_publish(scratch: pathlib.Path) -> None:
     artifact["mirror_licence"] = "MIT"
 
     def checked(name: str, data: dict, *assets: tuple[str, bytes]) -> subprocess.CompletedProcess[str]:
-        held = scratch / f"publish-{name}"
-        (held / "assets").mkdir(parents=True)
-        for asset, content in assets:
-            (held / "assets" / asset).write_bytes(content)
-        (held / "merged.json").write_text(json.dumps(data))
-        return intake("publish-check", "--merged", held / "merged.json", "--assets", held / "assets")
+        return publish_checked(scratch, name, data, *assets)
 
-    def refuses(ran: subprocess.CompletedProcess[str], words: str) -> None:
-        assert ran.returncode == 1 and words in ran.stderr, f"{ran.returncode} {ran.stderr!r} lacks {words!r}"
-        assert "Traceback" not in ran.stderr, ran.stderr
+    refuses = publish_refuses
+
+    def at(data: dict) -> dict:
+        return data["entries"][merged["entries"].index(big)]["targets"][0]["artifacts"][0]
 
     # A file-list asset the data names by hash, with the bytes that hash.
     bytes_of_listing = b"[]"
@@ -738,29 +759,59 @@ def check_publish(scratch: pathlib.Path) -> None:
     # A name that is not a hash.
     refuses(checked("named", merged, ("index.json", bytes_of_listing)), "not named by")
 
-    # An artifact copy: refused with no licence-gate record, or one that did not pass.
+    # An artifact copy: refused with no licence-gate record, or one that did
+    # not pass, or one that passed for other bytes or in another shape.
     refuses(checked("ungated", merged, (copy_hash, copied)), "licence-gate")
-    for name, record in (("failed", {"passed": False}), ("loose", {"passed": "yes"}), ("empty", {})):
+    elsewhere = gate_record(b"some other bytes")
+    unbound = dict(gate_record(copied), asset={"sha256": copy_hash})
+    for name, record in (
+        ("failed", {"passed": False, "reason": "it did not pass"}),
+        ("loose", dict(gate_record(copied), passed="yes")),
+        ("empty", {}),
+        ("bare", {"passed": True}),
+        ("elsewhere", elsewhere),
+        ("unbound", unbound),
+    ):
         gated = copy.deepcopy(merged)
-        gated["entries"][merged["entries"].index(big)]["targets"][0]["artifacts"][0]["licence_gate"] = record
+        at(gated)["licence_gate"] = record
         refuses(checked(name, gated, (copy_hash, copied)), "licence-gate")
     gated = copy.deepcopy(merged)
-    gated["entries"][merged["entries"].index(big)]["targets"][0]["artifacts"][0]["licence_gate"] = {"passed": True}
+    at(gated)["licence_gate"] = gate_record(copied)
     ran = checked("gated", gated, (copy_hash, copied))
     assert ran.returncode == 0, f"a gated copy was refused:\n{ran.stdout}{ran.stderr}"
     # The record vouches for the bytes the data pins, so they must hash to it.
     refuses(checked("gated-forged", gated, (copy_hash, b"other bytes")), "not the bytes")
+    # The NOTICE and licence text a passing record gives are published by
+    # their hash and size, beside the copy.
+    notice, licence = b"a NOTICE", b"a licence text"
+    shipped = ((hashlib.sha256(notice).hexdigest(), notice), (hashlib.sha256(licence).hexdigest(), licence))
+    ran = checked("gated-notice", gated, (copy_hash, copied), *shipped)
+    assert ran.returncode == 0, f"a passing record's NOTICE was refused:\n{ran.stdout}{ran.stderr}"
+    misstated = copy.deepcopy(gated)
+    at(misstated)["licence_gate"]["notice"]["size"] = len(notice) + 1
+    refuses(checked("notice-size", misstated, shipped[0]), "size")
+    # A failing record publishes no NOTICE.
+    failing = copy.deepcopy(merged)
+    at(failing)["licence_gate"] = dict(gate_record(copied), passed=False)
+    refuses(checked("notice-failed", failing, shipped[0]), "not in the merged data")
+    # Two entries holding the same bytes: a copy passes only where both pass.
+    doubled = copy.deepcopy(gated)
+    twin = copy.deepcopy(doubled["entries"][merged["entries"].index(big)])
+    twin["key"] = "twin"
+    twin["targets"][0]["artifacts"][0]["licence_gate"] = {"passed": False, "reason": "no lockfile or SBOM was given"}
+    doubled["entries"].append(twin)
+    refuses(checked("twin", doubled, (copy_hash, copied)), "licence-gate")
     # An artifact copy needs the mirror mark as well as the record.
     unmarked = copy.deepcopy(gated)
-    del unmarked["entries"][merged["entries"].index(big)]["targets"][0]["artifacts"][0]["mirror_licence"]
+    del at(unmarked)["mirror_licence"]
     refuses(checked("unmarked", unmarked, (copy_hash, copied)), "mirror")
     # One hash that is both a file list and an artifact is held to both: the
     # file-list rule must not let it past the gate.
     dual = copy.deepcopy(merged)
-    held = dual["entries"][merged["entries"].index(big)]["targets"][0]["artifacts"][0]
+    held = at(dual)
     held["files"] = {"sha256": copy_hash, "size": len(copied)}
     refuses(checked("dual", dual, (copy_hash, copied)), "licence-gate")
-    held["licence_gate"] = {"passed": True}
+    held["licence_gate"] = gate_record(copied)
     ran = checked("dual-gated", dual, (copy_hash, copied))
     assert ran.returncode == 0, f"a gated dual hash was refused:\n{ran.stdout}{ran.stderr}"
     # An asset that is a link is refused, not followed.
@@ -772,6 +823,252 @@ def check_publish(scratch: pathlib.Path) -> None:
     refuses(intake("publish-check", "--merged", linked / "merged.json", "--assets", linked / "assets"), "regular file")
     # Merged data that is not review data is refused, not read as holding nothing.
     refuses(checked("shapeless", {"entries": "none"}), "not review data")
+
+
+def check_publish_replaced(scratch: pathlib.Path) -> None:
+    """A gated output installed in an artifact's place is published by the
+    record that names it, and the artifact it replaces is then not copied."""
+    module = load_intake()
+    merged = json.loads((RENDER / "merged.json").read_text())
+    index = next(index for index, entry in enumerate(merged["entries"]) if entry["key"] == "fake")
+    artifact = merged["entries"][index]["targets"][0]["artifacts"][0]
+    downloaded = b"the bytes the vendor published"
+    original = hashlib.sha256(downloaded).hexdigest()
+    artifact["sha256"] = original
+    assert artifact.get("mirror_licence") == "MIT", "the fixture's artifact is marked for mirroring"
+    built = b"the bytes of an output built at review"
+    built_hash = hashlib.sha256(built).hexdigest()
+    module.replaced(artifact, gate_record(built))
+    assert artifact["replaced_by"] == {"sha256": built_hash, "size": len(built)}, artifact.get("replaced_by")
+    assert artifact["licence_gate"] == gate_record(built), "the record is kept beside what it replaces"
+    ran = publish_checked(scratch, "replaced", merged, (built_hash, built))
+    assert ran.returncode == 0, f"a gated replacement was refused:\n{ran.stdout}{ran.stderr}"
+    # The record names the replacement, so it vouches for no copy of the original.
+    publish_refuses(publish_checked(scratch, "replaced-original", merged, (original, downloaded)), "licence-gate")
+    # A replacement whose record names other bytes is refused.
+    other = copy.deepcopy(merged)
+    other["entries"][index]["targets"][0]["artifacts"][0]["licence_gate"] = gate_record(b"other bytes")
+    publish_refuses(publish_checked(scratch, "replaced-elsewhere", other, (built_hash, built)), "licence-gate")
+    # A failing record is recorded, and names no replacement.
+    failing = copy.deepcopy(merged)
+    held = failing["entries"][index]["targets"][0]["artifacts"][0]
+    module.replaced(held, {"passed": False, "reason": "off the list"})
+    assert held["licence_gate"] == {"passed": False, "reason": "off the list"}, "a failing record is still recorded"
+    assert "replaced_by" not in held, "a failing record names no replacement"
+    publish_refuses(publish_checked(scratch, "replaced-failed", failing, (built_hash, built)), "not in the merged data")
+    # The catalog a client reads keeps the replacement and leaves the record out.
+    held_merged = written(scratch, "merged-replaced.json", merged)
+    ran, out = render(scratch, "catalog-replaced.json", merged=held_merged)
+    assert ran.returncode == 0, f"render failed:\n{ran.stdout}{ran.stderr}"
+    listed = json.loads(out.read_text())["entries"]
+    shown_artifact = next(entry for entry in listed if entry["key"] == "fake")["targets"][0]["artifacts"][0]
+    assert shown_artifact["replaced_by"] == {"sha256": built_hash, "size": len(built)}, "render keeps replaced_by"
+    assert "licence_gate" not in shown_artifact, "render leaves the gate's record out"
+
+
+GATE = FIXTURES / "licence-gate"
+GATE_ASSET = b"the bytes the gate publishes"
+
+
+def gate(
+    scratch: pathlib.Path,
+    name: str,
+    source: pathlib.Path,
+    *,
+    texts: pathlib.Path = GATE / "texts",
+) -> tuple[subprocess.CompletedProcess[str], pathlib.Path, dict | None]:
+    asset = scratch / "gate-asset"
+    if not asset.exists():
+        asset.write_bytes(GATE_ASSET)
+    out = scratch / f"gate-{name}"
+    ran = intake(
+        "licence-gate", "--input", source, "--deny", ROOT / "deny.toml", "--texts", texts, "--asset", asset,
+        "--out", out,
+    )
+    try:
+        record = json.loads(ran.stdout)
+    except ValueError:
+        record = None
+    return ran, out, record
+
+
+def gate_refuses(scratch: pathlib.Path, name: str, source: pathlib.Path, *words: str, **kept: object) -> dict:
+    ran, out, record = gate(scratch, name, source, **kept)
+    assert ran.returncode == 1 and "Traceback" not in ran.stderr, f"{name}: {ran.returncode} {ran.stderr!r}"
+    assert isinstance(record, dict) and record.get("passed") is False, f"{name}: no failing record printed"
+    assert sorted(record) == ["passed", "reason"], f"{name}: {sorted(record)}"
+    for word in words:
+        assert word in record["reason"] and word in ran.stderr, f"{name}: {record['reason']!r} lacks {word!r}"
+    assert not out.exists(), f"{name}: a refused input wrote its NOTICE"
+    return record
+
+
+def sbom_of(scratch: pathlib.Path, name: str, *components: dict) -> pathlib.Path:
+    return written(scratch, f"sbom-{name}.json", {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": list(components)})
+
+
+def check_licence_gate_refuses(scratch: pathlib.Path) -> None:
+    """One component off deny.toml's list refuses the whole input, and so
+    does every licence the gate cannot hold to that list."""
+    lock = json.loads((GATE / "lock.json").read_text())
+    lock["packages"][2]["license"] = "Unlicense"
+    gate_refuses(scratch, "lock-off", written(scratch, "lock-off.json", lock), "either", "3.2.1", "Unlicense")
+    sbom = json.loads((GATE / "sbom.json").read_text())
+    sbom["components"][3]["licenses"] = [{"expression": "Unlicense"}]
+    gate_refuses(scratch, "sbom-off", written(scratch, "sbom-off.json", sbom), "hasher", "Unlicense")
+
+    for name, licences, words in (
+        ("unlicensed", [], "no licence"),
+        ("noassertion", [{"expression": "NOASSERTION"}], "NOASSERTION"),
+        ("none", [{"license": {"id": "NONE"}}], "NONE"),
+        ("reference", [{"expression": "MIT AND LicenseRef-Own"}], "reference"),
+        ("document", [{"expression": "DocumentRef-spdx:LicenseRef-Own"}], "reference"),
+        ("later", [{"expression": "Apache-2.0+"}], "later version"),
+        ("unparsed", [{"expression": "MIT AND (ISC"}], "does not parse"),
+        ("dangling", [{"expression": "MIT OR"}], "does not parse"),
+        ("bare-with", [{"expression": "(MIT) WITH LLVM-exception"}], "does not parse"),
+        ("long", [{"expression": "MIT" + " AND MIT" * 40}], "256"),
+        ("exception", [{"expression": "MIT WITH LLVM-exception"}], "not on deny.toml's list"),
+        ("neither", [{"expression": "Unlicense OR Zero"}], "Unlicense"),
+        ("both", [{"expression": "MIT"}, {"expression": "Unlicense"}], "Unlicense"),
+        ("named", [{"license": {"name": "A licence of its own"}}], "SPDX id"),
+        ("encoded", [{"license": {"id": "MIT", "text": {"content": "Q29weQ==", "encoding": "base64"}}}], "encoding"),
+    ):
+        source = sbom_of(scratch, name, {"name": "lonely", "version": "1.0.0", "licenses": licences})
+        gate_refuses(scratch, name, source, "lonely", words)
+    # Nested components are part of the input, and are not read past.
+    nested = sbom_of(scratch, "nested", {
+        "name": "outer", "version": "1.0.0", "licenses": [{"expression": "MIT"}],
+        "components": [{"name": "inner", "version": "1.0.0", "licenses": [{"expression": "Unlicense"}]}],
+    })
+    gate_refuses(scratch, "nested", nested, "outer", "nests")
+    # Neither format, or no component at all.
+    gate_refuses(scratch, "shapeless", written(scratch, "shapeless.json", {"packages": "none"}), "neither")
+    gate_refuses(scratch, "empty", sbom_of(scratch, "empty"), "no component")
+    gate_refuses(scratch, "not-json", GATE / "texts" / "MIT.txt", "not JSON")
+    # A hostile name is shown as the intake shows hostile text.
+    hostile = sbom_of(scratch, "hostile", {"name": "evil‮txt", "version": "1", "licenses": [{"expression": "Unlicense"}]})
+    record = gate_refuses(scratch, "hostile", hostile, "\\u202e")
+    assert "‮" not in record["reason"], "a reordering character is written as its code point"
+    # A licence on the list with no text to ship beside it.
+    texts = scratch / "gate-texts-without-isc"
+    texts.mkdir()
+    for held in (GATE / "texts").iterdir():
+        if held.name != "ISC.txt":
+            (texts / held.name).write_bytes(held.read_bytes())
+    gate_refuses(scratch, "textless", GATE / "lock.json", "ISC", texts=texts)
+    # The asset gated must be there to be bound.
+    ran = intake(
+        "licence-gate", "--input", GATE / "lock.json", "--deny", ROOT / "deny.toml", "--texts", GATE / "texts",
+        "--asset", scratch / "no-such-asset", "--out", scratch / "gate-assetless",
+    )
+    assert ran.returncode == 1 and json.loads(ran.stdout)["passed"] is False, ran.stderr
+    # A directory that is already there is not written into.
+    (scratch / "gate-taken").mkdir()
+    ran, _, _ = gate(scratch, "taken", GATE / "lock.json")
+    assert ran.returncode == 1 and "already" in ran.stderr and "Traceback" not in ran.stderr, ran.stderr
+
+    # The ceilings: the component count and the text a component carries.
+    module = load_intake()
+    allowed = module.allowed_licences(ROOT / "deny.toml")
+    module.GATE_COMPONENTS = 2
+    record, files = module.licence_gate(GATE / "lock.json", allowed, GATE / "texts", scratch / "gate-asset")
+    assert record["passed"] is False and "more than 2" in record["reason"] and not files, record
+    module.GATE_COMPONENTS = 1 << 16
+    module.COMPONENT_TEXT_BYTES = 8
+    record, _ = module.licence_gate(GATE / "sbom.json", allowed, GATE / "texts", scratch / "gate-asset")
+    assert record["passed"] is False and "fake-agent" in record["reason"], record
+    module.COMPONENT_TEXT_BYTES = 1 << 20
+    module.COMPONENT_TEXTS_BYTES = 8
+    record, _ = module.licence_gate(GATE / "sbom.json", allowed, GATE / "texts", scratch / "gate-asset")
+    assert record["passed"] is False and "together" in record["reason"], record
+
+
+def check_licence_gate_notice(scratch: pathlib.Path) -> None:
+    """A passing input ships one NOTICE assembled from it and every licence
+    text it uses, and the record binds the asset, the NOTICE and each text."""
+    ran, out, record = gate(scratch, "sbom", GATE / "sbom.json")
+    assert ran.returncode == 0, f"a listed input was refused:\n{ran.stdout}{ran.stderr}"
+    notice = (out / "NOTICE").read_bytes()
+    assert notice == (GATE / "sbom.NOTICE").read_bytes(), "the NOTICE is not the one assembled from the fixture"
+    used = ["Apache-2.0 WITH LLVM-exception", "ISC", "MIT"]
+    assert sorted(path.name for path in (out / "LICENSES").iterdir()) == [f"{licence}.txt" for licence in used]
+    for licence in used:
+        assert (out / "LICENSES" / f"{licence}.txt").read_bytes() == (GATE / "texts" / f"{licence}.txt").read_bytes()
+    assert sorted(path.name for path in out.iterdir()) == ["LICENSES", "NOTICE"], "the gate writes nothing else"
+    assert record == {
+        "asset": {"sha256": hashlib.sha256(GATE_ASSET).hexdigest(), "size": len(GATE_ASSET)},
+        "components": 4,
+        "licences": [
+            {
+                "id": licence,
+                "sha256": hashlib.sha256((GATE / "texts" / f"{licence}.txt").read_bytes()).hexdigest(),
+                "size": len((GATE / "texts" / f"{licence}.txt").read_bytes()),
+            }
+            for licence in used
+        ],
+        "notice": {"sha256": hashlib.sha256(notice).hexdigest(), "size": len(notice)},
+        "passed": True,
+    }, "the record does not bind the bytes the gate wrote"
+    again, out_again, record_again = gate(scratch, "sbom-again", GATE / "sbom.json")
+    assert again.returncode == 0 and record_again == record, "the same input gave another record"
+    assert (out_again / "NOTICE").read_bytes() == notice, "the same input gave another NOTICE"
+
+    # The intake's own npm lock: a bundled package is a component, and an
+    # alternative is taken in the order it is written.
+    ran, out, record = gate(scratch, "lock", GATE / "lock.json")
+    assert ran.returncode == 0, f"a listed lock was refused:\n{ran.stdout}{ran.stderr}"
+    lines = (out / "NOTICE").read_text().splitlines()
+    for line in ("bundled-dep 1.0.0 ISC", "either 3.2.1 Apache-2.0", "npx-agent 2.1.0 MIT"):
+        assert line in lines, f"the lock's NOTICE lacks {line!r}"
+    assert record["components"] == 3 and [item["id"] for item in record["licences"]] == ["Apache-2.0", "ISC", "MIT"]
+
+
+def check_licence_gate_review(scratch: pathlib.Path, data: dict) -> None:
+    """`review` gates every mirror-marked artifact: with its input given, the
+    record binds the artifact and the NOTICE becomes an asset; with none, it
+    fails closed."""
+    plain = {target["platform"]: target for target in next(e for e in data["entries"] if e["key"] == "fake")["targets"]}
+    for target in plain.values():
+        assert target["artifacts"][0]["licence_gate"] == {
+            "passed": False, "reason": "no lockfile or SBOM was given",
+        }, "a mirror-marked artifact with no input fails the gate"
+    big = next(entry for entry in data["entries"] if entry["key"] == "big")
+    assert "licence_gate" not in big["targets"][0]["artifacts"][0], "an artifact not marked for mirroring is not gated"
+
+    linux = hashlib.sha256(archive("fake-agent", "linux-x86_64")).hexdigest()
+    sboms = scratch / "sboms"
+    sboms.mkdir()
+    (sboms / f"{linux}.json").write_bytes((GATE / "sbom.json").read_bytes())
+    ran = intake(
+        "review", "--registry", REGISTRY, "--choices", CHOICES, "--runners", RUNNERS,
+        "--observed", scratch / "observed", "--deny", ROOT / "deny.toml", "--assets", scratch / "textless-assets",
+        "--out", scratch / "textless.json", "--sboms", sboms,
+    )
+    assert ran.returncode == 1 and "--texts" in ran.stderr and "Traceback" not in ran.stderr, ran.stderr
+    gated, assets = review(scratch, "--sboms", sboms, "--texts", GATE / "texts", name="gated.json")
+    targets = {target["platform"]: target for target in next(e for e in gated["entries"] if e["key"] == "fake")["targets"]}
+    record = targets["linux-x86_64"]["artifacts"][0]["licence_gate"]
+    assert record["passed"] is True and record["components"] == 4, record
+    assert record["asset"] == {"sha256": linux, "size": len(archive("fake-agent", "linux-x86_64"))}, record["asset"]
+    notice = (assets / record["notice"]["sha256"]).read_bytes()
+    assert notice == (GATE / "sbom.NOTICE").read_bytes(), "the NOTICE asset is the one assembled from the input"
+    for licence in record["licences"]:
+        held = (assets / licence["sha256"]).read_bytes()
+        assert held == (GATE / "texts" / f"{licence['id']}.txt").read_bytes(), "a licence text is an asset by its hash"
+    assert targets["darwin-aarch64"]["artifacts"][0]["licence_gate"]["passed"] is False, "an input is per artifact"
+
+    # The publishing job takes the gated copy and what ships beside it, and
+    # still refuses the copy with no input.
+    shipped = [(linux, archive("fake-agent", "linux-x86_64")), (record["notice"]["sha256"], notice)]
+    shipped += [(licence["sha256"], (assets / licence["sha256"]).read_bytes()) for licence in record["licences"]]
+    ran = publish_checked(scratch, "reviewed", gated, *shipped)
+    assert ran.returncode == 0, f"a reviewed and gated copy was refused:\n{ran.stdout}{ran.stderr}"
+    darwin = hashlib.sha256(archive("fake-agent", "darwin-aarch64")).hexdigest()
+    publish_refuses(
+        publish_checked(scratch, "reviewed-ungated", gated, (darwin, archive("fake-agent", "darwin-aarch64"))),
+        "licence-gate",
+    )
 
 
 PYPI = "https://files.pythonhosted.org/packages/"
@@ -2571,6 +2868,10 @@ def main() -> int:
             ("render refuses", lambda: check_render_refuses(scratch)),
             ("render previous and entries", lambda: check_render_previous_and_entries(scratch)),
             ("publish", lambda: check_publish(scratch)),
+            ("publish replaced", lambda: check_publish_replaced(scratch)),
+            ("licence gate refuses", lambda: check_licence_gate_refuses(scratch)),
+            ("licence gate notice", lambda: check_licence_gate_notice(scratch)),
+            ("licence gate review", lambda: check_licence_gate_review(scratch, data)),
             ("uvx", lambda: check_uvx(scratch)),
             ("uvx interpreters", lambda: check_uvx_interpreters(scratch)),
             ("uvx tags", check_uvx_tags),

@@ -60,6 +60,9 @@ what is left once either is spent waits for the next run.
   `local` belong to a build route this review does not take, and refuse the
   run;
 - `--deny`: `deny.toml`, whose licence list decides what may be mirrored;
+- `--sboms`, where given: the input of each artifact marked for mirroring,
+  its lockfile or SBOM, as `<artifact sha256>.json`, which the licence gate
+  below reads; with it, `--texts`, the licence texts the gate ships;
 - `--merged`, where given: the merged data, against which a version already
   reviewed is held. A release whose content differs from what was reviewed
   under the same version is refused, naming what differs, since a changed
@@ -84,8 +87,14 @@ not `true`, `false` or `unknown`, and any conformance result but `not run`, is
 refused; and probes on different targets must agree on `agentInfo` and the
 sign-in methods, the refusal naming the field that differs. Each drop is
 recorded with its reason. An artifact whose declared licence is on `deny.toml`'s list is marked
-with that licence for mirroring; nothing is mirrored until the licence gate
-has passed it.
+with that licence for mirroring, and carries the licence gate's record over
+its whole input as its `licence_gate`; one whose input `--sboms` does not
+hold is recorded as failing, `no lockfile or SBOM was given`, so it keeps its
+vendor address and is not mirrored. A passing record's NOTICE and licence
+texts are written under `--assets` by their SHA-256. An output built or
+repacked from an artifact is gated the same way, and where it passes it is
+the artifact's `replaced_by`, the asset installed in its place, by the hash
+and size its record binds.
 
 A `uvx` agent's package is pinned as `name==version`, and each platform the
 runner matrix names is a target of its own: the pinned interpreter, started
@@ -198,6 +207,34 @@ and none for any other answer, which may pass. The proposals are written as
 a bare list in the shape of the merged data's `revoked`, `{key, version,
 lock_revision, reason}`, so a reviewer who agrees appends them as they are.
 
+`licence-gate` decides whether an asset may be published by the catalog,
+as a mirror, a repack or a build: only when every component of the build's
+whole input (`--input`) is used under licences `deny.toml`'s list (`--deny`)
+holds. The input is a CycloneDX JSON SBOM (`bomFormat` `CycloneDX`), each of
+whose `components` gives its `name`, `version` and `licenses`, each a
+`license.id` or an `expression`, all of which apply, or the intake's own npm
+lock, each of whose packages gives the licence its package.json states. It
+is read within 32 MiB and 65,536 components, and anything else is refused, a
+component that nests others among them. A component fails the gate with no
+licence, with `NOASSERTION` or `NONE`, a `LicenseRef-` or `DocumentRef-`
+reference, an id with a `+`, an expression over 256 bytes or one that does
+not parse as `AND`, `OR`, `WITH` and parentheses, or an id the list does not
+hold; an `OR` takes the first alternative, in written order, that the list
+holds, and an `X WITH Y` passes only where the list spells it whole. One
+component failing fails the whole input, and the refusal names the first.
+Where it passes, it writes into `--out`, a directory that must not exist yet,
+`NOTICE` (every component as `name version licence`, sorted, each followed
+by the copyright lines its SBOM carries as a licence's `text.content`,
+within 16 KiB each and 1 MiB together, and then each licence's text once)
+and `LICENSES/<id>.txt`, each text taken from `--texts/<id>.txt`, a licence
+with none there failing the gate; the same input gives the same bytes. Both
+ship beside the asset as catalog release assets. It prints its record:
+`{"passed": true, "asset", "notice", "licences", "components"}`, the first
+two each a `{sha256, size}`, `licences` a `{id, sha256, size}` per text and
+`components` their count, so the record names the exact asset gated (`--asset`)
+and what ships beside it; or `{"passed": false, "reason"}`, and the run is
+refused.
+
 `diff` writes the human diff of review data against the merged data before it,
 as Markdown, showing only what changed, compared on whole values. A version
 the merged data already holds is passed over only when it is the same in every
@@ -212,7 +249,8 @@ one (1 where none), `--signed-at` is the signing time in whole seconds,
 `expires` is thirty days after it, and `revoked` holds every revocation either
 source ever made, once each, since a revocation outlives the data that made
 it. Entries pass through but for what only a reviewer reads (each target's
-`probe` record, an artifact's `mirror_licence` mark); a long file list is
+`probe` record, an artifact's `mirror_licence` mark and `licence_gate`
+record); a long file list is
 already an asset the entry names by hash and size. The bytes are sorted keys,
 no spaces, UTF-8 and no floats, so the same data and time give the same bytes.
 Nothing is written, and the run is refused, for a catalog over `INDEX_BYTES`
@@ -229,16 +267,17 @@ reads the merged data (`--merged`) and the directory of assets the job would
 upload (`--assets`), each a regular file named by its lower-case hexadecimal
 SHA-256 with no extension, and refuses the run, uploading nothing, when any
 asset is not one of these: a file whose name is not a hash, whose bytes do not
-hash to its name, whose hash the merged data does not hold, whose size is not
-the one the data records for a file-list or lock asset, or whose hash is an
-artifact's and whose entry carries no `licence_gate` record of
-`{"passed": true}`. An artifact copy is a redistribution, so a copy of any
-artifact, a mirror included, waits for that record; a file-list or lock asset
-is the catalog's own data and needs none. A hash the data names both ways
-answers to both rules. A copy
-also needs its artifact's `mirror_licence` mark. An empty directory passes,
-since nothing is then uploaded. An asset is opened without following a link,
-but the check cannot hold a directory still: the publishing job checks and
+hash to its name, whose hash the merged data does not hold, or whose size is
+not the one the data records. A file-list or lock asset is the catalog's own
+data and needs no more. An artifact copy, a mirror included, and an artifact's
+`replaced_by` are redistributions, and each passes only where its entry's
+`licence_gate` record passed in the shape the gate writes, that record's
+`asset` is those very bytes, and, for a copy, the artifact carries its
+`mirror_licence` mark; the same bytes under two entries pass only where both
+do. A NOTICE or licence text passes by the hash and size a passing record
+gives it. A hash the data names both ways answers to both rules. An empty
+directory passes, since nothing is then uploaded. An asset is opened without
+following a link, but the check cannot hold a directory still: the publishing job checks and
 uploads from a directory the untrusted job cannot write once the check has
 begun, or the check proves nothing about what is uploaded.
 """
@@ -353,6 +392,15 @@ TARBALL_NAME_BYTES = 64 * TREE_NAMES
 # The longest licence a package's lock entry may give, and the most programs
 # one package and one tree may declare, as the client reads them.
 LICENSE_BYTES = 256
+# The licence gate's ceilings: its input, the components it lists (no fewer
+# than the files one npm tree may write), each licence text it ships, the
+# copyright lines a component carries, alone and together, and the NOTICE.
+GATE_INPUT_BYTES = 32 << 20
+GATE_COMPONENTS = 1 << 16
+LICENCE_TEXT_BYTES = 1 << 20
+COMPONENT_TEXT_BYTES = 16 << 10
+COMPONENT_TEXTS_BYTES = 1 << 20
+NOTICE_BYTES = 16 << 20
 PACKAGE_PROGRAMS = 64
 TREE_PROGRAMS = 1024
 NAME_COMPONENT_BYTES = 255
@@ -959,9 +1007,11 @@ def target(
     spec: object,
     runners: dict,
     mirrored: str | None,
+    gate: Gate,
     assets: dict[str, bytes],
 ) -> dict:
-    """One registry target as the catalog will list it, before its probe."""
+    """One registry target as the catalog will list it, before its probe; an
+    artifact marked for mirroring carries the licence gate's record."""
     if not PLATFORM.fullmatch(platform):
         raise Dropped("is not a platform the catalog names")
     spec = obj(spec, "the target")
@@ -985,6 +1035,7 @@ def target(
     artifact = artifact_of(url, format, sha256, size, listing, assets)
     if mirrored is not None:
         artifact["mirror_licence"] = mirrored
+        artifact["licence_gate"] = gate.of(sha256, place / "artifact", assets)
     return {
         "args": args,
         "artifacts": [artifact],
@@ -2761,6 +2812,7 @@ def entry(
     choice: dict,
     runners: dict,
     allowed: set[str],
+    gate: Gate,
     interpreters: dict[str, dict],
     node: Node,
     decided: dict[str, str],
@@ -2807,7 +2859,7 @@ def entry(
     for platform, spec in sorted(binary.items()) if kind == "binary" else [(platform, None) for platform in sorted(runners)]:
         try:
             if kind == "binary":
-                targets.append(target(observed, agent_id, platform, spec, runners, mirrored, assets))
+                targets.append(target(observed, agent_id, platform, spec, runners, mirrored, gate, assets))
             elif kind == "npm":
                 made = npm_target(observed, agent_id, platform, resolution, node, decided, assets)
                 targets.append({"args": args, "env": env, **made})
@@ -2918,6 +2970,296 @@ def allowed_licences(path: pathlib.Path) -> set[str]:
     return set(listed)
 
 
+class Ungated(Exception):
+    """Why the licence gate refuses an input."""
+
+
+def spdx_tokens(expression: str) -> list[str]:
+    return re.findall(r"[()]|[^\s()]+", expression)
+
+
+def spdx_chosen(expression: str, allowed: set[str]) -> list[str]:
+    """The licences `expression` is used under, each as `allowed` spells it,
+    in written order: an `AND` both sides, an `OR` the first side that passes.
+    Refused where it does not parse, is longer than `LICENSE_BYTES`, or no
+    side of it passes; the reason is the first that failed."""
+    if len(encoded(expression, "the licence")) > LICENSE_BYTES:
+        raise Ungated(f"gives a licence longer than {LICENSE_BYTES} bytes")
+    tokens = spdx_tokens(expression)
+    operators = {"AND", "OR", "WITH", "(", ")"}
+    at = 0
+
+    def unparsed() -> Ungated:
+        return Ungated(f"gives the licence {shown(clipped(expression))}, which does not parse as an SPDX expression")
+
+    def take() -> str:
+        nonlocal at
+        if at >= len(tokens):
+            raise unparsed()
+        at += 1
+        return tokens[at - 1]
+
+    def single(token: str) -> tuple[list[str] | None, str]:
+        if token in ("NOASSERTION", "NONE"):
+            return None, f"gives the licence {token}, which asserts none"
+        if token.startswith(("LicenseRef-", "DocumentRef-")):
+            return None, f"gives the licence {shown(clipped(token))}, a reference to text no list can hold"
+        if token.endswith("+"):
+            return None, f"gives the licence {shown(clipped(token))}, that or any later version, which no list can hold"
+        if token not in allowed:
+            return None, f"gives the licence {shown(clipped(token))}, which is not on deny.toml's list"
+        return [token], ""
+
+    def atom() -> tuple[list[str] | None, str]:
+        token = take()
+        if token == "(":
+            held = either()
+            if take() != ")":
+                raise unparsed()
+            return held
+        if token in operators:
+            raise unparsed()
+        if at < len(tokens) and tokens[at] == "WITH":
+            take()
+            exception = take()
+            if exception in operators:
+                raise unparsed()
+            whole = f"{token} WITH {exception}"
+            if whole not in allowed:
+                return None, f"gives the licence {shown(clipped(whole))}, which is not on deny.toml's list as one"
+            return [whole], ""
+        return single(token)
+
+    def both() -> tuple[list[str] | None, str]:
+        chosen, why = atom()
+        while at < len(tokens) and tokens[at] == "AND":
+            take()
+            right, right_why = atom()
+            if chosen is not None:
+                chosen, why = (None, right_why) if right is None else (chosen + right, "")
+        return chosen, why
+
+    def either() -> tuple[list[str] | None, str]:
+        chosen, why = both()
+        while at < len(tokens) and tokens[at] == "OR":
+            take()
+            right, right_why = both()
+            if chosen is None and right is not None:
+                chosen, why = right, ""
+        return chosen, why
+
+    if not tokens:
+        raise unparsed()
+    chosen, why = either()
+    if at != len(tokens):
+        raise unparsed()
+    if chosen is None:
+        raise Ungated(why)
+    return chosen
+
+
+def component_text(value: object, what: str) -> str:
+    """Copyright lines a component carries, as text a NOTICE holds."""
+    held = obj(value, what)
+    if "encoding" in held:
+        raise Ungated(f"carries {what} in an encoding, which the gate does not decode")
+    content = held.get("content")
+    if not isinstance(content, str):
+        raise Ungated(f"carries {what} with no content")
+    if len(encoded(content, what)) > COMPONENT_TEXT_BYTES:
+        raise Ungated(f"carries {what} longer than {COMPONENT_TEXT_BYTES} bytes")
+    if any((ord(c) < 0x20 and c not in "\n\t") or ord(c) == 0x7F for c in content):
+        raise Ungated(f"carries {what} holding a control character")
+    return content
+
+
+def sbom_component(item: dict) -> tuple[list[str], list[str]]:
+    """A CycloneDX component's licences, each an expression, and its
+    copyright lines; several licences are all of them, as with `AND`."""
+    if item.get("components"):
+        raise Ungated("nests components, which the gate does not read past")
+    licences = item.get("licenses", [])
+    if not isinstance(licences, list) or len(licences) > ITEMS:
+        raise Ungated(f"gives no list of at most {ITEMS} licences")
+    expressions, texts = [], []
+    for listed in licences:
+        listed = obj(listed, "a licence")
+        if "expression" in listed and "license" not in listed:
+            expression = listed["expression"]
+        elif "license" in listed and "expression" not in listed:
+            licence = obj(listed["license"], "a licence")
+            expression = licence.get("id")
+            if not isinstance(expression, str):
+                raise Ungated("names a licence by no SPDX id")
+            if licence.get("text") is not None:
+                texts.append(component_text(licence["text"], "a licence text"))
+        else:
+            raise Ungated("gives a licence that is neither an id nor an expression")
+        if not isinstance(expression, str):
+            raise Ungated("gives a licence expression that is not text")
+        expressions.append(expression)
+    return expressions, texts
+
+
+def lock_component(item: dict) -> tuple[list[str], list[str]]:
+    """A package of the intake's npm lock: the licence its package.json states."""
+    licence = item.get("license")
+    if licence is None:
+        return [], []
+    if not isinstance(licence, str):
+        raise Ungated("gives a licence that is not text")
+    return [licence], []
+
+
+def gate_components(held: bytes) -> list[tuple[str, str, list[str], str]]:
+    """Every component of the input, in its order: its name, version,
+    licences and copyright lines; refused where it is neither format."""
+    value = parsed(held, "the licence gate's input")
+    if isinstance(value, dict) and value.get("bomFormat") == "CycloneDX":
+        listed, read_one = value.get("components"), sbom_component
+    elif isinstance(value, dict) and isinstance(value.get("packages"), list) and "unpack_rules" in value:
+        listed, read_one = value["packages"], lock_component
+    else:
+        raise Ungated("the input is neither a CycloneDX SBOM nor an npm lock the intake wrote")
+    if not isinstance(listed, list) or not listed:
+        raise Ungated("the input lists no component")
+    if len(listed) > GATE_COMPONENTS:
+        raise Ungated(f"the input lists more than {GATE_COMPONENTS} components")
+    components = []
+    carried = 0
+    for index, item in enumerate(listed):
+        item = obj(item, f"component {index}")
+        name = text(item.get("name"), f"component {index}'s name")
+        who = shown(clipped(name))
+        try:
+            version_of = text(item.get("version"), "its version")
+            who = f"{who} {shown(clipped(version_of))}"
+            expressions, texts = read_one(item)
+            if not expressions:
+                raise Ungated("gives no licence")
+            carried += sum(len(item.encode()) for item in texts)
+            if carried > COMPONENT_TEXTS_BYTES:
+                raise Ungated(f"brings the copyright lines components carry together past {COMPONENT_TEXTS_BYTES} bytes")
+        except (Ungated, Dropped) as failed:
+            raise Ungated(f"the component {who} {failed}") from None
+        components.append((name, version_of, expressions, "\n".join(texts)))
+    return components
+
+
+def licence_gate(
+    source: pathlib.Path, allowed: set[str], texts: pathlib.Path, asset: pathlib.Path
+) -> tuple[dict, dict[str, bytes]]:
+    """The gate over a build's whole input `source`: its record, and where it
+    passes the files that ship beside `asset`, `NOTICE` and
+    `LICENSES/<id>.txt`. Every component must be used under licences
+    `allowed` lists, each with its text under `texts`."""
+    try:
+        components = gate_components(read(source, GATE_INPUT_BYTES, "the licence gate's input"))
+        lines = set()
+        used: set[str] = set()
+        for name, version_of, expressions, carried in components:
+            chosen: list[str] = []
+            for expression in expressions:
+                try:
+                    picked = spdx_chosen(expression, allowed)
+                except Ungated as failed:
+                    raise Ungated(f"the component {shown(clipped(name))} {shown(clipped(version_of))} {failed}") from None
+                chosen += [licence for licence in picked if licence not in chosen]
+            used.update(chosen)
+            lines.add((name, version_of, " AND ".join(chosen), carried))
+        held_texts = {}
+        for licence in sorted(used):
+            if not inside(f"{licence}.txt"):
+                raise Ungated(f"{licence} cannot name a licence text file")
+            try:
+                held_texts[licence] = read(texts / f"{licence}.txt", LICENCE_TEXT_BYTES, f"the licence text of {licence}")
+                held_texts[licence].decode()
+            except UnicodeDecodeError:
+                raise Ungated(f"the licence text of {licence} is not UTF-8") from None
+        parts = [
+            "This asset is built from the components below, each with its version and the\n"
+            "licence it is used under. The text of each licence follows them.\n\n"
+        ]
+        for name, version_of, licence, carried in sorted(lines):
+            parts.append(f"{name} {version_of} {licence}\n")
+            parts += [f"    {line}\n" for line in carried.splitlines()]
+        notice = "".join(parts).encode()
+        for licence, content in held_texts.items():
+            notice += f"\n==== {licence} ====\n\n".encode() + content + (b"" if content.endswith(b"\n") else b"\n")
+            if len(notice) > NOTICE_BYTES:
+                raise Ungated(f"the NOTICE would be larger than {NOTICE_BYTES} bytes")
+        sha256, size = hashed(asset)
+    except Spent:
+        raise
+    except (Ungated, Refused, Dropped) as failed:
+        return {"passed": False, "reason": clipped(failed)}, {}
+    files = {"NOTICE": notice, **{f"LICENSES/{licence}.txt": content for licence, content in held_texts.items()}}
+    record = {
+        "asset": {"sha256": sha256, "size": size},
+        "components": len(components),
+        "licences": [
+            {"id": licence, "sha256": hashlib.sha256(content).hexdigest(), "size": len(content)}
+            for licence, content in held_texts.items()
+        ],
+        "notice": {"sha256": hashlib.sha256(notice).hexdigest(), "size": len(notice)},
+        "passed": True,
+    }
+    return record, files
+
+
+# The record of a mirror-marked artifact `review` was given no input for.
+UNGATED = {"passed": False, "reason": "no lockfile or SBOM was given"}
+
+
+class Gate:
+    """The licence gate as `review` runs it, over each mirror-marked
+    artifact's input in `sboms`, named `<artifact sha256>.json`."""
+
+    def __init__(self, allowed: set[str], sboms: pathlib.Path | None, texts: pathlib.Path | None) -> None:
+        if sboms is not None and texts is None:
+            raise Refused("--sboms is given with no --texts, so no licence text could ship beside a mirror")
+        self.allowed, self.sboms, self.texts = allowed, sboms, texts
+
+    def of(self, sha256: str, asset: pathlib.Path, assets: dict[str, bytes]) -> dict:
+        """The record for the artifact `asset`, whose hash is `sha256`; the
+        NOTICE and licence texts of a passing one are kept as assets."""
+        source = None if self.sboms is None else self.sboms / f"{sha256}.json"
+        if source is None or self.texts is None or not os.path.lexists(source):
+            return dict(UNGATED)
+        record, files = licence_gate(source, self.allowed, self.texts, asset)
+        for content in files.values():
+            assets[hashlib.sha256(content).hexdigest()] = content
+        return record
+
+
+def replaced(artifact: dict, record: dict) -> None:
+    """Record the gate's `record` over an output built or repacked from
+    `artifact`; where it passed, that output is what installs in the
+    artifact's place, named by the hash and size the record binds."""
+    artifact["licence_gate"] = record
+    artifact.pop("replaced_by", None)
+    if record.get("passed") is True:
+        artifact["replaced_by"] = {"sha256": record["asset"]["sha256"], "size": record["asset"]["size"]}
+
+
+def licence_gate_command(arguments: argparse.Namespace) -> int:
+    allowed = allowed_licences(arguments.deny)
+    if os.path.lexists(arguments.out):
+        raise Refused("--out already exists; the gate writes a directory of its own")
+    record, files = licence_gate(arguments.input, allowed, arguments.texts, arguments.asset)
+    if record["passed"]:
+        try:
+            (arguments.out / "LICENSES").mkdir(parents=True)
+            for name, content in sorted(files.items()):
+                (arguments.out / name).write_bytes(content)
+        except OSError as failed:
+            raise Refused(f"the NOTICE could not be written to {clipped(arguments.out)}: {clipped(failed.strerror)}") from None
+    print(json.dumps(record, sort_keys=True))
+    if not record["passed"]:
+        raise Refused(f"the licence gate refuses the input: {record['reason']}")
+    return 0
+
+
 def review(arguments: argparse.Namespace) -> int:
     global BUDGET
     BUDGET = None
@@ -2929,6 +3271,7 @@ def review(arguments: argparse.Namespace) -> int:
     choices = choices_of(read_json(arguments.choices, SMALL_BYTES, "the choices"))
     runners = runners_of(read_json(arguments.runners, SMALL_BYTES, "the runner matrix"))
     allowed = allowed_licences(arguments.deny)
+    gate = Gate(allowed, arguments.sboms, arguments.texts)
     merged = merged_of(arguments.merged)
     interpreters = interpreters_of(arguments.interpreters)
     pinned_node = node_of(arguments.node)
@@ -2976,7 +3319,7 @@ def review(arguments: argparse.Namespace) -> int:
             continue
         try:
             made, kept = entry(
-                arguments.observed, agent, agent_id, choice, runners, allowed, interpreters, node,
+                arguments.observed, agent, agent_id, choice, runners, allowed, gate, interpreters, node,
                 dispositions.get(agent_id, {}), dropped,
             )
         except Exception as failed:  # whatever one entry breaks, the others go on
@@ -3169,7 +3512,7 @@ def rendered(entries: list[dict]) -> list[dict]:
         ]
         for target in copy["targets"]:
             target["artifacts"] = [
-                {name: value for name, value in artifact.items() if name != "mirror_licence"}
+                {name: value for name, value in artifact.items() if name not in ("mirror_licence", "licence_gate")}
                 for artifact in target.get("artifacts", [])
             ]
         listed.append(copy)
@@ -3240,26 +3583,61 @@ def render(arguments: argparse.Namespace) -> int:
     return 0
 
 
-def published(merged: dict) -> tuple[dict[str, int], dict[str, bool]]:
+def passing(record: object) -> dict | None:
+    """`record` where it is a passing licence-gate record in the shape the
+    gate writes, binding an asset, a NOTICE and each licence text; else none."""
+    if not isinstance(record, dict) or record.get("passed") is not True:
+        return None
+    try:
+        for bound in [record.get("asset"), record.get("notice"), *record.get("licences")]:
+            bound = obj(bound, "a bound file")
+            digest(bound.get("sha256"), "its sha256")
+            number(bound.get("size"), "its size")
+        for licence in record["licences"]:
+            text(licence.get("id"), "a licence id")
+        number(record.get("components"), "its components")
+    except (Dropped, TypeError):
+        return None
+    return record
+
+
+def published(merged: dict) -> tuple[dict[str, int], dict[str, int | None]]:
     """What the merged data lets the catalog release hold, by hash: each
-    file-list and lock asset with its size, and each artifact with whether it may be
-    copied (a mirror mark and a passing licence-gate record, on every entry
-    that holds those bytes)."""
+    file-list and lock asset, and each NOTICE and licence text a passing
+    licence-gate record gives, with its size; and each artifact copy or
+    replacement with the size its record binds, or none where it may not be
+    redistributed (no passing record for those very bytes on every entry that
+    holds them, or, for a copy, no mirror mark)."""
     listings: dict[str, int] = {}
-    artifacts: dict[str, bool] = {}
+    redistributed: dict[str, int | None] = {}
+
+    def allow(sha: str, size: int | None) -> None:
+        # The same bytes under two entries pass only where both do.
+        redistributed[sha] = size if redistributed.get(sha, size) == size else None
+
     try:
         for entry in merged["entries"]:
             for target in entry.get("targets", []):
                 for artifact in target.get("artifacts", []):
-                    record = artifact.get("licence_gate")
+                    record = passing(artifact.get("licence_gate"))
+                    gated = None if record is None else record["asset"]
                     sha = digest(artifact.get("sha256"), "an artifact's sha256")
-                    passed = (
-                        isinstance(record, dict)
-                        and record.get("passed") is True
+                    copied = (
+                        gated is not None
+                        and gated["sha256"] == sha
                         and isinstance(artifact.get("mirror_licence"), str)
                     )
-                    # The same bytes under two entries pass only where both do.
-                    artifacts[sha] = passed and artifacts.get(sha, True)
+                    allow(sha, gated["size"] if copied else None)
+                    replacement = artifact.get("replaced_by")
+                    if replacement is not None:
+                        replacement = obj(replacement, "an artifact's replaced_by")
+                        replaced_sha = digest(replacement.get("sha256"), "a replacement's sha256")
+                        replaced_size = number(replacement.get("size"), "a replacement's size")
+                        held = gated is not None and gated["sha256"] == replaced_sha and gated["size"] == replaced_size
+                        allow(replaced_sha, replaced_size if held else None)
+                    if record is not None:
+                        for shipped in [record["notice"], *record["licences"]]:
+                            listings[shipped["sha256"]] = shipped["size"]
                     files = artifact.get("files")
                     if isinstance(files, dict):
                         listings[digest(files.get("sha256"), "a file list's sha256")] = number(
@@ -3271,14 +3649,14 @@ def published(merged: dict) -> tuple[dict[str, int], dict[str, bool]]:
                     listings[digest(lock.get("sha256"), "a lock's sha256")] = number(lock.get("size"), "a lock's size")
     except (KeyError, TypeError, AttributeError, Dropped):
         raise Refused("the merged data is not review data as the intake writes it") from None
-    return listings, artifacts
+    return listings, redistributed
 
 
 def publish_check(arguments: argparse.Namespace) -> int:
     merged = read_json(arguments.merged, DATA_BYTES, "the merged data")
     if not isinstance(merged, dict):
         raise Refused("the merged data is not review data as the intake writes it")
-    listings, artifacts = published(merged)
+    listings, redistributed = published(merged)
     try:
         held = os.lstat(arguments.assets)
     except OSError:
@@ -3295,16 +3673,19 @@ def publish_check(arguments: argparse.Namespace) -> int:
             raise Refused(f"asset {name} {failed}") from None
         if actual != place.name:
             raise Refused(f"asset {name} is not the bytes its name claims")
-        if place.name not in listings and place.name not in artifacts:
+        if place.name not in listings and place.name not in redistributed:
             raise Refused(f"asset {name} is not in the merged data")
         # Independent: a hash the data names both ways answers to both.
         if place.name in listings and size != listings[place.name]:
             raise Refused(f"asset {name} is not the size the merged data records for it")
-        if place.name in artifacts and not artifacts[place.name]:
-            raise Refused(
-                f"asset {name} is a copy of an artifact whose entry lacks a mirror mark "
-                "or a passing licence-gate record"
-            )
+        if place.name in redistributed:
+            if redistributed[place.name] is None:
+                raise Refused(
+                    f"asset {name} copies or replaces an artifact with no passing licence-gate record for "
+                    "these bytes on every entry holding them, or a copy whose artifact lacks a mirror mark"
+                )
+            if size != redistributed[place.name]:
+                raise Refused(f"asset {name} is not the size its licence-gate record binds")
     return 0
 
 
@@ -3724,6 +4105,16 @@ def main() -> int:
     reviewing.add_argument("--node", type=pathlib.Path, help="the Node release npm agents run on")
     reviewing.add_argument("--node-keys", type=pathlib.Path, help="the keys a Node release may be signed under")
     reviewing.add_argument("--dispositions", type=pathlib.Path, help="the reviewer's decision on each skipped script")
+    reviewing.add_argument(
+        "--sboms", type=pathlib.Path, help="each mirror-marked artifact's lockfile or SBOM, as <sha256>.json"
+    )
+    reviewing.add_argument("--texts", type=pathlib.Path, help="the licence texts, one <id>.txt per listed licence")
+    gating = commands.add_parser("licence-gate", help="gate an asset on the licences of its whole input")
+    gating.add_argument("--input", type=pathlib.Path, required=True, help="the build's lockfile or SBOM")
+    gating.add_argument("--deny", type=pathlib.Path, required=True, help="deny.toml, whose licence list decides")
+    gating.add_argument("--texts", type=pathlib.Path, required=True, help="the licence texts, one <id>.txt each")
+    gating.add_argument("--asset", type=pathlib.Path, required=True, help="the file that would be published")
+    gating.add_argument("--out", type=pathlib.Path, required=True, help="a new directory for NOTICE and LICENSES/")
     differing = commands.add_parser("diff", help="the human diff of review data against merged data")
     differing.add_argument("--old", type=pathlib.Path, help="the merged data before this review")
     differing.add_argument("review", type=pathlib.Path)
@@ -3751,7 +4142,7 @@ def main() -> int:
     arguments = parser.parse_args()
     commands_run = {
         "review": review, "diff": diff, "render": render, "publish-check": publish_check,
-        "lock": lock, "tree": tree, "recheck": recheck,
+        "lock": lock, "tree": tree, "recheck": recheck, "licence-gate": licence_gate_command,
     }
     try:
         return commands_run[arguments.command](arguments)
