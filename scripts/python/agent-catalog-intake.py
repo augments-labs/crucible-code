@@ -123,8 +123,8 @@ alone; its `bin/node` (`node.exe` on Windows) and `LICENSE` are all a client
 keeps of it, and Node is never mirrored. Node publishes no FreeBSD build, so
 that target is dropped. The tree is npm's lock, in lockfile version 3, of
 which only each package's location, name, version, `resolved`, `integrity`,
-`inBundle`, `hasInstallScript`, `dev`, `optional`, `os`, `cpu`, `libc` and
-`bin` are read; a `dev` package is never installed. Every location is
+`inBundle`, `hasInstallScript`, `dev`, `optional`, `os`, `cpu` and `libc`
+are read; a `dev` package is never installed. Every location is
 `node_modules/<name>`, nested only under `node_modules/`, unique once case is
 folded, and no longer than 767 bytes. Every tarball is fetched from
 `https://registry.npmjs.org/` at a plain address of printable ASCII with
@@ -1671,16 +1671,6 @@ def npm_location(value: object) -> str:
     raise Dropped(f"the lock installs a package at {clipped(value)}, which is not where npm installs one")
 
 
-def bins_of(value: object, location: str) -> set[str]:
-    """The files a lock's `bin` for the package at `location` names, from the
-    tree's root."""
-    if value is None:
-        return set()
-    if not isinstance(value, dict) or len(value) > ITEMS:
-        raise Dropped(f"the lock's bin for {clipped(location)} is not an object of at most {ITEMS} names")
-    return {f"{location}/{relative(path, 'a bin in the lock')}" for path in value.values()}
-
-
 def fitting(values: object, current: str, what: str) -> bool:
     """Whether npm's `os` or `cpu` list `values` admits `current`: a `!` names
     one refused, and any other entry the only ones admitted."""
@@ -1842,7 +1832,6 @@ def npm_resolved(observed: pathlib.Path, agent: str, package: str, released: str
         ):
             raise Dropped(f"the lock's version for {clipped(location)} is not a version")
         packages.append({
-            "bins": bins_of(fields.get("bin"), location),
             "bundled": fields.get("inBundle") is True,
             "cpu": fields.get("cpu"),
             "index": index,
@@ -1993,10 +1982,12 @@ def tree_listing(place: pathlib.Path, name: str, built: bool) -> dict[str, dict]
     if not isinstance(files, list) or len(files) > TREE_ENTRIES:
         raise Dropped(f"tree/{name} lists no files, or more than {TREE_ENTRIES}")
     held: dict[str, dict] = {}
+    # Two paths a folding file system takes for one are one file listed twice.
+    folded: set[str] = set()
     for index, item in enumerate(files):
         item = obj(item, f"tree/{name} file {index}")
         path = text(item.get("path"), f"tree/{name} file {index}'s path")
-        if not inside(path) or path in held:
+        if not inside(path) or path.casefold() in folded:
             raise Dropped(f"tree/{name} lists {clipped(path)}, which is not inside its tree or is listed twice")
         if built and item.get("kind") != "file":
             raise Dropped(f"tree/{name} lists {clipped(path)} as other than a file")
@@ -2008,6 +1999,7 @@ def tree_listing(place: pathlib.Path, name: str, built: bool) -> dict[str, dict]
             "sha256": digest(item.get("sha256"), f"tree/{name}: {clipped(path)}'s sha256"),
             "size": number(item.get("size"), f"tree/{name}: {clipped(path)}'s size"),
         }
+        folded.add(path.casefold())
     return held
 
 
@@ -2039,13 +2031,24 @@ def owner_of(path: str, locations: set[str]) -> str | None:
 def trees_agree(place: pathlib.Path, installed: list[dict], platform: str) -> set[str]:
     """Refuse a target whose tree as npm built it differs from crucible's,
     compared by path, SHA-256 and exec flag under every installed location,
-    and give the files crucible's holds. npm makes runnable what a `bin`
-    names, and writes a `.gitignore` as `.npmignore`; neither is a difference.
-    On Windows no file is runnable, so the exec flag is not compared."""
+    and give the files crucible's holds. npm makes runnable a file the `bin`
+    of the package.json of the package holding it names, and never takes a
+    mode away, and writes a `.gitignore` as `.npmignore`; neither is a
+    difference. On Windows no file is runnable, so the exec flag is not
+    compared."""
     locations = {item["location"] for item in installed}
-    bins = set().union(*(item["bins"] for item in installed)) if installed else set()
     npm = tree_listing(place, "npm.json", built=False)
     built = tree_listing(place, "unpack-check.json", built=True)
+    every = set(npm) | set(built)
+    bins: set[str] = set()
+    for item in installed:
+        for path in (manifest_bins(item["manifest"], item["name"], item["location"], every) or {}).values():
+            try:
+                held = f"{item['location']}/{relative(path, 'its bin')}"
+            except Dropped:
+                continue  # npm links no bin it cannot place, so it marks nothing
+            if owner_of(held, locations) == item["location"]:
+                bins.add(held)
     ours: dict[str, dict] = {}
     for path, item in npm.items():
         if npm_own(path, locations):
@@ -2066,28 +2069,41 @@ def trees_agree(place: pathlib.Path, installed: list[dict], platform: str) -> se
             raise Dropped(f"crucible's tree lacks {clipped(path)}, which npm's holds")
         if ours[path]["sha256"] != built[path]["sha256"] or ours[path]["size"] != built[path]["size"]:
             raise Dropped(f"{clipped(path)} differs between npm's tree and crucible's")
-        if not windows and ours[path]["exec"] != built[path]["exec"] and path not in bins:
+        made_runnable = ours[path]["exec"] and not built[path]["exec"] and path in bins
+        if not windows and ours[path]["exec"] != built[path]["exec"] and not made_runnable:
             raise Dropped(f"{clipped(path)} is runnable in one of npm's tree and crucible's and not the other")
     return set(built)
+
+
+def manifest_bins(manifest: dict, name: str, location: str, files: set[str]) -> dict[str, str] | None:
+    """The bins a package's package.json gives, by name, as paths in the
+    package: a `bin` given as a path is named as the package is without its
+    scope, and with no `bin`, each file of `files` under `directories.bin` is
+    one, named as the file is; None where it gives none it can be read for."""
+    unscoped = name.rpartition("/")[2]
+    given = manifest.get("bin")
+    directories = manifest.get("directories")
+    if isinstance(given, str):
+        return {unscoped: given}
+    if isinstance(given, dict) and all(isinstance(path, str) for path in given.values()):
+        return dict(given)
+    if given is None and isinstance(directories, dict) and isinstance(directories.get("bin"), str):
+        try:
+            under = f"{location}/{relative(directories['bin'], 'its directories.bin')}/"
+        except Dropped:
+            return None
+        return {path.rpartition("/")[2]: path[len(location) + 1:] for path in sorted(files) if path.startswith(under)}
+    return None
 
 
 def chosen_bin(own: dict, files: set[str]) -> str:
     """The bin `npx` would run for the agent's own package: the only one its
     package.json names, else the one named as the package is without its
-    scope; a `bin` given as a path is named so, and with no `bin`, each file
-    under `directories.bin` is one, named as the file is."""
-    manifest, location = own["manifest"], own["location"]
+    scope."""
+    location = own["location"]
     unscoped = own["name"].rpartition("/")[2]
-    given = manifest.get("bin")
-    directories = manifest.get("directories")
-    if isinstance(given, str):
-        bins = {unscoped: given}
-    elif isinstance(given, dict) and all(isinstance(path, str) for path in given.values()):
-        bins = dict(given)
-    elif given is None and isinstance(directories, dict) and isinstance(directories.get("bin"), str):
-        under = f"{location}/{relative(directories['bin'], 'its directories.bin')}/"
-        bins = {path.rpartition("/")[2]: path[len(location) + 1:] for path in sorted(files) if path.startswith(under)}
-    else:
+    bins = manifest_bins(own["manifest"], own["name"], location, files)
+    if bins is None:
         raise Dropped("its package.json names no bin")
     if len(bins) == 1:
         [path] = bins.values()

@@ -1647,8 +1647,8 @@ def installed_on(tree: dict, platform: str) -> list[str]:
 
 def npm_listing(tree: dict, platform: str) -> dict:
     """What `tree` lists of `npm ci`'s output on `platform`: each package's
-    files, the declared bin made runnable and `.gitignore` written as
-    `.npmignore`, beside npm's own files and the project's."""
+    files, what its package.json's bin names made runnable and `.gitignore`
+    its_files as `.npmignore`, beside npm's own files and the project's."""
     windows = platform.startswith("windows-")
     files = [
         {"exec": False, "path": "package.json", "sha256": sha(b"{}"), "size": 2},
@@ -1657,8 +1657,13 @@ def npm_listing(tree: dict, platform: str) -> dict:
         {"exec": not windows, "path": "node_modules/.bin/npx-agent", "sha256": sha(b"#!"), "size": 2},
     ]
     for location in installed_on(tree, platform):
-        bins = set(tree["lock"]["packages"][location].get("bin", {}).values())
-        for path, (content, executable) in tree["files"].get(location, {}).items():
+        its_files = tree["files"].get(location, {})
+        declared = json.loads(its_files["package.json"][0]) if "package.json" in its_files else {}
+        given = declared.get("bin")
+        under = declared.get("directories", {}).get("bin") if given is None else None
+        bins = {given} if isinstance(given, str) else set((given or {}).values())
+        bins |= {path for path in its_files if under is not None and path.startswith(under + "/")}
+        for path, (content, executable) in its_files.items():
             name = path[: -len(".gitignore")] + ".npmignore" if path.rpartition("/")[2] == ".gitignore" else path
             runnable = (executable or path in bins) and not windows
             files.append({"exec": runnable, "path": f"{location}/{name}", "sha256": sha(content), "size": len(content)})
@@ -1852,6 +1857,22 @@ def npm_registry(scratch: pathlib.Path, signers: Signers) -> tuple[pathlib.Path,
     npm_case(observed, agents, choices, "npmignore-npm", npm_tree(),
              npm_side=on(linux, lambda files: file_of(files, TOP + "/.npmignore").update(sha256="e" * 64)))
     npm_case(observed, agents, choices, "lockdiff-npm", npm_tree())
+    # One file listed twice, exactly or once case is folded.
+    npm_case(observed, agents, choices, "twice-npm", npm_tree(),
+             npm_side=on(linux, lambda files: files.append(dict(file_of(files, run_js)))))
+    folded_js = {"exec": False, "path": TOP + "/LIB/run.js", "sha256": sha(b"module.exports = 1;\n"), "size": 20}
+    npm_case(observed, agents, choices, "folded-npm", npm_tree(),
+             npm_side=on(linux, lambda files: files.append(dict(folded_js))),
+             built_side=on(linux, lambda files: files.append(dict(folded_js, kind="file"))))
+    # npm makes runnable only what a package.json's bin names, and never
+    # takes a mode away.
+    agent_js = TOP + "/bin/agent.js"
+    npm_case(observed, agents, choices, "unrun-npm", npm_tree(),
+             npm_side=on(linux, lambda files: file_of(files, agent_js).update(exec=False)),
+             built_side=on(linux, lambda files: file_of(files, agent_js).update(exec=True)))
+    # A bin the lock names and the package.json does not.
+    npm_case(observed, agents, choices, "lockbin-npm", npm_tree(changes={TOP: {"bin": {"npx-agent": "bin/agent.js", "run": "lib/run.js"}}}),
+             npm_side=on(("linux-x86_64", "darwin-aarch64"), lambda files: file_of(files, run_js).update(exec=True)))
     (observed / "lockdiff-npm/linux-x86_64/tree/lock.json").write_bytes(b'{"packages":[],"unpack_rules":1}')
     # The bin npx would run.
     for agent_id, top in (
@@ -1900,8 +1921,8 @@ def check_npm(scratch: pathlib.Path, signers: Signers) -> None:
     data, assets = npm_review(scratch, signers, registry, choices, "--dispositions", dispositions)
     entries = {entry["key"]: entry for entry in data["entries"]}
     assert sorted(entries) == [
-        "bindir", "binmany", "binstr", "both", "exec", "extra", "hash", "libc", "lockdiff", "missing", "nodeagent",
-        "npmignore",
+        "bindir", "binmany", "binstr", "both", "exec", "extra", "folded", "hash", "libc", "lockbin", "lockdiff",
+        "missing", "nodeagent", "npmignore", "twice", "unrun",
     ], sorted(entries)
 
     entry = entries["nodeagent"]
@@ -1983,7 +2004,13 @@ def check_npm(scratch: pathlib.Path, signers: Signers) -> None:
     dropped(data, "extra-npm", "linux-x86_64", "node_modules/stray/index.js", "under no package")
     dropped(data, "npmignore-npm", "linux-x86_64", TOP + "/.gitignore", "differs")
     dropped(data, "lockdiff-npm", "linux-x86_64", "tree/lock.json")
-    for key in ("missing", "hash", "extra", "npmignore", "lockdiff"):
+    dropped(data, "twice-npm", "linux-x86_64", run_js, "listed twice")
+    dropped(data, "folded-npm", "linux-x86_64", TOP + "/LIB/run.js", "listed twice")
+    dropped(data, "unrun-npm", "linux-x86_64", TOP + "/bin/agent.js", "runnable")
+    for platform in ("linux-x86_64", "darwin-aarch64"):
+        dropped(data, "lockbin-npm", platform, run_js, "runnable")
+    assert [target["platform"] for target in entries["lockbin"]["targets"]] == ["windows-x86_64"], entries["lockbin"]
+    for key in ("missing", "hash", "extra", "npmignore", "lockdiff", "twice", "folded", "unrun"):
         assert sorted(t["platform"] for t in entries[key]["targets"]) == ["darwin-aarch64", "windows-x86_64"], key
     for key in ("binstr", "binmany", "bindir"):
         assert {t["bin"] for t in entries[key]["targets"]} == {TOP + "/bin/agent.js"}, (key, entries[key]["targets"])
