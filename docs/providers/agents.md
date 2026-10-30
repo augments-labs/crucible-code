@@ -217,11 +217,14 @@ written from a template that never changes, naming only the agent and the
 entry point the catalog gives, which adds `site/` to the interpreter's path and
 calls that entry point. The question's `Started as:` line shows the whole
 start, such as `python/bin/python3 -I launch.py acp`: the pinned interpreter,
-the arguments the catalog gives it (`-I` runs it isolated, reading no
-`PYTHON` variable, nothing from the directory it starts in and nothing from
-your own site-packages), the launcher, then the agent's own arguments. An entry
-point the launcher cannot be written for, or an agent the catalog says Node
-runs, is refused before anything is asked. A version whose `launch.py` is
+the arguments the catalog gives it, the launcher, then the agent's own
+arguments. Those arguments must include `-I`, which runs the interpreter
+isolated, reading no `PYTHON` variable, nothing from the directory it starts in
+and nothing from your own site-packages: an entry whose arguments lack it is
+refused before anything is asked, and so is any start of a version whose entry
+lacks it, before anything is started. An entry point the launcher cannot be
+written for, or an agent the catalog says Node runs, is refused before anything
+is asked. A version whose `launch.py` is
 gone, or leads out of the version, is refused before anything is started, and
 so is a version holding `launch.py` once the catalog no longer says a pinned
 interpreter starts it, withdrawn or listed now as an agent of another kind,

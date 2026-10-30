@@ -3,13 +3,14 @@
 //! installed under `site/` with the launcher written beside them, and the
 //! version committed whole or not at all; a start runs the interpreter with
 //! its own arguments, the launcher's path, then the agent's. An entry point
-//! the launcher cannot be written for is refused before the question, a
-//! wheel that is not its pin or lands on a path already written commits
-//! nothing, and a release a pinned Node starts is still refused before it.
-//! An installed version is started through its launcher or not at all: once
-//! the catalog no longer says a pinned interpreter starts it, it is refused
-//! before any process, and where a newer release that one starts is listed
-//! instead, it still starts through its own launcher.
+//! the launcher cannot be written for, or an interpreter the catalog does not
+//! give `-I`, is refused before the question, a wheel that is not its pin or
+//! lands on a path already written commits nothing, and a release a pinned
+//! Node starts is still refused before it. An installed version is started
+//! through its launcher, isolated, or not at all: once the catalog no longer
+//! says a pinned interpreter starts it, or says one starts it without `-I`,
+//! it is refused before any process, and where a newer release that one
+//! starts is listed instead, it still starts through its own launcher.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -351,6 +352,39 @@ fn an_entry_point_the_launcher_cannot_be_written_for_is_refused_before_the_quest
 }
 
 #[test]
+fn an_interpreter_the_catalog_does_not_give_dash_i_is_refused_before_the_question()
+-> Result<(), Failed> {
+    let bench = Bench::new("agents-door-uvx-unisolated")?;
+    let mut release = interpreted(
+        &bench.server,
+        "goose_acp.cli:main",
+        &peer(&answers("1.0.0"))?,
+        &wheel(),
+    );
+    set(
+        &mut release,
+        "/targets/0/interpreter_args",
+        json!(["-E", "-s"]),
+    );
+    bench.server.catalog(1, &[release], &json!([]))?;
+    bench.configure(&version(&bench).join(python()), &json!({}))?;
+    let before = fs::read(bench.user())?;
+    let mut front = answering(&bench.server, Some("Install"));
+
+    let (outcome, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+
+    assert_eq!(shape(&outcome), "Err(Unpacked)");
+    let said = outcome.err().map(|why| why.to_string()).unwrap_or_default();
+    assert!(
+        said.contains("interpreter_args") && !said.contains("-E"),
+        "the refusal does not name the field, or names its value"
+    );
+    assert!(front.put.is_empty());
+    assert_eq!(bench.server.asked(), CATALOG);
+    unchanged(&bench, &before, "refused")
+}
+
+#[test]
 fn a_wheel_that_is_not_its_pin_or_lands_where_another_artifact_wrote_commits_nothing()
 -> Result<(), Failed> {
     type Altered = fn(&Server, &mut Value, &[u8]);
@@ -599,5 +633,38 @@ fn a_version_superseded_by_a_newer_interpreted_release_starts_through_its_own_la
             .as_slice()
         )
     );
+    Ok(())
+}
+
+/// A version the catalog has moved on from to a newer release whose
+/// interpreter it does not give `-I` is refused before any process, rather
+/// than started other than isolated.
+#[test]
+fn a_version_the_catalog_now_starts_unisolated_is_refused_before_any_process() -> Result<(), Failed>
+{
+    let bench = Bench::new("agents-door-uvx-superseded-unisolated")?;
+    let played = peer(&answers("1.0.0"))?;
+    let mut newer = interpreted(
+        &bench.server,
+        "goose_acp.cli:main",
+        &peer(&answers("2.0.0"))?,
+        &wheel(),
+    );
+    set(&mut newer, "/version", json!("2.0.0"));
+    set(&mut newer, "/admits/version", json!("2.0.0"));
+    set(&mut newer, "/targets/0/interpreter_args", json!([]));
+    let (release, program) = superseded(&bench, &played, &[newer])?;
+
+    let ended = versioned(&bench, row_of(&release)?, &program)?;
+
+    let refused = matches!(
+        ended,
+        Err(Unlaunched::Launcher {
+            why: Unlaunchable::Unisolated,
+            ..
+        })
+    );
+    let started = fake_peer::argued(&version(&bench).join("python/bin"));
+    assert_eq!((refused, started), (true, Vec::<Vec<String>>::new()));
     Ok(())
 }

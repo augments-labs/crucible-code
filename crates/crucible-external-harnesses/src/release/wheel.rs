@@ -32,8 +32,12 @@
 //! which two values go, each as a Python string literal: the agent's key,
 //! whose characters need none escaped, and the entry point, held before
 //! anything is written to `module:attribute`, each side one or more ASCII
-//! identifiers joined by single dots. It finds its own directory from its
-//! own `__file__`, adds `site/` there as a site directory, sets `sys.argv` to
+//! identifiers joined by single dots. It is written only for an interpreter
+//! the catalog gives `-I`, which starts it isolated, so that what the
+//! workspace holds is never on its path; [`LaunchScript::isolated`] decides
+//! that for the install and for every start alike. It finds its own
+//! directory from its own `__file__`, adds `site/` there as a site directory,
+//! sets `sys.argv` to
 //! the key and the arguments it was started with after its own path, then
 //! imports the module, resolves the attribute and exits with what calling it
 //! returns, as a console script does.
@@ -358,19 +362,29 @@ fn fields(row: &[u8]) -> Result<(&str, &str, &str), UnpackError> {
 }
 
 impl LaunchScript {
-    /// The launcher that starts `agent` at `entry_point`, a `module:attribute`.
+    /// The launcher that starts `agent` at `entry_point`, a `module:attribute`,
+    /// under an interpreter given `interpreter_args`.
     ///
     /// # Errors
     ///
     /// [`UnpackError::EntryPoint`] where either side of `entry_point` is not
     /// one or more ASCII identifiers joined by single dots, so nothing but a
-    /// name a Python string literal holds as it is goes into the file.
-    pub fn new(agent: &AgentKey, entry_point: &str) -> Result<Self, UnpackError> {
+    /// name a Python string literal holds as it is goes into the file; else
+    /// [`UnpackError::Unisolated`] where `interpreter_args` would not start
+    /// the interpreter [isolated](LaunchScript::isolated).
+    pub fn new(
+        agent: &AgentKey,
+        interpreter_args: &[Box<str>],
+        entry_point: &str,
+    ) -> Result<Self, UnpackError> {
         let named = entry_point
             .split_once(':')
             .is_some_and(|(module, attribute)| dotted(module) && dotted(attribute));
         if !named {
             return Err(UnpackError::EntryPoint);
+        }
+        if !Self::isolated(interpreter_args) {
+            return Err(UnpackError::Unisolated);
         }
         Ok(Self {
             text: [
@@ -384,6 +398,14 @@ impl LaunchScript {
             ]
             .concat(),
         })
+    }
+
+    /// Whether an interpreter given `interpreter_args` starts isolated, as
+    /// the only start a launcher is written for or given to: one of them is
+    /// `-I` itself. Flags run together are not read apart.
+    #[must_use]
+    pub fn isolated(interpreter_args: &[Box<str>]) -> bool {
+        interpreter_args.iter().any(|argument| &**argument == "-I")
     }
 
     /// What the launcher holds.

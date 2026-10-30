@@ -36,7 +36,8 @@
 //! question is put is everything that can refuse the release without a byte
 //! fetched from its own hosts: how it is started, a release a pinned Node
 //! starts being refused and one a pinned interpreter starts having its entry
-//! point checked as one its launcher can be written for; its download hosts,
+//! point checked as one its launcher can be written for, and its interpreter's
+//! arguments as holding `-I`; its download hosts,
 //! and that every address and mirror it is pinned at is on one of them; its
 //! file lists, where a list the catalog keeps as an asset is first fetched
 //! from the catalog's own host by [`catalog_fetch::asset`] and read as one
@@ -914,9 +915,14 @@ impl Door<'_> {
         // written for its entry point, which is held before anything is asked.
         let script = match &offer.pin.target.launch {
             Launch::Binary => None,
-            Launch::Uvx { entry_point, .. } => {
-                Some(LaunchScript::new(&offer.entry.key, entry_point)?)
-            }
+            Launch::Uvx {
+                interpreter_args,
+                entry_point,
+            } => Some(LaunchScript::new(
+                &offer.entry.key,
+                interpreter_args,
+                entry_point,
+            )?),
             Launch::Npm { .. } => {
                 return Err(AgentsError::Unsupported(
                     "the release is started by a pinned Node",

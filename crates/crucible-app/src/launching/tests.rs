@@ -3933,3 +3933,50 @@ fn a_cmd_that_does_not_name_the_program_from_its_version_finds_no_launcher() {
 
     assert_eq!(found, vec![Err(Unlaunchable::Missing); cases.len()]);
 }
+
+/// A pinned interpreter whose catalog entry does not give it `-I` itself is
+/// not given its launcher, though one is in place, so no start runs it other
+/// than isolated; one given `-I` among other arguments is.
+#[test]
+fn a_pinned_interpreter_not_given_dash_i_is_not_given_its_launcher() {
+    let sample = Sample::new("launch-interpreted-unisolated");
+    let version = fs::canonicalize(sample.root())
+        .expect("a root")
+        .join("1.0.0");
+    fs::create_dir_all(version.join("python/bin")).expect("a directory");
+    let program = version.join("python/bin/python3");
+    fs::write(&program, b"").expect("an interpreter");
+    fs::write(version.join(LAUNCHER), b"").expect("a launcher");
+    let given: [&[&str]; 3] = [&[], &["-E", "-s"], &["-B", "-I"]];
+
+    let found: Vec<_> = given
+        .iter()
+        .map(|arguments| {
+            let mut target = interpreted();
+            target.launch = catalog::Launch::Uvx {
+                interpreter_args: arguments
+                    .iter()
+                    .map(|argument| (*argument).into())
+                    .collect(),
+                entry_point: "peer.cli:main".into(),
+            };
+            interpreting(&target, &program, &version)
+        })
+        .collect();
+
+    let launcher = version.join(LAUNCHER).to_string_lossy().into_owned();
+    assert_eq!(
+        found,
+        vec![
+            Err(Unlaunchable::Unisolated),
+            Err(Unlaunchable::Unisolated),
+            Ok(vec!["-B".to_owned(), "-I".to_owned(), launcher]),
+        ]
+    );
+    assert!(
+        Unlaunchable::Unisolated
+            .to_string()
+            .contains("interpreter_args"),
+        "the refusal does not name the field"
+    );
+}

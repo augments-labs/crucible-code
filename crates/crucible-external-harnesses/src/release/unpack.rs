@@ -189,6 +189,10 @@ pub enum UnpackError {
          identifiers joined by single dots"
     )]
     EntryPoint,
+    /// The interpreter a `uvx` release is started by is not given `-I`,
+    /// which starts it isolated.
+    #[error("the catalog's interpreter_args do not hold -I, which starts the interpreter isolated")]
+    Unisolated,
     /// Its file list is a catalog asset, which is fetched and read into a
     /// list before the artifact is unpacked.
     #[error("the artifact's file list is a catalog asset that has not been read")]

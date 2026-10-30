@@ -3151,10 +3151,15 @@ for part in attribute.split("."):
 sys.exit(target())
 "#;
 
+/// What the catalog gives the interpreter a launcher is written for.
+fn isolating() -> Vec<Box<str>> {
+    vec!["-I".into()]
+}
+
 #[test]
 fn the_launcher_is_a_fixed_template_holding_only_the_key_and_the_entry_point() {
     let key = AgentKey::new("fast-agent").expect("a key");
-    let script = LaunchScript::new(&key, "fast_agent.cli:main").expect("a launcher");
+    let script = LaunchScript::new(&key, &isolating(), "fast_agent.cli:main").expect("a launcher");
     assert_eq!(std::str::from_utf8(script.bytes()), Ok(LAUNCH_PY));
     assert_eq!(script.file(), listed(LAUNCHER, LAUNCH_PY.as_bytes(), false));
     assert_eq!(LAUNCHER, "launch.py");
@@ -3180,7 +3185,7 @@ fn the_launcher_is_a_fixed_template_holding_only_the_key_and_the_entry_point() {
 fn an_entry_point_that_is_not_dotted_identifiers_on_each_side_is_refused() {
     let key = AgentKey::new("agent").expect("a key");
     for accepted in ["main:run", "fast_agent.cli:main", "_a.b9:C.d_", "A:b.c.d"] {
-        let launcher = LaunchScript::new(&key, accepted);
+        let launcher = LaunchScript::new(&key, &isolating(), accepted);
         assert!(launcher.is_ok(), "{accepted}: {launcher:?}");
     }
     for refused in [
@@ -3188,18 +3193,69 @@ fn an_entry_point_that_is_not_dotted_identifiers_on_each_side_is_refused() {
         "a:9b", "a-b:c", "a b:c", "a:b\"", "a:b\\", "a:b\n", "a:b'", "a:b()", "a:b # c",
         "\u{e9}:b",
     ] {
-        let launcher = LaunchScript::new(&key, refused);
+        let launcher = LaunchScript::new(&key, &isolating(), refused);
         assert!(
             matches!(launcher, Err(UnpackError::EntryPoint)),
             "{refused:?}: {launcher:?}"
         );
     }
-    let said = LaunchScript::new(&key, "evil\"value:x")
+    let said = LaunchScript::new(&key, &isolating(), "evil\"value:x")
         .err()
         .map(|error| error.to_string())
         .unwrap_or_default();
     assert!(
         said.contains("entry_point") && !said.contains("evil"),
+        "the refusal names the field and not its value: {said}"
+    );
+}
+
+/// A launcher is written only for an interpreter the catalog gives `-I`
+/// itself, which starts it isolated, wherever it stands among the others;
+/// flags run together are not read apart, so `-Is` is not taken for it.
+#[test]
+fn a_launcher_is_written_only_for_an_interpreter_given_dash_i_itself() {
+    let key = AgentKey::new("agent").expect("a key");
+    let given = |arguments: &[&str]| -> Vec<Box<str>> {
+        arguments
+            .iter()
+            .map(|argument| (*argument).into())
+            .collect()
+    };
+    let accepted: [&[&str]; 3] = [&["-I"], &["-B", "-I"], &["-I", "-u"]];
+    let refused: [&[&str]; 7] = [
+        &[],
+        &["-i"],
+        &["-E", "-s"],
+        &["-Is"],
+        &["-I "],
+        &["--I"],
+        &["I"],
+    ];
+
+    let written: Vec<bool> = accepted
+        .iter()
+        .chain(&refused)
+        .map(
+            |arguments| match LaunchScript::new(&key, &given(arguments), "main:run") {
+                Ok(_) => true,
+                Err(UnpackError::Unisolated) => false,
+                Err(other) => panic!("{arguments:?}: {other:?}"),
+            },
+        )
+        .collect();
+    let said = LaunchScript::new(&key, &given(&["-evil"]), "main:run")
+        .err()
+        .map(|error| error.to_string())
+        .unwrap_or_default();
+
+    assert_eq!(
+        written,
+        [
+            true, true, true, false, false, false, false, false, false, false
+        ]
+    );
+    assert!(
+        said.contains("interpreter_args") && !said.contains("evil"),
         "the refusal names the field and not its value: {said}"
     );
 }
