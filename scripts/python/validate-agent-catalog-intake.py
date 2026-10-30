@@ -2264,6 +2264,9 @@ def check_npm_tarballs(scratch: pathlib.Path) -> None:
     # A global header as the registry's tarballs open with one, holding a
     # comment alone, which names no member.
     global_comment = tar_member(b"pax_global_header", b"g", pax_records(comment=b"0123456789abcdef\x1b[2J"))
+    # A global header declaring one byte more than an extended header may
+    # hold, and no body: it is refused before any of it is read.
+    global_big = tar_member(b"pax_global_header", b"g", size=load_intake().EXTENDED_BYTES + 1)
     for name, tarball, words in (
         ("slashed", tar_written(raw, tar_member(b"package/lib/more/", b"\0", b"2\n")), "empty"),
         ("paxslash", tar_written(raw, tar_member(b"package/x", b"x", pax_records(path=b"package/lib/more.js/")),
@@ -2271,6 +2274,7 @@ def check_npm_tarballs(scratch: pathlib.Path) -> None:
         ("global", tar_written(raw, tar_member(b"package/g", b"g", pax_records(path=b"package/lib/global.js")),
                                added), "says more than a comment"),
         ("globaltwice", tar_written(global_comment, global_comment, raw, added), "after another"),
+        ("globalbig", tar_written(global_big), "global extended header of more than"),
         ("globalahead", tar_written(raw, tar_member(b"././@LongLink", b"L", b"package/lib/one.js\0"),
                                     global_comment, added), "between a member's own headers"),
         ("spelled", tar_written(raw, tar_member(b"package/A/x", b"0", b"2\n"), tar_member(b"package/a/y", b"0", b"2\n")),
