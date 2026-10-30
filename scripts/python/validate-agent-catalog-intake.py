@@ -1621,7 +1621,7 @@ def npm_tree(
             tarballs[index] = tarball
             if location == ALIAS:
                 fields["integrity"] = "sha1-" + base64.b64encode(hashlib.sha1(tarball).digest()).decode()
-            elif location != OPTIONAL:
+            else:
                 fields["integrity"] = "sha512-" + base64.b64encode(hashlib.sha512(tarball).digest()).decode()
         fields.update((changes or {}).get(location, {}))
         lock_packages[location] = {field: value for field, value in fields.items() if value is not None}
@@ -1812,6 +1812,11 @@ def npm_registry(scratch: pathlib.Path, signers: Signers) -> tuple[pathlib.Path,
     # would have to encode to fetch.
     for agent_id, name in (("spaced-npm", "strip ansi"), ("accent-npm", "strip-ans\u00ed")):
         npm_case(observed, agents, choices, agent_id, npm_tree(changes={ALIAS: {"resolved": NPM + f"strip-ansi/-/{name}-7.1.0.tgz"}}))
+    # A lock that pins no tarball, or names a package other than its tarball.
+    npm_case(observed, agents, choices, "unpinned-npm", npm_tree(changes={ALIAS: {"integrity": None}}))
+    npm_case(observed, agents, choices, "otherversion-npm", npm_tree(changes={ALIAS: {"version": "7.1.1"}}))
+    npm_case(observed, agents, choices, "othername-npm", npm_tree(changes={ALIAS: {"name": "other-ansi"}}))
+    npm_case(observed, agents, choices, "otherbundled-npm", npm_tree(changes={BUNDLED: {"version": "1.0.1"}}))
     # The registry's address in capitals: its host is the registry's, its
     # prefix is not.
     npm_case(observed, agents, choices, "capital-npm", npm_tree(changes={ALIAS: {"resolved": "HTTPS://registry.npmjs.org/strip-ansi/-/strip-ansi-7.1.0.tgz"}}))
@@ -1956,6 +1961,9 @@ def check_npm(scratch: pathlib.Path, signers: Signers) -> None:
     for agent_id in ("spaced-npm", "accent-npm"):
         dropped(data, agent_id, None, "printable ASCII")
     dropped(data, "capital-npm", None, "https://registry.npmjs.org/, the one place")
+    dropped(data, "unpinned-npm", None, ALIAS, "no SHA-512 or SHA-1 integrity")
+    for agent_id, location in (("otherversion-npm", ALIAS), ("othername-npm", ALIAS), ("otherbundled-npm", BUNDLED)):
+        dropped(data, agent_id, None, location, "its package.json names")
     dropped(data, "hop-npm", None, "cdn.example", "registry.npmjs.org")
     dropped(data, "scriptless-npm", None, GYP, "no install script", "install")
     dropped(data, "scripted-npm", None, ALIAS, "has an install script")

@@ -131,7 +131,8 @@ folded, and no longer than 767 bytes. Every tarball is fetched from
 no space, and every hop of its fetch
 stays on that host; its SHA-512 and size are computed here, a SHA-512
 `integrity` must agree with it, a SHA-1 one is held only where it is the only
-one, and a tarball with no `integrity` is pinned by its SHA-512 alone. A
+one, and a package with neither is refused. Each package's own package.json,
+a bundled one's included, must give the name and version the lock gives it. A
 bundled package has no tarball of its own and is counted in the one that
 holds it. A target's lock, the asset a client unpacks its tree from, lists
 every package installed on it, in the lock's order, an optional one whose
@@ -1769,9 +1770,10 @@ def tarball_of(place: pathlib.Path, wanted: set[str]) -> dict:
 def integrity_agrees(value: object, tarball: dict) -> None:
     """Refuse a tarball the lock's `integrity` does not describe: every
     SHA-512 it gives must agree, and a SHA-1 is held only where no SHA-512 is
-    given; with neither, the SHA-512 the intake computed is the pin alone."""
+    given; a lock that gives neither pins nothing npm checks, so it is
+    refused."""
     if value is None:
-        return
+        raise Dropped("the lock gives no SHA-512 or SHA-1 integrity for its tarball")
     given: dict[str, list[bytes]] = {}
     for token in text(value, "the lock's integrity").split():
         algorithm, dash, encoded_digest = token.partition("-")
@@ -1782,7 +1784,7 @@ def integrity_agrees(value: object, tarball: dict) -> None:
             raise Dropped(f"the lock's integrity {clipped(token)} is not base64") from None
     held = given.get("sha512") or given.get("sha1")
     if held is None:
-        return
+        raise Dropped("the lock gives no SHA-512 or SHA-1 integrity for its tarball")
     expected = tarball["sha512"] if "sha512" in given else tarball["sha1"]
     if any(item != expected for item in held):
         raise Dropped("the tarball is not the bytes the lock's integrity describes")
@@ -1912,6 +1914,11 @@ def npm_resolved(observed: pathlib.Path, agent: str, package: str, released: str
             manifest = obj(parsed(manifest_bytes, "its package.json"), "its package.json")
         except Refused as refused:
             raise Dropped(f"{clipped(item['location'])}: {refused}") from None
+        if manifest.get("name") != item["name"] or manifest.get("version") != item["version"]:
+            raise Dropped(
+                f"{clipped(item['location'])}: its package.json names another package or version "
+                "than the lock gives it"
+            )
         item["manifest"] = manifest
         item["events"] = install_events(manifest, root in holder["tarball"]["gyps"])
         if bool(item["events"]) != item["scripted"]:
