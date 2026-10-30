@@ -38,9 +38,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crucible_external_harnesses::Discovery;
-use crucible_external_harnesses::catalog::{Artifact, CatalogError, INDEX_BYTES, Trust, Unusable};
+use crucible_external_harnesses::catalog::{
+    Artifact, CatalogError, Format, INDEX_BYTES, Trust, Unusable,
+};
 use crucible_external_harnesses::release::{
-    OwnedPin, Pin, UnpackError, Unpacked, Unpacker, unpack,
+    OwnedPin, Pin, UnpackError, Unpacked, Unpacker, Wheels, unpack,
 };
 use crucible_http::{Chunk, Chunks, Http, Lookups, Poison};
 use tokio::runtime::Handle;
@@ -356,8 +358,9 @@ pub enum Unchecked {
 /// Surveys the download at `artifact`, which the catalog artifact spelled in
 /// `entry` pins, into `out`, a directory only its owner may reach that this
 /// makes and nothing else may already be at, by the rules an install unpacks
-/// it by, and gives the file list it recorded as JSON, with its sizes, ending
-/// in a line feed.
+/// it by (a wheel's files under `site/`, as a pinned interpreter's install
+/// puts them), and gives the file list it recorded as JSON, with its sizes,
+/// ending in a line feed.
 ///
 /// `entry` is read only when it is at most [`INDEX_BYTES`], as a catalog is,
 /// and the download only up to the size the artifact pins, so neither is held
@@ -391,7 +394,13 @@ pub fn unpack_check(entry: &Path, artifact: &Path, out: &Path) -> Result<String,
         path: out.to_owned(),
         source,
     })?;
-    let surveyed = Unpacker::survey(&bytes, &described, out)
+    // A wheel is read as an install reads one, into `site/`.
+    let survey = if described.format == Format::Wheel {
+        Wheels::survey
+    } else {
+        Unpacker::survey
+    };
+    let surveyed = survey(&bytes, &described, out)
         .map_err(Unchecked::from)
         .and_then(|staged| Ok(serde_json::to_string_pretty(&staged.json())?));
     match surveyed {

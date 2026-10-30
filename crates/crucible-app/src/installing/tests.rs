@@ -8,7 +8,7 @@ use std::path::Path;
 
 use crucible_config::Driver;
 use crucible_external_harnesses::catalog::Trust;
-use crucible_external_harnesses::release::proof::{EXECUTABLE, released};
+use crucible_external_harnesses::release::proof::{self, EXECUTABLE, released};
 use crucible_http::{PlainLookups, ProxyEnv, Tls};
 
 use super::*;
@@ -370,4 +370,65 @@ fn an_agent_is_kept_under_its_driver_in_crucible_home() {
         root(home, &ANTIGRAVITY),
         Path::new("/home/me/.crucible/programs/antigravity")
     );
+}
+
+/// A wheel is surveyed by the wheel's reader, so the list the intake records
+/// names each file under `site/`, where an install puts it.
+#[test]
+fn unpack_check_surveys_a_wheel_into_its_site_directory() {
+    use sha2::{Digest as _, Sha256};
+    use std::fmt::Write as _;
+
+    let sample = Sample::new("unpack-check-wheel");
+    let root = sample.root();
+    let (wheel, installs) = proof::wheel(
+        "peer-1.0.dist-info",
+        &[
+            ("peer/__init__.py", b"".as_slice()),
+            ("peer-1.0.dist-info/METADATA", b"Name: peer\n".as_slice()),
+        ],
+    );
+    let sha256 = Sha256::digest(&wheel)
+        .iter()
+        .fold(String::new(), |mut text, byte| {
+            let _ = write!(text, "{byte:02x}");
+            text
+        });
+    let described = serde_json::json!({
+        "url": "https://example.invalid/peer-1.0-py3-none-any.whl",
+        "sha256": sha256,
+        "size": wheel.len(),
+        "format": "wheel",
+        "unpacked": 1 << 20,
+        "decompressed": 1 << 20,
+    });
+    let (entry, artifact, out) = (
+        root.join("artifact.json"),
+        root.join("peer.whl"),
+        root.join("out"),
+    );
+    fs::write(&entry, described.to_string()).expect("the artifact");
+    fs::write(&artifact, &wheel).expect("the download");
+
+    let listed = unpack_check(&entry, &artifact, &out).expect("surveyed");
+
+    let listed: serde_json::Value = serde_json::from_str(&listed).expect("a list");
+    let mut paths: Vec<&str> = listed
+        .get("files")
+        .and_then(serde_json::Value::as_array)
+        .expect("its files")
+        .iter()
+        .filter_map(|file| file.get("path").and_then(serde_json::Value::as_str))
+        .collect();
+    paths.sort_unstable();
+    let mut installed: Vec<&str> = installs.iter().map(|(path, _)| path.as_str()).collect();
+    installed.sort_unstable();
+    assert_eq!(paths, installed);
+    for (path, bytes) in &installs {
+        assert_eq!(
+            fs::read(out.join(path)).ok().as_ref(),
+            Some(bytes),
+            "{path}"
+        );
+    }
 }

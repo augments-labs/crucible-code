@@ -208,6 +208,31 @@ changed meanwhile and were left as they are, whether the agent was smoke-tested
 and the older versions kept; the list stands again as the store now stands,
 with what you had typed still in the search.
 
+An agent the catalog ships as a Python package comes with the Python it is
+run by, pinned in the same release, so no Python on your machine is looked for
+or used. Its install unpacks that interpreter, puts each of the agent's wheels
+under `site/` in the version, refusing a wheel whose `RECORD` disagrees with
+what it holds, and writes `launch.py` at the top of the version: a launcher
+written from a template that never changes, naming only the agent and the
+entry point the catalog gives, which adds `site/` to the interpreter's path and
+calls that entry point. The question's `Started as:` line shows the whole
+start, such as `python/bin/python3 -I launch.py acp`: the pinned interpreter,
+the arguments the catalog gives it, the launcher, then the agent's own
+arguments. Those arguments must be exactly `-I` and nothing else: it runs the
+interpreter isolated, reading no `PYTHON` variable, nothing from the directory
+it starts in and nothing from your own site-packages, and leaves the launcher
+the first thing it runs. An entry that gives the interpreter anything else is
+refused before anything is asked, and so is any start of a version whose entry
+does, before anything is started. An entry point the launcher cannot be
+written for, or an agent the catalog says Node runs, is refused before anything
+is asked. A version whose `launch.py` is
+gone, or leads out of the version, is refused before anything is started, and
+so is a version holding `launch.py` once the catalog no longer says a pinned
+interpreter starts it, withdrawn or listed now as an agent of another kind,
+rather than starting its interpreter without the launcher; a version the
+catalog has moved on from to a newer Python release still starts through its
+own `launch.py`.
+
 *Verify*, offered where a version is installed, hashes every file of each
 installed version against the receipt written when it was installed, and only
 when chosen. It says on the same screen, a line a version, that every file is

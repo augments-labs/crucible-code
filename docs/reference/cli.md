@@ -719,35 +719,41 @@ catalog writes it, with its address, size, SHA-256, format, ceilings and the
 members it keeps, and no file list yet; `ARTIFACT` is the download. The
 download is checked against the size and SHA-256 first, then unpacked into
 `OUT`, a directory it makes that only you can reach and that must not already
-be there. It refuses a name that is not plain relative ASCII, a name longer
-than 4096 bytes, with a part longer than 255 or with more than 64 parts, a
-name Windows takes for a device, a device, a sparse file, a link that does not
-resolve to a file inside `OUT`, more than 65536 files and directories, and
-anything past the artifact's ceilings; a leading `./` is dropped from a name.
-On standard output it writes the artifact's `unpacked` and `decompressed`
-sizes and its `files` as JSON, as the catalog records them. A refusal says why on standard error, with the cause the reader
-found, and removes `OUT`. It downloads nothing and reads no configuration.
+be there; a wheel's files go under `OUT/site/`, where an install puts them, and
+its `RECORD` must agree with them. It refuses a name that is not plain relative
+ASCII, a name longer than 4096 bytes, with a part longer than 255 or with more
+than 64 parts, a name Windows takes for a device, a device, a sparse file, a
+link that does not resolve to a file inside `OUT`, more than 65536 files and
+directories, and anything past the artifact's ceilings; a leading `./` is
+dropped from a name. On standard output it writes the artifact's `unpacked` and
+`decompressed` sizes and its `files` as JSON, as the catalog records them. A
+refusal says why on standard error, with the cause the reader found, and
+removes `OUT`. It downloads nothing and reads no configuration.
 
 ### `agents probe ROOT ENTRY [--unconfined]`
 
 `crucible agents probe` is how the agent catalog's intake learns what an agent
 says of itself, and `--help` leaves it out. `ROOT` is the directory a release
 was unpacked into and `ENTRY` is one catalog entry that lists the program to
-start there for this platform. The program is started in the sandbox with the
-network closed and `ROOT` read-only, sent `initialize` and nothing else, and
-stopped; it is given 30 seconds to answer. It is never signed in, and no
-credential is read. On standard output it writes JSON: `sandbox` (`closed`),
-`agentInfo`, `authMethods` (each with its `id`, `name` and `kind`, and for a
-`terminal` method its `command`, `args`, `env` and `tty`, which is `unknown`
-unless the method says whether it needs a real terminal), `capabilities`, and
-`conformance`, which is `not run`: the conformance cases need a turn, and a
-turn needs an account. Every text and list is bounded, and `incomplete` is
-`true` where anything was cut. Where this machine's sandbox cannot close the
-network, as on FreeBSD or on Windows without its broker, nothing is started and
-the run says so; with `--unconfined` the program is started without the sandbox,
-`sandbox` reads `unavailable: ` and why, and the run belongs on a machine to be
-thrown away: `--unconfined` is refused unless the environment variable `CI` is
-`true`, as a CI runner sets it. A refusal says why on standard error.
+start there for this platform. A program that is the interpreter a release pins
+is given its arguments and `launch.py` at the top of `ROOT` before the agent's,
+and is not started where that file is not there or where the entry's
+`interpreter_args` are not exactly `-I`. The program is started in the sandbox
+with the network closed and `ROOT` read-only, sent `initialize` and
+nothing else, and stopped; it is given 30 seconds to answer. It is never signed
+in, and no credential is read. On standard output it writes JSON: `sandbox`
+(`closed`), `agentInfo`, `authMethods` (each with its `id`, `name` and `kind`,
+and for a `terminal` method its `command`, `args`, `env` and `tty`, which is
+`unknown` unless the method says whether it needs a real terminal),
+`capabilities`, and `conformance`, which is `not run`: the conformance cases
+need a turn, and a turn needs an account. Every text and list is bounded, and
+`incomplete` is `true` where anything was cut. Where this machine's sandbox
+cannot close the network, as on FreeBSD or on Windows without its broker,
+nothing is started and the run says so; with `--unconfined` the program is
+started without the sandbox, `sandbox` reads `unavailable: ` and why, and the
+run belongs on a machine to be thrown away: `--unconfined` is refused unless
+the environment variable `CI` is `true`, as a CI runner sets it. A refusal says
+why on standard error.
 
 ## Credentials from the command line
 

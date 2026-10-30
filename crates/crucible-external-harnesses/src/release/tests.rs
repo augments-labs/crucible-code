@@ -5,6 +5,8 @@ use std::fs;
 use std::io::{Cursor, Write as _};
 use std::path::{Path, PathBuf};
 
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use sha2::{Digest as _, Sha256};
@@ -14,7 +16,10 @@ use zip::{CompressionMethod, ZipWriter};
 
 use crucible_types::AgentKey;
 
-use super::{Member, OwnedPin, Pin, Staged, UnpackError, Unpacked, Unpacker, hex, unpack};
+use super::{
+    LAUNCHER, LaunchScript, Member, OwnedPin, Pin, Staged, UnpackError, Unpacked, Unpacker, Wheels,
+    hex, unpack,
+};
 use crate::catalog::{Admits, Artifact, AssetRef, File, FileKind, Files, Format, Launch, Target};
 use crate::tests::Owned;
 
@@ -2736,5 +2741,551 @@ fn an_artifact_read_from_its_file_unpacks_as_its_bytes_do_and_is_held_to_its_pin
     assert!(
         matches!(refused, Err(UnpackError::Corrupt(_))),
         "{refused:?}"
+    );
+}
+
+/// The `.dist-info` directory every wheel a test writes describes itself in.
+const DIST_INFO: &str = "fast_agent-1.0.dist-info";
+
+/// A module of the agent a wheel installs.
+const MODULE: &[u8] = b"def main():\n    return 0\n";
+
+/// The members of a wheel that installs its root, its `purelib` and its
+/// `platlib`, before its `RECORD`.
+const WHEEL: [(&str, &[u8]); 5] = [
+    ("fast_agent/__init__.py", b""),
+    ("fast_agent/cli.py", MODULE),
+    (
+        "fast_agent-1.0.data/purelib/fast_agent/acp.py",
+        b"ACP = 1\n",
+    ),
+    (
+        "fast_agent-1.0.data/platlib/fast_agent/_speed.so",
+        b"\x7fELF",
+    ),
+    ("fast_agent-1.0.dist-info/METADATA", b"Name: fast-agent\n"),
+];
+
+/// `name`'s row in a wheel's `RECORD`, for `bytes`.
+fn row(name: &str, bytes: &[u8]) -> String {
+    format!(
+        "{name},sha256={},{}\n",
+        URL_SAFE_NO_PAD.encode(Sha256::digest(bytes)),
+        bytes.len()
+    )
+}
+
+/// The `RECORD` of a wheel of `members`: a row for each, then its own, which
+/// gives no hash and no size.
+fn record_of(members: &[(&str, &[u8])]) -> String {
+    let mut record: String = members
+        .iter()
+        .map(|(name, bytes)| row(name, bytes))
+        .collect();
+    record.push_str(DIST_INFO);
+    record.push_str("/RECORD,,\n");
+    record
+}
+
+/// A wheel of `members`, each a file made with mode `0644`, and then
+/// `record` as its `RECORD`.
+fn wheel_with(members: &[(&str, &[u8])], record: &str) -> Vec<u8> {
+    let name = format!("{DIST_INFO}/RECORD");
+    let mut zipped: Vec<Zipped<'_>> = members
+        .iter()
+        .map(|(name, bytes)| Zipped::File(name, bytes, 0o644))
+        .collect();
+    zipped.push(Zipped::File(&name, record.as_bytes(), 0o644));
+    zip_of(&zipped)
+}
+
+/// A wheel of `members` with the `RECORD` that agrees with them.
+fn wheel_of(members: &[(&str, &[u8])]) -> Vec<u8> {
+    wheel_with(members, &record_of(members))
+}
+
+/// The list a wheel of `members` at its root and `record` installs as.
+fn installed(members: &[(&str, &[u8])], record: &str) -> Vec<File> {
+    members
+        .iter()
+        .map(|(name, bytes)| listed(&format!("site/{name}"), bytes, false))
+        .chain([listed(
+            &format!("site/{DIST_INFO}/RECORD"),
+            record.as_bytes(),
+            false,
+        )])
+        .collect()
+}
+
+/// The wheel `wheel` is pinned as for a survey, which may write a mebibyte.
+fn surveyed_as(wheel: &[u8]) -> Artifact {
+    Artifact {
+        unpacked: 1 << 20,
+        ..pinned_as(wheel, Format::Wheel, Vec::new())
+    }
+}
+
+/// `wheel`, as `artifact` describes it, unpacked against its list and
+/// surveyed, each into a staging directory of its own, and what each left
+/// there.
+fn wheel_both_ways(
+    owned: &Owned,
+    wheel: &[u8],
+    artifact: &Artifact,
+) -> [(Result<Staged, UnpackError>, Vec<String>); 2] {
+    let listed = staging(owned, "listed");
+    let surveyed = staging(owned, "surveyed");
+    let unpacked = Wheels::unpack(wheel, artifact, &listed);
+    let survey = Wheels::survey(wheel, artifact, &surveyed);
+    let both = [(unpacked, tree(&listed)), (survey, tree(&surveyed))];
+    let _ = fs::remove_dir_all(listed);
+    let _ = fs::remove_dir_all(surveyed);
+    both
+}
+
+#[test]
+fn a_wheel_installs_its_root_purelib_and_platlib_under_site_as_its_survey_records() {
+    let owned = Owned::new("wheel-site");
+    let wheel = wheel_of(&WHEEL);
+    let record = record_of(&WHEEL);
+    let described = Artifact {
+        unpacked: 1 << 20,
+        ..pinned_as(&wheel, Format::Wheel, Vec::new())
+    };
+
+    let surveyed =
+        Wheels::survey(&wheel, &described, &staging(&owned, "surveyed")).expect("surveyed");
+
+    assert_eq!(
+        surveyed.files(),
+        [
+            listed("site/fast_agent/__init__.py", b"", false),
+            listed("site/fast_agent/cli.py", MODULE, false),
+            listed("site/fast_agent/acp.py", b"ACP = 1\n", false),
+            listed("site/fast_agent/_speed.so", b"\x7fELF", false),
+            listed(
+                "site/fast_agent-1.0.dist-info/METADATA",
+                b"Name: fast-agent\n",
+                false
+            ),
+            listed(
+                "site/fast_agent-1.0.dist-info/RECORD",
+                record.as_bytes(),
+                false
+            ),
+        ]
+    );
+    let recorded = Artifact {
+        unpacked: surveyed.unpacked(),
+        decompressed: surveyed.decompressed(),
+        files: Files::Listed(surveyed.files().to_vec()),
+        ..described
+    };
+    let at = staging(&owned, "unpacked");
+    let unpacked = Wheels::unpack(&wheel, &recorded, &at).expect("unpacked");
+    assert_eq!(unpacked.files(), surveyed.files());
+    assert_eq!(
+        tree(&at),
+        [
+            "site/",
+            "site/fast_agent-1.0.dist-info/",
+            "site/fast_agent-1.0.dist-info/METADATA",
+            "site/fast_agent-1.0.dist-info/RECORD",
+            "site/fast_agent/",
+            "site/fast_agent/__init__.py",
+            "site/fast_agent/_speed.so",
+            "site/fast_agent/acp.py",
+            "site/fast_agent/cli.py",
+        ],
+        "nothing of the .data directory is written as it is named"
+    );
+    let from = staging(&owned, "from-file");
+    let read = Wheels::unpack_from(&mut kept(&owned, "wheel", &wheel), &recorded, &from)
+        .expect("unpacked from its file");
+    assert_eq!(read.files(), surveyed.files());
+
+    let refused = Unpacker::unpack(&wheel, &recorded, &staging(&owned, "archive"));
+    assert!(matches!(refused, Err(UnpackError::Wheel)), "{refused:?}");
+    let zip = Artifact {
+        format: Format::Zip,
+        ..recorded
+    };
+    let refused = Wheels::unpack(&wheel, &zip, &staging(&owned, "zip"));
+    assert!(matches!(refused, Err(UnpackError::NotWheel)), "{refused:?}");
+}
+
+#[test]
+fn a_wheel_is_held_to_its_pin_before_a_byte_of_it_is_read() {
+    let owned = Owned::new("wheel-pin");
+    let wheel = wheel_of(&WHEEL[..2]);
+    let artifact = pinned_as(&wheel, Format::Wheel, Vec::new());
+    let mut other = wheel.clone();
+    if let Some(last) = other.last_mut() {
+        *last ^= 1;
+    }
+    let refused = Wheels::unpack(&other, &artifact, &staging(&owned, "bytes"));
+    assert!(matches!(refused, Err(UnpackError::Digest)), "{refused:?}");
+    let refused = Wheels::survey(&other, &artifact, &staging(&owned, "survey"));
+    assert!(matches!(refused, Err(UnpackError::Digest)), "{refused:?}");
+    let refused = Wheels::unpack_from(
+        &mut kept(&owned, "other", &other),
+        &artifact,
+        &staging(&owned, "file"),
+    );
+    assert!(matches!(refused, Err(UnpackError::Digest)), "{refused:?}");
+    assert!(tree(&owned.0.join("bytes")).is_empty());
+    assert!(tree(&owned.0.join("file")).is_empty());
+}
+
+#[test]
+fn a_wheel_with_another_part_of_its_data_directory_is_refused_naming_the_part() {
+    let owned = Owned::new("wheel-data");
+    for part in ["scripts", "headers", "data"] {
+        let name = format!("fast_agent-1.0.data/{part}/fast-agent");
+        let members: [(&str, &[u8]); 2] = [(&name, b"#!python\n"), ("fast_agent/__init__.py", b"")];
+        let record = record_of(&members);
+        let wheel = wheel_with(&members, &record);
+        let artifact = pinned_as(&wheel, Format::Wheel, installed(&members[1..], &record));
+        for (refused, left) in wheel_both_ways(&owned, &wheel, &artifact) {
+            assert!(
+                matches!(&refused, Err(UnpackError::Data { part: named, .. }) if named == part),
+                "{part}: {refused:?}"
+            );
+            assert!(left.is_empty(), "nothing is written before it: {left:?}");
+            let said = refused
+                .err()
+                .map(|error| error.to_string())
+                .unwrap_or_default();
+            assert!(said.contains(part), "{said}");
+        }
+    }
+}
+
+#[test]
+fn two_members_a_wheel_installs_on_one_path_are_refused() {
+    let owned = Owned::new("wheel-twice");
+    let members: [(&str, &[u8]); 2] = [
+        ("fast_agent/acp.py", b"ACP = 1\n"),
+        (
+            "fast_agent-1.0.data/purelib/fast_agent/acp.py",
+            b"ACP = 2\n",
+        ),
+    ];
+    let record = record_of(&members);
+    let wheel = wheel_with(&members, &record);
+    let artifact = pinned_as(&wheel, Format::Wheel, installed(&members[..1], &record));
+    for (refused, _) in wheel_both_ways(&owned, &wheel, &artifact) {
+        assert!(
+            matches!(refused, Err(UnpackError::Twice { .. })),
+            "{refused:?}"
+        );
+    }
+    let members: [(&str, &[u8]); 2] = [
+        ("fast_agent/ACP.py", b"ACP = 1\n"),
+        (
+            "fast_agent-1.0.data/platlib/fast_agent/acp.py",
+            b"ACP = 2\n",
+        ),
+    ];
+    let wheel = wheel_of(&members);
+    let artifact = surveyed_as(&wheel);
+    let refused = Wheels::survey(&wheel, &artifact, &staging(&owned, "case"));
+    assert!(
+        matches!(refused, Err(UnpackError::Collision { .. })),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn a_wheel_whose_record_disagrees_with_what_it_holds_is_refused() {
+    let owned = Owned::new("wheel-record");
+    let members = &WHEEL[..2];
+    let good = record_of(members);
+    let own = format!("{DIST_INFO}/RECORD,,\n");
+    let cli = row("fast_agent/cli.py", MODULE);
+    let init = row("fast_agent/__init__.py", b"");
+    let digest = URL_SAFE_NO_PAD.encode(Sha256::digest(MODULE));
+    let cases: [(&str, String, Option<&str>); 9] = [
+        (
+            "a member with no row",
+            format!("{init}{own}"),
+            Some("fast_agent/cli.py"),
+        ),
+        (
+            "a row for no member",
+            format!("{good}{}", row("fast_agent/gone.py", b"gone")),
+            Some("fast_agent/gone.py"),
+        ),
+        (
+            "a member's row twice",
+            format!("{init}{cli}{cli}{own}"),
+            Some("fast_agent/cli.py"),
+        ),
+        (
+            "another algorithm",
+            format!("{init}fast_agent/cli.py,md5=AAAA,{}\n{own}", MODULE.len()),
+            Some("fast_agent/cli.py"),
+        ),
+        (
+            "another member's hash",
+            format!("{init}{}{own}", row("fast_agent/cli.py", b"other")).replace(
+                &format!(",{}\n{own}", b"other".len()),
+                &format!(",{}\n{own}", MODULE.len()),
+            ),
+            Some("fast_agent/cli.py"),
+        ),
+        (
+            "a hash that is not base64",
+            format!("{init}fast_agent/cli.py,sha256=!!,{}\n{own}", MODULE.len()),
+            Some("fast_agent/cli.py"),
+        ),
+        (
+            "another size",
+            format!(
+                "{init}fast_agent/cli.py,sha256={digest},{}\n{own}",
+                MODULE.len() + 1
+            ),
+            Some("fast_agent/cli.py"),
+        ),
+        (
+            "a row that is not three fields",
+            format!("{good}a row\n"),
+            None,
+        ),
+        (
+            "a row longer than a row may be",
+            format!("{good}{},,\n", "a".repeat(8192)),
+            None,
+        ),
+    ];
+    for (case, record, named) in cases {
+        let wheel = wheel_with(members, &record);
+        let artifact = pinned_as(&wheel, Format::Wheel, installed(members, &record));
+        for (refused, _) in wheel_both_ways(&owned, &wheel, &artifact) {
+            match named {
+                Some(named) => assert!(
+                    matches!(&refused, Err(UnpackError::Recorded { name, .. }) if name == named),
+                    "{case}: {refused:?}"
+                ),
+                None => assert!(
+                    matches!(refused, Err(UnpackError::Record { .. })),
+                    "{case}: {refused:?}"
+                ),
+            }
+        }
+    }
+    let unrecorded = zip_of(&[Zipped::File("fast_agent/cli.py", MODULE, 0o644)]);
+    let artifact = surveyed_as(&unrecorded);
+    let refused = Wheels::survey(&unrecorded, &artifact, &staging(&owned, "unrecorded"));
+    assert!(
+        matches!(refused, Err(UnpackError::Record { .. })),
+        "no RECORD: {refused:?}"
+    );
+    let twice = zip_of(&[
+        Zipped::File("fast_agent/cli.py", MODULE, 0o644),
+        Zipped::File("one-1.0.dist-info/RECORD", good.as_bytes(), 0o644),
+        Zipped::File("two-1.0.dist-info/RECORD", good.as_bytes(), 0o644),
+    ]);
+    let artifact = surveyed_as(&twice);
+    let refused = Wheels::survey(&twice, &artifact, &staging(&owned, "twice"));
+    assert!(
+        matches!(refused, Err(UnpackError::Record { .. })),
+        "two RECORDs: {refused:?}"
+    );
+}
+
+#[test]
+fn a_wheel_member_on_a_path_another_artifact_wrote_is_refused() {
+    let owned = Owned::new("wheel-overlap");
+    let at = staging(&owned, "version");
+    let interpreter = tar_gz(&[
+        Tarred::Dir("site/"),
+        Tarred::File("site/sitecustomize.py", b"import os\n", 0o644),
+    ]);
+    let artifact = pinned_as(
+        &interpreter,
+        Format::TarGz,
+        vec![
+            listed_dir("site"),
+            listed("site/sitecustomize.py", b"import os\n", false),
+        ],
+    );
+    Unpacker::unpack(&interpreter, &artifact, &at).expect("the interpreter");
+    let members: [(&str, &[u8]); 1] = [("sitecustomize.py", b"import sys\n")];
+    let record = record_of(&members);
+    let wheel = wheel_with(&members, &record);
+    let artifact = pinned_as(&wheel, Format::Wheel, installed(&members, &record));
+
+    let refused = Wheels::unpack(&wheel, &artifact, &at);
+
+    assert!(
+        matches!(refused, Err(UnpackError::Write { .. })),
+        "{refused:?}"
+    );
+    assert_eq!(
+        fs::read(at.join("site").join("sitecustomize.py")).ok(),
+        Some(b"import os\n".to_vec()),
+        "the interpreter's file is as it wrote it"
+    );
+}
+
+/// The launcher a `uvx` release named `fast-agent` with the entry point
+/// `fast_agent.cli:main` is started through, to the byte.
+const LAUNCH_PY: &str = r#"# Written by crucible: the pinned interpreter runs this file, which starts
+# the agent from the wheels unpacked into site/ beside it.
+import importlib
+import os
+import site
+import sys
+
+AGENT = "fast-agent"
+ENTRY_POINT = "fast_agent.cli:main"
+
+here = os.path.dirname(os.path.abspath(__file__))
+site.addsitedir(os.path.join(here, "site"))
+sys.argv = [AGENT] + sys.argv[1:]
+module, _, attribute = ENTRY_POINT.partition(":")
+target = importlib.import_module(module)
+for part in attribute.split("."):
+    target = getattr(target, part)
+sys.exit(target())
+"#;
+
+/// What the catalog gives the interpreter a launcher is written for.
+fn isolating() -> Vec<Box<str>> {
+    vec!["-I".into()]
+}
+
+#[test]
+fn the_launcher_is_a_fixed_template_holding_only_the_key_and_the_entry_point() {
+    let key = AgentKey::new("fast-agent").expect("a key");
+    let script = LaunchScript::new(&key, &isolating(), "fast_agent.cli:main").expect("a launcher");
+    assert_eq!(std::str::from_utf8(script.bytes()), Ok(LAUNCH_PY));
+    assert_eq!(script.file(), listed(LAUNCHER, LAUNCH_PY.as_bytes(), false));
+    assert_eq!(LAUNCHER, "launch.py");
+
+    let owned = Owned::new("wheel-launcher");
+    let at = staging(&owned, "version");
+    assert_eq!(script.write(&at).ok(), Some(script.file()));
+    assert_eq!(
+        fs::read(at.join(LAUNCHER)).ok(),
+        Some(LAUNCH_PY.as_bytes().to_vec())
+    );
+    #[cfg(unix)]
+    assert!(!can_run(&at.join(LAUNCHER)), "the launcher is not runnable");
+    let refused = script.write(&at);
+    assert!(
+        matches!(refused, Err(UnpackError::Write { .. })),
+        "a launcher already there, or a file an artifact put there, is never written over: \
+         {refused:?}"
+    );
+}
+
+#[test]
+fn an_entry_point_that_is_not_dotted_identifiers_on_each_side_is_refused() {
+    let key = AgentKey::new("agent").expect("a key");
+    for accepted in ["main:run", "fast_agent.cli:main", "_a.b9:C.d_", "A:b.c.d"] {
+        let launcher = LaunchScript::new(&key, &isolating(), accepted);
+        assert!(launcher.is_ok(), "{accepted}: {launcher:?}");
+    }
+    for refused in [
+        "", "main", ":main", "main:", "a::b", "a:b:c", "a..b:c", ".a:b", "a.:b", "a:b.", "9a:b",
+        "a:9b", "a-b:c", "a b:c", "a:b\"", "a:b\\", "a:b\n", "a:b'", "a:b()", "a:b # c",
+        "\u{e9}:b",
+    ] {
+        let launcher = LaunchScript::new(&key, &isolating(), refused);
+        assert!(
+            matches!(launcher, Err(UnpackError::EntryPoint)),
+            "{refused:?}: {launcher:?}"
+        );
+    }
+    let said = LaunchScript::new(&key, &isolating(), "evil\"value:x")
+        .err()
+        .map(|error| error.to_string())
+        .unwrap_or_default();
+    assert!(
+        said.contains("entry_point") && !said.contains("evil"),
+        "the refusal names the field and not its value: {said}"
+    );
+}
+
+/// A launcher is written only for an interpreter the catalog gives exactly
+/// `-I`, which starts it isolated with the launcher the first thing it runs.
+/// Anything beside it is refused: an argument after which `-I` is not read
+/// as an option (`-c`, `-m`, a file to run), one it is followed by, a flag
+/// added, a flag run together with it, or none at all.
+#[test]
+fn a_launcher_is_written_only_for_an_interpreter_given_exactly_dash_i() {
+    let key = AgentKey::new("agent").expect("a key");
+    let given = |arguments: &[&str]| -> Vec<Box<str>> {
+        arguments
+            .iter()
+            .map(|argument| (*argument).into())
+            .collect()
+    };
+    let accepted: [&[&str]; 1] = [&["-I"]];
+    let refused: [&[&str]; 15] = [
+        &["-c", "x", "-I"],
+        &["-m", "x", "-I"],
+        &["acp", "-I"],
+        &["-I", "acp"],
+        &["-I", "-c", "x"],
+        &["-B", "-I"],
+        &["-I", "-u"],
+        &["-I", "-I"],
+        &[],
+        &["-i"],
+        &["-E", "-s"],
+        &["-Is"],
+        &["-I "],
+        &["--I"],
+        &["I"],
+    ];
+
+    let written: Vec<bool> = accepted
+        .iter()
+        .chain(&refused)
+        .map(
+            |arguments| match LaunchScript::new(&key, &given(arguments), "main:run") {
+                Ok(_) => true,
+                Err(UnpackError::Unisolated) => false,
+                Err(other) => panic!("{arguments:?}: {other:?}"),
+            },
+        )
+        .collect();
+    let said = LaunchScript::new(&key, &given(&["-evil"]), "main:run")
+        .err()
+        .map(|error| error.to_string())
+        .unwrap_or_default();
+
+    let expected: Vec<bool> = accepted
+        .iter()
+        .map(|_| true)
+        .chain(refused.iter().map(|_| false))
+        .collect();
+    assert_eq!(written, expected);
+    assert!(
+        said.contains("interpreter_args") && !said.contains("evil"),
+        "the refusal names the field and not its value: {said}"
+    );
+}
+
+#[test]
+fn every_character_an_agent_key_may_hold_needs_no_escaping_in_a_python_string() {
+    let mut allowed = 0;
+    for byte in 0_u8..=0xff {
+        let character = char::from(byte);
+        if AgentKey::new(&format!("a{character}")).is_ok() {
+            allowed += 1;
+            assert!(
+                byte.is_ascii_graphic() && !matches!(byte, b'"' | b'\'' | b'\\'),
+                "{byte:#04x} would need escaping in the launcher's string"
+            );
+        }
+    }
+    assert_eq!(
+        allowed,
+        26 + 10 + 1,
+        "lowercase letters, digits and a hyphen"
     );
 }

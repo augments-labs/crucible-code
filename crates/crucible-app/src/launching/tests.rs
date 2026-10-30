@@ -3837,3 +3837,157 @@ async fn a_launch_with_a_profile_directory_the_agent_cannot_take_starts_nothing(
     assert_eq!(fake_peer::played(peer.parent().expect("a directory")), 0);
     assert!(!profile.exists(), "the profile directory was made");
 }
+
+/// `peer`'s first target, as a pinned interpreter at `python/bin/python3`
+/// starts it through its launcher with `-I`.
+fn interpreted() -> Target {
+    let mut target = entry_keeping(None, None, &[])
+        .targets
+        .first()
+        .expect("a target")
+        .clone();
+    target.cmd = "python/bin/python3".into();
+    target.launch = catalog::Launch::Uvx {
+        interpreter_args: vec!["-I".into()],
+        entry_point: "peer.cli:main".into(),
+    };
+    target
+}
+
+#[test]
+fn a_pinned_interpreter_is_given_its_arguments_then_its_launcher_and_nothing_else_is() {
+    let sample = Sample::new("launch-interpreted");
+    let version = fs::canonicalize(sample.root())
+        .expect("a root")
+        .join("1.0.0");
+    fs::create_dir_all(version.join("python/bin")).expect("a directory");
+    let program = version.join("python/bin/python3");
+    fs::write(&program, b"").expect("an interpreter");
+    let target = interpreted();
+
+    let missing = interpreting(&target, &program, &version);
+    fs::write(version.join(LAUNCHER), b"").expect("a launcher");
+    let given = interpreting(&target, &program, &version);
+    let elsewhere = interpreting(&target, &version.join("bin/python3"), &version);
+    let deeper = interpreting(&target, &version.join("x/python/bin/python3"), &version);
+    let ran = entry_keeping(None, None, &[]);
+    let binary = interpreting(ran.targets.first().expect("a target"), &program, &version);
+
+    assert_eq!(missing, Err(Unlaunchable::Missing));
+    assert_eq!(
+        given,
+        Ok(vec![
+            "-I".to_owned(),
+            version.join(LAUNCHER).to_string_lossy().into_owned(),
+        ])
+    );
+    assert_eq!(elsewhere, Err(Unlaunchable::Missing));
+    assert_eq!(deeper, Err(Unlaunchable::Missing));
+    assert_eq!(binary, Ok(Vec::new()));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_launcher_that_leads_out_of_its_version_is_not_given() {
+    let sample = Sample::new("launch-interpreted-out");
+    let root = fs::canonicalize(sample.root()).expect("a root");
+    let version = root.join("1.0.0");
+    fs::create_dir_all(version.join("python/bin")).expect("a directory");
+    let program = version.join("python/bin/python3");
+    fs::write(&program, b"").expect("an interpreter");
+    fs::write(root.join("elsewhere.py"), b"").expect("a script");
+    std::os::unix::fs::symlink(root.join("elsewhere.py"), version.join(LAUNCHER)).expect("a link");
+
+    assert_eq!(
+        interpreting(&interpreted(), &program, &version),
+        Err(Unlaunchable::Missing)
+    );
+}
+
+/// A `cmd` that does not name the program from the top of its version finds
+/// no launcher, even where the directory as many levels above the program as
+/// `cmd` has parts holds the version's own: one that climbs, one that starts
+/// at the root, and one the program's path does not end in.
+#[test]
+fn a_cmd_that_does_not_name_the_program_from_its_version_finds_no_launcher() {
+    let sample = Sample::new("launch-interpreted-cmd");
+    let version = fs::canonicalize(sample.root())
+        .expect("a root")
+        .join("1.0.0");
+    fs::create_dir_all(version.join("python/bin")).expect("a directory");
+    fs::write(version.join(LAUNCHER), b"").expect("a launcher");
+    let cases = [
+        ("../x", version.join("python").join("x")),
+        ("/bin/python3", version.join("python/bin/python3")),
+        ("python/bin/python3", version.join("other/bin/python3")),
+    ];
+
+    let found: Vec<_> = cases
+        .iter()
+        .map(|(cmd, program)| {
+            let mut target = interpreted();
+            target.cmd = (*cmd).into();
+            interpreting(&target, program, &version)
+        })
+        .collect();
+
+    assert_eq!(found, vec![Err(Unlaunchable::Missing); cases.len()]);
+}
+
+/// A pinned interpreter whose catalog entry does not give it exactly `-I` is
+/// not given its launcher, though one is in place, so no start runs it other
+/// than isolated or runs anything ahead of the launcher: code, a module, or a
+/// file of the workspace's, with `-I` after it taken for that program's own.
+#[test]
+fn a_pinned_interpreter_given_anything_but_exactly_dash_i_is_not_given_its_launcher() {
+    let sample = Sample::new("launch-interpreted-unisolated");
+    let version = fs::canonicalize(sample.root())
+        .expect("a root")
+        .join("1.0.0");
+    fs::create_dir_all(version.join("python/bin")).expect("a directory");
+    let program = version.join("python/bin/python3");
+    fs::write(&program, b"").expect("an interpreter");
+    fs::write(version.join(LAUNCHER), b"").expect("a launcher");
+    let given: [&[&str]; 6] = [
+        &[],
+        &["-E", "-s"],
+        &["-B", "-I"],
+        &["acp", "-I"],
+        &["-c", "x", "-I"],
+        &["-I"],
+    ];
+
+    let found: Vec<_> = given
+        .iter()
+        .map(|arguments| {
+            let mut target = interpreted();
+            target.launch = catalog::Launch::Uvx {
+                interpreter_args: arguments
+                    .iter()
+                    .map(|argument| (*argument).into())
+                    .collect(),
+                entry_point: "peer.cli:main".into(),
+            };
+            interpreting(&target, &program, &version)
+        })
+        .collect();
+
+    let launcher = version.join(LAUNCHER).to_string_lossy().into_owned();
+    assert_eq!(
+        found,
+        vec![
+            Err(Unlaunchable::Unisolated),
+            Err(Unlaunchable::Unisolated),
+            Err(Unlaunchable::Unisolated),
+            Err(Unlaunchable::Unisolated),
+            Err(Unlaunchable::Unisolated),
+            Ok(vec!["-I".to_owned(), launcher]),
+        ]
+    );
+    assert!(
+        Unlaunchable::Unisolated
+            .to_string()
+            .contains("interpreter_args"),
+        "the refusal does not name the field"
+    );
+}
