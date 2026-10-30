@@ -4208,3 +4208,93 @@ fn a_bin_whose_path_holds_the_path_separator_is_refused() {
 
     assert_eq!(binning(&noded(), &version), Err(Unlaunchable::Untext));
 }
+
+/// Each refusal a launch gives reads as one line of single-spaced text, and
+/// names the fixed files it is about, never a value the catalog gave.
+#[test]
+fn a_launch_refusal_reads_as_one_line_of_single_spaced_text() {
+    assert_eq!(
+        [
+            Unlaunchable::Missing.to_string(),
+            Unlaunchable::Untext.to_string(),
+            Unlaunchable::Unlisted.to_string(),
+        ],
+        [
+            "its launcher, launch.py, or its preload, preload.cjs, and script are not files \
+             in the version its program lies in",
+            "the path of its launcher, launch.py, or of its preload, preload.cjs, script or \
+             .bin, is not text it can be given",
+            "its version holds launch.py or preload.cjs, and the catalog no longer says how \
+             that version is started",
+        ]
+    );
+}
+
+/// A version laid out as `node_version` lays one out, beside `version`, whose
+/// name extends that version's as `1.0.0x` does `1.0.0`; with a launcher
+/// too. Its path.
+fn extended_sibling(version: &Path) -> PathBuf {
+    let sibling = version.with_file_name("1.0.0x");
+    fs::create_dir_all(sibling.join("node/bin")).expect("a directory");
+    fs::create_dir_all(sibling.join("python/bin")).expect("a directory");
+    fs::create_dir_all(sibling.join("node_modules/peer")).expect("a directory");
+    fs::write(sibling.join("node/bin/node"), b"").expect("a Node");
+    fs::write(sibling.join("python/bin/python3"), b"").expect("an interpreter");
+    fs::write(sibling.join(PRELOAD), b"").expect("a preload");
+    fs::write(sibling.join(LAUNCHER), b"").expect("a launcher");
+    fs::write(sibling.join("node_modules/peer/cli.js"), b"").expect("a script");
+    sibling
+}
+
+/// A version whose name extends another's, as `1.0.0x` and `1.0.0` sit side
+/// by side in the store, is not inside it: a program found in it gives that
+/// version neither its preload nor its launcher, though its path begins with
+/// the version's.
+#[test]
+fn a_program_in_a_version_whose_name_extends_its_own_is_not_given_that_versions_files() {
+    let sample = Sample::new("launch-noded-sibling");
+    let (version, _) = node_version(&sample);
+    fs::write(version.join(LAUNCHER), b"").expect("a launcher");
+    let sibling = extended_sibling(&version);
+
+    let noded = interpreting(&noded(), &sibling.join("node/bin/node"), &version);
+    let interpreted = interpreting(
+        &interpreted(),
+        &sibling.join("python/bin/python3"),
+        &version,
+    );
+
+    assert_eq!(noded, Err(Unlaunchable::Missing));
+    assert_eq!(interpreted, Err(Unlaunchable::Missing));
+}
+
+/// A link in the version that leads into a version whose name extends its
+/// own leads out of it: such a preload, launcher or script is not given.
+#[cfg(unix)]
+#[test]
+fn a_link_into_a_version_whose_name_extends_its_own_is_not_given() {
+    let sample = Sample::new("launch-noded-sibling-link");
+    let (version, node) = node_version(&sample);
+    let sibling = extended_sibling(&version);
+    let python = version.join("python/bin/python3");
+    fs::create_dir_all(version.join("python/bin")).expect("a directory");
+    fs::write(&python, b"").expect("an interpreter");
+    let relink = |at: &Path, to: &Path| {
+        fs::remove_file(at).ok();
+        std::os::unix::fs::symlink(to, at).expect("a link");
+    };
+    let script = version.join("node_modules/peer/cli.js");
+
+    relink(&script, &sibling.join("node_modules/peer/cli.js"));
+    let scripted = interpreting(&noded(), &node, &version);
+    fs::remove_file(&script).expect("removed");
+    fs::write(&script, b"").expect("a script");
+    relink(&version.join(PRELOAD), &sibling.join(PRELOAD));
+    let preloaded = interpreting(&noded(), &node, &version);
+    relink(&version.join(LAUNCHER), &sibling.join(LAUNCHER));
+    let launched = interpreting(&interpreted(), &python, &version);
+
+    assert_eq!(scripted, Err(Unlaunchable::Missing));
+    assert_eq!(preloaded, Err(Unlaunchable::Missing));
+    assert_eq!(launched, Err(Unlaunchable::Missing));
+}

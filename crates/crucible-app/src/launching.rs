@@ -32,7 +32,8 @@
 //! not give it exactly `-I`, or the pinned Node of one whose preload is not at
 //! the top of it, whose script is not a file inside it or whose catalog entry
 //! gives Node any option, or that lies in such a version holding a
-//! launcher once the catalog no longer says a pinned interpreter starts it;
+//! launcher once the catalog no longer says a pinned interpreter starts it,
+//! or a preload once it no longer says a pinned Node starts it;
 //! and a route with no yes, with what to ask. A
 //! catalog row always ships, since it is listed only for an entry the catalog
 //! reviewed. Only then is the hold taken from `content_use`, the child's
@@ -98,7 +99,11 @@
 //! where its dependencies' programs are, goes last on the agent's `PATH`,
 //! after every directory the shell gave, so it never shadows one; nothing else
 //! Node reads to find code, `NODE_OPTIONS`, `NODE_PATH` or an `npm_`
-//! variable, is set.
+//! variable, is set. Where neither the release's own entry nor the release an
+//! update would install is one a pinned Node starts, a version holding
+//! anything at the preload's place, a link included, is refused rather than
+//! started as a program of its own, since its Node, given no preload and no
+//! script, would run what the workspace holds.
 //!
 //! A profile directory is given to a catalog agent through the variable its
 //! entry names, which is the whole of how the agent is told of it. On macOS and
@@ -458,7 +463,8 @@ pub enum Unlaunchable {
     /// the preload's place at the top of that version, or a pinned Node's
     /// script is not a file inside it.
     #[error(
-        "its launcher, {launcher}, or its preload, {preload}, and script are not files in the          version its program lies in",
+        "its launcher, {launcher}, or its preload, {preload}, and script are not files in the \
+         version its program lies in",
         launcher = LAUNCHER,
         preload = PRELOAD
     )]
@@ -467,7 +473,8 @@ pub enum Unlaunchable {
     /// text it can be given, or the `.bin`'s holds the separator a `PATH`
     /// splits on.
     #[error(
-        "the path of its launcher, {launcher}, or of its preload, {preload}, script or {bin},          is not text it can be given",
+        "the path of its launcher, {launcher}, or of its preload, {preload}, script or {bin}, \
+         is not text it can be given",
         launcher = LAUNCHER,
         preload = PRELOAD,
         bin = BIN
@@ -475,10 +482,13 @@ pub enum Unlaunchable {
     Untext,
     /// Its version holds something at the launcher's place, and the catalog
     /// no longer lists a release a pinned interpreter starts that would say
-    /// how it is started.
+    /// how it is started; or something at the preload's place, and the
+    /// catalog no longer lists a release a pinned Node starts.
     #[error(
-        "its version holds {launcher}, and the catalog no longer says how that version is started",
-        launcher = LAUNCHER
+        "its version holds {launcher} or {preload}, and the catalog no longer says how that \
+         version is started",
+        launcher = LAUNCHER,
+        preload = PRELOAD
     )]
     Unlisted,
     /// Its catalog entry does not give its interpreter exactly `-I`, which
@@ -868,18 +878,21 @@ impl Agent {
             why,
         };
         // A version installed for a pinned interpreter holds its launcher, and
-        // its interpreter given no launcher would run what the workspace
-        // holds; one whose catalog no longer says a pinned interpreter starts
-        // it is not started at all, whatever else the catalog now says.
-        // Anything there counts, a link too, and so does a place that cannot
-        // be read.
-        let holds_launcher = !matches!(
-            std::fs::symlink_metadata(root.join(LAUNCHER)),
-            Err(problem) if problem.kind() == std::io::ErrorKind::NotFound
-        );
-        let interpreted = offer
-            .is_some_and(|offer| matches!(offer.pin.target.launch, catalog::Launch::Uvx { .. }));
-        if holds_launcher && !interpreted {
+        // one installed for a pinned Node its preload; either started without
+        // it would run what the workspace holds, so one whose catalog no
+        // longer says that interpreter or that Node starts it is not started
+        // at all, whatever else the catalog now says. Anything there counts,
+        // a link too, and so does a place that cannot be read.
+        let holds = |name: &str| {
+            !matches!(
+                std::fs::symlink_metadata(root.join(name)),
+                Err(problem) if problem.kind() == std::io::ErrorKind::NotFound
+            )
+        };
+        let launch = offer.map(|offer| &offer.pin.target.launch);
+        let interpreted = matches!(launch, Some(catalog::Launch::Uvx { .. }));
+        let noded = matches!(launch, Some(catalog::Launch::Npm { .. }));
+        if (holds(LAUNCHER) && !interpreted) || (holds(PRELOAD) && !noded) {
             return Err(unlaunchable(Unlaunchable::Unlisted));
         }
         let (leading, bin) = match offer {
@@ -1000,19 +1013,18 @@ pub(crate) fn updating_off(mut request: Request, variable: Option<&Variable>) ->
 /// given ahead of the agent's own arguments; a turn, a smoke test and a
 /// probe each take it from here.
 ///
-/// A program that runs itself is given nothing. A pinned interpreter is given the
-/// catalog's `interpreter_args`, which must be exactly `-I`, and then the
-/// absolute path of its launcher, [`LAUNCHER`] at the top of the version:
-/// that top is `program` with the
-/// components of `cmd` taken off, never a path the catalog gives, and the
-/// launcher, its links followed, must be the file at the top of `version`.
-/// A pinned Node is given `--require` and the absolute path of its preload,
-/// [`PRELOAD`] found at the top of the version as a launcher is, then the
-/// absolute path of the script at the catalog's `bin` under `version`, its
-/// links followed, which must be a file inside `version`; its `node_args`
-/// must be empty, as [`Preload::admits`] decides.
-/// Nothing is run, and nothing else on the machine is looked at, to find
-/// any of it.
+/// A program that runs itself is given nothing. A pinned interpreter is
+/// given the catalog's `interpreter_args`, which must be exactly `-I`, and
+/// then the absolute path of its launcher, [`LAUNCHER`] at the top of the
+/// version: that top is `program` with the components of `cmd` taken off,
+/// never a path the catalog gives, and the launcher, its links followed, must
+/// be the file at the top of `version`. A pinned Node is given `--require`
+/// and the absolute path of its preload, [`PRELOAD`] found at the top of the
+/// version as a launcher is, then the absolute path of the script at the
+/// catalog's `bin` under `version`, its links followed, which must be a file
+/// inside `version`; its `node_args` must be empty, as [`Preload::admits`]
+/// decides. Nothing is run, and nothing else on the machine is looked at, to
+/// find any of it.
 ///
 /// # Errors
 ///
