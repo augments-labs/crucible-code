@@ -2032,11 +2032,20 @@ def check_npm_recheck(scratch: pathlib.Path, data: dict, assets: pathlib.Path) -
         out = scratch / f"recheck-{status}.json"
         ran = intake("recheck", "--merged", merged, "--assets", assets, "--results", results, "--out", out)
         assert ran.returncode == 0, ran.stderr
-        revoked = json.loads(out.read_text())["revocations"]
+        revoked = json.loads(out.read_text())
+        assert isinstance(revoked, list), "recheck writes the list the merged data's revoked takes"
         if proposed:
             keys = sorted(item["key"] for item in revoked)
             assert "nodeagent" in keys and all(item["version"] == "3.0.0" and item["lock_revision"] == 1 for item in revoked), revoked
             assert all(alias["url"] in item["reason"] and str(status) in item["reason"] for item in revoked), revoked
+            # Its entries are appended to the merged data's revoked as they are.
+            data_rendered = json.loads((RENDER / "merged.json").read_text())
+            data_rendered["revoked"] = data_rendered.get("revoked", []) + revoked
+            held = written(scratch, f"recheck-render-{status}.json", data_rendered)
+            _, catalog = rendered(scratch, f"recheck-catalog-{status}.json", merged=held)
+            assert {(item["key"], item["version"], item["lock_revision"]) for item in revoked} <= {
+                (item["key"], item["version"], item.get("lock_revision")) for item in catalog["revoked"]
+            }, catalog["revoked"]
         else:
             assert revoked == [], f"{status} proposes nothing: {revoked}"
     # Two tarballs of one lock gone propose one revocation of it.
@@ -2045,7 +2054,7 @@ def check_npm_recheck(scratch: pathlib.Path, data: dict, assets: pathlib.Path) -
     out = scratch / "recheck-two.json"
     ran = intake("recheck", "--merged", merged, "--assets", assets, "--results", results, "--out", out)
     assert ran.returncode == 0, ran.stderr
-    revoked = json.loads(out.read_text())["revocations"]
+    revoked = json.loads(out.read_text())
     identities = [(item["key"], item["version"], item["lock_revision"]) for item in revoked]
     assert len(identities) == len(set(identities)), f"one lock revision is revoked once: {revoked}"
     # An address is quoted with every character that could hide it escaped.
@@ -2062,7 +2071,7 @@ def check_npm_recheck(scratch: pathlib.Path, data: dict, assets: pathlib.Path) -
     ran = intake("recheck", "--merged", merged, "--assets", hostile / "assets",
                  "--results", written(hostile, "results.json", {"a" * 128: 404}), "--out", out)
     assert ran.returncode == 0, ran.stderr
-    [item] = json.loads(out.read_text())["revocations"]
+    [item] = json.loads(out.read_text())
     assert "\u202e" not in item["reason"] and "\\u202e" in item["reason"], "the address is shown escaped"
 
 

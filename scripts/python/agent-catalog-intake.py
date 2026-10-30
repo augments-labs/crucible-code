@@ -173,7 +173,9 @@ merged npm locks name, once, by its SHA-512 and address; given what the
 registry answered for each (`--results`, the status by SHA-512), it proposes
 a revocation, by key, version and lock revision, of every lock holding a
 tarball answered 404 or 410, which a fresh install could no longer fetch,
-and none for any other answer, which may pass.
+and none for any other answer, which may pass. The proposals are written as
+a bare list in the shape of the merged data's `revoked`, `{key, version,
+lock_revision, reason}`, so a reviewer who agrees appends them as they are.
 
 `diff` writes the human diff of review data against the merged data before it,
 as Markdown, showing only what changed, compared on whole values. A version
@@ -3104,7 +3106,8 @@ def recheck(arguments: argparse.Namespace) -> int:
     to ask the registry for; or, given what it answered (`--results`, the
     status by SHA-512), propose a revocation of each lock revision holding a
     tarball the registry answered 404 or 410 for, which a fresh install could
-    no longer fetch. Any other answer proposes nothing, since it may pass."""
+    no longer fetch. Any other answer proposes nothing, since it may pass.
+    The proposals are written as entries of the merged data's `revoked`."""
     merged = read_json(arguments.merged, DATA_BYTES, "the merged data")
     entries = merged.get("entries") if isinstance(merged, dict) else None
     if not isinstance(entries, list):
@@ -3157,7 +3160,7 @@ def recheck(arguments: argparse.Namespace) -> int:
         # quoted as the diff quotes hostile text.
         reason = f"its tarball {shown(clipped(url))} is answered {status} by the registry{more}"
         revoked.append({"key": key, "lock_revision": revision, "reason": reason, "version": released})
-    arguments.out.write_bytes(compact({"revocations": revoked}))
+    arguments.out.write_bytes(compact(revoked))
     return 0
 
 
