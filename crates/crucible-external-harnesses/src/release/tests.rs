@@ -4607,6 +4607,14 @@ fn programs_of(tree: &NpmTree) -> Vec<(String, String)> {
         .collect()
 }
 
+/// `pairs` as the programs [`programs_of`] gives.
+fn owned(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+    pairs
+        .iter()
+        .map(|(name, script)| ((*name).to_owned(), (*script).to_owned()))
+        .collect()
+}
+
 /// `entry` declaring `programs`, each a name and its script.
 fn declaring(entry: serde_json::Value, programs: &[(&str, &str)]) -> serde_json::Value {
     let bin: serde_json::Map<String, serde_json::Value> = programs
@@ -4614,6 +4622,11 @@ fn declaring(entry: serde_json::Value, programs: &[(&str, &str)]) -> serde_json:
         .map(|(name, script)| ((*name).to_owned(), (*script).into()))
         .collect();
     with(entry, "bin", Some(bin.into()))
+}
+
+/// Whether `read` was refused at a field of the lock that ends in `suffix`.
+fn refused_at(read: &Result<NpmTree, NpmError>, suffix: &str) -> bool {
+    matches!(read, Err(NpmError::Lock { field, .. }) if field.ends_with(suffix))
 }
 
 #[test]
@@ -4632,29 +4645,15 @@ fn a_lock_gives_each_package_its_licence_and_programs_and_is_read_without_them()
     );
     let tree = NpmTree::parse(&lock_of(&[licensed, inner])).ok();
     let packages = tree.as_ref().map(NpmTree::packages).unwrap_or_default();
-    let licences: Vec<Option<&str>> = packages
-        .iter()
-        .map(|package| package.license.as_deref())
-        .collect();
+    let licences: Vec<Option<&str>> = packages.iter().map(|p| p.license.as_deref()).collect();
     assert_eq!(licences, [Some("MIT"), Some("(Apache-2.0 OR MIT)")]);
     let declared: Vec<Vec<(&str, &str)>> = packages
         .iter()
-        .map(|package| {
-            package
-                .bin
-                .iter()
-                .map(|(name, script)| (&**name, &**script))
-                .collect()
-        })
+        .map(|p| p.bin.iter().map(|(n, s)| (&**n, &**s)).collect())
         .collect();
     assert_eq!(declared, [vec![("peer", "bin/peer.js")], vec![]]);
-    assert_eq!(
-        tree.as_ref().map(programs_of),
-        Some(vec![(
-            "peer".to_owned(),
-            "node_modules/peer/bin/peer.js".to_owned()
-        )])
-    );
+    let expected = owned(&[("peer", "node_modules/peer/bin/peer.js")]);
+    assert_eq!(tree.as_ref().map(programs_of), Some(expected));
 
     let bare = NpmTree::parse(&lock_of(&[entry()])).ok();
     let package = bare.as_ref().and_then(|tree| tree.packages().first());
@@ -4667,11 +4666,8 @@ fn a_lock_gives_each_package_its_licence_and_programs_and_is_read_without_them()
 fn a_licence_too_long_or_unprintable_is_refused_when_the_lock_is_read() {
     let tarball = tar_gz(&[Tarred::File("package/index.js", b"1", 0o644)]);
     let licensed = |license: serde_json::Value| {
-        lock_of(&[with(
-            locked("node_modules/peer", "peer", &tarball, 1, 1),
-            "license",
-            Some(license),
-        )])
+        let entry = locked("node_modules/peer", "peer", &tarball, 1, 1);
+        NpmTree::parse(&lock_of(&[with(entry, "license", Some(license))]))
     };
     let cases: Vec<(&str, serde_json::Value)> = vec![
         ("too long", "M".repeat(LICENSE_BYTES + 1).into()),
@@ -4684,21 +4680,13 @@ fn a_licence_too_long_or_unprintable_is_refused_when_the_lock_is_read() {
         ("an object", serde_json::json!({ "type": "MIT" })),
     ];
     for (case, license) in cases {
-        let refused = NpmTree::parse(&licensed(license));
-        assert!(
-            matches!(refused, Err(NpmError::Lock { ref field, .. }) if field.ends_with(".license")),
-            "{case}: {:?}",
-            refused.err()
-        );
+        let read = licensed(license);
+        assert!(refused_at(&read, ".license"), "{case}: {:?}", read.err());
     }
     let longest = "M".repeat(LICENSE_BYTES);
-    let read = NpmTree::parse(&licensed(longest.clone().into()));
-    let license = read.ok().and_then(|tree| {
-        tree.packages()
-            .first()
-            .and_then(|package| package.license.clone())
-    });
-    assert_eq!(license.as_deref(), Some(&*longest));
+    let read = licensed(longest.clone().into()).ok();
+    let license = read.as_ref().and_then(|tree| tree.packages().first());
+    assert_eq!(license.and_then(|p| p.license.as_deref()), Some(&*longest));
 }
 
 #[test]
@@ -4706,6 +4694,8 @@ fn a_program_with_a_bad_name_or_a_script_that_leaves_its_package_is_refused() {
     let tarball = tar_gz(&[Tarred::File("package/bin/peer.js", b"1", 0o755)]);
     let entry = || locked("node_modules/peer", "peer", &tarball, 1, 1);
     let program = |name: &str, script: &str| declaring(entry(), &[(name, script)]);
+    let bin = |bin: serde_json::Value| with(entry(), "bin", Some(bin));
+    let longest = "s".repeat(TREE_PATH_BYTES);
     let cases: Vec<(&str, serde_json::Value)> = vec![
         ("a name of two components", program("a/b", "bin/peer.js")),
         ("an empty name", program("", "bin/peer.js")),
@@ -4717,37 +4707,16 @@ fn a_program_with_a_bad_name_or_a_script_that_leaves_its_package_is_refused() {
         ("a name not ASCII", program("p\u{e9}er", "bin/peer.js")),
         ("a name with a dot first", program("./peer", "bin/peer.js")),
         ("a script climbing", program("peer", "../other/bin/x.js")),
-        (
-            "a script climbing inside",
-            program("peer", "bin/../../x.js"),
-        ),
+        ("climbing inside", program("peer", "bin/../../x.js")),
         ("a script absolute", program("peer", "/bin/peer.js")),
         ("a script with a backslash", program("peer", "bin\\peer.js")),
         ("an empty script", program("peer", "")),
-        (
-            "a script in a package below",
-            program("peer", "node_modules/inner/x.js"),
-        ),
-        (
-            "a script in a package below in capitals",
-            program("peer", "NODE_MODULES/inner/x.js"),
-        ),
-        (
-            "a script past the longest path",
-            program("peer", &"s".repeat(TREE_PATH_BYTES)),
-        ),
-        (
-            "a script not text",
-            with(entry(), "bin", Some(serde_json::json!({ "peer": 1 }))),
-        ),
-        (
-            "bin a string",
-            with(entry(), "bin", Some("bin/peer.js".into())),
-        ),
-        (
-            "bin a list",
-            with(entry(), "bin", Some(serde_json::json!(["bin/peer.js"]))),
-        ),
+        ("below", program("peer", "node_modules/inner/x.js")),
+        ("in capitals", program("peer", "NODE_MODULES/inner/x.js")),
+        ("past the longest path", program("peer", &longest)),
+        ("a script not text", bin(serde_json::json!({ "peer": 1 }))),
+        ("bin a string", bin("bin/peer.js".into())),
+        ("bin a list", bin(serde_json::json!(["bin/peer.js"]))),
     ];
     for (case, entry) in cases {
         let refused = NpmTree::parse(&lock_of(&[entry]));
@@ -4768,25 +4737,16 @@ fn a_package_or_a_tree_declaring_more_programs_than_its_ceiling_is_refused() {
     let tarball = tar_gz(&[Tarred::File("package/bin/peer.js", b"1", 0o755)]);
     let names: Vec<String> = (0..=TREE_PROGRAMS).map(|at| format!("p{at}")).collect();
     let package = |location: &str, names: &[String]| {
-        let programs: Vec<(&str, &str)> = names
-            .iter()
-            .map(|name| (name.as_str(), "bin/peer.js"))
-            .collect();
+        let programs: Vec<(&str, &str)> = names.iter().map(|n| (&**n, "bin/peer.js")).collect();
         declaring(locked(location, "peer", &tarball, 1, 1), &programs)
     };
     let most = names.get(..PACKAGE_PROGRAMS).unwrap_or_default();
     let read = NpmTree::parse(&lock_of(&[package("node_modules/peer", most)]));
-    assert_eq!(
-        read.map(|tree| tree.programs().count()).ok(),
-        Some(PACKAGE_PROGRAMS)
-    );
+    let count = read.map(|tree| tree.programs().count()).ok();
+    assert_eq!(count, Some(PACKAGE_PROGRAMS));
     let past = names.get(..=PACKAGE_PROGRAMS).unwrap_or_default();
     let refused = NpmTree::parse(&lock_of(&[package("node_modules/peer", past)]));
-    assert!(
-        matches!(refused, Err(NpmError::Lock { ref field, .. }) if field.ends_with("].bin")),
-        "{:?}",
-        refused.err()
-    );
+    assert!(refused_at(&refused, "].bin"), "{:?}", refused.err());
 
     let packages: Vec<serde_json::Value> = names
         .chunks(PACKAGE_PROGRAMS)
@@ -4794,81 +4754,40 @@ fn a_package_or_a_tree_declaring_more_programs_than_its_ceiling_is_refused() {
         .map(|(at, chunk)| package(&format!("node_modules/peer{at}"), chunk))
         .collect();
     let refused = NpmTree::parse(&lock_of(&packages));
-    assert!(
-        matches!(
-            refused,
-            Err(NpmError::Tree {
-                what: "programs",
-                ..
-            })
-        ),
-        "{:?}",
-        refused.err()
-    );
+    let tree = matches!(refused, Err(NpmError::Tree { what, .. }) if what == "programs");
+    assert!(tree, "{:?}", refused.err());
 }
 
+/// Names that differ only in case are refused across the tree, and npm links
+/// the program of the package at the top of the tree where two declare one
+/// name, since that is the one hoisting leaves on `PATH`; with no such package
+/// to settle it, the name is refused.
 #[test]
-fn programs_whose_names_differ_only_in_case_are_refused_across_the_tree() {
+fn a_program_two_packages_declare_is_the_top_level_packages_or_is_refused() {
     let tarball = tar_gz(&[Tarred::File("package/bin/peer.js", b"1", 0o755)]);
     let entry = |location: &str, programs: &[(&str, &str)]| {
         declaring(locked(location, "peer", &tarball, 1, 1), programs)
     };
-    let one = entry(
-        "node_modules/peer",
-        &[("peer", "bin/peer.js"), ("Peer", "bin/peer.js")],
-    );
-    let two = [
-        entry("node_modules/peer", &[("peer", "bin/peer.js")]),
-        entry("node_modules/other", &[("PEER", "bin/peer.js")]),
-    ];
-    for (case, lock) in [("one package", lock_of(&[one])), ("two", lock_of(&two))] {
-        let refused = NpmTree::parse(&lock);
-        assert!(
-            matches!(refused, Err(NpmError::Lock { ref field, .. }) if field.ends_with("].bin")),
-            "{case}: {:?}",
-            refused.err()
-        );
-    }
-}
-
-/// npm links the program of the package at the top of the tree where two
-/// declare one name, since that is the one hoisting leaves on `PATH`; with no
-/// such package to settle it, the name is refused.
-#[test]
-fn a_program_two_packages_declare_is_the_top_level_packages_or_is_refused() {
-    let tarball = tar_gz(&[Tarred::File("package/bin/peer.js", b"1", 0o755)]);
-    let entry = |location: &str, script: &str| {
-        declaring(
-            locked(location, "peer", &tarball, 1, 1),
-            &[("peer", script)],
-        )
-    };
-    let nested = entry("node_modules/a/node_modules/peer", "bin/nested.js");
-    let top = entry("node_modules/peer", "bin/top.js");
+    let nested = entry("node_modules/a/node_modules/peer", &[("peer", "bin/n.js")]);
+    let top = entry("node_modules/peer", &[("peer", "bin/top.js")]);
     let read = NpmTree::parse(&lock_of(&[nested.clone(), top.clone()]));
-    assert_eq!(
-        read.as_ref().ok().map(programs_of),
-        Some(vec![(
-            "peer".to_owned(),
-            "node_modules/peer/bin/top.js".to_owned()
-        )]),
-        "{:?}",
-        read.err()
-    );
+    let expected = owned(&[("peer", "node_modules/peer/bin/top.js")]);
+    let programs = read.as_ref().ok().map(programs_of);
+    assert_eq!(programs, Some(expected), "{:?}", read.err());
 
-    let elsewhere = entry("node_modules/b/node_modules/peer", "bin/elsewhere.js");
-    let scoped_top = entry("node_modules/@scope/peer", "bin/scoped.js");
+    let folded = entry("node_modules/peer", &[("peer", "x.js"), ("Peer", "x.js")]);
+    let upper = entry("node_modules/other", &[("PEER", "bin/peer.js")]);
+    let elsewhere = entry("node_modules/b/node_modules/peer", &[("peer", "bin/x.js")]);
+    let scoped_top = entry("node_modules/@scope/peer", &[("peer", "bin/scoped.js")]);
     let refusals = [
-        ("two nested", lock_of(&[nested.clone(), elsewhere])),
+        ("one package in two cases", lock_of(&[folded])),
+        ("two packages in two cases", lock_of(&[top.clone(), upper])),
+        ("two nested", lock_of(&[nested, elsewhere])),
         ("two at the top", lock_of(&[top, scoped_top])),
     ];
     for (case, lock) in refusals {
         let refused = NpmTree::parse(&lock);
-        assert!(
-            matches!(refused, Err(NpmError::Lock { ref field, .. }) if field.ends_with("].bin")),
-            "{case}: {:?}",
-            refused.err()
-        );
+        assert!(refused_at(&refused, "].bin"), "{case}: {:?}", refused.err());
     }
 }
 
@@ -4881,20 +4800,15 @@ fn a_program_whose_script_its_tarball_does_not_write_is_refused_when_unpacked() 
     ]);
     let tarballs = tarballs_in(&owned, "tarballs", &[&tarball]);
     let entry = |script: &str| {
-        lock_of(&[declaring(
-            locked("node_modules/peer", "peer", &tarball, 2, 2),
-            &[("peer", script)],
-        )])
+        let entry = locked("node_modules/peer", "peer", &tarball, 2, 2);
+        lock_of(&[declaring(entry, &[("peer", script)])])
     };
     let (unpacked, _) = npm_unpacked(&owned, "written", &entry("bin/peer.js"), &tarballs);
     assert_eq!(unpacked.map(|files| files.len()).ok(), Some(2));
     for (case, script) in [("missing", "bin/missing.js"), ("a directory", "lib")] {
         let (refused, _) = npm_unpacked(&owned, case, &entry(script), &tarballs);
-        assert!(
-            matches!(refused, Err(NpmError::Unwritten { .. })),
-            "{case}: {:?}",
-            refused.err()
-        );
+        let unwritten = matches!(refused, Err(NpmError::Unwritten { .. }));
+        assert!(unwritten, "{case}: {:?}", refused.err());
     }
 }
 
