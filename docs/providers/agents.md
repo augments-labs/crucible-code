@@ -224,14 +224,41 @@ it starts in and nothing from your own site-packages, and leaves the launcher
 the first thing it runs. An entry that gives the interpreter anything else is
 refused before anything is asked, and so is any start of a version whose entry
 does, before anything is started. An entry point the launcher cannot be
-written for, or an agent the catalog says Node runs, is refused before anything
-is asked. A version whose `launch.py` is
+written for is refused before anything is asked. A version whose `launch.py` is
 gone, or leads out of the version, is refused before anything is started, and
 so is a version holding `launch.py` once the catalog no longer says a pinned
 interpreter starts it, withdrawn or listed now as an agent of another kind,
 rather than starting its interpreter without the launcher; a version the
 catalog has moved on from to a newer Python release still starts through its
 own `launch.py`.
+
+An agent the catalog ships as an npm package comes with the Node it is run by,
+pinned in the same release, and with its package tree resolved at review into a
+lock the catalog keeps, so no Node or npm on your machine is used and no
+registry is asked what to install. Before the question, the lock is fetched
+from the catalog's own host, and every tarball it pins must be on a host the
+catalog lists for the agent, `registry.npmjs.org` among them; the question then
+says how many packages the tree holds, the whole download, Node and every
+tarball together, every host the install may reach, the licence, each install
+script in the tree and what the reviewer decided of it (none is run: one that
+does nothing the agent needs, one a platform package does the work of, one
+whose result is built at review, or one whose loss the agent works without), at
+most sixteen and then how many more, and how the agent is started, such as
+`node/bin/node --require preload.cjs node_modules/goose/bin/goose.js acp`.
+After the yes, Node is fetched as any agent's program is, then the tarballs,
+eight at a time, each held to the size and SHA-512 its lock pins from the first
+byte, with no copy to fall back on; each is unpacked to where the lock installs
+its package, and none is kept. The install writes `preload.cjs` at the top of
+the version, which Node is given before the agent's script and which refuses a
+package the version's tree does not hold, and an empty `.bin`, which goes last
+on the agent's `PATH`. A tarball that is not its pin, or that the registry no
+longer has, puts nothing in place; a host that answers 404 or 410 is said to be
+likely permanent, since the version can likely no longer be installed. An entry
+that gives Node arguments of its own, or has an install script run at install,
+is refused before anything is asked. A version already installed is known by
+its receipt: Node's files, the preload and `.bin` as the catalog pins them, and
+the tree's files only as lying where the lock installs a package, which the
+question says.
 
 *Verify*, offered where a version is installed, hashes every file of each
 installed version against the receipt written when it was installed, and only

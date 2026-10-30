@@ -4,14 +4,13 @@
 //! version committed whole or not at all; a start runs the interpreter with
 //! its own arguments, the launcher's path, then the agent's. An entry point
 //! the launcher cannot be written for, or an interpreter the catalog does not
-//! give exactly `-I`, is refused before the question, a wheel that is not its
-//! pin or lands on a path already written commits nothing, and a release a
-//! pinned Node starts is still refused before it. An installed version is
-//! started through its launcher, isolated, or not at all: once the catalog no
-//! longer says a pinned interpreter starts it, or says one starts it with
-//! anything but `-I`, it is refused before any process, and where a newer
-//! release that one starts is listed instead, it still starts through its own
-//! launcher. Whatever stands where a withdrawn version's launcher was counts
+//! give exactly `-I`, is refused before the question, and a wheel that is not
+//! its pin or lands on a path already written commits nothing. An installed
+//! version is started through its launcher, isolated, or not at all: once the
+//! catalog no longer says a pinned interpreter starts it, or says one starts
+//! it with anything but `-I`, it is refused before any process, and where a
+//! newer release that one starts is listed instead, it still starts through
+//! its own launcher. Whatever stands where a withdrawn version's launcher was counts
 //! as its launcher: a link, whether or not it leads anywhere, a directory and
 //! a file no one may read are each refused before any process. A version
 //! holding a pinned Node's preload is likewise refused once the catalog no
@@ -23,7 +22,7 @@ use std::sync::Arc;
 
 use crucible_app::backends::{CatalogRow, Registry};
 use crucible_app::catalog_fetch;
-use crucible_app::client::agents::{AgentsError, How, Outcome};
+use crucible_app::client::agents::{How, Outcome};
 use crucible_app::content_use::{Consent, Routes};
 use crucible_app::launching::{Agent, Launcher, Unlaunchable, Unlaunched};
 use crucible_client_api::{Command, Pending, Text};
@@ -122,7 +121,7 @@ fn interpreted(
 }
 
 /// Where version 1.0.0 is put.
-fn version(bench: &Bench) -> PathBuf {
+pub(super) fn version(bench: &Bench) -> PathBuf {
     bench.programs().join("1.0.0")
 }
 
@@ -140,7 +139,7 @@ fn catalog_then(assets: &[&[u8]]) -> Vec<String> {
 /// `executable`, with the sandbox off, or why it was not started: a step run
 /// to its end, so the peer standing in for the interpreter has kept the
 /// arguments it was given.
-fn versioned(
+pub(super) fn versioned(
     bench: &Bench,
     row: CatalogRow,
     executable: &Path,
@@ -186,7 +185,7 @@ fn versioned(
 }
 
 /// Asserts that nothing of goose is kept and the user file is `before`.
-fn unchanged(bench: &Bench, before: &[u8], what: &str) -> Result<(), Failed> {
+pub(super) fn unchanged(bench: &Bench, before: &[u8], what: &str) -> Result<(), Failed> {
     assert!(!version(bench).exists(), "{what}");
     assert!(
         bench
@@ -499,28 +498,6 @@ fn noded(version: &str) -> Value {
         target.insert("scripts".into(), json!([]));
     }
     release
-}
-
-#[test]
-fn a_release_a_pinned_node_starts_is_refused_before_the_question() -> Result<(), Failed> {
-    let bench = Bench::new("agents-door-npm")?;
-    let release = noded("1.0.0");
-    bench.server.catalog(1, &[release], &json!([]))?;
-    bench.configure(&bench.program("1.0.0"), &json!({}))?;
-    let before = fs::read(bench.user())?;
-    let mut front = answering(&bench.server, Some("Install"));
-
-    let (outcome, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
-
-    assert!(
-        matches!(&outcome, Err(AgentsError::Unsupported(why)) if why.contains("Node") && !why.contains("interpreter")),
-        "{}",
-        shape(&outcome)
-    );
-    assert!(front.put.is_empty());
-    assert_eq!(bench.server.asked(), CATALOG);
-    assert_eq!(fs::read(bench.user())?, before);
-    Ok(())
 }
 
 /// Installs goose 1.0.0 as a pinned interpreter starts it, the fake peer
