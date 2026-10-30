@@ -132,10 +132,12 @@ no space, and every hop of its fetch
 stays on that host; its SHA-512 and size are computed here, a SHA-512
 `integrity` must agree with it, a SHA-1 one is held only where it is the only
 one, and a package with neither is refused. A tarball is read as the client
-reads it, each header as it is written and none global: one gzip stream and
-nothing after it, at most 65,536 members, an ordinary file, a directory or a
-link alone, every name one the client writes, inside its package and the
-ones it bundles and not straight under a `node_modules` directory, none
+reads it, each header as it is written and a global one only as the first
+of its kind, before any member's own, and holding a comment alone: one gzip
+stream and nothing after it, at most 65,536 members, an ordinary file, a
+directory or a link alone, every name one the client writes, inside its
+package and the ones it bundles and not straight under a `node_modules`
+directory, none
 written twice once case is folded, and at most 131,072 names, directories
 included, holding at most 8 MiB; and a lock's tarballs write at
 most 65,536 files and 4 GiB together. Each package's own package.json,
@@ -1887,7 +1889,8 @@ def tarball_of(place: pathlib.Path, wanted: set[str], location: str, locations: 
 
     Its headers are read as the client reads them, each as it is written: a
     GNU long name or link, or an extended header, describes the one member
-    after it, and its own name is its header's. A global extended header is
+    after it, and its own name is its header's. One global extended header
+    holding only a `comment` is skipped, as it names no member; any other is
     refused: npm applies one to every member after it and the client does
     not, so the two would write such a member under different names.
 
@@ -1930,6 +1933,7 @@ def tarball_of(place: pathlib.Path, wanted: set[str], location: str, locations: 
         held_bytes = 0
         # What the headers read so far say of the member after them, by type.
         ahead: dict[bytes, bytes] = {}
+        global_read = False
         try:
             stream = OneGzip(Spending(file))
             unzipped = Bounded(stream, TARBALL_DECOMPRESSED, "the tarball")
@@ -1954,8 +1958,23 @@ def tarball_of(place: pathlib.Path, wanted: set[str], location: str, locations: 
                     tar_skip(unzipped, padding)
                     continue
                 if kind == b"g":
-                    raise Dropped("the tarball holds a global extended header, which npm applies to the "
-                                  "members after it and the client does not")
+                    # A global header holding only a comment names no member,
+                    # so npm, which applies one to every member after it, and
+                    # the client, which does not, write the same names. Its
+                    # comment is read for its keys alone and never shown.
+                    if ahead or global_read:
+                        raise Dropped("the tarball holds a global extended header after another, or between "
+                                      "a member's own headers and the member")
+                    if size_of > EXTENDED_BYTES:
+                        raise Dropped(f"the tarball holds a global extended header of more than "
+                                      f"{EXTENDED_BYTES} bytes")
+                    held_global = tar_read(unzipped, size_of)
+                    tar_skip(unzipped, padding)
+                    if any(key != b"comment" for key, _ in tar_extended(held_global)):
+                        raise Dropped("the tarball holds a global extended header that says more than a "
+                                      "comment, which npm applies to the members after it and the client does not")
+                    global_read = True
+                    continue
                 members += 1
                 if members > TARBALL_MEMBERS:
                     raise Dropped(f"the tarball holds more than {TARBALL_MEMBERS} members")

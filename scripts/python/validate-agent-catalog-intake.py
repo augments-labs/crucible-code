@@ -2261,12 +2261,18 @@ def check_npm_tarballs(scratch: pathlib.Path) -> None:
     # not write: each case's members follow it.
     raw = b"".join(tar_member(name.encode(), b"0", content) for name, _, content in base)
     added = tar_member(b"package/lib/more.js", b"0", b"2\n")
+    # A global header as the registry's tarballs open with one, holding a
+    # comment alone, which names no member.
+    global_comment = tar_member(b"pax_global_header", b"g", pax_records(comment=b"0123456789abcdef\x1b[2J"))
     for name, tarball, words in (
         ("slashed", tar_written(raw, tar_member(b"package/lib/more/", b"\0", b"2\n")), "empty"),
         ("paxslash", tar_written(raw, tar_member(b"package/x", b"x", pax_records(path=b"package/lib/more.js/")),
                                  added), "empty"),
         ("global", tar_written(raw, tar_member(b"package/g", b"g", pax_records(path=b"package/lib/global.js")),
-                               added), "global"),
+                               added), "says more than a comment"),
+        ("globaltwice", tar_written(global_comment, global_comment, raw, added), "after another"),
+        ("globalahead", tar_written(raw, tar_member(b"././@LongLink", b"L", b"package/lib/one.js\0"),
+                                    global_comment, added), "between a member's own headers"),
         ("paxsize", tar_written(raw, tar_member(b"package/x", b"x", pax_records(size=b"3")), added), "size"),
         ("longtwice", tar_written(raw, tar_member(b"././@LongLink", b"L", b"package/lib/one.js\0"),
                                   tar_member(b"././@LongLink", b"L", b"package/lib/two.js\0"), added),
@@ -2344,6 +2350,7 @@ def check_npm_tarballs(scratch: pathlib.Path) -> None:
     for name, tarball in (
         ("whole", packed(base)),
         ("extended", tar_written(raw, named, tar_member(b"package/short", b"0", b"2\n"))),
+        ("commented", tar_written(global_comment, raw, added)),
     ):
         lay_out_npm(scratch / name / "observed", "npx-agent", with_tarball(tree, TOP, tarball))
         out = scratch / name / "lock.json"
