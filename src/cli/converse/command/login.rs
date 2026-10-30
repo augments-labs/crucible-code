@@ -1023,6 +1023,7 @@ pub(super) fn refused(refusal: &AgentsError) -> String {
         | AgentsError::Store(_)
         | AgentsError::Download(_)
         | AgentsError::Unpacked(_)
+        | AgentsError::Stub(_)
         | AgentsError::FileListUnfetched(_)
         | AgentsError::FileListUnread(_)
         | AgentsError::Smoke { .. }
@@ -1112,6 +1113,7 @@ pub(super) fn sentence(refusal: &AgentsError) -> String {
         | AgentsError::Store(_)
         | AgentsError::Download(_)
         | AgentsError::Unpacked(_)
+        | AgentsError::Stub(_)
         | AgentsError::FileListUnfetched(_)
         | AgentsError::FileListUnread(_)
         | AgentsError::Smoke { .. }

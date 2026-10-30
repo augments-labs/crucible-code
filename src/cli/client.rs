@@ -666,6 +666,7 @@ pub(crate) const fn coded(refused: &AgentsError) -> ErrorCode {
         | AgentsError::Store(_)
         | AgentsError::Download(_)
         | AgentsError::Unpacked(_)
+        | AgentsError::Stub(_)
         | AgentsError::FileListUnfetched(_)
         | AgentsError::FileListUnread(_)
         | AgentsError::Remember(_)
