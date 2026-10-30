@@ -2039,6 +2039,31 @@ def check_npm_recheck(scratch: pathlib.Path, data: dict, assets: pathlib.Path) -
             assert all(alias["url"] in item["reason"] and str(status) in item["reason"] for item in revoked), revoked
         else:
             assert revoked == [], f"{status} proposes nothing: {revoked}"
+    # Two tarballs of one lock gone propose one revocation of it.
+    gone = next(item for item in listed if item["url"].endswith("withgyp-2.0.0.tgz"))
+    results = written(scratch, "results-two.json", {alias["sha512"]: 404, gone["sha512"]: 410})
+    out = scratch / "recheck-two.json"
+    ran = intake("recheck", "--merged", merged, "--assets", assets, "--results", results, "--out", out)
+    assert ran.returncode == 0, ran.stderr
+    revoked = json.loads(out.read_text())["revocations"]
+    identities = [(item["key"], item["version"], item["lock_revision"]) for item in revoked]
+    assert len(identities) == len(set(identities)), f"one lock revision is revoked once: {revoked}"
+    # An address is quoted with every character that could hide it escaped.
+    hostile = scratch / "recheck-hostile"
+    (hostile / "assets").mkdir(parents=True)
+    url = NPM + "x/-/x\u202e.tgz"
+    lock = lock_bytes({"packages": [{"location": "node_modules/x", "name": "x", "version": "1.0.0", "url": url,
+                                     "sha512": "a" * 128, "size": 1, "files": 1, "unpacked": 1}], "unpack_rules": 1})
+    (hostile / "assets" / sha(lock)).write_bytes(lock)
+    merged = written(hostile, "merged.json", {"entries": [
+        {"key": "hostile", "kind": "npm", "lock_revision": 1, "targets": [{"lock": {"sha256": sha(lock)}}], "version": "1.0.0"},
+    ]})
+    out = hostile / "recheck.json"
+    ran = intake("recheck", "--merged", merged, "--assets", hostile / "assets",
+                 "--results", written(hostile, "results.json", {"a" * 128: 404}), "--out", out)
+    assert ran.returncode == 0, ran.stderr
+    [item] = json.loads(out.read_text())["revocations"]
+    assert "\u202e" not in item["reason"] and "\\u202e" in item["reason"], "the address is shown escaped"
 
 
 def check_npm_publish(scratch: pathlib.Path, data: dict, assets: pathlib.Path) -> None:

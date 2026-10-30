@@ -3140,17 +3140,23 @@ def recheck(arguments: argparse.Namespace) -> int:
     results = read_json(arguments.results, SMALL_BYTES, "the results")
     if not isinstance(results, dict):
         raise Refused("the results are not an object of statuses by SHA-512")
-    proposed = set()
+    # Every tarball the registry no longer serves, by the lock revision
+    # that holds it, so each revision is proposed once however many are gone.
+    lost: dict[tuple[str, str, int], list[tuple[str, int]]] = {}
     for sha512, status in results.items():
         if sha512 not in tarballs or isinstance(status, bool) or not isinstance(status, int):
             raise Refused(f"the results give {clipped(sha512)}, which is not a listed tarball with a whole status")
         if status in (404, 410):
-            reason = clipped(f"its tarball {tarballs[sha512]} is answered {status} by the registry")
-            proposed |= {(key, released, revision, reason) for key, released, revision in holders[sha512]}
-    revoked = [
-        {"key": key, "lock_revision": revision, "reason": reason, "version": released}
-        for key, released, revision, reason in sorted(proposed)
-    ]
+            for holder in holders[sha512]:
+                lost.setdefault(holder, []).append((tarballs[sha512], status))
+    revoked = []
+    for (key, released, revision), gone in sorted(lost.items()):
+        url, status = min(gone)
+        more = f", and {len(gone) - 1} more of its tarballs are gone" if len(gone) > 1 else ""
+        # The address is the lock's, which no reviewer wrote, so it is
+        # quoted as the diff quotes hostile text.
+        reason = f"its tarball {shown(clipped(url))} is answered {status} by the registry{more}"
+        revoked.append({"key": key, "lock_revision": revision, "reason": reason, "version": released})
     arguments.out.write_bytes(compact({"revocations": revoked}))
     return 0
 
