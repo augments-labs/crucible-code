@@ -441,8 +441,9 @@ pub enum AgentsError {
     #[error(transparent)]
     Download(#[from] DownloadError),
     /// An artifact is not what its file list says, or the launcher of a
-    /// release a pinned interpreter starts cannot be written for its entry
-    /// point.
+    /// release a pinned interpreter starts cannot be written: its entry point
+    /// cannot be, or its catalog entry does not give the interpreter exactly
+    /// `-I`.
     #[error(transparent)]
     Unpacked(#[from] UnpackError),
     /// A file list the catalog keeps as an asset did not arrive from the
