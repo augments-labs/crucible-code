@@ -13,7 +13,9 @@
 //! release that one starts is listed instead, it still starts through its own
 //! launcher. Whatever stands where a withdrawn version's launcher was counts
 //! as its launcher: a link, whether or not it leads anywhere, a directory and
-//! a file no one may read are each refused before any process.
+//! a file no one may read are each refused before any process. A version
+//! holding a pinned Node's preload is likewise refused once the catalog no
+//! longer says a pinned Node starts it.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -639,6 +641,56 @@ fn withdrawn_holding(
     );
     let argued = fake_peer::argued(&version(&bench).join("python/bin"));
     Ok((bench, refused, argued))
+}
+
+/// A version that holds a pinned Node's preload is started by that Node, and
+/// that Node started without it would run what the workspace holds: once the
+/// catalog no longer says a pinned Node starts it, withdrawn or listed
+/// instead at a newer release a program of its own starts, it is refused
+/// before any process, whatever stands at the preload's place.
+#[test]
+fn a_version_holding_a_preload_is_refused_once_the_catalog_no_longer_says_a_pinned_node_starts_it()
+-> Result<(), Failed> {
+    let played = peer(&answers("1.0.0"))?;
+    let mut found = Vec::new();
+    let mut expected = Vec::new();
+    for (offered, entries) in [
+        ("withdrawn", Vec::new()),
+        (
+            "a program of its own",
+            vec![stating(super::goose("2.0.0", b"goose 2.0.0"))],
+        ),
+    ] {
+        for (index, what) in ["a file", "a directory"].into_iter().enumerate() {
+            let bench = Bench::new(&format!("agents-door-preload-unlisted-{offered}-{index}"))?;
+            let (release, program) = superseded(&bench, &played, &entries)?;
+            fs::remove_file(version(&bench).join("launch.py"))?;
+            let preload = version(&bench).join("preload.cjs");
+            if index == 0 {
+                fs::write(&preload, b"")?;
+            } else {
+                fs::create_dir(&preload)?;
+            }
+
+            let ended = versioned(&bench, row_of(&release)?, &program)?;
+
+            let refused = matches!(
+                ended,
+                Err(Unlaunched::Launcher {
+                    why: Unlaunchable::Unlisted,
+                    ..
+                })
+            );
+            let argued = fake_peer::argued(&version(&bench).join("python/bin"));
+            found.push((offered, what, refused, argued));
+            expected.push((offered, what, true, Vec::<Vec<String>>::new()));
+        }
+    }
+
+    // Each refused as a start the catalog no longer says, and the program
+    // never started, so it kept no arguments.
+    assert_eq!(found, expected);
+    Ok(())
 }
 
 /// A directory standing where a withdrawn version's launcher was counts as

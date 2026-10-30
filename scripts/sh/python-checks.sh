@@ -35,6 +35,13 @@ if ! PYTHONDONTWRITEBYTECODE=1 python3 -I scripts/python/validate-agent-catalog-
     printf '    FAIL the agent catalog intake did not turn its fixtures into the review data expected\n'
     failed=1
 fi
+# Isolated mode too: it writes and runs Node programs, and nothing beside the
+# script should choose what it imports. It skips, saying why, with no Node that
+# has module.registerHooks on PATH.
+if ! PYTHONDONTWRITEBYTECODE=1 python3 -I scripts/python/validate-node-preload.py; then
+    printf '    FAIL the npm preload did not confine an agent to its tree on a real Node\n'
+    failed=1
+fi
 if ! scripts/python/task-campaign.py validate --suite benchmarks/coding-tasks/suite.json; then
     printf '    FAIL the coding-task campaign suite is not self-contained and valid\n'
     failed=1

@@ -20,7 +20,9 @@
 //! rules, under `site/`, and [`LaunchScript`] is the file that starts it. A
 //! release that Node runs is a package tree, which [`NpmTree`] reads from the
 //! lock the catalog keeps for it and unpacks from its packages' tarballs by
-//! npm's rules where they differ from these.
+//! npm's rules where they differ from these; [`Preload`] is the file that
+//! confines Node to that tree, and each [`Stub`] a program of its `.bin` that
+//! runs the pinned Node under it.
 //!
 //! A [`Pin`] borrows what it names: the build's own table lends `'static`
 //! text, and an [`OwnedPin`], a release the agent catalog offers, lends text it
@@ -40,10 +42,12 @@ use zip::{CompressionMethod, ZipArchive};
 use crate::catalog::{Admits, FileKind, Files, Format, Launch, Target};
 
 mod npm;
+mod npm_launch;
 mod unpack;
 mod wheel;
 
 pub use npm::{NpmError, NpmPackage, NpmTarball, NpmTree};
+pub use npm_launch::{BIN, PRELOAD, Preload, Stub, StubError};
 pub(crate) use unpack::{MEMBERS, link_resolves};
 pub use unpack::{Staged, UnpackError, Unpacker};
 pub use wheel::{LAUNCHER, LaunchScript, Wheels};
