@@ -34,23 +34,31 @@
 //! cut is not put to a client that does not draw the whole value, and a no, a
 //! cancel, or nobody, leaves every file as it was. What is checked before that
 //! question is put is everything that can refuse the release without a byte
-//! fetched from its own hosts: its kind; its download hosts, and that every
-//! address and mirror it is pinned at is on one of them; its file lists, where
-//! a list the catalog keeps as an asset is first fetched from the catalog's
-//! own host by [`catalog_fetch::asset`] and read as one given inline, a list
-//! that does not arrive as listed or does not read refusing the release; that
-//! the program it is started as is one of its files and runs; its size, summed
-//! with checked arithmetic, against the most a release may be and the room
-//! the install store has; and, for a version already in place, that its
-//! receipt is of the artifacts and the files the catalog pins, refused
-//! otherwise.
+//! fetched from its own hosts: how it is started, a release a pinned Node
+//! starts being refused and one a pinned interpreter starts having its entry
+//! point checked as one its launcher can be written for; its download hosts,
+//! and that every address and mirror it is pinned at is on one of them; its
+//! file lists, where a list the catalog keeps as an asset is first fetched
+//! from the catalog's own host by [`catalog_fetch::asset`] and read as one
+//! given inline, a list that does not arrive as listed or does not read
+//! refusing the release; that the program it is started as is one of its
+//! files and runs; its size, summed with checked arithmetic, against the most
+//! a release may be and the room the install store has; and, for a version
+//! already in place, that its receipt is of the artifacts and the files the
+//! catalog pins, with the launcher of a release a pinned interpreter starts,
+//! refused otherwise.
 //!
 //! After a yes, the release the question named is the one installed: each
 //! artifact is downloaded within its pin by [`crate::agent_download`] into a
 //! file beside the staging directory, unpacked from it into that directory
-//! against its file list, and committed to the store with its receipt; only
-//! then is every instance whose `executable` lies in the agent's directory in
-//! the store written to the new program, in one update of the user file, each
+//! against its file list, a wheel of a release a pinned interpreter starts
+//! with its files under `site/`, and committed to the store with its receipt.
+//! Such a release's launcher, `launch.py`, is written at the top of the
+//! version for its entry point from a template that never changes and is
+//! committed and named in the receipt with the rest, so a second install of
+//! the version fetches nothing. Only then is every instance whose
+//! `executable` lies in the agent's directory in the store written to the new
+//! program, in one update of the user file, each
 //! only where its `executable` still names what the question showed, so an
 //! instance edited meanwhile keeps the edit and is said to; and the store is
 //! pruned to what the user file names then and one version before. A cancel, or a download or unpack
@@ -158,10 +166,12 @@ use crucible_client_api::{
 use crucible_config::{AgentUpdate, Cloud, ConfigError, Driver, ExternalAgent, Home, Settings};
 use crucible_execution::{Authentication, Failure};
 use crucible_external_harnesses::catalog::{
-    AuthMethod, CatalogError, Entry, File, FileKind, Files, Kind, Launch, Method, Offer, Target,
+    AuthMethod, CatalogError, Entry, File, FileKind, Files, Format, Launch, Method, Offer, Target,
     Trust, Unprofiled, file_list,
 };
-use crucible_external_harnesses::release::{RELEASE_BYTES, UnpackError, Unpacker};
+use crucible_external_harnesses::release::{
+    LAUNCHER, LaunchScript, RELEASE_BYTES, UnpackError, Unpacker, Wheels,
+};
 use crucible_external_harnesses::store::{
     Listing, Mismatch, Provenance, Receipt, Store, StoreError, Version,
 };
@@ -429,7 +439,9 @@ pub enum AgentsError {
     /// An artifact did not arrive as its pin.
     #[error(transparent)]
     Download(#[from] DownloadError),
-    /// An artifact is not what its file list says.
+    /// An artifact is not what its file list says, or the launcher of a
+    /// release a pinned interpreter starts cannot be written for its entry
+    /// point.
     #[error(transparent)]
     Unpacked(#[from] UnpackError),
     /// A file list the catalog keeps as an asset did not arrive from the
@@ -898,11 +910,19 @@ impl Door<'_> {
         front: &mut dyn Front,
         watching: Watching<'_>,
     ) -> Result<Outcome, AgentsError> {
-        if offer.entry.kind != Kind::Binary || offer.pin.target.launch != Launch::Binary {
-            return Err(AgentsError::Unsupported(
-                "the release is started by a pinned interpreter or Node",
-            ));
-        }
+        // A release a pinned interpreter starts is started through a launcher
+        // written for its entry point, which is held before anything is asked.
+        let script = match &offer.pin.target.launch {
+            Launch::Binary => None,
+            Launch::Uvx { entry_point, .. } => {
+                Some(LaunchScript::new(&offer.entry.key, entry_point)?)
+            }
+            Launch::Npm { .. } => {
+                return Err(AgentsError::Unsupported(
+                    "the release is started by a pinned Node",
+                ));
+            }
+        };
         let mut reached: Vec<String> = Vec::new();
         let hosts = &offer.pin.target.hosts;
         for artifact in &offer.pin.target.artifacts {
@@ -916,8 +936,11 @@ impl Door<'_> {
         let offer = &offer;
         let agent = &offer.entry.key;
         let target = &offer.pin.target;
-        let listed = listed(target);
+        let mut listed = listed(target);
         runnable(&listed, &target.cmd)?;
+        // The launcher is committed with the version, so a receipt of it in
+        // place names it too.
+        listed.extend(script.as_ref().map(LaunchScript::file));
         let total = sized(offer)?;
         let version = Version::new(&offer.pin.version, offer.pin.lock_revision)?;
         let kept = match self.store.receipt(agent, &version)? {
@@ -991,9 +1014,16 @@ impl Door<'_> {
                 drop(landing);
                 before = before.saturating_add(arrived.size);
                 let mut reading = staging.downloaded()?;
-                let staged = Unpacker::unpack_from(&mut reading, artifact, staging.directory())?;
+                let staged = if script.is_some() && artifact.format == Format::Wheel {
+                    Wheels::unpack_from(&mut reading, artifact, staging.directory())?
+                } else {
+                    Unpacker::unpack_from(&mut reading, artifact, staging.directory())?
+                };
                 files.extend_from_slice(staged.files());
                 fetched.push(arrived);
+            }
+            if let Some(script) = &script {
+                files.push(script.write(staging.directory())?);
             }
             let provenance = Provenance {
                 listing: Listing {
@@ -1093,6 +1123,15 @@ impl Door<'_> {
             facts.push(format!("Caution: {}", quoted(caution)));
         }
         let mut started = vec![quoted(&target.cmd)];
+        match &target.launch {
+            Launch::Uvx {
+                interpreter_args, ..
+            } => {
+                started.extend(interpreter_args.iter().map(|argument| quoted(argument)));
+                started.push(quoted(LAUNCHER));
+            }
+            Launch::Binary | Launch::Npm { .. } => {}
+        }
         started.extend(target.args.iter().map(|argument| quoted(argument)));
         facts.push(format!("Started as: {}", started.join(" ")));
         facts.push(if target.env.is_empty() {

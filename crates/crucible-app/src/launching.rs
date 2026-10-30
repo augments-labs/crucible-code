@@ -27,11 +27,12 @@
 //! roll back or update, or while the trust state cannot be used, naming its
 //! file, since then no revocation can be known, or that lies there, as its
 //! path is written or where it leads, in another agent's directory or in no
-//! version of its own; and a route with no yes, with
-//! what to ask. A catalog row always ships, since it is listed only for an
-//! entry the catalog reviewed. Only then is the hold taken from
+//! version of its own; a program that is the pinned interpreter of such a
+//! version whose launcher is not at the top of it; and a route with no yes,
+//! with what to ask. A catalog row always ships, since it is listed only for
+//! an entry the catalog reviewed. Only then is the hold taken from
 //! `content_use`, the child's sandbox policy built, and the process started.
-//! The first five are decided in one place, [`Agent::release`], after
+//! The first six are decided in one place, [`Agent::release`], after
 //! [`Agent::program`] has decided the first four, which an operation that
 //! would ask about a route before starting the agent consults first, through
 //! [`Steps::refusal`], or for a conversation's next turn through the
@@ -62,6 +63,19 @@
 //! same gates, each under a hold of its own. An account step the dialect
 //! speaks over the program's own wire is bounded: a version or status within
 //! the time a launch has to prepare, a sign-in within five minutes.
+//!
+//! A program that is the interpreter a release pins, which runs the agent
+//! through the launcher its install wrote, is given the catalog's
+//! `interpreter_args`, then the absolute path of that launcher, `launch.py`
+//! at the top of its version, and only then the agent's own arguments. That
+//! path is the program's with the components of the catalog's `cmd` taken
+//! off, never one the catalog or the configuration gives, and the launcher,
+//! its links followed, must be the file at the top of that version; nothing
+//! on the machine is looked for to find an interpreter. A turn, an account
+//! step, the smoke test of a release and the intake's probe all take what
+//! leads the arguments from one function, so none starts the interpreter any
+//! other way, and a probe of an unpacked release with no launcher at its top
+//! is refused.
 //!
 //! A profile directory is given to a catalog agent through the variable its
 //! entry names, which is the whole of how the agent is told of it. On macOS and
@@ -205,8 +219,9 @@ use crucible_execution::{
 };
 use crucible_external_harnesses::acp::{Acp, Allowing};
 use crucible_external_harnesses::catalog::{
-    CatalogProfile, Entry, Method, Target, Trust, Unprofiled, Unusable, Variable,
+    self, CatalogProfile, Entry, Method, Target, Trust, Unprofiled, Unusable, Variable,
 };
+use crucible_external_harnesses::release::LAUNCHER;
 use crucible_external_harnesses::store::Store;
 use crucible_external_harnesses::{
     Account, Act, Control, Dialect, Discovery, Held, Host, Launch, PREPARING, Program, Ran,
@@ -277,6 +292,15 @@ pub enum Unlaunched {
         /// Why, as the catalog said it and quoted, where a catalog still held
         /// says.
         reason: Option<Box<str>>,
+    },
+    /// Its program is a pinned interpreter in a version of crucible's install
+    /// store, and the launcher it runs cannot be given to it.
+    #[error("{agent} cannot be started: {why}.")]
+    Launcher {
+        /// The agent, as its row names it.
+        agent: String,
+        /// Why.
+        why: Unlaunchable,
     },
     /// Its program lies in crucible's install store where no version of its
     /// own is kept.
@@ -397,6 +421,25 @@ pub enum Unlaunched {
     /// The host refused the launch.
     #[error(transparent)]
     Refused(#[from] Refusal),
+}
+
+/// Why the launcher a pinned interpreter runs cannot be given to it.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum Unlaunchable {
+    /// Its program does not lie where the catalog's `cmd` puts it in its
+    /// version, or no file is at the launcher's place at the top of that
+    /// version once links are followed.
+    #[error(
+        "its launcher, {launcher}, is not a file at the top of the version its program lies in",
+        launcher = LAUNCHER
+    )]
+    Missing,
+    /// The launcher's path is not text an interpreter can be given.
+    #[error(
+        "the path of its launcher, {launcher}, is not text an interpreter can be given",
+        launcher = LAUNCHER
+    )]
+    Untext,
 }
 
 /// An agent as it was selected: its row, and what its program was found to
@@ -757,20 +800,30 @@ impl Agent {
                     .map(|reason| quoted(reason).into()),
             });
         }
-        // Its own entry's variable where the catalog still lists it; else
-        // that of the release an update would install, since a release
-        // superseded or gone back to is still that agent's program.
+        // Its own entry's variable and launch where the catalog still lists
+        // it; else those of the release an update would install, since a
+        // release superseded or gone back to is still that agent's program.
         let offers = trust.offers(Some(&key));
-        let updater_off = offers
+        let offer = offers
             .iter()
             .find(|offer| *offer.pin.version == *named && offer.pin.lock_revision == revision)
-            .or_else(|| offers.first())
-            .and_then(|offer| offer.entry.updater_off.clone());
+            .or_else(|| offers.first());
+        let root = store.directory(&key, &version);
+        let leading = match offer {
+            Some(offer) => interpreting(&offer.pin.target, program.path(), &root).map_err(
+                |why| Unlaunched::Launcher {
+                    agent: key.to_string(),
+                    why,
+                },
+            )?,
+            None => Vec::new(),
+        };
         Ok((
             program,
             Some(Stored {
-                root: store.directory(&key, &version),
-                updater_off,
+                root,
+                updater_off: offer.and_then(|offer| offer.entry.updater_off.clone()),
+                leading,
             }),
         ))
     }
@@ -798,6 +851,9 @@ pub struct Stored {
     /// where the catalog no longer lists it, the one the release an update
     /// would install names.
     updater_off: Option<Variable>,
+    /// What its program is given ahead of the agent's own arguments, as
+    /// [`interpreting`] decides for the same release.
+    leading: Vec<String>,
 }
 
 /// The most of one string the catalog, the configuration or an agent gave
@@ -861,6 +917,69 @@ pub(crate) fn updating_off(mut request: Request, variable: Option<&Variable>) ->
             .environment
             .push((variable.name.to_string(), variable.value.to_string()));
     }
+    request
+}
+
+/// What a start of `program`, the program `target` names in the version of
+/// crucible's install store, or the unpacked release, at `version`, is
+/// given ahead of the agent's own arguments; a turn, a smoke test and a
+/// probe each take it from here.
+///
+/// A program that runs itself is given nothing, and so is one a pinned Node
+/// runs, which nothing installs yet. A pinned interpreter is given the
+/// catalog's `interpreter_args`, and then the absolute path of its launcher,
+/// [`LAUNCHER`] at the top of the version: that top is `program` with the
+/// components of `cmd` taken off, never a path the catalog gives, and the
+/// launcher, its links followed, must be the file at the top of `version`.
+/// Nothing is run, and nothing else on the machine is looked at, to find it.
+///
+/// # Errors
+///
+/// [`Unlaunchable`] where the launcher is not there, or its path is not text.
+fn interpreting(
+    target: &Target,
+    program: &Path,
+    version: &Path,
+) -> Result<Vec<String>, Unlaunchable> {
+    let catalog::Launch::Uvx {
+        interpreter_args, ..
+    } = &target.launch
+    else {
+        return Ok(Vec::new());
+    };
+    let cmd = Path::new(&*target.cmd);
+    let depth = cmd.components().count();
+    let normal = cmd
+        .components()
+        .all(|component| matches!(component, Component::Normal(_)));
+    let top = program
+        .ancestors()
+        .nth(depth)
+        .filter(|_| normal && program.ends_with(cmd))
+        .ok_or(Unlaunchable::Missing)?;
+    // Followed, so a launcher that is a link cannot lead out of the version.
+    let launcher =
+        std::fs::canonicalize(top.join(LAUNCHER)).map_err(|_| Unlaunchable::Missing)?;
+    let placed = std::fs::canonicalize(version)
+        .map(|version| version.join(LAUNCHER))
+        .map_err(|_| Unlaunchable::Missing)?;
+    if launcher != placed || !launcher.is_file() {
+        return Err(Unlaunchable::Missing);
+    }
+    let launcher = launcher
+        .into_os_string()
+        .into_string()
+        .map_err(|_| Unlaunchable::Untext)?;
+    Ok(interpreter_args
+        .iter()
+        .map(|argument| argument.to_string())
+        .chain(std::iter::once(launcher))
+        .collect())
+}
+
+/// `request` with `leading` ahead of its arguments.
+fn led(mut request: Request, leading: &[String]) -> Request {
+    request.arguments.splice(0..0, leading.iter().cloned());
     request
 }
 
@@ -2468,7 +2587,10 @@ impl<'a> Launcher<'a> {
         )?;
         if let Some(stored) = &stored {
             policy = read_only(&policy, &stored.root)?;
-            request = updating_off(request, stored.updater_off.as_ref());
+            request = led(
+                updating_off(request, stored.updater_off.as_ref()),
+                &stored.leading,
+            );
         }
         for root in &kept {
             // Made only where the child may write it, as the profile is, and
@@ -2577,6 +2699,10 @@ pub enum Unprobeable {
          disposable machine, run again with `--unconfined` to run `initialize` alone"
     )]
     Unclosable(String),
+    /// Its program is a pinned interpreter, and the launcher it runs cannot
+    /// be given to it.
+    #[error(transparent)]
+    Launcher(#[from] Unlaunchable),
     /// The sandbox policy is not a valid one.
     #[error("the sandbox policy for the probe could not be built: {0}")]
     Policy(#[from] SandboxPolicyError),
@@ -2627,6 +2753,7 @@ pub(crate) async fn probing(
     let Discovery::Found(program) = Discovery::of(Some(&found)) else {
         return Err(unfound());
     };
+    let leading = interpreting(target, &root.join(&*target.cmd), &root)?;
     let unclosable = unclosable(service.as_ref()).await;
     if let (Some(reason), false) = (&unclosable, unconfined) {
         return Err(Unprobeable::Unclosable(reason.clone()));
@@ -2653,10 +2780,13 @@ pub(crate) async fn probing(
     // Without the sandbox its limits go with it, as for a command.
     .with_enabled(unclosable.is_none());
     let mut dialect = Acp::cataloged(profile, Allowing::Nothing);
-    let request = dialect.request(Shape {
-        workspace: Some(&root),
-        ..Shape::default()
-    });
+    let request = led(
+        dialect.request(Shape {
+            workspace: Some(&root),
+            ..Shape::default()
+        }),
+        &leading,
+    );
     let control = Control::new().ok_or(Unprobeable::Control)?;
     let launch = Launch::new(program, policy, Held::granted(PROBING)).asking(request);
     let host = Host::launch(service, runtime, &control, launch).await?;
@@ -2707,6 +2837,10 @@ pub enum Unsmoked {
     /// Its program is not one that runs.
     #[error("its program {0} is not an executable")]
     Program(String),
+    /// Its program is a pinned interpreter, and the launcher it runs cannot
+    /// be given to it.
+    #[error(transparent)]
+    Launcher(#[from] Unlaunchable),
     /// The sandbox policy is not a valid one.
     #[error("its sandbox policy could not be built: {0}")]
     Policy(#[from] SandboxPolicyError),
@@ -2773,6 +2907,7 @@ impl Launcher<'_> {
             return Err(Unsmoked::Program(quoted(&program.display().to_string())));
         };
         let root = resolved(root)?;
+        let leading = interpreting(target, program, &root)?;
         let readable = SandboxFilesystemRule::new(
             &root,
             SandboxFilesystemAccess::ReadOnly,
@@ -2797,12 +2932,15 @@ impl Launcher<'_> {
             },
         )?;
         let mut dialect = Smoking(Acp::cataloged(profile, Allowing::Nothing));
-        let request = updating_off(
-            dialect.request(Shape {
-                workspace: Some(&root),
-                ..Shape::default()
-            }),
-            entry.updater_off.as_ref(),
+        let request = led(
+            updating_off(
+                dialect.request(Shape {
+                    workspace: Some(&root),
+                    ..Shape::default()
+                }),
+                entry.updater_off.as_ref(),
+            ),
+            &leading,
         );
         let control = Control::new().ok_or(Unsmoked::Control)?;
         let launch = Launch::new(found, policy, held).asking(request);

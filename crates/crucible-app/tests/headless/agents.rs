@@ -66,6 +66,8 @@ use super::{Failed, Tree};
 mod adding;
 #[path = "agents/file_list.rs"]
 mod file_list;
+#[path = "agents/uvx.rs"]
+mod uvx;
 
 /// What the fake host answers a path with.
 #[derive(Clone)]
