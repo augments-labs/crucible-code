@@ -135,6 +135,15 @@
       }
     },
     {
+      "id": "docker-agent",
+      "name": "Docker Agent",
+      "version": "1.0.0",
+      "license": "MIT",
+      "distribution": {
+        "docker": {"image": "agent:1.0.0"}
+      }
+    },
+    {
       "id": "unkeyed-agent",
       "name": "Unkeyed Agent",
       "version": "1.0.0",

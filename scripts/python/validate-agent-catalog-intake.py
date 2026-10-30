@@ -18,12 +18,14 @@ under `site/` and the interpreter's under `python/`.
 from __future__ import annotations
 
 import argparse
+import base64
 import copy
 import gzip
 import hashlib
 import importlib.util
 import io
 import json
+import os
 import pathlib
 import struct
 import subprocess
@@ -318,7 +320,11 @@ def check_review(data: dict, assets: pathlib.Path) -> None:
     dropped(data, "unprobed-agent", None, "no probe output", "darwin-aarch64")
     dropped(data, "leaky-agent", None, "linux-x86_64", "without a sandbox", "confined")
     dropped(data, "reachy-agent", None, "10.0.0.1")
-    dropped(data, "npx-agent", None, "binary", "uvx")
+    # An agent distributed in none of the kinds the intake takes in.
+    dropped(data, "docker-agent", None, "binary", "uvx", "npx")
+    # With no Node pinned, an npm agent has no target.
+    dropped(data, "npx-agent", "linux-x86_64", "no Node is pinned")
+    dropped(data, "npx-agent", None, "no target")
     dropped(data, "unkeyed-agent", None, "no key")
     dropped(data, "x`` <b>@here", None, "registry id")
     dropped(data, "split-agent", None, "auth_methods[1].command", "darwin-aarch64")
@@ -673,7 +679,7 @@ def check_budget(scratch: pathlib.Path) -> None:
     namespace = argparse.Namespace(
         registry=REGISTRY, choices=CHOICES, runners=RUNNERS, observed=scratch / "observed",
         deny=ROOT / "deny.toml", assets=scratch / "budget-assets", out=scratch / "budget.json", merged=None,
-        interpreters=None,
+        interpreters=None, node=None, node_keys=None, dispositions=None,
     )
     module.RUN_BYTES = 3000
     assert module.review(namespace) == 0
@@ -1401,10 +1407,725 @@ def check_uvx_render(scratch: pathlib.Path) -> None:
         refused(scratch, f"uvx-{name}.json", words, merged=written(scratch, f"m-uvx-{name}.json", data))
 
 
+NODE_VERSION = "22.15.0"
+NODE_DIST = f"https://nodejs.org/dist/v{NODE_VERSION}/"
+NODE_NAMES = {
+    "linux-x86_64": "linux-x64",
+    "linux-aarch64": "linux-arm64",
+    "darwin-aarch64": "darwin-arm64",
+    "windows-x86_64": "win-x64",
+    "windows-aarch64": "win-arm64",
+}
+# The platforms each npm agent below is laid out on; the others are not.
+NODE_BUILT = ("linux-x86_64", "darwin-aarch64", "windows-x86_64")
+NPM = "https://registry.npmjs.org/"
+TOP = "node_modules/npx-agent"
+BUNDLED = "node_modules/npx-agent/node_modules/bundled-dep"
+OPTIONAL = "node_modules/@scope/opt-linux"
+ALIAS = "node_modules/strip"
+GYP = "node_modules/withgyp"
+DEV = "node_modules/devonly"
+
+
+def gpg(home: pathlib.Path, *args: str, faked: str | None = None) -> bytes:
+    """gpg on the throwaway keyring at `home`, at the faked time `faked`."""
+    extra = ["--faked-system-time", faked] if faked else []
+    return subprocess.run(
+        ["gpg", "--homedir", str(home), "--batch", "--no-tty", "--passphrase", "", "--pinentry-mode", "loopback",
+         *extra, *args],
+        capture_output=True, check=True, timeout=60,
+    ).stdout
+
+
+def signing_key(home: pathlib.Path, name: str, expiry: str = "never") -> str:
+    """A throwaway Ed25519 signing key made at the start of 2020, and its fingerprint."""
+    home.mkdir(mode=0o700, parents=True)
+    gpg(home, "--quick-gen-key", f"{name} <{name}@example.invalid>", "ed25519", "sign", expiry, faked="20200101T000000")
+    listing = gpg(home, "--with-colons", "--list-keys").decode()
+    return next(line.split(":")[9] for line in listing.splitlines() if line.startswith("fpr:"))
+
+
+def clearsigned(home: pathlib.Path, fpr: str, body: bytes, faked: str | None = None) -> bytes:
+    (home / "body").write_bytes(body)
+    out = home / "body.asc"
+    out.unlink(missing_ok=True)
+    gpg(home, "--local-user", fpr, "--clearsign", "--output", str(out), str(home / "body"), faked=faked)
+    return out.read_bytes()
+
+
+class Signers:
+    """Three throwaway release keys: one listed, one listed that expired on
+    2021-02-01, and one whose public key is vendored but whose fingerprint is
+    not listed; and the keys directory the intake is pointed at."""
+
+    def __init__(self, scratch: pathlib.Path) -> None:
+        self.homes = scratch / "gpg"
+        self.good = signing_key(self.homes / "good", "good")
+        self.unlisted = signing_key(self.homes / "unlisted", "unlisted")
+        expired = self.homes / "expired"
+        self.expired = signing_key(expired, "expired", "2022-01-01")
+        body = shasums()
+        # Signed before the key expired, and after; its expiry is moved
+        # earlier only once both are made.
+        self.before = clearsigned(expired, self.expired, body, faked="20210115T000000")
+        self.after = clearsigned(expired, self.expired, body, faked="20210301T000000")
+        gpg(expired, "--quick-set-expire", self.expired, "2021-02-01", faked="20210102T000000")
+        self.keys = scratch / "node-keys"
+        self.keys.mkdir()
+        for name, fpr in (("good", self.good), ("unlisted", self.unlisted), ("expired", self.expired)):
+            (self.keys / f"{fpr}.asc").write_bytes(gpg(self.homes / name, "--armor", "--export", fpr))
+        (self.keys / "fingerprints").write_text(f"# test keys\n{self.good}\n{self.expired}\n")
+
+    def signed(self, body: bytes | None = None, by: str = "good") -> bytes:
+        fpr = self.good if by == "good" else self.unlisted
+        return clearsigned(self.homes / by, fpr, shasums() if body is None else body)
+
+    def close(self) -> None:
+        for name in ("good", "unlisted", "expired"):
+            subprocess.run(["gpgconf", "--homedir", str(self.homes / name), "--kill", "gpg-agent"],
+                           capture_output=True, check=False, timeout=60)
+
+
+def tgz(members: dict[str, tuple[bytes, bool]], *, dirs: tuple = (), links: tuple = ()) -> bytes:
+    held = io.BytesIO()
+    with gzip.GzipFile(fileobj=held, mode="wb", mtime=0) as zipped, tarfile.open(fileobj=zipped, mode="w") as tar:
+        for path in dirs:
+            info = tarfile.TarInfo(path)
+            info.type, info.mode = tarfile.DIRTYPE, 0o755
+            tar.addfile(info)
+        for path, (content, executable) in members.items():
+            info = tarfile.TarInfo(path)
+            info.size, info.mode = len(content), 0o755 if executable else 0o644
+            tar.addfile(info, io.BytesIO(content))
+        for path, target in links:
+            info = tarfile.TarInfo(path)
+            info.type, info.linkname = tarfile.SYMTYPE, target
+            tar.addfile(info)
+    return held.getvalue()
+
+
+def node_archive(platform: str) -> tuple[bytes, dict, str, str]:
+    """Node's release archive for `platform`, the unpack-check output of the
+    members kept from it, its file name and its binary."""
+    top = f"node-v{NODE_VERSION}-{NODE_NAMES[platform]}"
+    windows = platform.startswith("windows-")
+    program = f"{top}/node.exe" if windows else f"{top}/bin/node"
+    kept = {program: (f"node for {platform}\n".encode(), not windows), f"{top}/LICENSE": (b"Node.js is MIT\n", False)}
+    members = {**kept, f"{top}/include/node/node.h": (b"// a header the client does not keep\n", False)}
+    if windows:
+        held = io.BytesIO()
+        with zipfile.ZipFile(held, "w") as archive_file:
+            for member, (content, _) in members.items():
+                archive_file.writestr(zipfile.ZipInfo(member, date_time=(1980, 1, 1, 0, 0, 0)), content)
+        return held.getvalue(), listed(kept), f"{top}.zip", program
+    return tgz(members, dirs=(top, f"{top}/bin")), listed(kept), f"{top}.tar.gz", program
+
+
+def shasums() -> bytes:
+    lines = [f"{sha(node_archive(platform)[0])}  {node_archive(platform)[2]}" for platform in NODE_BUILT]
+    lines.append(f"{'0' * 64}  node-v{NODE_VERSION}.tar.gz")
+    return ("\n".join(lines) + "\n").encode()
+
+
+def lay_out_node(observed: pathlib.Path, signed: bytes) -> None:
+    """What the job leaves of Node once per run: the signed checksums and
+    each platform's download, with the unpack-check output of what is kept."""
+    (observed / "node").mkdir(parents=True)
+    (observed / "node/SHASUMS256.txt.asc").write_bytes(signed)
+    (observed / "node/fetched.json").write_text(json.dumps({"chain": [NODE_DIST + "SHASUMS256.txt.asc"]}))
+    for platform in NODE_BUILT:
+        content, listing, file, _ = node_archive(platform)
+        place = observed / "node" / platform
+        place.mkdir()
+        (place / "artifact").write_bytes(content)
+        (place / "fetched.json").write_text(json.dumps({"chain": [NODE_DIST + file]}))
+        (place / "unpack-check.json").write_text(json.dumps(listing))
+
+
+def manifest(**fields: object) -> tuple[bytes, bool]:
+    return json.dumps(fields).encode(), False
+
+
+def npm_tree(top: dict | None = None, changes: dict | None = None, top_files: dict | None = None) -> dict:
+    """An agent's npm tree: npm's lock, each package's tarball by its place in
+    the lock, and the files each package writes. `top` replaces the agent's
+    own package.json, `top_files` adds to its files and `changes` to a
+    location's lock fields."""
+    top = top if top is not None else {
+        "name": "npx-agent", "version": "3.0.0", "bin": {"npx-agent": "bin/agent.js"},
+        "scripts": {"postinstall": "node setup.js", "test": "node test.js"},
+    }
+    own = {
+        "package.json": (json.dumps(top).encode(), False),
+        "bin/agent.js": (b"#!/usr/bin/env node\nrequire('../lib/run.js');\n", False),
+        "lib/run.js": (b"module.exports = 1;\n", False),
+        ".gitignore": (b"node_modules\n", False),
+        "node_modules/bundled-dep/package.json": manifest(name="bundled-dep", version="1.0.0"),
+        "node_modules/bundled-dep/index.js": (b"// bundled\n", False),
+        **(top_files or {}),
+    }
+    # location: (npm's lock fields, the files its tarball writes, or None)
+    packages: dict[str, tuple[dict, dict | None]] = {
+        OPTIONAL: (
+            {"version": "1.0.0", "resolved": NPM + "@scope/opt-linux/-/opt-linux-1.0.0.tgz", "optional": True, "os": ["linux"]},
+            {"package.json": manifest(name="@scope/opt-linux", version="1.0.0"), "opt.node": (b"\x7fELF native\n", True)},
+        ),
+        DEV: ({"version": "0.1.0", "resolved": NPM + "devonly/-/devonly-0.1.0.tgz", "dev": True}, None),
+        TOP: (
+            {"version": "3.0.0", "resolved": NPM + "npx-agent/-/npx-agent-3.0.0.tgz", "hasInstallScript": True,
+             "bin": {"npx-agent": "bin/agent.js"}, "license": "MIT", "dependencies": {"strip": "npm:strip-ansi@7.1.0"}},
+            own,
+        ),
+        BUNDLED: ({"version": "1.0.0", "inBundle": True}, None),
+        ALIAS: (
+            {"name": "strip-ansi", "version": "7.1.0", "resolved": NPM + "strip-ansi/-/strip-ansi-7.1.0.tgz"},
+            {"package.json": manifest(name="strip-ansi", version="7.1.0"), "index.js": (b"module.exports = s => s;\n", False)},
+        ),
+        GYP: (
+            {"version": "2.0.0", "resolved": NPM + "withgyp/-/withgyp-2.0.0.tgz", "hasInstallScript": True},
+            {"package.json": manifest(name="withgyp", version="2.0.0", scripts={"test": "x"}),
+             "binding.gyp": (b"{\"targets\": []}\n", False), "src/addon.c": (b"int addon;\n", False)},
+        ),
+    }
+    lock_packages: dict = {"": {"name": "root", "version": "1.0.0", "dependencies": {"npx-agent": "3.0.0"}}}
+    tarballs: dict[int, bytes] = {}
+    for index, (location, (fields, files)) in enumerate(sorted(packages.items()), start=1):
+        fields = dict(fields)
+        if files is not None:
+            tarball = tgz({f"package/{path}": member for path, member in files.items()},
+                          dirs=("package", "package/lib"), links=(("package/lib/link.js", "run.js"),))
+            tarballs[index] = tarball
+            if location == ALIAS:
+                fields["integrity"] = "sha1-" + base64.b64encode(hashlib.sha1(tarball).digest()).decode()
+            elif location != OPTIONAL:
+                fields["integrity"] = "sha512-" + base64.b64encode(hashlib.sha512(tarball).digest()).decode()
+        fields.update((changes or {}).get(location, {}))
+        lock_packages[location] = fields
+    return {
+        "lock": {"name": "root", "version": "1.0.0", "lockfileVersion": 3, "requires": True, "packages": lock_packages},
+        "tarballs": tarballs,
+        "files": {location: files for location, (_, files) in packages.items() if files is not None},
+    }
+
+
+def installed_on(tree: dict, platform: str) -> list[str]:
+    """The locations `npm ci` installs on `platform`, in the lock's order."""
+    return [
+        location for location, fields in tree["lock"]["packages"].items()
+        if location and not fields.get("dev") and (location != OPTIONAL or platform.startswith("linux-"))
+    ]
+
+
+def npm_listing(tree: dict, platform: str) -> dict:
+    """What `tree` lists of `npm ci`'s output on `platform`: each package's
+    files, the declared bin made runnable and `.gitignore` written as
+    `.npmignore`, beside npm's own files and the project's."""
+    windows = platform.startswith("windows-")
+    files = [
+        {"exec": False, "path": "package.json", "sha256": sha(b"{}"), "size": 2},
+        {"exec": False, "path": "package-lock.json", "sha256": sha(b"{}"), "size": 2},
+        {"exec": False, "path": "node_modules/.package-lock.json", "sha256": sha(b"{}"), "size": 2},
+        {"exec": not windows, "path": "node_modules/.bin/npx-agent", "sha256": sha(b"#!"), "size": 2},
+    ]
+    for location in installed_on(tree, platform):
+        bins = set(tree["lock"]["packages"][location].get("bin", {}).values())
+        for path, (content, executable) in tree["files"].get(location, {}).items():
+            name = path[: -len(".gitignore")] + ".npmignore" if path.rpartition("/")[2] == ".gitignore" else path
+            runnable = (executable or path in bins) and not windows
+            files.append({"exec": runnable, "path": f"{location}/{name}", "sha256": sha(content), "size": len(content)})
+    return {"files": files}
+
+
+def built_listing(tree: dict, platform: str) -> dict:
+    """What `crucible agents unpack-check` prints for the lock on `platform`."""
+    return {"files": [
+        {"exec": executable, "kind": "file", "path": f"{location}/{path}", "sha256": sha(content), "size": len(content)}
+        for location in installed_on(tree, platform)
+        for path, (content, executable) in tree["files"].get(location, {}).items()
+    ]}
+
+
+def expected_lock(tree: dict, platform: str) -> dict:
+    """The lock asset for `platform`, worked out from the files each tarball
+    was made of rather than read back from it."""
+    places = {location: index for index, location in enumerate(tree["lock"]["packages"])}
+    packages = []
+    for location in installed_on(tree, platform):
+        fields = tree["lock"]["packages"][location]
+        name = fields.get("name", location.removeprefix("node_modules/").rpartition("node_modules/")[2])
+        package: dict = {"location": location, "name": name, "version": fields["version"]}
+        if fields.get("inBundle"):
+            package["in_bundle"] = True
+        else:
+            tarball = tree["tarballs"][places[location]]
+            files = tree["files"][location]
+            package.update(
+                url=fields["resolved"], size=len(tarball), sha512=hashlib.sha512(tarball).hexdigest(),
+                files=len(files), unpacked=sum(len(content) for content, _ in files.values()),
+            )
+        packages.append(package)
+    return {"packages": packages, "unpack_rules": 1}
+
+
+def lock_bytes(lock: dict) -> bytes:
+    return json.dumps(lock, sort_keys=True, separators=(",", ":")).encode()
+
+
+def lay_out_npm(
+    observed: pathlib.Path,
+    agent: str,
+    tree: dict,
+    *,
+    chains: dict | None = None,
+    npm_side=None,
+    built_side=None,
+) -> None:
+    """What the job leaves for one npm agent: npm's lock, each tarball, and on
+    each platform in `NODE_BUILT` the two listings of its tree, crucible's lock
+    and the probe. `npm_side` and `built_side` change a platform's listing."""
+    place = observed / agent
+    (place / "resolve").mkdir(parents=True)
+    (place / "resolve/package-lock.json").write_text(json.dumps(tree["lock"]))
+    locations = list(tree["lock"]["packages"])
+    for index, tarball in tree["tarballs"].items():
+        held = place / "tarballs" / str(index)
+        held.mkdir(parents=True)
+        (held / "artifact").write_bytes(tarball)
+        url = tree["lock"]["packages"][locations[index]].get("resolved")
+        chain = (chains or {}).get(locations[index], [url])
+        (held / "fetched.json").write_text(json.dumps({"chain": chain}))
+    for platform in NODE_BUILT:
+        made = place / platform / "tree"
+        made.mkdir(parents=True)
+        npm = npm_listing(tree, platform)
+        built = built_listing(tree, platform)
+        if npm_side is not None:
+            npm_side(platform, npm)
+        if built_side is not None:
+            built_side(platform, built)
+        (made / "npm.json").write_text(json.dumps(npm))
+        (made / "unpack-check.json").write_text(json.dumps(built))
+        (made / "lock.json").write_bytes(lock_bytes(expected_lock(tree, platform)))
+        (place / platform / "probe.json").write_text(json.dumps(PROBED))
+
+
+def top_manifest(**changed: object) -> dict:
+    """The agent's own package.json, with `changed` in place of its fields; a
+    field changed to None is left out."""
+    held = {
+        "name": "npx-agent", "version": "3.0.0", "bin": {"npx-agent": "bin/agent.js"},
+        "scripts": {"postinstall": "node setup.js", "test": "node test.js"},
+    }
+    held.update(changed)
+    return {field: value for field, value in held.items() if value is not None}
+
+
+def npm_case(
+    observed: pathlib.Path,
+    agents: list[dict],
+    choices: dict,
+    agent_id: str,
+    tree: dict | None = None,
+    package: str = "npx-agent@3.0.0",
+    **kept: object,
+) -> dict | None:
+    """One npm agent in the registry, and what the job left for it."""
+    spec: dict = {"package": package, "args": ["--acp"]}
+    if agent_id == "npx-agent":
+        spec["env"] = {"NPX_QUIET": "1"}
+    agents.append({"id": agent_id, "name": agent_id, "version": "3.0.0", "license": "MIT", "distribution": {"npx": spec}})
+    choices[agent_id] = {"key": "nodeagent" if agent_id == "npx-agent" else agent_id.removesuffix("-npm")}
+    if tree is not None:
+        lay_out_npm(observed, agent_id, tree, **kept)
+    return tree
+
+
+def on(platforms: tuple, change):
+    """A listing change made on `platforms` alone."""
+    def side(platform: str, listing: dict) -> None:
+        if platform in platforms:
+            change(listing["files"])
+    return side
+
+
+def file_of(files: list[dict], path: str) -> dict:
+    return next(item for item in files if item["path"] == path)
+
+
+def npm_registry(scratch: pathlib.Path, signers: Signers) -> tuple[pathlib.Path, pathlib.Path, dict]:
+    """A registry of npm agents, the main one and each case, with what the job
+    left for them; returns the registry, the choices and the main tree."""
+    observed = scratch / "observed"
+    lay_out_node(observed, signers.signed())
+    agents: list[dict] = []
+    choices: dict = {}
+    main = npm_case(observed, agents, choices, "npx-agent", npm_tree())
+    for agent_id, package in (
+        ("range-npm", "npx-agent@^3.0.0"),
+        ("tag-npm", "npx-agent@latest"),
+        ("alias-npm", "npx-agent@npm:other@3.0.0"),
+        ("upper-npm", "Npx-Agent@3.0.0"),
+        ("bare-npm", "npx-agent"),
+    ):
+        npm_case(observed, agents, choices, agent_id, package=package)
+    npm_case(observed, agents, choices, "notop-npm", npm_tree(), package="npx-agent@3.0.1")
+    wrong_sha1 = "sha1-" + base64.b64encode(b"\0" * 20).decode()
+    wrong_sha512 = "sha512-" + base64.b64encode(b"\0" * 64).decode()
+    npm_case(observed, agents, choices, "sha1bad-npm", npm_tree(changes={ALIAS: {"integrity": wrong_sha1}}))
+    npm_case(observed, agents, choices, "sha512bad-npm", npm_tree(changes={TOP: {"integrity": wrong_sha512}}))
+    # A SHA-512 that agrees is held; a SHA-1 beside it is not.
+    tree = npm_tree()
+    held = tree["lock"]["packages"][TOP]["integrity"]
+    npm_case(observed, agents, choices, "both-npm", npm_tree(changes={TOP: {"integrity": f"{held} {wrong_sha1}"}}))
+    npm_case(observed, agents, choices, "offreg-npm", npm_tree(changes={ALIAS: {"resolved": "https://registry.example/strip-ansi/-/strip-ansi-7.1.0.tgz"}}))
+    npm_case(observed, agents, choices, "query-npm", npm_tree(changes={ALIAS: {"resolved": NPM + "strip-ansi/-/strip-ansi-7.1.0.tgz?x=1"}}))
+    npm_case(
+        observed, agents, choices, "hop-npm", npm_tree(),
+        chains={ALIAS: [NPM + "strip-ansi/-/strip-ansi-7.1.0.tgz", "https://cdn.example/strip-ansi.tgz"]},
+    )
+    npm_case(observed, agents, choices, "scriptless-npm", npm_tree(changes={GYP: {"hasInstallScript": False}}))
+    npm_case(observed, agents, choices, "scripted-npm", npm_tree(changes={ALIAS: {"hasInstallScript": True}}))
+    npm_case(observed, agents, choices, "place-npm", npm_tree(changes={ALIAS: {"inBundle": True}}))
+    # The tree npm built differs from crucible's, on Linux alone.
+    linux = ("linux-x86_64",)
+    run_js = TOP + "/lib/run.js"
+    npm_case(observed, agents, choices, "missing-npm", npm_tree(),
+             npm_side=on(linux, lambda files: files.remove(file_of(files, ALIAS + "/index.js"))))
+    npm_case(observed, agents, choices, "hash-npm", npm_tree(),
+             npm_side=on(linux, lambda files: file_of(files, run_js).update(sha256="e" * 64)))
+    # On Windows nothing is runnable, so an exec flag is not compared there.
+    npm_case(observed, agents, choices, "exec-npm", npm_tree(),
+             npm_side=on(("linux-x86_64", "windows-x86_64"), lambda files: file_of(files, run_js).update(exec=True)))
+    npm_case(observed, agents, choices, "extra-npm", npm_tree(),
+             npm_side=on(linux, lambda files: files.append(
+                 {"exec": False, "path": "node_modules/stray/index.js", "sha256": "e" * 64, "size": 1})))
+    npm_case(observed, agents, choices, "npmignore-npm", npm_tree(),
+             npm_side=on(linux, lambda files: file_of(files, TOP + "/.npmignore").update(sha256="e" * 64)))
+    npm_case(observed, agents, choices, "lockdiff-npm", npm_tree())
+    (observed / "lockdiff-npm/linux-x86_64/tree/lock.json").write_bytes(b'{"packages":[],"unpack_rules":1}')
+    # The bin npx would run.
+    for agent_id, top in (
+        ("binstr-npm", top_manifest(bin="bin/agent.js")),
+        ("binmany-npm", top_manifest(bin={"other": "lib/run.js", "npx-agent": "bin/agent.js"})),
+        ("binnone-npm", top_manifest(bin={"a": "lib/run.js", "b": "bin/agent.js"})),
+        ("bindir-npm", top_manifest(bin=None, directories={"bin": "bin"})),
+        ("binmissing-npm", top_manifest(bin={"npx-agent": "bin/missing.js"})),
+    ):
+        npm_case(observed, agents, choices, agent_id, npm_tree(top=top))
+    # A registry id the job's own Node directory would collide with.
+    npm_case(observed, agents, choices, "node")
+    registry = written(scratch, "npm-registry.json", {"version": "1.0.0", "agents": agents})
+    assert main is not None
+    return registry, written(scratch, "npm-choices.json", choices), main
+
+
+def npm_review(
+    scratch: pathlib.Path,
+    signers: Signers,
+    registry: pathlib.Path,
+    choices: pathlib.Path,
+    *extra: str | pathlib.Path,
+    name: str = "review.json",
+    node: str = "22.15.0",
+) -> tuple[dict, pathlib.Path]:
+    pin = written(scratch, f"node-{name}", {"version": node})
+    return review(scratch, "--node", pin, "--node-keys", signers.keys, *extra, name=name, registry=registry, choices=choices)
+
+
+def decided(scratch: pathlib.Path, value: object, name: str = "dispositions.json") -> pathlib.Path:
+    return written(scratch, name, value)
+
+
+def check_npm(scratch: pathlib.Path, signers: Signers) -> None:
+    """An npm agent is pinned per target as Node and the lock of the tree npm
+    installs there, once that tree is the one crucible builds from the lock;
+    whatever cannot be is dropped, naming why."""
+    scratch = scratch / "npm"
+    scratch.mkdir()
+    registry, choices, tree = npm_registry(scratch, signers)
+    dispositions = decided(scratch, {"npx-agent": {f"{TOP} postinstall": "inert"}})
+    data, assets = npm_review(scratch, signers, registry, choices, "--dispositions", dispositions)
+    entries = {entry["key"]: entry for entry in data["entries"]}
+    assert sorted(entries) == [
+        "bindir", "binmany", "binstr", "both", "exec", "extra", "hash", "lockdiff", "missing", "nodeagent",
+        "npmignore",
+    ], sorted(entries)
+
+    entry = entries["nodeagent"]
+    assert entry["kind"] == "npm" and entry["registry_id"] == "npx-agent", entry["kind"]
+    assert entry["lock_revision"] == 1, entry.get("lock_revision")
+    targets = {target["platform"]: target for target in entry["targets"]}
+    assert sorted(targets) == sorted(NODE_BUILT), sorted(targets)
+    for platform, target in targets.items():
+        content, listing, file, program = node_archive(platform)
+        assert target["cmd"] == program, target["cmd"]
+        assert target["node_args"] == [] and target["args"] == ["--acp"], target
+        assert target["env"] == {"NPX_QUIET": "1"}, target["env"]
+        assert target["bin"] == TOP + "/bin/agent.js", target["bin"]
+        [node] = target["artifacts"]
+        assert node["url"] == NODE_DIST + file and node["sha256"] == sha(content), node["url"]
+        assert node["format"] == ("zip" if platform.startswith("windows-") else "tar.gz"), node["format"]
+        assert node["kept"] == [program, program.split("/")[0] + "/LICENSE"], node["kept"]
+        assert node["files"] == listing["files"], "Node's kept members are listed"
+        assert "mirror_licence" not in node, "Node is never mirrored"
+        assert target["hosts"] == ["nodejs.org", "registry.npmjs.org"], target["hosts"]
+        lock = lock_bytes(expected_lock(tree, platform))
+        assert target["lock"] == {"sha256": sha(lock), "size": len(lock), "unpack_rules": 1}, "the lock is pinned by hash"
+        assert (assets / sha(lock)).read_bytes() == lock, "the lock asset is the lock the tree was built from"
+        assert target["probe"]["sandbox"] == "closed", target["probe"]
+    # An alias is locked under its own name where it is installed, a bundled
+    # package as part of the tarball that holds it, an optional one only where
+    # it fits, and a dev one nowhere: worked out here, not read back.
+    linux = json.loads((assets / targets["linux-x86_64"]["lock"]["sha256"]).read_bytes())
+    alias_tarball = tree["tarballs"][5]
+    assert {"location": ALIAS, "name": "strip-ansi", "version": "7.1.0", "url": NPM + "strip-ansi/-/strip-ansi-7.1.0.tgz",
+            "size": len(alias_tarball), "sha512": hashlib.sha512(alias_tarball).hexdigest(),
+            "files": 2, "unpacked": len(manifest(name="strip-ansi", version="7.1.0")[0]) + len(b"module.exports = s => s;\n")
+            } in linux["packages"], linux["packages"]
+    assert {"location": BUNDLED, "name": "bundled-dep", "version": "1.0.0", "in_bundle": True} in linux["packages"], linux
+    own = next(package for package in linux["packages"] if package["location"] == TOP)
+    assert own["files"] == 6, "a bundled package's files are counted in the tarball that holds it"
+    assert [package["location"] for package in linux["packages"]] == [OPTIONAL, TOP, BUNDLED, ALIAS, GYP], linux
+    assert targets["darwin-aarch64"]["lock"] == targets["windows-x86_64"]["lock"], "one lock is shared by hash"
+    assert targets["darwin-aarch64"]["lock"] != targets["linux-x86_64"]["lock"], "an optional package that fits differs"
+    # Each script --ignore-scripts skipped carries its disposition, or none.
+    assert targets["linux-x86_64"]["scripts"] == [
+        {"disposition": "inert", "event": "postinstall", "package": TOP},
+        {"disposition": None, "event": "install", "package": GYP},
+    ], targets["linux-x86_64"]["scripts"]
+    assert {"event": "install", "package": GYP, "registry_id": "npx-agent"} in data["undecided"], data["undecided"]
+    assert {"event": "postinstall", "package": TOP, "registry_id": "npx-agent"} not in data["undecided"], data["undecided"]
+
+    dropped(data, "npx-agent", "freebsd-x86_64", "Node publishes no build")
+    dropped(data, "npx-agent", "linux-aarch64", "Node 22.15.0", "nothing was downloaded")
+    for agent_id in ("range-npm", "tag-npm", "alias-npm", "upper-npm", "bare-npm"):
+        dropped(data, agent_id, None, "exact version")
+    dropped(data, "notop-npm", None, "installs no npx-agent 3.0.1")
+    dropped(data, "sha1bad-npm", None, ALIAS, "integrity")
+    dropped(data, "sha512bad-npm", None, TOP, "integrity")
+    dropped(data, "offreg-npm", None, "registry.example", "https://registry.npmjs.org/")
+    dropped(data, "query-npm", None, "not a plain address")
+    dropped(data, "hop-npm", None, "cdn.example", "registry.npmjs.org")
+    dropped(data, "scriptless-npm", None, GYP, "no install script", "install")
+    dropped(data, "scripted-npm", None, ALIAS, "has an install script")
+    dropped(data, "place-npm", None, ALIAS, "bundled in no package")
+    dropped(data, "missing-npm", "linux-x86_64", "npm's tree lacks", ALIAS + "/index.js")
+    dropped(data, "hash-npm", "linux-x86_64", run_js := TOP + "/lib/run.js", "differs")
+    dropped(data, "exec-npm", "linux-x86_64", run_js, "runnable")
+    assert sorted(target["platform"] for target in entries["exec"]["targets"]) == ["darwin-aarch64", "windows-x86_64"]
+    dropped(data, "extra-npm", "linux-x86_64", "node_modules/stray/index.js", "under no package")
+    dropped(data, "npmignore-npm", "linux-x86_64", TOP + "/.gitignore", "differs")
+    dropped(data, "lockdiff-npm", "linux-x86_64", "tree/lock.json")
+    for key in ("missing", "hash", "extra", "npmignore", "lockdiff"):
+        assert sorted(t["platform"] for t in entries[key]["targets"]) == ["darwin-aarch64", "windows-x86_64"], key
+    for key in ("binstr", "binmany", "bindir"):
+        assert {t["bin"] for t in entries[key]["targets"]} == {TOP + "/bin/agent.js"}, (key, entries[key]["targets"])
+    dropped(data, "binnone-npm", "linux-x86_64", "2 bins", "none npx-agent")
+    dropped(data, "binmissing-npm", "linux-x86_64", TOP + "/bin/missing.js", "not a file in the tree")
+    dropped(data, "node", None, "node")
+
+    # The diff marks a script with no disposition, and the whole start.
+    ran = intake("diff", scratch / "review.json")
+    assert ran.returncode == 0, ran.stderr
+    lines = ran.stdout.splitlines()
+    assert any("**undecided**" in line and GYP in line and "install" in line for line in lines), ran.stdout
+    assert any("bin" in line and TOP + "/bin/agent.js" in line for line in lines), ran.stdout
+    assert any("lock revision" in line and "1" in line for line in lines), ran.stdout
+
+    check_npm_revision(scratch, signers, registry, choices, dispositions, data)
+    check_npm_recheck(scratch, data, assets)
+    check_npm_publish(scratch, data, assets)
+    check_npm_lock_and_tree(scratch, tree)
+
+
+def check_npm_revision(
+    scratch: pathlib.Path, signers: Signers, registry: pathlib.Path, choices: pathlib.Path,
+    dispositions: pathlib.Path, data: dict,
+) -> None:
+    """A version reviewed before keeps its lock revision while every lock is
+    the same, and takes the next one when any lock changed."""
+    held = written(scratch, "npm-merged.json", data)
+    same, _ = npm_review(scratch, signers, registry, choices, "--dispositions", dispositions, "--merged", held, name="same.json")
+    [entry] = [entry for entry in same["entries"] if entry["key"] == "nodeagent"]
+    assert entry["lock_revision"] == 1, entry["lock_revision"]
+    old = copy.deepcopy(data)
+    [listed] = [entry for entry in old["entries"] if entry["key"] == "nodeagent"]
+    listed["lock_revision"] = 4
+    listed["targets"][0]["lock"]["sha256"] = "d" * 64
+    changed = written(scratch, "npm-merged-changed.json", old)
+    bumped, _ = npm_review(scratch, signers, registry, choices, "--dispositions", dispositions, "--merged", changed, name="bumped.json")
+    [entry] = [entry for entry in bumped["entries"] if entry["key"] == "nodeagent"]
+    assert entry["lock_revision"] == 5, entry["lock_revision"]
+    ran = intake("diff", "--old", changed, scratch / "bumped.json")
+    assert ran.returncode == 0, ran.stderr
+    assert any("new lock revision" in line and "5" in line for line in ran.stdout.splitlines()), ran.stdout
+
+
+def check_npm_recheck(scratch: pathlib.Path, data: dict, assets: pathlib.Path) -> None:
+    """The daily re-check lists each tarball once by hash, and proposes a
+    revocation only for a tarball the registry no longer serves."""
+    merged = written(scratch, "recheck-merged.json", data)
+    out = scratch / "recheck.json"
+    ran = intake("recheck", "--merged", merged, "--assets", assets, "--out", out)
+    assert ran.returncode == 0, ran.stderr
+    listed = json.loads(out.read_text())["tarballs"]
+    hashes = [item["sha512"] for item in listed]
+    assert len(hashes) == len(set(hashes)), "a tarball is listed once"
+    alias = next(item for item in listed if item["url"].endswith("strip-ansi-7.1.0.tgz"))
+    # Every case kept shares the main agent's tarballs but the bin cases',
+    # whose own package differs: five of the main tree and one each of theirs.
+    assert len(listed) == 7, listed
+    for status, proposed in ((404, True), (410, True), (503, False)):
+        results = written(scratch, f"results-{status}.json", {alias["sha512"]: status})
+        out = scratch / f"recheck-{status}.json"
+        ran = intake("recheck", "--merged", merged, "--assets", assets, "--results", results, "--out", out)
+        assert ran.returncode == 0, ran.stderr
+        revoked = json.loads(out.read_text())["revocations"]
+        if proposed:
+            keys = sorted(item["key"] for item in revoked)
+            assert "nodeagent" in keys and all(item["version"] == "3.0.0" and item["lock_revision"] == 1 for item in revoked), revoked
+            assert all(alias["url"] in item["reason"] and str(status) in item["reason"] for item in revoked), revoked
+        else:
+            assert revoked == [], f"{status} proposes nothing: {revoked}"
+
+
+def check_npm_publish(scratch: pathlib.Path, data: dict, assets: pathlib.Path) -> None:
+    """A lock asset the merged data names is published."""
+    held = scratch / "publish-npm"
+    (held / "assets").mkdir(parents=True)
+    [entry] = [entry for entry in data["entries"] if entry["key"] == "nodeagent"]
+    named = entry["targets"][0]["lock"]["sha256"]
+    (held / "assets" / named).write_bytes((assets / named).read_bytes())
+    (held / "merged.json").write_text(json.dumps(data))
+    ran = intake("publish-check", "--merged", held / "merged.json", "--assets", held / "assets")
+    assert ran.returncode == 0, f"a lock asset was refused:\n{ran.stdout}{ran.stderr}"
+
+
+def check_npm_lock_and_tree(scratch: pathlib.Path, tree: dict) -> None:
+    """`lock` writes the lock `review` holds the tree to, and `tree` lists a
+    directory's regular files as npm's side of the comparison."""
+    out = scratch / "lock.json"
+    ran = intake("lock", "--resolved", scratch / "observed/npx-agent", "--package", "npx-agent@3.0.0",
+                 "--platform", "darwin-aarch64", "--out", out)
+    assert ran.returncode == 0, ran.stderr
+    assert out.read_bytes() == lock_bytes(expected_lock(tree, "darwin-aarch64")), out.read_text()
+    made = scratch / "made"
+    (made / "node_modules/a/bin").mkdir(parents=True)
+    (made / "node_modules/a/index.js").write_bytes(b"1\n")
+    (made / "node_modules/a/bin/run").write_bytes(b"#!\n")
+    os.chmod(made / "node_modules/a/bin/run", 0o744)
+    (made / "node_modules/.bin").mkdir()
+    (made / "node_modules/.bin/run").symlink_to("../a/bin/run")
+    out = scratch / "tree.json"
+    ran = intake("tree", "--root", made, "--out", out)
+    assert ran.returncode == 0, ran.stderr
+    assert json.loads(out.read_text()) == {"files": [
+        {"exec": True, "path": "node_modules/a/bin/run", "sha256": sha(b"#!\n"), "size": 3},
+        {"exec": False, "path": "node_modules/a/index.js", "sha256": sha(b"1\n"), "size": 2},
+    ]}, out.read_text()
+
+
+def check_npm_node(scratch: pathlib.Path, signers: Signers) -> None:
+    """Node's checksums are taken only under one good signature by a listed
+    key made before that key expired, and Node's download only as they list it;
+    a pin or dispositions that break a rule refuse the run."""
+    scratch = scratch / "npm-node"
+    for name, signed, change, words in (
+        ("unlisted", signers.signed(by="unlisted"), None, "fingerprint"),
+        ("expired", signers.after, None, "expired"),
+        ("garbled", b"not signed at all\n", None, "one good signature"),
+        ("repeated", signers.signed(shasums() + shasums()), None, "twice"),
+        ("tampered", signers.signed(), "node/linux-x86_64/artifact", "not the bytes SHASUMS256.txt lists"),
+        ("before", signers.before, None, None),
+    ):
+        held = scratch / name
+        observed = held / "observed"
+        lay_out_node(observed, signed)
+        agents: list[dict] = []
+        choices: dict = {}
+        npm_case(observed, agents, choices, "npx-agent", npm_tree())
+        if change is not None:
+            (observed / change).write_bytes(b"other bytes")
+        registry = written(held, "registry.json", {"version": "1.0.0", "agents": agents})
+        data, _ = npm_review(held, signers, registry, written(held, "choices.json", choices))
+        if words is None:
+            assert [entry["key"] for entry in data["entries"]] == ["nodeagent"], f"{name}: {data['dropped']}"
+        elif change is not None:
+            dropped(data, "npx-agent", "linux-x86_64", words)
+            assert [entry["key"] for entry in data["entries"]] == ["nodeagent"], name
+        else:
+            assert not data["entries"], f"{name}: {data['entries']}"
+            for platform in NODE_BUILT:
+                dropped(data, "npx-agent", platform, "not verified", words)
+    held = scratch / "before"
+
+    def refuses(name: str, words: str, *extra: str | pathlib.Path, env: dict | None = None) -> None:
+        ran = subprocess.run(
+            [sys.executable, "-I", str(INTAKE), "review", "--registry", REGISTRY, "--choices", CHOICES,
+             "--runners", RUNNERS, "--observed", held / "observed", "--deny", ROOT / "deny.toml",
+             "--assets", scratch / "none", "--out", scratch / f"{name}.json", *map(str, extra)],
+            capture_output=True, text=True, check=False, timeout=60, env=env,
+        )
+        assert ran.returncode == 1 and words in ran.stderr, f"{name}: {ran.returncode} {ran.stderr!r} lacks {words!r}"
+        assert "Traceback" not in ran.stderr and not (scratch / f"{name}.json").exists(), f"{name}: {ran.stderr!r}"
+
+    for name, pin, words in (
+        ("odd", '{"version": "23.1.0"}', "long-term-support"),
+        ("early", '{"version": "22.14.0"}', "22.15.0"),
+        ("old", '{"version": "20.19.0"}', "long-term-support"),
+        ("extra", '{"version": "22.15.0", "mirror": true}', "mirror"),
+        ("repeated", '{"version": "22.15.0", "version": "24.0.0"}', "twice"),
+        ("loose", '{"version": "v22.15.0"}', "X.Y.Z"),
+    ):
+        path = scratch / f"node-{name}.json"
+        path.write_text(pin)
+        refuses(f"pin-{name}", words, "--node", path, "--node-keys", signers.keys)
+    pin = written(scratch, "pin.json", {"version": "22.15.0"})
+    empty = scratch / "no-gpg"
+    empty.mkdir()
+    refuses("no-gpg", "gpg", "--node", pin, "--node-keys", signers.keys, env={"PATH": str(empty)})
+    for name, value, words in (
+        ("built", {"npx-agent": {f"{TOP} postinstall": "built"}}, "build route"),
+        ("local", {"npx-agent": {f"{TOP} postinstall": "local"}}, "build route"),
+        ("unknown", {"npx-agent": {f"{TOP} postinstall": "skipped"}}, "inert"),
+        ("shapeless", {"npx-agent": "inert"}, "dispositions"),
+    ):
+        refuses(f"dispositions-{name}", words, "--dispositions", decided(scratch, value, f"d-{name}.json"))
+    repeated = scratch / "d-repeated.json"
+    repeated.write_text('{"npx-agent": {"a postinstall": "inert", "a postinstall": "lost"}}')
+    refuses("dispositions-repeated", "twice", "--dispositions", repeated)
+
+
+def check_npm_render(scratch: pathlib.Path) -> None:
+    """The committed catalog carries an npm entry, and one missing what the
+    client reads to start it, or with a script nobody decided, is refused."""
+    catalog = json.loads((RENDER / "catalog.json").read_text())
+    entry = next(entry for entry in catalog["entries"] if entry["kind"] == "npm")
+    target = entry["targets"][0]
+    assert target["lock"]["unpack_rules"] == 1 and target["node_args"] == [], target
+    merged = json.loads((RENDER / "merged.json").read_text())
+    index = next(index for index, entry in enumerate(merged["entries"]) if entry["kind"] == "npm")
+    for name, change, words in (
+        ("undecided", lambda t: t["scripts"][0].update(disposition=None), "disposition"),
+        ("built", lambda t: t["scripts"][0].update(disposition="built"), "disposition"),
+        ("no-bin", lambda t: t.pop("bin"), "bin"),
+        ("rules", lambda t: t["lock"].update(unpack_rules=2), "unpack_rules"),
+        ("no-lock", lambda t: t.pop("lock"), "lock"),
+        ("node-args", lambda t: t.update(node_args="--x"), "node_args"),
+    ):
+        data = copy.deepcopy(merged)
+        change(data["entries"][index]["targets"][0])
+        refused(scratch, f"npm-{name}.json", words, merged=written(scratch, f"m-npm-{name}.json", data))
+    data = copy.deepcopy(merged)
+    data["entries"][index].pop("lock_revision")
+    refused(scratch, "npm-revision.json", "lock_revision", merged=written(scratch, "m-npm-revision.json", data))
+
+
 def main() -> int:
     failures = []
     with tempfile.TemporaryDirectory(prefix="intake-") as held:
         scratch = pathlib.Path(held)
+        signers = Signers(scratch)
         data, assets = review(scratch)
         checks = [
             ("review", lambda: check_review(data, assets)),
@@ -1424,12 +2145,18 @@ def main() -> int:
             ("uvx tags", check_uvx_tags),
             ("uvx bomb", check_uvx_bomb),
             ("uvx render", lambda: check_uvx_render(scratch)),
+            ("npm", lambda: check_npm(scratch, signers)),
+            ("npm node", lambda: check_npm_node(scratch, signers)),
+            ("npm render", lambda: check_npm_render(scratch)),
         ]
-        for name, check in checks:
-            try:
-                check()
-            except Exception as failed:  # every check reports, not just the first
-                failures.append(f"{name}: {type(failed).__name__}: {failed}")
+        try:
+            for name, check in checks:
+                try:
+                    check()
+                except Exception as failed:  # every check reports, not just the first
+                    failures.append(f"{name}: {type(failed).__name__}: {failed}")
+        finally:
+            signers.close()
     for failure in failures:
         print(f"    {failure}"[:2000], file=sys.stderr)
     if failures:

@@ -6,6 +6,7 @@
   "leaky-agent": {"key": "leaky"},
   "reachy-agent": {"key": "reachy", "reach": ["10.0.0.1"]},
   "npx-agent": {"key": "npx"},
+  "docker-agent": {"key": "docker"},
   "split-agent": {"key": "split"},
   "tty-agent": {"key": "tty"},
   "failed-agent": {"key": "failed"},
