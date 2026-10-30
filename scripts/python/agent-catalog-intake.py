@@ -62,10 +62,11 @@ what is left once either is spent waits for the next run.
 - `--merged`, where given: the merged data, against which a version already
   reviewed is held. A release whose content differs from what was reviewed
   under the same version is refused, naming what differs, since a changed
-  release is taken in only under a new version. An `npx` agent is the
-  exception: the tree npm resolves for one version can change, so the entry
-  keeps the merged `lock_revision` while every target's lock is the merged
-  one, and takes the next where any differs.
+  release is taken in only under a new version. An `npx` agent's targets'
+  locks are the one exception: the tree npm resolves for one version can
+  change, so the entry keeps the merged `lock_revision` while every target's
+  lock is the merged one, and takes the next where any differs; any other
+  difference is refused as for every agent.
 
 It writes the review data to `--out`, and each file-list asset (a per-file list
 longer than 256 entries, kept as an asset named by its SHA-256) and each npm
@@ -2142,6 +2143,19 @@ def lock_revision(made: dict, held: dict | None) -> int:
     return before if locks == merged_locks else before + 1
 
 
+def unlocked(entry: dict) -> dict:
+    """An npm entry without its lock revision and each target's lock, the
+    one part a version reviewed before may change in."""
+    held = {field: value for field, value in entry.items() if field != "lock_revision"}
+    targets = held.get("targets")
+    if isinstance(targets, list):
+        held["targets"] = [
+            {field: value for field, value in listed.items() if field != "lock"} if isinstance(listed, dict) else listed
+            for listed in targets
+        ]
+    return held
+
+
 def probe(value: object, platform: str, runner: dict) -> tuple[dict, list[dict], dict]:
     """The `agentInfo`, sign-in methods and record of one target's probe."""
     value = obj(value, f"the probe output for {platform}")
@@ -2401,12 +2415,14 @@ def review(arguments: argparse.Namespace) -> int:
             dropped.append({"reason": reason(failed), "registry_id": agent_id})
             continue
         held = merged.get((made["key"], made["version"]))
+        new, old = made, held
         if made["kind"] == "npm":
-            # A version reviewed before is taken in again under the lock
-            # revision its locks give it, in place of the refusal below.
+            # A version reviewed before may differ from the merged one in its
+            # locks alone, which give its lock revision; any other difference
+            # meets the refusal below.
             made["lock_revision"] = lock_revision(made, held)
-            held = None
-        changed = differences(made, held) if held is not None else []
+            new, old = unlocked(made), None if held is None else unlocked(held)
+        changed = differences(new, old) if old is not None else []
         if changed:
             dropped.append(
                 {

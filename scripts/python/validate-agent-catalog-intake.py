@@ -1959,6 +1959,23 @@ def check_npm_revision(
     ran = intake("diff", "--old", changed, scratch / "bumped.json")
     assert ran.returncode == 0, ran.stderr
     assert any("new lock revision" in line and "5" in line for line in ran.stdout.splitlines()), ran.stdout
+    # Under the same locks, any other difference is a changed release, which
+    # is taken in only under a new version; a lock that changed beside it
+    # takes in nothing more.
+    for name, change in (
+        ("args", lambda entry: entry["targets"][0].update(args=["--other"])),
+        ("lock-and-env", lambda entry: (entry["targets"][0]["lock"].update(sha256="d" * 64),
+                                        entry["targets"][0].update(env={}))),
+        ("target-gone", lambda entry: entry["targets"].pop()),
+    ):
+        old = copy.deepcopy(data)
+        [listed] = [entry for entry in old["entries"] if entry["key"] == "nodeagent"]
+        change(listed)
+        held = written(scratch, f"npm-merged-{name}.json", old)
+        moved, _ = npm_review(scratch, signers, registry, choices, "--dispositions", dispositions, "--merged", held,
+                              name=f"moved-{name}.json")
+        assert "nodeagent" not in [entry["key"] for entry in moved["entries"]], f"{name} was taken in"
+        dropped(moved, "npx-agent", None, "already reviewed with other content", "a changed release")
 
 
 def check_npm_recheck(scratch: pathlib.Path, data: dict, assets: pathlib.Path) -> None:
