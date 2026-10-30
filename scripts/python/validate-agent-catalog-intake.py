@@ -1940,6 +1940,7 @@ def npm_registry(scratch: pathlib.Path, signers: Signers) -> tuple[pathlib.Path,
         {"package.json": manifest(name="inner", version="1.0.0", bin={"bundled": "i.js"}), "i.js": (b"1\n", False)},
     )}))
     npm_case(observed, agents, choices, "binname-npm", npm_tree(top=top_manifest(bin={"npx-agent": "bin/agent.js", "a:b": "lib/run.js"})))
+    npm_case(observed, agents, choices, "binnode-npm", npm_tree(top=top_manifest(bin={"npx-agent": "bin/agent.js", "NODE": "bin/agent.js"})))
     # The program below the top of the tree that one at its top settles.
     npm_case(observed, agents, choices, "binsettled-npm", npm_tree(extra={inner: (
         {"version": "1.0.0", "resolved": NPM + "inner/-/inner-1.0.0.tgz"},
@@ -2100,6 +2101,7 @@ def check_npm(scratch: pathlib.Path, signers: Signers) -> None:
         dropped(data, "bintop-npm", platform, "npx-agent", "top of the tree")
         dropped(data, "bincontested-npm", platform, "bundled", "none at the top")
         dropped(data, "binname-npm", platform, "a:b", "not one file name")
+        dropped(data, "binnode-npm", platform, "NODE", "pinned Node")
     dropped(data, "binnone-npm", "linux-x86_64", "2 bins", "none npx-agent")
     for platform in NODE_BUILT:
         dropped(data, "binmissing-npm", platform, TOP + "/bin/missing.js", "not a file in the tree")

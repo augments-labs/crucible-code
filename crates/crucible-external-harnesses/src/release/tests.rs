@@ -4706,6 +4706,8 @@ fn a_program_with_a_bad_name_or_a_script_that_leaves_its_package_is_refused() {
         ("a name with a backslash", program("a\\b", "bin/peer.js")),
         ("a name not ASCII", program("p\u{e9}er", "bin/peer.js")),
         ("a name with a dot first", program("./peer", "bin/peer.js")),
+        ("the pinned Node's name", program("node", "bin/peer.js")),
+        ("its name in capitals", program("NoDe", "bin/peer.js")),
         ("a script climbing", program("peer", "../other/bin/x.js")),
         ("climbing inside", program("peer", "bin/../../x.js")),
         ("a script absolute", program("peer", "/bin/peer.js")),

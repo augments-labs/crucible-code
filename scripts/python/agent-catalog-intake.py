@@ -154,7 +154,7 @@ it states one as text, and the programs it declares by `bin` or
 `directories.bin`; it is named by its SHA-256, so targets with the same tree
 share one. A licence or programs the client would refuse drop the target: a
 licence that is not printable ASCII of at most 256 bytes, a program whose name
-is not one file name, whose script lies in another package or is not a file
+is not one file name or is Node's own in any case, whose script lies in another package or is not a file
 the tree holds, two whose names differ only in case, one two packages at the
 top of the tree declare or two below it and none at it, and more than 64 in
 one package or 1,024 in the tree. The target is dropped unless the job's
@@ -2343,7 +2343,7 @@ def npm_programs(item: dict, tarball: dict) -> dict[str, str]:
     the files `tarball`, its own or its holder's, writes. A script that is not
     a relative path inside the package is left out, as npm links nothing for
     it. Refused where the client would refuse the lock: a name that is not
-    one file name, a script it does not write as given, one in another
+    one file name or is Node's own, a script it does not write as given, one in another
     package's location or not a file in the tree, and more than
     `PACKAGE_PROGRAMS` of them."""
     location = item["location"]
@@ -2375,6 +2375,9 @@ def npm_programs(item: dict, tarball: dict) -> dict[str, str]:
         if written != name:
             raise Dropped(f"{clipped(location)} declares the program {shown(clipped(name))}, whose name is not one "
                           "file name the client writes")
+        if name.lower() == "node":
+            raise Dropped(f"{clipped(location)} declares the program {shown(clipped(name))}, the pinned Node's own "
+                          "name, which the client refuses")
         try:
             script = npm_written(script)
         except Dropped:

@@ -43,7 +43,8 @@
 //!     its script, relative to its location. Left out where it declares none,
 //!     and at most [`PACKAGE_PROGRAMS`] of them. A name is one component held
 //!     to the rules a name the release unpacker writes is, spelled as those
-//!     rules leave it. A script is held to the same rules, so it is relative
+//!     rules leave it, and not `node` in any case, which is the pinned Node's
+//!     own name on the agent's `PATH`. A script is held to the same rules, so it is relative
 //!     and climbs out through no `..`, and does not begin with a
 //!     `node_modules` component, whatever its case, so it is the package's own
 //!     file and no other package's; from the tree's root it is at most
@@ -779,6 +780,9 @@ fn licence(fields: &Fields<'_>) -> Result<Option<Box<str>>, NpmError> {
     }
 }
 
+/// The program name the pinned Node goes by, which no package may declare.
+const NODE_PROGRAM: &str = "node";
+
 /// The programs `fields` declares for the package installed at `location`,
 /// each by its name and its script, relative to that location.
 fn declared(fields: &Fields<'_>, location: &str) -> Result<BTreeMap<Box<str>, Box<str>>, NpmError> {
@@ -798,6 +802,11 @@ fn declared(fields: &Fields<'_>, location: &str) -> Result<BTreeMap<Box<str>, Bo
     for (name, script) in declared {
         if name.contains('/') || named(name.as_bytes(), false).map_err(unnamed)? != *name {
             return Err(fields.wrong("bin", "names a program that is not one file name"));
+        }
+        // `.bin` is put on the agent's `PATH`, so a stub named for Node could
+        // stand in for the pinned Node itself, on a system that folds case too.
+        if name.eq_ignore_ascii_case(NODE_PROGRAM) {
+            return Err(fields.wrong("bin", "names a program after the pinned Node"));
         }
         let Value::String(script) = script else {
             return Err(fields.wrong("bin", "gives a script that is not text"));
