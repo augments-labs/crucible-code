@@ -2208,6 +2208,14 @@ def check_npm_tarballs(scratch: pathlib.Path) -> None:
     base = [(f"package/{path}", tarfile.REGTYPE, content) for path, (content, _) in tree["files"][TOP].items()]
     deep = "/".join(["d" * 200] * 4)
     many = [(f"package/d{index}", tarfile.DIRTYPE, b"") for index in range(65_537)]
+    # As many files as the tree may hold, each under 58 directories of its
+    # own, so the names it implies are many times its files.
+    under = "/".join(["abcdefghi"] * 58)
+    room = 65_536 - sum(len(files) for files in tree["files"].values())
+    nested = [(f"package/u{index:05}/{under}", tarfile.REGTYPE, b"") for index in range(room)]
+    # Fewer names than a tree may hold, each long enough that together they
+    # hold more bytes than a tarball's names may.
+    wide = [(f"package/w/{index:06}{'x' * 244}", tarfile.REGTYPE, b"") for index in range(33_600)]
     for name, tarball, words in (
         ("members", packed(base) + gzip.compress(b"more", mtime=0), "gzip stream"),
         ("sparse", packed([*base, ("package/hole.bin", tarfile.GNUTYPE_SPARSE, b"")]), "of a kind"),
@@ -2219,6 +2227,8 @@ def check_npm_tarballs(scratch: pathlib.Path) -> None:
         ("dot", packed([*base, ("package/lib/run.", tarfile.REGTYPE, b"2\n")]), "dot or a space"),
         ("long", packed([*base, (f"package/{deep}", tarfile.REGTYPE, b"2\n")]), "767"),
         ("headers", packed(base + many), "65536"),
+        ("nested", packed(base + nested), "131072 names"),
+        ("wide", packed(base + wide), "8388608 bytes"),
     ):
         observed = scratch / name / "observed"
         lay_out_npm(observed, "npx-agent", with_tarball(tree, TOP, tarball))

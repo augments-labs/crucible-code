@@ -326,6 +326,11 @@ NPM_PATH_BYTES = 767
 # The most members one tarball may give, and the most bytes and components a
 # name written from it may have, in any one component and in all.
 TARBALL_MEMBERS = 1 << 16
+# The most names one tarball's files and the directories above them make,
+# each held once, as the client allows a tree; and the most bytes those
+# names, each component held once, may hold, 64 a name on average.
+TREE_NAMES = 1 << 17
+TARBALL_NAME_BYTES = 64 * TREE_NAMES
 NAME_COMPONENT_BYTES = 255
 NAME_COMPONENTS = 64
 # The devices Windows takes a name for whatever follows it after a dot,
@@ -1777,8 +1782,10 @@ def tarball_of(place: pathlib.Path, wanted: set[str], location: str) -> dict:
     refused where the client would refuse it: more than one gzip stream, a
     member of a kind other than a file, a directory or a link, more than
     `TARBALL_MEMBERS` members, a name the client does not write or that is
-    longer than `NPM_PATH_BYTES` under `location`, and a name written twice,
-    or as a file and a directory, once case is folded."""
+    longer than `NPM_PATH_BYTES` under `location`, a name written twice, or
+    as a file and a directory, once case is folded, and names that with the
+    directories above them are more than `TREE_NAMES`, or hold more than
+    `TARBALL_NAME_BYTES`."""
     with opened(place / "artifact") as file:
         sha512 = hashlib.sha512()
         sha1 = hashlib.sha1()
@@ -1794,9 +1801,13 @@ def tarball_of(place: pathlib.Path, wanted: set[str], location: str) -> dict:
         files = unpacked = members = 0
         manifests: dict[str, bytes] = {}
         gyps: set[str] = set()
-        # The names written, and the directories they imply, once folded.
-        written: set[str] = set()
-        directories: set[str] = set()
+        # The names written and the directories above them, once folded, as
+        # a tree of components each held once, so what is kept grows with
+        # the names and not with their depth: each node's child by its
+        # component, and whether each node is a file.
+        children: dict[tuple[int, str], int] = {}
+        files_at: list[bool] = [False]
+        held_bytes = 0
         try:
             stream = OneGzip(Spending(file))
             unzipped = Bounded(stream, TARBALL_DECOMPRESSED, "the tarball")
@@ -1820,14 +1831,24 @@ def tarball_of(place: pathlib.Path, wanted: set[str], location: str) -> dict:
                     if len(path) > NPM_PATH_BYTES:
                         raise Dropped(f"the tarball writes {shown(clipped(path))}, longer than {NPM_PATH_BYTES} bytes")
                     npm_written(path)
-                    folded = path.casefold()
-                    above = folded.split("/")
-                    implied = {"/".join(above[:depth]) for depth in range(1, len(above))}
-                    if folded in written or folded in directories or implied & written:
-                        raise Dropped(f"the tarball writes {shown(clipped(path))} twice, or as a file and a "
-                                      "directory, once case is folded")
-                    written.add(folded)
-                    directories |= implied
+                    node = 0
+                    parts = path.casefold().split("/")
+                    for depth, part in enumerate(parts, 1):
+                        child = children.get((node, part))
+                        if child is None:
+                            # The first node is the tree's root, which is no name.
+                            if len(files_at) > TREE_NAMES:
+                                raise Dropped(f"the tarball writes more than {TREE_NAMES} names, each "
+                                              "directory above a file counted")
+                            held_bytes += len(part)
+                            if held_bytes > TARBALL_NAME_BYTES:
+                                raise Dropped(f"the tarball's names hold more than {TARBALL_NAME_BYTES} bytes")
+                            child = children[(node, part)] = len(files_at)
+                            files_at.append(depth == len(parts))
+                        elif depth == len(parts) or files_at[child]:
+                            raise Dropped(f"the tarball writes {shown(clipped(path))} twice, or as a file and "
+                                          "a directory, once case is folded")
+                        node = child
                     files += 1
                     unpacked += member.size
                     root, _, leaf = rest.rpartition("/")
