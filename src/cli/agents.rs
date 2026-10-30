@@ -20,8 +20,9 @@
 //! of it is written is escaped first.
 //!
 //! `crucible agents unpack-check`, which the help leaves out, is the agent
-//! catalog's intake asking how a download unpacks by the rules an install
-//! holds it to; the file list it records goes to standard output as
+//! catalog's intake asking how a download, or a package tree from its lock
+//! and tarballs, unpacks by the rules an install holds it to; the file list
+//! it records goes to standard output as
 //! [`crucible_app::installing::unpack_check`] gives it, and a refusal to
 //! standard error, written [`failing`].
 //!
@@ -767,7 +768,8 @@ fn chosen(answered: &str, count: usize) -> Option<usize> {
 }
 
 /// Runs `crucible agents unpack-check` over the artifact the catalog spells
-/// in `entry` and its download at `artifact`, unpacking into `out`, and stops.
+/// in `entry` and its download at `artifact`, or the lock at `entry` and the
+/// directory of its tarballs at `artifact`, unpacking into `out`, and stops.
 pub(super) fn unpack_check(entry: &Path, artifact: &Path, out: &Path) -> ExitCode {
     written(checked(entry, artifact, out))
 }

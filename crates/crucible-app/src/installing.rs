@@ -28,7 +28,9 @@
 //! install of a catalog agent goes through: it reads an artifact as the
 //! catalog spells one and a download from disk, each within its bound,
 //! surveys the download into a directory of its own, and gives the file list
-//! the survey recorded. It downloads nothing and reads no configuration.
+//! the survey recorded. Given a package tree's lock and the directory its
+//! tarballs were downloaded into instead, it unpacks the tree by [`NpmTree`]
+//! the same way. It downloads nothing and reads no configuration.
 
 use std::fs::{self, File};
 use std::io::{self, Read as _, Write as _};
@@ -39,10 +41,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crucible_external_harnesses::Discovery;
 use crucible_external_harnesses::catalog::{
-    Artifact, CatalogError, Format, INDEX_BYTES, Trust, Unusable,
+    ASSET_BYTES, Artifact, CatalogError, Format, INDEX_BYTES, Trust, Unusable,
 };
 use crucible_external_harnesses::release::{
-    OwnedPin, Pin, UnpackError, Unpacked, Unpacker, Wheels, unpack,
+    NpmError, NpmTree, OwnedPin, Pin, UnpackError, Unpacked, Unpacker, Wheels, unpack,
 };
 use crucible_http::{Chunk, Chunks, Http, Lookups, Poison};
 use tokio::runtime::Handle;
@@ -350,6 +352,10 @@ pub enum Unchecked {
     /// to.
     #[error(transparent)]
     Unpacked(#[from] UnpackError),
+    /// The lock is not one as the catalog keeps it, or a tarball is not the
+    /// one it pins, or breaks a rule an install holds it to.
+    #[error(transparent)]
+    Tree(#[from] NpmError),
     /// What was recorded could not be written as JSON.
     #[error("the file list could not be written as JSON")]
     Json(#[from] serde_json::Error),
@@ -362,15 +368,37 @@ pub enum Unchecked {
 /// puts them), and gives the file list it recorded as JSON, with its sizes,
 /// ending in a line feed.
 ///
+/// Where `artifact` is a directory, `entry` is a package tree's lock instead,
+/// and `artifact` holds each of its tarballs under the SHA-512 it is pinned
+/// by: the tree is unpacked into `out` by [`NpmTree::unpack`], and the JSON
+/// gives the `files` it wrote.
+///
 /// `entry` is read only when it is at most [`INDEX_BYTES`], as a catalog is,
-/// and the download only up to the size the artifact pins, so neither is held
-/// past its bound. A refusal removes `out`.
+/// or [`ASSET_BYTES`] for a lock, and the download only up to the size the
+/// artifact pins, so neither is held past its bound. A refusal removes `out`.
 ///
 /// # Errors
 ///
 /// [`Unchecked`] naming what could not be read or made, or how the download
 /// is not the artifact or breaks a rule.
 pub fn unpack_check(entry: &Path, artifact: &Path, out: &Path) -> Result<String, Unchecked> {
+    if artifact.is_dir() {
+        let tree = NpmTree::parse(&bounded(entry, ASSET_BYTES)?)?;
+        made(out)?;
+        let unpacked = tree
+            .unpack(artifact, out)
+            .map_err(Unchecked::from)
+            .and_then(|files| {
+                let files: Vec<_> = files
+                    .iter()
+                    .map(crucible_external_harnesses::catalog::File::json)
+                    .collect();
+                Ok(serde_json::to_string_pretty(
+                    &serde_json::json!({ "files": files }),
+                )?)
+            });
+        return recorded(out, unpacked);
+    }
     let ceiling = u64::try_from(INDEX_BYTES).unwrap_or(u64::MAX);
     let text = bounded(entry, ceiling)?;
     let described = Artifact::unsigned(&text).map_err(|source| Unchecked::Artifact {
@@ -382,18 +410,7 @@ pub fn unpack_check(entry: &Path, artifact: &Path, out: &Path) -> Result<String,
         .as_ref()
         .map_or(described.size, |asset| asset.size);
     let bytes = bounded(artifact, pinned)?;
-    let made = fs::DirBuilder::new();
-    // Only its owner may reach it, where the platform says who may.
-    #[cfg(unix)]
-    let made = {
-        let mut made = made;
-        std::os::unix::fs::DirBuilderExt::mode(&mut made, 0o700);
-        made
-    };
-    made.create(out).map_err(|source| Unchecked::Out {
-        path: out.to_owned(),
-        source,
-    })?;
+    made(out)?;
     // A wheel is read as an install reads one, into `site/`.
     let survey = if described.format == Format::Wheel {
         Wheels::survey
@@ -403,7 +420,30 @@ pub fn unpack_check(entry: &Path, artifact: &Path, out: &Path) -> Result<String,
     let surveyed = survey(&bytes, &described, out)
         .map_err(Unchecked::from)
         .and_then(|staged| Ok(serde_json::to_string_pretty(&staged.json())?));
-    match surveyed {
+    recorded(out, surveyed)
+}
+
+/// Makes `out`, which only its owner may reach where the platform says who
+/// may, and which must not already be there.
+fn made(out: &Path) -> Result<(), Unchecked> {
+    let made = fs::DirBuilder::new();
+    #[cfg(unix)]
+    let made = {
+        let mut made = made;
+        std::os::unix::fs::DirBuilderExt::mode(&mut made, 0o700);
+        made
+    };
+    made.create(out).map_err(|source| Unchecked::Out {
+        path: out.to_owned(),
+        source,
+    })
+}
+
+/// What `crucible agents unpack-check` gives once it unpacked into `out`:
+/// the JSON `unpacked` holds, ending in a line feed, or its refusal, once
+/// `out` is removed.
+fn recorded(out: &Path, unpacked: Result<String, Unchecked>) -> Result<String, Unchecked> {
+    match unpacked {
         Ok(listed) => Ok(format!("{listed}\n")),
         Err(refused) => {
             let _ = fs::remove_dir_all(out);

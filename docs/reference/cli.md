@@ -730,6 +730,26 @@ dropped from a name. On standard output it writes the artifact's `unpacked` and
 refusal says why on standard error, with the cause the reader found, and
 removes `OUT`. It downloads nothing and reads no configuration.
 
+Where `ARTIFACT` is a directory, `ENTRY` is a package tree's lock as the
+catalog keeps one, of at most 4 MiB, and the directory holds each tarball the
+lock pins, named by its SHA-512; the tree is unpacked into `OUT` as crucible
+installs an agent that Node runs. Each tarball is checked against its size and
+SHA-512 before any of it is unpacked, and goes under its package's location,
+which for a package installed under an alias is not its name. The first part of
+every name is dropped, whatever it is; a directory or a link is skipped and
+writes nothing; and a file is runnable when its mode in the tarball has any
+execute bit. A tarball writes only into its own package and the bundled
+packages it holds: never a package the lock does not list, nor a file straight
+into a directory named `node_modules` whatever its case, though a
+`node_modules` deeper in a package's own files is written. It refuses a lock
+for other unpack rules, a package pinned by a SHA-1 alone, a tarball not
+fetched from `https://registry.npmjs.org/`, a tarball that writes anywhere
+else, a name that is not plain relative ASCII, two names in the tree that
+differ only in case, a path longer than 767 bytes, a device, a pipe, a sparse
+file, a package that writes more files or bytes than its lock gives it, and a
+tree of more than 65536 files or 4 GiB. On standard output it writes the
+`files` it wrote as JSON, and a refusal removes `OUT` as above.
+
 ### `agents probe ROOT ENTRY [--unconfined]`
 
 `crucible agents probe` is how the agent catalog's intake learns what an agent

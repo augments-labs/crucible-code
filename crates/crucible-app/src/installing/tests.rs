@@ -432,3 +432,147 @@ fn unpack_check_surveys_a_wheel_into_its_site_directory() {
         );
     }
 }
+
+/// A lock is unpacked by the tree's reader from the directory of tarballs it
+/// is given, each package under its location, so the list the intake records
+/// is the tree an install builds.
+#[test]
+fn unpack_check_unpacks_a_lock_into_its_tree() {
+    let sample = Sample::new("unpack-check-tree");
+    let root = sample.root();
+    let (lock, sha512, tarball) = proof::npm_tree();
+    let (entry, tarballs, out) = (
+        root.join("lock.json"),
+        root.join("tarballs"),
+        root.join("out"),
+    );
+    fs::create_dir_all(&tarballs).expect("a directory of tarballs");
+    fs::write(&entry, &lock).expect("the lock");
+    fs::write(tarballs.join(&sha512), &tarball).expect("the tarball");
+
+    let listed = unpack_check(&entry, &tarballs, &out);
+
+    assert!(listed.is_ok(), "{:?}", listed.as_ref().err());
+    let listed: serde_json::Value =
+        serde_json::from_str(&listed.unwrap_or_default()).expect("a list");
+    let files: Vec<(&str, bool)> = listed
+        .get("files")
+        .and_then(serde_json::Value::as_array)
+        .expect("its files")
+        .iter()
+        .filter_map(|file| Some((file.get("path")?.as_str()?, file.get("exec")?.as_bool()?)))
+        .collect();
+    assert_eq!(
+        files,
+        [
+            ("node_modules/peer/index.js", false),
+            ("node_modules/peer/bin/peer.js", true),
+        ]
+    );
+    assert_eq!(
+        fs::read(out.join("node_modules/peer/index.js"))
+            .ok()
+            .as_deref(),
+        Some(proof::NPM_INDEX)
+    );
+    assert_eq!(
+        fs::read(out.join("node_modules/peer/bin/peer.js"))
+            .ok()
+            .as_deref(),
+        Some(proof::NPM_BIN)
+    );
+}
+
+/// A lock whose tarball is not the one it pins is refused, and what was made
+/// to unpack it into is removed with it.
+#[test]
+fn unpack_check_refuses_a_tarball_its_lock_does_not_pin_and_removes_out() {
+    let sample = Sample::new("unpack-check-tree-refused");
+    let root = sample.root();
+    let (lock, sha512, mut tarball) = proof::npm_tree();
+    if let Some(last) = tarball.last_mut() {
+        *last ^= 1;
+    }
+    let (entry, tarballs, out) = (
+        root.join("lock.json"),
+        root.join("tarballs"),
+        root.join("out"),
+    );
+    fs::create_dir_all(&tarballs).expect("a directory of tarballs");
+    fs::write(&entry, &lock).expect("the lock");
+    fs::write(tarballs.join(&sha512), &tarball).expect("the tarball");
+
+    let refused = unpack_check(&entry, &tarballs, &out);
+
+    assert!(
+        matches!(
+            refused,
+            Err(Unchecked::Tree(
+                crucible_external_harnesses::release::NpmError::Digest { .. }
+            ))
+        ),
+        "{:?}",
+        refused.err()
+    );
+    assert!(!out.exists(), "{} is left", out.display());
+}
+
+/// A lock larger than a catalog asset is refused as it is read, before more
+/// than one byte past the asset's ceiling is held, and nothing is made to
+/// unpack it into.
+#[test]
+fn unpack_check_refuses_a_lock_larger_than_an_asset_as_it_reads_it() {
+    let sample = Sample::new("unpack-check-tree-large");
+    let root = sample.root();
+    let (entry, tarballs, out) = (
+        root.join("lock.json"),
+        root.join("tarballs"),
+        root.join("out"),
+    );
+    fs::create_dir_all(&tarballs).expect("a directory of tarballs");
+    let large = usize::try_from(ASSET_BYTES + 1).expect("an asset's size");
+    fs::write(&entry, vec![b' '; large]).expect("the lock");
+
+    let refused = unpack_check(&entry, &tarballs, &out);
+
+    assert!(
+        matches!(
+            refused,
+            Err(Unchecked::TooLarge {
+                ceiling: ASSET_BYTES,
+                ..
+            })
+        ),
+        "{:?}",
+        refused.err()
+    );
+    assert!(!out.exists(), "{} is made", out.display());
+}
+
+/// What a tree is unpacked into is made so only its owner may reach it,
+/// whatever the umask would leave.
+#[cfg(unix)]
+#[test]
+fn unpack_check_makes_what_it_unpacks_a_tree_into_reachable_by_its_owner_alone() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let sample = Sample::new("unpack-check-tree-mode");
+    let root = sample.root();
+    let (lock, sha512, tarball) = proof::npm_tree();
+    let (entry, tarballs, out) = (
+        root.join("lock.json"),
+        root.join("tarballs"),
+        root.join("out"),
+    );
+    fs::create_dir_all(&tarballs).expect("a directory of tarballs");
+    fs::write(&entry, &lock).expect("the lock");
+    fs::write(tarballs.join(&sha512), &tarball).expect("the tarball");
+
+    let listed = unpack_check(&entry, &tarballs, &out);
+
+    assert!(listed.is_ok(), "{:?}", listed.err());
+    let reach = fs::metadata(&out)
+        .map(|metadata| metadata.permissions().mode() & 0o077)
+        .ok();
+    assert_eq!(reach, Some(0), "{} is reachable by others", out.display());
+}
