@@ -137,10 +137,10 @@ of its kind, before any member's own, and holding a comment alone: one gzip
 stream and nothing after it, at most 65,536 members, an ordinary file, a
 directory or a link alone, every name one the client writes, inside its
 package and the ones it bundles and not straight under a `node_modules`
-directory, none
-written twice once case is folded, and at most 131,072 names, directories
-included, holding at most 8 MiB; and a lock's tarballs write at
-most 65,536 files and 4 GiB together. Each package's own package.json,
+directory, none written twice once case is folded nor one directory spelled
+in two cases, and at most 131,072 names, directories included, holding at
+most 8 MiB; and a lock's tarballs write at most 65,536 files and 4 GiB
+together. Each package's own package.json,
 a bundled one's included, must give the name and version the lock gives it. A
 bundled package has no tarball of its own and is counted in the one that
 holds it. A target's lock, the asset a client unpacks its tree from, lists
@@ -1904,7 +1904,7 @@ def tarball_of(place: pathlib.Path, wanted: set[str], location: str, locations: 
     `location`, a file written outside its package and the ones it bundles,
     of the lock's `locations`, or straight under a `node_modules` directory,
     a name written twice, or as a file and a directory, once case is folded,
-    and names that with the directories above them are more than
+    a directory spelled in two cases, and names that with the directories above them are more than
     `TREE_NAMES`, or hold more than `TARBALL_NAME_BYTES`. A sparse member,
     by its header or by its extended one, is refused, though the client
     writes the second as it is stored."""
@@ -1927,8 +1927,10 @@ def tarball_of(place: pathlib.Path, wanted: set[str], location: str, locations: 
         # The names written and the directories above them, once folded, as
         # a tree of components each held once, so what is kept grows with
         # the names and not with their depth: each node's child by its
-        # component, and whether each node is a file.
+        # component folded, each node's component as spelled, and whether
+        # each node is a file.
         children: dict[tuple[int, str], int] = {}
+        spelled_at: list[str] = [""]
         files_at: list[bool] = [False]
         held_bytes = 0
         # What the headers read so far say of the member after them, by type.
@@ -2015,9 +2017,9 @@ def tarball_of(place: pathlib.Path, wanted: set[str], location: str, locations: 
                                   "it bundles, or straight under a node_modules directory")
                 tar_number(header[100:108])
                 node = 0
-                parts = path.casefold().split("/")
+                parts = path.split("/")
                 for depth, part in enumerate(parts, 1):
-                    child = children.get((node, part))
+                    child = children.get((node, part.casefold()))
                     if child is None:
                         # The first node is the tree's root, which is no name.
                         if len(files_at) > TREE_NAMES:
@@ -2026,11 +2028,13 @@ def tarball_of(place: pathlib.Path, wanted: set[str], location: str, locations: 
                         held_bytes += len(part)
                         if held_bytes > TARBALL_NAME_BYTES:
                             raise Dropped(f"the tarball's names hold more than {TARBALL_NAME_BYTES} bytes")
-                        child = children[(node, part)] = len(files_at)
+                        child = children[(node, part.casefold())] = len(files_at)
+                        spelled_at.append(part)
                         files_at.append(depth == len(parts))
-                    elif depth == len(parts) or files_at[child]:
+                    elif depth == len(parts) or files_at[child] or spelled_at[child] != part:
                         raise Dropped(f"the tarball writes {shown(clipped(path))} twice, or as a file and "
-                                      "a directory, once case is folded")
+                                      "a directory, once case is folded, or under a directory spelled "
+                                      "in another case")
                     node = child
                 files += 1
                 unpacked += size_of

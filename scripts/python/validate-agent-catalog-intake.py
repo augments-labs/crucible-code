@@ -2273,6 +2273,8 @@ def check_npm_tarballs(scratch: pathlib.Path) -> None:
         ("globaltwice", tar_written(global_comment, global_comment, raw, added), "after another"),
         ("globalahead", tar_written(raw, tar_member(b"././@LongLink", b"L", b"package/lib/one.js\0"),
                                     global_comment, added), "between a member's own headers"),
+        ("spelled", tar_written(raw, tar_member(b"package/A/x", b"0", b"2\n"), tar_member(b"package/a/y", b"0", b"2\n")),
+         "spelled in another case"),
         ("paxsize", tar_written(raw, tar_member(b"package/x", b"x", pax_records(size=b"3")), added), "size"),
         ("longtwice", tar_written(raw, tar_member(b"././@LongLink", b"L", b"package/lib/one.js\0"),
                                   tar_member(b"././@LongLink", b"L", b"package/lib/two.js\0"), added),
