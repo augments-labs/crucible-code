@@ -1808,6 +1808,13 @@ def npm_registry(scratch: pathlib.Path, signers: Signers) -> tuple[pathlib.Path,
     npm_case(observed, agents, choices, "both-npm", npm_tree(changes={TOP: {"integrity": f"{held} {wrong_sha1}"}}))
     npm_case(observed, agents, choices, "offreg-npm", npm_tree(changes={ALIAS: {"resolved": "https://registry.example/strip-ansi/-/strip-ansi-7.1.0.tgz"}}))
     npm_case(observed, agents, choices, "query-npm", npm_tree(changes={ALIAS: {"resolved": NPM + "strip-ansi/-/strip-ansi-7.1.0.tgz?x=1"}}))
+    # An address with a space, or a letter outside ASCII, which a client
+    # would have to encode to fetch.
+    for agent_id, name in (("spaced-npm", "strip ansi"), ("accent-npm", "strip-ans\u00ed")):
+        npm_case(observed, agents, choices, agent_id, npm_tree(changes={ALIAS: {"resolved": NPM + f"strip-ansi/-/{name}-7.1.0.tgz"}}))
+    # The registry's address in capitals: its host is the registry's, its
+    # prefix is not.
+    npm_case(observed, agents, choices, "capital-npm", npm_tree(changes={ALIAS: {"resolved": "HTTPS://registry.npmjs.org/strip-ansi/-/strip-ansi-7.1.0.tgz"}}))
     npm_case(
         observed, agents, choices, "hop-npm", npm_tree(),
         chains={ALIAS: [NPM + "strip-ansi/-/strip-ansi-7.1.0.tgz", "https://cdn.example/strip-ansi.tgz"]},
@@ -1946,6 +1953,9 @@ def check_npm(scratch: pathlib.Path, signers: Signers) -> None:
     dropped(data, "sha512bad-npm", None, TOP, "integrity")
     dropped(data, "offreg-npm", None, "registry.example", "https://registry.npmjs.org/")
     dropped(data, "query-npm", None, "not a plain address")
+    for agent_id in ("spaced-npm", "accent-npm"):
+        dropped(data, agent_id, None, "printable ASCII")
+    dropped(data, "capital-npm", None, "https://registry.npmjs.org/, the one place")
     dropped(data, "hop-npm", None, "cdn.example", "registry.npmjs.org")
     dropped(data, "scriptless-npm", None, GYP, "no install script", "install")
     dropped(data, "scripted-npm", None, ALIAS, "has an install script")

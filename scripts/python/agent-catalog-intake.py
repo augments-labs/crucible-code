@@ -127,7 +127,8 @@ which only each package's location, name, version, `resolved`, `integrity`,
 `bin` are read; a `dev` package is never installed. Every location is
 `node_modules/<name>`, nested only under `node_modules/`, unique once case is
 folded, and no longer than 767 bytes. Every tarball is fetched from
-`https://registry.npmjs.org/` at a plain address and every hop of its fetch
+`https://registry.npmjs.org/` at a plain address of printable ASCII with
+no space, and every hop of its fetch
 stays on that host; its SHA-512 and size are computed here, a SHA-512
 `integrity` must agree with it, a SHA-1 one is held only where it is the only
 one, and a tarball with no `integrity` is pinned by its SHA-512 alone. A
@@ -1881,6 +1882,13 @@ def npm_resolved(observed: pathlib.Path, agent: str, package: str, released: str
 
         def fetched(item: dict = item, wanted: set[str] = wanted) -> dict:
             url = text(item["fields"].get("resolved"), "its resolved address")
+            # The client fetches the address as it is written, so it holds
+            # nothing that would have to be encoded first.
+            if any(not "!" <= character <= "~" for character in url):
+                raise Dropped(
+                    f"{shown(clipped(url))} holds a space or a character outside printable ASCII, "
+                    "so it is not fetched as it is written"
+                )
             if not url.startswith(NPM_REGISTRY):
                 raise Dropped(f"{clipped(url)} is not on {NPM_REGISTRY}, the one place a package is taken from")
             plain(url)
