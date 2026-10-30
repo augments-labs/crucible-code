@@ -1,5 +1,5 @@
 #!/usr/bin/env -S python3 -I
-"""The agent catalog's intake: registry `binary` entries become review data.
+"""The agent catalog's intake: registry `binary` and `uvx` entries become review data.
 
 The intake runs in the catalog repository's CI, between a job that downloads
 and starts vendor programs with no token, and a job that signs what a
@@ -28,7 +28,17 @@ what is left once either is spent waits for the next run.
   platform, `<id>/<platform>/`, holding `artifact` (the download), `fetched.json`
   (`{"chain": [...]}`, every address it was fetched through, the registry's
   first), `unpack-check.json` and `probe.json`; neither directory may be a
-  link;
+  link. A `uvx` agent's directory instead holds `resolved.json` (pip's
+  `--report` for the package on that platform's pinned interpreter, of which
+  only `version`, and each package's `download_info.url`, `metadata.name` and
+  `metadata.version`, are read), `interpreter/` and `wheels/<n>/` (`n` the
+  package's place in the report), each holding the `artifact`, `fetched.json`
+  and `unpack-check.json` of one download, and `probe.json`; no directory on
+  the way may be a link;
+- `--interpreters`, where given: the reviewer's interpreter pins, by
+  platform, each `{"url", "sha256", "python"}`: the `https` address of a
+  python-build-standalone `install_only` build, its SHA-256, and the `3.M` it
+  runs. A `uvx` target on a platform with no pin is dropped;
 - `--deny`: `deny.toml`, whose licence list decides what may be mirrored;
 - `--merged`, where given: the merged data, against which a version already
   reviewed is held. A release whose content differs from what was reviewed
@@ -52,6 +62,28 @@ sign-in methods, the refusal naming the field that differs. Each drop is
 recorded with its reason. An artifact whose declared licence is on `deny.toml`'s list is marked
 with that licence for mirroring; nothing is mirrored until the licence gate
 has passed it.
+
+A `uvx` agent's package is pinned as `name==version`, and each platform the
+runner matrix names is a target of its own: the pinned interpreter, started
+with `-I`, and every package pip's report installs on it, each a wheel from
+`https://files.pythonhosted.org/packages/`, at a plain address (no `%`,
+query, fragment, parameter, backslash, or empty, `.` or `..` segment) that
+every hop of its fetch keeps on that host, whose file name agrees with the
+report and whose tags that interpreter on that platform accepts (Linux wheels
+for glibc 2.34 or older, macOS ones for 11.0 on Apple silicon and 10.12 on
+Intel). A target is dropped when the interpreter is not the bytes its pin
+names, when a wheel holds a part of `.data` but `purelib` or `platlib`, which
+the client does not install, when the agent's own wheel names no console
+script by the package's name as `module:attr`, when an interpreter file lies
+outside `python/` or a wheel's outside `site/`, when two of its artifacts
+list one path, when a wheel lists one member twice (a leading `./` removed
+and case folded, as the client compares names), when a wheel does not end as
+a wheel ends (its end record last, with no comment, and any zip64 record just
+before its locator, which points at it), or when that record claims more
+members or a larger central directory than the stated ceilings. A package pip found only as a source distribution drops its target
+with a `build` list naming each one, clipped as a reason is, so it waits for
+a build at review. An interpreter and its wheels are never marked for
+mirroring.
 
 `diff` writes the human diff of review data against the merged data before it,
 as Markdown, showing only what changed, compared on whole values. A version
@@ -100,17 +132,20 @@ begun, or the check proves nothing about what is uploaded.
 from __future__ import annotations
 
 import argparse
+import configparser
 import hashlib
 import json
 import os
 import pathlib
 import re
 import stat
+import struct
 import sys
 import time
 import tomllib
 import unicodedata
 import urllib.parse
+import zipfile
 
 # The ceilings of what is read, each before it is parsed.
 REGISTRY_BYTES = 1 << 20
@@ -150,12 +185,58 @@ REASON_CHARS = 300
 SHOWN_FILES = 50
 # The most differing fields a reason names.
 NAMED_FIELDS = 8
+# A `uvx` target's own ceilings: the packages pip's report may install, the
+# report's bytes, which carry each package's metadata, and the bytes of the
+# agent's own `entry_points.txt`.
+WHEELS = 256
+REPORT_BYTES = 16 << 20
+ENTRY_POINTS_BYTES = 64 << 10
+# The bytes a wheel's central directory may take, read from its own record
+# before `zipfile` holds it: 46 bytes, the smallest member header, for each of
+# `LISTED_ENTRIES` members, so no directory within it holds more headers than
+# the entry ceiling allows.
+CENTRAL_DIRECTORY_BYTES = 46 * LISTED_ENTRIES
+# The one host a wheel is fetched from, at every hop of the way.
+PYPI_HOST = "files.pythonhosted.org"
 
 PLATFORM = re.compile(r"(linux|darwin|windows|freebsd)-(x86_64|aarch64)")
 REGISTRY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 AGENT_KEY = re.compile(r"[a-z0-9-]{1,32}")
 LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
 SHA256 = re.compile(r"[0-9a-f]{64}")
+# A `uvx` package pinned as `name==version`: a PyPI project name, and a
+# version of the characters a version is spelt with, so no extra, range,
+# marker or address passes.
+PACKAGE = re.compile(r"([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)==(.*)", re.DOTALL)
+PINNED = re.compile(r"[A-Za-z0-9][A-Za-z0-9.!+_-]*")
+# An interpreter pin's version, `3.M`.
+PYTHON = re.compile(r"3\.(0|[1-9][0-9]{0,2})")
+# Where every package a `uvx` target installs is taken from.
+PYPI = "https://files.pythonhosted.org/packages/"
+# A wheel's file name: `{name}-{version}(-{build})?-{python}-{abi}-{platform}.whl`.
+WHEEL_NAME = re.compile(
+    r"(?P<name>[A-Za-z0-9](?:[A-Za-z0-9._]*[A-Za-z0-9])?)-(?P<version>[A-Za-z0-9.!+_]+)"
+    r"(?:-(?P<build>[0-9][A-Za-z0-9_.]*))?-(?P<python>[A-Za-z0-9_.]+)-(?P<abi>[A-Za-z0-9_.]+)"
+    r"-(?P<platform>[A-Za-z0-9_.]+)\.whl"
+)
+# The platform tags a wheel may carry on each platform an interpreter is
+# pinned for, beside `any`. Each ceiling is the oldest system crucible's own
+# release runs on: glibc 2.34 on Linux, the floor the release workflow builds
+# against and checks; macOS 11.0 on Apple silicon, the first macOS to run on
+# it; and macOS 10.12 on Intel, the oldest Rust's x86_64-apple-darwin target
+# supports. musllinux, linux_* and every tag not named here are refused.
+PLATFORM_TAGS: dict[str, dict] = {
+    "linux-x86_64": {
+        "glibc": 34,
+        "machine": "x86_64",
+        "legacy": {"manylinux1_x86_64", "manylinux2010_x86_64", "manylinux2014_x86_64"},
+    },
+    "linux-aarch64": {"glibc": 34, "machine": "aarch64", "legacy": {"manylinux2014_aarch64"}},
+    "darwin-aarch64": {"macos": (11, 0), "machines": {"arm64", "universal2"}},
+    "darwin-x86_64": {"macos": (10, 12), "machines": {"x86_64", "intel", "universal2"}},
+    "windows-x86_64": {"exact": {"win_amd64"}},
+    "windows-aarch64": {"exact": {"win_arm64"}},
+}
 
 
 class Refused(Exception):
@@ -168,6 +249,19 @@ class Dropped(Exception):
 
 class Spent(Dropped):
     """The run's budget is spent, so what is left waits for the next run."""
+
+
+class Build(Dropped):
+    """A `uvx` target whose report installs a source distribution, so it waits
+    for that to be built at review; `build` names each one."""
+
+    def __init__(self, build: list[dict]) -> None:
+        self.build = build
+        names = named([f"{item['package']} {item['version']}" for item in build])
+        super().__init__(
+            f"{names} {'comes' if len(build) == 1 else 'come'} only as a source distribution here, "
+            "so this target waits for a build at review"
+        )
 
 
 class Budget:
@@ -436,32 +530,45 @@ def format_of(url: str) -> str:
     return "bare"
 
 
-def hashed(path: pathlib.Path) -> tuple[str, int]:
-    """The SHA-256 and size of the download at `path`, read within its ceiling."""
+def opened(path: pathlib.Path):
+    """The download at `path`, opened for reading, refused where it is not a
+    regular file."""
     try:
         held = os.lstat(path)
     except OSError:
         raise Dropped("could not be hashed: nothing was downloaded") from None
     if not stat.S_ISREG(held.st_mode):
         raise Dropped("could not be hashed: the download is not a regular file")
-    sha = hashlib.sha256()
-    size = 0
     try:
         # Opened without following a link, so a path swapped for one after the
         # check above reads nothing.
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     except OSError:
         raise Dropped("could not be hashed: the download is not a regular file") from None
-    with os.fdopen(descriptor, "rb") as file:
-        if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
-            raise Dropped("could not be hashed: the download is not a regular file")
-        while chunk := file.read(1 << 20):
-            spend(len(chunk))
-            size += len(chunk)
-            if size > ARTIFACT_BYTES:
-                raise Dropped(f"could not be hashed: the download is larger than {ARTIFACT_BYTES} bytes")
-            sha.update(chunk)
+    file = os.fdopen(descriptor, "rb")
+    if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
+        file.close()
+        raise Dropped("could not be hashed: the download is not a regular file")
+    return file
+
+
+def digested(file) -> tuple[str, int]:
+    """The SHA-256 and size of the open download `file`, read within its ceiling."""
+    sha = hashlib.sha256()
+    size = 0
+    while chunk := file.read(1 << 20):
+        spend(len(chunk))
+        size += len(chunk)
+        if size > ARTIFACT_BYTES:
+            raise Dropped(f"could not be hashed: the download is larger than {ARTIFACT_BYTES} bytes")
+        sha.update(chunk)
     return sha.hexdigest(), size
+
+
+def hashed(path: pathlib.Path) -> tuple[str, int]:
+    """The SHA-256 and size of the download at `path`, read within its ceiling."""
+    with opened(path) as file:
+        return digested(file)
 
 
 def file_list(value: object) -> tuple[list[dict], int, int]:
@@ -548,19 +655,89 @@ def resolved(link: str, seen: dict[str, dict]) -> str:
     raise Dropped(f"{clipped(link)} takes more than {LINK_STEPS} links to reach a file")
 
 
-def place_of(observed: pathlib.Path, agent: str, platform: str) -> pathlib.Path:
-    """Where the untrusted job left what it observed of one target, refused
-    where a directory on the way there is a link, which could reach anywhere."""
+def place_of(observed: pathlib.Path, *parts: str) -> pathlib.Path:
+    """Where the untrusted job left what it observed of one target, or of one
+    download of it, refused where a directory on the way there is a link,
+    which could reach anywhere."""
     place = observed
-    for part in (agent, platform):
+    for part in parts:
         place = place / part
         try:
             held = os.lstat(place)
         except OSError:
-            return observed / agent / platform
+            return observed.joinpath(*parts)
         if not stat.S_ISDIR(held.st_mode):
             raise Dropped(f"{clipped(part)} is not a directory of the observed tree")
     return place
+
+
+def chained(place: pathlib.Path, url: str, begins: str) -> list[str]:
+    """The hosts of the chain `fetched.json` under `place` gives, which must
+    begin at `url`, `begins` saying whose address that is."""
+    try:
+        fetched = obj(read_json(place / "fetched.json", SMALL_BYTES, "fetched.json"), "fetched.json")
+    except Refused as refused:
+        raise Dropped(str(refused)) from None
+    chain = fetched.get("chain")
+    if not isinstance(chain, list) or not chain or len(chain) > ITEMS:
+        raise Dropped("fetched.json gives no chain of addresses")
+    if chain[0] != url:
+        raise Dropped(f"fetched.json does not begin at {begins}")
+    hosts: list[str] = []
+    for hop in chain:
+        _, name = address(hop, "the redirect to")
+        if name not in hosts:
+            hosts.append(name)
+    return hosts
+
+
+def unpacked_at(place: pathlib.Path) -> tuple[list[dict], int, int]:
+    """What `unpack-check` printed of the download under `place`."""
+    try:
+        printed = read_json(place / "unpack-check.json", UNPACK_CHECK_BYTES, "unpack-check.json")
+    except Refused as refused:
+        raise Dropped(str(refused)) from None
+    return file_list(printed)
+
+
+def runnable(files: list[dict], cmd: str, platform: str) -> None:
+    """Refuse `cmd` where `files` does not list it as a file it may run."""
+    program = next((file for file in files if file["path"] == cmd), None)
+    if program is None or program["kind"] != "file":
+        raise Dropped(f"cmd {clipped(cmd)} is not a file the archive unpacks to")
+    if not program["exec"] and not platform.startswith("windows-"):
+        raise Dropped(f"cmd {clipped(cmd)} is not runnable")
+
+
+def artifact_of(
+    url: str,
+    format: str,
+    sha256: str,
+    size: int,
+    listing: tuple[list[dict], int, int],
+    assets: dict[str, bytes],
+) -> dict:
+    """One artifact as the catalog pins it, its file list kept as a file-list
+    asset where it is longer than a catalog lists inline."""
+    files, unpacked, decompressed = listing
+    artifact: dict = {
+        "decompressed": decompressed,
+        "format": format,
+        "sha256": sha256,
+        "size": size,
+        "unpacked": unpacked,
+        "url": url,
+    }
+    if len(files) > LISTED_FILES:
+        held = compact(files)
+        if len(held) > ASSET_BYTES:
+            raise Dropped(f"its file list is larger than a catalog asset may be, {ASSET_BYTES} bytes")
+        named = hashlib.sha256(held).hexdigest()
+        assets[named] = held
+        artifact["files"] = {"sha256": named, "size": len(held)}
+    else:
+        artifact["files"] = files
+    return artifact
 
 
 def compact(value: object) -> bytes:
@@ -594,47 +771,10 @@ def target(
     sha256, size = hashed(place / "artifact")
     if pinned is not None and pinned != sha256:
         raise Dropped("the download is not the bytes the registry pinned")
-    try:
-        fetched = obj(read_json(place / "fetched.json", SMALL_BYTES, "fetched.json"), "fetched.json")
-    except Refused as refused:
-        raise Dropped(str(refused)) from None
-    chain = fetched.get("chain")
-    if not isinstance(chain, list) or not chain or len(chain) > ITEMS:
-        raise Dropped("fetched.json gives no chain of addresses")
-    if chain[0] != url:
-        raise Dropped("fetched.json does not begin at the registry's address")
-    hosts: list[str] = []
-    for hop in chain:
-        _, name = address(hop, "the redirect to")
-        if name not in hosts:
-            hosts.append(name)
-    try:
-        printed = read_json(place / "unpack-check.json", UNPACK_CHECK_BYTES, "unpack-check.json")
-    except Refused as refused:
-        raise Dropped(str(refused)) from None
-    files, unpacked, decompressed = file_list(printed)
-    program = next((file for file in files if file["path"] == cmd), None)
-    if program is None or program["kind"] != "file":
-        raise Dropped(f"cmd {clipped(cmd)} is not a file the archive unpacks to")
-    if not program["exec"] and not platform.startswith("windows-"):
-        raise Dropped(f"cmd {clipped(cmd)} is not runnable")
-    artifact: dict = {
-        "decompressed": decompressed,
-        "format": format,
-        "sha256": sha256,
-        "size": size,
-        "unpacked": unpacked,
-        "url": url,
-    }
-    if len(files) > LISTED_FILES:
-        listing = compact(files)
-        if len(listing) > ASSET_BYTES:
-            raise Dropped(f"its file list is larger than a catalog asset may be, {ASSET_BYTES} bytes")
-        named = hashlib.sha256(listing).hexdigest()
-        assets[named] = listing
-        artifact["files"] = {"sha256": named, "size": len(listing)}
-    else:
-        artifact["files"] = files
+    hosts = chained(place, url, "the registry's address")
+    listing = unpacked_at(place)
+    runnable(listing[0], cmd, platform)
+    artifact = artifact_of(url, format, sha256, size, listing, assets)
     if mirrored is not None:
         artifact["mirror_licence"] = mirrored
     return {
@@ -643,6 +783,418 @@ def target(
         "cmd": cmd,
         "env": env,
         "hosts": hosts,
+        "platform": platform,
+    }
+
+
+def interpreters_of(path: pathlib.Path | None) -> dict[str, dict]:
+    """The reviewer's interpreter pins, by platform: each a python-build-standalone
+    `install_only` build's address, its SHA-256 and the `3.M` it runs. With no
+    pins, no platform has an interpreter."""
+    if path is None:
+        return {}
+    value = read_json(path, SMALL_BYTES, "the interpreter pins")
+    if not isinstance(value, dict):
+        raise Refused("the interpreter pins are not an object by platform")
+    held = {}
+    for platform, pin in value.items():
+        if platform not in PLATFORM_TAGS:
+            raise Refused(
+                f"the interpreter pins name {clipped(platform)}, which is not a platform "
+                "a wheel's tags are read for"
+            )
+        where = f"the interpreter pin for {platform}"
+        if not isinstance(pin, dict):
+            raise Refused(f"{where} is not an object")
+        extra = sorted(set(pin) - {"url", "sha256", "python"})
+        if extra:
+            raise Refused(f"{where} holds {named(extra)}, which no pin holds")
+        url = pin.get("url")
+        try:
+            address(url, where)
+        except Dropped:
+            url = None
+        if url is None or not urllib.parse.urlsplit(url).path.endswith("-install_only.tar.gz"):
+            raise Refused(
+                f"{where} names {clipped(pin.get('url'))}, which is not an https address of a "
+                "python-build-standalone install_only build"
+            )
+        sha256 = pin.get("sha256")
+        if not isinstance(sha256, str) or not SHA256.fullmatch(sha256):
+            raise Refused(f"{where}: its sha256 is not a SHA-256 in lowercase hexadecimal")
+        python = pin.get("python")
+        if not isinstance(python, str) or not PYTHON.fullmatch(python):
+            raise Refused(f"{where}: its python {clipped(python)} is not a version 3.M")
+        held[platform] = {"minor": int(python[2:]), "python": python, "sha256": sha256, "url": url}
+    return held
+
+
+def normal(name: str) -> str:
+    """A package's name as an index compares it."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def python_fits(python: str, abi: str, minor: int) -> bool:
+    """Whether the interpreter tag `python` with the ABI tag `abi` runs on a
+    CPython of 3.`minor` built without debug or free threading."""
+    cpython = re.fullmatch(r"cp3(0|[1-9][0-9]*)", python)
+    if cpython is not None:
+        built = int(cpython[1])
+        if built == minor:
+            return abi in (f"cp3{minor}", "abi3", "none")
+        return 2 <= built < minor and abi == "abi3"
+    generic = re.fullmatch(r"py3(0|[1-9][0-9]*)?", python)
+    return generic is not None and abi == "none" and (generic[1] is None or int(generic[1]) <= minor)
+
+
+def platform_fits(tag: str, platform: str) -> bool:
+    """Whether the platform tag `tag` runs on `platform`, as `PLATFORM_TAGS` holds it."""
+    if tag == "any":
+        return True
+    accepted = PLATFORM_TAGS.get(platform)
+    if accepted is None:
+        return False
+    if "glibc" in accepted:
+        held = re.fullmatch(r"manylinux_2_(0|[1-9][0-9]*)_([a-z0-9_]+)", tag)
+        if held is not None:
+            return held[2] == accepted["machine"] and int(held[1]) <= accepted["glibc"]
+        return tag in accepted["legacy"]
+    if "macos" in accepted:
+        held = re.fullmatch(r"macosx_(0|[1-9][0-9]*)_(0|[1-9][0-9]*)_([a-z0-9_]+)", tag)
+        return (
+            held is not None
+            and held[3] in accepted["machines"]
+            and (int(held[1]), int(held[2])) <= accepted["macos"]
+        )
+    return tag in accepted["exact"]
+
+
+def fits(tags: str, platform: str, minor: int) -> bool:
+    """Whether a wheel tagged `tags` (`{python}-{abi}-{platform}`, each part
+    expanded on its dots) runs on an interpreter of 3.`minor` on `platform`."""
+    parts = tags.split("-")
+    if len(parts) != 3:
+        return False
+    pythons, abis, platforms = (part.split(".") for part in parts)
+    return any(python_fits(python, abi, minor) for python in pythons for abi in abis) and any(
+        platform_fits(tag, platform) for tag in platforms
+    )
+
+
+def dotted(value: str) -> bool:
+    """Whether `value` is a dotted Python name."""
+    return all(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", part, re.ASCII) for part in value.split("."))
+
+
+class Spending:
+    """An open download that spends the run's budget on every byte read from
+    it, so a wheel's members are read within the budget."""
+
+    def __init__(self, file) -> None:
+        self.file = file
+
+    def read(self, count: int = -1) -> bytes:
+        chunk = self.file.read(count)
+        spend(len(chunk))
+        return chunk
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        return self.file.seek(offset, whence)
+
+    def tell(self) -> int:
+        return self.file.tell()
+
+    def seekable(self) -> bool:
+        return True
+
+
+def data_part(name: str) -> None:
+    """Refuse the wheel member `name` where the client would not install it:
+    of a `.data` directory (its top directory's last dotted part being `data`
+    in any case) only `purelib` and `platlib` are installed."""
+    member = name[2:] if name.startswith("./") else name
+    directory = member.endswith("/")
+    member = member[:-1] if directory else member
+    top, slash, rest = member.partition("/")
+    _, dot, suffix = top.rpartition(".")
+    if not dot or not suffix.isascii() or suffix.lower() != "data":
+        return
+    if not slash:
+        if directory:
+            return
+        refused = top
+    else:
+        part, slash, path = rest.partition("/")
+        if part in ("purelib", "platlib") and (path or directory):
+            return
+        refused = part
+    raise Dropped(
+        f"holds {clipped(member)} under {clipped(refused)}, which the client refuses: "
+        "of a wheel's .data directory only purelib and platlib are installed"
+    )
+
+
+def entry_point_of(archive: zipfile.ZipFile, names: list[str], package: str) -> str:
+    """The `module:attr` the agent's own wheel names as its console script `package`."""
+    tops = {name.split("/", 1)[0] for name in names if name.split("/", 1)[0].endswith(".dist-info")}
+    if len(tops) != 1:
+        raise Dropped("holds no single .dist-info directory")
+    try:
+        info = archive.getinfo(f"{tops.pop()}/entry_points.txt")
+    except KeyError:
+        raise Dropped("has no entry_points.txt") from None
+    with archive.open(info) as file:
+        content = file.read(ENTRY_POINTS_BYTES + 1)
+    if len(content) > ENTRY_POINTS_BYTES:
+        raise Dropped(f"its entry_points.txt is larger than {ENTRY_POINTS_BYTES} bytes")
+    # A default section no header can name, as a header holds no line break,
+    # so a `[DEFAULT]` section is a section and lends console_scripts nothing.
+    parser = configparser.ConfigParser(interpolation=None, strict=True, delimiters=("=",), default_section="\n")
+    parser.optionxform = str  # a script's name is read as written
+    try:
+        parser.read_string(content.decode())
+    except (configparser.Error, UnicodeDecodeError):
+        raise Dropped("its entry_points.txt cannot be read: it is not UTF-8, or repeats a section or a name") from None
+    if not parser.has_option("console_scripts", package):
+        raise Dropped(f"names no console script {clipped(package)}")
+    value = parser.get("console_scripts", package)
+    module, colon, attr = value.partition(":")
+    if not colon or not dotted(module) or not dotted(attr):
+        raise Dropped(f"its console script {clipped(package)} is {clipped(value)}, not module:attr")
+    return value
+
+
+def central_directory(file) -> None:
+    """Refuse the open wheel `file` where its central directory, as the record
+    that ends it states, holds more than `LISTED_ENTRIES` members or more than
+    `CENTRAL_DIRECTORY_BYTES`, read before `zipfile` holds that directory.
+
+    A wheel is held to the layout a wheel has, so that the record read here is
+    the one `zipfile` obeys: the end record is the file's last 22 bytes, with no
+    comment after it; and where the 20 bytes before it are a zip64 locator, or
+    any of its fields stands at its all-ones value and so defers to zip64, the
+    zip64 record is the 56 bytes just before that locator, where `zipfile`
+    reads it, and the locator must point at that very place."""
+    end_bytes, locator_bytes, record_bytes = 22, 20, 56
+    size = file.seek(0, os.SEEK_END)
+    if size < end_bytes:
+        raise Dropped("is not a wheel this intake can read")
+    file.seek(size - end_bytes)
+    end = file.read(end_bytes)
+    if end[:4] != b"PK\x05\x06" or end[20:22] != b"\x00\x00":
+        raise Dropped(
+            "does not end in the record that closes a central directory, with no zip comment after it, "
+            "as a wheel ends"
+        )
+    on_disk, entries, directory, offset = struct.unpack("<HHII", end[8:20])
+    deferred = 0xFFFF in (on_disk, entries) or 0xFFFFFFFF in (directory, offset)
+    locator_at = size - end_bytes - locator_bytes
+    locator = b""
+    if locator_at >= 0:
+        file.seek(locator_at)
+        locator = file.read(locator_bytes)
+    if locator[:4] == b"PK\x06\x07" or deferred:
+        record_at = locator_at - record_bytes
+        if locator[:4] != b"PK\x06\x07" or record_at < 0:
+            raise Dropped("its central directory defers to a zip64 record it does not hold")
+        (stated,) = struct.unpack("<Q", locator[8:16])
+        file.seek(record_at)
+        record = file.read(record_bytes)
+        if stated != record_at or record[:4] != b"PK\x06\x06":
+            raise Dropped(
+                "its central directory's zip64 locator does not point at the zip64 record just before it, "
+                "the one zipfile reads"
+            )
+        entries, directory = struct.unpack("<QQ", record[32:48])
+    if entries > LISTED_ENTRIES:
+        raise Dropped(f"its central directory lists more than {LISTED_ENTRIES} members")
+    if directory > CENTRAL_DIRECTORY_BYTES:
+        raise Dropped(f"its central directory is larger than {CENTRAL_DIRECTORY_BYTES} bytes")
+    file.seek(0)
+
+
+def wheel_read(file, package: str | None) -> str | None:
+    """Refuse the open wheel `file` where a member is one the client would not
+    install, or two members share a name, and give its console script
+    `package` where one is asked for."""
+    try:
+        spending = Spending(file)
+        central_directory(spending)
+        with zipfile.ZipFile(spending) as archive:
+            infos = archive.infolist()
+            if len(infos) > LISTED_ENTRIES:
+                raise Dropped(f"holds more than {LISTED_ENTRIES} members")
+            names = [info.filename for info in infos]
+            # Names compared as the client compares them: a leading `./`
+            # removed, and case folded.
+            seen: set[str] = set()
+            for name in names:
+                compared = name.removeprefix("./").casefold()
+                if compared in seen:
+                    raise Dropped(f"lists {clipped(name)} twice, as the client compares names")
+                seen.add(compared)
+                data_part(name)
+            return entry_point_of(archive, names, package) if package is not None else None
+    except Dropped:
+        raise
+    except Exception:  # whatever zipfile cannot read is a wheel this intake cannot read
+        raise Dropped("is not a wheel this intake can read") from None
+
+
+def under(files: list[dict], top: str) -> None:
+    """Refuse a listing with a path outside the directory `top`."""
+    for file in files:
+        path = file["path"]
+        if path != top and not path.startswith(top + "/"):
+            raise Dropped(f"lists {clipped(path)}, which is not under {top}/")
+
+
+def staged(prefix: str, work):
+    """What `work` gives, a drop it raises naming `prefix` first."""
+    try:
+        return work()
+    except Spent:
+        raise
+    except Dropped as failed:
+        raise Dropped(f"{prefix}: {failed}") from None
+
+
+def report_of(place: pathlib.Path) -> list[tuple[str, str, str]]:
+    """The address, name and version of each package pip's report under
+    `place` installs, in its order; nothing else of the report is read."""
+    try:
+        report = obj(read_json(place / "resolved.json", REPORT_BYTES, "resolved.json"), "pip's report")
+    except Refused as refused:
+        raise Dropped(str(refused)) from None
+    if report.get("version") != "1":
+        raise Dropped(f"pip's report is in version {clipped(report.get('version'))}, not 1, the one read here")
+    install = report.get("install")
+    if not isinstance(install, list) or not install or len(install) > WHEELS:
+        raise Dropped(f"pip's report installs nothing, or more than {WHEELS} packages")
+    items = []
+    for index, item in enumerate(install):
+        item = obj(item, f"the report's package {index}")
+        url = text(obj(item.get("download_info"), f"the report's package {index}'s download").get("url"),
+                   f"the report's package {index}'s address")
+        metadata = obj(item.get("metadata"), f"the report's package {index}'s metadata")
+        items.append(
+            (
+                url,
+                text(metadata.get("name"), f"the report's package {index}'s name"),
+                text(metadata.get("version"), f"the report's package {index}'s version"),
+            )
+        )
+    return items
+
+
+def uvx_target(
+    observed: pathlib.Path,
+    agent: str,
+    platform: str,
+    package: str,
+    released: str,
+    interpreters: dict[str, dict],
+    assets: dict[str, bytes],
+) -> dict:
+    """One platform of a `uvx` agent as the catalog will list it, before its
+    probe: the interpreter pinned for it and every wheel pip's report installs
+    on it, each the bytes that were downloaded and checked."""
+    pin = interpreters.get(platform)
+    if pin is None:
+        raise Dropped("no interpreter is pinned for this platform")
+    place = place_of(observed, agent, platform)
+    wheels = []
+    build = []
+    own = None
+    for index, (url, name, item_version) in enumerate(report_of(place)):
+        if not url.startswith(PYPI):
+            raise Dropped(f"{clipped(url)} is not on {PYPI}, the one place a wheel is taken from")
+        odd = next((mark for mark in "%?#;\\" if mark in url), None)
+        if odd is not None:
+            raise Dropped(
+                f"{clipped(url)} is not a plain address: it holds a {odd}, and a %, query, fragment, "
+                "parameter or backslash would let it be read as other than it is written"
+            )
+        path = urllib.parse.urlsplit(url).path
+        if any(segment in ("", ".", "..") for segment in path[1:].split("/")):
+            raise Dropped(f"{clipped(url)} holds an empty, . or .. segment in its path")
+        file = path.rsplit("/", 1)[-1]
+        mine = normal(name) == normal(package) and item_version == released
+        own = own or mine
+        if not file.endswith(".whl"):
+            # At most `WHEELS` rows, as the report lists no more, each field
+            # clipped as a reason quotes it.
+            build.append({"package": clipped(name), "url": clipped(url), "version": clipped(item_version)})
+            continue
+        held = WHEEL_NAME.fullmatch(file)
+        if held is None:
+            raise Dropped(f"{clipped(file)} is not a wheel's file name")
+        if normal(held["name"]) != normal(name) or held["version"] != item_version:
+            raise Dropped(
+                f"wheel {clipped(file)} does not agree with the report, which says it is "
+                f"{clipped(name)} {clipped(item_version)}"
+            )
+        if not fits(f"{held['python']}-{held['abi']}-{held['platform']}", platform, pin["minor"]):
+            raise Dropped(
+                f"wheel {clipped(file)} is built for none of the tags an interpreter of "
+                f"Python {pin['python']} on {platform} accepts"
+            )
+        wheels.append((index, url, file, mine))
+    if not own:
+        raise Dropped(f"the report installs no {clipped(package)} {clipped(released)}")
+    if build:
+        raise Build(build)
+    windows = platform.startswith("windows-")
+    cmd = "python/python.exe" if windows else f"python/bin/python{pin['python']}"
+
+    def python() -> tuple[dict, list[str], list[dict]]:
+        inner = place_of(observed, agent, platform, "interpreter")
+        sha256, size = hashed(inner / "artifact")
+        if sha256 != pin["sha256"]:
+            raise Dropped("the download is not the bytes the interpreter pin names")
+        hosts = chained(inner, pin["url"], "the pinned address")
+        listing = unpacked_at(inner)
+        under(listing[0], "python")
+        runnable(listing[0], cmd, platform)
+        return artifact_of(pin["url"], "tar.gz", sha256, size, listing, assets), hosts, listing[0]
+
+    artifact, hosts, files = staged("the interpreter", python)
+    artifacts = [artifact]
+    listings = [files]
+    entry_point = None
+    for index, url, file, mine in wheels:
+
+        def one() -> tuple[dict, list[str], list[dict], str | None]:
+            inner = place_of(observed, agent, platform, "wheels", str(index))
+            with opened(inner / "artifact") as download:
+                sha256, size = digested(download)
+                download.seek(0)
+                named_script = wheel_read(download, package if mine else None)
+            reached = chained(inner, url, "the report's address")
+            elsewhere = next((name for name in reached if name != PYPI_HOST), None)
+            if elsewhere is not None:
+                raise Dropped(f"fetched.json reaches {clipped(elsewhere)}, but a wheel is fetched from {PYPI_HOST} alone")
+            listing = unpacked_at(inner)
+            under(listing[0], "site")
+            return artifact_of(url, "wheel", sha256, size, listing, assets), reached, listing[0], named_script
+
+        artifact, reached, files, named_script = staged(f"wheel {clipped(file)}", one)
+        artifacts.append(artifact)
+        listings.append(files)
+        hosts += [name for name in reached if name not in hosts]
+        entry_point = entry_point or named_script
+    folded: set[str] = set()
+    for files in listings:
+        for listed in files:
+            if listed["path"].casefold() in folded:
+                raise Dropped(f"{clipped(listed['path'])} is listed by two of its artifacts, which the door would refuse")
+        folded.update(listed["path"].casefold() for listed in files)
+    return {
+        "artifacts": artifacts,
+        "cmd": cmd,
+        "entry_point": entry_point,
+        "hosts": hosts,
+        "interpreter_args": ["-I"],
         "platform": platform,
     }
 
@@ -726,25 +1278,47 @@ def entry(
     choice: dict,
     runners: dict,
     allowed: set[str],
+    interpreters: dict[str, dict],
     dropped: list[dict],
 ) -> tuple[dict, dict[str, bytes]]:
     distribution = agent.get("distribution")
-    binary = distribution.get("binary") if isinstance(distribution, dict) else None
-    if not isinstance(binary, dict):
-        raise Dropped("is not distributed as a binary, the one kind this intake takes in")
-    if len(binary) > ITEMS:
-        raise Dropped(f"lists more than {ITEMS} binary targets")
+    distribution = distribution if isinstance(distribution, dict) else {}
+    # A binary wins: `uvx` is read only for an agent with no binary.
+    binary = distribution.get("binary")
+    uvx = distribution.get("uvx") if binary is None else None
+    if isinstance(binary, dict):
+        kind = "binary"
+        if len(binary) > ITEMS:
+            raise Dropped(f"lists more than {ITEMS} binary targets")
+    elif isinstance(uvx, dict):
+        kind = "uvx"
+        package = uvx.get("package")
+        pinned = PACKAGE.fullmatch(package) if isinstance(package, str) else None
+        if pinned is None or not PINNED.fullmatch(pinned[2]):
+            raise Dropped(f"the uvx package {clipped(package)} is not pinned as name==version")
+        name, pinned_version = pinned[1], version(pinned[2], "the uvx package's version")
+        args = arguments(uvx.get("args"), "args")
+        env = variables(uvx.get("env"), "env")
+    else:
+        raise Dropped("is distributed neither as a binary nor through uvx, the kinds this intake takes in")
     released = version(agent.get("version"), "the version")
     licence = text(agent.get("license"), "the licence")
     reached = reach(choice.get("reach"), "the chosen reach")
     mirrored = licence if licence in allowed else None
     assets: dict[str, bytes] = {}
     targets = []
-    for platform, spec in sorted(binary.items()):
+    for platform, spec in sorted(binary.items()) if kind == "binary" else [(platform, None) for platform in sorted(runners)]:
         try:
-            targets.append(target(observed, agent_id, platform, spec, runners, mirrored, assets))
+            if kind == "binary":
+                targets.append(target(observed, agent_id, platform, spec, runners, mirrored, assets))
+            else:
+                made = uvx_target(observed, agent_id, platform, name, pinned_version, interpreters, assets)
+                targets.append({"args": args, "env": env, **made})
         except Exception as failed:  # whatever one target breaks, the others go on
-            dropped.append({"platform": clipped(platform), "reason": reason(failed), "registry_id": agent_id})
+            row = {"platform": clipped(platform), "reason": reason(failed), "registry_id": agent_id}
+            if isinstance(failed, Build):
+                row["build"] = failed.build
+            dropped.append(row)
     if not targets:
         raise Dropped("has no target left to offer")
     probed = []
@@ -770,7 +1344,7 @@ def entry(
             "admits": admits,
             "auth_methods": methods,
             "key": choice["key"],
-            "kind": "binary",
+            "kind": kind,
             "license": licence,
             "reach": reached,
             "registry_id": agent_id,
@@ -856,6 +1430,7 @@ def review(arguments: argparse.Namespace) -> int:
     runners = runners_of(read_json(arguments.runners, SMALL_BYTES, "the runner matrix"))
     allowed = allowed_licences(arguments.deny)
     merged = merged_of(arguments.merged)
+    interpreters = interpreters_of(arguments.interpreters)
     BUDGET = Budget()
     entries = []
     dropped: list[dict] = []
@@ -876,7 +1451,7 @@ def review(arguments: argparse.Namespace) -> int:
             dropped.append({"reason": "has no key chosen by a reviewer yet", "registry_id": agent_id})
             continue
         try:
-            made, kept = entry(arguments.observed, agent, agent_id, choice, runners, allowed, dropped)
+            made, kept = entry(arguments.observed, agent, agent_id, choice, runners, allowed, interpreters, dropped)
         except Exception as failed:  # whatever one entry breaks, the others go on
             dropped.append({"reason": reason(failed), "registry_id": agent_id})
             continue
@@ -988,6 +1563,13 @@ def checked(entry: dict) -> None:
         for name in ("platform", "cmd"):
             present(target, name, str, f"{where}: a target")
         present(target, "hosts", list, f"{where}: a target")
+        if entry["kind"] == "uvx":
+            started = present(target, "interpreter_args", list, f"{where}: a target")
+            if not all(isinstance(item, str) for item in started):
+                raise Refused(f"{where}: a target's interpreter_args is not a list of text")
+            module, colon, attr = present(target, "entry_point", str, f"{where}: a target").partition(":")
+            if not colon or not module or not attr:
+                raise Refused(f"{where}: a target's entry_point is not module:attr")
         artifacts = present(target, "artifacts", list, f"{where}: a target")
         if not artifacts:
             raise Refused(f"{where}: a target's artifacts is empty, so nothing would be pinned")
@@ -1298,7 +1880,11 @@ def entry_lines(entry: dict, previous: dict | None, same: bool) -> list[str]:
     )
     lines += compared("registry id", entry.get("registry_id"), against("registry_id"), shown)
     lines += compared("licence", entry.get("license"), against("license"), shown)
-    lines.append("- " + ("marked for mirroring" if mirrored else "not mirrored: its licence is not on deny.toml's list"))
+    uvx = entry.get("kind") == "uvx"
+    if uvx:
+        lines.append("- not mirrored: an interpreter and its wheels are never mirrored")
+    else:
+        lines.append("- " + ("marked for mirroring" if mirrored else "not mirrored: its licence is not on deny.toml's list"))
     lines += compared(
         "answers initialize as",
         entry.get("admits"),
@@ -1328,6 +1914,9 @@ def entry_lines(entry: dict, previous: dict | None, same: bool) -> list[str]:
             lines.append(probe_line(platform, record))
         lines += compared("capabilities", record.get("capabilities"), prior.get("probe", {}).get("capabilities") if old is not None else NEW, capabilities_of)
         lines += compared("cmd", listed.get("cmd"), was_of("cmd"), shown)
+        if uvx:
+            lines += compared("interpreter args", listed.get("interpreter_args", []), was_of("interpreter_args"), words)
+            lines += compared("entry point", listed.get("entry_point"), was_of("entry_point"), shown)
         lines += compared("args", listed.get("args", []), was_of("args"), words)
         lines += compared("env", listed.get("env", {}), was_of("env"), setting)
         lines += compared("hosts", listed.get("hosts", []), was_of("hosts"), words)
@@ -1376,11 +1965,14 @@ def diff(arguments: argparse.Namespace) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
-    reviewing = commands.add_parser("review", help="turn registry binary entries into review data")
+    reviewing = commands.add_parser("review", help="turn registry binary and uvx entries into review data")
     for name in ("registry", "choices", "runners", "observed", "deny", "assets", "out"):
         reviewing.add_argument(f"--{name}", type=pathlib.Path, required=True)
     reviewing.add_argument(
         "--merged", type=pathlib.Path, help="the merged data, against which a version already reviewed is held"
+    )
+    reviewing.add_argument(
+        "--interpreters", type=pathlib.Path, help="the interpreter pinned for each platform a uvx agent runs on"
     )
     differing = commands.add_parser("diff", help="the human diff of review data against merged data")
     differing.add_argument("--old", type=pathlib.Path, help="the merged data before this review")
