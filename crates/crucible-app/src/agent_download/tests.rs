@@ -371,6 +371,44 @@ fn a_download_host_that_is_an_address_or_every_host_is_refused_before_a_request(
     assert!(server.asked().is_empty());
 }
 
+/// An address a refusal names is quoted and cut, however long the catalog or
+/// a lock wrote it, so no refusal carries the whole of it.
+#[test]
+fn an_address_a_refusal_names_is_cut_however_long_it_is() {
+    let server = Server::start();
+    let source = server.source();
+    let long = "a".repeat(32 * 1024);
+
+    let unlisted = bare(PROGRAM, format!("https://elsewhere.example/{long}"), None);
+    let refused = reachable(&source, &hosts(), &unlisted);
+    assert!(matches!(refused, Err(DownloadError::Unlisted(_))));
+    let said = refused
+        .err()
+        .map(|error| error.to_string())
+        .unwrap_or_default();
+    assert!(
+        said.chars().count() < 512,
+        "{} characters",
+        said.chars().count()
+    );
+    assert!(said.contains('…'), "the address is said to be cut");
+
+    let unread = bare(PROGRAM, format!("not an address {long}"), None);
+    let refused = reachable(&source, &hosts(), &unread);
+    assert!(matches!(refused, Err(DownloadError::Address(_))));
+    let said = refused
+        .err()
+        .map(|error| error.to_string())
+        .unwrap_or_default();
+    assert!(
+        said.chars().count() < 512,
+        "{} characters",
+        said.chars().count()
+    );
+    assert!(said.contains('…'), "the address is said to be cut");
+    assert!(server.asked().is_empty());
+}
+
 #[test]
 fn an_address_or_mirror_on_a_host_not_listed_is_refused_before_a_request() {
     let server = Server::start();

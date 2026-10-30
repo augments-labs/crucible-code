@@ -151,7 +151,7 @@ const LOOPBACK: [&str; 3] = ["127.0.0.1", "[::1]", "localhost"];
 ///
 /// Anything else between the host and the path, a user's name or a second
 /// host among it, is refused rather than read the way a URL parser would.
-fn looped(base: &str) -> bool {
+pub(crate) fn looped(base: &str) -> bool {
     let Some(rest) = base
         .strip_prefix("http://")
         .or_else(|| base.strip_prefix("https://"))

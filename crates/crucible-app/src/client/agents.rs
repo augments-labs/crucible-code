@@ -34,20 +34,32 @@
 //! cut is not put to a client that does not draw the whole value, and a no, a
 //! cancel, or nobody, leaves every file as it was. What is checked before that
 //! question is put is everything that can refuse the release without a byte
-//! fetched from its own hosts: how it is started, a release a pinned Node
-//! starts being refused and one a pinned interpreter starts having its entry
-//! point checked as one its launcher can be written for, and its interpreter's
-//! arguments as exactly `-I`; its download hosts,
-//! and that every address and mirror it is pinned at is on one of them; its
+//! fetched from its own hosts: how it is started, a release a pinned
+//! interpreter starts having its entry point checked as one its launcher can
+//! be written for, and its interpreter's arguments as exactly `-I`, and one a
+//! pinned Node starts being refused where Node is given arguments of its own
+//! or an install script is to be run at install, which this build does not
+//! do; its download hosts,
+//! and that every address and mirror it is pinned at is on one of them; for a
+//! release a pinned Node starts, its package lock, fetched from the catalog's
+//! own host by [`catalog_fetch::asset`] and read, and every tarball it pins on
+//! a host the target lists, so the question names the package count, every
+//! install script and what the reviewer decided of it, at most sixteen and
+//! then how many more, and the hosts the registry is reached through; its
 //! file lists, where a list the catalog keeps as an asset is first fetched
 //! from the catalog's own host by [`catalog_fetch::asset`] and read as one
 //! given inline, a list that does not arrive as listed or does not read
 //! refusing the release; that the program it is started as is one of its
-//! files and runs; its size, summed with checked arithmetic, against the most
-//! a release may be and the room the install store has; and, for a version
-//! already in place, that its receipt is of the artifacts and the files the
-//! catalog pins, with the launcher of a release a pinned interpreter starts,
-//! refused otherwise.
+//! files and runs; its size, its tarballs' among it, summed with checked
+//! arithmetic, against the most a release may be and the room the install
+//! store has, where the tarballs stand as one more download; and, for a
+//! version already in place, that its receipt is of the artifacts and the
+//! files the catalog pins, with the launcher of a release a pinned
+//! interpreter starts, or the preload and `.bin` of one a pinned Node starts,
+//! refused otherwise. A tree's own files are known from its receipt only as
+//! lying where its lock installs a package, which the question says, since
+//! its lock lists none of them; a receipt is bounded, so a tree of very many
+//! files can make a version that is refused rather than kept.
 //!
 //! After a yes, the release the question named is the one installed: each
 //! artifact is downloaded within its pin by [`crate::agent_download`] into a
@@ -57,7 +69,12 @@
 //! Such a release's launcher, `launch.py`, is written at the top of the
 //! version for its entry point from a template that never changes and is
 //! committed and named in the receipt with the rest, so a second install of
-//! the version fetches nothing. Only then is every instance whose
+//! the version fetches nothing. A release a pinned Node starts has its
+//! tarballs downloaded after its artifacts by [`agent_download::tarballs`]
+//! into a directory of the staging's own, unpacked from there to where its
+//! lock installs each package and that directory removed, then the preload
+//! written at the top of the version and `.bin` made empty beside it, each
+//! named in the receipt. Only then is every instance whose
 //! `executable` lies in the agent's directory in the store written to the new
 //! program, in one update of the user file, each
 //! only where its `executable` still names what the question showed, so an
@@ -167,11 +184,12 @@ use crucible_client_api::{
 use crucible_config::{AgentUpdate, Cloud, ConfigError, Driver, ExternalAgent, Home, Settings};
 use crucible_execution::{Authentication, Failure};
 use crucible_external_harnesses::catalog::{
-    AuthMethod, CatalogError, Entry, File, FileKind, Files, Format, Launch, Method, Offer, Target,
-    Trust, Unprofiled, file_list,
+    Artifact, AssetRef, AuthMethod, CatalogError, Disposition, Entry, File, FileKind, Files,
+    Format, Launch, Method, Offer, Script, Target, Trust, Unprofiled, file_list,
 };
 use crucible_external_harnesses::release::{
-    LAUNCHER, LaunchScript, RELEASE_BYTES, UnpackError, Unpacker, Wheels,
+    BIN, LAUNCHER, LaunchScript, NpmTree, PRELOAD, Preload, RELEASE_BYTES, UnpackError, Unpacker,
+    Wheels,
 };
 use crucible_external_harnesses::store::{
     Listing, Mismatch, Provenance, Receipt, Store, StoreError, Version,
@@ -913,23 +931,10 @@ impl Door<'_> {
         watching: Watching<'_>,
     ) -> Result<Outcome, AgentsError> {
         // A release a pinned interpreter starts is started through a launcher
-        // written for its entry point, which is held before anything is asked.
-        let script = match &offer.pin.target.launch {
-            Launch::Binary => None,
-            Launch::Uvx {
-                interpreter_args,
-                entry_point,
-            } => Some(LaunchScript::new(
-                &offer.entry.key,
-                interpreter_args,
-                entry_point,
-            )?),
-            Launch::Npm { .. } => {
-                return Err(AgentsError::Unsupported(
-                    "the release is started by a pinned Node",
-                ));
-            }
-        };
+        // written for its entry point, which is held before anything is asked;
+        // one a pinned Node starts, under the preload alone, with no install
+        // script run, and its lock is fetched below.
+        let (script, lock) = launched(&offer)?;
         let mut reached: Vec<String> = Vec::new();
         let hosts = &offer.pin.target.hosts;
         for artifact in &offer.pin.target.artifacts {
@@ -940,18 +945,42 @@ impl Door<'_> {
             }
         }
         fetch_file_lists(&self.shelf.catalog, &mut offer).await?;
+        // The lock from the catalog's own host, read, and every tarball it
+        // pins on a host the target lists, all before anything is asked.
+        let tree = match &lock {
+            Some(asset) => Some(
+                fetch_tree(
+                    &self.shelf.catalog,
+                    asset,
+                    &offer.pin.target.hosts,
+                    &mut reached,
+                )
+                .await?,
+            ),
+            None => None,
+        };
         let offer = &offer;
         let agent = &offer.entry.key;
         let target = &offer.pin.target;
         let mut listed = listed(target);
         runnable(&listed, &target.cmd)?;
         // The launcher is committed with the version, so a receipt of it in
-        // place names it too.
+        // place names it too; so are the preload and the empty `.bin` beside
+        // a tree.
         listed.extend(script.as_ref().map(LaunchScript::file));
-        let total = sized(offer)?;
+        if tree.is_some() {
+            listed.extend([
+                Preload::file(),
+                File {
+                    path: BIN.into(),
+                    kind: FileKind::Dir,
+                },
+            ]);
+        }
+        let (total, fitted) = sized(offer, tree.as_ref())?;
         let version = Version::new(&offer.pin.version, offer.pin.lock_revision)?;
         let kept = match self.store.receipt(agent, &version)? {
-            Some(receipt) if same(&receipt, target, &listed) => true,
+            Some(receipt) if same(&receipt, target, &listed, tree.as_ref()) => true,
             Some(_) => {
                 return Err(AgentsError::Kept {
                     agent: agent.clone(),
@@ -963,7 +992,7 @@ impl Door<'_> {
         // Room for what it unpacks to, and for the download beside it while
         // it is unpacked; a version kept takes none.
         if !kept {
-            self.store.fits_while_downloading(target)?;
+            self.store.fits_while_downloading(&fitted)?;
         }
         let moving = self.moving(agent);
         let root = self.store.directory(agent, &version);
@@ -971,6 +1000,8 @@ impl Door<'_> {
 
         let plan = Plan {
             kept,
+            total,
+            tree: tree.as_ref(),
             reached,
             smoking: self.smoking(agent),
             // The name the question shows; the one written is chosen again
@@ -1032,6 +1063,34 @@ impl Door<'_> {
             if let Some(script) = &script {
                 files.push(script.write(staging.directory())?);
             }
+            if let Some(tree) = &tree {
+                // The last artifact's download is unpacked; emptied, it takes
+                // no room the tarballs need.
+                drop(staging.download()?);
+                let progress = &mut *watching.progress;
+                let mut told = |done: u64, _: u64| {
+                    let done = before.saturating_add(done).min(total);
+                    if let Some(said) = name
+                        .clone()
+                        .and_then(|name| InstallProgress::new(name, done, total))
+                    {
+                        progress(said);
+                    }
+                };
+                files.extend(
+                    noded(
+                        &self.shelf.catalog,
+                        agent_download::Tree {
+                            hosts: &target.hosts,
+                            tree,
+                        },
+                        &staging,
+                        &mut told,
+                        watching.cancel,
+                    )
+                    .await?,
+                );
+            }
             let provenance = Provenance {
                 listing: Listing {
                     serial: offer.serial,
@@ -1072,9 +1131,7 @@ impl Door<'_> {
         let kept = plan.kept;
         let target = &offer.pin.target;
         let entry = &offer.entry;
-        // Summed before the question is put, which a size past the bound
-        // never reaches.
-        let total = sized(offer).unwrap_or(0);
+        let total = plan.total;
         let (key, version) = (entry.key.as_str(), quoted(&offer.pin.version));
         let putting = format!("Put {version} in place and move the instances named onto it");
         let (asks, choice, does) = match (how, &plan.adding) {
@@ -1097,6 +1154,14 @@ impl Door<'_> {
         } else {
             format!("{key} {version}, {total} bytes to download.")
         }];
+        if kept && plan.tree.is_some() {
+            facts.push(
+                "Known by its receipt: Node's artifacts by SHA-256, and Node's files, the preload \
+                 and .bin as pinned; its package tree's files only as lying where its lock \
+                 installs a package, which are not read again."
+                    .to_owned(),
+            );
+        }
         if !kept {
             let reached: Vec<String> = plan.reached.iter().map(|place| quoted(place)).collect();
             let mut mirrors: Vec<String> = target
@@ -1120,6 +1185,14 @@ impl Door<'_> {
                     mirrors.join(", ")
                 )
             });
+            if let Some(tree) = plan.tree {
+                let count = tree.packages().len();
+                let packages = if count == 1 { "package" } else { "packages" };
+                facts.push(format!(
+                    "Its package tree holds {count} {packages}, each unpacked from the tarball its \
+                     lock pins by SHA-512."
+                ));
+            }
         }
         let license = quoted(&entry.license);
         facts.push(match &entry.terms {
@@ -1137,10 +1210,20 @@ impl Door<'_> {
                 started.extend(interpreter_args.iter().map(|argument| quoted(argument)));
                 started.push(quoted(LAUNCHER));
             }
-            Launch::Binary | Launch::Npm { .. } => {}
+            Launch::Npm { bin, scripts, .. } => {
+                facts.extend(unrun(scripts));
+                started.extend(["--require".to_owned(), PRELOAD.to_owned(), quoted(bin)]);
+            }
+            Launch::Binary => {}
         }
         started.extend(target.args.iter().map(|argument| quoted(argument)));
         facts.push(format!("Started as: {}", started.join(" ")));
+        if matches!(target.launch, Launch::Npm { .. }) {
+            facts.push(format!(
+                "Node is given the preload first, which refuses a package the version's tree \
+                 does not hold, and {BIN}, empty in this build, last on its PATH."
+            ));
+        }
         facts.push(if target.env.is_empty() {
             "Started with no environment of its own.".to_owned()
         } else {
@@ -1736,27 +1819,188 @@ fn signing_row(
     Ok((row, agent))
 }
 
-/// What downloading `offer` takes, in bytes, refused where it or what it
-/// unpacks to is more than a release may be.
-fn sized(offer: &Offer) -> Result<u64, AgentsError> {
+/// What downloading `offer` and `tree`, where it has one, takes, in bytes,
+/// refused where it or what it unpacks to is more than a release may be;
+/// and its target as the install store's room is asked for it, with one more
+/// artifact standing for the tree.
+fn sized(offer: &Offer, tree: Option<&NpmTree>) -> Result<(u64, Target), AgentsError> {
     let mut downloaded: u64 = 0;
     let mut unpacked: u64 = 0;
+    let within = |sum: Option<u64>| {
+        sum.filter(|bytes| *bytes <= RELEASE_BYTES)
+            .ok_or(AgentsError::TooLarge)
+    };
     for artifact in &offer.pin.target.artifacts {
         let size = artifact
             .replaced_by
             .as_ref()
             .map_or(artifact.size, |asset| asset.size);
-        downloaded = downloaded
-            .checked_add(size)
-            .filter(|bytes| *bytes <= RELEASE_BYTES)
-            .ok_or(AgentsError::TooLarge)?;
-        unpacked = unpacked
-            .checked_add(artifact.unpacked)
-            .filter(|bytes| *bytes <= RELEASE_BYTES)
-            .ok_or(AgentsError::TooLarge)?;
+        downloaded = within(downloaded.checked_add(size))?;
+        unpacked = within(unpacked.checked_add(artifact.unpacked))?;
     }
-    Ok(downloaded)
+    let mut room = offer.pin.target.clone();
+    if let Some(tree) = tree {
+        // Every tarball is downloaded once, however many packages it is
+        // unpacked for, and each package unpacks its own; both sums are
+        // checked, so a lock that overflows them is refused, not wrapped.
+        let mut seen = std::collections::HashSet::new();
+        let (mut tarred, mut spread): (u64, u64) = (0, 0);
+        for tarball in tree
+            .packages()
+            .iter()
+            .filter_map(|package| package.tarball.as_ref())
+        {
+            if seen.insert(&*tarball.sha512) {
+                tarred = within(tarred.checked_add(tarball.size))?;
+            }
+            spread = within(spread.checked_add(tarball.unpacked))?;
+        }
+        downloaded = within(downloaded.checked_add(tarred))?;
+        within(unpacked.checked_add(spread))?;
+        // The tarballs lie in the staging until they are unpacked, so the
+        // room asked for stands them as one download beside what the tree
+        // unpacks to.
+        room.artifacts.push(Artifact {
+            url: String::new().into(),
+            mirror: None,
+            sha256: String::new().into(),
+            size: tarred,
+            format: Format::TarGz,
+            unpacked: spread,
+            decompressed: spread,
+            files: Files::Listed(Vec::new()),
+            kept: Vec::new(),
+            replaced_by: None,
+        });
+    }
+    Ok((downloaded, room))
 }
+
+/// What starting `offer` takes beyond its artifacts: the launcher of a
+/// release a pinned interpreter starts, or the lock of one a pinned Node
+/// starts, refused where Node is given arguments of its own or an install
+/// script is to be run at install, which this build does not do.
+fn launched(offer: &Offer) -> Result<(Option<LaunchScript>, Option<AssetRef>), AgentsError> {
+    Ok(match &offer.pin.target.launch {
+        Launch::Binary => (None, None),
+        Launch::Uvx {
+            interpreter_args,
+            entry_point,
+        } => (
+            Some(LaunchScript::new(
+                &offer.entry.key,
+                interpreter_args,
+                entry_point,
+            )?),
+            None,
+        ),
+        Launch::Npm {
+            node_args,
+            lock,
+            scripts,
+            ..
+        } => {
+            if !Preload::admits(node_args) {
+                return Err(AgentsError::Unsupported(
+                    "the release gives its pinned Node arguments of its own",
+                ));
+            }
+            if scripts
+                .iter()
+                .any(|script| matches!(script.disposition, Disposition::Local { .. }))
+            {
+                return Err(AgentsError::Unsupported(
+                    "the release has an install script run at install",
+                ));
+            }
+            (None, Some(lock.asset.clone()))
+        }
+    })
+}
+
+/// The facts naming each install script of a tree, which none is run as npm
+/// would run it, at most [`SCRIPTS`] of them, then how many more.
+fn unrun(scripts: &[Script]) -> Vec<String> {
+    let mut facts: Vec<String> = scripts
+        .iter()
+        .take(SCRIPTS)
+        .map(|script| {
+            let why = match &script.disposition {
+                Disposition::Inert => "inert: it does nothing the agent needs",
+                Disposition::Replaced => "replaced: a platform package does its work",
+                Disposition::Lost => "lost: the agent works without what it would add",
+                Disposition::Built => "built at review and installed as an asset",
+                // Refused before the question is put.
+                Disposition::Local { .. } => "run at install, which this build does not do",
+            };
+            format!(
+                "Install script not run: {} {}, {why}.",
+                quoted(&script.package),
+                quoted(&script.event)
+            )
+        })
+        .collect();
+    let more = scripts.len().saturating_sub(SCRIPTS);
+    if more > 0 {
+        facts.push(format!("And {more} more install scripts, none run."));
+    }
+    facts
+}
+
+/// The most install scripts a question names one by one.
+const SCRIPTS: usize = 16;
+
+/// The files of `tree` installed into `staging`: each tarball
+/// downloaded by [`agent_download::tarballs`] into a directory of the
+/// staging's own, unpacked from there and the directory removed, so it is not
+/// committed; then the preload, written new and writable by its owner alone,
+/// and `.bin`, made empty and reachable by its owner alone.
+async fn noded(
+    source: &Source,
+    tree: agent_download::Tree<'_>,
+    staging: &crucible_external_harnesses::store::Staging,
+    progress: &mut (dyn FnMut(u64, u64) + Send),
+    cancel: &Cancel,
+) -> Result<Vec<File>, AgentsError> {
+    let root = staging.directory();
+    let tarballs = root.join(TARBALLS);
+    agent_download::tarballs(source, tree, &tarballs, progress, cancel).await?;
+    let mut files = tree
+        .tree
+        .unpack(&tarballs, root)
+        .map_err(DownloadError::Tree)?;
+    std::fs::remove_dir_all(&tarballs).map_err(DownloadError::Write)?;
+    // Made new, so nothing the tree unpacked to its name is written through,
+    // and with the modes the tree's own files and directories are, whatever
+    // the umask would allow: Node loads the preload before the agent.
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o644);
+    let mut preload = options
+        .open(root.join(PRELOAD))
+        .map_err(DownloadError::Write)?;
+    std::io::Write::write_all(&mut preload, Preload::bytes()).map_err(DownloadError::Write)?;
+    let bin = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    let bin = {
+        let mut bin = bin;
+        std::os::unix::fs::DirBuilderExt::mode(&mut bin, 0o700);
+        bin
+    };
+    bin.create(root.join(BIN)).map_err(DownloadError::Write)?;
+    files.extend([
+        Preload::file(),
+        File {
+            path: BIN.into(),
+            kind: FileKind::Dir,
+        },
+    ]);
+    Ok(files)
+}
+
+/// The directory of the staging a tree's tarballs are downloaded into.
+const TARBALLS: &str = "tarballs";
 
 /// The instances a switch wrote onto the new program, and those it left as
 /// they are because they named something else by then.
@@ -1792,6 +2036,8 @@ fn written(moving: &[(&ExternalAgent, Version)], left: Vec<String>) -> Written {
 /// would be written under.
 struct Plan<'a> {
     kept: bool,
+    total: u64,
+    tree: Option<&'a NpmTree>,
     reached: Vec<String>,
     smoking: Result<&'a Launcher<'a>, String>,
     adding: Option<String>,
@@ -1813,6 +2059,27 @@ async fn fetch_file_lists(source: &Source, offer: &mut Offer) -> Result<(), Agen
         artifact.files = Files::Listed(files);
     }
     Ok(())
+}
+
+/// The tree the lock at `asset` gives, fetched from the catalog's own host
+/// and read, with every place its tarballs may be fetched through, on
+/// `hosts`, added to `reached`.
+async fn fetch_tree(
+    source: &Source,
+    asset: &AssetRef,
+    hosts: &[Box<str>],
+    reached: &mut Vec<String>,
+) -> Result<NpmTree, AgentsError> {
+    let bytes = catalog_fetch::asset(source, asset)
+        .await
+        .map_err(DownloadError::Lock)?;
+    let tree = NpmTree::parse(&bytes).map_err(DownloadError::Tree)?;
+    for place in agent_download::tree_reachable(source, hosts, &tree)? {
+        if !reached.contains(&place) {
+            reached.push(place);
+        }
+    }
+    Ok(tree)
 }
 
 /// Every file the target's artifacts list, as they would be committed; a
@@ -1842,8 +2109,11 @@ fn runnable(listed: &[File], cmd: &str) -> Result<(), AgentsError> {
 }
 
 /// Whether `receipt`, of a version already in place, is the release `target`
-/// pins: the same artifacts, by size and SHA-256 as pinned, and the same files.
-fn same(receipt: &Receipt, target: &Target, listed: &[File]) -> bool {
+/// pins: the same artifacts, by size and SHA-256 as pinned, and the same files;
+/// beside a `tree`, the files where its lock installs a package are set
+/// apart first, since its lock lists none of them, and every other file is
+/// held to `listed`.
+fn same(receipt: &Receipt, target: &Target, listed: &[File], tree: Option<&NpmTree>) -> bool {
     let pinned = target
         .artifacts
         .iter()
@@ -1860,9 +2130,24 @@ fn same(receipt: &Receipt, target: &Target, listed: &[File]) -> bool {
         files.sort_by(|one, other| one.path.cmp(&other.path));
         files
     };
+    let installed = |file: &File| {
+        tree.is_some_and(|tree| {
+            tree.packages().iter().any(|package| {
+                file.path
+                    .strip_prefix(&*package.location)
+                    .is_some_and(|rest| rest.starts_with('/'))
+            })
+        })
+    };
+    let own: Vec<File> = receipt
+        .files
+        .iter()
+        .filter(|file| !installed(file))
+        .cloned()
+        .collect();
     receipt.artifacts.len() == target.artifacts.len()
         && pinned.eq(fetched)
-        && by_path(&receipt.files) == by_path(listed)
+        && by_path(&own) == by_path(listed)
 }
 
 /// The sentence saying which instances move onto `version` of `agent`.

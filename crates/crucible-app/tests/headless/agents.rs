@@ -66,6 +66,9 @@ use super::{Failed, Tree};
 mod adding;
 #[path = "agents/file_list.rs"]
 mod file_list;
+#[cfg(feature = "proof")]
+#[path = "agents/npm.rs"]
+mod npm;
 #[path = "agents/uvx.rs"]
 mod uvx;
 
@@ -79,6 +82,9 @@ enum Reply {
     /// A 200 promising twice these bytes, of which it sends these, then holds
     /// the connection open.
     Half(Vec<u8>),
+    /// This status, with no body.
+    #[cfg(feature = "proof")]
+    Status(u16),
 }
 
 /// A host on this machine standing where the catalog is published.
@@ -220,6 +226,16 @@ fn answer(
             ("200 OK", String::new(), body, promised)
         }
         Some(Reply::Redirect(to)) => ("302 Found", format!("location: {to}\r\n"), Vec::new(), 0),
+        #[cfg(feature = "proof")]
+        Some(Reply::Status(code)) => {
+            let _ = write!(
+                stream,
+                "HTTP/1.1 {code} Status\r\nconnection: close\r\ncontent-length: 0\r\n\r\n"
+            );
+            let _ = stream.flush();
+            let _ = stream.shutdown(Shutdown::Write);
+            return;
+        }
         Some(Reply::Half(body)) => {
             let promised = body.len() * 2;
             let _ = write!(
