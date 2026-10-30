@@ -17,7 +17,10 @@
 //! same rules with no list, so the list the catalog's intake records is one
 //! an unpack accepts. A wheel of a release started by a pinned interpreter
 //! is unpacked by [`Wheels`] into the same staging directory, by the same
-//! rules, under `site/`, and [`LaunchScript`] is the file that starts it.
+//! rules, under `site/`, and [`LaunchScript`] is the file that starts it. A
+//! release that Node runs is a package tree, which [`NpmTree`] reads from the
+//! lock the catalog keeps for it and unpacks from its packages' tarballs by
+//! npm's rules where they differ from these.
 //!
 //! A [`Pin`] borrows what it names: the build's own table lends `'static`
 //! text, and an [`OwnedPin`], a release the agent catalog offers, lends text it
@@ -443,7 +446,8 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// A release a test can publish: an archive of two small members and the pin
-/// it was published as, a catalog agent's archive, and a wheel.
+/// it was published as, a catalog agent's archive, a wheel, and a package
+/// tree's lock and tarball.
 #[cfg(feature = "proof")]
 pub mod proof {
     use std::fmt::Write as _;
@@ -453,7 +457,7 @@ pub mod proof {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use flate2::Compression;
     use flate2::write::GzEncoder;
-    use sha2::{Digest as _, Sha256};
+    use sha2::{Digest as _, Sha256, Sha512};
     use tar::{EntryType, Header};
     use zip::write::SimpleFileOptions;
     use zip::{CompressionMethod, ZipWriter};
@@ -468,6 +472,12 @@ pub mod proof {
 
     /// The licence a catalog agent's release ships beside them.
     pub const LICENSE: &[u8] = b"MIT License\n";
+
+    /// The bytes of the one package of [`npm_tree`]'s `index.js`.
+    pub const NPM_INDEX: &[u8] = b"module.exports = 1;\n";
+
+    /// The bytes of the one package of [`npm_tree`]'s `bin/peer.js`.
+    pub const NPM_BIN: &[u8] = b"#!/usr/bin/env node\n";
 
     /// A catalog agent's release for the intake to survey, and the artifact
     /// the catalog describes it as before a file list is recorded for it, as
@@ -528,6 +538,59 @@ pub mod proof {
             "decompressed": 1 << 20,
         });
         (archive, described.to_string().into_bytes())
+    }
+
+    /// A package tree's lock, as the JSON `crucible agents unpack-check`
+    /// reads, the SHA-512 its one tarball is pinned by and kept under, and
+    /// the tarball.
+    ///
+    /// The tree is one package, `peer` 1.0.0, installed at
+    /// `node_modules/peer`. Its tarball is a gzip-compressed tar of
+    /// `package/index.js`, holding [`NPM_INDEX`], and `package/bin/peer.js`,
+    /// holding [`NPM_BIN`] and given a mode that runs it, written with no
+    /// time or owner in them.
+    ///
+    /// # Panics
+    ///
+    /// When the tarball cannot be written in memory, which leaves the test
+    /// asking for it nothing to report.
+    #[must_use]
+    #[allow(clippy::expect_used)]
+    pub fn npm_tree() -> (Vec<u8>, String, Vec<u8>) {
+        let mut builder = tar::Builder::new(Vec::new());
+        let members = [
+            ("package/index.js", NPM_INDEX, 0o644),
+            ("package/bin/peer.js", NPM_BIN, 0o755),
+        ];
+        for (name, bytes, mode) in members {
+            let mut header = Header::new_gnu();
+            header.set_path(name).expect("a name");
+            header.set_entry_type(EntryType::Regular);
+            header.set_size(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+            header.set_mode(mode);
+            header.set_mtime(0);
+            header.set_cksum();
+            builder.append(&header, bytes).expect("a member");
+        }
+        let tar = builder.into_inner().expect("a tar");
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&tar).expect("its bytes");
+        let tarball = encoder.finish().expect("a gzip stream");
+        let sha512 = hex(&Sha512::digest(&tarball));
+        let lock = serde_json::json!({
+            "unpack_rules": 1,
+            "packages": [{
+                "location": "node_modules/peer",
+                "name": "peer",
+                "version": "1.0.0",
+                "url": "https://registry.npmjs.org/peer/-/peer-1.0.0.tgz",
+                "size": tarball.len(),
+                "sha512": sha512,
+                "files": members.len(),
+                "unpacked": NPM_INDEX.len() + NPM_BIN.len(),
+            }],
+        });
+        (lock.to_string().into_bytes(), sha512, tarball)
     }
 
     /// Release 1.0.0's archive, of an `agent` and a `harness`, and its pin,

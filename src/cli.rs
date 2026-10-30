@@ -376,15 +376,18 @@ enum AgentsAction {
         #[arg(long)]
         method: Option<String>,
     },
-    /// Unpack a download the agent catalog describes by the rules an install
-    /// holds it to, write the file list it unpacked to as JSON, and stop.
+    /// Unpack a download the agent catalog describes, or a package tree its
+    /// lock describes, by the rules an install holds it to, write the file
+    /// list it unpacked to as JSON, and stop.
     ///
     /// The catalog's intake runs it, so `--help` leaves it out.
     #[command(hide = true)]
     UnpackCheck {
-        /// One artifact as the catalog spells it, with no file list.
+        /// One artifact as the catalog spells it, with no file list; or a
+        /// package tree's lock, where the download is a directory.
         entry: PathBuf,
-        /// The download.
+        /// The download; or, for a lock, the directory holding each of its
+        /// tarballs under the SHA-512 it is pinned by.
         artifact: PathBuf,
         /// The directory to unpack into, which must not exist.
         out: PathBuf,
