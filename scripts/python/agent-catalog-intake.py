@@ -1890,9 +1890,10 @@ def tarball_of(place: pathlib.Path, wanted: set[str], location: str, locations: 
     Its headers are read as the client reads them, each as it is written: a
     GNU long name or link, or an extended header, describes the one member
     after it, and its own name is its header's. One global extended header
-    holding only a `comment` is skipped, as it names no member; any other is
-    refused: npm applies one to every member after it and the client does
-    not, so the two would write such a member under different names.
+    holding only `comment` records, which use up its body, is skipped, as it
+    names no member; any other is refused: npm applies one to every member
+    after it and the client does not, so the two would write such a member
+    under different names.
 
     It is refused where the client would refuse it: more than one gzip
     stream, a header whose checksum or numbers are wrong, one member
@@ -1972,7 +1973,12 @@ def tarball_of(place: pathlib.Path, wanted: set[str], location: str, locations: 
                                       f"{EXTENDED_BYTES} bytes")
                     held_global = tar_read(unzipped, size_of)
                     tar_skip(unzipped, padding)
-                    if any(key != b"comment" for key, _ in tar_extended(held_global)):
+                    # Its records must use up its body, each line ending in a
+                    # newline and none of them blank: the reader stops at a
+                    # blank line, as the client's does, and npm's reads on.
+                    lines = held_global.split(b"\n")
+                    if lines[-1] or not all(lines[:-1]) or any(
+                            key != b"comment" for key, _ in tar_extended(held_global)):
                         raise Dropped("the tarball holds a global extended header that says more than a "
                                       "comment, which npm applies to the members after it and the client does not")
                     global_read = True

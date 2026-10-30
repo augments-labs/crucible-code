@@ -2267,6 +2267,10 @@ def check_npm_tarballs(scratch: pathlib.Path) -> None:
     # A global header declaring one byte more than an extended header may
     # hold, and no body: it is refused before any of it is read.
     global_big = tar_member(b"pax_global_header", b"g", size=load_intake().EXTENDED_BYTES + 1)
+    # A comment, a blank line and a `path` after it, which the client's reader
+    # stops before and npm's does not.
+    hidden = pax_records(comment=b"0123456789abcdef") + b"\n" + pax_records(path=b"package/lib/hidden.js")
+    global_hidden = tar_member(b"pax_global_header", b"g", hidden)
     for name, tarball, words in (
         ("slashed", tar_written(raw, tar_member(b"package/lib/more/", b"\0", b"2\n")), "empty"),
         ("paxslash", tar_written(raw, tar_member(b"package/x", b"x", pax_records(path=b"package/lib/more.js/")),
@@ -2275,6 +2279,7 @@ def check_npm_tarballs(scratch: pathlib.Path) -> None:
                                added), "says more than a comment"),
         ("globaltwice", tar_written(global_comment, global_comment, raw, added), "after another"),
         ("globalbig", tar_written(global_big), "global extended header of more than"),
+        ("globalhidden", tar_written(global_hidden, raw, added), "says more than a comment"),
         ("globalahead", tar_written(raw, tar_member(b"././@LongLink", b"L", b"package/lib/one.js\0"),
                                     global_comment, added), "between a member's own headers"),
         ("spelled", tar_written(raw, tar_member(b"package/A/x", b"0", b"2\n"), tar_member(b"package/a/y", b"0", b"2\n")),
