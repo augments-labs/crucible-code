@@ -11,7 +11,9 @@
 //! longer says a pinned interpreter starts it, or says one starts it with
 //! anything but `-I`, it is refused before any process, and where a newer
 //! release that one starts is listed instead, it still starts through its own
-//! launcher.
+//! launcher. Whatever stands where a withdrawn version's launcher was counts
+//! as its launcher: a link, whether or not it leads anywhere, a directory and
+//! a file no one may read are each refused before any process.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -609,6 +611,106 @@ fn a_version_holding_its_launcher_is_refused_once_the_catalog_no_longer_says_how
         .map(|(what, _)| (*what, true, Vec::<Vec<String>>::new()))
         .collect();
     assert_eq!(found, expected);
+    Ok(())
+}
+
+/// Installs goose 1.0.0 on a bench named `name` as a pinned interpreter
+/// starts it, takes in a catalog that lists nothing, has `place` put something
+/// else at the version's `launch.py`, and starts the version; gives the bench,
+/// whether the start was refused as one the catalog no longer says, and the
+/// arguments the interpreter kept.
+fn withdrawn_holding(
+    name: &str,
+    place: impl FnOnce(&Path) -> std::io::Result<()>,
+) -> Result<(Bench, bool, Vec<Vec<String>>), Failed> {
+    let bench = Bench::new(name)?;
+    let played = peer(&answers("1.0.0"))?;
+    let (release, program) = superseded(&bench, &played, &[])?;
+    place(&version(&bench).join("launch.py"))?;
+
+    let ended = versioned(&bench, row_of(&release)?, &program)?;
+
+    let refused = matches!(
+        ended,
+        Err(Unlaunched::Launcher {
+            why: Unlaunchable::Unlisted,
+            ..
+        })
+    );
+    let argued = fake_peer::argued(&version(&bench).join("python/bin"));
+    Ok((bench, refused, argued))
+}
+
+/// A directory standing where a withdrawn version's launcher was counts as
+/// its launcher: the version is refused before any process.
+#[test]
+fn a_directory_where_a_withdrawn_versions_launcher_was_is_refused_before_any_process()
+-> Result<(), Failed> {
+    let (_bench, refused, argued) =
+        withdrawn_holding("agents-door-uvx-unlisted-directory", |at| {
+            fs::remove_file(at)?;
+            fs::create_dir(at)
+        })?;
+
+    assert_eq!((refused, argued), (true, Vec::<Vec<String>>::new()));
+    Ok(())
+}
+
+/// A link standing where a withdrawn version's launcher was counts as its
+/// launcher whether or not it leads anywhere: a dangling link, and a link to
+/// a file inside the version, are each refused before any process.
+#[cfg(unix)]
+#[test]
+fn a_link_where_a_withdrawn_versions_launcher_was_is_refused_before_any_process()
+-> Result<(), Failed> {
+    use std::os::unix::fs::symlink;
+
+    let (_dangling, dangling, dangling_argued) =
+        withdrawn_holding("agents-door-uvx-unlisted-dangling", |at| {
+            fs::remove_file(at)?;
+            symlink("missing.py", at)
+        })?;
+    let (_inner, inner, inner_argued) =
+        withdrawn_holding("agents-door-uvx-unlisted-inner", |at| {
+            fs::rename(at, at.with_file_name("kept.py"))?;
+            symlink("kept.py", at)
+        })?;
+
+    // Each refused as a start the catalog no longer says, and the
+    // interpreter never started, so it kept no arguments.
+    assert_eq!(
+        [
+            ("a dangling link", dangling, dangling_argued),
+            ("a link inside the version", inner, inner_argued),
+        ],
+        [
+            ("a dangling link", true, Vec::<Vec<String>>::new()),
+            ("a link inside the version", true, Vec::<Vec<String>>::new()),
+        ]
+    );
+    Ok(())
+}
+
+/// A launcher no one may read, where a withdrawn version's launcher was,
+/// still counts as its launcher: the version is refused before any process.
+#[cfg(unix)]
+#[test]
+fn a_launcher_no_one_may_read_in_a_withdrawn_version_is_refused_before_any_process()
+-> Result<(), Failed> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut kept = None;
+    let (bench, refused, argued) =
+        withdrawn_holding("agents-door-uvx-unlisted-unreadable", |at| {
+            kept = Some(fs::metadata(at)?.permissions());
+            fs::set_permissions(at, fs::Permissions::from_mode(0o000))
+        })?;
+    // Its mode is put back, so its temporary directory can be removed.
+    if let Some(permissions) = kept {
+        fs::set_permissions(version(&bench).join("launch.py"), permissions)?;
+    }
+
+    assert_eq!((refused, argued), (true, Vec::<Vec<String>>::new()));
     Ok(())
 }
 
