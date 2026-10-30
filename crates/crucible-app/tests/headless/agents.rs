@@ -1,12 +1,12 @@
 //! The agents door, driven with no terminal and no conversation: nothing is
-//! fetched before the answer, a no changes nothing, a download goes only where
-//! it is listed and a cancelled one commits nothing, and an update and a
-//! rollback move the instances' `executable` between versions. A version
-//! the catalog revoked is refused at launch with its reason, an agent started
-//! from the store cannot write into its version, and a switch is smoke-tested
-//! only where a launcher's sandbox is on with the network closed and the
-//! agent's route has its yes, keeping every instance where it was when the
-//! smoke fails.
+//! fetched before the answer but the catalog and a file list it keeps as an
+//! asset, a no changes nothing, a download goes only where it is listed and a
+//! cancelled one commits nothing, and an update and a rollback move the
+//! instances' `executable` between versions. A version the catalog revoked is
+//! refused at launch with its reason, an agent started from the store cannot
+//! write into its version, and a switch is smoke-tested only where a
+//! launcher's sandbox is on with the network closed and the agent's route has
+//! its yes, keeping every instance where it was when the smoke fails.
 //!
 //! The cases that start the fake peer in the sandbox pass over nothing on a
 //! machine whose sandbox cannot enforce, and fail there on a job that sets
@@ -64,6 +64,8 @@ use super::{Failed, Tree};
 
 #[path = "agents/adding.rs"]
 mod adding;
+#[path = "agents/file_list.rs"]
+mod file_list;
 
 /// What the fake host answers a path with.
 #[derive(Clone)]
@@ -515,6 +517,8 @@ const fn shape(outcome: &Result<Outcome, AgentsError>) -> &'static str {
         Err(AgentsError::Store(_)) => "Err(Store)",
         Err(AgentsError::Download(_)) => "Err(Download)",
         Err(AgentsError::Unpacked(_)) => "Err(Unpacked)",
+        Err(AgentsError::FileListUnfetched(_)) => "Err(FileListUnfetched)",
+        Err(AgentsError::FileListUnread(_)) => "Err(FileListUnread)",
         Err(AgentsError::Remember(_)) => "Err(Remember)",
         Err(AgentsError::Unadded { .. }) => "Err(Unadded)",
         Err(AgentsError::Smoke { .. }) => "Err(Smoke)",

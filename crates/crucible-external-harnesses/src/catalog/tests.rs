@@ -18,12 +18,13 @@ use super::trust::{
 };
 use super::{
     Admits, AssetRef, AuthMethod, Catalog, CatalogError, CatalogProfile, ContentUse, Disposition,
-    Entry, FileKind, Files, Format, GRACE, Held, INDEX_BYTES, KEYS, Keys, Kind, Launch, Lock,
+    Entry, File, FileKind, Files, Format, GRACE, Held, INDEX_BYTES, KEYS, Keys, Kind, Launch, Lock,
     Method, Revoked, Route, SCHEMA_SHOWN, SNAPSHOT, Script, Trust, TrustError, Unprofiled,
-    Unusable, VERSION_BYTES, Variable,
+    Unusable, VERSION_BYTES, Variable, file_list,
 };
 use crate::acp::SignIn;
 use crate::antigravity::AGENT;
+use crate::release::MEMBERS;
 use crate::tests::Owned;
 
 const DAY: Duration = Duration::from_hours(24);
@@ -1020,6 +1021,142 @@ fn an_artifact_without_its_file_list_is_refused() {
             refused.map(|_| "believed")
         );
     }
+}
+
+/// goose as the whole catalog believes it, the files its one artifact lists
+/// inline, and that list as the catalog spells it.
+// A test whose good catalog lists no goose has nothing else to report.
+#[allow(clippy::panic)]
+fn goose_listed() -> (Entry, Vec<File>, Value) {
+    let catalog = believed();
+    let Some(goose) = catalog.entries().first() else {
+        panic!("an entry");
+    };
+    let Some(Files::Listed(files)) = goose
+        .targets
+        .first()
+        .and_then(|target| target.artifacts.first())
+        .map(|artifact| artifact.files.clone())
+    else {
+        panic!("goose lists its files inline");
+    };
+    let spelled = binary()
+        .pointer("/targets/0/artifacts/0/files")
+        .cloned()
+        .unwrap_or_default();
+    (goose.clone(), files, spelled)
+}
+
+#[test]
+fn a_file_list_asset_reads_to_the_files_the_inline_list_of_them_gives() {
+    let (goose, inline, spelled) = goose_listed();
+    // As the intake writes it, keys sorted and nothing between them, and laid
+    // out, since whitespace is not the format.
+    let compact = serde_json::to_vec(&spelled).unwrap_or_default();
+    let laid_out = serde_json::to_vec_pretty(&spelled).unwrap_or_default();
+
+    for bytes in [compact, laid_out] {
+        let read = file_list(&goose, &bytes);
+
+        assert_eq!(read.as_ref().ok(), Some(&inline), "{read:?}");
+    }
+}
+
+#[test]
+fn a_file_list_asset_is_refused_naming_its_entry_and_the_first_member_at_fault() {
+    let (goose, _, spelled) = goose_listed();
+    let first = spelled.get(0).cloned().unwrap_or_default();
+    let after = |member: Value| serde_json::to_vec(&json!([first, member])).unwrap_or_default();
+    let cases: Vec<(&str, Vec<u8>, &str, &str)> = vec![
+        (
+            "a member whose size is not a number",
+            after(json!({"path": "lib/x", "size": "large", "sha256": hash('d')})),
+            "goose 1.4.1 files[1].size",
+            "is not a whole number",
+        ),
+        (
+            "a member that is not an object",
+            after(json!("goose")),
+            "goose 1.4.1 files[1]",
+            "is not an object",
+        ),
+        (
+            "a member whose path leaves its directory",
+            after(json!({"path": "../goose", "kind": "dir"})),
+            "goose 1.4.1 files[1].path",
+            "is not a relative path that stays inside its directory",
+        ),
+        (
+            "a path listed twice",
+            after(json!({"path": "goose", "kind": "dir"})),
+            "goose 1.4.1 files[1].path",
+            "is listed twice",
+        ),
+        (
+            "a link to an absolute path",
+            after(json!({"path": "lib/libgoose.so", "kind": "link", "target": "/etc/passwd"})),
+            "goose 1.4.1 files[1].target",
+            "is not a relative link",
+        ),
+        (
+            "a link through a backslash",
+            after(json!({"path": "lib/libgoose.so", "kind": "link", "target": "..\\goose"})),
+            "goose 1.4.1 files[1].target",
+            "is not a relative link",
+        ),
+        (
+            "an object in place of the list",
+            serde_json::to_vec(&first).unwrap_or_default(),
+            "goose 1.4.1 files",
+            "is not a JSON list of files",
+        ),
+        (
+            "bytes that are not JSON",
+            b"[{\"path\":".to_vec(),
+            "goose 1.4.1 files",
+            "is not a JSON list of files",
+        ),
+    ];
+
+    let failures: Vec<String> = cases
+        .into_iter()
+        .filter_map(|(case, bytes, named, said)| {
+            let refused = file_list(&goose, &bytes);
+            let right = matches!(
+                &refused,
+                Err(CatalogError::Field { field, why }) if **field == *named && *why == said
+            );
+            (!right).then(|| format!("{case}: {refused:?}"))
+        })
+        .collect();
+
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+#[test]
+fn a_file_list_asset_holds_as_many_files_as_an_unpack_writes_and_no_more() {
+    let (goose, _, _) = goose_listed();
+    let list = |members: usize| {
+        let files: Vec<Value> = (0..members)
+            .map(|index| json!({"path": format!("d{index}"), "kind": "dir"}))
+            .collect();
+        serde_json::to_vec(&files).unwrap_or_default()
+    };
+
+    let whole = file_list(&goose, &list(MEMBERS));
+    let over = file_list(&goose, &list(MEMBERS + 1));
+
+    assert_eq!(whole.as_ref().map(Vec::len).ok(), Some(MEMBERS));
+    let past = format!("goose 1.4.1 files[{MEMBERS}]");
+    assert!(
+        matches!(
+            &over,
+            Err(CatalogError::Field { field, why: "is past the most files one list may hold" })
+                if **field == *past
+        ),
+        "{:?}",
+        over.map(|files| files.len())
+    );
 }
 
 #[test]

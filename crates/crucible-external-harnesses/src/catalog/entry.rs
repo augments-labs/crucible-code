@@ -20,6 +20,9 @@
 //! - every digest is a SHA-256 in lowercase hexadecimal, and every artifact a
 //!   catalog carries lists the files it unpacks to, where one read alone for
 //!   the intake to survey lists none;
+//! - a file list the catalog keeps as an asset of its own is read member by
+//!   member as an inline one is, once its bytes are fetched, with each path in
+//!   it listed once and no more members than an unpack writes;
 //! - no variable it sets is one a loader reads to choose what code runs.
 //!
 //! Nothing more is checked here. Control characters, names a platform
@@ -27,10 +30,13 @@
 //! since it writes the files, and the sizes are the unpacker's and the store's
 //! to reconcile, with checked arithmetic.
 
+use std::collections::HashSet;
+
 use crucible_types::AgentKey;
 use serde_json::{Map, Value, json};
 
 use super::CatalogError;
+use crate::release::MEMBERS;
 
 /// The largest catalog asset a file list, a package tree or a script's result
 /// is kept in, in bytes.
@@ -688,6 +694,49 @@ impl File {
             kind,
         })
     }
+}
+
+/// The files a file-list asset of `entry` holds, read from `bytes` as an
+/// artifact's inline `files` is read, member by member: a JSON list of file
+/// objects in any layout, each path in it listed once, and no more of them
+/// than the most members an unpack writes.
+///
+/// The caller bounds `bytes` before they are read, as fetching the asset
+/// within the size the catalog lists it at does.
+///
+/// # Errors
+///
+/// [`CatalogError::Field`] naming `entry` by its key and version, and the
+/// first member that is not what the catalog holds.
+pub fn file_list(entry: &Entry, bytes: &[u8]) -> Result<Vec<File>, CatalogError> {
+    let list = format!("{} {} files", entry.key.as_str(), entry.version);
+    let Ok(Value::Array(members)) = serde_json::from_slice::<Value>(bytes) else {
+        return Err(CatalogError::Field {
+            field: list.into(),
+            why: "is not a JSON list of files",
+        });
+    };
+    let mut paths = HashSet::with_capacity(members.len().min(MEMBERS));
+    let mut files = Vec::with_capacity(members.len().min(MEMBERS));
+    for (index, member) in members.iter().enumerate() {
+        let at = format!("{list}[{index}]");
+        if index == MEMBERS {
+            return Err(CatalogError::Field {
+                field: at.into(),
+                why: "is past the most files one list may hold",
+            });
+        }
+        let fields = Fields::new(member, at)?;
+        let file = File::read(&fields)?;
+        // The path as the list spells it, which the file was read from.
+        if let Some(path) = fields.field("path").and_then(Value::as_str)
+            && !paths.insert(path)
+        {
+            return Err(fields.wrong("path", "is listed twice"));
+        }
+        files.push(file);
+    }
+    Ok(files)
 }
 
 impl Revoked {

@@ -86,7 +86,7 @@ const LINK_STEPS: usize = 8;
 /// The most members a survey writes, and the most names either writes, each
 /// directory a member only implies counted; an unpack writes no more members
 /// than its list holds.
-pub(super) const MEMBERS: usize = 65_536;
+pub(crate) const MEMBERS: usize = 65_536;
 
 /// The longest name a member may have, and a link's target, in bytes.
 const NAME_BYTES: usize = 4096;
