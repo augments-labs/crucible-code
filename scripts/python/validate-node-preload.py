@@ -7,10 +7,13 @@ lays one out, in a scratch directory that is also the agent's `HOME`. The
 agent's script requires an optional dependency inside a `try`, and requires
 and imports a module named `planted`, which is installed in a `node_modules`
 above the store and in `HOME/.node_modules`, where Node's walk up would find
-it. Each planted copy writes a marker file when it runs. The script does the
-same again in a worker and in a child started by `fork`.
+it. It requires and imports `linkout` too, a link in the tree into a version
+beside it whose name extends the tree's own, requires `.\\planted`, which on
+POSIX names a file planted above the store, and imports a `data:` URL. Each
+planted copy writes a marker file when it runs. The script does the same again
+in a worker and in a child started by `fork`.
 
-It passes when every one of them refuses both, `require` with
+It passes when every one of them refuses each, `require` with
 `MODULE_NOT_FOUND` and `import` with `ERR_MODULE_NOT_FOUND`, naming nothing
 but the specifier, while a module inside the tree still loads, no marker is
 written, and a Node without `module.registerHooks` stops at the preload rather
@@ -67,8 +70,12 @@ main().catch((error) => {
 });
 """
 
+# What the probe imports as a `data:` URL, which is refused as a package.
+DATA = "data:text/javascript,export default 1"
+
 PROBE = r"""
 'use strict';
+const DATA = __DATA__;
 function caught(load) {
   try {
     load();
@@ -81,6 +88,8 @@ module.exports = async function probe() {
   const seen = {
     optional: caught(() => require('optional-dep')),
     planted: caught(() => require('planted')),
+    backslashed: caught(() => require('.\\planted')),
+    linked: caught(() => require('linkout')),
     inside: caught(() => require('inside')),
   };
   try {
@@ -90,6 +99,18 @@ module.exports = async function probe() {
     seen.imported = { code: error.code, message: error.message };
   }
   try {
+    await import('linkout');
+    seen.imported_linked = { code: 'loaded' };
+  } catch (error) {
+    seen.imported_linked = { code: error.code, message: error.message };
+  }
+  try {
+    await import(DATA);
+    seen.imported_data = { code: 'loaded' };
+  } catch (error) {
+    seen.imported_data = { code: error.code, message: error.message };
+  }
+  try {
     await import('inside');
     seen.imported_inside = { code: 'loaded' };
   } catch (error) {
@@ -97,7 +118,7 @@ module.exports = async function probe() {
   }
   return seen;
 };
-"""
+""".replace("__DATA__", json.dumps(DATA))
 
 WORKER = r"""
 'use strict';
@@ -192,8 +213,24 @@ def layout(root: pathlib.Path, preload: str, name: str) -> tuple[pathlib.Path, p
         (root / ".node_modules" / "optional-dep", "home-optional"),
         (root / ".node_libraries" / "planted", "home-libraries"),
     ]
+    # A version beside this one whose name extends its own, which a link in
+    # the tree leads into: outside the tree, though its path begins with the
+    # tree's.
+    sibling = version.with_name(version.name + "x")
+    planted.append((sibling / "node_modules" / "planted", "sibling"))
     for directory, marker in planted:
         module(directory, PLANTED % (json.dumps(str(markers)), json.dumps(marker)))
+    try:
+        os.symlink(sibling / "node_modules" / "planted", version / "node_modules" / "linkout", target_is_directory=True)
+    except OSError as error:
+        raise SystemExit(f"node preload: a link could not be made in the tree: {error}")
+    if os.name != "nt":
+        # A file whose name begins `.\`, which on POSIX Node resolves
+        # `require('.\\planted')` to as a package, not as a relative path.
+        (root / "node_modules" / ".\\planted.js").write_text(
+            PLANTED % (json.dumps(str(markers)), json.dumps("above-store-backslash")),
+            encoding="utf-8",
+        )
     return version / name, agent / "cli.js", markers
 
 
@@ -210,7 +247,8 @@ def refused(seen: dict, field: str, code: str, specifier: str, where: str) -> li
     if got.get("code") != code:
         problems.append(f"{where}: {field} gave {got.get('code')!r}, not {code}")
     message = got.get("message") or ""
-    if json.dumps(specifier) not in message or "/" in message or "\\" in message:
+    rest = message.replace(json.dumps(specifier), "")
+    if json.dumps(specifier) not in message or "/" in rest or "\\" in rest:
         problems.append(f"{where}: {field}'s refusal does not name the specifier alone: {message!r}")
     return problems
 
@@ -241,6 +279,11 @@ def confined(node: str, preload: pathlib.Path, script: pathlib.Path, root: pathl
         problems += refused(got, "optional", "MODULE_NOT_FOUND", "optional-dep", where)
         problems += refused(got, "planted", "MODULE_NOT_FOUND", "planted", where)
         problems += refused(got, "imported", "ERR_MODULE_NOT_FOUND", "planted", where)
+        problems += refused(got, "linked", "MODULE_NOT_FOUND", "linkout", where)
+        problems += refused(got, "imported_linked", "ERR_MODULE_NOT_FOUND", "linkout", where)
+        problems += refused(got, "imported_data", "ERR_MODULE_NOT_FOUND", DATA, where)
+        if os.name != "nt":
+            problems += refused(got, "backslashed", "MODULE_NOT_FOUND", ".\\planted", where)
         for field in ["inside", "imported_inside"]:
             if (got.get(field) or {}).get("code") != "loaded":
                 problems.append(f"{where}: the module inside the tree did not load: {got.get(field)}")
