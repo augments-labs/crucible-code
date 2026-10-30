@@ -131,7 +131,11 @@ folded, and no longer than 767 bytes. Every tarball is fetched from
 no space, and every hop of its fetch
 stays on that host; its SHA-512 and size are computed here, a SHA-512
 `integrity` must agree with it, a SHA-1 one is held only where it is the only
-one, and a package with neither is refused. Each package's own package.json,
+one, and a package with neither is refused. A tarball is read as the client
+reads it: one gzip stream and nothing after it, at most 65,536 members, an
+ordinary file, a directory or a link alone, every name one the client writes
+and none written twice once case is folded; and a lock's tarballs write at
+most 65,536 files and 4 GiB together. Each package's own package.json,
 a bundled one's included, must give the name and version the lock gives it. A
 bundled package has no tarball of its own and is counted in the one that
 holds it. A target's lock, the asset a client unpacks its tree from, lists
@@ -230,7 +234,6 @@ from __future__ import annotations
 import argparse
 import base64
 import configparser
-import gzip
 import hashlib
 import json
 import os
@@ -248,6 +251,7 @@ import tomllib
 import unicodedata
 import urllib.parse
 import zipfile
+import zlib
 
 # The ceilings of what is read, each before it is parsed.
 REGISTRY_BYTES = 1 << 20
@@ -319,6 +323,16 @@ DISPOSITIONS_BYTES = SMALL_BYTES
 TREE_FILES = 1 << 16
 TREE_BYTES = 4 << 30
 NPM_PATH_BYTES = 767
+# The most members one tarball may give, and the most bytes and components a
+# name written from it may have, in any one component and in all.
+TARBALL_MEMBERS = 1 << 16
+NAME_COMPONENT_BYTES = 255
+NAME_COMPONENTS = 64
+# The devices Windows takes a name for whatever follows it after a dot,
+# besides `com0` to `com9` and `lpt0` to `lpt9`, and the characters it
+# refuses in a name besides the backslash and the colon.
+WINDOWS_DEVICES = {"con", "prn", "aux", "nul", "conin$", "conout$"}
+WINDOWS_REFUSES = '<>"|?*'
 SEMVER_BYTES = 256
 # How long one gpg call may take.
 GPG_SECONDS = 60
@@ -1700,12 +1714,71 @@ class Bounded:
         return chunk
 
 
-def tarball_of(place: pathlib.Path, wanted: set[str]) -> dict:
-    """The tarball under `place` as npm unpacks it: its SHA-512, SHA-1 and
-    size; the files and bytes it writes, its first component stripped and a
-    member with nothing after it skipped, directories and links writing
-    nothing; and the `package.json` and whether a `binding.gyp` lies at each
-    package root in `wanted` ("" its own, or a bundled package's below it)."""
+class OneGzip:
+    """The one gzip stream `file` holds, decompressed as it is read; whatever
+    follows that stream is left for `ended` to refuse."""
+
+    def __init__(self, file) -> None:
+        self.file = file
+        self.inflate = zlib.decompressobj(wbits=31)
+        self.held = b""
+
+    def read(self, count: int = -1) -> bytes:
+        count = 1 << 20 if count < 0 else count
+        while len(self.held) < count and not self.inflate.eof:
+            chunk = self.inflate.unconsumed_tail or self.file.read(1 << 16)
+            if not chunk:
+                raise Dropped("the tarball's gzip stream ends before it is whole")
+            self.held += self.inflate.decompress(chunk, 1 << 20)
+        chunk, self.held = self.held[:count], self.held[count:]
+        return chunk
+
+    def ended(self) -> bool:
+        """Whether the stream is whole and nothing follows it."""
+        return self.inflate.eof and not self.inflate.unused_data and not self.file.read(1)
+
+
+def npm_written(name: str) -> str:
+    """`name` as the client writes a file under it, one leading `./` dropped,
+    refused where the client would refuse it: printable ASCII alone,
+    relative, with no backslash, colon or character Windows refuses, at most
+    255 bytes a component and 64 components, and no empty, `.` or `..`
+    component, none that ends in a dot or a space, and none that names a
+    device Windows reserves."""
+    name = name[2:] if name.startswith("./") else name
+    shown_name = clipped(name)
+    parts = name.split("/")
+    if len(parts) > NAME_COMPONENTS or any(len(part) > NAME_COMPONENT_BYTES for part in parts):
+        raise Dropped(f"the tarball writes {shown(shown_name)}, deeper than {NAME_COMPONENTS} components "
+                      f"or with one longer than {NAME_COMPONENT_BYTES} bytes")
+    if any(not " " <= character <= "~" for character in name):
+        raise Dropped(f"the tarball writes {shown(shown_name)}, which is not printable ASCII")
+    if name.startswith("/") or any(mark in name for mark in "\\:" + WINDOWS_REFUSES):
+        raise Dropped(f"the tarball writes {shown(shown_name)}, which is absolute or holds a character "
+                      "Windows refuses")
+    for part in parts:
+        stem = part.split(".")[0].rstrip(" ").lower()
+        if part in ("", ".", ".."):
+            raise Dropped(f"the tarball writes {shown(shown_name)}, with an empty, . or .. component")
+        if part.endswith((".", " ")):
+            raise Dropped(f"the tarball writes {shown(shown_name)}, with a component ending in a dot or a space")
+        if stem in WINDOWS_DEVICES or (len(stem) == 4 and stem[:3] in ("com", "lpt") and stem[3].isdigit()):
+            raise Dropped(f"the tarball writes {shown(shown_name)}, which names a device Windows reserves")
+    return name
+
+
+def tarball_of(place: pathlib.Path, wanted: set[str], location: str) -> dict:
+    """The tarball under `place`, of the package at `location`, as npm
+    unpacks it and the client reads it: its SHA-512, SHA-1 and size; the
+    files and bytes it writes, its first component stripped and a member
+    with nothing after it skipped, directories and links writing nothing;
+    and the `package.json` and whether a `binding.gyp` lies at each package
+    root in `wanted` ("" its own, or a bundled package's below it). It is
+    refused where the client would refuse it: more than one gzip stream, a
+    member of a kind other than a file, a directory or a link, more than
+    `TARBALL_MEMBERS` members, a name the client does not write or that is
+    longer than `NPM_PATH_BYTES` under `location`, and a name written twice,
+    or as a file and a directory, once case is folded."""
     with opened(place / "artifact") as file:
         sha512 = hashlib.sha512()
         sha1 = hashlib.sha1()
@@ -1718,22 +1791,45 @@ def tarball_of(place: pathlib.Path, wanted: set[str]) -> dict:
             sha512.update(chunk)
             sha1.update(chunk)
         file.seek(0)
-        files = unpacked = 0
+        files = unpacked = members = 0
         manifests: dict[str, bytes] = {}
         gyps: set[str] = set()
+        # The names written, and the directories they imply, once folded.
+        written: set[str] = set()
+        directories: set[str] = set()
         try:
-            unzipped = Bounded(gzip.GzipFile(fileobj=Spending(file), mode="rb"), TARBALL_DECOMPRESSED, "the tarball")
+            stream = OneGzip(Spending(file))
+            unzipped = Bounded(stream, TARBALL_DECOMPRESSED, "the tarball")
             with tarfile.open(fileobj=unzipped, mode="r|") as tar:
-                for member in tar:
+                # Read one member at a time, and none kept, so a tarball of
+                # many members is not held whole.
+                while (member := tar.next()) is not None:
+                    tar.members.clear()
+                    members += 1
+                    if members > TARBALL_MEMBERS:
+                        raise Dropped(f"the tarball holds more than {TARBALL_MEMBERS} members")
                     _, _, rest = member.name.partition("/")
-                    if not rest or member.isdir() or member.issym() or member.islnk():
+                    if member.type in (tarfile.DIRTYPE, tarfile.SYMTYPE, tarfile.LNKTYPE):
                         continue
-                    if not member.isfile():
-                        raise Dropped(f"the tarball holds {clipped(rest)}, of a kind npm's rules refuse")
+                    if member.type not in (tarfile.REGTYPE, tarfile.AREGTYPE) or member.issparse():
+                        raise Dropped(f"the tarball holds {shown(clipped(member.name))}, of a kind npm's rules refuse")
+                    if not rest:
+                        continue
+                    rest = npm_written(rest)
+                    path = f"{location}/{rest}"
+                    if len(path) > NPM_PATH_BYTES:
+                        raise Dropped(f"the tarball writes {shown(clipped(path))}, longer than {NPM_PATH_BYTES} bytes")
+                    npm_written(path)
+                    folded = path.casefold()
+                    above = folded.split("/")
+                    implied = {"/".join(above[:depth]) for depth in range(1, len(above))}
+                    if folded in written or folded in directories or implied & written:
+                        raise Dropped(f"the tarball writes {shown(clipped(path))} twice, or as a file and a "
+                                      "directory, once case is folded")
+                    written.add(folded)
+                    directories |= implied
                     files += 1
                     unpacked += member.size
-                    if files > LISTED_ENTRIES:
-                        raise Dropped(f"the tarball writes more than {LISTED_ENTRIES} files")
                     root, _, leaf = rest.rpartition("/")
                     if root in wanted and leaf == "binding.gyp":
                         gyps.add(root)
@@ -1742,6 +1838,10 @@ def tarball_of(place: pathlib.Path, wanted: set[str]) -> dict:
                             raise Dropped(f"{clipped(rest)} is larger than {PACKAGE_JSON_BYTES} bytes")
                         extracted = tar.extractfile(member)
                         manifests[root] = extracted.read() if extracted is not None else b""
+            while unzipped.read(1 << 20):
+                pass
+            if not stream.ended():
+                raise Dropped("the tarball goes on past its one gzip stream")
         except Dropped:
             raise
         except Exception:  # whatever gzip or tarfile cannot read is a tarball npm would not unpack
@@ -1884,7 +1984,7 @@ def npm_resolved(observed: pathlib.Path, agent: str, package: str, released: str
                 raise Dropped(f"{clipped(url)} is not on {NPM_REGISTRY}, the one place a package is taken from")
             plain(url)
             inner = place_of(observed, agent, "tarballs", str(item["index"]))
-            tarball = tarball_of(inner, wanted)
+            tarball = tarball_of(inner, wanted, item["location"])
             integrity_agrees(item["fields"].get("integrity"), tarball)
             reached = chained(inner, url, "the lock's address")
             elsewhere = next((name for name in reached if name != NPM_HOST), None)
@@ -1949,7 +2049,17 @@ def npm_installed(resolution: dict, platform: str) -> list[dict]:
 def npm_lock(installed: list[dict]) -> bytes:
     """The lock asset a client unpacks the tree from: every package installed,
     in the lock's order, a bundled one marked as such and every other with the
-    tarball the intake checked, compact with sorted keys."""
+    tarball the intake checked, compact with sorted keys; refused where its
+    tarballs write more files or bytes together, or hold more bytes, than the
+    client unpacks for one tree."""
+    held_tarballs = [item["tarball"] for item in installed if not item["bundled"]]
+    for field, ceiling, said in (
+        ("files", TREE_FILES, "write more than {} files"),
+        ("unpacked", TREE_BYTES, "write more than {} bytes"),
+        ("size", TREE_BYTES, "hold more than {} bytes"),
+    ):
+        if sum(tarball[field] for tarball in held_tarballs) > ceiling:
+            raise Dropped(f"its tarballs {said.format(ceiling)} together, more than a client unpacks for one tree")
     packages = []
     for item in installed:
         package: dict = {"location": item["location"], "name": item["name"], "version": item["version"]}

@@ -2174,6 +2174,78 @@ def check_npm_lock_and_tree(scratch: pathlib.Path, tree: dict) -> None:
     ]}, out.read_text()
 
 
+def packed(entries: list[tuple[str, bytes, bytes]]) -> bytes:
+    """A tarball of `entries`, each a name, its tar type and its bytes, in
+    the GNU format, which can carry a sparse member's type."""
+    held = io.BytesIO()
+    with gzip.GzipFile(fileobj=held, mode="wb", mtime=0) as zipped, \
+            tarfile.open(fileobj=zipped, mode="w", format=tarfile.GNU_FORMAT) as tar:
+        for name, kind, content in entries:
+            info = tarfile.TarInfo(name)
+            info.type, info.mode = kind, 0o755 if kind == tarfile.DIRTYPE else 0o644
+            info.size = len(content) if kind != tarfile.DIRTYPE else 0
+            tar.addfile(info, io.BytesIO(content) if info.size else None)
+    return held.getvalue()
+
+
+def with_tarball(tree: dict, location: str, tarball: bytes) -> dict:
+    """`tree` with `tarball` in place of the one at `location`, and the lock's
+    integrity for it made the new one's."""
+    held = {**tree, "lock": json.loads(json.dumps(tree["lock"])), "tarballs": dict(tree["tarballs"])}
+    held["tarballs"][list(tree["lock"]["packages"]).index(location)] = tarball
+    integrity = "sha512-" + base64.b64encode(hashlib.sha512(tarball).digest()).decode()
+    held["lock"]["packages"][location]["integrity"] = integrity
+    return held
+
+
+def check_npm_tarballs(scratch: pathlib.Path) -> None:
+    """A tarball is read as the client reads it: one gzip stream, ordinary
+    files alone written, every name one the client writes, none twice, and
+    no more members than the client takes; and a lock's packages write no
+    more files together than the client unpacks."""
+    scratch = scratch / "npm-tarballs"
+    tree = npm_tree()
+    base = [(f"package/{path}", tarfile.REGTYPE, content) for path, (content, _) in tree["files"][TOP].items()]
+    deep = "/".join(["d" * 200] * 4)
+    many = [(f"package/d{index}", tarfile.DIRTYPE, b"") for index in range(65_537)]
+    for name, tarball, words in (
+        ("members", packed(base) + gzip.compress(b"more", mtime=0), "gzip stream"),
+        ("sparse", packed([*base, ("package/hole.bin", tarfile.GNUTYPE_SPARSE, b"")]), "of a kind"),
+        ("contiguous", packed([*base, ("package/next.bin", tarfile.CONTTYPE, b"x")]), "of a kind"),
+        ("twice", packed([*base, ("package/lib/run.js", tarfile.REGTYPE, b"2\n")]), "twice"),
+        ("folded", packed([*base, ("package/LIB/run.js", tarfile.REGTYPE, b"2\n")]), "twice"),
+        ("under", packed([*base, ("package/lib/run.js/inner.js", tarfile.REGTYPE, b"2\n")]), "twice"),
+        ("device", packed([*base, ("package/lib/aux.txt", tarfile.REGTYPE, b"2\n")]), "device"),
+        ("dot", packed([*base, ("package/lib/run.", tarfile.REGTYPE, b"2\n")]), "dot or a space"),
+        ("long", packed([*base, (f"package/{deep}", tarfile.REGTYPE, b"2\n")]), "767"),
+        ("headers", packed(base + many), "65536"),
+    ):
+        observed = scratch / name / "observed"
+        lay_out_npm(observed, "npx-agent", with_tarball(tree, TOP, tarball))
+        out = scratch / name / "lock.json"
+        ran = intake("lock", "--resolved", observed / "npx-agent", "--package", "npx-agent@3.0.0",
+                     "--platform", "darwin-aarch64", "--out", out)
+        assert ran.returncode == 1 and words in ran.stderr, f"{name}: {ran.returncode} {ran.stderr[-400:]!r} lacks {words!r}"
+        assert "Traceback" not in ran.stderr and not out.exists(), name
+    # Two tarballs that write more files together than a tree may hold.
+    half = [(f"package/f{index}", tarfile.REGTYPE, b"") for index in range(32_769)]
+    held = with_tarball(tree, TOP, packed(base + half))
+    alias = [(f"package/{path}", tarfile.REGTYPE, content) for path, (content, _) in tree["files"][ALIAS].items()]
+    held = with_tarball(held, ALIAS, packed(alias + half))
+    observed = scratch / "files" / "observed"
+    lay_out_npm(observed, "npx-agent", held)
+    out = scratch / "files" / "lock.json"
+    ran = intake("lock", "--resolved", observed / "npx-agent", "--package", "npx-agent@3.0.0",
+                 "--platform", "darwin-aarch64", "--out", out)
+    assert ran.returncode == 1 and "65536 files" in ran.stderr, f"files: {ran.returncode} {ran.stderr[-400:]!r}"
+    # The tree as built, which every case changes, is laid out and read.
+    lay_out_npm(scratch / "whole" / "observed", "npx-agent", with_tarball(tree, TOP, packed(base)))
+    out = scratch / "whole" / "lock.json"
+    ran = intake("lock", "--resolved", scratch / "whole/observed/npx-agent", "--package", "npx-agent@3.0.0",
+                 "--platform", "darwin-aarch64", "--out", out)
+    assert ran.returncode == 0, ran.stderr
+
+
 def check_npm_node(scratch: pathlib.Path, signers: Signers) -> None:
     """Node's checksums are taken only under one good signature by a listed
     key made before that key expired, and Node's download only as they list it;
@@ -2298,6 +2370,7 @@ def main() -> int:
             ("uvx render", lambda: check_uvx_render(scratch)),
             ("npm", lambda: check_npm(scratch, signers)),
             ("npm node", lambda: check_npm_node(scratch, signers)),
+            ("npm tarballs", lambda: check_npm_tarballs(scratch)),
             ("npm render", lambda: check_npm_render(scratch)),
         ]
         try:
