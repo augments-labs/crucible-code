@@ -12,9 +12,10 @@ authors.workspace = true
 # The scripted peer and the suite every dialect runs against it. Off by default,
 # so a shipped build compiles neither; another package's tests turn it on to
 # reach the peer and the script sets. It also compiles the signer a test signs
-# its agent catalog with, and the three crates that signer is made of.
+# its agent catalog with, and the two crates of that signer a shipped build does
+# not otherwise need.
 [features]
-proof = ["dep:base64", "dep:blake2", "dep:ring"]
+proof = ["dep:blake2", "dep:ring"]
 
 # The scripted peer the tests launch in place of a vendor's agent. A binary of
 # its own, so that what it writes to standard output is protocol and nothing
@@ -46,10 +47,13 @@ crucible-types.workspace = true
 # under a compiled key, and verifying one is cryptography this crate does not
 # write.
 minisign-verify.workspace = true
-# Under `proof` alone, the test signer: `ring` signs with a key minted once per
-# test process, `blake2` takes the digest a minisign signature signs, and
-# `base64` writes the signature and public key as minisign's text.
-base64 = { workspace = true, optional = true }
+# A wheel's RECORD gives each member's SHA-256 in URL-safe base64, which is
+# decoded to be compared with the bytes written; under `proof`, the test signer
+# also writes its signature and public key as minisign's text with it.
+base64.workspace = true
+# Under `proof` alone, the rest of the test signer: `ring` signs with a key
+# minted once per test process, and `blake2` takes the digest a minisign
+# signature signs.
 blake2 = { workspace = true, optional = true }
 ring = { workspace = true, optional = true }
 # The journal's records and the fake peer's script are JSON, and a hand-written

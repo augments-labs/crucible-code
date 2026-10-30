@@ -15,7 +15,9 @@
 //! the catalog lists it; the rules it holds an archive to are written above
 //! it, in its own module. Its [`Unpacker::survey`] holds an archive to the
 //! same rules with no list, so the list the catalog's intake records is one
-//! an unpack accepts.
+//! an unpack accepts. A wheel of a release started by a pinned interpreter
+//! is unpacked by [`Wheels`] into the same staging directory, by the same
+//! rules, under `site/`, and [`LaunchScript`] is the file that starts it.
 //!
 //! A [`Pin`] borrows what it names: the build's own table lends `'static`
 //! text, and an [`OwnedPin`], a release the agent catalog offers, lends text it
@@ -35,9 +37,11 @@ use zip::{CompressionMethod, ZipArchive};
 use crate::catalog::{Admits, FileKind, Files, Format, Launch, Target};
 
 mod unpack;
+mod wheel;
 
 pub(crate) use unpack::{MEMBERS, link_resolves};
 pub use unpack::{Staged, UnpackError, Unpacker};
+pub use wheel::{LAUNCHER, LaunchScript, Wheels};
 
 /// The most a release may be: its archive, and what it unpacks to.
 pub const RELEASE_BYTES: u64 = 4 << 30;

@@ -60,6 +60,10 @@
 //!   and the pin fixes its bytes, so what a survey recorded is what an unpack
 //!   reads.
 //!
+//! A wheel is a zip, and its reader walks it with this one, through
+//! [`Walk::placing`]: each of its members is held to every rule above, under
+//! the name it is installed as.
+//!
 //! The staging directory is the caller's, since one version can be made of
 //! several artifacts: this writes only under it, creates nothing that is
 //! already there, and leaves removing it after a refusal to its owner.
@@ -89,7 +93,7 @@ const LINK_STEPS: usize = 8;
 pub(crate) const MEMBERS: usize = 65_536;
 
 /// The longest name a member may have, and a link's target, in bytes.
-const NAME_BYTES: usize = 4096;
+pub(super) const NAME_BYTES: usize = 4096;
 
 /// The longest component of a name, in bytes.
 const COMPONENT_BYTES: usize = 255;
@@ -150,6 +154,41 @@ pub enum UnpackError {
     /// It is a wheel, which has a reader of its own.
     #[error("a wheel is not unpacked by the reader for archives and programs")]
     Wheel,
+    /// It is not a wheel, and was given to the reader for wheels.
+    #[error("the artifact is not a wheel, which is all the reader for wheels unpacks")]
+    NotWheel,
+    /// A wheel holds a part of its `.data` directory that is not installed as
+    /// modules: anything but `purelib` and `platlib`.
+    #[error(
+        "the wheel holds {name:?} in the {part:?} part of its .data directory, which is not installed; only purelib and platlib are"
+    )]
+    Data {
+        /// The member, cut short.
+        name: String,
+        /// The part, cut short.
+        part: String,
+    },
+    /// A wheel's `RECORD` is missing, given twice or cannot be read as rows.
+    #[error("the wheel's RECORD {why}")]
+    Record {
+        /// What is wrong with it.
+        why: &'static str,
+    },
+    /// A wheel's `RECORD` does not agree with one of its members.
+    #[error("the wheel's RECORD row for {name:?} {why}")]
+    Recorded {
+        /// The member, or the path the row names, cut short.
+        name: String,
+        /// How they disagree.
+        why: &'static str,
+    },
+    /// The entry point a `uvx` release is started at is not one its launcher
+    /// can name.
+    #[error(
+        "the catalog's entry_point is not a module and an attribute, each one or more Python \
+         identifiers joined by single dots"
+    )]
+    EntryPoint,
     /// Its file list is a catalog asset, which is fetched and read into a
     /// list before the artifact is unpacked.
     #[error("the artifact's file list is a catalog asset that has not been read")]
@@ -385,7 +424,7 @@ impl Staged {
 }
 
 /// Whether `bytes` are what `artifact` pins: their size, then their SHA-256.
-fn pinned(bytes: &[u8], artifact: &Artifact) -> Result<(), UnpackError> {
+pub(super) fn pinned(bytes: &[u8], artifact: &Artifact) -> Result<(), UnpackError> {
     let (sha256, size) = match &artifact.replaced_by {
         Some(asset) => (&asset.sha256, asset.size),
         None => (&artifact.sha256, artifact.size),
@@ -403,7 +442,7 @@ fn pinned(bytes: &[u8], artifact: &Artifact) -> Result<(), UnpackError> {
 /// Whether what `file` holds is what `artifact` pins, read through from its
 /// start within one byte past the pinned size, and the file is left at its
 /// start again.
-fn pinned_file(file: &mut fs::File, artifact: &Artifact) -> Result<(), UnpackError> {
+pub(super) fn pinned_file(file: &mut fs::File, artifact: &Artifact) -> Result<(), UnpackError> {
     let (sha256, size) = match &artifact.replaced_by {
         Some(asset) => (&asset.sha256, asset.size),
         None => (&artifact.sha256, artifact.size),
@@ -435,7 +474,10 @@ fn pinned_file(file: &mut fs::File, artifact: &Artifact) -> Result<(), UnpackErr
 
 /// `files` by path, once no path is listed twice and their sizes add up to
 /// no more than `unpacked`.
-fn listing(files: &[File], unpacked: u64) -> Result<HashMap<&str, &FileKind>, UnpackError> {
+pub(super) fn listing(
+    files: &[File],
+    unpacked: u64,
+) -> Result<HashMap<&str, &FileKind>, UnpackError> {
     let mut list = HashMap::with_capacity(files.len());
     let mut total: u64 = 0;
     for file in files {
@@ -457,7 +499,7 @@ fn listing(files: &[File], unpacked: u64) -> Result<HashMap<&str, &FileKind>, Un
 }
 
 /// At most [`NAMED`] characters of `name`, for a refusal to repeat.
-fn shown(name: &[u8]) -> String {
+pub(super) fn shown(name: &[u8]) -> String {
     String::from_utf8_lossy(name).chars().take(NAMED).collect()
 }
 
@@ -903,11 +945,20 @@ fn parsed(value: &[u8]) -> Option<u64> {
     std::str::from_utf8(value).ok()?.parse().ok()
 }
 
+/// Where a wheel's reader installs a member, from the name it has in the
+/// wheel once that is held to the rules and whether it is a directory: the
+/// name it is written under, none for one that is not written, or why it is
+/// refused.
+pub(super) type Placing<'p> = dyn FnMut(&str, bool) -> Result<Option<String>, UnpackError> + 'p;
+
 /// One artifact being unpacked: the rules it is held to and what it has
 /// written so far.
-struct Walk<'a> {
+pub(super) struct Walk<'a> {
     artifact: &'a Artifact,
     staging: &'a Path,
+    /// Where each member is written, for a wheel; an archive's are written
+    /// as they are named.
+    place: Option<&'a mut Placing<'a>>,
     /// The list it is held to, by path; none for a survey.
     list: Option<HashMap<&'a str, &'a FileKind>>,
     /// The members kept, when not all of them are.
@@ -927,7 +978,9 @@ struct Walk<'a> {
 }
 
 impl<'a> Walk<'a> {
-    fn new(
+    /// The walk of `artifact` into `staging`, held to `list` where there is
+    /// one.
+    pub(super) fn new(
         artifact: &'a Artifact,
         staging: &'a Path,
         list: Option<HashMap<&'a str, &'a FileKind>>,
@@ -936,6 +989,7 @@ impl<'a> Walk<'a> {
         Self {
             artifact,
             staging,
+            place: None,
             list,
             kept: artifact.kept.iter().map(|kept| &**kept).collect(),
             members,
@@ -947,15 +1001,31 @@ impl<'a> Walk<'a> {
         }
     }
 
+    /// This walk, of a wheel, writing each member where `place` puts it once
+    /// its name is held to the rules: its list, and the members it keeps,
+    /// are then held to those names.
+    pub(super) fn placing(self, place: &'a mut Placing<'a>) -> Self {
+        Self {
+            place: Some(place),
+            ..self
+        }
+    }
+
     /// Unpacks `bytes` by the artifact's format, then makes its links and
     /// checks that nothing it names is missing.
-    fn run<R: io::BufRead + io::Seek>(mut self, reader: R) -> Result<Staged, UnpackError> {
+    pub(super) fn run<R: io::BufRead + io::Seek>(
+        mut self,
+        reader: R,
+    ) -> Result<Staged, UnpackError> {
         let budget = Budget::new(self.artifact.decompressed);
-        match self.artifact.format {
-            Format::Zip => self.zipped(reader, &budget)?,
-            Format::TarGz => self.tarred(reader, &budget)?,
-            Format::Bare => self.bare(reader, &budget)?,
-            Format::Wheel => return Err(UnpackError::Wheel),
+        match (self.artifact.format, self.place.is_some()) {
+            (Format::Zip, false) | (Format::Wheel, true) => self.zipped(reader, &budget)?,
+            (Format::TarGz, false) => self.tarred(reader, &budget)?,
+            (Format::Bare, false) => self.bare(reader, &budget)?,
+            (Format::Wheel, false) => return Err(UnpackError::Wheel),
+            (Format::Zip | Format::TarGz | Format::Bare, true) => {
+                return Err(UnpackError::NotWheel);
+            }
         }
         self.linked()?;
         self.complete()?;
@@ -1124,7 +1194,16 @@ impl<'a> Walk<'a> {
         if matches!(body, Body::Dir) && matches!(raw, b"." | b"./") {
             return Ok(());
         }
-        let name = named(raw, matches!(body, Body::Dir))?;
+        let directory = matches!(body, Body::Dir);
+        let name = named(raw, directory)?;
+        let name = match self.place.as_mut() {
+            Some(place) => match place(&name, directory)? {
+                // Where it is installed is held to the same rules.
+                Some(placed) => named(placed.as_bytes(), directory)?,
+                None => return Ok(()),
+            },
+            None => name,
+        };
         if !self.kept.is_empty() && !self.kept.contains(name.as_str()) {
             return Ok(());
         }
@@ -1467,7 +1546,7 @@ pub(crate) fn link_resolves(
 /// A new file at `path`, made on Unix with the mode it keeps, which anyone may
 /// run when `exec` says and otherwise only read, less what the process's
 /// umask takes away.
-fn created(path: &Path, exec: bool) -> io::Result<fs::File> {
+pub(super) fn created(path: &Path, exec: bool) -> io::Result<fs::File> {
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
