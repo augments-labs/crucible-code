@@ -2317,6 +2317,26 @@ def check_npm_tarballs(scratch: pathlib.Path) -> None:
     ran = intake("lock", "--resolved", observed / "npx-agent", "--package", "npx-agent@3.0.0",
                  "--platform", "darwin-aarch64", "--out", out)
     assert ran.returncode == 1 and "65536 files" in ran.stderr, f"files: {ran.returncode} {ran.stderr[-400:]!r}"
+    # Two tarballs that write, or hold, as many bytes together as a tree may,
+    # and one byte more; no tarball that large can be laid out here, so the
+    # lock is made from what the intake read of them.
+    module = load_intake()
+    ceiling = module.TREE_BYTES
+    for field, words in (("unpacked", f"write more than {ceiling} bytes"), ("size", f"hold more than {ceiling} bytes")):
+        for extra in (0, 1):
+            installed = [
+                {"bundled": False, "location": f"node_modules/p{index}", "name": f"p{index}", "version": "1.0.0",
+                 "url": f"{NPM}p{index}/-/p{index}-1.0.0.tgz",
+                 "tarball": {"files": 1, "sha512": bytes(64), "size": 1, "unpacked": 1,
+                             field: ceiling // 2 + extra * index}}
+                for index in (0, 1)
+            ]
+            try:
+                module.npm_lock(installed)
+            except module.Dropped as refused:
+                assert extra and words in str(refused), f"{field} {extra}: {refused}"
+            else:
+                assert not extra, f"{field}: a lock past {ceiling} bytes was made"
     # The tree as built, which every case changes, is laid out and read, and
     # so is one whose added file is named by an extended header, and sized by
     # it as its own header sizes it.
