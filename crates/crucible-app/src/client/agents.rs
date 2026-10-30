@@ -44,8 +44,8 @@
 //! release a pinned Node starts, its package lock, fetched from the catalog's
 //! own host by [`catalog_fetch::asset`] and read, and every tarball it pins on
 //! a host the target lists, so the question names the package count, how
-//! many packages are under each licence the lock gives, at most eight and
-//! then how many more, every install script and what the reviewer decided of
+//! many packages are under each licence the lock gives, each quoted, where
+//! any package gives one, at most eight and then how many more, every install script and what the reviewer decided of
 //! it, at most sixteen and then how many more, and the hosts the registry is
 //! reached through; its
 //! file lists, where a list the catalog keeps as an asset is first fetched
@@ -1972,9 +1972,20 @@ const SCRIPTS: usize = 16;
 
 /// How many packages of `tree` are under each licence its lock gives, those
 /// that give none counted together, the most packages first and then by
-/// licence, a package that gives none after one that does: no more than
-/// [`LICENCES`] of them, then how many more.
+/// licence; the row of those that give none is placed by its count like any
+/// other, after every licence given as many packages: no more than
+/// [`LICENCES`] of them, then how many more. A lock in which no package gives
+/// a licence carries no counts, so none is given. Each licence is quoted
+/// between double quotes, so no text a lock gives can read as the row of
+/// those that give none, which is the question's own words.
 fn licences(tree: &NpmTree) -> Vec<String> {
+    if tree
+        .packages()
+        .iter()
+        .all(|package| package.license.is_none())
+    {
+        return Vec::new();
+    }
     let mut counted: HashMap<Option<&str>, usize> = HashMap::new();
     for package in tree.packages() {
         *counted.entry(package.license.as_deref()).or_default() += 1;
@@ -1992,7 +2003,10 @@ fn licences(tree: &NpmTree) -> Vec<String> {
             let packages = if *count == 1 { "package" } else { "packages" };
             match license {
                 Some(license) => {
-                    format!("{count} {packages} of its tree under {}.", quoted(license))
+                    format!(
+                        "{count} {packages} of its tree under \"{}\".",
+                        quoted(license)
+                    )
                 }
                 None => format!("{count} {packages} of its tree under no licence given."),
             }

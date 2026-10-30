@@ -448,23 +448,50 @@ fn a_release_that_gives_node_arguments_of_its_own_is_refused_before_anything_is_
     unchanged(&bench, &before, "Node arguments of its own")
 }
 
+/// A package bundled inside `peer`, named `name` and under `license`.
+fn inside(name: &str, license: Option<&str>) -> Value {
+    let mut package = json!({
+        "location": format!("node_modules/peer/node_modules/{name}"),
+        "name": name,
+        "version": "1.0.0",
+        "in_bundle": true,
+    });
+    if let (Some(fields), Some(license)) = (package.as_object_mut(), license) {
+        fields.insert("license".to_owned(), json!(license));
+    }
+    package
+}
+
+/// The facts that count licences in the question asked for the tree whose
+/// top package is under `top` and that bundles `bundled`, run in a bench
+/// named `named`.
+fn licence_facts(named: &str, top: Option<&str>, bundled: &[Value]) -> Result<Vec<String>, Failed> {
+    let given: Vec<(usize, Value)> = top
+        .map(|top| (0, json!({ "license": top })))
+        .into_iter()
+        .collect();
+    let tree = amended(&tree(), &given, bundled)?;
+    let (bench, _, _) = bench_of(named, tree)?;
+    let mut front = answering(&bench.server, None);
+
+    let (outcome, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+
+    assert!(
+        matches!(outcome, Ok(Outcome::Undecided)),
+        "{}",
+        shape(&outcome)
+    );
+    Ok(facts(&front)?
+        .into_iter()
+        .filter(|fact| fact.contains(" of its tree under ") || fact.ends_with(" more licences."))
+        .collect())
+}
+
 /// The question counts the packages of the tree under each licence its lock
-/// gives, the most common first, a package that gives none counted as such,
-/// and names no more than eight licences before it says how many more.
+/// gives, quoted, the most common first, a package that gives none counted as
+/// such, and names no more than eight licences before it says how many more.
 #[test]
 fn the_question_counts_the_packages_of_the_tree_under_each_licence() -> Result<(), Failed> {
-    let inside = |name: &str, license: Option<&str>| {
-        let mut package = json!({
-            "location": format!("node_modules/peer/node_modules/{name}"),
-            "name": name,
-            "version": "1.0.0",
-            "in_bundle": true,
-        });
-        if let (Some(fields), Some(license)) = (package.as_object_mut(), license) {
-            fields.insert("license".to_owned(), json!(license));
-        }
-        package
-    };
     let mut bundled = vec![
         inside("a", Some("MIT")),
         inside("b", Some("MIT")),
@@ -486,40 +513,49 @@ fn the_question_counts_the_packages_of_the_tree_under_each_licence() -> Result<(
     for (at, license) in single.iter().enumerate() {
         bundled.push(inside(&format!("single{at}"), Some(license)));
     }
-    let tree = amended(&tree(), &[(0, json!({"license": "MIT"}))], &bundled)?;
-    let (bench, _, _) = bench_of("agents-door-npm-licences", tree)?;
-    let mut front = answering(&bench.server, None);
 
-    let (outcome, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+    let counted = licence_facts("agents-door-npm-licences", Some("MIT"), &bundled)?;
 
-    assert!(
-        matches!(outcome, Ok(Outcome::Undecided)),
-        "{}",
-        shape(&outcome)
-    );
-    let facts = facts(&front)?;
     let expected = [
-        "3 packages of its tree under MIT.",
-        "2 packages of its tree under Apache-2.0.",
+        "3 packages of its tree under \"MIT\".",
+        "2 packages of its tree under \"Apache-2.0\".",
         "2 packages of its tree under no licence given.",
-        "1 package of its tree under (MIT OR Apache-2.0).",
-        "1 package of its tree under 0BSD.",
-        "1 package of its tree under BlueOak-1.0.0.",
-        "1 package of its tree under CC0-1.0.",
-        "1 package of its tree under ISC.",
+        "1 package of its tree under \"(MIT OR Apache-2.0)\".",
+        "1 package of its tree under \"0BSD\".",
+        "1 package of its tree under \"BlueOak-1.0.0\".",
+        "1 package of its tree under \"CC0-1.0\".",
+        "1 package of its tree under \"ISC\".",
         "And 3 more licences.",
     ];
-    let first = facts
-        .iter()
-        .position(|fact| fact.as_str() == expected[0])
-        .ok_or("the licence the most packages are under is counted first")?;
-    let counted: Vec<&str> = facts
-        .iter()
-        .skip(first)
-        .take(expected.len())
-        .map(String::as_str)
-        .collect();
     assert_eq!(counted, expected);
+    Ok(())
+}
+
+/// A licence the lock gives is quoted, so one that spells the question's own
+/// words for a package that gives none is told apart from that row.
+#[test]
+fn a_licence_spelling_the_questions_own_words_is_told_apart_from_them() -> Result<(), Failed> {
+    let bundled = [inside("a", Some("no licence given")), inside("b", None)];
+
+    let counted = licence_facts("agents-door-npm-licence-words", None, &bundled)?;
+
+    let expected = [
+        "2 packages of its tree under no licence given.",
+        "1 package of its tree under \"no licence given\".",
+    ];
+    assert_eq!(counted, expected);
+    Ok(())
+}
+
+/// A lock in which no package gives a licence carries no counts, so the
+/// question counts none.
+#[test]
+fn a_lock_no_package_of_which_gives_a_licence_is_counted_under_none() -> Result<(), Failed> {
+    let bundled = [inside("a", None), inside("b", None)];
+
+    let counted = licence_facts("agents-door-npm-unlicensed", None, &bundled)?;
+
+    assert_eq!(counted, Vec::<String>::new());
     Ok(())
 }
 
