@@ -1,0 +1,8 @@
+{
+  "packages": [
+    {"location": "node_modules/npx-agent", "name": "npx-agent", "version": "2.1.0", "license": "MIT"},
+    {"location": "node_modules/npx-agent/node_modules/bundled-dep", "name": "bundled-dep", "version": "1.0.0", "license": "ISC", "in_bundle": true},
+    {"location": "node_modules/either", "name": "either", "version": "3.2.1", "license": "(Apache-2.0 OR MIT)"}
+  ],
+  "unpack_rules": 1
+}
