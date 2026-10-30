@@ -2861,10 +2861,35 @@ fn a_catalog_the_intake_renders_verifies_under_the_key_that_signed_it() {
         .iter()
         .map(|entry| entry.key.as_str())
         .collect();
-    assert_eq!(keys, ["big", "fake", "pyagent"]);
-    let [.., python] = catalog.entries() else {
-        panic!("an interpreter entry");
+    assert_eq!(keys, ["big", "fake", "nodeagent", "pyagent"]);
+    let [.., node, python] = catalog.entries() else {
+        panic!("an npm entry and an interpreter entry");
     };
+    assert_eq!(node.kind, Kind::Npm);
+    assert_eq!(node.lock_revision, Some(2));
+    let [target] = node.targets.as_slice() else {
+        panic!("one npm target");
+    };
+    assert_eq!(
+        target.launch,
+        Launch::Npm {
+            node_args: Vec::new(),
+            bin: "node_modules/node-agent/bin/agent.js".into(),
+            lock: Lock {
+                asset: AssetRef {
+                    sha256: "9".repeat(64).into(),
+                    size: 512,
+                },
+                unpack_rules: 1,
+            },
+            scripts: vec![Script {
+                package: "node_modules/node-agent".into(),
+                event: "postinstall".into(),
+                disposition: Disposition::Inert,
+            }],
+        },
+        "the rendered npm target starts as the intake reviewed it"
+    );
     assert_eq!(python.kind, Kind::Uvx);
     let [target] = python.targets.as_slice() else {
         panic!("one target");
