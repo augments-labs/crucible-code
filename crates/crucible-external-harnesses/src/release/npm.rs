@@ -73,10 +73,10 @@
 //!   umask takes away. Nothing else is made runnable, not even what a
 //!   package's `bin` names; no link to it is made, and a `.gitignore` is
 //!   written under that name.
-//! - Every name, once stripped and again under its location, is held to the
-//!   rules every member's name is: printable ASCII alone; relative, with no
-//!   backslash, colon or character Windows refuses; no empty, `.` or `..`
-//!   component; and none that ends in a dot or a space or names a device
+//! - Every name written, once stripped and again under its location, is held
+//!   to the rules every member's name is: printable ASCII alone; relative,
+//!   with no backslash, colon or character Windows refuses; no empty, `.` or
+//!   `..` component; and none that ends in a dot or a space or names a device
 //!   Windows reserves. Since nothing but ASCII is written, no two names can be
 //!   spellings of one that Unicode normalises alike, so no such collision can
 //!   arise.
@@ -120,8 +120,9 @@ use super::{RELEASE_BYTES, UnpackError, hex};
 use crate::catalog::{ASSET_BYTES, File, UNPACK_RULES};
 
 /// The most files a tree writes, all its packages together: the most names
-/// the unpacker writes for one artifact, which keeps a tree's receipt the size
-/// of a release's.
+/// the release unpacker writes for one artifact. A tree's file list is bounded
+/// by this count alone, not by a catalog asset as a release's is, so the
+/// receipt's own ceiling may refuse a very large tree.
 pub(super) const TREE_FILES: u64 = MEMBERS as u64;
 
 /// The most names a tree holds, each directory a file only implies counted:
