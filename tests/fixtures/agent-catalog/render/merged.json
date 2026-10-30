@@ -327,6 +327,101 @@
     },
     {
       "admits": {
+        "name": "node-agent",
+        "version": "3.0.0"
+      },
+      "auth_methods": [
+        {
+          "id": "browser",
+          "kind": "agent",
+          "name": "Sign in with a browser"
+        }
+      ],
+      "key": "nodeagent",
+      "kind": "npm",
+      "license": "MIT",
+      "lock_revision": 2,
+      "reach": [],
+      "registry_id": "node-agent",
+      "review": "https://github.com/augments-labs/crucible-agent-catalog/pull/7",
+      "sign_in_hosts": [],
+      "state_paths": [],
+      "targets": [
+        {
+          "args": [
+            "--acp"
+          ],
+          "artifacts": [
+            {
+              "decompressed": 60,
+              "files": [
+                {
+                  "kind": "dir",
+                  "path": "node-v22.15.0-linux-x64"
+                },
+                {
+                  "kind": "dir",
+                  "path": "node-v22.15.0-linux-x64/bin"
+                },
+                {
+                  "exec": false,
+                  "kind": "file",
+                  "path": "node-v22.15.0-linux-x64/LICENSE",
+                  "sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+                  "size": 8
+                },
+                {
+                  "exec": true,
+                  "kind": "file",
+                  "path": "node-v22.15.0-linux-x64/bin/node",
+                  "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+                  "size": 16
+                }
+              ],
+              "format": "tar.gz",
+              "kept": [
+                "node-v22.15.0-linux-x64/bin/node",
+                "node-v22.15.0-linux-x64/LICENSE"
+              ],
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "size": 40,
+              "unpacked": 24,
+              "url": "https://nodejs.org/dist/v22.15.0/node-v22.15.0-linux-x64.tar.gz"
+            }
+          ],
+          "bin": "node_modules/node-agent/bin/agent.js",
+          "cmd": "node-v22.15.0-linux-x64/bin/node",
+          "env": {},
+          "hosts": [
+            "nodejs.org",
+            "registry.npmjs.org"
+          ],
+          "lock": {
+            "sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+            "size": 512,
+            "unpack_rules": 1
+          },
+          "node_args": [],
+          "platform": "linux-x86_64",
+          "probe": {
+            "capabilities": {},
+            "confined": true,
+            "conformance": "not run",
+            "sandbox": "closed"
+          },
+          "scripts": [
+            {
+              "disposition": "inert",
+              "event": "postinstall",
+              "package": "node_modules/node-agent"
+            }
+          ]
+        }
+      ],
+      "version": "3.0.0"
+    },
+    {
+      "admits": {
         "name": "pyagent",
         "version": "1.4.0"
       },
