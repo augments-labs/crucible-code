@@ -1425,6 +1425,8 @@ OPTIONAL = "node_modules/@scope/opt-linux"
 ALIAS = "node_modules/strip"
 GYP = "node_modules/withgyp"
 DEV = "node_modules/devonly"
+LIBC_GNU = "node_modules/@scope/native-linux-gnu"
+LIBC_MUSL = "node_modules/@scope/native-linux-musl"
 
 
 def gpg(home: pathlib.Path, *args: str, faked: str | None = None) -> bytes:
@@ -1546,11 +1548,14 @@ def manifest(**fields: object) -> tuple[bytes, bool]:
     return json.dumps(fields).encode(), False
 
 
-def npm_tree(top: dict | None = None, changes: dict | None = None, top_files: dict | None = None) -> dict:
+def npm_tree(
+    top: dict | None = None, changes: dict | None = None, top_files: dict | None = None, extra: dict | None = None,
+) -> dict:
     """An agent's npm tree: npm's lock, each package's tarball by its place in
     the lock, and the files each package writes. `top` replaces the agent's
-    own package.json, `top_files` adds to its files and `changes` to a
-    location's lock fields."""
+    own package.json, `top_files` adds to its files, `changes` to a
+    location's lock fields (a field changed to None is left out), and `extra`
+    to its packages."""
     top = top if top is not None else {
         "name": "npx-agent", "version": "3.0.0", "bin": {"npx-agent": "bin/agent.js"},
         "scripts": {"postinstall": "node setup.js", "test": "node test.js"},
@@ -1586,6 +1591,7 @@ def npm_tree(top: dict | None = None, changes: dict | None = None, top_files: di
             {"package.json": manifest(name="withgyp", version="2.0.0", scripts={"test": "x"}),
              "binding.gyp": (b"{\"targets\": []}\n", False), "src/addon.c": (b"int addon;\n", False)},
         ),
+        **(extra or {}),
     }
     lock_packages: dict = {"": {"name": "root", "version": "1.0.0", "dependencies": {"npx-agent": "3.0.0"}}}
     tarballs: dict[int, bytes] = {}
@@ -1600,7 +1606,7 @@ def npm_tree(top: dict | None = None, changes: dict | None = None, top_files: di
             elif location != OPTIONAL:
                 fields["integrity"] = "sha512-" + base64.b64encode(hashlib.sha512(tarball).digest()).decode()
         fields.update((changes or {}).get(location, {}))
-        lock_packages[location] = fields
+        lock_packages[location] = {field: value for field, value in fields.items() if value is not None}
     return {
         "lock": {"name": "root", "version": "1.0.0", "lockfileVersion": 3, "requires": True, "packages": lock_packages},
         "tarballs": tarballs,
@@ -1609,10 +1615,15 @@ def npm_tree(top: dict | None = None, changes: dict | None = None, top_files: di
 
 
 def installed_on(tree: dict, platform: str) -> list[str]:
-    """The locations `npm ci` installs on `platform`, in the lock's order."""
+    """The locations `npm ci` installs on `platform`, in the lock's order: in
+    these trees an `os` or `libc` lists only what is admitted, and a runner
+    on Linux is glibc."""
+    linux = platform.startswith("linux-")
     return [
         location for location, fields in tree["lock"]["packages"].items()
-        if location and not fields.get("dev") and (location != OPTIONAL or platform.startswith("linux-"))
+        if location and not fields.get("dev")
+        and ("os" not in fields or platform.partition("-")[0] in fields["os"])
+        and ("libc" not in fields or (linux and "glibc" in fields["libc"]))
     ]
 
 
@@ -1786,6 +1797,15 @@ def npm_registry(scratch: pathlib.Path, signers: Signers) -> tuple[pathlib.Path,
     npm_case(observed, agents, choices, "scriptless-npm", npm_tree(changes={GYP: {"hasInstallScript": False}}))
     npm_case(observed, agents, choices, "scripted-npm", npm_tree(changes={ALIAS: {"hasInstallScript": True}}))
     npm_case(observed, agents, choices, "place-npm", npm_tree(changes={ALIAS: {"inBundle": True}}))
+    # A glibc and a musl build of one optional package: Linux takes the first.
+    npm_case(observed, agents, choices, "libc-npm", npm_tree(extra={
+        location: (
+            {"version": "1.0.0", "resolved": NPM + f"@scope/{name}/-/{name}-1.0.0.tgz", "optional": True,
+             "os": ["linux"], "libc": [libc]},
+            {"package.json": manifest(name=f"@scope/{name}", version="1.0.0"), "native.node": (libc.encode(), True)},
+        )
+        for location, name, libc in ((LIBC_GNU, "native-linux-gnu", "glibc"), (LIBC_MUSL, "native-linux-musl", "musl"))
+    }))
     # The tree npm built differs from crucible's, on Linux alone.
     linux = ("linux-x86_64",)
     run_js = TOP + "/lib/run.js"
@@ -1850,7 +1870,7 @@ def check_npm(scratch: pathlib.Path, signers: Signers) -> None:
     data, assets = npm_review(scratch, signers, registry, choices, "--dispositions", dispositions)
     entries = {entry["key"]: entry for entry in data["entries"]}
     assert sorted(entries) == [
-        "bindir", "binmany", "binstr", "both", "exec", "extra", "hash", "lockdiff", "missing", "nodeagent",
+        "bindir", "binmany", "binstr", "both", "exec", "extra", "hash", "libc", "lockdiff", "missing", "nodeagent",
         "npmignore",
     ], sorted(entries)
 
@@ -1912,6 +1932,14 @@ def check_npm(scratch: pathlib.Path, signers: Signers) -> None:
     dropped(data, "scriptless-npm", None, GYP, "no install script", "install")
     dropped(data, "scripted-npm", None, ALIAS, "has an install script")
     dropped(data, "place-npm", None, ALIAS, "bundled in no package")
+    libc_targets = {target["platform"]: target for target in entries["libc"]["targets"]}
+    assert sorted(libc_targets) == sorted(NODE_BUILT), [d for d in data["dropped"] if d["registry_id"] == "libc-npm"]
+    libc_linux = json.loads((assets / libc_targets["linux-x86_64"]["lock"]["sha256"]).read_bytes())["packages"]
+    libc_held = {package["location"] for package in libc_linux}
+    assert LIBC_GNU in libc_held and LIBC_MUSL not in libc_held, "Linux installs the glibc build alone"
+    for platform in ("darwin-aarch64", "windows-x86_64"):
+        held = json.loads((assets / libc_targets[platform]["lock"]["sha256"]).read_bytes())["packages"]
+        assert not {LIBC_GNU, LIBC_MUSL} & {package["location"] for package in held}, platform
     dropped(data, "missing-npm", "linux-x86_64", "npm's tree lacks", ALIAS + "/index.js")
     dropped(data, "hash-npm", "linux-x86_64", run_js := TOP + "/lib/run.js", "differs")
     dropped(data, "exec-npm", "linux-x86_64", run_js, "runnable")
@@ -1996,8 +2024,9 @@ def check_npm_recheck(scratch: pathlib.Path, data: dict, assets: pathlib.Path) -
     assert len(hashes) == len(set(hashes)), "a tarball is listed once"
     alias = next(item for item in listed if item["url"].endswith("strip-ansi-7.1.0.tgz"))
     # Every case kept shares the main agent's tarballs but the bin cases',
-    # whose own package differs: five of the main tree and one each of theirs.
-    assert len(listed) == 7, listed
+    # whose own package differs, and the libc case's glibc build: five of the
+    # main tree, one each of the bin cases' and one of the glibc build.
+    assert len(listed) == 8, listed
     for status, proposed in ((404, True), (410, True), (503, False)):
         results = written(scratch, f"results-{status}.json", {alias["sha512"]: status})
         out = scratch / f"recheck-{status}.json"

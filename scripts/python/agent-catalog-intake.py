@@ -122,8 +122,8 @@ alone; its `bin/node` (`node.exe` on Windows) and `LICENSE` are all a client
 keeps of it, and Node is never mirrored. Node publishes no FreeBSD build, so
 that target is dropped. The tree is npm's lock, in lockfile version 3, of
 which only each package's location, name, version, `resolved`, `integrity`,
-`inBundle`, `hasInstallScript`, `dev`, `optional`, `os`, `cpu` and `bin` are
-read; a `dev` package is never installed. Every location is
+`inBundle`, `hasInstallScript`, `dev`, `optional`, `os`, `cpu`, `libc` and
+`bin` are read; a `dev` package is never installed. Every location is
 `node_modules/<name>`, nested only under `node_modules/`, unique once case is
 folded, and no longer than 767 bytes. Every tarball is fetched from
 `https://registry.npmjs.org/` at a plain address and every hop of its fetch
@@ -133,7 +133,9 @@ one, and a tarball with no `integrity` is pinned by its SHA-512 alone. A
 bundled package has no tarball of its own and is counted in the one that
 holds it. A target's lock, the asset a client unpacks its tree from, lists
 every package installed on it, in the lock's order, an optional one whose
-`os` or `cpu` refuses the platform left out; it is named by its SHA-256, so
+`os`, `cpu` or `libc` refuses the platform left out (Linux runners are
+glibc, and a `libc` refuses any other system), decided from the lock as npm
+decides before npm runs; it is named by its SHA-256, so
 targets with the same tree share one. The target is dropped unless the job's
 `tree/lock.json` is that lock byte for byte and the tree `npm ci` built
 (`tree/npm.json`) and the one `unpack-check` built from the lock
@@ -334,6 +336,8 @@ NODE_BUILDS = {
 # What npm calls each platform's system and machine in a package's `os` and `cpu`.
 NPM_OS = {"linux": "linux", "darwin": "darwin", "windows": "win32", "freebsd": "freebsd"}
 NPM_CPU = {"x86_64": "x64", "aarch64": "arm64"}
+# The C library npm finds on a Linux runner.
+NPM_LIBC = "glibc"
 # Where every package an npm target installs is taken from, at every hop.
 NPM_REGISTRY = "https://registry.npmjs.org/"
 NPM_HOST = "registry.npmjs.org"
@@ -1828,6 +1832,7 @@ def npm_resolved(observed: pathlib.Path, agent: str, package: str, released: str
             "bundled": fields.get("inBundle") is True,
             "cpu": fields.get("cpu"),
             "index": index,
+            "libc": fields.get("libc"),
             "location": location,
             "name": name,
             "optional": fields.get("optional") is True,
@@ -1902,21 +1907,25 @@ def npm_resolved(observed: pathlib.Path, agent: str, package: str, released: str
 
 def npm_installed(resolution: dict, platform: str) -> list[dict]:
     """The packages `npm ci --omit=dev` installs on `platform`, in the lock's
-    order: an optional one whose `os` or `cpu` refuses the platform is left
-    out with everything under it, and any other such one refuses the target."""
+    order, decided from the lock as npm decides: an optional one whose `os`,
+    `cpu` or `libc` refuses the platform is left out with everything under
+    it, and any other such one refuses the target. A `libc` is held only on
+    Linux, whose runners are glibc; anywhere else, any `libc` refuses."""
     system, machine = platform.split("-")
     current_os, current_cpu = NPM_OS[system], NPM_CPU[machine]
+    linux = system == "linux"
     left_out: list[str] = []
     installed = []
     for item in resolution["packages"]:
         if any(item["location"].startswith(above + "/") for above in left_out):
             continue
-        if fitting(item["os"], current_os, "os") and fitting(item["cpu"], current_cpu, "cpu"):
+        fits_libc = item["libc"] is None or (linux and fitting(item["libc"], NPM_LIBC, "libc"))
+        if fitting(item["os"], current_os, "os") and fitting(item["cpu"], current_cpu, "cpu") and fits_libc:
             installed.append(item)
         elif item["optional"]:
             left_out.append(item["location"])
         else:
-            raise Dropped(f"{clipped(item['location'])} is not optional, and its os or cpu refuses {platform}")
+            raise Dropped(f"{clipped(item['location'])} is not optional, and its os, cpu or libc refuses {platform}")
     if any(item.get("holder") is not None and item["holder"] in left_out for item in installed):
         raise Dropped("a bundled package's holder is not installed here")
     return installed
