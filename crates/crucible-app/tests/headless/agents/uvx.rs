@@ -4,13 +4,14 @@
 //! version committed whole or not at all; a start runs the interpreter with
 //! its own arguments, the launcher's path, then the agent's. An entry point
 //! the launcher cannot be written for, or an interpreter the catalog does not
-//! give `-I`, is refused before the question, a wheel that is not its pin or
-//! lands on a path already written commits nothing, and a release a pinned
-//! Node starts is still refused before it. An installed version is started
-//! through its launcher, isolated, or not at all: once the catalog no longer
-//! says a pinned interpreter starts it, or says one starts it without `-I`,
-//! it is refused before any process, and where a newer release that one
-//! starts is listed instead, it still starts through its own launcher.
+//! give exactly `-I`, is refused before the question, a wheel that is not its
+//! pin or lands on a path already written commits nothing, and a release a
+//! pinned Node starts is still refused before it. An installed version is
+//! started through its launcher, isolated, or not at all: once the catalog no
+//! longer says a pinned interpreter starts it, or says one starts it with
+//! anything but `-I`, it is refused before any process, and where a newer
+//! release that one starts is listed instead, it still starts through its own
+//! launcher.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -351,10 +352,12 @@ fn an_entry_point_the_launcher_cannot_be_written_for_is_refused_before_the_quest
     unchanged(&bench, &before, "refused")
 }
 
-#[test]
-fn an_interpreter_the_catalog_does_not_give_dash_i_is_refused_before_the_question()
--> Result<(), Failed> {
-    let bench = Bench::new("agents-door-uvx-unisolated")?;
+/// Puts the install of a release whose interpreter the catalog gives
+/// `interpreter_args`, and asserts it is refused before the question, naming
+/// the field and not `shown`, a part of its value, with nothing of the
+/// release fetched and nothing written.
+fn refused_at_the_door(name: &str, interpreter_args: Value, shown: &str) -> Result<(), Failed> {
+    let bench = Bench::new(name)?;
     let mut release = interpreted(
         &bench.server,
         "goose_acp.cli:main",
@@ -364,7 +367,7 @@ fn an_interpreter_the_catalog_does_not_give_dash_i_is_refused_before_the_questio
     set(
         &mut release,
         "/targets/0/interpreter_args",
-        json!(["-E", "-s"]),
+        interpreter_args,
     );
     bench.server.catalog(1, &[release], &json!([]))?;
     bench.configure(&version(&bench).join(python()), &json!({}))?;
@@ -376,12 +379,25 @@ fn an_interpreter_the_catalog_does_not_give_dash_i_is_refused_before_the_questio
     assert_eq!(shape(&outcome), "Err(Unpacked)");
     let said = outcome.err().map(|why| why.to_string()).unwrap_or_default();
     assert!(
-        said.contains("interpreter_args") && !said.contains("-E"),
+        said.contains("interpreter_args") && !said.contains(shown),
         "the refusal does not name the field, or names its value"
     );
     assert!(front.put.is_empty());
     assert_eq!(bench.server.asked(), CATALOG);
     unchanged(&bench, &before, "refused")
+}
+
+#[test]
+fn an_interpreter_the_catalog_does_not_give_dash_i_is_refused_before_the_question()
+-> Result<(), Failed> {
+    refused_at_the_door("agents-door-uvx-unisolated", json!(["-E", "-s"]), "-E")
+}
+
+/// `-I` after code to run is that code's argument, not the interpreter's.
+#[test]
+fn an_interpreter_given_code_to_run_ahead_of_dash_i_is_refused_before_the_question()
+-> Result<(), Failed> {
+    refused_at_the_door("agents-door-uvx-code-first", json!(["-c", "x", "-I"]), "-c")
 }
 
 #[test]

@@ -33,11 +33,11 @@
 //! whose characters need none escaped, and the entry point, held before
 //! anything is written to `module:attribute`, each side one or more ASCII
 //! identifiers joined by single dots. It is written only for an interpreter
-//! the catalog gives `-I`, which starts it isolated, so that what the
-//! workspace holds is never on its path; [`LaunchScript::isolated`] decides
-//! that for the install and for every start alike. It finds its own
-//! directory from its own `__file__`, adds `site/` there as a site directory,
-//! sets `sys.argv` to
+//! the catalog gives exactly `-I` and nothing else, which starts it isolated,
+//! so that what the workspace holds is never on its path, and runs the
+//! launcher before anything else; [`LaunchScript::admits`] decides that for
+//! the install and for every start alike. It finds its own directory from its
+//! own `__file__`, adds `site/` there as a site directory, sets `sys.argv` to
 //! the key and the arguments it was started with after its own path, then
 //! imports the module, resolves the attribute and exits with what calling it
 //! returns, as a console script does.
@@ -370,8 +370,8 @@ impl LaunchScript {
     /// [`UnpackError::EntryPoint`] where either side of `entry_point` is not
     /// one or more ASCII identifiers joined by single dots, so nothing but a
     /// name a Python string literal holds as it is goes into the file; else
-    /// [`UnpackError::Unisolated`] where `interpreter_args` would not start
-    /// the interpreter [isolated](LaunchScript::isolated).
+    /// [`UnpackError::Unisolated`] where `interpreter_args` are not exactly
+    /// `-I`, as [`LaunchScript::admits`] decides.
     pub fn new(
         agent: &AgentKey,
         interpreter_args: &[Box<str>],
@@ -383,7 +383,7 @@ impl LaunchScript {
         if !named {
             return Err(UnpackError::EntryPoint);
         }
-        if !Self::isolated(interpreter_args) {
+        if !Self::admits(interpreter_args) {
             return Err(UnpackError::Unisolated);
         }
         Ok(Self {
@@ -400,12 +400,16 @@ impl LaunchScript {
         })
     }
 
-    /// Whether an interpreter given `interpreter_args` starts isolated, as
-    /// the only start a launcher is written for or given to: one of them is
-    /// `-I` itself. Flags run together are not read apart.
+    /// Whether `interpreter_args` are the ones a launcher is written for and
+    /// started under: exactly the one element `-I`, which starts the
+    /// interpreter isolated and leaves the launcher the first thing it runs.
+    /// Anything else is refused, since Python reads its own options only up
+    /// to the first argument that is not one: a `-I` after `-c`, `-m` or a
+    /// file is that program's argument, what follows `-I` runs ahead of the
+    /// launcher, and flags run together are not read apart.
     #[must_use]
-    pub fn isolated(interpreter_args: &[Box<str>]) -> bool {
-        interpreter_args.iter().any(|argument| &**argument == "-I")
+    pub fn admits(interpreter_args: &[Box<str>]) -> bool {
+        matches!(interpreter_args, [only] if &**only == "-I")
     }
 
     /// What the launcher holds.

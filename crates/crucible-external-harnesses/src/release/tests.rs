@@ -3209,11 +3209,13 @@ fn an_entry_point_that_is_not_dotted_identifiers_on_each_side_is_refused() {
     );
 }
 
-/// A launcher is written only for an interpreter the catalog gives `-I`
-/// itself, which starts it isolated, wherever it stands among the others;
-/// flags run together are not read apart, so `-Is` is not taken for it.
+/// A launcher is written only for an interpreter the catalog gives exactly
+/// `-I`, which starts it isolated with the launcher the first thing it runs.
+/// Anything beside it is refused: an argument after which `-I` is not read
+/// as an option (`-c`, `-m`, a file to run), one it is followed by, a flag
+/// added, a flag run together with it, or none at all.
 #[test]
-fn a_launcher_is_written_only_for_an_interpreter_given_dash_i_itself() {
+fn a_launcher_is_written_only_for_an_interpreter_given_exactly_dash_i() {
     let key = AgentKey::new("agent").expect("a key");
     let given = |arguments: &[&str]| -> Vec<Box<str>> {
         arguments
@@ -3221,8 +3223,16 @@ fn a_launcher_is_written_only_for_an_interpreter_given_dash_i_itself() {
             .map(|argument| (*argument).into())
             .collect()
     };
-    let accepted: [&[&str]; 3] = [&["-I"], &["-B", "-I"], &["-I", "-u"]];
-    let refused: [&[&str]; 7] = [
+    let accepted: [&[&str]; 1] = [&["-I"]];
+    let refused: [&[&str]; 15] = [
+        &["-c", "x", "-I"],
+        &["-m", "x", "-I"],
+        &["acp", "-I"],
+        &["-I", "acp"],
+        &["-I", "-c", "x"],
+        &["-B", "-I"],
+        &["-I", "-u"],
+        &["-I", "-I"],
         &[],
         &["-i"],
         &["-E", "-s"],
@@ -3248,12 +3258,12 @@ fn a_launcher_is_written_only_for_an_interpreter_given_dash_i_itself() {
         .map(|error| error.to_string())
         .unwrap_or_default();
 
-    assert_eq!(
-        written,
-        [
-            true, true, true, false, false, false, false, false, false, false
-        ]
-    );
+    let expected: Vec<bool> = accepted
+        .iter()
+        .map(|_| true)
+        .chain(refused.iter().map(|_| false))
+        .collect();
+    assert_eq!(written, expected);
     assert!(
         said.contains("interpreter_args") && !said.contains("evil"),
         "the refusal names the field and not its value: {said}"

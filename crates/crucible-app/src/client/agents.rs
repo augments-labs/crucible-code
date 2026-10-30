@@ -37,7 +37,7 @@
 //! fetched from its own hosts: how it is started, a release a pinned Node
 //! starts being refused and one a pinned interpreter starts having its entry
 //! point checked as one its launcher can be written for, and its interpreter's
-//! arguments as holding `-I`; its download hosts,
+//! arguments as exactly `-I`; its download hosts,
 //! and that every address and mirror it is pinned at is on one of them; its
 //! file lists, where a list the catalog keeps as an asset is first fetched
 //! from the catalog's own host by [`catalog_fetch::asset`] and read as one

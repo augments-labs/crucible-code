@@ -3934,11 +3934,12 @@ fn a_cmd_that_does_not_name_the_program_from_its_version_finds_no_launcher() {
     assert_eq!(found, vec![Err(Unlaunchable::Missing); cases.len()]);
 }
 
-/// A pinned interpreter whose catalog entry does not give it `-I` itself is
+/// A pinned interpreter whose catalog entry does not give it exactly `-I` is
 /// not given its launcher, though one is in place, so no start runs it other
-/// than isolated; one given `-I` among other arguments is.
+/// than isolated or runs anything ahead of the launcher: code, a module, or a
+/// file of the workspace's, with `-I` after it taken for that program's own.
 #[test]
-fn a_pinned_interpreter_not_given_dash_i_is_not_given_its_launcher() {
+fn a_pinned_interpreter_given_anything_but_exactly_dash_i_is_not_given_its_launcher() {
     let sample = Sample::new("launch-interpreted-unisolated");
     let version = fs::canonicalize(sample.root())
         .expect("a root")
@@ -3947,7 +3948,14 @@ fn a_pinned_interpreter_not_given_dash_i_is_not_given_its_launcher() {
     let program = version.join("python/bin/python3");
     fs::write(&program, b"").expect("an interpreter");
     fs::write(version.join(LAUNCHER), b"").expect("a launcher");
-    let given: [&[&str]; 3] = [&[], &["-E", "-s"], &["-B", "-I"]];
+    let given: [&[&str]; 6] = [
+        &[],
+        &["-E", "-s"],
+        &["-B", "-I"],
+        &["acp", "-I"],
+        &["-c", "x", "-I"],
+        &["-I"],
+    ];
 
     let found: Vec<_> = given
         .iter()
@@ -3970,7 +3978,10 @@ fn a_pinned_interpreter_not_given_dash_i_is_not_given_its_launcher() {
         vec![
             Err(Unlaunchable::Unisolated),
             Err(Unlaunchable::Unisolated),
-            Ok(vec!["-B".to_owned(), "-I".to_owned(), launcher]),
+            Err(Unlaunchable::Unisolated),
+            Err(Unlaunchable::Unisolated),
+            Err(Unlaunchable::Unisolated),
+            Ok(vec!["-I".to_owned(), launcher]),
         ]
     );
     assert!(

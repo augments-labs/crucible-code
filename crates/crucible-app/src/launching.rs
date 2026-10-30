@@ -29,9 +29,9 @@
 //! path is written or where it leads, in another agent's directory or in no
 //! version of its own; a program that is the pinned interpreter of such a
 //! version whose launcher is not at the top of it or whose catalog entry does
-//! not give it `-I`, or that lies in such a version holding a launcher once
-//! the catalog no longer says a pinned interpreter starts it; and a route with
-//! no yes, with what to ask. A
+//! not give it exactly `-I`, or that lies in such a version holding a
+//! launcher once the catalog no longer says a pinned interpreter starts it;
+//! and a route with no yes, with what to ask. A
 //! catalog row always ships, since it is listed only for an entry the catalog
 //! reviewed. Only then is the hold taken from `content_use`, the child's
 //! sandbox policy built, and the process started.
@@ -69,9 +69,9 @@
 //!
 //! A program that is the interpreter a release pins, which runs the agent
 //! through the launcher its install wrote, is given the catalog's
-//! `interpreter_args`, which must hold `-I` or the start is refused, then the
-//! absolute path of that launcher, `launch.py`
-//! at the top of its version, and only then the agent's own arguments. That
+//! `interpreter_args`, which must be exactly `-I` or the start is refused,
+//! then the absolute path of that launcher, `launch.py` at the top of its
+//! version, and only then the agent's own arguments. That
 //! path is the program's with the components of the catalog's `cmd` taken
 //! off, never one the catalog or the configuration gives, and the launcher,
 //! its links followed, must be the file at the top of that version; nothing
@@ -305,8 +305,8 @@ pub enum Unlaunched {
     /// Its program lies in a version of crucible's install store that is
     /// started through a launcher, as a pinned interpreter's is, and cannot
     /// be started so: the launcher cannot be given to it, its catalog entry
-    /// does not give the interpreter `-I`, or the catalog no longer says how
-    /// that version is started.
+    /// does not give the interpreter exactly `-I`, or the catalog no longer
+    /// says how that version is started.
     #[error("{agent} cannot be started: {why}.")]
     Launcher {
         /// The agent, as its row names it.
@@ -460,11 +460,11 @@ pub enum Unlaunchable {
         launcher = LAUNCHER
     )]
     Unlisted,
-    /// Its catalog entry does not give its interpreter `-I`, which starts it
-    /// isolated.
+    /// Its catalog entry does not give its interpreter exactly `-I`, which
+    /// alone starts it isolated with its launcher the first thing it runs.
     #[error(
-        "its catalog entry's interpreter_args do not hold -I, which starts the interpreter \
-         isolated"
+        "its catalog entry's interpreter_args are not exactly -I, which alone starts its \
+         launcher isolated"
     )]
     Unisolated,
 }
@@ -969,17 +969,17 @@ pub(crate) fn updating_off(mut request: Request, variable: Option<&Variable>) ->
 ///
 /// A program that runs itself is given nothing, and so is one a pinned Node
 /// runs, which nothing installs yet. A pinned interpreter is given the
-/// catalog's `interpreter_args`, which must hold `-I`, and then the absolute
-/// path of its launcher,
-/// [`LAUNCHER`] at the top of the version: that top is `program` with the
+/// catalog's `interpreter_args`, which must be exactly `-I`, and then the
+/// absolute path of its launcher, [`LAUNCHER`] at the top of the version:
+/// that top is `program` with the
 /// components of `cmd` taken off, never a path the catalog gives, and the
 /// launcher, its links followed, must be the file at the top of `version`.
 /// Nothing is run, and nothing else on the machine is looked at, to find it.
 ///
 /// # Errors
 ///
-/// [`Unlaunchable`] where `interpreter_args` would not start the interpreter
-/// isolated, the launcher is not there, or its path is not text.
+/// [`Unlaunchable`] where `interpreter_args` are not exactly `-I`, the
+/// launcher is not there, or its path is not text.
 fn interpreting(
     target: &Target,
     program: &Path,
@@ -991,7 +991,7 @@ fn interpreting(
     else {
         return Ok(Vec::new());
     };
-    if !LaunchScript::isolated(interpreter_args) {
+    if !LaunchScript::admits(interpreter_args) {
         return Err(Unlaunchable::Unisolated);
     }
     let cmd = Path::new(&*target.cmd);
