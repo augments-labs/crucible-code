@@ -1870,6 +1870,10 @@ def npm_registry(scratch: pathlib.Path, signers: Signers) -> tuple[pathlib.Path,
     npm_case(observed, agents, choices, "unrun-npm", npm_tree(),
              npm_side=on(linux, lambda files: file_of(files, agent_js).update(exec=False)),
              built_side=on(linux, lambda files: file_of(files, agent_js).update(exec=True)))
+    # A bin a package.json names in another package's files, here the one it
+    # bundles, which npm makes runnable: a package's own bins alone may be.
+    npm_case(observed, agents, choices, "ownerbin-npm",
+             npm_tree(top=top_manifest(bin={"npx-agent": "bin/agent.js", "other": "node_modules/bundled-dep/index.js"})))
     # A bin the lock names and the package.json does not.
     npm_case(observed, agents, choices, "lockbin-npm", npm_tree(changes={TOP: {"bin": {"npx-agent": "bin/agent.js", "run": "lib/run.js"}}}),
              npm_side=on(("linux-x86_64", "darwin-aarch64"), lambda files: file_of(files, run_js).update(exec=True)))
@@ -1922,7 +1926,7 @@ def check_npm(scratch: pathlib.Path, signers: Signers) -> None:
     entries = {entry["key"]: entry for entry in data["entries"]}
     assert sorted(entries) == [
         "bindir", "binmany", "binstr", "both", "exec", "extra", "folded", "hash", "libc", "lockbin", "lockdiff",
-        "missing", "nodeagent", "npmignore", "twice", "unrun",
+        "missing", "nodeagent", "npmignore", "ownerbin", "twice", "unrun",
     ], sorted(entries)
 
     entry = entries["nodeagent"]
@@ -2009,7 +2013,9 @@ def check_npm(scratch: pathlib.Path, signers: Signers) -> None:
     dropped(data, "unrun-npm", "linux-x86_64", TOP + "/bin/agent.js", "runnable")
     for platform in ("linux-x86_64", "darwin-aarch64"):
         dropped(data, "lockbin-npm", platform, run_js, "runnable")
-    assert [target["platform"] for target in entries["lockbin"]["targets"]] == ["windows-x86_64"], entries["lockbin"]
+        dropped(data, "ownerbin-npm", platform, BUNDLED + "/index.js", "runnable")
+    for key in ("lockbin", "ownerbin"):
+        assert [target["platform"] for target in entries[key]["targets"]] == ["windows-x86_64"], key
     for key in ("missing", "hash", "extra", "npmignore", "lockdiff", "twice", "folded", "unrun"):
         assert sorted(t["platform"] for t in entries[key]["targets"]) == ["darwin-aarch64", "windows-x86_64"], key
     for key in ("binstr", "binmany", "bindir"):
@@ -2089,7 +2095,7 @@ def check_npm_recheck(scratch: pathlib.Path, data: dict, assets: pathlib.Path) -
     # Every case kept shares the main agent's tarballs but the bin cases',
     # whose own package differs, and the libc case's glibc build: five of the
     # main tree, one each of the bin cases' and one of the glibc build.
-    assert len(listed) == 8, listed
+    assert len(listed) == 9, listed
     for status, proposed in ((404, True), (410, True), (503, False)):
         results = written(scratch, f"results-{status}.json", {alias["sha512"]: status})
         out = scratch / f"recheck-{status}.json"
