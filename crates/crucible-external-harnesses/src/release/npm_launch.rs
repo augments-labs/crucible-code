@@ -2,7 +2,7 @@
 //! the package tree: the preload that confines the agent to that tree, and a
 //! stub for each program the tree's packages declare.
 //!
-//! [`Preload`] is [`PRELOAD`] at the top of the version, a fixed CommonJS file
+//! [`Preload`] is [`PRELOAD`] at the top of the version, a fixed `CommonJS` file
 //! the pinned Node is given with `--require` ahead of the agent's script. It
 //! registers synchronous module hooks, which `require` and `import` both go
 //! through, and refuses a package name (a specifier that is not relative,
@@ -50,7 +50,7 @@ pub const BIN: &str = ".bin";
 // The preload's text. The Python gate reads it from between the two marker
 // lines and runs it on a real Node, so keep it one raw string between them.
 // node-preload: begin
-const PRELOAD_TEXT: &str = r#"// Written by crucible: Node is given this file with --require before the
+const PRELOAD_TEXT: &str = r"// Written by crucible: Node is given this file with --require before the
 // agent's script, and passes it on to every worker and forked child through
 // process.execArgv. A package name is resolved as Node resolves it, and one
 // that lands outside this file's own directory is refused as missing, so
@@ -114,7 +114,7 @@ Module.registerHooks({
     throw refusal;
   },
 });
-"#;
+";
 // node-preload: end
 
 /// The preload of a version of a release that Node runs.
