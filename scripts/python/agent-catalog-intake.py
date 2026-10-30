@@ -41,7 +41,8 @@ what is left once either is spent waits for the next run.
   (`lock.json`, `npm.json` and `unpack-check.json`, below) and `probe.json`.
   Node's own downloads are under `node/`: `SHASUMS256.txt.asc` and its
   `fetched.json`, and `<platform>/` holding the `artifact` and `fetched.json`
-  of each build, so no agent may have the registry id `node`;
+  of each build, so an agent whose registry id is `node`, or is another's,
+  once case is folded, is dropped;
 - `--interpreters`, where given: the reviewer's interpreter pins, by
   platform, each `{"url", "sha256", "python"}`: the `https` address of a
   python-build-standalone `install_only` build, its SHA-256, and the `3.M` it
@@ -2388,6 +2389,11 @@ def review(arguments: argparse.Namespace) -> int:
     dropped: list[dict] = []
     assets: dict[str, bytes] = {}
     listed: set[str] = set()
+    # Each top-level name of the observed tree, as a file system that folds
+    # case names it: Node's own directory, and one directory per registry id.
+    folded: dict[str, int] = {"node": 1}
+    for agent in {agent.get("id") for agent in agents if isinstance(agent, dict) and isinstance(agent.get("id"), str)}:
+        folded[agent.casefold()] = folded.get(agent.casefold(), 0) + 1
     for index, agent in enumerate(agents):
         agent_id = agent.get("id") if isinstance(agent, dict) else None
         if not isinstance(agent_id, str) or not REGISTRY_ID.fullmatch(agent_id):
@@ -2398,9 +2404,15 @@ def review(arguments: argparse.Namespace) -> int:
             dropped.append({"reason": "the registry lists it twice", "registry_id": agent_id})
             continue
         listed.add(agent_id)
-        if agent_id == "node":
-            # The job leaves Node's own downloads under `node/` beside each agent's.
-            dropped.append({"reason": "its registry id is node, the observed directory Node's downloads are left in", "registry_id": agent_id})
+        if folded[agent_id.casefold()] > 1:
+            # The job leaves Node's own downloads under `node/` beside each
+            # agent's directory, and a folding file system takes two names
+            # that differ in case alone for one.
+            dropped.append({
+                "reason": "its registry id names the same observed directory as node, where Node's downloads "
+                "are left, or another agent's, once case is folded",
+                "registry_id": agent_id,
+            })
             continue
         choice = choices.get(agent_id)
         if choice is None:

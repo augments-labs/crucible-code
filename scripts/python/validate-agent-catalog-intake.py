@@ -1812,8 +1812,11 @@ def npm_registry(scratch: pathlib.Path, signers: Signers) -> tuple[pathlib.Path,
         ("binmissing-npm", top_manifest(bin={"npx-agent": "bin/missing.js"})),
     ):
         npm_case(observed, agents, choices, agent_id, npm_tree(top=top))
-    # A registry id the job's own Node directory would collide with.
-    npm_case(observed, agents, choices, "node")
+    # Registry ids the job's own directories would collide with, as a file
+    # system that folds case names them: Node's, and each other's.
+    for agent_id, key in (("node", "node"), ("Node", "upper-node"), ("fold-npm", "fold"), ("FOLD-npm", "fold-two")):
+        npm_case(observed, agents, choices, agent_id)
+        choices[agent_id] = {"key": key}
     registry = written(scratch, "npm-registry.json", {"version": "1.0.0", "agents": agents})
     assert main is not None
     return registry, written(scratch, "npm-choices.json", choices), main
@@ -1923,6 +1926,9 @@ def check_npm(scratch: pathlib.Path, signers: Signers) -> None:
     dropped(data, "binnone-npm", "linux-x86_64", "2 bins", "none npx-agent")
     dropped(data, "binmissing-npm", "linux-x86_64", TOP + "/bin/missing.js", "not a file in the tree")
     dropped(data, "node", None, "node")
+    dropped(data, "Node", None, "observed directory")
+    for agent_id in ("fold-npm", "FOLD-npm"):
+        dropped(data, agent_id, None, "observed directory")
 
     # The diff marks a script with no disposition, and the whole start.
     ran = intake("diff", scratch / "review.json")
