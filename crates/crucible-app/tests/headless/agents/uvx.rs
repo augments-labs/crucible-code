@@ -6,6 +6,10 @@
 //! the launcher cannot be written for is refused before the question, a
 //! wheel that is not its pin or lands on a path already written commits
 //! nothing, and a release a pinned Node starts is still refused before it.
+//! An installed version is started through its launcher or not at all: once
+//! the catalog no longer says a pinned interpreter starts it, it is refused
+//! before any process, and where a newer release that one starts is listed
+//! instead, it still starts through its own launcher.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,8 +19,8 @@ use crucible_app::backends::{CatalogRow, Registry};
 use crucible_app::catalog_fetch;
 use crucible_app::client::agents::{AgentsError, How, Outcome};
 use crucible_app::content_use::{Consent, Routes};
-use crucible_app::launching::{Agent, Launcher, Unlaunched};
-use crucible_client_api::{Pending, Text};
+use crucible_app::launching::{Agent, Launcher, Unlaunchable, Unlaunched};
+use crucible_client_api::{Command, Pending, Text};
 use crucible_config::{Driver, ExternalAgent};
 use crucible_external_harnesses::fake_peer;
 use crucible_external_harnesses::release::proof;
@@ -127,9 +131,14 @@ fn catalog_then(assets: &[&[u8]]) -> Vec<String> {
 }
 
 /// What goose, the agent `row` gives, says when its version is asked of
-/// `executable`, with the sandbox off: a step run to its end, so the peer
-/// standing in for the interpreter has kept the arguments it was given.
-fn versioned(bench: &Bench, row: CatalogRow, executable: &Path) -> Result<Reading, Failed> {
+/// `executable`, with the sandbox off, or why it was not started: a step run
+/// to its end, so the peer standing in for the interpreter has kept the
+/// arguments it was given.
+fn versioned(
+    bench: &Bench,
+    row: CatalogRow,
+    executable: &Path,
+) -> Result<Result<Reading, Unlaunched>, Failed> {
     let consent = Consent::new(Routes::production().cataloging(row.warned().ok().cloned()));
     consent.give("agent:goose");
     let registry: &'static Registry = Box::leak(Box::new(
@@ -167,7 +176,7 @@ fn versioned(bench: &Bench, row: CatalogRow, executable: &Path) -> Result<Readin
         dialect.as_mut(),
         Account::Version,
         &|_| {},
-    ))?)
+    )))
 }
 
 /// Asserts that nothing of goose is kept and the user file is `before`.
@@ -234,7 +243,7 @@ fn a_release_a_pinned_interpreter_starts_is_installed_after_the_yes_and_started_
 
     // Started, the interpreter is given its own arguments, then the
     // launcher, then the agent's.
-    let read = versioned(&bench, row_of(&release)?, &program)?;
+    let read = versioned(&bench, row_of(&release)?, &program)??;
 
     assert!(
         matches!(read, Reading::Version(_)),
@@ -419,10 +428,9 @@ fn a_version_whose_launcher_is_gone_is_refused_before_any_process() -> Result<()
     Ok(())
 }
 
-#[test]
-fn a_release_a_pinned_node_starts_is_refused_before_the_question() -> Result<(), Failed> {
-    let bench = Bench::new("agents-door-npm")?;
-    let mut release = stating(super::goose("1.0.0", b"node"));
+/// `goose` at `version` as a pinned Node starts it.
+fn noded(version: &str) -> Value {
+    let mut release = stating(super::goose(version, b"node"));
     set(&mut release, "/kind", json!("npm"));
     if let Some(target) = release
         .pointer_mut("/targets/0")
@@ -436,6 +444,13 @@ fn a_release_a_pinned_node_starts_is_refused_before_the_question() -> Result<(),
         );
         target.insert("scripts".into(), json!([]));
     }
+    release
+}
+
+#[test]
+fn a_release_a_pinned_node_starts_is_refused_before_the_question() -> Result<(), Failed> {
+    let bench = Bench::new("agents-door-npm")?;
+    let release = noded("1.0.0");
     bench.server.catalog(1, &[release], &json!([]))?;
     bench.configure(&bench.program("1.0.0"), &json!({}))?;
     let before = fs::read(bench.user())?;
@@ -451,5 +466,138 @@ fn a_release_a_pinned_node_starts_is_refused_before_the_question() -> Result<(),
     assert!(front.put.is_empty());
     assert_eq!(bench.server.asked(), CATALOG);
     assert_eq!(fs::read(bench.user())?, before);
+    Ok(())
+}
+
+/// Installs goose 1.0.0 as a pinned interpreter starts it, the fake peer
+/// playing `played` standing in for that interpreter, then takes in the
+/// catalog of serial 2, which lists `entries` instead; and gives the release
+/// installed and its interpreter's path.
+fn superseded(
+    bench: &Bench,
+    played: &(Vec<u8>, Vec<u8>),
+    entries: &[Value],
+) -> Result<(Value, PathBuf), Failed> {
+    let release = interpreted(&bench.server, "goose_acp.cli:main", played, &wheel());
+    bench
+        .server
+        .catalog(1, std::slice::from_ref(&release), &json!([]))?;
+    let program = version(bench).join(python());
+    bench.configure(&program, &json!({}))?;
+    let (installed, _) = bench.ask(
+        install("1.0.0")?,
+        &mut answering(&bench.server, Some("Install")),
+        false,
+    )?;
+    assert!(
+        matches!(installed, Ok(Outcome::Moved { .. })),
+        "{}",
+        shape(&installed)
+    );
+    assert!(version(bench).join("launch.py").is_file());
+    bench.server.catalog(2, entries, &json!([]))?;
+    let (listed, _) = bench.ask(
+        Command::AgentCatalog,
+        &mut answering(&bench.server, None),
+        false,
+    )?;
+    assert!(
+        matches!(
+            listed,
+            Ok(Outcome::Catalog {
+                unrefreshed: None,
+                ..
+            })
+        ),
+        "{}",
+        shape(&listed)
+    );
+    Ok((release, program))
+}
+
+/// Once the catalog no longer says a pinned interpreter starts it, a version
+/// that holds its launcher is not started at all, rather than as a program of
+/// its own: withdrawn, and listed instead at a newer release a program of its
+/// own or a pinned Node starts, it is refused before any process.
+#[test]
+fn a_version_holding_its_launcher_is_refused_once_the_catalog_no_longer_says_how_it_starts()
+-> Result<(), Failed> {
+    let played = peer(&answers("1.0.0"))?;
+    let cases: [(&str, Vec<Value>); 3] = [
+        ("withdrawn", Vec::new()),
+        (
+            "a program of its own",
+            vec![stating(super::goose("2.0.0", b"goose 2.0.0"))],
+        ),
+        ("a pinned Node", vec![noded("2.0.0")]),
+    ];
+    let mut found = Vec::new();
+    for (index, (what, entries)) in cases.iter().enumerate() {
+        let bench = Bench::new(&format!("agents-door-uvx-unlisted-{index}"))?;
+        let (release, program) = superseded(&bench, &played, entries)?;
+
+        let ended = versioned(&bench, row_of(&release)?, &program)?;
+
+        let refused = matches!(
+            ended,
+            Err(Unlaunched::Launcher {
+                why: Unlaunchable::Unlisted,
+                ..
+            })
+        );
+        found.push((
+            *what,
+            refused,
+            fake_peer::argued(&version(&bench).join("python/bin")),
+        ));
+    }
+
+    // Each refused as a start the catalog no longer says, and the
+    // interpreter never started, so it kept no arguments.
+    let expected: Vec<_> = cases
+        .iter()
+        .map(|(what, _)| (*what, true, Vec::<Vec<String>>::new()))
+        .collect();
+    assert_eq!(found, expected);
+    Ok(())
+}
+
+/// A version the catalog no longer lists, where a newer release a pinned
+/// interpreter starts is listed instead, is still started through its own
+/// launcher, isolated.
+#[test]
+fn a_version_superseded_by_a_newer_interpreted_release_starts_through_its_own_launcher()
+-> Result<(), Failed> {
+    let bench = Bench::new("agents-door-uvx-superseded")?;
+    let played = peer(&answers("1.0.0"))?;
+    let mut newer = interpreted(
+        &bench.server,
+        "goose_acp.cli:main",
+        &peer(&answers("2.0.0"))?,
+        &wheel(),
+    );
+    set(&mut newer, "/version", json!("2.0.0"));
+    set(&mut newer, "/admits/version", json!("2.0.0"));
+    let (release, program) = superseded(&bench, &played, &[newer])?;
+
+    let read = versioned(&bench, row_of(&release)?, &program)??;
+
+    assert!(
+        matches!(read, Reading::Version(_)),
+        "it did not answer initialize"
+    );
+    let launcher = fs::canonicalize(version(&bench).join("launch.py"))?;
+    let started = fake_peer::argued(&version(&bench).join("python/bin"));
+    assert_eq!(
+        started.first().map(Vec::as_slice),
+        Some(
+            [
+                "-I".to_owned(),
+                launcher.to_string_lossy().into_owned(),
+                "acp".to_owned(),
+            ]
+            .as_slice()
+        )
+    );
     Ok(())
 }

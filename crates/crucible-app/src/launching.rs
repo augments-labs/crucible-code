@@ -28,10 +28,12 @@
 //! file, since then no revocation can be known, or that lies there, as its
 //! path is written or where it leads, in another agent's directory or in no
 //! version of its own; a program that is the pinned interpreter of such a
-//! version whose launcher is not at the top of it; and a route with no yes,
-//! with what to ask. A catalog row always ships, since it is listed only for
-//! an entry the catalog reviewed. Only then is the hold taken from
-//! `content_use`, the child's sandbox policy built, and the process started.
+//! version whose launcher is not at the top of it, or that lies in such a
+//! version holding a launcher once the catalog no longer says a pinned
+//! interpreter starts it; and a route with no yes, with what to ask. A
+//! catalog row always ships, since it is listed only for an entry the catalog
+//! reviewed. Only then is the hold taken from `content_use`, the child's
+//! sandbox policy built, and the process started.
 //! The first six are decided in one place, [`Agent::release`], after
 //! [`Agent::program`] has decided the first four, which an operation that
 //! would ask about a route before starting the agent consults first, through
@@ -75,7 +77,12 @@
 //! step, the smoke test of a release and the intake's probe all take what
 //! leads the arguments from one function, so none starts the interpreter any
 //! other way, and a probe of an unpacked release with no launcher at its top
-//! is refused.
+//! is refused. A turn and an account step take the launch from the release's
+//! own entry where the catalog still lists it, else from the release an
+//! update would install; where neither is one a pinned interpreter starts, a
+//! version holding anything at the launcher's place, a link included, is
+//! refused rather than started as a program of its own, since its
+//! interpreter, given no launcher, would run what the workspace holds.
 //!
 //! A profile directory is given to a catalog agent through the variable its
 //! entry names, which is the whole of how the agent is told of it. On macOS and
@@ -293,8 +300,10 @@ pub enum Unlaunched {
         /// says.
         reason: Option<Box<str>>,
     },
-    /// Its program is a pinned interpreter in a version of crucible's install
-    /// store, and the launcher it runs cannot be given to it.
+    /// Its program lies in a version of crucible's install store that is
+    /// started through a launcher, as a pinned interpreter's is, and cannot
+    /// be started so: the launcher cannot be given to it, or the catalog no
+    /// longer says how that version is started.
     #[error("{agent} cannot be started: {why}.")]
     Launcher {
         /// The agent, as its row names it.
@@ -440,6 +449,14 @@ pub enum Unlaunchable {
         launcher = LAUNCHER
     )]
     Untext,
+    /// Its version holds something at the launcher's place, and the catalog
+    /// no longer lists a release a pinned interpreter starts that would say
+    /// how it is started.
+    #[error(
+        "its version holds {launcher}, and the catalog no longer says how that version is started",
+        launcher = LAUNCHER
+    )]
+    Unlisted,
 }
 
 /// An agent as it was selected: its row, and what its program was found to
@@ -750,12 +767,14 @@ impl Agent {
     /// one that lies there in another agent's directory, or in none of its
     /// own versions, is refused rather than taken for the user's own. A
     /// program outside the store is the user's own, and no release of the
-    /// catalog's.
+    /// catalog's. A version that holds a launcher is started through it or
+    /// not at all.
     ///
     /// # Errors
     ///
     /// As [`Agent::program`], else [`Unlaunched::Unstored`],
-    /// [`Unlaunched::Untrusted`] or [`Unlaunched::Revoked`].
+    /// [`Unlaunched::Untrusted`], [`Unlaunched::Revoked`] or
+    /// [`Unlaunched::Launcher`].
     pub fn release(
         &self,
         consent: &Consent,
@@ -809,17 +828,28 @@ impl Agent {
             .find(|offer| *offer.pin.version == *named && offer.pin.lock_revision == revision)
             .or_else(|| offers.first());
         let root = store.directory(&key, &version);
+        let unlaunchable = |why| Unlaunched::Launcher {
+            agent: key.to_string(),
+            why,
+        };
         let leading = match offer {
             Some(offer) => {
-                interpreting(&offer.pin.target, program.path(), &root).map_err(|why| {
-                    Unlaunched::Launcher {
-                        agent: key.to_string(),
-                        why,
-                    }
-                })?
+                interpreting(&offer.pin.target, program.path(), &root).map_err(unlaunchable)?
             }
             None => Vec::new(),
         };
+        // A version installed for a pinned interpreter holds its launcher, and
+        // its interpreter given no launcher would run what the workspace
+        // holds; one whose catalog no longer says so is not started at all.
+        // Anything there counts, a link too, and so does a place that cannot
+        // be read.
+        let holds_launcher = !matches!(
+            std::fs::symlink_metadata(root.join(LAUNCHER)),
+            Err(problem) if problem.kind() == std::io::ErrorKind::NotFound
+        );
+        if leading.is_empty() && holds_launcher {
+            return Err(unlaunchable(Unlaunchable::Unlisted));
+        }
         Ok((
             program,
             Some(Stored {

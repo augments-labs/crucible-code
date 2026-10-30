@@ -221,8 +221,13 @@ the arguments the catalog gives it (`-I` runs it isolated, reading no
 `PYTHON` variable, nothing from the directory it starts in and nothing from
 your own site-packages), the launcher, then the agent's own arguments. An entry
 point the launcher cannot be written for, or an agent the catalog says Node
-runs, is refused before anything is asked, and a version whose `launch.py` is
-gone, or leads out of the version, is refused before anything is started.
+runs, is refused before anything is asked. A version whose `launch.py` is
+gone, or leads out of the version, is refused before anything is started, and
+so is a version holding `launch.py` once the catalog no longer says a pinned
+interpreter starts it, withdrawn or listed now as an agent of another kind,
+rather than starting its interpreter without the launcher; a version the
+catalog has moved on from to a newer Python release still starts through its
+own `launch.py`.
 
 *Verify*, offered where a version is installed, hashes every file of each
 installed version against the receipt written when it was installed, and only
