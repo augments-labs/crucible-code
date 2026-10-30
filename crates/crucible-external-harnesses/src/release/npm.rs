@@ -354,7 +354,9 @@ pub enum NpmError {
         path: String,
     },
     /// A package declares a program whose script its tarball did not write.
-    #[error("the package at {location:?} declares a program whose script its tarball did not write")]
+    #[error(
+        "the package at {location:?} declares a program whose script its tarball did not write"
+    )]
     Unwritten {
         /// Where it is installed, cut short.
         location: String,
@@ -779,10 +781,7 @@ fn licence(fields: &Fields<'_>) -> Result<Option<Box<str>>, NpmError> {
 
 /// The programs `fields` declares for the package installed at `location`,
 /// each by its name and its script, relative to that location.
-fn declared(
-    fields: &Fields<'_>,
-    location: &str,
-) -> Result<BTreeMap<Box<str>, Box<str>>, NpmError> {
+fn declared(fields: &Fields<'_>, location: &str) -> Result<BTreeMap<Box<str>, Box<str>>, NpmError> {
     let declared = match fields.fields.get("bin") {
         None => return Ok(BTreeMap::new()),
         Some(Value::Object(declared)) => declared,

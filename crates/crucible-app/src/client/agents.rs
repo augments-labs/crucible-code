@@ -2092,7 +2092,9 @@ fn stubs(tree: &NpmTree, root: &Path, node: &Path) -> Result<Vec<Stub>, AgentsEr
     let preload = root.join(PRELOAD);
     let mut stubs = Vec::new();
     for (name, script) in tree.programs() {
-        let script = script.split('/').fold(root.to_path_buf(), |at, part| at.join(part));
+        let script = script
+            .split('/')
+            .fold(root.to_path_buf(), |at, part| at.join(part));
         stubs.push(if cfg!(windows) {
             Stub::windows(name, node, &preload, &script)?
         } else {

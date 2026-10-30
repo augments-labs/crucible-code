@@ -27,8 +27,8 @@ use serde_json::{Value, json};
 
 use super::uvx::{unchanged, version, versioned};
 use super::{
-    Bench, CATALOG, Failed, Reply, Server, answering, answers, artifact, asset_path, digest,
-    facts, install, peer, platform, row_of, set, shape, stating,
+    Bench, CATALOG, Failed, Reply, Server, answering, answers, artifact, asset_path, digest, facts,
+    install, peer, platform, row_of, set, shape, stating,
 };
 
 /// Node's path in the version, as the catalog lists it.
@@ -478,8 +478,8 @@ fn the_question_counts_the_packages_of_the_tree_under_each_licence() -> Result<(
         "Unlicense",
         "ISC",
         "CC0-1.0",
-        "BSD-3-Clause",
-        "BSD-2-Clause",
+        "BlueOak-1.0.0",
+        "Python-2.0",
         "0BSD",
         "(MIT OR Apache-2.0)",
     ];
@@ -504,9 +504,9 @@ fn the_question_counts_the_packages_of_the_tree_under_each_licence() -> Result<(
         "2 packages of its tree under no licence given.",
         "1 package of its tree under (MIT OR Apache-2.0).",
         "1 package of its tree under 0BSD.",
-        "1 package of its tree under BSD-2-Clause.",
-        "1 package of its tree under BSD-3-Clause.",
+        "1 package of its tree under BlueOak-1.0.0.",
         "1 package of its tree under CC0-1.0.",
+        "1 package of its tree under ISC.",
         "And 3 more licences.",
     ];
     let first = facts
@@ -528,7 +528,11 @@ fn the_question_counts_the_packages_of_the_tree_under_each_licence() -> Result<(
 #[test]
 fn each_program_the_tree_declares_is_given_a_stub_in_bin_that_the_receipt_names()
 -> Result<(), Failed> {
-    let declared = amended(&tree(), &[(0, json!({"bin": {"peer": "./bin/peer.js"}}))], &[])?;
+    let declared = amended(
+        &tree(),
+        &[(0, json!({"bin": {"peer": "./bin/peer.js"}}))],
+        &[],
+    )?;
     let (bench, _, tree) = bench_of("agents-door-npm-stubs", declared)?;
     bench.server.serve(TARBALL, Reply::Body(tree.tarball));
     let mut front = answering(&bench.server, Some("Install"));

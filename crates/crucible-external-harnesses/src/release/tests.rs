@@ -4693,9 +4693,11 @@ fn a_licence_too_long_or_unprintable_is_refused_when_the_lock_is_read() {
     }
     let longest = "M".repeat(LICENSE_BYTES);
     let read = NpmTree::parse(&licensed(longest.clone().into()));
-    let license = read
-        .ok()
-        .and_then(|tree| tree.packages().first().and_then(|package| package.license.clone()));
+    let license = read.ok().and_then(|tree| {
+        tree.packages()
+            .first()
+            .and_then(|package| package.license.clone())
+    });
     assert_eq!(license.as_deref(), Some(&*longest));
 }
 
@@ -4715,7 +4717,10 @@ fn a_program_with_a_bad_name_or_a_script_that_leaves_its_package_is_refused() {
         ("a name not ASCII", program("p\u{e9}er", "bin/peer.js")),
         ("a name with a dot first", program("./peer", "bin/peer.js")),
         ("a script climbing", program("peer", "../other/bin/x.js")),
-        ("a script climbing inside", program("peer", "bin/../../x.js")),
+        (
+            "a script climbing inside",
+            program("peer", "bin/../../x.js"),
+        ),
         ("a script absolute", program("peer", "/bin/peer.js")),
         ("a script with a backslash", program("peer", "bin\\peer.js")),
         ("an empty script", program("peer", "")),
@@ -4735,7 +4740,10 @@ fn a_program_with_a_bad_name_or_a_script_that_leaves_its_package_is_refused() {
             "a script not text",
             with(entry(), "bin", Some(serde_json::json!({ "peer": 1 }))),
         ),
-        ("bin a string", with(entry(), "bin", Some("bin/peer.js".into()))),
+        (
+            "bin a string",
+            with(entry(), "bin", Some("bin/peer.js".into())),
+        ),
         (
             "bin a list",
             with(entry(), "bin", Some(serde_json::json!(["bin/peer.js"]))),
@@ -4787,7 +4795,13 @@ fn a_package_or_a_tree_declaring_more_programs_than_its_ceiling_is_refused() {
         .collect();
     let refused = NpmTree::parse(&lock_of(&packages));
     assert!(
-        matches!(refused, Err(NpmError::Tree { what: "programs", .. })),
+        matches!(
+            refused,
+            Err(NpmError::Tree {
+                what: "programs",
+                ..
+            })
+        ),
         "{:?}",
         refused.err()
     );
