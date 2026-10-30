@@ -3552,22 +3552,21 @@ fn an_alias_is_unpacked_under_its_location_and_not_under_its_name() {
 #[test]
 fn names_two_packages_write_that_differ_only_in_case_are_refused() {
     let owned = Owned::new("npm-collision");
-    let parent = tar_gz(&[
-        Tarred::File("package/index.js", b"x", 0o644),
-        Tarred::File("package/node_modules/Y/index.js", b"Y", 0o644),
-    ]);
-    let nested = tar_gz(&[Tarred::File("package/index.js", b"y", 0o644)]);
+    let parent = tar_gz(&[Tarred::File("package/index.js", b"x", 0o644)]);
+    let nested = tar_gz(&[Tarred::File("package/index.js", b"z", 0o644)]);
     let tarballs = tarballs_in(&owned, "tarballs", &[&parent, &nested]);
     let lock = |at: &str| {
         lock_of(&[
-            locked("node_modules/x", "x", &parent, 2, 2),
-            locked(at, "y", &nested, 1, 1),
+            locked("node_modules/x", "x", &parent, 1, 1),
+            locked(at, "z", &nested, 1, 1),
         ])
     };
+    // Installed under the package above it spelled in another case, its
+    // files go into a directory that differs from that one only in case.
     let (refused, _) = npm_unpacked(
         &owned,
         "refused",
-        &lock("node_modules/x/node_modules/y"),
+        &lock("node_modules/X/node_modules/z"),
         &tarballs,
     );
     assert!(
@@ -3588,7 +3587,7 @@ fn names_two_packages_write_that_differ_only_in_case_are_refused() {
         &lock("node_modules/x/node_modules/z"),
         &tarballs,
     );
-    assert_eq!(unpacked.map(|files| files.len()).ok(), Some(3));
+    assert_eq!(unpacked.map(|files| files.len()).ok(), Some(2));
     assert_eq!(
         left,
         [
@@ -3596,8 +3595,6 @@ fn names_two_packages_write_that_differ_only_in_case_are_refused() {
             "node_modules/x/",
             "node_modules/x/index.js",
             "node_modules/x/node_modules/",
-            "node_modules/x/node_modules/Y/",
-            "node_modules/x/node_modules/Y/index.js",
             "node_modules/x/node_modules/z/",
             "node_modules/x/node_modules/z/index.js"
         ]
@@ -3993,6 +3990,227 @@ fn a_bundled_package_is_unpacked_from_the_tarball_of_the_package_above_it() {
             refused.err()
         );
     }
+}
+
+#[test]
+fn a_package_bundled_in_a_bundled_package_is_unpacked_from_the_tarball_that_holds_both() {
+    let owned = Owned::new("npm-bundled-twice");
+    let parent = tar_gz(&[
+        Tarred::File("package/index.js", b"x", 0o644),
+        Tarred::File("package/node_modules/b/index.js", b"b", 0o644),
+        Tarred::File(
+            "package/node_modules/b/node_modules/c/index.js",
+            b"c",
+            0o644,
+        ),
+    ]);
+    let tarballs = tarballs_in(&owned, "tarballs", &[&parent]);
+    let lock = lock_of(&[
+        locked("node_modules/x", "x", &parent, 3, 3),
+        bundled("node_modules/x/node_modules/b"),
+        bundled("node_modules/x/node_modules/b/node_modules/c"),
+    ]);
+    let (unpacked, _) = npm_unpacked(&owned, "root", &lock, &tarballs);
+    assert_eq!(
+        unpacked.ok(),
+        Some(vec![
+            listed("node_modules/x/index.js", b"x", false),
+            listed("node_modules/x/node_modules/b/index.js", b"b", false),
+            listed(
+                "node_modules/x/node_modules/b/node_modules/c/index.js",
+                b"c",
+                false
+            ),
+        ])
+    );
+}
+
+#[test]
+fn a_bundled_package_is_refused_where_a_tarball_that_does_not_hold_it_writes_it() {
+    let owned = Owned::new("npm-bundled-elsewhere");
+    let parent = tar_gz(&[
+        Tarred::File("package/index.js", b"x", 0o644),
+        Tarred::File(
+            "package/node_modules/b/node_modules/c/index.js",
+            b"c",
+            0o644,
+        ),
+    ]);
+    let middle = tar_gz(&[Tarred::File("package/index.js", b"b", 0o644)]);
+    let tarballs = tarballs_in(&owned, "tarballs", &[&parent, &middle]);
+    let lock = lock_of(&[
+        locked("node_modules/x", "x", &parent, 2, 2),
+        locked("node_modules/x/node_modules/b", "b", &middle, 1, 1),
+        bundled("node_modules/x/node_modules/b/node_modules/c"),
+    ]);
+    let (refused, left) = npm_unpacked(&owned, "root", &lock, &tarballs);
+    assert!(
+        matches!(refused, Err(NpmError::Outside { .. })),
+        "{:?}",
+        refused.err()
+    );
+    assert_eq!(
+        left,
+        [
+            "node_modules/",
+            "node_modules/x/",
+            "node_modules/x/index.js"
+        ]
+    );
+}
+
+#[test]
+fn a_package_the_lock_does_not_list_is_refused_where_a_tarball_writes_it() {
+    let owned = Owned::new("npm-unlisted");
+    let tarball = tar_gz(&[
+        Tarred::File("package/index.js", b"x", 0o644),
+        Tarred::File("package/node_modules/ghost/index.js", b"g", 0o644),
+    ]);
+    let tarballs = tarballs_in(&owned, "tarballs", &[&tarball]);
+    let lock = lock_of(&[locked("node_modules/x", "x", &tarball, 2, 2)]);
+    let (refused, left) = npm_unpacked(&owned, "root", &lock, &tarballs);
+    assert!(
+        matches!(refused, Err(NpmError::Outside { .. })),
+        "{:?}",
+        refused.err()
+    );
+    assert_eq!(
+        left,
+        [
+            "node_modules/",
+            "node_modules/x/",
+            "node_modules/x/index.js"
+        ]
+    );
+}
+
+#[test]
+fn a_tarball_that_writes_into_a_package_unpacked_after_it_is_refused() {
+    let owned = Owned::new("npm-another-after");
+    let parent = tar_gz(&[
+        Tarred::File("package/index.js", b"x", 0o644),
+        Tarred::File("package/node_modules/b/extra.js", b"e", 0o755),
+    ]);
+    let nested = tar_gz(&[Tarred::File("package/index.js", b"b", 0o644)]);
+    let tarballs = tarballs_in(&owned, "tarballs", &[&parent, &nested]);
+    let x = locked("node_modules/x", "x", &parent, 2, 2);
+    let b = locked("node_modules/x/node_modules/b", "b", &nested, 1, 1);
+
+    let (refused, left) = npm_unpacked(&owned, "root", &lock_of(&[x, b]), &tarballs);
+    assert!(
+        matches!(refused, Err(NpmError::Outside { .. })),
+        "{:?}",
+        refused.err()
+    );
+    assert_eq!(
+        left,
+        [
+            "node_modules/",
+            "node_modules/x/",
+            "node_modules/x/index.js"
+        ]
+    );
+}
+
+#[test]
+fn a_tarball_that_writes_into_a_package_unpacked_before_it_is_refused() {
+    let owned = Owned::new("npm-another-before");
+    let parent = tar_gz(&[
+        Tarred::File("package/index.js", b"x", 0o644),
+        Tarred::File("package/node_modules/b/extra.js", b"e", 0o755),
+    ]);
+    let nested = tar_gz(&[Tarred::File("package/index.js", b"b", 0o644)]);
+    let tarballs = tarballs_in(&owned, "tarballs", &[&parent, &nested]);
+    let x = locked("node_modules/x", "x", &parent, 2, 2);
+    let b = locked("node_modules/x/node_modules/b", "b", &nested, 1, 1);
+
+    let (refused, left) = npm_unpacked(&owned, "root", &lock_of(&[b, x]), &tarballs);
+    assert!(
+        matches!(refused, Err(NpmError::Outside { .. })),
+        "{:?}",
+        refused.err()
+    );
+    assert_eq!(
+        left,
+        [
+            "node_modules/",
+            "node_modules/x/",
+            "node_modules/x/index.js",
+            "node_modules/x/node_modules/",
+            "node_modules/x/node_modules/b/",
+            "node_modules/x/node_modules/b/index.js"
+        ]
+    );
+}
+
+#[test]
+fn a_file_a_tarball_writes_straight_into_a_node_modules_directory_is_refused() {
+    let owned = Owned::new("npm-stray");
+    let tarball = tar_gz(&[Tarred::File("package/node_modules/stray.js", b"s", 0o644)]);
+    let tarballs = tarballs_in(&owned, "tarballs", &[&tarball]);
+    let lock = lock_of(&[locked("node_modules/x", "x", &tarball, 1, 1)]);
+    let (refused, left) = npm_unpacked(&owned, "root", &lock, &tarballs);
+    assert!(
+        matches!(refused, Err(NpmError::Outside { .. })),
+        "{:?}",
+        refused.err()
+    );
+    assert_eq!(left, Vec::<String>::new());
+}
+
+#[test]
+fn a_node_modules_directory_spelled_in_another_case_is_held_to_the_same_rule() {
+    let owned = Owned::new("npm-case");
+    let tarball = tar_gz(&[Tarred::File(
+        "package/Node_Modules/ghost/index.js",
+        b"g",
+        0o644,
+    )]);
+    let tarballs = tarballs_in(&owned, "tarballs", &[&tarball]);
+    let lock = lock_of(&[locked("node_modules/x", "x", &tarball, 1, 1)]);
+    let (refused, left) = npm_unpacked(&owned, "root", &lock, &tarballs);
+    assert!(
+        matches!(refused, Err(NpmError::Outside { .. })),
+        "{:?}",
+        refused.err()
+    );
+    assert_eq!(left, Vec::<String>::new());
+}
+
+#[test]
+fn a_node_modules_directory_deep_in_a_packages_own_files_is_written() {
+    let owned = Owned::new("npm-fixtures");
+    let tarball = tar_gz(&[
+        Tarred::File("package/index.js", b"x", 0o644),
+        Tarred::File("package/test/fixtures/node_modules/x/index.js", b"f", 0o644),
+    ]);
+    let tarballs = tarballs_in(&owned, "tarballs", &[&tarball]);
+    let lock = lock_of(&[locked("node_modules/x", "x", &tarball, 2, 2)]);
+    let (unpacked, left) = npm_unpacked(&owned, "root", &lock, &tarballs);
+    assert_eq!(
+        unpacked.ok(),
+        Some(vec![
+            listed("node_modules/x/index.js", b"x", false),
+            listed(
+                "node_modules/x/test/fixtures/node_modules/x/index.js",
+                b"f",
+                false
+            ),
+        ])
+    );
+    assert_eq!(
+        left,
+        [
+            "node_modules/",
+            "node_modules/x/",
+            "node_modules/x/index.js",
+            "node_modules/x/test/",
+            "node_modules/x/test/fixtures/",
+            "node_modules/x/test/fixtures/node_modules/",
+            "node_modules/x/test/fixtures/node_modules/x/",
+            "node_modules/x/test/fixtures/node_modules/x/index.js"
+        ]
+    );
 }
 
 #[test]

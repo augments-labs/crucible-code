@@ -22,9 +22,10 @@
 //!   - `version`: its version, printable ASCII with no space, at most
 //!     [`SEMVER_BYTES`] long.
 //!   - `in_bundle`: `true` for a package that the tarball of a package the
-//!     lock installs above it holds, which then gives none of the fields
-//!     below, its files being counted in that package's; left out, or
-//!     `false`, for every other.
+//!     lock installs above it holds, which is the nearest above it unpacked
+//!     from a tarball of its own; it then gives none of the fields below, its
+//!     files being counted in that package's. Left out, or `false`, for every
+//!     other.
 //!   - `url`: where the registry publishes its tarball, beginning exactly
 //!     `https://registry.npmjs.org/`, then printable ASCII with no space.
 //!   - `size`: the tarball's size, in bytes.
@@ -54,6 +55,15 @@
 //! - The first component of every name is stripped, whatever it is, and a
 //!   member with nothing after it is skipped, so `package/index.js` is written
 //!   as `index.js` under the package's location.
+//! - A file is written only where the lock installs from its tarball: the
+//!   deepest location the lock gives above it, compared case-folded, is its
+//!   package's own or a bundled package's that tarball holds, and what is
+//!   below that location does not begin with a `node_modules` component,
+//!   whatever its case. So a tarball writes no package the lock does not list,
+//!   nothing into another package's location and no file straight into a
+//!   `node_modules` directory, while a `node_modules` deeper in a package's
+//!   own files, as a test's fixtures may keep one, is written as npm writes
+//!   it.
 //! - An ordinary file is written, with the directories above it, each made
 //!   so only its owner may reach it, as a staged release's are. A directory
 //!   entry, a symbolic link and a hard link are skipped and write nothing. A
@@ -93,7 +103,7 @@
 //! The root is the caller's: this writes only under it, makes nothing that is
 //! already there, and leaves removing it after a refusal to its owner.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, BufRead, Read as _, Seek as _};
 use std::path::{Path, PathBuf};
@@ -279,6 +289,16 @@ pub enum NpmError {
         /// The most the lock gives it.
         ceiling: u64,
     },
+    /// A tarball writes where the lock does not install from it.
+    #[error(
+        "the tarball of the package at {location:?} writes {path:?}, which the lock does not install from it"
+    )]
+    Outside {
+        /// Where its package is installed, cut short.
+        location: String,
+        /// What it writes, from the tree's root, cut short.
+        path: String,
+    },
     /// A tarball breaks a rule every archive is held to.
     #[error("the tarball of the package at {location:?} was refused")]
     Tarball {
@@ -353,15 +373,25 @@ impl NpmTree {
     ///
     /// [`NpmError::Read`], [`NpmError::Size`] and [`NpmError::Digest`] for a
     /// tarball that is not its pin, [`NpmError::Path`] for a path past its
-    /// ceiling, [`NpmError::Package`] for a package that writes more than its
-    /// entry gives it, and [`NpmError::Tarball`] for a tarball that breaks a
-    /// rule every archive is held to, or that could not be written. What was
-    /// written before is left under `root`.
+    /// ceiling, [`NpmError::Outside`] for a tarball that writes where the lock
+    /// does not install from it, [`NpmError::Package`] for a package that
+    /// writes more than its entry gives it, and [`NpmError::Tarball`] for a
+    /// tarball that breaks a rule every archive is held to, or that could not
+    /// be written. What was written before is left under `root`.
     pub fn unpack(&self, tarballs: &Path, root: &Path) -> Result<Vec<File>, NpmError> {
+        let unpacked = self.unpacked();
         let mut unpacking = Unpacking {
             root,
             budget: Budget::new(TREE_DECOMPRESSED),
             names: Names::new(TREE_NAMES),
+            writers: self
+                .packages
+                .iter()
+                .filter_map(|package| {
+                    let writer = holder(&unpacked, package)?;
+                    Some((package.location.to_ascii_lowercase(), writer))
+                })
+                .collect(),
             files: Vec::new(),
         };
         for package in &self.packages {
@@ -386,28 +416,21 @@ impl NpmTree {
         Ok(unpacking.files)
     }
 
-    /// Refuses a bundled package that no package the lock installs above it
-    /// can hold.
-    fn bundled(&self) -> Result<(), NpmError> {
-        let unpacked: HashSet<&str> = self
-            .packages
+    /// Where every package the lock unpacks from a tarball is installed.
+    fn unpacked(&self) -> HashSet<&str> {
+        self.packages
             .iter()
             .filter(|package| package.tarball.is_some())
             .map(|package| &*package.location)
-            .collect();
+            .collect()
+    }
+
+    /// Refuses a bundled package that no package the lock installs above it
+    /// can hold.
+    fn bundled(&self) -> Result<(), NpmError> {
+        let unpacked = self.unpacked();
         for (index, package) in self.packages.iter().enumerate() {
-            if package.tarball.is_some() {
-                continue;
-            }
-            let mut above = &*package.location;
-            let held = loop {
-                match above.rsplit_once("/node_modules/") {
-                    Some((parent, _)) if unpacked.contains(parent) => break true,
-                    Some((parent, _)) => above = parent,
-                    None => break false,
-                }
-            };
-            if !held {
+            if holder(&unpacked, package).is_none() {
                 return Err(wrong(
                     &format!("packages[{index}].location"),
                     "is bundled in no package the lock installs above it",
@@ -438,6 +461,24 @@ impl NpmTree {
         summed("files", TREE_FILES, |tarball| tarball.files)?;
         summed("bytes", TREE_BYTES, |tarball| tarball.unpacked)?;
         summed("bytes of tarballs", TREE_BYTES, |tarball| tarball.size)
+    }
+}
+
+/// Where the package whose tarball writes `package` is installed: its own
+/// location for a package with a tarball, and for a bundled one the nearest
+/// above it of `unpacked`, where the lock installs a package from a tarball,
+/// if there is one.
+fn holder<'p>(unpacked: &HashSet<&str>, package: &'p NpmPackage) -> Option<&'p str> {
+    if package.tarball.is_some() {
+        return Some(&package.location);
+    }
+    let mut above = &*package.location;
+    loop {
+        let (parent, _) = above.rsplit_once("/node_modules/")?;
+        if unpacked.contains(parent) {
+            return Some(parent);
+        }
+        above = parent;
     }
 }
 
@@ -664,11 +705,13 @@ fn pinned(file: &mut fs::File, tarball: &NpmTarball, location: &str) -> Result<(
 }
 
 /// A tree being unpacked: where, what has been read out of its tarballs and
-/// what has been written, every package's together.
+/// what has been written, every package's together, and for every location,
+/// case-folded, where the package whose tarball writes it is installed.
 struct Unpacking<'r> {
     root: &'r Path,
     budget: Budget,
     names: Names,
+    writers: HashMap<String, &'r str>,
     files: Vec<File>,
 }
 
@@ -684,6 +727,7 @@ impl Unpacking<'_> {
             root,
             budget,
             names,
+            writers,
             files,
         } = self;
         let budget = &*budget;
@@ -748,6 +792,12 @@ impl Unpacking<'_> {
                 });
             }
             let path = named(path.as_bytes(), false).map_err(refused)?;
+            if !writes(writers, location, &path) {
+                return Err(NpmError::Outside {
+                    location: shown(location.as_bytes()),
+                    path: shown(path.as_bytes()),
+                });
+            }
             let size = entry.size();
             let exec = entry
                 .header()
@@ -782,4 +832,36 @@ impl Unpacking<'_> {
         }
         ended(archive, &ahead, budget).map_err(refused)
     }
+}
+
+/// Whether the tarball of the package installed at `location` may write
+/// `path`, from the tree's root, by `writers`: the deepest location above it,
+/// compared case-folded, is written from that tarball, and what is below that
+/// location does not begin with a `node_modules` component, whatever its case.
+fn writes(writers: &HashMap<String, &str>, location: &str, path: &str) -> bool {
+    let folded = path.to_ascii_lowercase();
+    // A location deeper than the package's own goes on from it with
+    // `/node_modules/` and a package's name, so one is looked for only there.
+    let (mut end, mut deepest) = (location.len(), location.len());
+    while let Some(after) = folded
+        .get(end..)
+        .and_then(|rest| rest.strip_prefix("/node_modules/"))
+    {
+        let Some(rest) = package_name(after).filter(|rest| rest.starts_with('/')) else {
+            break;
+        };
+        end = folded.len() - rest.len();
+        if folded
+            .get(..end)
+            .is_some_and(|above| writers.contains_key(above))
+        {
+            deepest = end;
+        }
+    }
+    let written = folded
+        .get(..deepest)
+        .and_then(|above| writers.get(above))
+        .is_some_and(|writer| *writer == location);
+    let below = folded.get(deepest + 1..).unwrap_or_default();
+    written && below.split('/').next() != Some("node_modules")
 }
