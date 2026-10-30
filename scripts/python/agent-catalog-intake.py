@@ -66,17 +66,22 @@ has passed it.
 A `uvx` agent's package is pinned as `name==version`, and each platform the
 runner matrix names is a target of its own: the pinned interpreter, started
 with `-I`, and every package pip's report installs on it, each a wheel from
-`https://files.pythonhosted.org/packages/` whose file name agrees with the
+`https://files.pythonhosted.org/packages/`, at a plain address (no `%`,
+query, fragment, parameter, backslash, or empty, `.` or `..` segment) that
+every hop of its fetch keeps on that host, whose file name agrees with the
 report and whose tags that interpreter on that platform accepts (Linux wheels
 for glibc 2.34 or older, macOS ones for 11.0 on Apple silicon and 10.12 on
 Intel). A target is dropped when the interpreter is not the bytes its pin
 names, when a wheel holds a part of `.data` but `purelib` or `platlib`, which
 the client does not install, when the agent's own wheel names no console
 script by the package's name as `module:attr`, when an interpreter file lies
-outside `python/` or a wheel's outside `site/`, or when two of its artifacts
-list one path. A package pip found only as a source distribution drops its
-target with a `build` list naming each one, so it waits for a build at review.
-An interpreter and its wheels are never marked for mirroring.
+outside `python/` or a wheel's outside `site/`, when two of its artifacts
+list one path, when a wheel lists one member twice, or when a wheel's own
+record claims more members or a larger central directory than the stated
+ceilings. A package pip found only as a source distribution drops its target
+with a `build` list naming each one, clipped as a reason is, so it waits for
+a build at review. An interpreter and its wheels are never marked for
+mirroring.
 
 `diff` writes the human diff of review data against the merged data before it,
 as Markdown, showing only what changed, compared on whole values. A version
@@ -132,6 +137,7 @@ import os
 import pathlib
 import re
 import stat
+import struct
 import sys
 import time
 import tomllib
@@ -183,6 +189,11 @@ NAMED_FIELDS = 8
 WHEELS = 256
 REPORT_BYTES = 16 << 20
 ENTRY_POINTS_BYTES = 64 << 10
+# The bytes a wheel's central directory may take, read from its own record
+# before `zipfile` holds it: room for `LISTED_ENTRIES` members of short names.
+CENTRAL_DIRECTORY_BYTES = 64 << 20
+# The one host a wheel is fetched from, at every hop of the way.
+PYPI_HOST = "files.pythonhosted.org"
 
 PLATFORM = re.compile(r"(linux|darwin|windows|freebsd)-(x86_64|aarch64)")
 REGISTRY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
@@ -932,7 +943,9 @@ def entry_point_of(archive: zipfile.ZipFile, names: list[str], package: str) -> 
         content = file.read(ENTRY_POINTS_BYTES + 1)
     if len(content) > ENTRY_POINTS_BYTES:
         raise Dropped(f"its entry_points.txt is larger than {ENTRY_POINTS_BYTES} bytes")
-    parser = configparser.ConfigParser(interpolation=None, strict=True, delimiters=("=",))
+    # A default section no header can name, as a header holds no line break,
+    # so a `[DEFAULT]` section is a section and lends console_scripts nothing.
+    parser = configparser.ConfigParser(interpolation=None, strict=True, delimiters=("=",), default_section="\n")
     parser.optionxform = str  # a script's name is read as written
     try:
         parser.read_string(content.decode())
@@ -947,16 +960,54 @@ def entry_point_of(archive: zipfile.ZipFile, names: list[str], package: str) -> 
     return value
 
 
+def central_directory(file) -> None:
+    """Refuse the open wheel `file` where the record that ends it claims more
+    members than `LISTED_ENTRIES` or a central directory larger than
+    `CENTRAL_DIRECTORY_BYTES`, read before `zipfile` holds that directory. The
+    record is found as `zipfile` finds it, the last one in the file's tail,
+    and its zip64 record, where its locator stands before it, is read too."""
+    end_bytes, locator_bytes = 22, 20
+    size = file.seek(0, os.SEEK_END)
+    start = max(0, size - (end_bytes + 0xFFFF))
+    file.seek(start)
+    tail = file.read(size - start)
+    at = tail.rfind(b"PK\x05\x06")
+    if at < 0 or len(tail) - at < end_bytes:
+        raise Dropped("is not a wheel this intake can read")
+    entries, directory = struct.unpack("<HI", tail[at + 10 : at + 16])
+    if at >= locator_bytes and tail[at - locator_bytes : at - locator_bytes + 4] == b"PK\x06\x07":
+        (offset,) = struct.unpack("<Q", tail[at - locator_bytes + 8 : at - locator_bytes + 16])
+        if offset > size - 56:
+            raise Dropped("is not a wheel this intake can read")
+        file.seek(offset)
+        record = file.read(56)
+        if record[:4] != b"PK\x06\x06":
+            raise Dropped("is not a wheel this intake can read")
+        entries, directory = struct.unpack("<QQ", record[32:48])
+    if entries > LISTED_ENTRIES:
+        raise Dropped(f"its central directory lists more than {LISTED_ENTRIES} members")
+    if directory > CENTRAL_DIRECTORY_BYTES:
+        raise Dropped(f"its central directory is larger than {CENTRAL_DIRECTORY_BYTES} bytes")
+    file.seek(0)
+
+
 def wheel_read(file, package: str | None) -> str | None:
     """Refuse the open wheel `file` where a member is one the client would not
-    install, and give its console script `package` where one is asked for."""
+    install, or two members share a name, and give its console script
+    `package` where one is asked for."""
     try:
-        with zipfile.ZipFile(Spending(file)) as archive:
+        spending = Spending(file)
+        central_directory(spending)
+        with zipfile.ZipFile(spending) as archive:
             infos = archive.infolist()
             if len(infos) > LISTED_ENTRIES:
                 raise Dropped(f"holds more than {LISTED_ENTRIES} members")
             names = [info.filename for info in infos]
+            seen: set[str] = set()
             for name in names:
+                if name in seen:
+                    raise Dropped(f"lists {clipped(name)} twice")
+                seen.add(name)
                 data_part(name)
             return entry_point_of(archive, names, package) if package is not None else None
     except Dropped:
@@ -1033,13 +1084,22 @@ def uvx_target(
     for index, (url, name, item_version) in enumerate(report_of(place)):
         if not url.startswith(PYPI):
             raise Dropped(f"{clipped(url)} is not on {PYPI}, the one place a wheel is taken from")
-        if "%" in url:
-            raise Dropped(f"{clipped(url)} holds a %, so its file name is not read as it is written")
-        file = urllib.parse.urlsplit(url).path.rsplit("/", 1)[-1]
+        odd = next((mark for mark in "%?#;\\" if mark in url), None)
+        if odd is not None:
+            raise Dropped(
+                f"{clipped(url)} is not a plain address: it holds a {odd}, and a %, query, fragment, "
+                "parameter or backslash would let it be read as other than it is written"
+            )
+        path = urllib.parse.urlsplit(url).path
+        if any(segment in ("", ".", "..") for segment in path[1:].split("/")):
+            raise Dropped(f"{clipped(url)} holds an empty, . or .. segment in its path")
+        file = path.rsplit("/", 1)[-1]
         mine = normal(name) == normal(package) and item_version == released
         own = own or mine
         if not file.endswith(".whl"):
-            build.append({"package": name, "url": url, "version": item_version})
+            # At most `WHEELS` rows, as the report lists no more, each field
+            # clipped as a reason quotes it.
+            build.append({"package": clipped(name), "url": clipped(url), "version": clipped(item_version)})
             continue
         held = WHEEL_NAME.fullmatch(file)
         if held is None:
@@ -1086,6 +1146,9 @@ def uvx_target(
                 download.seek(0)
                 named_script = wheel_read(download, package if mine else None)
             reached = chained(inner, url, "the report's address")
+            elsewhere = next((name for name in reached if name != PYPI_HOST), None)
+            if elsewhere is not None:
+                raise Dropped(f"fetched.json reaches {clipped(elsewhere)}, but a wheel is fetched from {PYPI_HOST} alone")
             listing = unpacked_at(inner)
             under(listing[0], "site")
             return artifact_of(url, "wheel", sha256, size, listing, assets), reached, listing[0], named_script

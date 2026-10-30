@@ -25,10 +25,12 @@ import importlib.util
 import io
 import json
 import pathlib
+import struct
 import subprocess
 import sys
 import tarfile
 import tempfile
+import warnings
 import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -853,6 +855,33 @@ def wheel(
     return held.getvalue(), listed({installed(member): (content, False) for member, content in members.items()})
 
 
+def claimed(built: tuple[bytes, dict], *, entries: int | None = None, size: int | None = None) -> tuple[bytes, dict]:
+    """The wheel `built` with its end-of-central-directory record moved into a
+    zip64 one that claims `entries` members or a central directory of `size`
+    bytes, without holding either."""
+    content, listing = built
+    end = content.rindex(b"PK\x05\x06")
+    count, held_size, offset = struct.unpack("<HII", content[end + 10 : end + 20])
+    record = struct.pack(
+        "<IQHHIIQQQQ", 0x06064B50, 44, 45, 45, 0, 0,
+        entries if entries is not None else count, entries if entries is not None else count,
+        size if size is not None else held_size, offset,
+    )
+    locator = struct.pack("<IIQI", 0x07064B50, 0, end, 1)
+    final = struct.pack("<IHHHHIIH", 0x06054B50, 0, 0, 0xFFFF, 0xFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0)
+    return content[:end] + record + locator + final, listing
+
+
+def twice(built: tuple[bytes, dict], member: str, content: bytes) -> tuple[bytes, dict]:
+    """The wheel `built` with a second member named `member`."""
+    held = io.BytesIO(built[0])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with zipfile.ZipFile(held, "a") as archive_file:
+            archive_file.writestr(zipfile.ZipInfo(member, date_time=(1980, 1, 1, 0, 0, 0)), content)
+    return held.getvalue(), built[1]
+
+
 def own(**changed: object) -> dict:
     """The agent's own wheel as a report item, from PyPI."""
     built = wheel("pyagent", "1.4.0", console=CONSOLE, extra={
@@ -1002,6 +1031,26 @@ def uvx_registry(scratch: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
         ("noexec-agent", [own()], {"built": (interpreter("linux-x86_64")[0], interpreter("linux-x86_64", runnable=False)[1])}),
         ("noprogram-agent", [own()], {"built": (interpreter("linux-x86_64")[0], interpreter("linux-x86_64", program=False)[1])}),
         ("datadir-agent", [own(wheel=wheel("pyagent", "1.4.0", console=CONSOLE, extra={"PyAgent-1.4.0.DATA/scripts/x": b"x"}))], {}),
+        # The central directory's own record is held to the ceilings before it is read.
+        ("entries-agent", [own(wheel=claimed(own()["wheel"], entries=(1 << 20) + 1))], {}),
+        ("directory-agent", [own(wheel=claimed(own()["wheel"], size=(64 << 20) + 1))], {}),
+        # A `[DEFAULT]` section is a section, not defaults for console_scripts.
+        ("default-agent", [own(wheel=wheel("pyagent", "1.4.0", console="[DEFAULT]\npyagent = pyagent.acp:main\n[console_scripts]\n"))], {}),
+        ("twice-agent", [own(wheel=twice(own()["wheel"], "pyagent-1.4.0.dist-info/entry_points.txt", b"[console_scripts]\npyagent = other:main\n"))], {}),
+        ("bigep-agent", [own(wheel=wheel("pyagent", "1.4.0", console=CONSOLE + "#" * (64 << 10) + "\n"))], {}),
+        # A wheel's address is plain: no query, fragment, params, backslash or odd segment.
+        ("query-agent", [own(), dependency(dep, url=PYPI + "cc/dd/" + dep + "?x=1")], {}),
+        ("fragment-agent", [own(), dependency(dep, url=PYPI + "cc/dd/" + dep + "#sha256=" + "0" * 64)], {}),
+        ("params-agent", [own(), dependency(dep, url=PYPI + "cc;p/dd/" + dep)], {}),
+        ("backslash-agent", [own(), dependency(dep, url=PYPI + "cc\\dd/" + dep)], {}),
+        ("empty-agent", [own(), dependency(dep, url=PYPI + "cc//dd/" + dep)], {}),
+        ("dot-agent", [own(), dependency(dep, url=PYPI + "cc/./dd/" + dep)], {}),
+        ("dotdot-agent", [own(), dependency(dep, url=PYPI + "cc/../dd/" + dep)], {}),
+        ("percentdir-agent", [own(), dependency(dep, url=PYPI + "c%63/dd/" + dep)], {}),
+        # A wheel is fetched from PyPI alone, every hop of the way.
+        ("wheelhop-agent", [own(), dependency(dep, chain=[PYPI + "cc/dd/" + dep, "https://objects.example/rpds.whl"])], {}),
+        # A build row holds what a drop reason may quote, no more.
+        ("longbuild-agent", [own(), sdist("a" * 4000 + "-0.1.tar.gz", "a" * 4000, "0.1")], {}),
     ]
     for agent_id, items, kept in cases:
         agent(agent_id)
@@ -1130,6 +1179,21 @@ def check_uvx(scratch: pathlib.Path) -> None:
     dropped(data, "stray-agent", "linux-x86_64", "lib/stray.py", "python/")
     dropped(data, "noexec-agent", "linux-x86_64", "python/bin/python3.12", "not runnable")
     dropped(data, "noprogram-agent", "linux-x86_64", "python/bin/python3.12", "not a file")
+    dropped(data, "entries-agent", "linux-x86_64", OWN, "central directory", str((1 << 20)))
+    dropped(data, "directory-agent", "linux-x86_64", OWN, "central directory", str(64 << 20))
+    dropped(data, "default-agent", "linux-x86_64", "no console script pyagent")
+    dropped(data, "twice-agent", "linux-x86_64", "entry_points.txt", "twice")
+    dropped(data, "bigep-agent", "linux-x86_64", "entry_points.txt", str(64 << 10))
+    for agent_id in ("query", "fragment", "params", "backslash", "percentdir"):
+        dropped(data, f"{agent_id}-agent", "linux-x86_64", "not a plain address")
+    for agent_id in ("empty", "dot", "dotdot"):
+        dropped(data, f"{agent_id}-agent", "linux-x86_64", "segment")
+    dropped(data, "wheelhop-agent", "linux-x86_64", "objects.example", "files.pythonhosted.org")
+    long_rows = [item for item in data["dropped"] if item["registry_id"] == "longbuild-agent" and item.get("platform") == "linux-x86_64"]
+    assert len(long_rows) == 1 and len(long_rows[0]["build"]) == 1, long_rows
+    for field in ("package", "url", "version"):
+        held_field = long_rows[0]["build"][0][field]
+        assert len(held_field) <= 303, f"a build row's {field} is {len(held_field)} characters, past what a reason quotes"
     for agent_id in ("range-agent", "extra-agent", "url-agent", "marker-agent", "bare-agent", "edge-agent"):
         dropped(data, agent_id, None, "name==version")
     dropped(data, "loader-agent", None, "LD_PRELOAD")
