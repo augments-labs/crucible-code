@@ -64,7 +64,7 @@ pub use trust::{Offer, Trust, TrustError, Unusable};
 pub use entry::{
     ASSET_BYTES, Admits, Artifact, AssetRef, AuthMethod, ContentUse, Disposition, Entry, File,
     FileKind, Files, Format, Kind, LISTED_FILES, Launch, Lock, Method, Revoked, Route, Script,
-    Target, UNPACK_RULES, VERSION_BYTES, Variable,
+    Target, UNPACK_RULES, VERSION_BYTES, Variable, file_list,
 };
 
 /// The largest catalog read, in bytes.
