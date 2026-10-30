@@ -35,13 +35,39 @@
 //!     `integrity` is the intake's to check, and is not read here.
 //!   - `files`: the most files the tarball writes.
 //!   - `unpacked`: the most bytes the tarball writes.
+//!   - `license`: the licence its manifest gives, which the confirmation
+//!     counts. Left out where the manifest gives none as one string; given,
+//!     it is printable ASCII, at least one byte and at most [`LICENSE_BYTES`]
+//!     long.
+//!   - `bin`: the programs it declares, an object from each program's name to
+//!     its script, relative to its location. Left out where it declares none,
+//!     and at most [`PACKAGE_PROGRAMS`] of them. A name is one component held
+//!     to the rules a name the release unpacker writes is, spelled as those
+//!     rules leave it. A script is held to the same rules, so it is relative
+//!     and climbs out through no `..`, and does not begin with a
+//!     `node_modules` component, whatever its case, so it is the package's own
+//!     file and no other package's; from the tree's root it is at most
+//!     [`TREE_PATH_BYTES`] long.
 //!
-//!   Any other field of a package is ignored.
+//!   A bundled package may give `license` and `bin` too. Any other field of a
+//!   package is ignored.
 //!
 //! Every number is whole and fits in 64 bits, and the tree's are summed with
 //! checked arithmetic as the lock is read: its packages write at most
 //! [`TREE_FILES`] files and [`TREE_BYTES`] bytes together, and their tarballs
 //! hold at most [`TREE_BYTES`].
+//!
+//! # Programs
+//!
+//! The tree's packages declare at most [`TREE_PROGRAMS`] programs together,
+//! and each name runs one script. Two names that differ only in case are
+//! refused, wherever they are declared, since a file system that folds case
+//! keeps one program for both. Where several packages declare one name, the
+//! one at the top of the tree, installed at `node_modules/` and its name
+//! alone, runs it, as npm's hoisting leaves that package's program on `PATH`;
+//! two at the top declaring it, or several below the top and none at it, are
+//! refused, since nothing then settles which runs. A program's script must be
+//! a file the tree's tarballs wrote, or the tree is refused once unpacked.
 //!
 //! # Unpacking
 //!
@@ -72,9 +98,9 @@
 //!   device, a pipe, a sparse file and every other kind are refused.
 //! - A file is runnable exactly when the tarball's mode for it has any execute
 //!   bit, and is made on Unix as `0o755`, every other as `0o644`, less what the
-//!   umask takes away. Nothing else is made runnable, not even what a
-//!   package's `bin` names; no link to it is made, and a `.gitignore` is
-//!   written under that name.
+//!   umask takes away. No link to a program's script is made, since the
+//!   installer writes a stub for it, and a `.gitignore` is written under that
+//!   name.
 //! - Every name written, once stripped and again under its location, is held
 //!   to the rules every member's name is: printable ASCII alone; relative,
 //!   with no backslash, colon or character Windows refuses; no empty, `.` or
@@ -105,7 +131,7 @@
 //! The root is the caller's: this writes only under it, makes nothing that is
 //! already there, and leaves removing it after a refusal to its owner.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::{self, BufRead, Read as _, Seek as _};
 use std::path::{Path, PathBuf};
@@ -119,7 +145,7 @@ use super::unpack::{
     Ahead, Bounded, Budget, Held, MEMBERS, Names, copied, ended, made, named, shown,
 };
 use super::{RELEASE_BYTES, UnpackError, hex};
-use crate::catalog::{ASSET_BYTES, File, UNPACK_RULES};
+use crate::catalog::{ASSET_BYTES, File, FileKind, UNPACK_RULES};
 
 /// The most files a tree writes, all its packages together: the most names
 /// the release unpacker writes for one artifact. A tree's file list is bounded
@@ -145,6 +171,15 @@ pub(super) const TREE_PATH_BYTES: usize = 767;
 /// The longest version, in bytes, which is as long as npm reads one.
 const SEMVER_BYTES: usize = 256;
 
+/// The longest licence a package gives, in bytes.
+pub(super) const LICENSE_BYTES: usize = 256;
+
+/// The most programs one package declares.
+pub(super) const PACKAGE_PROGRAMS: usize = 64;
+
+/// The most programs a tree's packages declare, all together.
+pub(super) const TREE_PROGRAMS: usize = 1024;
+
 /// Where every tarball is fetched from.
 const REGISTRY: &str = "https://registry.npmjs.org/";
 
@@ -156,6 +191,17 @@ const SHA512_DIGITS: usize = 128;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NpmTree {
     packages: Vec<NpmPackage>,
+    programs: BTreeMap<Box<str>, Program>,
+}
+
+/// A program the tree makes runnable: the package that declares it and its
+/// script.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Program {
+    /// Where the package that declares it is installed.
+    location: Box<str>,
+    /// Its script, from the tree's root.
+    path: Box<str>,
 }
 
 /// One package of a tree.
@@ -170,6 +216,11 @@ pub struct NpmPackage {
     /// The tarball it is unpacked from; none for a package that the tarball
     /// of a package above it holds.
     pub tarball: Option<NpmTarball>,
+    /// The licence it gives, if any.
+    pub license: Option<Box<str>>,
+    /// The programs it declares, each by its name and its script, relative to
+    /// its location.
+    pub bin: BTreeMap<Box<str>, Box<str>>,
 }
 
 /// The tarball a package is unpacked from, and what it may write.
@@ -302,6 +353,12 @@ pub enum NpmError {
         /// What it writes, from the tree's root, cut short.
         path: String,
     },
+    /// A package declares a program whose script its tarball did not write.
+    #[error("the package at {location:?} declares a program whose script its tarball did not write")]
+    Unwritten {
+        /// Where it is installed, cut short.
+        location: String,
+    },
     /// A tarball breaks a rule every archive is held to.
     #[error("the tarball of the package at {location:?} was refused")]
     Tarball {
@@ -356,9 +413,13 @@ impl NpmTree {
             let package = read_package(&Fields { fields, at }, &mut locations)?;
             packages.push(package);
         }
-        let tree = Self { packages };
+        let mut tree = Self {
+            packages,
+            programs: BTreeMap::new(),
+        };
         tree.bundled()?;
         tree.within()?;
+        tree.programs = tree.linked()?;
         Ok(tree)
     }
 
@@ -366,6 +427,14 @@ impl NpmTree {
     #[must_use]
     pub fn packages(&self) -> &[NpmPackage] {
         &self.packages
+    }
+
+    /// Every program the tree makes runnable, by its name and the path of
+    /// its script from the tree's root, in the order of their names.
+    pub fn programs(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.programs
+            .iter()
+            .map(|(name, program)| (&**name, &*program.path))
     }
 
     /// Unpacks every package's tarball, each kept in `tarballs` under its
@@ -380,7 +449,8 @@ impl NpmTree {
     /// does not install from it, [`NpmError::Package`] for a package that
     /// writes more than its entry gives it, and [`NpmError::Tarball`] for a
     /// tarball that breaks a rule every archive is held to, or that could not
-    /// be written. What was written before is left under `root`.
+    /// be written. [`NpmError::Unwritten`] for a program whose script no
+    /// tarball wrote as a file. What was written before is left under `root`.
     pub fn unpack(&self, tarballs: &Path, root: &Path) -> Result<Vec<File>, NpmError> {
         let unpacked = self.unpacked();
         let mut unpacking = Unpacking {
@@ -413,6 +483,21 @@ impl NpmTree {
             let reader = io::BufReader::new(file.take(tarball.size));
             unpacking.package(package, tarball, reader)?;
         }
+        let written: HashSet<&str> = unpacking
+            .files
+            .iter()
+            .filter(|file| matches!(file.kind, FileKind::File { .. }))
+            .map(|file| &*file.path)
+            .collect();
+        if let Some(program) = self
+            .programs
+            .values()
+            .find(|program| !written.contains(&*program.path))
+        {
+            return Err(NpmError::Unwritten {
+                location: shown(program.location.as_bytes()),
+            });
+        }
         Ok(unpacking.files)
     }
 
@@ -438,6 +523,95 @@ impl NpmTree {
             }
         }
         Ok(())
+    }
+
+    /// The program each name the tree's packages declare runs: the one
+    /// declared under it, or where several packages declare it, the one the
+    /// package at the top of the tree declares. A name declared by several
+    /// packages none of which is at the top, by two at the top, or that
+    /// differs only in case from another, is refused, and so is a tree that
+    /// declares more programs than [`TREE_PROGRAMS`].
+    fn linked(&self) -> Result<BTreeMap<Box<str>, Program>, NpmError> {
+        /// The package that holds a name so far, and whether another below
+        /// the top of the tree declares it too.
+        struct Claim<'t> {
+            name: &'t str,
+            index: usize,
+            top: bool,
+            contested: bool,
+        }
+        let mut claims: BTreeMap<String, Claim<'_>> = BTreeMap::new();
+        let mut declared = 0_usize;
+        for (index, package) in self.packages.iter().enumerate() {
+            let top = package
+                .location
+                .strip_prefix("node_modules/")
+                .and_then(package_name)
+                == Some("");
+            let field = format!("packages[{index}].bin");
+            for name in package.bin.keys() {
+                declared += 1;
+                if declared > TREE_PROGRAMS {
+                    return Err(NpmError::Tree {
+                        what: "programs",
+                        ceiling: TREE_PROGRAMS as u64,
+                    });
+                }
+                let claim = Claim {
+                    name,
+                    index,
+                    top,
+                    contested: false,
+                };
+                let held = match claims.entry(name.to_ascii_lowercase()) {
+                    std::collections::btree_map::Entry::Vacant(vacant) => {
+                        vacant.insert(claim);
+                        continue;
+                    }
+                    std::collections::btree_map::Entry::Occupied(held) => held.into_mut(),
+                };
+                if held.name != &**name {
+                    return Err(wrong(
+                        &field,
+                        "declares a program whose name differs only in case from another's",
+                    ));
+                }
+                match (held.top, top) {
+                    (true, true) => {
+                        return Err(wrong(
+                            &field,
+                            "declares a program another package at the top of the tree declares",
+                        ));
+                    }
+                    (false, true) => *held = claim,
+                    (false, false) => held.contested = true,
+                    (true, false) => {}
+                }
+            }
+        }
+        let mut programs = BTreeMap::new();
+        for claim in claims.into_values() {
+            let package = self.packages.get(claim.index);
+            let script = package.and_then(|package| package.bin.get(claim.name));
+            let (Some(package), Some(script)) = (package, script) else {
+                continue;
+            };
+            if claim.contested {
+                return Err(wrong(
+                    &format!("packages[{}].bin", claim.index),
+                    "declares a program other packages below the top of the tree declare, \
+                     and none at the top settles which runs",
+                ));
+            }
+            programs.insert(
+                claim.name.into(),
+                Program {
+                    location: package.location.clone(),
+                    path: format!("{}/{script}", package.location).into(),
+                },
+            );
+        }
+        Ok(programs)
     }
 
     /// Refuses a tree whose packages write more files or bytes than a tree
@@ -573,12 +747,76 @@ fn read_package(
     } else {
         Some(read_tarball(fields, &location)?)
     };
+    let license = licence(fields)?;
+    let bin = declared(fields, &location)?;
     Ok(NpmPackage {
         location: location.into(),
         name: name.into(),
         version: version.into(),
         tarball,
+        license,
+        bin,
     })
+}
+
+/// The licence `fields` gives, if any.
+fn licence(fields: &Fields<'_>) -> Result<Option<Box<str>>, NpmError> {
+    match fields.fields.get("license") {
+        None => Ok(None),
+        Some(Value::String(license))
+            if !license.is_empty()
+                && license.len() <= LICENSE_BYTES
+                && license.bytes().all(|byte| matches!(byte, b' '..=b'~')) =>
+        {
+            Ok(Some(license.as_str().into()))
+        }
+        Some(_) => Err(fields.wrong(
+            "license",
+            "is not printable ASCII text within the longest a licence may be",
+        )),
+    }
+}
+
+/// The programs `fields` declares for the package installed at `location`,
+/// each by its name and its script, relative to that location.
+fn declared(
+    fields: &Fields<'_>,
+    location: &str,
+) -> Result<BTreeMap<Box<str>, Box<str>>, NpmError> {
+    let declared = match fields.fields.get("bin") {
+        None => return Ok(BTreeMap::new()),
+        Some(Value::Object(declared)) => declared,
+        Some(_) => return Err(fields.wrong("bin", "is not an object of programs")),
+    };
+    if declared.len() > PACKAGE_PROGRAMS {
+        return Err(fields.wrong("bin", "declares more programs than a package may"));
+    }
+    let unnamed = |source| NpmError::Name {
+        field: fields.field("bin"),
+        source,
+    };
+    let mut bin = BTreeMap::new();
+    for (name, script) in declared {
+        if name.contains('/') || named(name.as_bytes(), false).map_err(unnamed)? != *name {
+            return Err(fields.wrong("bin", "names a program that is not one file name"));
+        }
+        let Value::String(script) = script else {
+            return Err(fields.wrong("bin", "gives a script that is not text"));
+        };
+        let script = named(script.as_bytes(), false).map_err(unnamed)?;
+        if script
+            .split('/')
+            .next()
+            .is_some_and(|first| first.eq_ignore_ascii_case("node_modules"))
+        {
+            return Err(fields.wrong("bin", "gives a script in another package's location"));
+        }
+        if location.len() + 1 + script.len() > TREE_PATH_BYTES {
+            return Err(fields.wrong("bin", "gives a script whose path is longer than one may be"));
+        }
+        bin.insert(name.as_str().into(), script.into());
+    }
+    Ok(bin)
 }
 
 /// The tarball `fields` pins for the package installed at `location`.
