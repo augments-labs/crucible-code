@@ -132,9 +132,12 @@ no space, and every hop of its fetch
 stays on that host; its SHA-512 and size are computed here, a SHA-512
 `integrity` must agree with it, a SHA-1 one is held only where it is the only
 one, and a package with neither is refused. A tarball is read as the client
-reads it: one gzip stream and nothing after it, at most 65,536 members, an
-ordinary file, a directory or a link alone, every name one the client writes
-and none written twice once case is folded; and a lock's tarballs write at
+reads it, each header as it is written and none global: one gzip stream and
+nothing after it, at most 65,536 members, an ordinary file, a directory or a
+link alone, every name one the client writes, inside its package and the
+ones it bundles and not straight under a `node_modules` directory, none
+written twice once case is folded, and at most 131,072 names, directories
+included, holding at most 8 MiB; and a lock's tarballs write at
 most 65,536 files and 4 GiB together. Each package's own package.json,
 a bundled one's included, must give the name and version the lock gives it. A
 bundled package has no tarball of its own and is counted in the one that
@@ -244,7 +247,6 @@ import stat
 import struct
 import subprocess
 import sys
-import tarfile
 import tempfile
 import time
 import tomllib
@@ -326,6 +328,12 @@ NPM_PATH_BYTES = 767
 # The most members one tarball may give, and the most bytes and components a
 # name written from it may have, in any one component and in all.
 TARBALL_MEMBERS = 1 << 16
+# A tar block, and the most bytes a GNU long name or link, a name an extended
+# header gives, and an extended header itself may hold, as the client reads
+# them.
+TAR_BLOCK = 512
+LONG_NAME_BYTES = 4097
+EXTENDED_BYTES = 64 << 10
 # The most names one tarball's files and the directories above them make,
 # each held once, as the client allows a tree; and the most bytes those
 # names, each component held once, may hold, 64 a name on average.
@@ -1772,20 +1780,132 @@ def npm_written(name: str) -> str:
     return name
 
 
-def tarball_of(place: pathlib.Path, wanted: set[str], location: str) -> dict:
+def npm_after_name(text: str) -> str | None:
+    """What follows the package's name `text` begins with, as the client
+    finds one: one component, or a scope of `@` and more and one component
+    under it; none where it begins with no name."""
+    first, _, rest = text.partition("/")
+    if not first or first == "node_modules":
+        return None
+    if not first.startswith("@"):
+        return text[len(first):]
+    second = rest.split("/")[0]
+    if len(first) == 1 or not second:
+        return None
+    return text[len(first) + 1 + len(second):]
+
+
+def npm_writes(locations: set[str], held: set[str], location: str, path: str) -> bool:
+    """Whether the tarball of the package at `location` may write `path`, as
+    the client decides: the deepest of the lock's `locations` above it,
+    reached from `location` by `/node_modules/` and a package's name, is one
+    `held` in that tarball, and what is below it does not begin with a
+    `node_modules` component, whatever its case."""
+    folded = path.lower()
+    end = deepest = len(location)
+    while folded.startswith("/node_modules/", end):
+        rest = npm_after_name(folded[end + len("/node_modules/"):])
+        if rest is None or not rest.startswith("/"):
+            break
+        end = len(folded) - len(rest)
+        if path[:end] in locations:
+            deepest = end
+    return path[:deepest] in held and folded[deepest + 1:].split("/")[0] != "node_modules"
+
+
+def tar_number(field: bytes, binary: bool = False) -> int:
+    """The number a tar header's `field` gives, as the client's tar reader
+    reads it: where `binary` allows it and the high bit of its first byte is
+    set, its last eight bytes in base 256; otherwise octal, up to its first
+    NUL, within ASCII whitespace and after at most one `+`."""
+    if binary and field[0] & 0x80:
+        return int.from_bytes(field[-8:], "big")
+    text = field.split(b"\0", 1)[0].strip(b" \t\n\v\f\r")
+    digits = text[1:] if text.startswith(b"+") else text
+    if not digits or digits.strip(b"01234567") or int(digits, 8) >> 64:
+        raise Dropped("the tarball holds a header with a number that is not one")
+    return int(digits, 8)
+
+
+def tar_name(header: bytes) -> bytes:
+    """The name a tar `header` gives, as the client's tar reader reads it:
+    its name field up to its first NUL, after the prefix field and a `/`
+    where the header is ustar and the prefix is not empty or the name field
+    holds a backslash."""
+    name = header[:100].split(b"\0", 1)[0]
+    if header[257:263] == b"ustar\0" and header[263:265] == b"00" and (header[345] or b"\\" in header[:100]):
+        prefix = header[345:500].split(b"\0", 1)[0]
+        name = prefix + b"/" + name if prefix else name
+    return name
+
+
+def tar_extended(data: bytes) -> list[tuple[bytes, bytes]]:
+    """The records of an extended header's `data`, as the client's tar
+    reader reads them: a line each up to the first empty one, each `length
+    key=value` with `length` counting the line and its newline."""
+    records = []
+    for line in data.split(b"\n"):
+        if not line:
+            break
+        length, space, record = line.partition(b" ")
+        key, equals, value = record.partition(b"=")
+        digits = length[1:] if length.startswith(b"+") else length
+        if not space or not equals or not digits.isdigit() or int(digits) != len(line) + 1:
+            raise Dropped("the tarball holds an extended header the client cannot read")
+        records.append((key, value))
+    return records
+
+
+def tar_read(stream, count: int) -> bytes:
+    """The next `count` bytes of `stream`, refused where it ends first."""
+    held = bytearray()
+    while len(held) < count:
+        chunk = stream.read(min(count - len(held), 1 << 20))
+        if not chunk:
+            raise Dropped("the tarball ends inside a header or a member")
+        held += chunk
+    return bytes(held)
+
+
+def tar_skip(stream, count: int) -> None:
+    """Reads past the next `count` bytes of `stream`, refused where it ends
+    first."""
+    while count:
+        chunk = stream.read(min(count, 1 << 20))
+        if not chunk:
+            raise Dropped("the tarball ends inside a member")
+        count -= len(chunk)
+
+
+def tarball_of(place: pathlib.Path, wanted: set[str], location: str, locations: set[str]) -> dict:
     """The tarball under `place`, of the package at `location`, as npm
     unpacks it and the client reads it: its SHA-512, SHA-1 and size; the
     files and bytes it writes, its first component stripped and a member
     with nothing after it skipped, directories and links writing nothing;
     and the `package.json` and whether a `binding.gyp` lies at each package
-    root in `wanted` ("" its own, or a bundled package's below it). It is
-    refused where the client would refuse it: more than one gzip stream, a
-    member of a kind other than a file, a directory or a link, more than
-    `TARBALL_MEMBERS` members, a name the client does not write or that is
-    longer than `NPM_PATH_BYTES` under `location`, a name written twice, or
-    as a file and a directory, once case is folded, and names that with the
-    directories above them are more than `TREE_NAMES`, or hold more than
-    `TARBALL_NAME_BYTES`."""
+    root in `wanted` ("" its own, or a bundled package's below it).
+
+    Its headers are read as the client reads them, each as it is written: a
+    GNU long name or link, or an extended header, describes the one member
+    after it, and its own name is its header's. A global extended header is
+    refused: npm applies one to every member after it and the client does
+    not, so the two would write such a member under different names.
+
+    It is refused where the client would refuse it: more than one gzip
+    stream, a header whose checksum or numbers are wrong, one member
+    described twice by the same kind of header or a description with no
+    member after it, an extended header the client cannot read or whose
+    `size` is not its member's, a member of a kind other than a file, a
+    directory or a link, more than `TARBALL_MEMBERS` members, a name the
+    client does not write or that is longer than `NPM_PATH_BYTES` under
+    `location`, a file written outside its package and the ones it bundles,
+    of the lock's `locations`, or straight under a `node_modules` directory,
+    a name written twice, or as a file and a directory, once case is folded,
+    and names that with the directories above them are more than
+    `TREE_NAMES`, or hold more than `TARBALL_NAME_BYTES`. A sparse member,
+    by its header or by its extended one, is refused, though the client
+    writes the second as it is stored."""
+    held_locations = {location} | {f"{location}/{root}" for root in wanted if root}
     with opened(place / "artifact") as file:
         sha512 = hashlib.sha512()
         sha1 = hashlib.sha1()
@@ -1808,64 +1928,112 @@ def tarball_of(place: pathlib.Path, wanted: set[str], location: str) -> dict:
         children: dict[tuple[int, str], int] = {}
         files_at: list[bool] = [False]
         held_bytes = 0
+        # What the headers read so far say of the member after them, by type.
+        ahead: dict[bytes, bytes] = {}
         try:
             stream = OneGzip(Spending(file))
             unzipped = Bounded(stream, TARBALL_DECOMPRESSED, "the tarball")
-            with tarfile.open(fileobj=unzipped, mode="r|") as tar:
-                # Read one member at a time, and none kept, so a tarball of
-                # many members is not held whole.
-                while (member := tar.next()) is not None:
-                    tar.members.clear()
-                    members += 1
-                    if members > TARBALL_MEMBERS:
-                        raise Dropped(f"the tarball holds more than {TARBALL_MEMBERS} members")
-                    _, _, rest = member.name.partition("/")
-                    if member.type in (tarfile.DIRTYPE, tarfile.SYMTYPE, tarfile.LNKTYPE):
-                        continue
-                    if member.type not in (tarfile.REGTYPE, tarfile.AREGTYPE) or member.issparse():
-                        raise Dropped(f"the tarball holds {shown(clipped(member.name))}, of a kind npm's rules refuse")
-                    if not rest:
-                        continue
-                    rest = npm_written(rest)
-                    path = f"{location}/{rest}"
-                    if len(path) > NPM_PATH_BYTES:
-                        raise Dropped(f"the tarball writes {shown(clipped(path))}, longer than {NPM_PATH_BYTES} bytes")
-                    npm_written(path)
-                    node = 0
-                    parts = path.casefold().split("/")
-                    for depth, part in enumerate(parts, 1):
-                        child = children.get((node, part))
-                        if child is None:
-                            # The first node is the tree's root, which is no name.
-                            if len(files_at) > TREE_NAMES:
-                                raise Dropped(f"the tarball writes more than {TREE_NAMES} names, each "
-                                              "directory above a file counted")
-                            held_bytes += len(part)
-                            if held_bytes > TARBALL_NAME_BYTES:
-                                raise Dropped(f"the tarball's names hold more than {TARBALL_NAME_BYTES} bytes")
-                            child = children[(node, part)] = len(files_at)
-                            files_at.append(depth == len(parts))
-                        elif depth == len(parts) or files_at[child]:
-                            raise Dropped(f"the tarball writes {shown(clipped(path))} twice, or as a file and "
-                                          "a directory, once case is folded")
-                        node = child
-                    files += 1
-                    unpacked += member.size
-                    root, _, leaf = rest.rpartition("/")
-                    if root in wanted and leaf == "binding.gyp":
-                        gyps.add(root)
-                    if root in wanted and leaf == "package.json":
-                        if member.size > PACKAGE_JSON_BYTES:
-                            raise Dropped(f"{clipped(rest)} is larger than {PACKAGE_JSON_BYTES} bytes")
-                        extracted = tar.extractfile(member)
-                        manifests[root] = extracted.read() if extracted is not None else b""
+            # One header at a time, and nothing kept of a member once read,
+            # so a tarball of many members is not held whole.
+            while header := unzipped.read(TAR_BLOCK):
+                header += tar_read(unzipped, TAR_BLOCK - len(header))
+                if not any(header):
+                    break
+                if tar_number(header[148:156]) != sum(header[:148]) + sum(header[156:]) + 8 * 32:
+                    raise Dropped("the tarball holds a header whose checksum is wrong")
+                kind = header[156:157]
+                size_of = tar_number(header[124:136], binary=True)
+                padding = -size_of % TAR_BLOCK
+                if kind in (b"L", b"K", b"x"):
+                    ceiling = EXTENDED_BYTES if kind == b"x" else LONG_NAME_BYTES
+                    if size_of > ceiling:
+                        raise Dropped(f"the tarball holds a long name or extended header of more than {ceiling} bytes")
+                    if kind in ahead:
+                        raise Dropped("the tarball describes one member twice")
+                    ahead[kind] = tar_read(unzipped, size_of)
+                    tar_skip(unzipped, padding)
+                    continue
+                if kind == b"g":
+                    raise Dropped("the tarball holds a global extended header, which npm applies to the "
+                                  "members after it and the client does not")
+                members += 1
+                if members > TARBALL_MEMBERS:
+                    raise Dropped(f"the tarball holds more than {TARBALL_MEMBERS} members")
+                raw = tar_name(header)
+                for key, value in tar_extended(ahead.pop(b"x", b"")):
+                    if key in (b"path", b"linkpath") and len(value) > LONG_NAME_BYTES:
+                        raise Dropped(f"the tarball holds a name longer than {LONG_NAME_BYTES} bytes")
+                    if key == b"path":
+                        raw = value
+                    digits = value[1:] if value.startswith(b"+") else value
+                    if key == b"size" and not (digits.isdigit() and int(digits) == size_of):
+                        raise Dropped("the tarball's extended header gives a member another size than its header")
+                    if key.startswith(b"GNU.sparse."):
+                        raise Dropped("the tarball holds a sparse member, of a kind npm's rules refuse")
+                long = ahead.pop(b"L", None)
+                if long is not None:
+                    raw = long[:-1] if long.endswith(b"\0") else long
+                ahead.pop(b"K", None)
+                # Every byte stands for itself, so a name outside printable
+                # ASCII is refused below as it is written.
+                name = raw.decode("latin-1")
+                if kind in (b"5", b"2", b"1"):
+                    tar_skip(unzipped, size_of + padding)
+                    continue
+                if kind not in (b"\0", b"0"):
+                    raise Dropped(f"the tarball holds {shown(clipped(name))}, of a kind npm's rules refuse")
+                _, slash, rest = name.partition("/")
+                if not slash or not rest:
+                    tar_skip(unzipped, size_of + padding)
+                    continue
+                rest = npm_written(rest)
+                path = f"{location}/{rest}"
+                if len(path) > NPM_PATH_BYTES:
+                    raise Dropped(f"the tarball writes {shown(clipped(path))}, longer than {NPM_PATH_BYTES} bytes")
+                npm_written(path)
+                if not npm_writes(locations, held_locations, location, path):
+                    raise Dropped(f"the tarball writes {shown(clipped(path))}, outside its package and the ones "
+                                  "it bundles, or straight under a node_modules directory")
+                tar_number(header[100:108])
+                node = 0
+                parts = path.casefold().split("/")
+                for depth, part in enumerate(parts, 1):
+                    child = children.get((node, part))
+                    if child is None:
+                        # The first node is the tree's root, which is no name.
+                        if len(files_at) > TREE_NAMES:
+                            raise Dropped(f"the tarball writes more than {TREE_NAMES} names, each "
+                                          "directory above a file counted")
+                        held_bytes += len(part)
+                        if held_bytes > TARBALL_NAME_BYTES:
+                            raise Dropped(f"the tarball's names hold more than {TARBALL_NAME_BYTES} bytes")
+                        child = children[(node, part)] = len(files_at)
+                        files_at.append(depth == len(parts))
+                    elif depth == len(parts) or files_at[child]:
+                        raise Dropped(f"the tarball writes {shown(clipped(path))} twice, or as a file and "
+                                      "a directory, once case is folded")
+                    node = child
+                files += 1
+                unpacked += size_of
+                root, _, leaf = rest.rpartition("/")
+                if root in wanted and leaf == "binding.gyp":
+                    gyps.add(root)
+                if root in wanted and leaf == "package.json":
+                    if size_of > PACKAGE_JSON_BYTES:
+                        raise Dropped(f"{clipped(rest)} is larger than {PACKAGE_JSON_BYTES} bytes")
+                    manifests[root] = tar_read(unzipped, size_of)
+                    tar_skip(unzipped, padding)
+                else:
+                    tar_skip(unzipped, size_of + padding)
+            if ahead:
+                raise Dropped("the tarball describes a member it does not hold")
             while unzipped.read(1 << 20):
                 pass
             if not stream.ended():
                 raise Dropped("the tarball goes on past its one gzip stream")
         except Dropped:
             raise
-        except Exception:  # whatever gzip or tarfile cannot read is a tarball npm would not unpack
+        except Exception:  # whatever gzip cannot read is a tarball npm would not unpack
             raise Dropped("is not a gzip-compressed tar this intake can read") from None
     return {
         "files": files,
@@ -1983,6 +2151,7 @@ def npm_resolved(observed: pathlib.Path, agent: str, package: str, released: str
                 raise Dropped(f"{clipped(item['location'])} is bundled in no package the lock installs above it")
             item["holder"] = holder
     by_location = {item["location"]: item for item in packages}
+    locations = set(by_location)
     for item in packages:
         if item["bundled"]:
             continue
@@ -2005,7 +2174,7 @@ def npm_resolved(observed: pathlib.Path, agent: str, package: str, released: str
                 raise Dropped(f"{clipped(url)} is not on {NPM_REGISTRY}, the one place a package is taken from")
             plain(url)
             inner = place_of(observed, agent, "tarballs", str(item["index"]))
-            tarball = tarball_of(inner, wanted, item["location"])
+            tarball = tarball_of(inner, wanted, item["location"], locations)
             integrity_agrees(item["fields"].get("integrity"), tarball)
             reached = chained(inner, url, "the lock's address")
             elsewhere = next((name for name in reached if name != NPM_HOST), None)

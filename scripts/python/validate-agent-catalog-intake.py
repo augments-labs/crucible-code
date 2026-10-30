@@ -2188,6 +2188,41 @@ def packed(entries: list[tuple[str, bytes, bytes]]) -> bytes:
     return held.getvalue()
 
 
+def tar_member(name: bytes, kind: bytes, content: bytes = b"", size: int | None = None) -> bytes:
+    """One tar member written as its bytes: a ustar header naming `name`, of
+    type `kind`, giving `size` (by default the length of `content`), then
+    `content` padded to whole blocks."""
+    block = bytearray(512)
+    block[0:len(name)] = name
+    block[100:108] = b"0000644\0"
+    block[108:124] = b"0000000\0" * 2
+    block[124:136] = b"%011o\0" % (len(content) if size is None else size)
+    block[136:148] = b"00000000000\0"
+    block[148:156] = b" " * 8
+    block[156:157] = kind
+    block[257:265] = b"ustar\x0000"
+    block[148:156] = b"%06o\0 " % sum(block)
+    return bytes(block) + content + bytes(-len(content) % 512)
+
+
+def pax_records(**records: bytes) -> bytes:
+    """An extended header's records, each `length key=value` and a newline."""
+    held = b""
+    for key, value in records.items():
+        line = b" %s=%s\n" % (key.encode(), value)
+        length = len(line) + 1
+        while len(b"%d" % length) + len(line) != length:
+            length += 1
+        held += b"%d" % length + line
+    return held
+
+
+def tar_written(*members: bytes) -> bytes:
+    """A tarball of `members`, already written, and the two empty blocks that
+    end an archive."""
+    return gzip.compress(b"".join(members) + bytes(1024), mtime=0)
+
+
 def with_tarball(tree: dict, location: str, tarball: bytes) -> dict:
     """`tree` with `tarball` in place of the one at `location`, and the lock's
     integrity for it made the new one's."""
@@ -2216,6 +2251,34 @@ def check_npm_tarballs(scratch: pathlib.Path) -> None:
     # Fewer names than a tree may hold, each long enough that together they
     # hold more bytes than a tarball's names may.
     wide = [(f"package/w/{index:06}{'x' * 244}", tarfile.REGTYPE, b"") for index in range(33_600)]
+    # The tarball as written header by header, for what a tar writer will
+    # not write: each case's members follow it.
+    raw = b"".join(tar_member(name.encode(), b"0", content) for name, _, content in base)
+    added = tar_member(b"package/lib/more.js", b"0", b"2\n")
+    for name, tarball, words in (
+        ("slashed", tar_written(raw, tar_member(b"package/lib/more/", b"\0", b"2\n")), "empty"),
+        ("paxslash", tar_written(raw, tar_member(b"package/x", b"x", pax_records(path=b"package/lib/more.js/")),
+                                 added), "empty"),
+        ("global", tar_written(raw, tar_member(b"package/g", b"g", pax_records(path=b"package/lib/global.js")),
+                               added), "global"),
+        ("paxsize", tar_written(raw, tar_member(b"package/x", b"x", pax_records(size=b"3")), added), "size"),
+        ("longtwice", tar_written(raw, tar_member(b"././@LongLink", b"L", b"package/lib/one.js\0"),
+                                  tar_member(b"././@LongLink", b"L", b"package/lib/two.js\0"), added),
+         "describes one member twice"),
+        ("solaris", tar_written(raw, tar_member(b"package/x", b"X", pax_records(path=b"package/lib/x.js")),
+                                added), "of a kind"),
+        ("modules", tar_written(raw, tar_member(b"package/node_modules/other/index.js", b"0", b"2\n")),
+         "node_modules directory"),
+        ("Modules", tar_written(raw, tar_member(b"package/Node_Modules/other/index.js", b"0", b"2\n")),
+         "node_modules directory"),
+    ):
+        observed = scratch / name / "observed"
+        lay_out_npm(observed, "npx-agent", with_tarball(tree, TOP, tarball))
+        out = scratch / name / "lock.json"
+        ran = intake("lock", "--resolved", observed / "npx-agent", "--package", "npx-agent@3.0.0",
+                     "--platform", "darwin-aarch64", "--out", out)
+        assert ran.returncode == 1 and words in ran.stderr, f"{name}: {ran.returncode} {ran.stderr[-400:]!r} lacks {words!r}"
+        assert "Traceback" not in ran.stderr and not out.exists(), name
     for name, tarball, words in (
         ("members", packed(base) + gzip.compress(b"more", mtime=0), "gzip stream"),
         ("sparse", packed([*base, ("package/hole.bin", tarfile.GNUTYPE_SPARSE, b"")]), "of a kind"),
@@ -2248,12 +2311,19 @@ def check_npm_tarballs(scratch: pathlib.Path) -> None:
     ran = intake("lock", "--resolved", observed / "npx-agent", "--package", "npx-agent@3.0.0",
                  "--platform", "darwin-aarch64", "--out", out)
     assert ran.returncode == 1 and "65536 files" in ran.stderr, f"files: {ran.returncode} {ran.stderr[-400:]!r}"
-    # The tree as built, which every case changes, is laid out and read.
-    lay_out_npm(scratch / "whole" / "observed", "npx-agent", with_tarball(tree, TOP, packed(base)))
-    out = scratch / "whole" / "lock.json"
-    ran = intake("lock", "--resolved", scratch / "whole/observed/npx-agent", "--package", "npx-agent@3.0.0",
-                 "--platform", "darwin-aarch64", "--out", out)
-    assert ran.returncode == 0, ran.stderr
+    # The tree as built, which every case changes, is laid out and read, and
+    # so is one whose added file is named by an extended header, and sized by
+    # it as its own header sizes it.
+    named = tar_member(b"package/x", b"x", pax_records(path=b"package/lib/more.js", size=b"2"))
+    for name, tarball in (
+        ("whole", packed(base)),
+        ("extended", tar_written(raw, named, tar_member(b"package/short", b"0", b"2\n"))),
+    ):
+        lay_out_npm(scratch / name / "observed", "npx-agent", with_tarball(tree, TOP, tarball))
+        out = scratch / name / "lock.json"
+        ran = intake("lock", "--resolved", scratch / name / "observed/npx-agent", "--package", "npx-agent@3.0.0",
+                     "--platform", "darwin-aarch64", "--out", out)
+        assert ran.returncode == 0, f"{name}: {ran.stderr[-400:]!r}"
 
 
 def check_npm_node(scratch: pathlib.Path, signers: Signers) -> None:
