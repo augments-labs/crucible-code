@@ -516,3 +516,63 @@ fn unpack_check_refuses_a_tarball_its_lock_does_not_pin_and_removes_out() {
     );
     assert!(!out.exists(), "{} is left", out.display());
 }
+
+/// A lock larger than a catalog asset is refused as it is read, before more
+/// than one byte past the asset's ceiling is held, and nothing is made to
+/// unpack it into.
+#[test]
+fn unpack_check_refuses_a_lock_larger_than_an_asset_as_it_reads_it() {
+    let sample = Sample::new("unpack-check-tree-large");
+    let root = sample.root();
+    let (entry, tarballs, out) = (
+        root.join("lock.json"),
+        root.join("tarballs"),
+        root.join("out"),
+    );
+    fs::create_dir_all(&tarballs).expect("a directory of tarballs");
+    let large = usize::try_from(ASSET_BYTES + 1).expect("an asset's size");
+    fs::write(&entry, vec![b' '; large]).expect("the lock");
+
+    let refused = unpack_check(&entry, &tarballs, &out);
+
+    assert!(
+        matches!(
+            refused,
+            Err(Unchecked::TooLarge {
+                ceiling: ASSET_BYTES,
+                ..
+            })
+        ),
+        "{:?}",
+        refused.err()
+    );
+    assert!(!out.exists(), "{} is made", out.display());
+}
+
+/// What a tree is unpacked into is made so only its owner may reach it,
+/// whatever the umask would leave.
+#[cfg(unix)]
+#[test]
+fn unpack_check_makes_what_it_unpacks_a_tree_into_reachable_by_its_owner_alone() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let sample = Sample::new("unpack-check-tree-mode");
+    let root = sample.root();
+    let (lock, sha512, tarball) = proof::npm_tree();
+    let (entry, tarballs, out) = (
+        root.join("lock.json"),
+        root.join("tarballs"),
+        root.join("out"),
+    );
+    fs::create_dir_all(&tarballs).expect("a directory of tarballs");
+    fs::write(&entry, &lock).expect("the lock");
+    fs::write(tarballs.join(&sha512), &tarball).expect("the tarball");
+
+    let listed = unpack_check(&entry, &tarballs, &out);
+
+    assert!(listed.is_ok(), "{:?}", listed.err());
+    let reach = fs::metadata(&out)
+        .map(|metadata| metadata.permissions().mode() & 0o077)
+        .ok();
+    assert_eq!(reach, Some(0), "{} is reachable by others", out.display());
+}
