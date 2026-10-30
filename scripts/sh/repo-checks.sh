@@ -1364,6 +1364,8 @@ removable=(
     crates/crucible-app/src/installing.rs src/cli.rs src/cli/agents.rs
     # The fetch of the catalog of agents a release may be installed from.
     crates/crucible-app/src/catalog_fetch.rs
+    # The gate that runs the preload an npm agent starts under on a real Node.
+    scripts/python/validate-node-preload.py
     # The agents door and the download of the releases it installs.
     crates/crucible-app/src/client/agents.rs crates/crucible-app/src/agent_download.rs
     crates/crucible-app/tests/headless/agents.rs
