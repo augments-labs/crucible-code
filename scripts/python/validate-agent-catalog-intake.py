@@ -996,6 +996,20 @@ def check_licence_gate_refuses(scratch: pathlib.Path) -> None:
     del subject["metadata"]["component"]["licenses"]
     ran, _, record = gate(scratch, "subject-bare", written(scratch, "subject-bare.json", subject))
     assert ran.returncode == 0 and record["components"] == 4, ran.stderr
+    subject["metadata"]["component"]["licenses"] = []
+    ran, _, record = gate(scratch, "subject-empty", written(scratch, "subject-empty.json", subject))
+    assert ran.returncode == 0 and record["components"] == 4, ran.stderr
+    # A subject in no shape the gate reads is refused, never passed over.
+    off = {"name": "the-subject", "version": "9.9.9", "licenses": [{"expression": "Unlicense"}]}
+    for name, metadata in (
+        ("subject-list", {"component": [off]}),
+        ("subject-string", {"component": "the-subject"}),
+        ("subject-zero", {"component": {**off, "licenses": 0}}),
+        ("subject-blank", {"component": {**off, "licenses": ""}}),
+        ("metadata-list", [{"component": off}]),
+    ):
+        malformed = {**json.loads((GATE / "sbom.json").read_text()), "metadata": metadata}
+        gate_refuses(scratch, name, written(scratch, f"{name}.json", malformed), "metadata")
     # A licence on the list with no text to ship beside it.
     texts = scratch / "gate-texts-without-isc"
     texts.mkdir()

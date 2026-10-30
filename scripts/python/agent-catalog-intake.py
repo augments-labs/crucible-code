@@ -3170,11 +3170,21 @@ def gate_components(held: bytes) -> list[tuple[str, str, list[str], str]]:
         raise Ungated("the input is neither a CycloneDX SBOM nor an npm lock the intake wrote")
     if not isinstance(listed, list) or not listed:
         raise Ungated("the input lists no component")
-    if read_one is sbom_component and isinstance(value.get("metadata"), dict):
-        # The SBOM's own subject is part of the input where it gives a licence.
-        subject = value["metadata"].get("component")
-        if isinstance(subject, dict) and subject.get("licenses"):
-            listed = [subject, *listed]
+    if read_one is sbom_component and "metadata" in value:
+        # The SBOM's own subject is part of the input where it gives a
+        # licence; one in no shape the gate reads is refused, not passed over.
+        metadata = value["metadata"]
+        if not isinstance(metadata, dict):
+            raise Ungated("the input's metadata is not an object")
+        subject = metadata.get("component")
+        if subject is not None:
+            if not isinstance(subject, dict):
+                raise Ungated("the input's metadata.component is not an object")
+            licences = subject.get("licenses", [])
+            if not isinstance(licences, list):
+                raise Ungated("the input's metadata.component gives licenses that are not a list")
+            if licences:
+                listed = [subject, *listed]
     if len(listed) > GATE_COMPONENTS:
         raise Ungated(f"the input lists more than {GATE_COMPONENTS} components")
     components = []
