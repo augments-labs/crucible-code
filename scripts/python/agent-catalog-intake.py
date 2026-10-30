@@ -132,9 +132,11 @@ no space, and every hop of its fetch
 stays on that host; its SHA-512 and size are computed here, a SHA-512
 `integrity` must agree with it, a SHA-1 one is held only where it is the only
 one, and a package with neither is refused. A tarball is read as the client
-reads it, each header as it is written and a global one only as the first
-of its kind, before any member's own, and holding a comment alone: one gzip
-stream and nothing after it, at most 65,536 members, an ordinary file, a
+reads it, each header as it is written. A global one holding comment records
+alone, which use up its body, is accepted wherever the client accepts one,
+between members included, unless it follows another or comes between a
+member's own headers and the member. A tarball must hold one gzip stream
+and nothing after it, at most 65,536 members, an ordinary file, a
 directory or a link alone, every name one the client writes, inside its
 package and the ones it bundles and not straight under a `node_modules`
 directory, none written twice once case is folded nor one directory spelled
@@ -1905,10 +1907,10 @@ def tarball_of(place: pathlib.Path, wanted: set[str], location: str, locations: 
     `location`, a file written outside its package and the ones it bundles,
     of the lock's `locations`, or straight under a `node_modules` directory,
     a name written twice, or as a file and a directory, once case is folded,
-    a directory spelled in two cases, and names that with the directories above them are more than
-    `TREE_NAMES`, or hold more than `TARBALL_NAME_BYTES`. A sparse member,
-    by its header or by its extended one, is refused, though the client
-    writes the second as it is stored."""
+    a directory spelled in two cases, and names that with the directories
+    above them are more than `TREE_NAMES`, or hold more than
+    `TARBALL_NAME_BYTES`. A sparse member, by its header or by its extended
+    one, is refused, though the client writes the second as it is stored."""
     held_locations = {location} | {f"{location}/{root}" for root in wanted if root}
     with opened(place / "artifact") as file:
         sha512 = hashlib.sha512()
