@@ -3903,3 +3903,33 @@ fn a_launcher_that_leads_out_of_its_version_is_not_given() {
         Err(Unlaunchable::Missing)
     );
 }
+
+/// A `cmd` that does not name the program from the top of its version finds
+/// no launcher, even where the directory as many levels above the program as
+/// `cmd` has parts holds the version's own: one that climbs, one that starts
+/// at the root, and one the program's path does not end in.
+#[test]
+fn a_cmd_that_does_not_name_the_program_from_its_version_finds_no_launcher() {
+    let sample = Sample::new("launch-interpreted-cmd");
+    let version = fs::canonicalize(sample.root())
+        .expect("a root")
+        .join("1.0.0");
+    fs::create_dir_all(version.join("python/bin")).expect("a directory");
+    fs::write(version.join(LAUNCHER), b"").expect("a launcher");
+    let cases = [
+        ("../x", version.join("python").join("x")),
+        ("/bin/python3", version.join("python/bin/python3")),
+        ("python/bin/python3", version.join("other/bin/python3")),
+    ];
+
+    let found: Vec<_> = cases
+        .iter()
+        .map(|(cmd, program)| {
+            let mut target = interpreted();
+            target.cmd = (*cmd).into();
+            interpreting(&target, program, &version)
+        })
+        .collect();
+
+    assert_eq!(found, vec![Err(Unlaunchable::Missing); cases.len()]);
+}
