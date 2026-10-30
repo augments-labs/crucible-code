@@ -189,7 +189,7 @@ pub enum NpmError {
     Json(#[source] serde_json::Error),
     /// The lock is for rules of unpacking this reader does not hold.
     #[error(
-        "the package lock is for unpack rules {given}, and only rules {UNPACK_RULES} are known"
+        "the package lock is for unpack rules {given:?}, and only rules {UNPACK_RULES} are known"
     )]
     Rules {
         /// The rules it gives, cut short.

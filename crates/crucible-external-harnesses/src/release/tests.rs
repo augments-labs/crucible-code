@@ -3738,6 +3738,25 @@ fn a_lock_for_other_rules_than_these_is_refused() {
 }
 
 #[test]
+fn the_rules_a_lock_gives_are_shown_escaped_when_it_is_refused_for_them() {
+    let lock = serde_json::json!({ "unpack_rules": "\u{202e}1", "packages": [] })
+        .to_string()
+        .into_bytes();
+    let refused = NpmTree::parse(&lock);
+    assert!(
+        matches!(refused, Err(NpmError::Rules { .. })),
+        "{:?}",
+        refused.err()
+    );
+    let shown = refused.err().map(|error| error.to_string());
+    assert_eq!(
+        shown.map(|shown| shown.contains('\u{202e}')),
+        Some(false),
+        "a right-to-left override reaches the message as it is"
+    );
+}
+
+#[test]
 fn a_tarball_fetched_from_anywhere_but_the_registry_is_refused() {
     let tarball = tar_gz(&[Tarred::File("package/index.js", b"1", 0o644)]);
     let entry = locked("node_modules/peer", "peer", &tarball, 1, 1);
