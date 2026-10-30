@@ -1217,6 +1217,27 @@ def check_licence_gate_rereview(scratch: pathlib.Path, data: dict) -> None:
     assert "licence gate" not in ran.stdout, "an unchanged record is shown"
     ran = intake("diff", scratch / "rereview.json")
     assert any("licence gate" in line and "passed" in line for line in ran.stdout.splitlines()), ran.stdout
+    # Two records that differ never read the same.
+    module = load_intake()
+    for field in ("licence", "licence-size", "notice-sha256", "notice-size", "extra", "nested", "failing-extra"):
+        other = copy.deepcopy(record)
+        if field == "licence":
+            other["licences"][0]["sha256"] = "e" * 64
+        elif field == "licence-size":
+            other["licences"][0]["size"] += 1
+        elif field == "notice-sha256":
+            other["notice"]["sha256"] = "e" * 64
+        elif field == "notice-size":
+            other["notice"]["size"] += 1
+        elif field == "extra":
+            other["note"] = "x"
+        elif field == "nested":
+            other["licences"][0]["note"] = "x"
+        else:
+            failing = {"passed": False, "reason": "r"}
+            assert module.gate_of({**failing, "note": "x"}) != module.gate_of(failing), "a failing record's extra reads the same"
+            continue
+        assert module.gate_of(other) != module.gate_of(record), f"a record changed in its {field} reads the same"
 
 
 PYPI = "https://files.pythonhosted.org/packages/"

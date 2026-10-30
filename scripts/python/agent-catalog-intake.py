@@ -251,7 +251,9 @@ field; otherwise it is shown, marked as a same-version change, or, where only
 an artifact's `licence_gate` record differs, as a record that changed. Each
 artifact's record is shown where it is new or changed, absent, failing or
 passing, so the reviewer sees an artifact become one that may be
-redistributed.
+redistributed; a passing record is shown with every file it binds, the NOTICE
+and each licence text by hash and size, so two records that differ never read
+the same.
 
 `render` writes the catalog a client reads, from the merged data (`--merged`,
 review data a reviewer completed and merged, with the `revoked` list a
@@ -3901,19 +3903,36 @@ def method_line(method: dict) -> str:
 ARTIFACT_FIELDS = ("url", "format", "size", "sha256", "unpacked", "decompressed", "mirror_licence")
 
 
+# The fields a passing licence-gate record holds.
+GATE_RECORD_FIELDS = ("asset", "components", "licences", "notice", "passed")
+
+
 def gate_of(record: object) -> str:
     """A licence-gate record as the reviewer reads it: whether the artifact
-    may now be redistributed, and what the record binds."""
+    may now be redistributed, and every file the record binds, so two records
+    that differ never read the same."""
     if record is None:
         return "none"
     held = passing(record)
+    if held is not None and (
+        any(set(held[bound]) - {"sha256", "size"} for bound in ("asset", "notice"))
+        or any(set(licence) - {"id", "sha256", "size"} for licence in held["licences"])
+    ):
+        held = None
     if held is not None:
+        licences = "; ".join(
+            f"{shown(clipped(licence['id']))} {shown(licence['sha256'])} of {shown(licence['size'])} bytes"
+            for licence in held["licences"]
+        )
+        extra = {name: value for name, value in held.items() if name not in GATE_RECORD_FIELDS}
         return (
             f"**passed**, so it may be redistributed: asset {shown(held['asset']['sha256'])} of "
-            f"{shown(held['asset']['size'])} bytes, {shown(held['components'])} components, licences "
-            f"{words([licence.get('id') for licence in held['licences']])}, NOTICE {shown(held['notice']['sha256'])}"
+            f"{shown(held['asset']['size'])} bytes, {shown(held['components'])} components, "
+            f"NOTICE {shown(held['notice']['sha256'])} of {shown(held['notice']['size'])} bytes, "
+            f"licences {licences or 'none'}"
+            + (f", and {shown(json.dumps(extra, sort_keys=True))}" if extra else "")
         )
-    if isinstance(record, dict) and record.get("passed") is False:
+    if isinstance(record, dict) and record.get("passed") is False and set(record) <= {"passed", "reason"}:
         return f"failed: {shown(record.get('reason'))}"
     return f"not a record the gate writes: {shown(json.dumps(record, sort_keys=True))}"
 
