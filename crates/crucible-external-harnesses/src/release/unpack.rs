@@ -663,7 +663,7 @@ enum Body<'r> {
 
 /// How a name written is held.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Held {
+pub(super) enum Held {
     /// A directory a member under it made.
     Implied,
     /// A directory the archive gives.
@@ -675,7 +675,7 @@ enum Held {
 /// Every name written and every directory a member under it implies, as a
 /// tree of their components: each component is held once as spelled and once
 /// case-folded, so what is held grows with the names' own bytes.
-struct Names {
+pub(super) struct Names {
     /// The most names it holds.
     ceiling: usize,
     /// Each node, by its parent's and its component case-folded.
@@ -686,7 +686,7 @@ struct Names {
 }
 
 impl Names {
-    fn new(ceiling: usize) -> Self {
+    pub(super) fn new(ceiling: usize) -> Self {
         Self {
             ceiling,
             children: HashMap::new(),
@@ -697,7 +697,7 @@ impl Names {
     /// Holds `name` as `held`, with every directory above it, refusing a name
     /// another differs from only in case, a name taken twice, a directory
     /// that is also something else, and a name past the ceiling.
-    fn claim(&mut self, name: &str, held: Held) -> Result<(), UnpackError> {
+    pub(super) fn claim(&mut self, name: &str, held: Held) -> Result<(), UnpackError> {
         let mut node = 0;
         let mut parts = name.split('/').peekable();
         while let Some(part) = parts.next() {
@@ -778,14 +778,14 @@ impl Names {
 }
 
 /// The ceiling on what is read out of an archive, and how much of it is left.
-struct Budget {
-    ceiling: u64,
-    left: Cell<u64>,
+pub(super) struct Budget {
+    pub(super) ceiling: u64,
+    pub(super) left: Cell<u64>,
     exceeded: Cell<bool>,
 }
 
 impl Budget {
-    fn new(ceiling: u64) -> Self {
+    pub(super) fn new(ceiling: u64) -> Self {
         Self {
             ceiling,
             left: Cell::new(ceiling),
@@ -800,7 +800,7 @@ impl Budget {
 
     /// The refusal for a failure to read the archive: its ceiling, where it was
     /// passed, else an archive that is not one.
-    fn failed(&self, error: io::Error) -> UnpackError {
+    pub(super) fn failed(&self, error: io::Error) -> UnpackError {
         if self.exceeded.get() {
             UnpackError::Decompressed {
                 ceiling: self.ceiling,
@@ -813,9 +813,9 @@ impl Budget {
 
 /// A reader that fails, and says so in its budget, once more than the budget
 /// has come through it.
-struct Bounded<'b, R> {
-    inner: R,
-    budget: &'b Budget,
+pub(super) struct Bounded<'b, R> {
+    pub(super) inner: R,
+    pub(super) budget: &'b Budget,
 }
 
 impl<R: Read> Read for Bounded<'_, R> {
@@ -841,7 +841,7 @@ impl<R: Read> Read for Bounded<'_, R> {
 /// long link target and an extended header, each held only once its ceiling
 /// allows it.
 #[derive(Default)]
-struct Ahead {
+pub(super) struct Ahead {
     name: Option<Vec<u8>>,
     link: Option<Vec<u8>>,
     extended: Option<Vec<u8>>,
@@ -849,14 +849,14 @@ struct Ahead {
 
 impl Ahead {
     /// Whether nothing is waiting for a member to describe.
-    fn is_empty(&self) -> bool {
+    pub(super) fn is_empty(&self) -> bool {
         self.name.is_none() && self.link.is_none() && self.extended.is_none()
     }
 
     /// Takes `entry`, of `kind`, when it describes the member after it, or
     /// says something of every member after it, which this reader does not
     /// take from it; whether it was such an entry.
-    fn took(
+    pub(super) fn took(
         &mut self,
         kind: EntryType,
         entry: &mut tar::Entry<'_, impl Read>,
@@ -899,7 +899,7 @@ impl Ahead {
 
     /// The raw name and link target of `entry`, as what came before it says
     /// they are, which it then no longer says.
-    fn named(
+    pub(super) fn named(
         &mut self,
         entry: &tar::Entry<'_, impl Read>,
     ) -> Result<(Vec<u8>, Option<Vec<u8>>), UnpackError> {
@@ -1142,24 +1142,7 @@ impl<'a> Walk<'a> {
             };
             self.member(&raw, body, budget)?;
         }
-        if !ahead.is_empty() {
-            return Err(UnpackError::Corrupt(io::Error::other(
-                "the archive describes a member it does not hold",
-            )));
-        }
-        let mut contents = archive.into_inner();
-        io::copy(&mut contents, &mut io::sink()).map_err(|error| budget.failed(error))?;
-        let mut rest = contents.inner.into_inner();
-        if io::BufRead::fill_buf(&mut rest)
-            .map_err(UnpackError::Corrupt)?
-            .is_empty()
-        {
-            Ok(())
-        } else {
-            Err(UnpackError::Corrupt(io::Error::other(
-                "the archive goes on past its gzip stream",
-            )))
-        }
+        ended(archive, &ahead, budget)
     }
 
     /// Takes a program published bare as one member, named as its list names
@@ -1362,27 +1345,7 @@ impl<'a> Walk<'a> {
     /// directory, where each is not there already as a directory, never
     /// through a link.
     fn directory(&self, name: &str) -> Result<PathBuf, UnpackError> {
-        let mut path = self.staging.to_path_buf();
-        for part in name.split('/').filter(|part| !part.is_empty()) {
-            path.push(part);
-            match fs::symlink_metadata(&path) {
-                Ok(metadata) if metadata.is_dir() => {}
-                Ok(_) => {
-                    return Err(UnpackError::Write {
-                        path,
-                        source: io::ErrorKind::AlreadyExists.into(),
-                    });
-                }
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    owner_only(&path).map_err(|source| UnpackError::Write {
-                        path: path.clone(),
-                        source,
-                    })?;
-                }
-                Err(source) => return Err(UnpackError::Write { path, source }),
-            }
-        }
-        Ok(path)
+        made(self.staging, name)
     }
 
     /// Makes the directory above `name`, as [`Walk::directory`] makes one.
@@ -1409,42 +1372,9 @@ impl<'a> Walk<'a> {
         let path = self
             .parent(name)?
             .join(name.rsplit('/').next().unwrap_or(name));
-        let written = |source| UnpackError::Write {
-            path: path.clone(),
-            source,
-        };
-        let mut out = created(&path, exec).map_err(written)?;
-        let mut digest = Sha256::new();
-        let mut chunk = vec![0_u8; 1 << 16];
-        let mut data = data.take(size.saturating_add(1));
-        let mut copied: u64 = 0;
-        loop {
-            let read = match data.read(&mut chunk) {
-                Ok(0) => break,
-                Ok(read) => read,
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-                Err(error) => return Err(unreadable(error)),
-            };
-            copied = copied.saturating_add(u64::try_from(read).unwrap_or(u64::MAX));
-            if copied > size {
-                return Err(UnpackError::Corrupt(io::Error::other(
-                    "a member holds more than its size",
-                )));
-            }
-            let bytes = chunk.get(..read).unwrap_or_default();
-            digest.update(bytes);
-            out.write_all(bytes).map_err(written)?;
-        }
-        if copied != size {
-            return Err(UnpackError::Corrupt(io::ErrorKind::UnexpectedEof.into()));
-        }
-        out.sync_all().map_err(written)?;
+        let written = copied(&path, data, size, exec, unreadable)?;
         self.unpacked = total;
-        Ok(FileKind::File {
-            size,
-            sha256: hex(&digest.finalize()).into(),
-            exec,
-        })
+        Ok(written)
     }
 
     /// Makes every link the archive gave, once each resolves.
@@ -1549,6 +1479,108 @@ pub(crate) fn link_resolves(
         from = resolved;
     }
     Err("goes through more than eight links")
+}
+
+/// Reads what is left of a gzip-compressed tar `archive` once its last member
+/// has been taken, through its `budget`, refusing an entry that describes a
+/// member the archive does not hold, and anything after its one gzip stream.
+pub(super) fn ended<R: io::BufRead>(
+    archive: tar::Archive<Bounded<'_, GzDecoder<R>>>,
+    ahead: &Ahead,
+    budget: &Budget,
+) -> Result<(), UnpackError> {
+    if !ahead.is_empty() {
+        return Err(UnpackError::Corrupt(io::Error::other(
+            "the archive describes a member it does not hold",
+        )));
+    }
+    let mut contents = archive.into_inner();
+    io::copy(&mut contents, &mut io::sink()).map_err(|error| budget.failed(error))?;
+    let mut rest = contents.inner.into_inner();
+    if io::BufRead::fill_buf(&mut rest)
+        .map_err(UnpackError::Corrupt)?
+        .is_empty()
+    {
+        Ok(())
+    } else {
+        Err(UnpackError::Corrupt(io::Error::other(
+            "the archive goes on past its gzip stream",
+        )))
+    }
+}
+
+/// Makes the directory `name` and every one above it under `staging`, where
+/// each is not there already as a directory, never through a link, and gives
+/// where it is.
+pub(super) fn made(staging: &Path, name: &str) -> Result<PathBuf, UnpackError> {
+    let mut path = staging.to_path_buf();
+    for part in name.split('/').filter(|part| !part.is_empty()) {
+        path.push(part);
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => {
+                return Err(UnpackError::Write {
+                    path,
+                    source: io::ErrorKind::AlreadyExists.into(),
+                });
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                owner_only(&path).map_err(|source| UnpackError::Write {
+                    path: path.clone(),
+                    source,
+                })?;
+            }
+            Err(source) => return Err(UnpackError::Write { path, source }),
+        }
+    }
+    Ok(path)
+}
+
+/// Writes the `size` bytes of `data` to a new file at `path`, runnable when
+/// `exec` says, refusing data that holds more or less than that, and gives it
+/// as a list would; `unreadable` says why its data could not be read.
+pub(super) fn copied(
+    path: &Path,
+    data: &mut dyn Read,
+    size: u64,
+    exec: bool,
+    unreadable: &dyn Fn(io::Error) -> UnpackError,
+) -> Result<FileKind, UnpackError> {
+    let written = |source| UnpackError::Write {
+        path: path.to_path_buf(),
+        source,
+    };
+    let mut out = created(path, exec).map_err(written)?;
+    let mut digest = Sha256::new();
+    let mut chunk = vec![0_u8; 1 << 16];
+    let mut data = data.take(size.saturating_add(1));
+    let mut copied: u64 = 0;
+    loop {
+        let read = match data.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(unreadable(error)),
+        };
+        copied = copied.saturating_add(u64::try_from(read).unwrap_or(u64::MAX));
+        if copied > size {
+            return Err(UnpackError::Corrupt(io::Error::other(
+                "a member holds more than its size",
+            )));
+        }
+        let bytes = chunk.get(..read).unwrap_or_default();
+        digest.update(bytes);
+        out.write_all(bytes).map_err(written)?;
+    }
+    if copied != size {
+        return Err(UnpackError::Corrupt(io::ErrorKind::UnexpectedEof.into()));
+    }
+    out.sync_all().map_err(written)?;
+    Ok(FileKind::File {
+        size,
+        sha256: hex(&digest.finalize()).into(),
+        exec,
+    })
 }
 
 /// A new file at `path`, made on Unix with the mode it keeps, which anyone may

@@ -36,9 +36,11 @@ use zip::{CompressionMethod, ZipArchive};
 
 use crate::catalog::{Admits, FileKind, Files, Format, Launch, Target};
 
+mod npm;
 mod unpack;
 mod wheel;
 
+pub use npm::{NpmError, NpmPackage, NpmTarball, NpmTree};
 pub(crate) use unpack::{MEMBERS, link_resolves};
 pub use unpack::{Staged, UnpackError, Unpacker};
 pub use wheel::{LAUNCHER, LaunchScript, Wheels};
