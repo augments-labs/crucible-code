@@ -1447,18 +1447,23 @@ def signing_key(home: pathlib.Path, name: str, expiry: str = "never") -> str:
     return next(line.split(":")[9] for line in listing.splitlines() if line.startswith("fpr:"))
 
 
-def clearsigned(home: pathlib.Path, fpr: str, body: bytes, faked: str | None = None) -> bytes:
+def clearsigned(
+    home: pathlib.Path, fpr: str, body: bytes, faked: str | None = None, digest: str | None = None,
+) -> bytes:
     (home / "body").write_bytes(body)
     out = home / "body.asc"
     out.unlink(missing_ok=True)
-    gpg(home, "--local-user", fpr, "--clearsign", "--output", str(out), str(home / "body"), faked=faked)
+    chosen = ["--digest-algo", digest] if digest else []
+    gpg(home, "--local-user", fpr, *chosen, "--clearsign", "--output", str(out), str(home / "body"), faked=faked)
     return out.read_bytes()
 
 
 class Signers:
-    """Three throwaway release keys: one listed, one listed that expired on
-    2021-02-01, and one whose public key is vendored but whose fingerprint is
-    not listed; and the keys directory the intake is pointed at."""
+    """Four throwaway release keys: one listed, one listed that expired on
+    2021-02-01, one listed whose primary expired on 2021-02-01 while its
+    signing subkey never does, and one whose public key is vendored but whose
+    fingerprint is not listed; and the keys directory the intake is pointed
+    at."""
 
     def __init__(self, scratch: pathlib.Path) -> None:
         self.homes = scratch / "gpg"
@@ -1472,18 +1477,31 @@ class Signers:
         self.before = clearsigned(expired, self.expired, body, faked="20210115T000000")
         self.after = clearsigned(expired, self.expired, body, faked="20210301T000000")
         gpg(expired, "--quick-set-expire", self.expired, "2021-02-01", faked="20210102T000000")
+        # Signed by a subkey after its primary expired.
+        parent = self.homes / "parent"
+        parent.mkdir(mode=0o700, parents=True)
+        gpg(parent, "--quick-gen-key", "parent <parent@example.invalid>", "ed25519", "cert", "never",
+            faked="20200101T000000")
+        listing = gpg(parent, "--with-colons", "--list-keys").decode()
+        self.parent = next(line.split(":")[9] for line in listing.splitlines() if line.startswith("fpr:"))
+        gpg(parent, "--quick-add-key", self.parent, "ed25519", "sign", "never", faked="20200101T000000")
+        self.orphaned = clearsigned(parent, self.parent, body, faked="20210301T000000")
+        gpg(parent, "--quick-set-expire", self.parent, "2021-02-01", faked="20210102T000000")
+        # A digest Node's keys must not be trusted under.
+        self.sha1 = clearsigned(self.homes / "good", self.good, body, digest="SHA1")
         self.keys = scratch / "node-keys"
         self.keys.mkdir()
-        for name, fpr in (("good", self.good), ("unlisted", self.unlisted), ("expired", self.expired)):
+        named_keys = (("good", self.good), ("unlisted", self.unlisted), ("expired", self.expired), ("parent", self.parent))
+        for name, fpr in named_keys:
             (self.keys / f"{fpr}.asc").write_bytes(gpg(self.homes / name, "--armor", "--export", fpr))
-        (self.keys / "fingerprints").write_text(f"# test keys\n{self.good}\n{self.expired}\n")
+        (self.keys / "fingerprints").write_text(f"# test keys\n{self.good}\n{self.expired}\n{self.parent}\n")
 
     def signed(self, body: bytes | None = None, by: str = "good") -> bytes:
         fpr = self.good if by == "good" else self.unlisted
         return clearsigned(self.homes / by, fpr, shasums() if body is None else body)
 
     def close(self) -> None:
-        for name in ("good", "unlisted", "expired"):
+        for name in ("good", "unlisted", "expired", "parent"):
             subprocess.run(["gpgconf", "--homedir", str(self.homes / name), "--kill", "gpg-agent"],
                            capture_output=True, check=False, timeout=60)
 
@@ -2119,6 +2137,8 @@ def check_npm_node(scratch: pathlib.Path, signers: Signers) -> None:
     for name, signed, change, words in (
         ("unlisted", signers.signed(by="unlisted"), None, "fingerprint"),
         ("expired", signers.after, None, "expired"),
+        ("orphaned", signers.orphaned, None, "expired"),
+        ("sha1", signers.sha1, None, "digest"),
         ("garbled", b"not signed at all\n", None, "one good signature"),
         ("repeated", signers.signed(shasums() + shasums()), None, "twice"),
         ("tampered", signers.signed(), "node/linux-x86_64/artifact", "not the bytes SHASUMS256.txt lists"),

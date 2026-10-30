@@ -114,8 +114,9 @@ scoped or not, and one exact version, so a range, a tag or an `npm:` alias
 drops it. It runs on Node, which is checked before any agent: the signed
 `SHASUMS256.txt.asc` for the pin, fetched from
 `https://nodejs.org/dist/v<version>/`, is verified with `gpg` in a home of
-its own and taken only under one good signature, made before its key
-expired, by a key whose primary fingerprint is listed, and only the
+its own and taken only under one good signature over a SHA-2 digest, made
+before its key and that key's primary expired, by a key whose primary
+fingerprint is listed, and only the
 `<sha256>  <file>` lines it signed are read, none twice. Each platform's
 build must be the bytes that list gives it, fetched through `nodejs.org`
 alone; its `bin/node` (`node.exe` on Windows) and `LICENSE` are all a client
@@ -1464,7 +1465,8 @@ def node_sums(gpg: str, keys: tuple[set[str], list[bytes]], signed: bytes) -> di
     """The SHA-256 of each file `signed`, a Node release's
     `SHASUMS256.txt.asc`, lists, once its signature is held to be one of the
     vendored release keys': one signature, good, by a key whose primary
-    fingerprint is listed, made before any expiry of the key that made it.
+    fingerprint is listed, over a SHA-2 digest, made before any expiry of the
+    key that made it and of its primary.
     Only the body gpg verified is read, in a keyring of its own."""
     listed, armoured = keys
     with tempfile.TemporaryDirectory(prefix="node-keys-") as held:
@@ -1495,6 +1497,10 @@ def node_sums(gpg: str, keys: tuple[set[str], list[bytes]], signed: bytes) -> di
         valid = next((line for line in lines if line[1] == "VALIDSIG" and len(line) >= 12), None)
         if valid is None or valid[11] not in listed:
             raise Dropped("SHASUMS256.txt.asc is signed by a key whose fingerprint the vendored list does not hold")
+        # OpenPGP's SHA-256, SHA-384, SHA-512 and SHA-224; a collision in
+        # anything weaker could put other sums under the same signature.
+        if valid[9] not in ("8", "9", "10", "11"):
+            raise Dropped(f"SHASUMS256.txt.asc is signed over digest {clipped(valid[9])}, not one of the SHA-2 family")
         # The expiry of every key and subkey, by fingerprint, as the colon
         # listing gives it: the expiry field of a `pub` or `sub` line, then
         # its `fpr` line.
@@ -1506,9 +1512,12 @@ def node_sums(gpg: str, keys: tuple[set[str], list[bytes]], signed: bytes) -> di
                 expiry = fields[6]
             elif fields[0] == "fpr" and len(fields) > 9:
                 expiries[fields[9]] = expiry
-        signed_at, ends = valid[4], expiries.get(valid[2], "")
-        if not signed_at.isdigit() or (ends and (not ends.isdigit() or int(signed_at) >= int(ends))):
-            raise Dropped("SHASUMS256.txt.asc was signed after the key that signed it expired")
+        # Before the expiry of the key that made it and of its primary, which
+        # gpg's listing may not carry down to a subkey.
+        signed_at = valid[4]
+        for ends in {expiries.get(valid[2], ""), expiries.get(valid[11], "")}:
+            if not signed_at.isdigit() or (ends and (not ends.isdigit() or int(signed_at) >= int(ends))):
+                raise Dropped("SHASUMS256.txt.asc was signed after the key that signed it expired")
         body = read(home / "body", SHASUMS_BYTES, "SHASUMS256.txt")
     sums: dict[str, str] = {}
     for line in body.decode(errors="replace").splitlines():
