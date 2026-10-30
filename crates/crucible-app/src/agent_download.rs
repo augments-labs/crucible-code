@@ -105,13 +105,13 @@ pub enum DownloadError {
     #[error("the catalog lists {0:?} as a download host, which is not a host name")]
     Host(Box<str>),
     /// The address or mirror an artifact is pinned at is on no host the
-    /// download may reach.
+    /// download may reach, quoted and cut.
     #[error("{0} is on no host the catalog lists for this download")]
     Unlisted(Box<str>),
     /// The download could not be written where it lands.
     #[error("the download could not be written: {0}")]
     Write(#[source] std::io::Error),
-    /// An address is not one a download can be made from.
+    /// An address is not one a download can be made from, quoted and cut.
     #[error("{0} is not an address a download can be made from")]
     Address(Box<str>),
     /// The pin is larger than a release may be.
@@ -464,9 +464,15 @@ const fn fixture(_: &Source, _: &str) -> Option<String> {
     None
 }
 
+/// `address` as a refusal names it: escaped and cut, however long the catalog
+/// or a lock wrote it.
+fn quoted(address: &str) -> Box<str> {
+    crate::launching::quoted(address).into()
+}
+
 /// Refused unless `address` is on one of `places`, matched by host and port.
 fn listed_on(places: &[String], address: &str) -> Result<(), DownloadError> {
-    let origin = Origin::of(address).ok_or_else(|| DownloadError::Address(address.into()))?;
+    let origin = Origin::of(address).ok_or_else(|| DownloadError::Address(quoted(address)))?;
     let default = default_port(origin.scheme());
     let listed = places
         .iter()
@@ -475,7 +481,7 @@ fn listed_on(places: &[String], address: &str) -> Result<(), DownloadError> {
     if listed {
         Ok(())
     } else {
-        Err(DownloadError::Unlisted(address.into()))
+        Err(DownloadError::Unlisted(quoted(address)))
     }
 }
 
@@ -499,8 +505,8 @@ pub fn reachable(
 ) -> Result<Vec<String>, DownloadError> {
     let mut places: Vec<String> = Vec::new();
     if artifact.replaced_by.is_some() {
-        let origin = Origin::of(&source.base)
-            .ok_or_else(|| DownloadError::Address(source.base.as_str().into()))?;
+        let origin =
+            Origin::of(&source.base).ok_or_else(|| DownloadError::Address(quoted(&source.base)))?;
         places.push(format!("{}:{}", origin.host(), origin.port()));
     } else {
         named(hosts)?;
@@ -603,7 +609,7 @@ async fn fetch(
         return Err(DownloadError::TooLarge(pin.size));
     }
     let origin =
-        Origin::of(pin.address).ok_or_else(|| DownloadError::Address(pin.address.into()))?;
+        Origin::of(pin.address).ok_or_else(|| DownloadError::Address(quoted(pin.address)))?;
     let client = client(source, &origin, listed)?;
     let fetching = async {
         timeout(LIFETIME, followed(&client, &origin, listed, pin, landing))
