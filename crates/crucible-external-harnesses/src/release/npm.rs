@@ -56,14 +56,16 @@
 //!   member with nothing after it is skipped, so `package/index.js` is written
 //!   as `index.js` under the package's location.
 //! - A file is written only where the lock installs from its tarball: the
-//!   deepest location the lock gives above it, compared case-folded, is its
-//!   package's own or a bundled package's that tarball holds, and what is
-//!   below that location does not begin with a `node_modules` component,
-//!   whatever its case. So a tarball writes no package the lock does not list,
-//!   nothing into another package's location and no file straight into a
-//!   `node_modules` directory, while a `node_modules` deeper in a package's
-//!   own files, as a test's fixtures may keep one, is written as npm writes
-//!   it.
+//!   deepest location the lock gives above it is its package's own or a
+//!   bundled package's that tarball holds, and what is below that location
+//!   does not begin with a `node_modules` component. A location counts only
+//!   spelled as the lock spells it, while `node_modules` is recognised in any
+//!   case, since a file system that folds case takes every spelling of it for
+//!   one. So a tarball writes no package the lock does not list, not even one
+//!   it lists spelled in another case, nothing into another package's
+//!   location and no file straight into a `node_modules` directory, while a
+//!   `node_modules` deeper in a package's own files, as a test's fixtures may
+//!   keep one, is written as npm writes it.
 //! - An ordinary file is written, with the directories above it, each made
 //!   so only its owner may reach it, as a staged release's are. A directory
 //!   entry, a symbolic link and a hard link are skipped and write nothing. A
@@ -388,10 +390,7 @@ impl NpmTree {
             writers: self
                 .packages
                 .iter()
-                .filter_map(|package| {
-                    let writer = holder(&unpacked, package)?;
-                    Some((package.location.to_ascii_lowercase(), writer))
-                })
+                .filter_map(|package| Some((&*package.location, holder(&unpacked, package)?)))
                 .collect(),
             files: Vec::new(),
         };
@@ -707,12 +706,13 @@ fn pinned(file: &mut fs::File, tarball: &NpmTarball, location: &str) -> Result<(
 
 /// A tree being unpacked: where, what has been read out of its tarballs and
 /// what has been written, every package's together, and for every location,
-/// case-folded, where the package whose tarball writes it is installed.
+/// as the lock spells it, where the package whose tarball writes it is
+/// installed.
 struct Unpacking<'r> {
     root: &'r Path,
     budget: Budget,
     names: Names,
-    writers: HashMap<String, &'r str>,
+    writers: HashMap<&'r str, &'r str>,
     files: Vec<File>,
 }
 
@@ -837,9 +837,12 @@ impl Unpacking<'_> {
 
 /// Whether the tarball of the package installed at `location` may write
 /// `path`, from the tree's root, by `writers`: the deepest location above it,
-/// compared case-folded, is written from that tarball, and what is below that
-/// location does not begin with a `node_modules` component, whatever its case.
-fn writes(writers: &HashMap<String, &str>, location: &str, path: &str) -> bool {
+/// spelled as the lock spells it, is written from that tarball, and what is
+/// below that location does not begin with a `node_modules` component,
+/// whatever its case.
+fn writes(writers: &HashMap<&str, &str>, location: &str, path: &str) -> bool {
+    // `node_modules` is looked for in the folded path, and a location in the
+    // path as it is, at the same offsets, since every name is ASCII.
     let folded = path.to_ascii_lowercase();
     // A location deeper than the package's own goes on from it with
     // `/node_modules/` and a package's name, so one is looked for only there.
@@ -852,14 +855,14 @@ fn writes(writers: &HashMap<String, &str>, location: &str, path: &str) -> bool {
             break;
         };
         end = folded.len() - rest.len();
-        if folded
+        if path
             .get(..end)
             .is_some_and(|above| writers.contains_key(above))
         {
             deepest = end;
         }
     }
-    let written = folded
+    let written = path
         .get(..deepest)
         .and_then(|above| writers.get(above))
         .is_some_and(|writer| *writer == location);

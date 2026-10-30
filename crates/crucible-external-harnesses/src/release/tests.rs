@@ -4213,6 +4213,132 @@ fn a_node_modules_directory_deep_in_a_packages_own_files_is_written() {
     );
 }
 
+/// What a lock leaves in a root of its own named `name` when it installs `a`
+/// from a tarball holding its `index.js`, then `x.js` under `written`, and
+/// bundles a package in `a` at `bundled_at`, both below `a`'s location.
+fn spelled(
+    owned: &Owned,
+    name: &str,
+    bundled_at: &str,
+    written: &str,
+) -> (Result<Vec<File>, NpmError>, Vec<String>) {
+    let member = format!("package/{written}/x.js");
+    let tarball = tar_gz(&[
+        Tarred::File("package/index.js", b"a", 0o644),
+        Tarred::File(&member, b"t", 0o644),
+    ]);
+    let tarballs = tarballs_in(owned, &format!("{name}-tarballs"), &[&tarball]);
+    let lock = lock_of(&[
+        locked("node_modules/a", "a", &tarball, 2, 2),
+        bundled(&format!("node_modules/a/{bundled_at}")),
+    ]);
+    npm_unpacked(owned, name, &lock, &tarballs)
+}
+
+#[test]
+fn a_bundled_package_written_as_the_lock_spells_it_is_unpacked() {
+    let owned = Owned::new("npm-spelled-exactly");
+    let (unpacked, _) = spelled(
+        &owned,
+        "root",
+        "node_modules/JSONStream",
+        "node_modules/JSONStream",
+    );
+    assert_eq!(
+        unpacked.ok(),
+        Some(vec![
+            listed("node_modules/a/index.js", b"a", false),
+            listed("node_modules/a/node_modules/JSONStream/x.js", b"t", false),
+        ])
+    );
+}
+
+#[test]
+fn a_bundled_package_written_in_lower_case_where_the_lock_spells_it_with_capitals_is_refused() {
+    let owned = Owned::new("npm-spelled-lower");
+    let (refused, left) = spelled(
+        &owned,
+        "root",
+        "node_modules/JSONStream",
+        "node_modules/jsonstream",
+    );
+    assert!(
+        matches!(refused, Err(NpmError::Outside { .. })),
+        "{:?}",
+        refused.err()
+    );
+    assert_eq!(
+        left,
+        [
+            "node_modules/",
+            "node_modules/a/",
+            "node_modules/a/index.js"
+        ]
+    );
+}
+
+#[test]
+fn a_bundled_package_written_in_capitals_where_the_lock_spells_it_in_mixed_case_is_refused() {
+    let owned = Owned::new("npm-spelled-upper");
+    let (refused, left) = spelled(
+        &owned,
+        "root",
+        "node_modules/JSONStream",
+        "node_modules/JSONSTREAM",
+    );
+    assert!(
+        matches!(refused, Err(NpmError::Outside { .. })),
+        "{:?}",
+        refused.err()
+    );
+    assert_eq!(
+        left,
+        [
+            "node_modules/",
+            "node_modules/a/",
+            "node_modules/a/index.js"
+        ]
+    );
+}
+
+#[test]
+fn a_bundled_scoped_package_written_under_its_scope_in_another_case_is_refused() {
+    let owned = Owned::new("npm-spelled-scope");
+    let (refused, left) = spelled(&owned, "root", "node_modules/@s/x", "node_modules/@S/x");
+    assert!(
+        matches!(refused, Err(NpmError::Outside { .. })),
+        "{:?}",
+        refused.err()
+    );
+    assert_eq!(
+        left,
+        [
+            "node_modules/",
+            "node_modules/a/",
+            "node_modules/a/index.js"
+        ]
+    );
+}
+
+#[test]
+fn a_bundled_scoped_package_written_under_its_name_in_another_case_is_refused() {
+    let owned = Owned::new("npm-spelled-scoped-name");
+    let (refused, left) = spelled(&owned, "root", "node_modules/@s/x", "node_modules/@s/X");
+    assert!(
+        matches!(refused, Err(NpmError::Outside { .. })),
+        "{:?}",
+        refused.err()
+    );
+    assert_eq!(
+        left,
+        [
+            "node_modules/",
+            "node_modules/a/",
+            "node_modules/a/index.js"
+        ]
+    );
+}
+
 #[test]
 fn a_tree_past_its_ceilings_is_refused_when_the_lock_is_read() {
     let tarball = tar_gz(&[Tarred::File("package/index.js", b"1", 0o644)]);
