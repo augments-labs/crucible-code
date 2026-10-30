@@ -1574,16 +1574,14 @@ def npm_tree(
     own package.json, `top_files` adds to its files, `changes` to a
     location's lock fields (a field changed to None is left out), and `extra`
     to its packages."""
-    top = top if top is not None else {
-        "name": "npx-agent", "version": "3.0.0", "bin": {"npx-agent": "bin/agent.js"},
-        "scripts": {"postinstall": "node setup.js", "test": "node test.js"},
-    }
+    top = top if top is not None else top_manifest()
     own = {
         "package.json": (json.dumps(top).encode(), False),
         "bin/agent.js": (b"#!/usr/bin/env node\nrequire('../lib/run.js');\n", False),
         "lib/run.js": (b"module.exports = 1;\n", False),
         ".gitignore": (b"node_modules\n", False),
-        "node_modules/bundled-dep/package.json": manifest(name="bundled-dep", version="1.0.0"),
+        "node_modules/bundled-dep/package.json": manifest(
+            name="bundled-dep", version="1.0.0", license="ISC", bin={"bundled": "./index.js"}),
         "node_modules/bundled-dep/index.js": (b"// bundled\n", False),
         **(top_files or {}),
     }
@@ -1602,11 +1600,13 @@ def npm_tree(
         BUNDLED: ({"version": "1.0.0", "inBundle": True}, None),
         ALIAS: (
             {"name": "strip-ansi", "version": "7.1.0", "resolved": NPM + "strip-ansi/-/strip-ansi-7.1.0.tgz"},
-            {"package.json": manifest(name="strip-ansi", version="7.1.0"), "index.js": (b"module.exports = s => s;\n", False)},
+            {"package.json": manifest(name="strip-ansi", version="7.1.0", license="MIT"),
+             "index.js": (b"module.exports = s => s;\n", False)},
         ),
         GYP: (
             {"version": "2.0.0", "resolved": NPM + "withgyp/-/withgyp-2.0.0.tgz", "hasInstallScript": True},
-            {"package.json": manifest(name="withgyp", version="2.0.0", scripts={"test": "x"}),
+            {"package.json": manifest(name="withgyp", version="2.0.0", scripts={"test": "x"},
+                                      license={"type": "ISC"}),
              "binding.gyp": (b"{\"targets\": []}\n", False), "src/addon.c": (b"int addon;\n", False)},
         ),
         **(extra or {}),
@@ -1688,6 +1688,7 @@ def expected_lock(tree: dict, platform: str) -> dict:
         fields = tree["lock"]["packages"][location]
         name = fields.get("name", location.removeprefix("node_modules/").rpartition("node_modules/")[2])
         package: dict = {"location": location, "name": name, "version": fields["version"]}
+        package.update(stated(tree, location, name))
         if fields.get("inBundle"):
             package["in_bundle"] = True
         else:
@@ -1699,6 +1700,32 @@ def expected_lock(tree: dict, platform: str) -> dict:
             )
         packages.append(package)
     return {"packages": packages, "unpack_rules": 1}
+
+
+def stated(tree: dict, location: str, name: str) -> dict:
+    """The `license` and `bin` the lock gives the package at `location`, from
+    the package.json among the files it was made of, its holder's for a
+    bundled package: a licence only where it is text, and the programs a
+    `bin` string, a `bin` object or the files under `directories.bin` give,
+    each script without its leading `./`; neither where it gives none."""
+    holder = location if location in tree["files"] else next(
+        held for held in tree["files"] if location.startswith(held + "/"))
+    under = location[len(holder) + 1:]
+    files = {path[len(under) + 1:] if under else path: member for path, member in tree["files"][holder].items()
+             if not under or path.startswith(under + "/")}
+    declared = json.loads(files["package.json"][0])
+    held: dict = {}
+    if isinstance(declared.get("license"), str):
+        held["license"] = declared["license"]
+    given = declared.get("bin")
+    if isinstance(given, str):
+        given = {name.rpartition("/")[2]: given}
+    elif given is None and "bin" in declared.get("directories", {}):
+        directory = declared["directories"]["bin"]
+        given = {path.rpartition("/")[2]: path for path in files if path.startswith(directory + "/")}
+    if given:
+        held["bin"] = {program: script.removeprefix("./") for program, script in given.items()}
+    return held
 
 
 def lock_bytes(lock: dict) -> bytes:
@@ -1743,11 +1770,21 @@ def lay_out_npm(
         (place / platform / "probe.json").write_text(json.dumps(PROBED))
 
 
+def alias_with(**changed: object) -> tuple[dict, dict]:
+    """The aliased package of the default tree, its package.json given
+    `changed` too."""
+    return (
+        {"name": "strip-ansi", "version": "7.1.0", "resolved": NPM + "strip-ansi/-/strip-ansi-7.1.0.tgz"},
+        {"package.json": manifest(name="strip-ansi", version="7.1.0", license="MIT", **changed),
+         "index.js": (b"module.exports = s => s;\n", False)},
+    )
+
+
 def top_manifest(**changed: object) -> dict:
     """The agent's own package.json, with `changed` in place of its fields; a
     field changed to None is left out."""
     held = {
-        "name": "npx-agent", "version": "3.0.0", "bin": {"npx-agent": "bin/agent.js"},
+        "name": "npx-agent", "version": "3.0.0", "bin": {"npx-agent": "bin/agent.js"}, "license": "Apache-2.0",
         "scripts": {"postinstall": "node setup.js", "test": "node test.js"},
     }
     held.update(changed)
@@ -1871,7 +1908,7 @@ def npm_registry(scratch: pathlib.Path, signers: Signers) -> tuple[pathlib.Path,
              npm_side=on(linux, lambda files: file_of(files, agent_js).update(exec=False)),
              built_side=on(linux, lambda files: file_of(files, agent_js).update(exec=True)))
     # A bin a package.json names in another package's files, here the one it
-    # bundles, which npm makes runnable: a package's own bins alone may be.
+    # bundles, which npm makes runnable and the client does not link.
     npm_case(observed, agents, choices, "ownerbin-npm",
              npm_tree(top=top_manifest(bin={"npx-agent": "bin/agent.js", "other": "node_modules/bundled-dep/index.js"})))
     # A bin the lock names and the package.json does not.
@@ -1887,6 +1924,27 @@ def npm_registry(scratch: pathlib.Path, signers: Signers) -> tuple[pathlib.Path,
         ("binmissing-npm", top_manifest(bin={"npx-agent": "bin/missing.js"})),
     ):
         npm_case(observed, agents, choices, agent_id, npm_tree(top=top))
+    # A licence the client would refuse, and programs it would: two whose
+    # names differ only in case, one name at the top of the tree twice, one
+    # declared by two packages below the top and none at it, and one whose
+    # name is no file name. A licence that is not text is left out instead.
+    npm_case(observed, agents, choices, "licence-npm", npm_tree(top=top_manifest(license="MIT\u00e9")))
+    npm_case(observed, agents, choices, "longlicence-npm", npm_tree(top=top_manifest(license="M" * 257)))
+    npm_case(observed, agents, choices, "binfold-npm", npm_tree(
+        top=top_manifest(bin={"npx-agent": "bin/agent.js", "Strip": "lib/run.js"}),
+        extra={ALIAS: alias_with(bin={"strip": "index.js"})}))
+    npm_case(observed, agents, choices, "bintop-npm", npm_tree(extra={ALIAS: alias_with(bin={"npx-agent": "index.js"})}))
+    inner = ALIAS + "/node_modules/inner"
+    npm_case(observed, agents, choices, "bincontested-npm", npm_tree(extra={inner: (
+        {"version": "1.0.0", "resolved": NPM + "inner/-/inner-1.0.0.tgz"},
+        {"package.json": manifest(name="inner", version="1.0.0", bin={"bundled": "i.js"}), "i.js": (b"1\n", False)},
+    )}))
+    npm_case(observed, agents, choices, "binname-npm", npm_tree(top=top_manifest(bin={"npx-agent": "bin/agent.js", "a:b": "lib/run.js"})))
+    # The program below the top of the tree that one at its top settles.
+    npm_case(observed, agents, choices, "binsettled-npm", npm_tree(extra={inner: (
+        {"version": "1.0.0", "resolved": NPM + "inner/-/inner-1.0.0.tgz"},
+        {"package.json": manifest(name="inner", version="1.0.0", bin={"strip": "i.js"}), "i.js": (b"1\n", False)},
+    ), ALIAS: alias_with(bin={"strip": "index.js"})}))
     # Registry ids the job's own directories would collide with, as a file
     # system that folds case names them: Node's, and each other's.
     for agent_id, key in (("node", "node"), ("Node", "upper-node"), ("fold-npm", "fold"), ("FOLD-npm", "fold-two")):
@@ -1925,8 +1983,8 @@ def check_npm(scratch: pathlib.Path, signers: Signers) -> None:
     data, assets = npm_review(scratch, signers, registry, choices, "--dispositions", dispositions)
     entries = {entry["key"]: entry for entry in data["entries"]}
     assert sorted(entries) == [
-        "bindir", "binmany", "binstr", "both", "exec", "extra", "folded", "hash", "libc", "lockbin", "lockdiff",
-        "missing", "nodeagent", "npmignore", "ownerbin", "twice", "unrun",
+        "bindir", "binmany", "binsettled", "binstr", "both", "exec", "extra", "folded", "hash", "libc", "lockbin",
+        "lockdiff", "missing", "nodeagent", "npmignore", "twice", "unrun",
     ], sorted(entries)
 
     entry = entries["nodeagent"]
@@ -1957,10 +2015,18 @@ def check_npm(scratch: pathlib.Path, signers: Signers) -> None:
     linux = json.loads((assets / targets["linux-x86_64"]["lock"]["sha256"]).read_bytes())
     alias_tarball = tree["tarballs"][5]
     assert {"location": ALIAS, "name": "strip-ansi", "version": "7.1.0", "url": NPM + "strip-ansi/-/strip-ansi-7.1.0.tgz",
-            "size": len(alias_tarball), "sha512": hashlib.sha512(alias_tarball).hexdigest(),
-            "files": 2, "unpacked": len(manifest(name="strip-ansi", version="7.1.0")[0]) + len(b"module.exports = s => s;\n")
+            "size": len(alias_tarball), "sha512": hashlib.sha512(alias_tarball).hexdigest(), "license": "MIT",
+            "files": 2, "unpacked": len(manifest(name="strip-ansi", version="7.1.0", license="MIT")[0])
+            + len(b"module.exports = s => s;\n")
             } in linux["packages"], linux["packages"]
-    assert {"location": BUNDLED, "name": "bundled-dep", "version": "1.0.0", "in_bundle": True} in linux["packages"], linux
+    assert {"location": BUNDLED, "name": "bundled-dep", "version": "1.0.0", "in_bundle": True, "license": "ISC",
+            "bin": {"bundled": "index.js"}} in linux["packages"], linux
+    # Each package's licence as its package.json states it, where it is text,
+    # and the programs it declares.
+    held = {package["location"]: package for package in linux["packages"]}
+    assert held[TOP]["license"] == "Apache-2.0" and held[TOP]["bin"] == {"npx-agent": "bin/agent.js"}, held[TOP]
+    assert held[ALIAS]["license"] == "MIT" and "bin" not in held[ALIAS], held[ALIAS]
+    assert "license" not in held[GYP] and "license" not in held[OPTIONAL], "a licence that is not text is not written"
     own = next(package for package in linux["packages"] if package["location"] == TOP)
     assert own["files"] == 6, "a bundled package's files are counted in the tarball that holds it"
     assert [package["location"] for package in linux["packages"]] == [OPTIONAL, TOP, BUNDLED, ALIAS, GYP], linux
@@ -2013,15 +2079,30 @@ def check_npm(scratch: pathlib.Path, signers: Signers) -> None:
     dropped(data, "unrun-npm", "linux-x86_64", TOP + "/bin/agent.js", "runnable")
     for platform in ("linux-x86_64", "darwin-aarch64"):
         dropped(data, "lockbin-npm", platform, run_js, "runnable")
-        dropped(data, "ownerbin-npm", platform, BUNDLED + "/index.js", "runnable")
-    for key in ("lockbin", "ownerbin"):
-        assert [target["platform"] for target in entries[key]["targets"]] == ["windows-x86_64"], key
+    # A program whose script lies in the package it bundles is one the
+    # client refuses, wherever it is installed.
+    for platform in NODE_BUILT:
+        dropped(data, "ownerbin-npm", platform, TOP, "other", "another package's location")
+    assert [target["platform"] for target in entries["lockbin"]["targets"]] == ["windows-x86_64"], "lockbin"
     for key in ("missing", "hash", "extra", "npmignore", "lockdiff", "twice", "folded", "unrun"):
         assert sorted(t["platform"] for t in entries[key]["targets"]) == ["darwin-aarch64", "windows-x86_64"], key
     for key in ("binstr", "binmany", "bindir"):
         assert {t["bin"] for t in entries[key]["targets"]} == {TOP + "/bin/agent.js"}, (key, entries[key]["targets"])
+    # A bin under directories.bin is each file there, named as the file is.
+    bindir = json.loads((assets / entries["bindir"]["targets"][0]["lock"]["sha256"]).read_bytes())["packages"]
+    assert next(p for p in bindir if p["location"] == TOP)["bin"] == {"agent.js": "bin/agent.js"}, bindir
+    settled = json.loads((assets / entries["binsettled"]["targets"][0]["lock"]["sha256"]).read_bytes())["packages"]
+    assert {p["location"]: p.get("bin") for p in settled}[ALIAS + "/node_modules/inner"] == {"strip": "i.js"}, settled
+    for platform in NODE_BUILT:
+        dropped(data, "licence-npm", platform, TOP, "licence", "printable ASCII")
+        dropped(data, "longlicence-npm", platform, TOP, "licence", "256")
+        dropped(data, "binfold-npm", platform, ALIAS, TOP, "differs only in case")
+        dropped(data, "bintop-npm", platform, "npx-agent", "top of the tree")
+        dropped(data, "bincontested-npm", platform, "bundled", "none at the top")
+        dropped(data, "binname-npm", platform, "a:b", "not one file name")
     dropped(data, "binnone-npm", "linux-x86_64", "2 bins", "none npx-agent")
-    dropped(data, "binmissing-npm", "linux-x86_64", TOP + "/bin/missing.js", "not a file in the tree")
+    for platform in NODE_BUILT:
+        dropped(data, "binmissing-npm", platform, TOP + "/bin/missing.js", "not a file in the tree")
     dropped(data, "node", None, "node")
     dropped(data, "Node", None, "observed directory")
     for agent_id in ("fold-npm", "FOLD-npm"):
@@ -2092,10 +2173,11 @@ def check_npm_recheck(scratch: pathlib.Path, data: dict, assets: pathlib.Path) -
     hashes = [item["sha512"] for item in listed]
     assert len(hashes) == len(set(hashes)), "a tarball is listed once"
     alias = next(item for item in listed if item["url"].endswith("strip-ansi-7.1.0.tgz"))
-    # Every case kept shares the main agent's tarballs but the bin cases',
-    # whose own package differs, and the libc case's glibc build: five of the
-    # main tree, one each of the bin cases' and one of the glibc build.
-    assert len(listed) == 9, listed
+    # Every case kept shares the main agent's tarballs but those whose own
+    # package differs, and adds those it adds: four of the main tree, one of
+    # each kept bin case's own package, one of the glibc build, and the
+    # settled program's case's aliased package and the one it nests.
+    assert len(listed) == 10, (len(listed), sorted(item["url"].rpartition("/")[2] for item in listed))
     for status, proposed in ((404, True), (410, True), (503, False)):
         results = written(scratch, f"results-{status}.json", {alias["sha512"]: status})
         out = scratch / f"recheck-{status}.json"
@@ -2343,7 +2425,7 @@ def check_npm_tarballs(scratch: pathlib.Path) -> None:
         for extra in (0, 1):
             installed = [
                 {"bundled": False, "location": f"node_modules/p{index}", "name": f"p{index}", "version": "1.0.0",
-                 "url": f"{NPM}p{index}/-/p{index}-1.0.0.tgz",
+                 "url": f"{NPM}p{index}/-/p{index}-1.0.0.tgz", "manifest": {},
                  "tarball": {"files": 1, "sha512": bytes(64), "size": 1, "unpacked": 1,
                              field: ceiling // 2 + extra * index}}
                 for index in (0, 1)

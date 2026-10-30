@@ -149,8 +149,15 @@ holds it. A target's lock, the asset a client unpacks its tree from, lists
 every package installed on it, in the lock's order, an optional one whose
 `os`, `cpu` or `libc` refuses the platform left out (Linux runners are
 glibc, and a `libc` refuses any other system), decided from the lock as npm
-decides before npm runs; it is named by its SHA-256, so
-targets with the same tree share one. The target is dropped unless the job's
+decides before npm runs, each with the licence its package.json states, where
+it states one as text, and the programs it declares by `bin` or
+`directories.bin`; it is named by its SHA-256, so targets with the same tree
+share one. A licence or programs the client would refuse drop the target: a
+licence that is not printable ASCII of at most 256 bytes, a program whose name
+is not one file name, whose script lies in another package or is not a file
+the tree holds, two whose names differ only in case, one two packages at the
+top of the tree declare or two below it and none at it, and more than 64 in
+one package or 1,024 in the tree. The target is dropped unless the job's
 `tree/lock.json` is that lock byte for byte and the tree `npm ci` built
 (`tree/npm.json`) and the one `unpack-check` built from the lock
 (`tree/unpack-check.json`) agree on every file under an installed location,
@@ -343,6 +350,11 @@ EXTENDED_BYTES = 64 << 10
 # names, each component held once, may hold, 64 a name on average.
 TREE_NAMES = 1 << 17
 TARBALL_NAME_BYTES = 64 * TREE_NAMES
+# The longest licence a package's lock entry may give, and the most programs
+# one package and one tree may declare, as the client reads them.
+LICENSE_BYTES = 256
+PACKAGE_PROGRAMS = 64
+TREE_PROGRAMS = 1024
 NAME_COMPONENT_BYTES = 255
 NAME_COMPONENTS = 64
 # The devices Windows takes a name for whatever follows it after a dot,
@@ -1885,7 +1897,8 @@ def tarball_of(place: pathlib.Path, wanted: set[str], location: str, locations: 
     """The tarball under `place`, of the package at `location`, as npm
     unpacks it and the client reads it: its SHA-512, SHA-1 and size; the
     files and bytes it writes, its first component stripped and a member
-    with nothing after it skipped, directories and links writing nothing;
+    with nothing after it skipped, directories and links writing nothing,
+    and the names it writes, each component held once;
     and the `package.json` and whether a `binding.gyp` lies at each package
     root in `wanted` ("" its own, or a bundled package's below it).
 
@@ -1935,6 +1948,7 @@ def tarball_of(place: pathlib.Path, wanted: set[str], location: str, locations: 
         children: dict[tuple[int, str], int] = {}
         spelled_at: list[str] = [""]
         files_at: list[bool] = [False]
+        parents: list[int] = [0]
         held_bytes = 0
         # What the headers read so far say of the member after them, by type.
         ahead: dict[bytes, bytes] = {}
@@ -2039,6 +2053,7 @@ def tarball_of(place: pathlib.Path, wanted: set[str], location: str, locations: 
                         child = children[(node, part.casefold())] = len(files_at)
                         spelled_at.append(part)
                         files_at.append(depth == len(parts))
+                        parents.append(node)
                     elif depth == len(parts) or files_at[child] or spelled_at[child] != part:
                         raise Dropped(f"the tarball writes {shown(clipped(path))} twice, or as a file and "
                                       "a directory, once case is folded, or under a directory spelled "
@@ -2070,11 +2085,52 @@ def tarball_of(place: pathlib.Path, wanted: set[str], location: str, locations: 
         "files": files,
         "gyps": gyps,
         "manifests": manifests,
+        "names": {"children": children, "files_at": files_at, "parents": parents, "spelled_at": spelled_at},
         "sha1": sha1.digest(),
         "sha512": sha512.digest(),
         "size": size,
         "unpacked": unpacked,
     }
+
+
+def tarball_node(tarball: dict, path: str) -> int | None:
+    """The name `tarball` writes at `path`, spelled as it is written, or
+    None where it writes none there."""
+    names = tarball["names"]
+    node = 0
+    for part in path.split("/"):
+        node = names["children"].get((node, part.casefold()))
+        if node is None or names["spelled_at"][node] != part:
+            return None
+    return node
+
+
+def tarball_holds(tarball: dict, path: str) -> bool:
+    """Whether `tarball` writes a file at `path`."""
+    node = tarball_node(tarball, path)
+    return node is not None and tarball["names"]["files_at"][node]
+
+
+def tarball_files_under(tarball: dict, directory: str) -> set[str]:
+    """Every file `tarball` writes below `directory`, at any depth."""
+    names = tarball["names"]
+    top = tarball_node(tarball, directory)
+    if top is None or names["files_at"][top]:
+        return set()
+    below: dict[int, list[int]] = {}
+    for node in range(1, len(names["parents"])):
+        below.setdefault(names["parents"][node], []).append(node)
+    found: set[str] = set()
+    waiting = [(top, directory)]
+    while waiting:
+        node, path = waiting.pop()
+        for child in below.get(node, []):
+            held = f"{path}/{names['spelled_at'][child]}"
+            if names["files_at"][child]:
+                found.add(held)
+            else:
+                waiting.append((child, held))
+    return found
 
 
 def integrity_agrees(value: object, tarball: dict) -> None:
@@ -2267,12 +2323,117 @@ def npm_installed(resolution: dict, platform: str) -> list[dict]:
     return installed
 
 
+def npm_licence(item: dict) -> str | None:
+    """The licence the package.json of `item` states, exactly as it states
+    it, where it states one as text; a legacy object or list of licences is
+    none. Refused where the client would refuse it: more than
+    `LICENSE_BYTES` long, or anything but printable ASCII."""
+    licence = item["manifest"].get("license")
+    if not isinstance(licence, str) or not licence:
+        return None
+    if len(licence) > LICENSE_BYTES or any(not " " <= character <= "~" for character in licence):
+        raise Dropped(f"{clipped(item['location'])} gives a licence that is not printable ASCII of at most "
+                      f"{LICENSE_BYTES} bytes, which the client refuses")
+    return licence
+
+
+def npm_programs(item: dict, tarball: dict) -> dict[str, str]:
+    """The programs the package.json of `item` declares, by name, each with
+    its script relative to the package, as `manifest_bins` reads them from
+    the files `tarball`, its own or its holder's, writes. A script that is not
+    a relative path inside the package is left out, as npm links nothing for
+    it. Refused where the client would refuse the lock: a name that is not
+    one file name, a script it does not write as given, one in another
+    package's location or not a file in the tree, and more than
+    `PACKAGE_PROGRAMS` of them."""
+    location = item["location"]
+    under = location + "/"
+    declared = manifest_bins(item["manifest"], item["name"], location, set()) or {}
+    directory = item["manifest"].get("directories")
+    if item["manifest"].get("bin") is None and isinstance(directory, dict) and isinstance(directory.get("bin"), str):
+        try:
+            listed = f"{location}/{relative(directory['bin'], 'its directories.bin')}"
+        except Dropped:
+            listed = None
+        if listed is not None:
+            files = tarball_files_under(tarball, listed)
+            declared = manifest_bins(item["manifest"], item["name"], location, files) or {}
+    if len(declared) > PACKAGE_PROGRAMS:
+        raise Dropped(f"{clipped(location)} declares more than {PACKAGE_PROGRAMS} programs, which the client refuses")
+    programs: dict[str, str] = {}
+    for name, script in declared.items():
+        try:
+            relative(script, "its bin")
+        except Dropped:
+            continue  # npm links no bin it cannot place
+        written = None
+        if name and "/" not in name:
+            try:
+                written = npm_written(name)
+            except Dropped:
+                pass
+        if written != name:
+            raise Dropped(f"{clipped(location)} declares the program {shown(clipped(name))}, whose name is not one "
+                          "file name the client writes")
+        try:
+            script = npm_written(script)
+        except Dropped:
+            raise Dropped(f"{clipped(location)} declares the program {shown(clipped(name))}, whose script the "
+                          "client does not write as it is given") from None
+        if script.split("/")[0].casefold() == "node_modules":
+            raise Dropped(f"{clipped(location)} declares the program {shown(clipped(name))}, whose script lies in "
+                          "another package's location, which the client refuses")
+        held = under + script
+        if len(held) > NPM_PATH_BYTES or not tarball_holds(tarball, held):
+            raise Dropped(f"{clipped(location)} declares the program {shown(clipped(name))}, whose script "
+                          f"{shown(clipped(held))} is not a file in the tree")
+        programs[name] = script
+    return programs
+
+
+def npm_linked(programs: list[tuple[str, dict[str, str]]]) -> None:
+    """Refuse the programs of a tree, each package's location with what it
+    declares in the lock's order, where the client would refuse to link them
+    into `.bin`: more than `TREE_PROGRAMS` in all, two names that differ only
+    in case, one name two packages at the top of the tree declare, or one two
+    packages below the top declare and none at the top settles."""
+    claims: dict[str, dict] = {}
+    count = 0
+    for location, declared in programs:
+        after = npm_after_name(location.removeprefix("node_modules/")) if location.startswith("node_modules/") else None
+        top = after == ""
+        for name in declared:
+            count += 1
+            if count > TREE_PROGRAMS:
+                raise Dropped(f"the tree declares more than {TREE_PROGRAMS} programs, which the client refuses")
+            claim = {"name": name, "location": location, "top": top, "contested": False}
+            held = claims.setdefault(name.casefold(), claim)
+            if held is claim:
+                continue
+            if held["name"] != name:
+                raise Dropped(f"{clipped(location)} declares the program {shown(clipped(name))}, and "
+                              f"{clipped(held['location'])} one whose name differs only in case")
+            if held["top"] and top:
+                raise Dropped(f"{clipped(location)} and {clipped(held['location'])} both declare the program "
+                              f"{shown(clipped(name))} at the top of the tree")
+            if top:
+                claims[name.casefold()] = claim
+            elif not held["top"]:
+                held["contested"] = True
+    for claim in claims.values():
+        if claim["contested"]:
+            raise Dropped(f"packages below the top of the tree declare the program {shown(clipped(claim['name']))}, "
+                          "and none at the top settles which runs")
+
+
 def npm_lock(installed: list[dict]) -> bytes:
     """The lock asset a client unpacks the tree from: every package installed,
     in the lock's order, a bundled one marked as such and every other with the
-    tarball the intake checked, compact with sorted keys; refused where its
-    tarballs write more files or bytes together, or hold more bytes, than the
-    client unpacks for one tree."""
+    tarball the intake checked, each with the licence and the programs its
+    package.json gives, compact with sorted keys; refused where its tarballs
+    write more files or bytes together, or hold more bytes, than the client
+    unpacks for one tree, or where the client would refuse a licence or the
+    programs."""
     held_tarballs = [item["tarball"] for item in installed if not item["bundled"]]
     for field, ceiling, said in (
         ("files", TREE_FILES, "write more than {} files"),
@@ -2281,9 +2442,18 @@ def npm_lock(installed: list[dict]) -> bytes:
     ):
         if sum(tarball[field] for tarball in held_tarballs) > ceiling:
             raise Dropped(f"its tarballs {said.format(ceiling)} together, more than a client unpacks for one tree")
+    by_location = {item["location"]: item for item in installed}
     packages = []
+    programs = []
     for item in installed:
         package: dict = {"location": item["location"], "name": item["name"], "version": item["version"]}
+        licence = npm_licence(item)
+        if licence is not None:
+            package["license"] = licence
+        declared = npm_programs(item, by_location[item.get("holder", item["location"])]["tarball"])
+        if declared:
+            package["bin"] = declared
+            programs.append((item["location"], declared))
         if item["bundled"]:
             package["in_bundle"] = True
         else:
@@ -2296,6 +2466,7 @@ def npm_lock(installed: list[dict]) -> bytes:
                 url=item["url"],
             )
         packages.append(package)
+    npm_linked(programs)
     held = compact({"packages": packages, "unpack_rules": UNPACK_RULES})
     if len(held) > ASSET_BYTES:
         raise Dropped(f"its lock is larger than a catalog asset may be, {ASSET_BYTES} bytes")
