@@ -251,7 +251,7 @@ byte, with no copy to fall back on; each is unpacked to where the lock installs
 its package, and none is kept. The install writes `preload.cjs` at the top of
 the version, which Node is given before the agent's script and which refuses a
 package the version's tree does not hold, and an empty `.bin`, which goes last
-on the agent's `PATH`. A tarball that is not its pin, or that the registry no
+on the agent's `PATH`; only you may change either. A tarball that is not its pin, or that the registry no
 longer has, puts nothing in place; a host that answers 404 or 410 is said to be
 likely permanent, since the version can likely no longer be installed. An entry
 that gives Node arguments of its own, or has an install script run at install,

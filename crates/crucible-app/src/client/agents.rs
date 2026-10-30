@@ -1953,7 +1953,8 @@ const SCRIPTS: usize = 16;
 /// The files of `tree` installed into `staging`: each tarball
 /// downloaded by [`agent_download::tarballs`] into a directory of the
 /// staging's own, unpacked from there and the directory removed, so it is not
-/// committed; then the preload, written new, and `.bin`, made empty.
+/// committed; then the preload, written new and writable by its owner alone,
+/// and `.bin`, made empty and reachable by its owner alone.
 async fn noded(
     source: &Source,
     tree: agent_download::Tree<'_>,
@@ -1969,14 +1970,25 @@ async fn noded(
         .unpack(&tarballs, root)
         .map_err(DownloadError::Tree)?;
     std::fs::remove_dir_all(&tarballs).map_err(DownloadError::Write)?;
-    // Made new, so nothing the tree unpacked to its name is written through.
-    let mut preload = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
+    // Made new, so nothing the tree unpacked to its name is written through,
+    // and with the modes the tree's own files and directories are, whatever
+    // the umask would allow: Node loads the preload before the agent.
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o644);
+    let mut preload = options
         .open(root.join(PRELOAD))
         .map_err(DownloadError::Write)?;
     std::io::Write::write_all(&mut preload, Preload::bytes()).map_err(DownloadError::Write)?;
-    std::fs::create_dir(root.join(BIN)).map_err(DownloadError::Write)?;
+    let bin = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    let bin = {
+        let mut bin = bin;
+        std::os::unix::fs::DirBuilderExt::mode(&mut bin, 0o700);
+        bin
+    };
+    bin.create(root.join(BIN)).map_err(DownloadError::Write)?;
     files.extend([
         Preload::file(),
         File {

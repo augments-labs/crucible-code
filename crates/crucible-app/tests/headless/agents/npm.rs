@@ -3,8 +3,8 @@
 //! count, the whole size, every host the install reaches, the licence, each
 //! install script left unrun and how the agent is started; Node and every
 //! tarball are fetched only after the yes, each tarball held to its SHA-512,
-//! and the version is committed with its tree, its preload and an empty `.bin`
-//! whole or not at all. A tarball that is not its pin commits nothing, a
+//! and the version is committed with its tree, its preload and an empty `.bin`,
+//! which only their owner may change, whole or not at all. A tarball that is not its pin commits nothing, a
 //! tarball the registry answers 410 for says the version can likely no longer
 //! be installed, and an offer that gives Node arguments of its own is refused
 //! before anything is asked.
@@ -302,6 +302,32 @@ fn a_release_a_pinned_node_starts_is_installed_after_the_yes_and_started_under_i
         shape(&kept)
     );
     assert_eq!(bench.server.asked(), catalog_and_lock(&tree));
+    Ok(())
+}
+
+/// The preload Node loads before the agent's script is written so no one but
+/// its owner may change it, and `.bin` made so only its owner may reach it,
+/// whatever the umask would have allowed.
+#[cfg(unix)]
+#[test]
+fn the_preload_and_bin_of_an_installed_tree_are_made_with_their_own_modes() -> Result<(), Failed> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let (bench, _, tree) = bench("agents-door-npm-modes")?;
+    bench.server.serve(TARBALL, Reply::Body(tree.tarball));
+    let mut front = answering(&bench.server, Some("Install"));
+
+    let (outcome, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+
+    assert!(outcome.is_ok(), "{}", shape(&outcome));
+    let root = version(&bench);
+    let mode = |path: &str| -> Result<u32, Failed> {
+        Ok(fs::symlink_metadata(root.join(path))?.permissions().mode() & 0o777)
+    };
+    let preload = mode(PRELOAD)?;
+    assert_eq!(preload & 0o022, 0, "the preload is {preload:o}");
+    assert_eq!(preload & 0o111, 0, "the preload is {preload:o}");
+    assert_eq!(mode(BIN)?, 0o700, "the mode of .bin");
     Ok(())
 }
 
