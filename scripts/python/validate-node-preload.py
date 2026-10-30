@@ -9,9 +9,11 @@ and imports a module named `planted`, which is installed in a `node_modules`
 above the store and in `HOME/.node_modules`, where Node's walk up would find
 it. It requires and imports `linkout` too, a link in the tree into a version
 beside it whose name extends the tree's own, requires `.\\planted`, which on
-POSIX names a file planted above the store, requires `file:planted`, which
-there names one too, imports a `data:` URL, and imports the `file:` URL of a
-module inside the tree, which still loads. Each
+POSIX names a file planted above the store, requires `file:planted`,
+`file:/planted`, `file:///planted` and `file://planted`, which there name ones
+planted too, imports a `data:` URL and the `file:` URL of a module above the
+store, and imports the `file:` URL of a module inside the tree, which still
+loads. Each
 planted copy writes a marker file when it runs. The script does the same again
 in a worker and in a child started by `fork`.
 
@@ -78,6 +80,7 @@ DATA = "data:text/javascript,export default 1"
 PROBE = r"""
 'use strict';
 const DATA = __DATA__;
+const OUTSIDE = __OUTSIDE__;
 function caught(load) {
   try {
     load();
@@ -92,6 +95,9 @@ module.exports = async function probe() {
     planted: caught(() => require('planted')),
     backslashed: caught(() => require('.\\planted')),
     filed: caught(() => require('file:planted')),
+    filed_path: caught(() => require('file:/planted')),
+    filed_root: caught(() => require('file:///planted')),
+    filed_host: caught(() => require('file://planted')),
     linked: caught(() => require('linkout')),
     inside: caught(() => require('inside')),
   };
@@ -112,6 +118,12 @@ module.exports = async function probe() {
     seen.imported_data = { code: 'loaded' };
   } catch (error) {
     seen.imported_data = { code: error.code, message: error.message };
+  }
+  try {
+    await import(OUTSIDE);
+    seen.imported_outside_url = { code: 'loaded' };
+  } catch (error) {
+    seen.imported_outside_url = { code: error.code, message: error.message };
   }
   try {
     await import(require('node:url').pathToFileURL(require.resolve('inside')).href);
@@ -199,6 +211,11 @@ def module(directory: pathlib.Path, body: str) -> None:
     (directory / "index.js").write_text(body, encoding="utf-8")
 
 
+def outside(root: pathlib.Path) -> pathlib.Path:
+    """A module above the store, which the probe imports by its `file:` URL."""
+    return root / "outside.mjs"
+
+
 def layout(root: pathlib.Path, preload: str, name: str) -> tuple[pathlib.Path, pathlib.Path, pathlib.Path]:
     """A store under `root` with one version, and modules planted around it:
     the preload's path, the agent's script and the directory markers go to."""
@@ -210,7 +227,7 @@ def layout(root: pathlib.Path, preload: str, name: str) -> tuple[pathlib.Path, p
     (version / name).write_text(preload, encoding="utf-8")
     for file, body in [
         ("cli.js", AGENT),
-        ("probe.cjs", PROBE),
+        ("probe.cjs", PROBE.replace("__OUTSIDE__", json.dumps(outside(root).as_uri()))),
         ("worker.cjs", WORKER),
         ("child.cjs", CHILD),
     ]:
@@ -240,12 +257,24 @@ def layout(root: pathlib.Path, preload: str, name: str) -> tuple[pathlib.Path, p
             PLANTED % (json.dumps(str(markers)), json.dumps("above-store-backslash")),
             encoding="utf-8",
         )
+        # A file in a directory named `file:`, which `require('file:/planted')`
+        # and its spellings with more slashes walk up to as a package too.
+        (root / "node_modules" / "file:").mkdir()
+        (root / "node_modules" / "file:" / "planted.js").write_text(
+            PLANTED % (json.dumps(str(markers)), json.dumps("above-store-file-path")),
+            encoding="utf-8",
+        )
         # A file whose name begins `file:`, which `require('file:planted')`
         # walks up to as a package: only a `file:` URL with a path is one.
         (root / "node_modules" / "file:planted.js").write_text(
             PLANTED % (json.dumps(str(markers)), json.dumps("above-store-file")),
             encoding="utf-8",
         )
+    outside(root).write_text(
+        "import { writeFileSync } from 'node:fs';\n"
+        f"writeFileSync({json.dumps(str(markers / 'outside-url'))}, 'ran');\n",
+        encoding="utf-8",
+    )
     return version / name, agent / "cli.js", markers
 
 
@@ -297,9 +326,14 @@ def confined(node: str, preload: pathlib.Path, script: pathlib.Path, root: pathl
         problems += refused(got, "linked", "MODULE_NOT_FOUND", "linkout", where)
         problems += refused(got, "imported_linked", "ERR_MODULE_NOT_FOUND", "linkout", where)
         problems += refused(got, "imported_data", "ERR_MODULE_NOT_FOUND", DATA, where)
+        problems += refused(got, "imported_outside_url", "ERR_MODULE_NOT_FOUND", outside(root).as_uri(), where)
         if os.name != "nt":
             problems += refused(got, "backslashed", "MODULE_NOT_FOUND", ".\\planted", where)
             problems += refused(got, "filed", "MODULE_NOT_FOUND", "file:planted", where)
+            # Whichever of Node or the preload refuses these, none loads.
+            for field in ["filed_path", "filed_root", "filed_host"]:
+                if (got.get(field) or {}).get("code") != "MODULE_NOT_FOUND":
+                    problems.append(f"{where}: {field} gave {(got.get(field) or {}).get('code')!r}, not MODULE_NOT_FOUND")
         for field in ["inside", "imported_inside", "imported_inside_url"]:
             if (got.get(field) or {}).get("code") != "loaded":
                 problems.append(f"{where}: the module inside the tree did not load: {got.get(field)}")
