@@ -30,6 +30,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import tracemalloc
 import warnings
 import zipfile
 
@@ -872,6 +873,44 @@ def claimed(built: tuple[bytes, dict], *, entries: int | None = None, size: int 
     return content[:end] + record + locator + final, listing
 
 
+def decoyed(built: tuple[bytes, dict], entries: int) -> tuple[bytes, dict]:
+    """The zip64 wheel `built` (as `claimed` writes it) with a second zip64
+    record, claiming `entries` members, put just before its locator, where
+    `zipfile` reads one, while the locator still points at the first."""
+    content, listing = built
+    locator = content.rindex(b"PK\x06\x07")
+    first = locator - 56
+    record = bytearray(content[first:locator])
+    record[24:40] = struct.pack("<QQ", entries, entries)
+    return content[:locator] + bytes(record) + content[locator:], listing
+
+
+def commented(built: tuple[bytes, dict]) -> tuple[bytes, dict]:
+    """The wheel `built` with a zip comment after its end record."""
+    held = io.BytesIO(built[0])
+    with zipfile.ZipFile(held, "a") as archive_file:
+        archive_file.comment = b"a comment"
+    return held.getvalue(), built[1]
+
+
+def bomb(inflated: int) -> bytes:
+    """The agent's own wheel with an `entry_points.txt` that deflates to a
+    little and inflates to `inflated` bytes."""
+    held = io.BytesIO()
+    dist = "pyagent-1.4.0.dist-info"
+    with zipfile.ZipFile(held, "w", zipfile.ZIP_DEFLATED) as archive_file:
+        archive_file.writestr(f"{dist}/METADATA", "Metadata-Version: 2.1\nName: pyagent\nVersion: 1.4.0\n")
+        info = zipfile.ZipInfo(f"{dist}/entry_points.txt", date_time=(1980, 1, 1, 0, 0, 0))
+        info.compress_type = zipfile.ZIP_DEFLATED
+        with archive_file.open(info, "w") as member:
+            member.write(CONSOLE.encode())
+            chunk = b"#" * (1 << 20)
+            for _ in range(inflated >> 20):
+                member.write(chunk)
+        archive_file.writestr(f"{dist}/RECORD", "")
+    return held.getvalue()
+
+
 def twice(built: tuple[bytes, dict], member: str, content: bytes) -> tuple[bytes, dict]:
     """The wheel `built` with a second member named `member`."""
     held = io.BytesIO(built[0])
@@ -1033,7 +1072,16 @@ def uvx_registry(scratch: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
         ("datadir-agent", [own(wheel=wheel("pyagent", "1.4.0", console=CONSOLE, extra={"PyAgent-1.4.0.DATA/scripts/x": b"x"}))], {}),
         # The central directory's own record is held to the ceilings before it is read.
         ("entries-agent", [own(wheel=claimed(own()["wheel"], entries=(1 << 20) + 1))], {}),
-        ("directory-agent", [own(wheel=claimed(own()["wheel"], size=(64 << 20) + 1))], {}),
+        ("directory-agent", [own(wheel=claimed(own()["wheel"], size=46 * (1 << 20) + 1))], {}),
+        # The zip64 record checked is the one zipfile reads, just before the locator.
+        ("decoy-agent", [own(wheel=decoyed(claimed(own()["wheel"]), (1 << 20) + 1))], {}),
+        ("comment-agent", [own(wheel=commented(own()["wheel"]))], {}),
+        ("zip64ok-agent", [own(wheel=claimed(own()["wheel"]))], {}),
+        # Two members the client takes for one: a case or a leading ./ apart.
+        ("case-agent", [own(wheel=twice(own()["wheel"], "PyAgent/__init__.py", b"# again\n"))], {}),
+        ("dotslash-agent", [own(wheel=twice(own()["wheel"], "./pyagent/__init__.py", b"# again\n"))], {}),
+        # A report that installs more packages than a target may.
+        ("many-agent", [own()] + [sdist(f"dep{index}-1.0.tar.gz", f"dep{index}", "1.0") for index in range(256)], {}),
         # A `[DEFAULT]` section is a section, not defaults for console_scripts.
         ("default-agent", [own(wheel=wheel("pyagent", "1.4.0", console="[DEFAULT]\npyagent = pyagent.acp:main\n[console_scripts]\n"))], {}),
         ("twice-agent", [own(wheel=twice(own()["wheel"], "pyagent-1.4.0.dist-info/entry_points.txt", b"[console_scripts]\npyagent = other:main\n"))], {}),
@@ -1090,7 +1138,7 @@ def check_uvx(scratch: pathlib.Path) -> None:
     pins = pinned_interpreters(scratch)
     data, assets = review(scratch, "--interpreters", pins, registry=registry, choices=choices)
     entries = {entry["key"]: entry for entry in data["entries"]}
-    assert sorted(entries) == ["both", "pyagent"], sorted(entries)
+    assert sorted(entries) == ["both", "pyagent", "zip64ok"], sorted(entries)
     assert entries["both"]["kind"] == "binary", "an agent that lists a binary is a binary agent"
 
     entry = entries["pyagent"]
@@ -1180,7 +1228,13 @@ def check_uvx(scratch: pathlib.Path) -> None:
     dropped(data, "noexec-agent", "linux-x86_64", "python/bin/python3.12", "not runnable")
     dropped(data, "noprogram-agent", "linux-x86_64", "python/bin/python3.12", "not a file")
     dropped(data, "entries-agent", "linux-x86_64", OWN, "central directory", str((1 << 20)))
-    dropped(data, "directory-agent", "linux-x86_64", OWN, "central directory", str(64 << 20))
+    dropped(data, "directory-agent", "linux-x86_64", OWN, "central directory", str(46 * (1 << 20)))
+    dropped(data, "decoy-agent", "linux-x86_64", OWN, "central directory", "zip64")
+    dropped(data, "comment-agent", "linux-x86_64", OWN, "comment")
+    assert [target["platform"] for target in entries["zip64ok"]["targets"]] == ["linux-x86_64"], "a zip64 wheel within the ceilings reads"
+    dropped(data, "case-agent", "linux-x86_64", OWN, "PyAgent/__init__.py", "twice")
+    dropped(data, "dotslash-agent", "linux-x86_64", OWN, "pyagent/__init__.py", "twice")
+    dropped(data, "many-agent", "linux-x86_64", "more than 256 packages")
     dropped(data, "default-agent", "linux-x86_64", "no console script pyagent")
     dropped(data, "twice-agent", "linux-x86_64", "entry_points.txt", "twice")
     dropped(data, "bigep-agent", "linux-x86_64", "entry_points.txt", str(64 << 10))
@@ -1258,6 +1312,27 @@ def check_uvx_interpreters(scratch: pathlib.Path) -> None:
         )
         assert ran.returncode == 1 and words in ran.stderr, f"{name}: {ran.returncode} {ran.stderr!r} lacks {words!r}"
         assert "Traceback" not in ran.stderr, ran.stderr
+
+
+def check_uvx_bomb() -> None:
+    """An `entry_points.txt` that inflates past its ceiling is refused having
+    inflated no more than the ceiling: the budget counts the stored bytes, so
+    only the bounded read keeps a deflate bomb out of memory."""
+    intake_module = load_intake()
+    inflated = 256 << 20
+    content = bomb(inflated)
+    assert len(content) < (1 << 20), len(content)
+    tracemalloc.start()
+    try:
+        intake_module.wheel_read(io.BytesIO(content), "pyagent")
+    except intake_module.Dropped as failed:
+        refused = str(failed)
+    else:
+        refused = ""
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert "entry_points.txt" in refused and str(intake_module.ENTRY_POINTS_BYTES) in refused, refused
+    assert peak < 16 << 20, f"reading the bomb held {peak} bytes"
 
 
 def check_uvx_tags() -> None:
@@ -1347,6 +1422,7 @@ def main() -> int:
             ("uvx", lambda: check_uvx(scratch)),
             ("uvx interpreters", lambda: check_uvx_interpreters(scratch)),
             ("uvx tags", check_uvx_tags),
+            ("uvx bomb", check_uvx_bomb),
             ("uvx render", lambda: check_uvx_render(scratch)),
         ]
         for name, check in checks:

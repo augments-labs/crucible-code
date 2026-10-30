@@ -76,9 +76,11 @@ names, when a wheel holds a part of `.data` but `purelib` or `platlib`, which
 the client does not install, when the agent's own wheel names no console
 script by the package's name as `module:attr`, when an interpreter file lies
 outside `python/` or a wheel's outside `site/`, when two of its artifacts
-list one path, when a wheel lists one member twice, or when a wheel's own
-record claims more members or a larger central directory than the stated
-ceilings. A package pip found only as a source distribution drops its target
+list one path, when a wheel lists one member twice (a leading `./` removed
+and case folded, as the client compares names), when a wheel does not end as
+a wheel ends (its end record last, with no comment, and any zip64 record just
+before its locator, which points at it), or when that record claims more
+members or a larger central directory than the stated ceilings. A package pip found only as a source distribution drops its target
 with a `build` list naming each one, clipped as a reason is, so it waits for
 a build at review. An interpreter and its wheels are never marked for
 mirroring.
@@ -190,8 +192,10 @@ WHEELS = 256
 REPORT_BYTES = 16 << 20
 ENTRY_POINTS_BYTES = 64 << 10
 # The bytes a wheel's central directory may take, read from its own record
-# before `zipfile` holds it: room for `LISTED_ENTRIES` members of short names.
-CENTRAL_DIRECTORY_BYTES = 64 << 20
+# before `zipfile` holds it: 46 bytes, the smallest member header, for each of
+# `LISTED_ENTRIES` members, so no directory within it holds more headers than
+# the entry ceiling allows.
+CENTRAL_DIRECTORY_BYTES = 46 * LISTED_ENTRIES
 # The one host a wheel is fetched from, at every hop of the way.
 PYPI_HOST = "files.pythonhosted.org"
 
@@ -961,28 +965,46 @@ def entry_point_of(archive: zipfile.ZipFile, names: list[str], package: str) -> 
 
 
 def central_directory(file) -> None:
-    """Refuse the open wheel `file` where the record that ends it claims more
-    members than `LISTED_ENTRIES` or a central directory larger than
-    `CENTRAL_DIRECTORY_BYTES`, read before `zipfile` holds that directory. The
-    record is found as `zipfile` finds it, the last one in the file's tail,
-    and its zip64 record, where its locator stands before it, is read too."""
-    end_bytes, locator_bytes = 22, 20
+    """Refuse the open wheel `file` where its central directory, as the record
+    that ends it states, holds more than `LISTED_ENTRIES` members or more than
+    `CENTRAL_DIRECTORY_BYTES`, read before `zipfile` holds that directory.
+
+    A wheel is held to the layout a wheel has, so that the record read here is
+    the one `zipfile` obeys: the end record is the file's last 22 bytes, with no
+    comment after it; and where the 20 bytes before it are a zip64 locator, or
+    any of its fields stands at its all-ones value and so defers to zip64, the
+    zip64 record is the 56 bytes just before that locator, where `zipfile`
+    reads it, and the locator must point at that very place."""
+    end_bytes, locator_bytes, record_bytes = 22, 20, 56
     size = file.seek(0, os.SEEK_END)
-    start = max(0, size - (end_bytes + 0xFFFF))
-    file.seek(start)
-    tail = file.read(size - start)
-    at = tail.rfind(b"PK\x05\x06")
-    if at < 0 or len(tail) - at < end_bytes:
+    if size < end_bytes:
         raise Dropped("is not a wheel this intake can read")
-    entries, directory = struct.unpack("<HI", tail[at + 10 : at + 16])
-    if at >= locator_bytes and tail[at - locator_bytes : at - locator_bytes + 4] == b"PK\x06\x07":
-        (offset,) = struct.unpack("<Q", tail[at - locator_bytes + 8 : at - locator_bytes + 16])
-        if offset > size - 56:
-            raise Dropped("is not a wheel this intake can read")
-        file.seek(offset)
-        record = file.read(56)
-        if record[:4] != b"PK\x06\x06":
-            raise Dropped("is not a wheel this intake can read")
+    file.seek(size - end_bytes)
+    end = file.read(end_bytes)
+    if end[:4] != b"PK\x05\x06" or end[20:22] != b"\x00\x00":
+        raise Dropped(
+            "does not end in the record that closes a central directory, with no zip comment after it, "
+            "as a wheel ends"
+        )
+    on_disk, entries, directory, offset = struct.unpack("<HHII", end[8:20])
+    deferred = 0xFFFF in (on_disk, entries) or 0xFFFFFFFF in (directory, offset)
+    locator_at = size - end_bytes - locator_bytes
+    locator = b""
+    if locator_at >= 0:
+        file.seek(locator_at)
+        locator = file.read(locator_bytes)
+    if locator[:4] == b"PK\x06\x07" or deferred:
+        record_at = locator_at - record_bytes
+        if locator[:4] != b"PK\x06\x07" or record_at < 0:
+            raise Dropped("its central directory defers to a zip64 record it does not hold")
+        (stated,) = struct.unpack("<Q", locator[8:16])
+        file.seek(record_at)
+        record = file.read(record_bytes)
+        if stated != record_at or record[:4] != b"PK\x06\x06":
+            raise Dropped(
+                "its central directory's zip64 locator does not point at the zip64 record just before it, "
+                "the one zipfile reads"
+            )
         entries, directory = struct.unpack("<QQ", record[32:48])
     if entries > LISTED_ENTRIES:
         raise Dropped(f"its central directory lists more than {LISTED_ENTRIES} members")
@@ -1003,11 +1025,14 @@ def wheel_read(file, package: str | None) -> str | None:
             if len(infos) > LISTED_ENTRIES:
                 raise Dropped(f"holds more than {LISTED_ENTRIES} members")
             names = [info.filename for info in infos]
+            # Names compared as the client compares them: a leading `./`
+            # removed, and case folded.
             seen: set[str] = set()
             for name in names:
-                if name in seen:
-                    raise Dropped(f"lists {clipped(name)} twice")
-                seen.add(name)
+                compared = name.removeprefix("./").casefold()
+                if compared in seen:
+                    raise Dropped(f"lists {clipped(name)} twice, as the client compares names")
+                seen.add(compared)
                 data_part(name)
             return entry_point_of(archive, names, package) if package is not None else None
     except Dropped:
