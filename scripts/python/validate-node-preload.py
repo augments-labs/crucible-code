@@ -265,7 +265,8 @@ def layout(root: pathlib.Path, preload: str, name: str) -> tuple[pathlib.Path, p
             encoding="utf-8",
         )
         # A file whose name begins `file:`, which `require('file:planted')`
-        # walks up to as a package: only a `file:` URL with a path is one.
+        # walks up to as a package, as the preload confines every `file:`
+        # specifier.
         (root / "node_modules" / "file:planted.js").write_text(
             PLANTED % (json.dumps(str(markers)), json.dumps("above-store-file")),
             encoding="utf-8",
