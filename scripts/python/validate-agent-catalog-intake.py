@@ -3897,15 +3897,24 @@ def builds_review(scratch: pathlib.Path, signers: Signers) -> tuple[dict, pathli
         "darwin-aarch64": {"second": differs, "built": True, "sbom": failing_sbom},
         "windows-x86_64": {"built": True, "sbom": passing_sbom},
     })
-    # Commands that run a build tool however it is reached, or cannot be
-    # split, and one that names a file like one and runs none.
+    # Commands that run a build tool however it is reached: through a
+    # package manager, an expansion, a glob, a versioned or scripted name;
+    # ones that cannot be split, or hold what could hide what they run; and
+    # one that names a file like one and runs none.
     for agent_id, command in (
         ("npxgyp-npm", "npx node-gyp@10 rebuild"),
         ("prebuild-npm", "prebuild-install || node build.js"),
         ("path-npm", "./node_modules/.bin/node-gyp rebuild"),
         ("subst-npm", "node -e \"$(cmake --version)\""),
         ("quote-npm", "node \"setup.js"),
-        ("near-npm", "node make.js"),
+        ("braced-npm", "ma${u}ke"),
+        ("glob-npm", "mak?"),
+        ("versioned-npm", "gcc-12 x.c"),
+        ("gypjs-npm", "node node_modules/node-gyp/bin/node-gyp.js rebuild"),
+        ("run-npm", "npm run build"),
+        ("bidi-npm", "node x.js \u202e;rm"),
+        ("nel-npm", "node x.js \x85rm"),
+        ("near-npm", "node remake.js"),
     ):
         agent(agent_id, command, {"linux-x86_64": {}})
     # Builds review does not take as a build `pack` wrote: one compressed
@@ -3960,11 +3969,18 @@ def check_npm_build_by_rule(scratch: pathlib.Path, signers: Signers) -> None:
     assert "command" not in script and "result" not in script, script
     # Where the job saw nothing of the script, it stays for the reviewer.
     assert top_script(targets["windows-x86_64"])["disposition"] is None, targets["windows-x86_64"]["scripts"]
-    for agent_id in ("npxgyp-npm", "prebuild-npm", "path-npm", "subst-npm", "quote-npm"):
+    for agent_id in (
+        "npxgyp-npm", "prebuild-npm", "path-npm", "subst-npm", "quote-npm", "braced-npm", "glob-npm",
+        "versioned-npm", "gypjs-npm", "run-npm", "bidi-npm", "nel-npm",
+    ):
         dropped(data, agent_id, "linux-x86_64", "is a build", "left no build")
     dropped(data, "quote-npm", "linux-x86_64", "cannot be split")
+    for agent_id in ("braced-npm", "glob-npm"):
+        dropped(data, agent_id, "linux-x86_64", "a shell expands")
+    for agent_id in ("bidi-npm", "nel-npm"):
+        dropped(data, agent_id, "linux-x86_64", "could hide what it runs")
     near = top_script(built_targets(data, "near")["linux-x86_64"])
-    assert near["disposition"] == "local" and near["command"] == "node make.js", near
+    assert near["disposition"] == "local" and near["command"] == "node remake.js", near
 
 
 def check_npm_build_by_difference(scratch: pathlib.Path, signers: Signers) -> None:
@@ -3987,6 +4003,26 @@ def check_npm_build_by_difference(scratch: pathlib.Path, signers: Signers) -> No
         "result": {"sha256": sha(agreed), "size": len(agreed)},
     }, script
     assert (assets / sha(agreed)).read_bytes() == agreed, "the agreed listing is kept as an asset by its hash"
+    # What one run holds of the listings its local scripts agreed on is
+    # bounded; past it the target is dropped and nothing of it is kept.
+    module = load_intake()
+    gate = module.Gate(set(), None, None)
+    observed = scratch / "npm-builds" / "observed"
+    item = {"manifest": {"scripts": {"postinstall": "node setup.js"}}}
+    undecided = {"package": TOP, "event": "postinstall", "disposition": None}
+    module.GATE_HELD_BYTES = len(agreed) - 1
+    held_assets: dict = {}
+    try:
+        module.classed(observed, "differ-npm", "darwin-aarch64", item, undecided, gate, held_assets)
+    except module.Dropped as failed:
+        assert str(module.GATE_HELD_BYTES) in str(failed) and "holds" in str(failed), str(failed)
+    else:
+        raise AssertionError("a local script's listing past what a run holds was kept")
+    assert not held_assets and gate.held_bytes == 0, "nothing of a refused listing is kept"
+    module.GATE_HELD_BYTES = len(agreed)
+    local = module.classed(observed, "differ-npm", "darwin-aarch64", item, undecided, gate, held_assets)
+    assert local["disposition"] == "local" and held_assets == {sha(agreed): agreed}, local
+    assert gate.held_bytes == len(agreed), gate.held_bytes
     ran = intake("diff", scratch / "npm-builds" / "review.json")
     assert ran.returncode == 0, ran.stderr
     [line] = [line for line in ran.stdout.splitlines() if "**undecided**" not in line and "node setup.js" in line
@@ -4032,6 +4068,31 @@ def check_npm_build_gated(scratch: pathlib.Path, signers: Signers) -> None:
     (held / "merged.json").write_text(json.dumps(data))
     ran = intake("publish-check", "--merged", held / "merged.json", "--assets", held / "assets")
     assert ran.returncode == 0, f"a gated build or a local script's listing was refused:\n{ran.stdout}{ran.stderr}"
+    # A local script whose command holds what could hide what it runs is
+    # not rendered.
+    module = load_intake()
+    entry, target = next(
+        (entry, target) for entry in data["entries"] for target in entry["targets"]
+        if any(script.get("disposition") == "local" for script in target.get("scripts", []))
+    )
+    # The scripts the reviewer left undecided are decided, so only the
+    # local one is in question.
+    target = copy.deepcopy(target)
+    for script in target["scripts"]:
+        if script.get("disposition") is None:
+            script["disposition"] = "inert"
+    module.npm_checked(entry, target, "the entry")
+    for hiding in ("\u202e", "\x85"):
+        hidden_target = copy.deepcopy(target)
+        next(script for script in hidden_target["scripts"] if script.get("disposition") == "local")["command"] = (
+            f"node x.js {hiding};rm"
+        )
+        try:
+            module.npm_checked(entry, hidden_target, "the entry")
+        except module.Refused as refused:
+            assert "could hide what it runs" in str(refused), str(refused)
+        else:
+            raise AssertionError(f"a local script's command holding {hiding!r} was taken")
     # A build whose record gates other bytes than it is replaced by may not
     # be published.
     mismatched = copy.deepcopy(data)

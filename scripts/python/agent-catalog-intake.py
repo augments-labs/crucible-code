@@ -277,18 +277,26 @@ ceiling of a tree listing and refused past the client's ceilings for a tree
 as incomplete, and `hosts.json`, `{"hosts": [...]}`, the at most 64 hosts the
 recording proxy saw over both runs, read within 1 MiB. A script is a build
 by rule when the command its package's `package.json` gives for the event,
-or the `node-gyp rebuild` a `binding.gyp` implies, names a compiler, a
-native-addon builder or a build tool (`cc`, `gcc`, `g++`, `c++`, `clang`,
-`clang++`, `cl`, `cl.exe`, `node-gyp`, `node-gyp-build`, `prebuild-install`,
-`make`, `gmake`, `nmake`, `cmake`, `ninja`, `cargo`, `rustc` or `go`) as any
-word of it split as a shell splits it, by its last path segment, so `npx
-node-gyp` is one, or cannot be split; it is a build on every `windows-*` and
+or the `node-gyp rebuild` a `binding.gyp` implies, holds a character that
+could hide what it runs (a control, bidi, zero-width or other such one) or
+one a shell or Windows expands (`$`, a backquote, `*`, `?`, `[`, `]`, `~`,
+`{`, `}` or `%`), names a compiler, a native-addon builder, a build tool or a
+package manager (`cc`, `gcc`, `g++`, `c++`, `clang`, `clang++`, `cl`,
+`node-gyp*`, `node-pre-gyp`, `cmake-js`, `prebuild*`, `make`, `gmake`,
+`nmake`, `cmake`, `ninja`, `cargo`, `rustc`, `go`, `npm`, `npx`, `yarn` or
+`pnpm`) as any word of it split as a shell splits it, by its last path
+segment, case folded, with an `@version`, one `.exe`, `.cmd`, `.bat`, `.js`,
+`.cjs` or `.mjs` and one `-<digits>` or `-<digits>.<digits>` taken off, so
+`npx node-gyp`, `gcc-12` and `npm run build` are each one, or cannot be
+split; it is a build on every `windows-*` and
 `freebsd-*` platform, whatever it runs; and it is a build by difference when
 its two runs left listings that differ, or a run left none, a broken one, or
 one past the ceilings. Otherwise it is `local`: the two listings are the same
 bytes, and the entry lists the script with its `command`, the `hosts` it
 reached, each a host's name, and `result`, `{sha256, size}`, the listing,
-kept as an asset within the ceiling of one, so the client shows all three
+kept as an asset within the ceiling of one and, with every NOTICE and
+licence text, within the 64 MiB a run holds of them, past which the target
+is dropped, so the client shows all three
 before it runs it. A build installs as what the job built: `built.tar.gz`
 beside the runs, the package's directory after the build as `pack` writes
 it, read within 1 GiB, which review writes again through the same writer
@@ -640,16 +648,26 @@ DISPOSITIONS = ("inert", "replaced", "lost")
 # on the user's machine, the job having seen it leave the same files twice.
 CLASSED = ("built", "local")
 # The words that make a script a build by rule, whatever its runs leave: a
-# compiler, a native-addon builder or a build tool, tested against each word
-# of the command as a shell splits it, by its last path segment, so `npx
-# node-gyp` and `npm run make` are caught as surely as `node-gyp`. A command
-# that names one for another reason is built too: erring toward a build is the
-# safe direction, since a build is held to the licence gate and a local script
+# compiler, a native-addon builder, a build tool, or a package manager, which
+# can reach a build through another script, so no subcommand of one is taken
+# as safe. Each word of the command as a shell splits it is tested by its
+# last path segment, case folded, with an `@version`, then one `.exe`,
+# `.cmd`, `.bat`, `.js`, `.cjs` or `.mjs`, then one `-<digits>` or
+# `-<digits>.<digits>` taken off, so `npx node-gyp@10`, `gcc-12`, `make.bat`
+# and `node .../node-gyp.js` are caught as surely as `node-gyp`; a name
+# opening with one of `BUILD_PREFIXES` is one too. A command that names one
+# for another reason is built too: erring toward a build is the safe
+# direction, since a build is held to the licence gate and a local script
 # runs on the user's machine.
 BUILD_TOOLS = frozenset({
-    "cc", "gcc", "g++", "c++", "clang", "clang++", "cl", "cl.exe", "node-gyp", "node-gyp-build",
-    "prebuild-install", "make", "gmake", "nmake", "cmake", "ninja", "cargo", "rustc", "go",
+    "cc", "gcc", "g++", "c++", "clang", "clang++", "cl", "node-pre-gyp", "cmake-js", "make", "gmake",
+    "nmake", "cmake", "ninja", "cargo", "rustc", "go", "npm", "npx", "yarn", "pnpm",
 })
+BUILD_PREFIXES = ("node-gyp", "prebuild")
+# What a shell or Windows expands into words the classifier cannot see, so a
+# command holding any of them is a build, quoted or not: a variable,
+# substitution, glob, home or brace expansion, or a `%variable%`.
+EXPANDS = frozenset("$`*?[]~{}%")
 # What splits a command into words, as a shell splits it: blanks, its
 # operators, a backquote and the `(` of `$(`, and `=`, so an assignment's
 # value is a word of its own.
@@ -1709,7 +1727,7 @@ def wheel_fits(file: str, name: str, item_version: str, platform: str, pin: dict
     if normal(held["name"]) != normal(name) or held["version"] != item_version:
         raise Dropped(
             f"wheel {shown(clipped(file))} does not agree with the report, which says it is "
-            f"{clipped(name)} {clipped(item_version)}"
+            f"{shown(clipped(name))} {shown(clipped(item_version))}"
         )
     if not fits(f"{held['python']}-{held['abi']}-{held['platform']}", platform, pin["minor"]):
         raise Dropped(
@@ -1843,7 +1861,7 @@ def uvx_target(
             return artifact_of(url, "wheel", sha256, size, listing, assets), reached, listing[0], named_script
 
         kind = "wheel" if name is None else "source distribution"
-        artifact, reached, files, named_script = staged(f"{kind} {clipped(file)}", one)
+        artifact, reached, files, named_script = staged(f"{kind} {shown(clipped(file))}", one)
         artifacts.append(artifact)
         listings.append(files)
         hosts += [name for name in reached if name not in hosts]
@@ -3011,8 +3029,8 @@ def listed_tree(printed: object, name: str, built: bool) -> dict[str, dict]:
             raise Dropped(f"{name}: {shown(clipped(path))}'s exec flag is not true or false")
         held[path] = {
             "exec": runs,
-            "sha256": digest(item.get("sha256"), f"{name}: {clipped(path)}'s sha256"),
-            "size": number(item.get("size"), f"{name}: {clipped(path)}'s size"),
+            "sha256": digest(item.get("sha256"), f"{name}: {shown(clipped(path))}'s sha256"),
+            "size": number(item.get("size"), f"{name}: {shown(clipped(path))}'s size"),
         }
         folded.add(path.casefold())
     return held
@@ -3216,15 +3234,23 @@ def command_words(command: str) -> list[str] | None:
 
 
 def builds(command: str) -> str | None:
-    """Why `command` is a build by rule, or none where it names no word of
-    `BUILD_TOOLS`: each word by its last path segment, case folded, with an
-    `@version` and a `.exe` or `.cmd` taken off."""
+    """Why `command` is a build by rule, or none where it holds nothing
+    `hidden` flags or a shell expands and names no build tool: each word
+    named as `BUILD_TOOLS` says. A hidden character makes the script a
+    build rather than dropping its target, so the target's other scripts
+    are still classed, and this one is held to a build the gate passes."""
+    if any(hidden(character) for character in command):
+        return "its command holds a character that could hide what it runs"
+    expanded = sorted(EXPANDS.intersection(command))
+    if expanded:
+        return f"its command holds {shown(expanded[0])}, which a shell expands"
     words = command_words(command)
     if words is None:
         return "its command cannot be split as a shell splits it"
     for word in words:
         name = re.split(r"[/\\]", word)[-1].lower().partition("@")[0]
-        if name in BUILD_TOOLS or name.removesuffix(".exe").removesuffix(".cmd") in BUILD_TOOLS:
+        name = re.sub(r"-[0-9]+(\.[0-9]+)?$", "", re.sub(r"\.(exe|cmd|bat|js|cjs|mjs)$", "", name))
+        if name in BUILD_TOOLS or name.startswith(BUILD_PREFIXES):
             return f"its command runs {shown(clipped(word))}"
     return None
 
@@ -3290,8 +3316,11 @@ def classed(
         why = f"the listing its runs left is larger than a catalog asset may be, {ASSET_BYTES} bytes"
     if why is None and first is not None:
         hosts = staged(named, lambda: script_hosts(place))
+        if not gate.kept({"result": first}, assets):
+            raise Dropped(
+                f"the listing {named}'s runs left would bring what this review holds past {GATE_HELD_BYTES} bytes"
+            )
         result = hashlib.sha256(first).hexdigest()
-        assets[result] = first
         return {
             **script,
             "command": command,
@@ -3913,8 +3942,9 @@ class Gate:
     """The licence gate as `review` runs it, over each mirror-marked
     artifact's input in `sboms`, named `<artifact sha256>.json`. What it
     keeps of every NOTICE and licence text until the run writes them is held
-    within `GATE_HELD_BYTES` for the run, and what it keeps of every repack
-    and bundle within `REPACK_HELD_BYTES`, each distinct file counted once."""
+    within `GATE_HELD_BYTES` for the run, with every listing a local
+    script's runs agreed on, and what it keeps of every repack and bundle
+    within `REPACK_HELD_BYTES`, each distinct file counted once."""
 
     def __init__(self, allowed: set[str], sboms: pathlib.Path | None, texts: pathlib.Path | None) -> None:
         if sboms is not None and texts is None:
@@ -3932,16 +3962,23 @@ class Gate:
         if source is None or self.texts is None or not os.path.lexists(source):
             return dict(UNGATED)
         record, files = licence_gate(source, self.allowed, self.texts, asset)
-        named = self.beside(files)
-        if named is None:
+        if not self.kept(files, assets):
             return {
                 "passed": False,
                 "reason": f"its NOTICE would bring what this review holds past {GATE_HELD_BYTES} bytes",
             }
+        return record
+
+    def kept(self, files: dict[str, bytes], assets: dict[str, bytes]) -> bool:
+        """Whether `files` are kept as assets by their hashes, which they
+        are only within `GATE_HELD_BYTES` for the run."""
+        named = self.beside(files)
+        if named is None:
+            return False
         self.held_bytes += sum(len(content) for sha, content in named.items() if sha not in self.held)
         self.held.update(named)
         assets.update(named)
-        return record
+        return True
 
     def beside(self, files: dict[str, bytes]) -> dict[str, bytes] | None:
         """The NOTICE and licence texts `files` by their hashes, or none
@@ -4788,7 +4825,9 @@ def npm_checked(entry: dict, target: dict, where: str) -> None:
         if script["disposition"] == "local":
             # What the client shows before it runs a script on the user's machine.
             try:
-                text(present(script, "command", str, f"{where}: a local script"), "a local script's command")
+                command = text(present(script, "command", str, f"{where}: a local script"), "a local script's command")
+                if any(hidden(character) for character in command):
+                    raise Dropped("a local script's command holds a character that could hide what it runs")
                 hosts = present(script, "hosts", list, f"{where}: a local script")
                 if len(hosts) > ITEMS or not all(isinstance(name, str) and host(name) for name in hosts):
                     raise Dropped(f"a local script's hosts are not a list of at most {ITEMS} hosts")
