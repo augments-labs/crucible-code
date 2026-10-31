@@ -281,7 +281,7 @@ zip = { version = "=9.0.5", default-features = false, features = ["deflate-flate
 # exactly the large files where the budget is decided, and `grep-regex` is the
 # matcher it runs with — the half that turns a pattern into something applied to
 # a buffer rather than to a string.
-ignore = "=0.4.33"
+ignore = "=0.4.34"
 globset = "=0.4.20"
 grep-searcher = "=0.1.17"
 grep-regex = "=0.1.14"
