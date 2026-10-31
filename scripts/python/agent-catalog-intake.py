@@ -283,10 +283,10 @@ one a shell or Windows expands (`$`, a backquote, `*`, `?`, `[`, `]`, `~`,
 `{`, `}` or `%`), names a compiler, a native-addon builder, a build tool or a
 package manager (`cc`, `gcc`, `g++`, `c++`, `clang`, `clang++`, `cl`,
 `node-gyp*`, `node-pre-gyp`, `cmake-js`, `prebuild*`, `make`, `gmake`,
-`nmake`, `cmake`, `ninja`, `cargo`, `rustc`, `go`, `npm`, `npx`, `yarn` or
-`pnpm`) as any word of it split as a shell splits it, by its last path
+`nmake`, `cmake`, `ninja`, `cargo`, `rustc`, `go`, `npm`, `npx`, `yarn`,
+`pnpm`, `pnpx`, `bun` or `bunx`) as any word of it split as a shell splits it, by its last path
 segment, case folded, with an `@version`, one `.exe`, `.cmd`, `.bat`, `.js`,
-`.cjs` or `.mjs` and one `-<digits>` or `-<digits>.<digits>` taken off,
+`.cjs` or `.mjs` and one `-<digits>` version, dotted or not, taken off,
 or ending, as a cross compiler's target triplet does, in `-gcc`, `-g++`,
 `-cc`, `-c++`, `-clang`, `-clang++` or `-ld`, so `npx node-gyp`, `gcc-12`,
 `x86_64-linux-gnu-gcc` and `npm run build` are each one, or cannot be
@@ -654,8 +654,8 @@ CLASSED = ("built", "local")
 # can reach a build through another script, so no subcommand of one is taken
 # as safe. Each word of the command as a shell splits it is tested by its
 # last path segment, case folded, with an `@version`, then one `.exe`,
-# `.cmd`, `.bat`, `.js`, `.cjs` or `.mjs`, then one `-<digits>` or
-# `-<digits>.<digits>` taken off, so `npx node-gyp@10`, `gcc-12`, `make.bat`
+# `.cmd`, `.bat`, `.js`, `.cjs` or `.mjs`, then one `-<digits>` version,
+# dotted or not, taken off, so `npx node-gyp@10`, `gcc-12`, `make.bat`
 # and `node .../node-gyp.js` are caught as surely as `node-gyp`; a name
 # opening with one of `BUILD_PREFIXES`, or ending in one of
 # `BUILD_SUFFIXES` as a cross compiler's target triplet does, is one too. A command that names one
@@ -664,7 +664,7 @@ CLASSED = ("built", "local")
 # runs on the user's machine.
 BUILD_TOOLS = frozenset({
     "cc", "gcc", "g++", "c++", "clang", "clang++", "cl", "node-pre-gyp", "cmake-js", "make", "gmake",
-    "nmake", "cmake", "ninja", "cargo", "rustc", "go", "npm", "npx", "yarn", "pnpm",
+    "nmake", "cmake", "ninja", "cargo", "rustc", "go", "npm", "npx", "yarn", "pnpm", "pnpx", "bun", "bunx",
 })
 BUILD_PREFIXES = ("node-gyp", "prebuild")
 BUILD_SUFFIXES = ("-gcc", "-g++", "-cc", "-c++", "-clang", "-clang++", "-ld")
@@ -3253,7 +3253,7 @@ def builds(command: str) -> str | None:
         return "its command cannot be split as a shell splits it"
     for word in words:
         name = re.split(r"[/\\]", word)[-1].lower().partition("@")[0]
-        name = re.sub(r"-[0-9]+(\.[0-9]+)?$", "", re.sub(r"\.(exe|cmd|bat|js|cjs|mjs)$", "", name))
+        name = re.sub(r"-[0-9]+(\.[0-9]+)*$", "", re.sub(r"\.(exe|cmd|bat|js|cjs|mjs)$", "", name))
         if name in BUILD_TOOLS or name.startswith(BUILD_PREFIXES) or name.endswith(BUILD_SUFFIXES):
             return f"its command runs {shown(clipped(word))}"
     return None

@@ -3914,6 +3914,9 @@ def builds_review(scratch: pathlib.Path, signers: Signers) -> tuple[dict, pathli
         ("run-npm", "npm run build"),
         ("triplet-npm", "x86_64-linux-gnu-gcc x.c"),
         ("crossversioned-npm", "aarch64-linux-gnu-g++-12 x.cc"),
+        ("dotversioned-npm", "gcc-12.2.0 x.c"),
+        ("pnpx-npm", "pnpx tsc"),
+        ("bunx-npm", "bunx tsc"),
         ("bidi-npm", "node x.js \u202e;rm"),
         ("nel-npm", "node x.js \x85rm"),
         ("near-npm", "node remake.js"),
@@ -3973,7 +3976,7 @@ def check_npm_build_by_rule(scratch: pathlib.Path, signers: Signers) -> None:
     assert top_script(targets["windows-x86_64"])["disposition"] is None, targets["windows-x86_64"]["scripts"]
     for agent_id in (
         "npxgyp-npm", "prebuild-npm", "path-npm", "subst-npm", "quote-npm", "braced-npm", "glob-npm",
-        "versioned-npm", "gypjs-npm", "run-npm", "triplet-npm", "crossversioned-npm", "bidi-npm", "nel-npm",
+        "versioned-npm", "gypjs-npm", "run-npm", "triplet-npm", "crossversioned-npm", "dotversioned-npm", "pnpx-npm", "bunx-npm", "bidi-npm", "nel-npm",
     ):
         dropped(data, agent_id, "linux-x86_64", "is a build", "left no build")
     dropped(data, "quote-npm", "linux-x86_64", "cannot be split")
