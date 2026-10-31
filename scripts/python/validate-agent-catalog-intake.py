@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import bz2
 import copy
 import gzip
 import hashlib
@@ -1737,6 +1738,7 @@ def check_uvx(scratch: pathlib.Path) -> None:
     assert "- interpreter args: ` -I `" in lines, ran.stdout
     assert "- entry point: ` pyagent.acp:main `" in lines, ran.stdout
     assert any("never mirrored" in line for line in lines), ran.stdout
+    assert not any("installs as its bundle" in line for line in lines), ran.stdout
     old = copy.deepcopy(data)
     for listed_entry in old["entries"]:
         if listed_entry["key"] == "pyagent":
@@ -2206,10 +2208,11 @@ def lay_out_npm(
     chains: dict | None = None,
     npm_side=None,
     built_side=None,
+    platforms: tuple = NODE_BUILT,
 ) -> None:
     """What the job leaves for one npm agent: npm's lock, each tarball, and on
-    each platform in `NODE_BUILT` the two listings of its tree, crucible's lock
-    and the probe. `npm_side` and `built_side` change a platform's listing."""
+    each of `platforms` the two listings of its tree, crucible's lock and the
+    probe. `npm_side` and `built_side` change a platform's listing."""
     place = observed / agent
     (place / "resolve").mkdir(parents=True)
     (place / "resolve/package-lock.json").write_text(json.dumps(tree["lock"]))
@@ -2221,7 +2224,7 @@ def lay_out_npm(
         url = tree["lock"]["packages"][locations[index]].get("resolved")
         chain = (chains or {}).get(locations[index], [url])
         (held / "fetched.json").write_text(json.dumps({"chain": chain}))
-    for platform in NODE_BUILT:
+    for platform in platforms:
         made = place / platform / "tree"
         made.mkdir(parents=True)
         npm = npm_listing(tree, platform)
@@ -3018,6 +3021,726 @@ def check_npm_render(scratch: pathlib.Path) -> None:
     refused(scratch, "npm-revision.json", "lock_revision", merged=written(scratch, "m-npm-revision.json", data))
 
 
+# The members of the `.tar.bz2` fixture, in archive order: name, kind, mode,
+# and content or link target. A name longer than 100 bytes takes a GNU long
+# name header, and the program's set-user-id bit is not a permission.
+BZ2_MEMBERS = [
+    ("goose", "dir", 0o755, None),
+    ("goose/bin", "dir", 0o750, None),
+    ("goose/bin/goose", "file", 0o4755, b"\x7fELF the goose program\n"),
+    ("goose/README.md", "file", 0o644, b"# goose\n"),
+    ("goose/share", "dir", 0o755, None),
+    ("goose/share/" + "a-long-name-" * 10 + ".txt", "file", 0o600, b"a long name\n"),
+    ("goose/bin/g", "link", 0o777, "goose"),
+]
+TAR_KINDS = {
+    "dir": tarfile.DIRTYPE, "link": tarfile.SYMTYPE, "hard": tarfile.LNKTYPE, "fifo": tarfile.FIFOTYPE,
+    "char": tarfile.CHRTYPE, "block": tarfile.BLKTYPE, "sparse": tarfile.GNUTYPE_SPARSE,
+}
+
+
+def bz2_tar(
+    members: list[tuple],
+    *,
+    format: int = tarfile.GNU_FORMAT,
+    owner: tuple[int, str] = (1000, "builder"),
+    mtime: int = 1_700_000_000,
+    pax: dict | None = None,
+) -> bytes:
+    """A `.tar.bz2` of `members`, each owned by `owner` and stamped `mtime`."""
+    held = io.BytesIO()
+    with tarfile.open(fileobj=held, mode="w", format=format, pax_headers=pax) as tar:
+        for name, kind, mode, value in members:
+            info = tarfile.TarInfo(name)
+            info.mode, info.mtime = mode, mtime
+            info.uid = info.gid = owner[0]
+            info.uname = info.gname = owner[1]
+            if kind == "file":
+                info.size = len(value)
+                tar.addfile(info, io.BytesIO(value))
+                continue
+            info.type = TAR_KINDS[kind]
+            if kind in ("link", "hard"):
+                info.linkname = value
+            if isinstance(value, dict):
+                info.pax_headers = value
+            tar.addfile(info)
+    return bz2.compress(held.getvalue())
+
+
+def repack_of(scratch: pathlib.Path, name: str, content: bytes) -> tuple[subprocess.CompletedProcess[str], pathlib.Path]:
+    held = scratch / "repack" / name
+    held.mkdir(parents=True)
+    (held / "in.tar.bz2").write_bytes(content)
+    return intake("repack", "--input", held / "in.tar.bz2", "--out", held / "out.tar.gz"), held
+
+
+def repacked_by(scratch: pathlib.Path, name: str, content: bytes) -> bytes:
+    ran, held = repack_of(scratch, name, content)
+    assert ran.returncode == 0, f"{name}: the repack was refused: {ran.stderr[-600:]}"
+    return (held / "out.tar.gz").read_bytes()
+
+
+def bz2_listing(members: list[tuple]) -> dict:
+    """The client's listing of the repack of `members`."""
+    return listed(
+        {name: (value, bool(mode & 0o111)) for name, kind, mode, value in members if kind == "file"},
+        tuple(name for name, kind, _, _ in members if kind == "dir"),
+        tuple((name, value) for name, kind, _, value in members if kind == "link"),
+    )
+
+
+def check_repack(scratch: pathlib.Path) -> None:
+    """A `.tar.bz2` is repacked to a `.tar.gz` whose files are the same names,
+    modes and bytes, with nothing of who made it or when, the same bytes every
+    time; a member the client would refuse refuses the repack, leaving nothing."""
+    content = bz2_tar(BZ2_MEMBERS)
+    out = repacked_by(scratch, "fixture", content)
+    assert out[:3] == b"\x1f\x8b\x08" and out[3] == 0, "the gzip header names no file and sets no flag"
+    assert out[4:8] == b"\0\0\0\0", "the gzip header carries mtime 0"
+    raw = gzip.decompress(out)
+    assert b"ustar  \0" in raw and b"ustar\x0000" not in raw, "the repack is written as a GNU tar"
+    with tarfile.open(fileobj=io.BytesIO(out), mode="r:gz") as tar:
+        members = tar.getmembers()
+        assert [member.name for member in members] == [name for name, _, _, _ in BZ2_MEMBERS], "names and order kept"
+        for member, (name, kind, mode, value) in zip(members, BZ2_MEMBERS):
+            assert member.type == ({"file": tarfile.REGTYPE} | TAR_KINDS)[kind], f"{name}: kind {member.type!r}"
+            assert member.mode == mode & 0o777, f"{name}: mode {oct(member.mode)}"
+            assert (member.uid, member.gid, member.uname, member.gname, member.mtime) == (0, 0, "", "", 0), name
+            if kind == "file":
+                extracted = tar.extractfile(member)
+                assert extracted is not None and sha(extracted.read()) == sha(value), f"{name}: content differs"
+            if kind == "link":
+                assert member.linkname == value, f"{name}: links to {member.linkname!r}"
+    assert repacked_by(scratch, "again", content) == out, "two repacks of one archive are the same bytes"
+    other = bz2_tar(BZ2_MEMBERS, format=tarfile.PAX_FORMAT, owner=(0, "root"), mtime=5)
+    assert other != content and repacked_by(scratch, "other", other) == out, "who made it and when are not kept"
+
+    def refused(name: str, held: bytes, *words: str) -> None:
+        ran, place = repack_of(scratch, name, held)
+        assert ran.returncode == 1 and "Traceback" not in ran.stderr, f"{name}: {ran.returncode} {ran.stderr[-600:]!r}"
+        for word in words:
+            assert word in ran.stderr, f"{name}: {ran.stderr[-600:]!r} lacks {word!r}"
+        assert sorted(path.name for path in place.iterdir()) == ["in.tar.bz2"], f"{name}: a refused repack left a file"
+
+    for name, extra, words in (
+        ("hard", [("goose/bin/h", "hard", 0o755, "goose/bin/goose")], "hard link"),
+        ("fifo", [("goose/pipe", "fifo", 0o644, None)], "FIFO"),
+        ("char", [("goose/tty", "char", 0o644, None)], "device"),
+        ("block", [("goose/disk", "block", 0o644, None)], "device"),
+        ("sparse", [("goose/holes", "sparse", 0o644, None)], "sparse"),
+        ("twice", [("goose/README.md", "file", 0o644, b"again\n")], "twice"),
+        ("folded", [("goose/readme.MD", "file", 0o644, b"again\n")], "twice"),
+        ("dotdot", [("goose/../../evil", "file", 0o644, b"x")], ". or .."),
+        ("absolute", [("/etc/evil", "file", 0o644, b"x")], "absolute"),
+        ("colon", [("goose/a:b", "file", 0o644, b"x")], "Windows refuses"),
+        ("link-out", [("goose/l", "link", 0o777, "/etc/passwd")], "relative"),
+        ("link-back", [("goose/l", "link", 0o777, "..\\..\\evil")], "relative"),
+    ):
+        refused(name, bz2_tar(BZ2_MEMBERS + extra), *words)
+    deep = "/".join(["d" * 70] * 63)
+    refused("long", bz2_tar([(deep, "file", 0o644, b"x")], format=tarfile.PAX_FORMAT), "4096")
+    refused("long-name", bz2_tar([("n/" * 2500 + "x", "file", 0o644, b"x")]), "long name")
+    refused("pax-sparse", bz2_tar([("goose/holes", "dir", 0o755, {"GNU.sparse.map": "0,1", "GNU.sparse.size": "1"})],
+                                  format=tarfile.PAX_FORMAT), "sparse")
+    refused("global", bz2_tar(BZ2_MEMBERS, format=tarfile.PAX_FORMAT, pax={"comment": "made by"}), "global")
+    refused("big-pax", bz2_tar([("goose/x", "dir", 0o755, {"comment": "x" * (70 << 10)})], format=tarfile.PAX_FORMAT),
+            "extended header")
+    refused("trailing", content + b"more", "one bzip2 stream")
+    refused("two-streams", content + bz2.compress(b"more"), "one bzip2 stream")
+    refused("truncated", content[:-40], "ends before")
+    refused("garbage", b"not a bzip2 stream at all", "not a bzip2-compressed tar")
+    refused("plain", gzip.decompress(out), "not a bzip2-compressed tar")
+    refused("not-tar", bz2.compress(b"x" * 2000), "not a bzip2-compressed tar")
+    # An output already there is replaced only once the whole repack is made.
+    ran, held = repack_of(scratch, "missing", b"")
+    (held / "in.tar.bz2").unlink()
+    ran = intake("repack", "--input", held / "in.tar.bz2", "--out", held / "out.tar.gz")
+    assert ran.returncode == 1 and "Traceback" not in ran.stderr and not list(held.iterdir()), ran.stderr
+
+    module = load_intake()
+    for words, ceilings in (
+        ("ceiling", {"REPACK_DECOMPRESSED": 4096}),
+        (f"more than {3} members", {"TARBALL_MEMBERS": 3}),
+        ("archive is larger than", {"ARTIFACT_BYTES": 100}),
+        ("repack would be larger than", {"REPACK_BYTES": 100}),
+    ):
+        saved = {name: getattr(module, name) for name in ceilings}
+        try:
+            for name, value in ceilings.items():
+                setattr(module, name, value)
+            try:
+                module.repacked(io.BytesIO(content))
+            except module.Dropped as failed:
+                assert words in str(failed), f"{ceilings}: {failed} lacks {words!r}"
+            else:
+                raise AssertionError(f"{ceilings}: the repack was not refused")
+        finally:
+            for name, value in saved.items():
+                setattr(module, name, value)
+    assert module.repacked(io.BytesIO(content)) == out, "the job's repack is the review's"
+
+
+BZ_URL = "https://downloads.bz.example/goose-1.0-{}.tar.bz2"
+
+
+def check_bz2_review(scratch: pathlib.Path) -> None:
+    """A `.tar.bz2` marked for mirroring is repacked by `review` from the bytes
+    it hashed, kept only where the job's repack is those very bytes and the
+    licence gate passes over it, and installs as that repack; one that is not
+    marked is dropped, and so is every other archive kind."""
+    scratch = scratch / "bz2"
+    observed = scratch / "observed"
+    sboms = scratch / "sboms"
+    sboms.mkdir(parents=True)
+    contents = {
+        "linux-x86_64": bz2_tar(BZ2_MEMBERS),
+        "darwin-aarch64": bz2_tar(BZ2_MEMBERS),
+        "linux-aarch64": bz2_tar(BZ2_MEMBERS, mtime=7),
+        "windows-x86_64": bz2_tar(BZ2_MEMBERS, mtime=8),
+    }
+    out = repacked_by(scratch, "fixture", contents["linux-x86_64"])
+    agents = []
+
+    def lay_out_bz2(agent: str, platform: str, content: bytes, url: str, job_repack: bytes | None) -> None:
+        place = observed / agent / platform
+        place.mkdir(parents=True)
+        (place / "artifact").write_bytes(content)
+        (place / "fetched.json").write_text(json.dumps({"chain": [url]}))
+        if job_repack is not None:
+            (place / "repacked").write_bytes(job_repack)
+        (place / "unpack-check.json").write_text(json.dumps(bz2_listing(BZ2_MEMBERS)))
+        (place / "probe.json").write_text(json.dumps(PROBED))
+
+    binary = {}
+    for platform, content in contents.items():
+        url = BZ_URL.format(platform)
+        binary[platform] = {"archive": url, "cmd": "goose/bin/goose", "sha256": sha(content)}
+        job_repack = b"other bytes" if platform == "darwin-aarch64" else repacked_by(scratch, platform, content)
+        lay_out_bz2("bz-agent", platform, content, url, job_repack)
+    agents.append({"id": "bz-agent", "name": "bz", "version": "1.0.0", "license": "MIT", "distribution": {"binary": binary}})
+    (sboms / f"{sha(contents['linux-x86_64'])}.json").write_bytes((GATE / "sbom.json").read_bytes())
+    failing = json.loads((GATE / "sbom.json").read_text())
+    failing["components"][0]["licenses"] = [{"expression": "Unlicense"}]
+    (sboms / f"{sha(contents['windows-x86_64'])}.json").write_text(json.dumps(failing))
+    for agent, licence, url in (
+        ("bzprop-agent", "LicenseRef-Proprietary", BZ_URL.format("linux-x86_64")),
+        ("xz-agent", "MIT", "https://downloads.bz.example/goose-1.0-linux-x86_64.tar.xz"),
+    ):
+        lay_out_bz2(agent, "linux-x86_64", contents["linux-x86_64"], url, out)
+        target = {"archive": url, "cmd": "goose/bin/goose"}
+        agents.append({"id": agent, "name": agent, "version": "1.0.0", "license": licence,
+                       "distribution": {"binary": {"linux-x86_64": target}}})
+    registry = written(scratch, "registry.json", {"version": "1.0.0", "agents": agents})
+    choices = written(scratch, "choices.json", {agent["id"]: {"key": agent["id"].removesuffix("-agent")} for agent in agents})
+    data, assets = review(scratch, "--sboms", sboms, "--texts", GATE / "texts", registry=registry, choices=choices)
+
+    [entry] = data["entries"]
+    assert entry["key"] == "bz" and [target["platform"] for target in entry["targets"]] == ["linux-x86_64"], entry
+    [artifact] = entry["targets"][0]["artifacts"]
+    original = contents["linux-x86_64"]
+    assert artifact["url"] == BZ_URL.format("linux-x86_64"), "the artifact keeps the vendor's address"
+    assert (artifact["sha256"], artifact["size"]) == (sha(original), len(original)), "and the download's hash and size"
+    assert artifact["format"] == "tar.gz", "it installs as its repack, a tar.gz"
+    assert artifact["mirror_licence"] == "MIT", artifact.get("mirror_licence")
+    assert artifact["files"] == bz2_listing(BZ2_MEMBERS)["files"], "its files are the listing of the repack"
+    assert artifact["replaced_by"] == {"sha256": sha(out), "size": len(out)}, artifact.get("replaced_by")
+    record = artifact["licence_gate"]
+    assert record["passed"] is True and record["asset"] == {"sha256": sha(out), "size": len(out)}, record
+    assert (assets / sha(out)).read_bytes() == out, "the repack is kept as an asset by its hash"
+    assert not (assets / sha(original)).exists(), "the vendor's bz2 is not kept"
+    dropped(data, "bz-agent", "darwin-aarch64", "repack", "not the bytes")
+    dropped(data, "bz-agent", "linux-aarch64", "no lockfile or SBOM was given")
+    dropped(data, "bz-agent", "windows-x86_64", "Unlicense")
+    dropped(data, "bzprop-agent", "linux-x86_64", "not on deny.toml's list", "repacked")
+    dropped(data, "xz-agent", "linux-x86_64", "of a kind this intake does not take in")
+
+    # The publishing job takes the repack under its passing record, beside its
+    # NOTICE and licence texts, and never the vendor's bz2.
+    beside = [(record["notice"]["sha256"], (assets / record["notice"]["sha256"]).read_bytes())]
+    beside += [(licence["sha256"], (assets / licence["sha256"]).read_bytes()) for licence in record["licences"]]
+    ran = publish_checked(scratch, "bz2", data, (sha(out), out), *beside)
+    assert ran.returncode == 0, f"a gated repack was refused:\n{ran.stdout}{ran.stderr}"
+    publish_refuses(publish_checked(scratch, "bz2-alone", data, (sha(out), out)), "NOTICE")
+    publish_refuses(publish_checked(scratch, "bz2-original", data, (sha(original), original), *beside), "licence-gate")
+    ungated = copy.deepcopy(data)
+    ungated["entries"][0]["targets"][0]["artifacts"][0].pop("licence_gate")
+    # Without the record its NOTICE and texts are in no data, so the repack goes alone.
+    publish_refuses(publish_checked(scratch, "bz2-ungated", ungated, (sha(out), out)), "licence-gate")
+
+    # `diff` shows what installs in the artifact's place; that `render` keeps
+    # it is `check_publish_replaced`'s.
+    ran = intake("diff", scratch / "review.json")
+    assert ran.returncode == 0, ran.stderr
+    assert f"replaced by `` {sha(out)} ``" in ran.stdout or f"replaced by {sha(out)}" in ran.stdout or (
+        "replaced by" in ran.stdout and sha(out) in ran.stdout
+    ), "diff shows the repack that installs in the artifact's place"
+    changed = copy.deepcopy(data)
+    changed["entries"][0]["targets"][0]["artifacts"][0]["replaced_by"] = {"sha256": "c" * 64, "size": 1}
+    ran = intake("diff", "--old", written(scratch, "old.json", changed), scratch / "review.json")
+    assert ran.returncode == 0 and "artifact replaced by" in ran.stdout, ran.stdout[-2000:]
+
+    # With no input for the gate, a bz2 has no route to install, so it is dropped.
+    plain, _ = review(scratch, name="ungated.json", registry=registry, choices=choices)
+    dropped(plain, "bz-agent", "linux-x86_64", "no lockfile or SBOM was given")
+    assert not plain["entries"], plain["entries"]
+
+    # What one run holds of repacks is bounded; past it the repack is refused.
+    module = load_intake()
+    gate = module.Gate(module.allowed_licences(ROOT / "deny.toml"), sboms, GATE / "texts")
+    module.REPACK_HELD_BYTES = len(out) - 1
+    held_assets: dict = {}
+    try:
+        gate.replacing({}, sboms / f"{sha(original)}.json", out, held_assets)
+    except module.Dropped as failed:
+        assert str(module.REPACK_HELD_BYTES) in str(failed), str(failed)
+    else:
+        raise AssertionError("a repack past what a run holds was kept")
+    assert not held_assets, "nothing of a refused repack is kept"
+    module.REPACK_HELD_BYTES = 1 << 30
+
+    # The job's repack is compared to this review's without being held whole,
+    # and refused on its size before any of it is read.
+    module.BUDGET = module.Budget()
+    try:
+        place = scratch / "compare"
+        place.mkdir()
+        for name, held_bytes, words in (
+            ("longer", out + b"x", "not the bytes"),
+            ("flipped", out[:-1] + bytes([out[-1] ^ 1]), "not the bytes"),
+        ):
+            (place / name).write_bytes(held_bytes)
+            before = module.BUDGET.read
+            try:
+                module.same_bytes(place / name, out, "the job's repack")
+            except module.Dropped as failed:
+                assert words in str(failed), f"{name}: {failed}"
+            else:
+                raise AssertionError(f"{name}: a repack that differs was taken")
+            if name == "longer":
+                assert module.BUDGET.read == before, "a repack of another size is refused before it is read"
+        (place / "same").write_bytes(out)
+        module.same_bytes(place / "same", out, "the job's repack")
+    finally:
+        module.BUDGET = None
+
+    # What one run decompresses of every bz2 is bounded; past it the next
+    # target waits for the next run.
+    unpacked_size = len(bz2.decompress(original))
+    module.REPACK_RUN_DECOMPRESSED = unpacked_size * 3 // 2
+    namespace = argparse.Namespace(
+        registry=registry, choices=choices, runners=RUNNERS, observed=observed, deny=ROOT / "deny.toml",
+        assets=scratch / "run-assets", out=scratch / "run-budget.json", merged=None, interpreters=None, node=None,
+        node_keys=None, dispositions=None, sboms=sboms, texts=GATE / "texts",
+    )
+    assert module.review(namespace) == 0
+    spent = json.loads((scratch / "run-budget.json").read_text())
+    dropped(spent, "bz-agent", "darwin-aarch64", "not the bytes")
+    for platform in ("linux-aarch64", "linux-x86_64", "windows-x86_64"):
+        dropped(spent, "bz-agent", platform, str(module.REPACK_RUN_DECOMPRESSED), "next run")
+
+
+BSD_ABI = "FreeBSD:14:amd64"
+LDD_ADDRESS = "(0x82a3c1000)"
+
+
+def staged_runtime(
+    held: pathlib.Path,
+    *,
+    program: str = "node",
+    package: str = "node22",
+    licences: list[str] | None = None,
+    logic: str = "single",
+    python: bool = False,
+) -> tuple[pathlib.Path, dict, dict]:
+    """What the FreeBSD step stages for one runtime: the program, one library
+    it needs (through its versioned link), each package's licence, and for
+    CPython its standard library; with the package list `pkg query` gives.
+    Returns the staged directory, the ldd sections by staged path, and the
+    packages."""
+    staged = held / "staged"
+    for directory in ("bin", "lib", f"licenses/{package}", "licenses/libfoo"):
+        (staged / directory).mkdir(parents=True)
+    (staged / "bin" / program).write_bytes(f"\x7fELF {program}\n".encode())
+    (staged / "bin" / program).chmod(0o755)
+    (staged / "lib/libfoo.so.1.2").write_bytes(b"\x7fELF libfoo\n")
+    (staged / "lib/libfoo.so.1").symlink_to("libfoo.so.1.2")
+    (staged / f"licenses/{package}/LICENSE").write_bytes(f"{package} licence\n".encode())
+    (staged / "licenses/libfoo/COPYING").write_bytes(b"libfoo licence\n")
+    root = os.path.realpath(staged)
+    sections = {
+        f"bin/{program}": [
+            f"libfoo.so.1 => {root}/bin/../lib/libfoo.so.1 {LDD_ADDRESS}",
+            f"libc.so.7 => /lib/libc.so.7 {LDD_ADDRESS}",
+            f"libc++.so.1 => /usr/lib/libc++.so.1 {LDD_ADDRESS}",
+            f"[vdso] {LDD_ADDRESS}",
+        ],
+        "lib/libfoo.so.1.2": [f"libc.so.7 => /lib/libc.so.7 {LDD_ADDRESS}"],
+    }
+    files = [f"/usr/local/bin/{program}"]
+    if python:
+        (staged / f"lib/python{PYTHON}/lib-dynload").mkdir(parents=True)
+        (staged / f"lib/python{PYTHON}/os.py").write_bytes(b"# os\n")
+        (staged / f"lib/python{PYTHON}/lib-dynload/_ssl.so").write_bytes(b"\x7fELF _ssl\n")
+        sections[f"lib/python{PYTHON}/lib-dynload/_ssl.so"] = [f"libc.so.7 => /lib/libc.so.7 {LDD_ADDRESS}"]
+        files += [f"/usr/local/lib/python{PYTHON}/os.py", f"/usr/local/lib/python{PYTHON}/lib-dynload/_ssl.so"]
+    packages = {
+        "packages": [
+            {"name": package, "version": "22.15.1", "licenses": licences or ["MIT"], "logic": logic, "files": files},
+            {"name": "libfoo", "version": "1.2_1", "licenses": ["ISCL", "MIT"], "logic": "and",
+             "files": ["/usr/local/lib/libfoo.so.1.2", "/usr/local/lib/libfoo.so.1"]},
+        ]
+    }
+    return staged, sections, packages
+
+
+def ldd_text(staged: pathlib.Path, sections: dict) -> str:
+    root = os.path.realpath(staged)
+    return "".join(f"{root}/{path}:\n" + "".join(f"\t{line}\n" for line in lines) for path, lines in sections.items())
+
+
+def bundle_of(
+    held: pathlib.Path, staged: pathlib.Path, ldd: str, packages: dict, abi: str = BSD_ABI
+) -> tuple[subprocess.CompletedProcess[str], pathlib.Path, pathlib.Path]:
+    (held / "ldd.txt").write_text(ldd)
+    written(held, "packages.json", packages)
+    out, sbom = held / "out" / "bundle.tar.gz", held / "out" / "sbom.json"
+    out.parent.mkdir(exist_ok=True)
+    ran = intake(
+        "bundle", "--staged", staged, "--ldd", held / "ldd.txt", "--packages", held / "packages.json",
+        "--abi", abi, "--out", out, "--sbom", sbom,
+    )
+    return ran, out, sbom
+
+
+def bundled(held: pathlib.Path, **kept: object) -> tuple[bytes, dict, dict]:
+    """A bundle the FreeBSD step would make, its SBOM, and the client's listing of it."""
+    held.mkdir(parents=True)
+    staged, sections, packages = staged_runtime(held, **kept)
+    ran, out, sbom = bundle_of(held, staged, ldd_text(staged, sections), packages)
+    assert ran.returncode == 0, f"the bundle was refused: {ran.stderr[-600:]}"
+    files: dict[str, tuple[bytes, bool]] = {}
+    dirs, links = [], []
+    with tarfile.open(fileobj=io.BytesIO(out.read_bytes()), mode="r:gz") as tar:
+        for member in tar.getmembers():
+            if member.isdir():
+                dirs.append(member.name)
+            elif member.issym():
+                links.append((member.name, member.linkname))
+            else:
+                extracted = tar.extractfile(member)
+                assert extracted is not None
+                files[member.name] = (extracted.read(), bool(member.mode & 0o111))
+    return out.read_bytes(), json.loads(sbom.read_text()), listed(files, tuple(dirs), tuple(links))
+
+
+def check_bundle(scratch: pathlib.Path) -> None:
+    """The FreeBSD step's staged runtime is bundled with the libraries ldd
+    resolves into it, each installed by a listed package, as a deterministic
+    tar.gz and an SBOM the licence gate reads; a library that resolves
+    anywhere but the bundle or the base system cannot be bundled."""
+    scratch = scratch / "bundle"
+    held = scratch / "made"
+    held.mkdir(parents=True)
+    staged, sections, packages = staged_runtime(held)
+    ran, out, sbom = bundle_of(held, staged, ldd_text(staged, sections), packages)
+    assert ran.returncode == 0, f"the bundle was refused: {ran.stderr[-600:]}"
+    made, sbom_made = out.read_bytes(), sbom.read_bytes()
+    assert made[3] == 0 and made[4:8] == b"\0\0\0\0", "the gzip header names no file and carries mtime 0"
+    with tarfile.open(fileobj=io.BytesIO(made), mode="r:gz") as tar:
+        members = tar.getmembers()
+        assert [member.name for member in members] == [
+            "bin", "bin/node", "lib", "lib/libfoo.so.1", "lib/libfoo.so.1.2", "licenses", "licenses/libfoo",
+            "licenses/libfoo/COPYING", "licenses/node22", "licenses/node22/LICENSE",
+        ], [member.name for member in members]
+        for member in members:
+            assert (member.uid, member.gid, member.uname, member.gname, member.mtime) == (0, 0, "", "", 0), member.name
+            on_disk = os.lstat(staged / member.name)
+            if not member.issym():
+                assert member.mode == on_disk.st_mode & 0o777, f"{member.name}: mode {oct(member.mode)}"
+            if member.isfile():
+                extracted = tar.extractfile(member)
+                assert extracted is not None and extracted.read() == (staged / member.name).read_bytes(), member.name
+        link = next(member for member in members if member.name == "lib/libfoo.so.1")
+        assert link.issym() and link.linkname == "libfoo.so.1.2", "a library's link is kept as a link"
+    again = scratch / "again"
+    again.mkdir()
+    ran, out, sbom = bundle_of(again, staged, ldd_text(staged, sections), packages)
+    assert ran.returncode == 0 and out.read_bytes() == made and sbom.read_bytes() == sbom_made, "a bundle is the same bytes"
+    bom = json.loads(sbom_made)
+    assert bom["bomFormat"] == "CycloneDX" and bom["specVersion"] == "1.6", bom
+    assert {"name": "freebsd:abi", "value": BSD_ABI} in bom["metadata"]["properties"], bom["metadata"]
+    assert [(c["name"], c["version"], c["licenses"]) for c in bom["components"]] == [
+        ("libfoo", "1.2_1", [{"expression": "ISC AND MIT"}]),
+        ("node22", "22.15.1", [{"expression": "MIT"}]),
+    ], bom["components"]
+    (scratch / "bundle-asset").write_bytes(made)
+    ran = intake(
+        "licence-gate", "--input", held / "out" / "sbom.json", "--deny", ROOT / "deny.toml", "--texts", GATE / "texts",
+        "--asset", held / "out" / "bundle.tar.gz", "--out", scratch / "gated",
+    )
+    assert ran.returncode == 0 and json.loads(ran.stdout)["asset"]["sha256"] == sha(made), ran.stderr
+    # A ports licence the table does not hold asserts none, so the gate fails
+    # closed; under `or` another licence may still carry the package.
+    for name, licences, logic, expression in (
+        ("unknown", ["GPLv2"], "single", "NOASSERTION"),
+        ("either", ["MIT", "GPLv2"], "or", "MIT OR NOASSERTION"),
+        ("empty", [], "single", "NOASSERTION"),
+    ):
+        place = scratch / name
+        place.mkdir()
+        staged_here, sections_here, packages_here = staged_runtime(place, licences=licences, logic=logic)
+        if not licences:
+            packages_here["packages"][0]["licenses"] = []
+        ran, out, sbom = bundle_of(place, staged_here, ldd_text(staged_here, sections_here), packages_here)
+        assert ran.returncode == 0, f"{name}: {ran.stderr[-600:]}"
+        component = next(c for c in json.loads(sbom.read_text())["components"] if c["name"] == "node22")
+        assert component["licenses"] == [{"expression": expression}], f"{name}: {component}"
+    ran = intake(
+        "licence-gate", "--input", scratch / "unknown/out/sbom.json", "--deny", ROOT / "deny.toml",
+        "--texts", GATE / "texts", "--asset", scratch / "unknown/out/bundle.tar.gz", "--out", scratch / "ungated",
+    )
+    assert ran.returncode == 1 and "NOASSERTION" in ran.stderr, ran.stderr
+
+    def refused(name: str, words: tuple[str, ...], change=None, ldd=None, abi: str = BSD_ABI) -> None:
+        place = scratch / f"refused-{name}"
+        place.mkdir()
+        staged_here, sections_here, packages_here = staged_runtime(place)
+        if change is not None:
+            change(staged_here, sections_here, packages_here)
+        text_here = ldd(staged_here, sections_here) if ldd is not None else ldd_text(staged_here, sections_here)
+        ran, out, _ = bundle_of(place, staged_here, text_here, packages_here, abi)
+        assert ran.returncode == 1 and "Traceback" not in ran.stderr, f"{name}: {ran.returncode} {ran.stderr[-600:]!r}"
+        for word in words:
+            assert word in ran.stderr, f"{name}: {ran.stderr[-600:]!r} lacks {word!r}"
+        assert not list(out.parent.iterdir()), f"{name}: a refused bundle left a file"
+        return ran
+
+    def needs(line: str):
+        return lambda staged_here, sections_here, packages_here: sections_here["bin/node"].append(line)
+
+    root_of = os.path.realpath
+    # The evaluator's case: a library outside the bundle and the base system.
+    refused("local", ("libbar.so.2", "cannot be bundled"), needs(f"libbar.so.2 => /usr/local/lib/libbar.so.2 {LDD_ADDRESS}"))
+    refused("missing", ("libbaz.so.1", "cannot be bundled"), needs("libbaz.so.1 => not found (0)"))
+    refused("elsewhere", ("libq.so.1", "cannot be bundled"), needs(f"libq.so.1 => /opt/lib/libq.so.1 {LDD_ADDRESS}"))
+    refused("unstaged", ("libz.so.6", "cannot be bundled"), lambda s, sections_here, p: sections_here["bin/node"].append(
+        f"libz.so.6 => {root_of(s)}/lib/libz.so.6 {LDD_ADDRESS}"))
+    refused("escaping", ("libz.so.6", "cannot be bundled"), lambda s, sections_here, p: sections_here["bin/node"].append(
+        f"libz.so.6 => {root_of(s)}/lib/../../elsewhere/libz.so.6 {LDD_ADDRESS}"))
+    refused("unneeded", ("lib/libextra.so.1", "no ldd line needs"),
+            lambda s, se, p: (s / "lib/libextra.so.1").write_bytes(b"not loaded\n"))
+    refused("unpackaged", ("lib/libfoo.so.1.2", "no listed package installs"),
+            lambda s, se, p: p["packages"][1]["files"].remove("/usr/local/lib/libfoo.so.1.2"))
+    refused("unparsed", ("does not parse",), needs("libfoo.so.1 -> somewhere"))
+    # What ldd printed is the job's, so a refusal shows it escaped.
+    ran = refused("escape", ("libq.so\\u001b[31m", "cannot be bundled"), needs("libq.so\x1b[31m => not found (0)"))
+    assert "\x1b" not in ran.stderr, ran.stderr[-600:]
+    ran = refused("return", ("does not parse", "\\u000d"), needs(f"libq.so.1 => /opt/lib/libq.so.1 {LDD_ADDRESS}\r"))
+    assert "\r" not in ran.stderr, ran.stderr[-600:]
+    # A listed path installs a staged file only at its place under /usr/local/.
+    refused("elsewhere-installed", ("bin/node", "no listed package installs"),
+            lambda s, se, p: p["packages"][0]["files"].__setitem__(0, "/home/other/bin/node"))
+    refused("unsectioned", ("lib/libfoo.so.1.2", "ldd printed nothing"), lambda s, sections_here, p: sections_here.pop(
+        "lib/libfoo.so.1.2"))
+    refused("foreign", ("not a staged",), ldd=lambda s, se: ldd_text(s, se) + "/usr/local/bin/other:\n")
+    refused("again", ("twice",), ldd=lambda s, se: ldd_text(s, se) + ldd_text(s, {"bin/node": se["bin/node"]}))
+    refused("loose", ("does not parse",), ldd=lambda s, se: "ldd says hello\n" + ldd_text(s, se))
+    refused("abi", ("ABI",), abi="FreeBSD:14:i386")
+    refused("field", ("holds", "origin"), lambda s, se, p: p["packages"][0].update(origin="www/node22"))
+    refused("single", ("single",), lambda s, se, p: p["packages"][0].update(licenses=["MIT", "ISCL"]))
+    refused("logic", ("logic",), lambda s, se, p: p["packages"][0].update(logic="dual"))
+    refused("relative", ("absolute",), lambda s, se, p: p["packages"][0]["files"].append("usr/local/bin/x"))
+    refused("licence-dir", ("licenses/stray", "no listed package"),
+            lambda s, se, p: (s / "licenses/stray").mkdir())
+    refused("top", ("share",), lambda s, se, p: (s / "share").mkdir())
+    refused("programs", ("one program",), lambda s, se, p: (s / "bin/second").write_bytes(b"#!/bin/sh\n"))
+    refused("fifo", ("fifo",), lambda s, se, p: os.mkfifo(s / "lib/pipe"))
+    # A staged name is the job's, so a refusal shows it escaped.
+    ran = refused("fifo-escape", ("pipe\\u001b[31m", "fifo"), lambda s, se, p: os.mkfifo(s / "lib/pipe\x1b[31m"))
+    assert "\x1b" not in ran.stderr, ran.stderr[-600:]
+    refused("twice-named", ("twice",), lambda s, se, p: p["packages"].append(dict(p["packages"][1])))
+
+
+PKG_URL = "https://pkg.freebsd.org/" + BSD_ABI + "/latest/All/{}.pkg"
+
+
+def lay_out_runtime(place: pathlib.Path, package: bytes, url: str, made: tuple[bytes, dict, dict]) -> None:
+    """What the FreeBSD step leaves for one runtime: the pinned package, the
+    address it came from, the bundle, the client's listing of it and its SBOM."""
+    place.mkdir(parents=True, exist_ok=True)
+    bundle, sbom, listing = made
+    (place / "artifact").write_bytes(package)
+    (place / "fetched.json").write_text(json.dumps({"chain": [url]}))
+    (place / "repacked").write_bytes(bundle)
+    (place / "unpack-check.json").write_text(json.dumps(listing))
+    (place / "sbom.json").write_text(json.dumps(sbom))
+
+
+def check_freebsd_python(scratch: pathlib.Path) -> None:
+    """A `uvx` agent runs on FreeBSD on the CPython package the reviewer pins,
+    bundled on FreeBSD, installed as that bundle under a passing licence gate;
+    a runtime that is not the pinned package or fails the gate drops only
+    the FreeBSD target."""
+    scratch = scratch / "freebsd-python"
+    observed = scratch / "observed"
+    package = b"the python312 package\n"
+    url = PKG_URL.format("python312-3.12.7")
+    made = bundled(scratch / "made", program=f"python{PYTHON}", package="python312", python=True)
+    failing = bundled(scratch / "psf", program=f"python{PYTHON}", package="python312", python=True, licences=["PSFL"])
+    agents, choices = [], {}
+    for agent, runtime, chain in (
+        ("bsd-agent", made, url),
+        ("psf-agent", failing, url),
+        ("other-agent", made, url),
+        ("moved-agent", made, "https://pkg.freebsd.org/elsewhere.pkg"),
+    ):
+        agents.append({"id": agent, "name": agent, "version": "1.4.0", "license": "MIT",
+                       "distribution": {"uvx": {"package": "pyagent==1.4.0", "args": ["acp"]}}})
+        choices[agent] = {"key": agent.removesuffix("-agent")}
+        lay_out_uvx(observed, agent, "freebsd-x86_64", [own()], built=(package, runtime[2]), interpreter_chain=[chain])
+        lay_out_runtime(observed / agent / "freebsd-x86_64/interpreter",
+                        b"other bytes" if agent == "other-agent" else package, chain, runtime)
+    pins = json.loads(INTERPRETERS.read_text())
+    pins["freebsd-x86_64"] = {"url": url, "sha256": sha(package), "python": PYTHON, "abi": BSD_ABI}
+    registry = written(scratch, "registry.json", {"version": "1.0.0", "agents": agents})
+    data, assets = review(
+        scratch, "--interpreters", written(scratch, "pins.json", pins), "--texts", GATE / "texts",
+        registry=registry, choices=written(scratch, "choices.json", choices),
+    )
+    [entry] = data["entries"]
+    [target] = entry["targets"]
+    assert entry["key"] == "bsd" and target["platform"] == "freebsd-x86_64", entry
+    assert target["cmd"] == f"bin/python{PYTHON}" and target["interpreter_args"] == ["-I"], target["cmd"]
+    runtime = target["artifacts"][0]
+    bundle, _, listing = made
+    assert (runtime["url"], runtime["sha256"], runtime["size"]) == (url, sha(package), len(package)), runtime["url"]
+    assert runtime["format"] == "tar.gz" and runtime["files"] == listing["files"], runtime["format"]
+    assert "kept" not in runtime and "mirror_licence" not in runtime, "every file of the bundle is kept"
+    assert runtime["replaced_by"] == {"sha256": sha(bundle), "size": len(bundle)}, runtime.get("replaced_by")
+    assert runtime["licence_gate"]["passed"] is True, runtime["licence_gate"]
+    assert (assets / sha(bundle)).read_bytes() == bundle, "the bundle is kept as an asset by its hash"
+    assert target["artifacts"][1]["format"] == "wheel", "the agent's wheels install beside it"
+    dropped(data, "psf-agent", "freebsd-x86_64", "the interpreter", "PSF-2.0", "not on deny.toml's list")
+    dropped(data, "other-agent", "freebsd-x86_64", "the interpreter", "not the bytes")
+    dropped(data, "moved-agent", "freebsd-x86_64", "the interpreter", "pinned address")
+    # The diff no longer says an interpreter is never mirrored where one ships.
+    ran = intake("diff", scratch / "review.json")
+    assert ran.returncode == 0, ran.stderr
+    [said] = [line for line in ran.stdout.splitlines() if line.startswith("- not mirrored")]
+    assert "except" in said and "` freebsd-x86_64 `" in said and "installs as its bundle" in said, said
+    beside = [(record["sha256"], (assets / record["sha256"]).read_bytes())
+              for record in [runtime["licence_gate"]["notice"], *runtime["licence_gate"]["licences"]]]
+    ran = publish_checked(scratch, "freebsd-python", data, (sha(bundle), bundle), *beside)
+    assert ran.returncode == 0, f"a gated bundle was refused:\n{ran.stdout}{ran.stderr}"
+    publish_refuses(publish_checked(scratch, "freebsd-package", data, (sha(package), package), *beside), "licence-gate")
+    # With no licence texts nothing could ship beside a bundle, so it has none.
+    textless, _ = review(scratch, "--interpreters", scratch / "pins.json", name="textless.json",
+                         registry=registry, choices=scratch / "choices.json")
+    dropped(textless, "bsd-agent", "freebsd-x86_64", "no licence texts were given")
+
+    for name, changed, words in (
+        ("host", {"url": url.replace("pkg.freebsd.org", "pkg.example.org")}, "pkg.freebsd.org"),
+        ("suffix", {"url": url.replace(".pkg", ".txz")}, ".pkg"),
+        ("abi-path", {"url": url.replace(BSD_ABI, "FreeBSD:13:amd64")}, BSD_ABI),
+        ("query", {"url": url + "?x=1"}, "plain"),
+        ("abi", {"abi": "FreeBSD:14:aarch64"}, "ABI"),
+        ("no-abi", {"abi": None}, "ABI"),
+        ("extra", {"mirror": True}, "mirror"),
+    ):
+        held = copy.deepcopy(pins)
+        held["freebsd-x86_64"].update(changed)
+        held["freebsd-x86_64"] = {key: value for key, value in held["freebsd-x86_64"].items() if value is not None}
+        ran = intake(
+            "review", "--registry", registry, "--choices", scratch / "choices.json", "--runners", RUNNERS,
+            "--observed", observed, "--deny", ROOT / "deny.toml", "--assets", scratch / "none",
+            "--out", scratch / f"pins-{name}.json", "--interpreters", written(scratch, f"pins-{name}-in.json", held),
+        )
+        assert ran.returncode == 1 and words in ran.stderr, f"{name}: {ran.returncode} {ran.stderr[-600:]!r} lacks {words!r}"
+        assert "Traceback" not in ran.stderr and not (scratch / f"pins-{name}.json").exists(), ran.stderr
+    linux = copy.deepcopy(pins)
+    linux["linux-x86_64"]["abi"] = BSD_ABI
+    ran = intake(
+        "review", "--registry", registry, "--choices", scratch / "choices.json", "--runners", RUNNERS,
+        "--observed", observed, "--deny", ROOT / "deny.toml", "--assets", scratch / "none",
+        "--out", scratch / "pins-linux.json", "--interpreters", written(scratch, "pins-linux-in.json", linux),
+    )
+    assert ran.returncode == 1 and "abi" in ran.stderr and "Traceback" not in ran.stderr, ran.stderr
+
+
+def check_freebsd_node(scratch: pathlib.Path, signers: Signers) -> None:
+    """An npm agent runs on FreeBSD on the Node package the reviewer pins,
+    in the major line of the run's Node, bundled on FreeBSD and installed as
+    that bundle under a passing licence gate; one failing the gate drops only
+    the FreeBSD target."""
+    scratch = scratch / "freebsd-node"
+    observed = scratch / "observed"
+    lay_out_node(observed, signers.signed())
+    agents: list[dict] = []
+    choices: dict = {}
+    platforms = (*NODE_BUILT, "freebsd-x86_64")
+    npm_case(observed, agents, choices, "npx-agent", npm_tree(), platforms=platforms)
+    package = b"the node22 package\n"
+    url = PKG_URL.format("node22-22.15.1")
+    made = bundled(scratch / "made")
+    lay_out_runtime(observed / "node/freebsd-x86_64", package, url, made)
+    registry = written(scratch, "registry.json", {"version": "1.0.0", "agents": agents})
+    choices_path = written(scratch, "choices.json", choices)
+    freebsd = {"url": url, "sha256": sha(package), "abi": BSD_ABI, "version": "22.15.1"}
+    pin = written(scratch, "node.json", {"version": NODE_VERSION, "freebsd-x86_64": freebsd})
+    data, assets = review(scratch, "--node", pin, "--node-keys", signers.keys, "--texts", GATE / "texts",
+                          registry=registry, choices=choices_path)
+    [entry] = data["entries"]
+    targets = {target["platform"]: target for target in entry["targets"]}
+    assert sorted(targets) == sorted(platforms), sorted(targets)
+    target = targets["freebsd-x86_64"]
+    assert target["cmd"] == "bin/node", target["cmd"]
+    [runtime] = target["artifacts"]
+    bundle, _, listing = made
+    assert (runtime["url"], runtime["sha256"], runtime["size"]) == (url, sha(package), len(package)), runtime["url"]
+    assert runtime["format"] == "tar.gz" and runtime["files"] == listing["files"], runtime["format"]
+    assert "kept" not in runtime, "every file of the bundle is kept"
+    assert runtime["replaced_by"] == {"sha256": sha(bundle), "size": len(bundle)}, runtime.get("replaced_by")
+    assert (assets / sha(bundle)).read_bytes() == bundle, "the bundle is kept as an asset by its hash"
+    assert "kept" in targets["linux-x86_64"]["artifacts"][0], "Node's own builds are kept as before"
+    # The diff no longer says Node is never mirrored where its bundle ships.
+    ran = intake("diff", scratch / "review.json")
+    assert ran.returncode == 0, ran.stderr
+    [said] = [line for line in ran.stdout.splitlines() if line.startswith("- not mirrored")]
+    assert "except" in said and "` freebsd-x86_64 `" in said and "installs as its bundle" in said, said
+
+    failing = bundled(scratch / "failing", licences=["GPLv2"])
+    (observed / "node/freebsd-x86_64/sbom.json").write_text(json.dumps(failing[1]))
+    held, _ = review(scratch, "--node", pin, "--node-keys", signers.keys, "--texts", GATE / "texts",
+                     name="failing.json", registry=registry, choices=choices_path)
+    dropped(held, "npx-agent", "freebsd-x86_64", "NOASSERTION")
+    assert sorted(t["platform"] for t in held["entries"][0]["targets"]) == sorted(NODE_BUILT), "only FreeBSD drops"
+    bare = written(scratch, "bare.json", {"version": NODE_VERSION})
+    held, _ = review(scratch, "--node", bare, "--node-keys", signers.keys, name="bare.json",
+                     registry=registry, choices=choices_path)
+    dropped(held, "npx-agent", "freebsd-x86_64", "Node publishes no build", "no FreeBSD package")
+
+    for name, changed, words in (
+        ("major", {"version": "24.1.0"}, "major"),
+        ("floor", {"version": "22.14.0"}, "22.15.0"),
+        ("loose", {"version": "v22.15.1"}, "X.Y.Z"),
+        ("host", {"url": url.replace("pkg.freebsd.org", "pkg.example.org")}, "pkg.freebsd.org"),
+        ("suffix", {"url": url.replace(".pkg", ".txz")}, ".pkg"),
+        ("abi", {"abi": "FreeBSD:14"}, "ABI"),
+        ("digest", {"sha256": "A" * 64}, "sha256"),
+        ("extra", {"mirror": True}, "mirror"),
+    ):
+        pinned = {**freebsd, **changed}
+        path = written(scratch, f"node-{name}.json", {"version": NODE_VERSION, "freebsd-x86_64": pinned})
+        ran = intake(
+            "review", "--registry", registry, "--choices", choices_path, "--runners", RUNNERS,
+            "--observed", observed, "--deny", ROOT / "deny.toml", "--assets", scratch / "none",
+            "--out", scratch / f"pin-{name}.json", "--node", path, "--node-keys", signers.keys,
+        )
+        assert ran.returncode == 1 and words in ran.stderr, f"{name}: {ran.returncode} {ran.stderr[-600:]!r} lacks {words!r}"
+        assert "Traceback" not in ran.stderr and not (scratch / f"pin-{name}.json").exists(), ran.stderr
+
+
 def main() -> int:
     failures = []
     with tempfile.TemporaryDirectory(prefix="intake-") as held:
@@ -3051,6 +3774,11 @@ def main() -> int:
             ("npm node", lambda: check_npm_node(scratch, signers)),
             ("npm tarballs", lambda: check_npm_tarballs(scratch)),
             ("npm render", lambda: check_npm_render(scratch)),
+            ("repack", lambda: check_repack(scratch)),
+            ("bz2 review", lambda: check_bz2_review(scratch)),
+            ("bundle", lambda: check_bundle(scratch)),
+            ("freebsd python", lambda: check_freebsd_python(scratch)),
+            ("freebsd node", lambda: check_freebsd_node(scratch, signers)),
         ]
         try:
             for name, check in checks:
