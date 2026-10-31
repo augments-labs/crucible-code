@@ -3938,7 +3938,7 @@ def staged_tree(staged: pathlib.Path) -> dict[str, tuple[str, int]]:
         try:
             names = sorted(os.listdir(directory))
         except OSError:
-            raise Refused(f"the staged directory {clipped(prefix or '.')} cannot be read") from None
+            raise Refused(f"the staged directory {shown(clipped(prefix or '.'))} cannot be read") from None
         for name in names:
             path = f"{prefix}{name}"
             held = os.lstat(directory / name)
@@ -3952,7 +3952,7 @@ def staged_tree(staged: pathlib.Path) -> dict[str, tuple[str, int]]:
                 found[path] = ("dir", held.st_mode)
                 walk(directory / name, f"{path}/")
             else:
-                raise Refused(f"the staged {clipped(path)} is a fifo, a device or a socket, not a file, "
+                raise Refused(f"the staged {shown(clipped(path))} is a fifo, a device or a socket, not a file, "
                               "a directory or a link")
 
     walk(staged, "")

@@ -3556,6 +3556,9 @@ def check_bundle(scratch: pathlib.Path) -> None:
     refused("top", ("share",), lambda s, se, p: (s / "share").mkdir())
     refused("programs", ("one program",), lambda s, se, p: (s / "bin/second").write_bytes(b"#!/bin/sh\n"))
     refused("fifo", ("fifo",), lambda s, se, p: os.mkfifo(s / "lib/pipe"))
+    # A staged name is the job's, so a refusal shows it escaped.
+    ran = refused("fifo-escape", ("pipe\\u001b[31m", "fifo"), lambda s, se, p: os.mkfifo(s / "lib/pipe\x1b[31m"))
+    assert "\x1b" not in ran.stderr, ran.stderr[-600:]
     refused("twice-named", ("twice",), lambda s, se, p: p["packages"].append(dict(p["packages"][1])))
 
 
