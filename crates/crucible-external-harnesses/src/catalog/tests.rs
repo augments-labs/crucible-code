@@ -20,7 +20,7 @@ use super::{
     Admits, AssetRef, AuthMethod, Catalog, CatalogError, CatalogProfile, ContentUse, Disposition,
     Entry, File, FileKind, Files, Format, GRACE, Held, INDEX_BYTES, KEYS, Keys, Kind, Launch, Lock,
     Method, Revoked, Route, SCHEMA_SHOWN, SNAPSHOT, Script, Trust, TrustError, Unprofiled,
-    Unusable, VERSION_BYTES, Variable, file_list,
+    Unusable, VERSION_BYTES, Variable, file_list, result_list,
 };
 use crate::acp::SignIn;
 use crate::antigravity::AGENT;
@@ -173,7 +173,8 @@ fn npm() -> Value {
                 {"package": "node_modules/d", "event": "install", "disposition": "built"},
                 {
                     "package": "node_modules/e", "event": "postinstall", "disposition": "local",
-                    "hosts": ["*.example.com"], "result": {"sha256": hash('4'), "size": 900}
+                    "command": "node install.js", "hosts": ["*.example.com"],
+                    "result": {"sha256": hash('4'), "size": 900}
                 }
             ],
             "artifacts": [{
@@ -521,6 +522,7 @@ fn a_signed_catalog_parses_its_interpreter_and_node_entries() {
                     "node_modules/e",
                     "postinstall",
                     Disposition::Local {
+                        command: "node install.js".into(),
                         hosts: vec!["*.example.com".into()],
                         result: AssetRef {
                             sha256: hash('4').into(),
@@ -876,6 +878,31 @@ fn a_field_that_is_not_what_it_must_be_is_refused_by_its_name() {
     assert!(failures.is_empty(), "{failures:#?}");
 }
 
+/// A local script is run by the command it gives, so one that gives none, or
+/// one a terminal could not show as it is, or one longer than the intake lets
+/// a catalog text be, is refused by that field's name.
+#[test]
+fn a_local_script_without_a_command_it_can_show_is_refused() {
+    let command = "entries[2].targets[0].scripts[4].command";
+    let at = "/entries/2/targets/0/scripts/4/command";
+    let missing = fetched(&without(at));
+    assert!(
+        matches!(
+            &missing,
+            Err(CatalogError::Field { field, why: "is missing" }) if **field == *command
+        ),
+        "a local script without a command: {:?}",
+        missing.map(|_| "believed")
+    );
+    let cases = vec![
+        (command, at.to_owned(), json!("node install.js\u{1b}[2J")),
+        (command, at.to_owned(), json!("node\ninstall.js")),
+        (command, at.to_owned(), json!("x".repeat(4097))),
+    ];
+    let failures = misnamed(cases, None);
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
 #[test]
 fn every_path_address_digest_and_word_is_checked_where_it_is_read() {
     let goose = "/entries/0/targets/0/artifacts/0";
@@ -1021,6 +1048,52 @@ fn an_artifact_without_its_file_list_is_refused() {
             refused.map(|_| "believed")
         );
     }
+}
+
+/// A local script's result is the listing review's runs left of its package's
+/// directory, `{"files": [...]}`, regular files alone, each read as a file of
+/// a file list is; a bare list, or a member of any other kind, is refused.
+// A test whose good catalog lists no goose has nothing else to report.
+#[allow(clippy::panic)]
+#[test]
+fn a_script_result_reads_the_files_its_listing_gives_and_files_alone() {
+    let catalog = believed();
+    let Some(goose) = catalog.entries().first() else {
+        panic!("an entry");
+    };
+    let member = json!({"exec": true, "path": "build/x.node", "sha256": hash('9'), "size": 3});
+    let listing = serde_json::to_vec(&json!({"files": [member]})).unwrap_or_default();
+
+    let read = result_list(goose, &listing);
+
+    assert_eq!(
+        read.ok(),
+        Some(vec![File {
+            path: "build/x.node".into(),
+            kind: FileKind::File {
+                size: 3,
+                sha256: hash('9').into(),
+                exec: true
+            },
+        }])
+    );
+    let bare = serde_json::to_vec(&json!([member])).unwrap_or_default();
+    assert!(
+        result_list(goose, &bare).is_err(),
+        "a bare list is no result"
+    );
+    let dir = serde_json::to_vec(&json!({"files": [{"path": "build", "kind": "dir"}]}))
+        .unwrap_or_default();
+    assert!(
+        matches!(
+            result_list(goose, &dir),
+            Err(CatalogError::Field {
+                why: "is not a file",
+                ..
+            })
+        ),
+        "a result lists files alone"
+    );
 }
 
 /// goose as the whole catalog believes it, the files its one artifact lists

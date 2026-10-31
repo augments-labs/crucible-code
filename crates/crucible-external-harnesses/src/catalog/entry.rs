@@ -52,6 +52,10 @@ pub const UNPACK_RULES: u64 = 1;
 /// The longest version, in bytes; a version names one directory in the store.
 pub const VERSION_BYTES: usize = 64;
 
+/// The longest command a local install script may give, in bytes, as the
+/// intake bounds every catalog text.
+const COMMAND_BYTES: usize = 4096;
+
 /// One reviewed version of one agent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
@@ -263,6 +267,8 @@ pub enum Disposition {
     Built,
     /// It is run at install, in the sandbox, and must then match.
     Local {
+        /// What `sh -c` is given to run it, in its package's directory.
+        command: Box<str>,
         /// The host patterns it may reach.
         hosts: Vec<Box<str>>,
         /// The files its package directory must hold afterwards.
@@ -558,6 +564,7 @@ impl Script {
             "lost" => Disposition::Lost,
             "built" => Disposition::Built,
             "local" => Disposition::Local {
+                command: fields.command("command")?,
                 hosts: fields.texts("hosts")?,
                 result: fields.object("result")?.asset(Some(ASSET_BYTES))?,
             },
@@ -716,6 +723,49 @@ pub fn file_list(entry: &Entry, bytes: &[u8]) -> Result<Vec<File>, CatalogError>
             why: "is not a JSON list of files",
         });
     };
+    read_members(&list, &members)
+}
+
+/// The files a local install script's `result` asset of `entry` says its
+/// package's directory holds after it runs: the listing review's runs left,
+/// `{"files": [...]}` with each path relative to that directory, every member
+/// read as [`file_list`] reads one and each a regular file, as that listing
+/// gives nothing else.
+///
+/// # Errors
+///
+/// A [`CatalogError::Field`] naming the listing, or the first member at
+/// fault, where it is not that object, or a member is not a file.
+pub fn result_list(entry: &Entry, bytes: &[u8]) -> Result<Vec<File>, CatalogError> {
+    let list = format!("{} {} script result", entry.key.as_str(), entry.version);
+    let Ok(Value::Object(mut listing)) = serde_json::from_slice::<Value>(bytes) else {
+        return Err(CatalogError::Field {
+            field: list.into(),
+            why: "is not a JSON object listing files",
+        });
+    };
+    let Some(Value::Array(members)) = listing.remove("files") else {
+        return Err(CatalogError::Field {
+            field: format!("{list}.files").into(),
+            why: "is not a JSON list of files",
+        });
+    };
+    let files = read_members(&format!("{list}.files"), &members)?;
+    if let Some(index) = files
+        .iter()
+        .position(|file| !matches!(file.kind, FileKind::File { .. }))
+    {
+        return Err(CatalogError::Field {
+            field: format!("{list}.files[{index}]").into(),
+            why: "is not a file",
+        });
+    }
+    Ok(files)
+}
+
+/// The files `members` of the list `list` names hold, each path listed once
+/// and no more of them than the most members an unpack writes.
+fn read_members(list: &str, members: &[Value]) -> Result<Vec<File>, CatalogError> {
     let mut paths = HashSet::with_capacity(members.len().min(MEMBERS));
     let mut files = Vec::with_capacity(members.len().min(MEMBERS));
     for (index, member) in members.iter().enumerate() {
@@ -822,6 +872,20 @@ impl<'a> Fields<'a> {
             Some(Value::String(text)) => Ok(Some(text.as_str().into())),
             Some(_) => Err(self.wrong(name, "is not text")),
         }
+    }
+
+    /// A command a shell is given, which the question shows before it runs:
+    /// within [`COMMAND_BYTES`], and holding no character a terminal acts on
+    /// or hides rather than draws.
+    fn command(&self, name: &str) -> Result<Box<str>, CatalogError> {
+        let command = self.text(name)?;
+        if command.len() > COMMAND_BYTES {
+            return Err(self.wrong(name, "is longer than a command may be"));
+        }
+        if command.chars().any(crucible_types::shown::unshown) {
+            return Err(self.wrong(name, "holds a character that could hide what it runs"));
+        }
+        Ok(command)
     }
 
     pub(super) fn text(&self, name: &str) -> Result<Box<str>, CatalogError> {
