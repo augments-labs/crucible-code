@@ -3007,7 +3007,11 @@ def check_npm_render(scratch: pathlib.Path) -> None:
     index = next(index for index, entry in enumerate(merged["entries"]) if entry["kind"] == "npm")
     for name, change, words in (
         ("undecided", lambda t: t["scripts"][0].update(disposition=None), "disposition"),
-        ("built", lambda t: t["scripts"][0].update(disposition="built"), "disposition"),
+        ("unknown", lambda t: t["scripts"][0].update(disposition="compiled"), "disposition"),
+        ("local-bare", lambda t: t["scripts"][0].update(disposition="local"), "command"),
+        ("local-host", lambda t: t["scripts"][0].update(
+            disposition="local", command="node x.js", hosts=["no host"], result={"sha256": "0" * 64, "size": 2}
+        ), "hosts"),
         ("no-bin", lambda t: t.pop("bin"), "bin"),
         ("rules", lambda t: t["lock"].update(unpack_rules=2), "unpack_rules"),
         ("no-lock", lambda t: t.pop("lock"), "lock"),
@@ -3741,6 +3745,463 @@ def check_freebsd_node(scratch: pathlib.Path, signers: Signers) -> None:
         assert "Traceback" not in ran.stderr and not (scratch / f"pin-{name}.json").exists(), ran.stderr
 
 
+# What the job leaves for a skipped script of an npm agent's own package.
+TOP_SCRIPT = (TOP, "postinstall")
+BUILT_HOSTS = ["registry.npmjs.org", "github.com"]
+
+
+def script_place(observed: pathlib.Path, agent: str, platform: str, location: str, event: str) -> pathlib.Path:
+    """Where the job leaves what it saw of one script: under the target's
+    `scripts/`, by the SHA-256 of `<location> <event>`."""
+    return observed / agent / platform / "scripts" / sha(f"{location} {event}".encode())
+
+
+def package_files(tree: dict, **added: bytes) -> dict[str, tuple[bytes, bool]]:
+    """The agent's own package directory after a run of its script: the files
+    its tarball wrote, and `added`, by path."""
+    files = dict(tree["files"][TOP])
+    files.update({path.replace("__", "/"): (content, False) for path, content in added.items()})
+    return files
+
+
+def tree_of(files: dict[str, tuple[bytes, bool]]) -> bytes:
+    """The listing `tree` prints of a directory holding `files`."""
+    listed_files = sorted(
+        ({"exec": runs, "path": path, "sha256": sha(content), "size": len(content)}
+         for path, (content, runs) in files.items()),
+        key=lambda item: item["path"],
+    )
+    return json.dumps({"files": listed_files}, sort_keys=True, separators=(",", ":")).encode()
+
+
+def packed_as_packing(files: dict[str, tuple[bytes, bool]], links: dict[str, str] | None = None) -> bytes:
+    """`files` as a deterministic tar.gz, written as `Packing` writes one: a
+    GNU tar of each directory above a file and each file, in order, owner 0
+    and mtime 0, in one gzip stream at level 9 naming no file; with `links`,
+    each a symbolic link to its target, which no build `pack` writes holds."""
+    names: dict[str, tuple[bytes, bool] | str | None] = {}
+    for path in sorted([*files, *(links or {})]):
+        parts = path.split("/")
+        for depth in range(1, len(parts)):
+            names.setdefault("/".join(parts[:depth]), None)
+        names[path] = files[path] if path in files else (links or {})[path]
+    sink = io.BytesIO()
+    with gzip.GzipFile(filename="", mode="wb", fileobj=sink, compresslevel=9, mtime=0) as zipped:
+        with tarfile.open(fileobj=zipped, mode="w", format=tarfile.GNU_FORMAT, encoding="utf-8") as tar:
+            for name, member in sorted(names.items(), key=lambda item: tuple(item[0].split("/"))):
+                info = tarfile.TarInfo(name)
+                info.uid = info.gid = 0
+                info.uname = info.gname = ""
+                info.mtime = 0
+                if member is None:
+                    info.type, info.mode = tarfile.DIRTYPE, 0o755
+                    tar.addfile(info)
+                elif isinstance(member, str):
+                    info.type, info.mode, info.linkname = tarfile.SYMTYPE, 0o777, member
+                    tar.addfile(info)
+                else:
+                    content, runs = member
+                    info.mode, info.size = (0o755 if runs else 0o644), len(content)
+                    tar.addfile(info, io.BytesIO(content))
+    return sink.getvalue()
+
+
+def lay_out_script(
+    place: pathlib.Path,
+    first: bytes | None,
+    second: bytes | None,
+    *,
+    hosts: object = BUILT_HOSTS,
+    built: dict[str, tuple[bytes, bool]] | None = None,
+    sboms: pathlib.Path | None = None,
+    sbom: bytes | None = None,
+    packed=packed_as_packing,
+    listed_as=None,
+) -> bytes | None:
+    """What the job leaves for one script: its two runs' listings, the hosts
+    it reached, and, where it built, the deterministic tar.gz of its package
+    and that tree's listing, with the build's SBOM by the archive's hash;
+    `packed` writes the archive of the built files, and `listed_as`, where
+    given, the files `built.json` lists instead of them. Returns the archive."""
+    place.mkdir(parents=True)
+    for name, listing in (("run-1.json", first), ("run-2.json", second)):
+        if listing is not None:
+            (place / name).write_bytes(listing)
+    (place / "hosts.json").write_text(json.dumps({"hosts": hosts}))
+    if built is None:
+        return None
+    archive_bytes = packed(built)
+    (place / "built.tar.gz").write_bytes(archive_bytes)
+    (place / "built.json").write_bytes(tree_of(built if listed_as is None else listed_as(built)))
+    if sboms is not None and sbom is not None:
+        (sboms / f"{sha(archive_bytes)}.json").write_bytes(sbom)
+    return archive_bytes
+
+
+BUILDS: dict = {}
+
+
+def builds_review(scratch: pathlib.Path, signers: Signers) -> tuple[dict, pathlib.Path, dict]:
+    """One review of npm agents whose own package's postinstall script the
+    job ran twice, or built, on some targets; returns the data, the assets
+    and the archives the job built, by agent and platform. Reviewed once and
+    kept, as every check of it reads the same run."""
+    held = BUILDS
+    if "data" in held:
+        return held["data"], held["assets"], held["archives"]
+    scratch = scratch / "npm-builds"
+    observed = scratch / "observed"
+    sboms = scratch / "sboms"
+    sboms.mkdir(parents=True)
+    lay_out_node(observed, signers.signed())
+    agents: list[dict] = []
+    choices: dict = {}
+    archives: dict[tuple[str, str], bytes | None] = {}
+    passing_sbom = (GATE / "sbom.json").read_bytes()
+    failing = json.loads(passing_sbom)
+    failing["components"][0]["licenses"] = [{"expression": "Unlicense"}]
+    failing_sbom = json.dumps(failing).encode()
+
+    def agent(agent_id: str, command: str, laid: dict[str, dict]) -> dict:
+        tree = npm_tree(top=top_manifest(scripts={"postinstall": command}))
+        npm_case(observed, agents, choices, agent_id, tree)
+        same = tree_of(package_files(tree, **{"build__done": b"1\n"}))
+        for platform, kept in laid.items():
+            first = kept.pop("first", same)
+            second = kept.pop("second", same)
+            built = kept.pop("built", None)
+            if built is not None:
+                built = package_files(tree, **{"build__Release__addon.node": f"\x7fELF {agent_id} {platform}\n".encode()})
+            archives[(agent_id, platform)] = lay_out_script(
+                script_place(observed, agent_id, platform, *TOP_SCRIPT), first, second,
+                built=built, sboms=sboms, **kept,
+            )
+        return tree
+
+    differs = b'{"files":[]}'
+    # A compiler's script is a build by rule, whatever its runs leave.
+    agent("gyp-npm", "node-gyp rebuild", {
+        "linux-x86_64": {"built": True, "sbom": passing_sbom},
+        "darwin-aarch64": {},
+    })
+    # Runs that leave other listings are a build; ones that agree are run
+    # locally, except where every script is built.
+    agent("differ-npm", "node setup.js", {
+        "linux-x86_64": {"second": differs},
+        "darwin-aarch64": {},
+        "windows-x86_64": {},
+    })
+    # A build the gate refuses, or has no input for, drops its target.
+    agent("ungated-npm", "node setup.js", {
+        "linux-x86_64": {"second": differs, "built": True},
+        "darwin-aarch64": {"second": differs, "built": True, "sbom": failing_sbom},
+        "windows-x86_64": {"built": True, "sbom": passing_sbom},
+    })
+    # Commands that run a build tool however it is reached: through a
+    # package manager, an expansion, a glob, a versioned or scripted name;
+    # ones that cannot be split, or hold what could hide what they run; and
+    # one that names a file like one and runs none.
+    for agent_id, command in (
+        ("npxgyp-npm", "npx node-gyp@10 rebuild"),
+        ("prebuild-npm", "prebuild-install || node build.js"),
+        ("path-npm", "./node_modules/.bin/node-gyp rebuild"),
+        ("subst-npm", "node -e \"$(cmake --version)\""),
+        ("quote-npm", "node \"setup.js"),
+        ("braced-npm", "ma${u}ke"),
+        ("glob-npm", "mak?"),
+        ("versioned-npm", "gcc-12 x.c"),
+        ("gypjs-npm", "node node_modules/node-gyp/bin/node-gyp.js rebuild"),
+        ("run-npm", "npm run build"),
+        ("triplet-npm", "x86_64-linux-gnu-gcc x.c"),
+        ("crossversioned-npm", "aarch64-linux-gnu-g++-12 x.cc"),
+        ("dotversioned-npm", "gcc-12.2.0 x.c"),
+        ("pnpx-npm", "pnpx tsc"),
+        ("bunx-npm", "bunx tsc"),
+        ("bidi-npm", "node x.js \u202e;rm"),
+        ("nel-npm", "node x.js \x85rm"),
+        ("near-npm", "node remake.js"),
+    ):
+        agent(agent_id, command, {"linux-x86_64": {}})
+    # Builds review does not take as a build `pack` wrote: one compressed
+    # otherwise, one with bytes after its gzip stream, one holding a link,
+    # and one whose listing leaves a file out.
+    def recompressed(files: dict) -> bytes:
+        return gzip.compress(gzip.decompress(packed_as_packing(files)), compresslevel=1, mtime=0)
+
+    for agent_id, kept in (
+        ("recompressed-npm", {"packed": recompressed}),
+        ("trailing-npm", {"packed": lambda files: packed_as_packing(files) + b"\0"}),
+        ("linked-npm", {"packed": lambda files: packed_as_packing(files, {"build/link": "done"})}),
+        ("omitted-npm", {"listed_as": lambda files: {
+            path: held for path, held in files.items() if not path.endswith("addon.node")
+        }}),
+    ):
+        agent(agent_id, "node-gyp rebuild", {"linux-x86_64": {"built": True, "sbom": passing_sbom, **kept}})
+    # A run the job left no listing of, and hosts that are not hosts.
+    agent("norun-npm", "node setup.js", {"linux-x86_64": {"second": None}})
+    agent("badhost-npm", "node setup.js", {"linux-x86_64": {"hosts": ["10.0.0.1"]}})
+    registry = written(scratch, "registry.json", {"version": "1.0.0", "agents": agents})
+    choices_path = written(scratch, "choices.json", choices)
+    data, assets = npm_review(scratch, signers, registry, choices_path, "--sboms", sboms, "--texts", GATE / "texts")
+    held.update(data=data, assets=assets, archives=archives)
+    return data, assets, archives
+
+
+def built_targets(data: dict, key: str) -> dict[str, dict]:
+    entry = next((entry for entry in data["entries"] if entry["key"] == key), {"targets": []})
+    return {target["platform"]: target for target in entry["targets"]}
+
+
+def top_script(target: dict) -> dict:
+    return next(script for script in target["scripts"] if (script["package"], script["event"]) == TOP_SCRIPT)
+
+
+def check_npm_build_by_rule(scratch: pathlib.Path, signers: Signers) -> None:
+    """A script that runs `node-gyp` is a build even where its two runs
+    agree: built where the job built it and the gate passes, and its target
+    dropped where the job left no build."""
+    data, assets, archives = builds_review(scratch, signers)
+    dropped(data, "gyp-npm", "darwin-aarch64", "postinstall", TOP, "is a build", "node-gyp", "left no build")
+    targets = built_targets(data, "gyp")
+    assert sorted(targets) == ["linux-x86_64", "windows-x86_64"], sorted(targets)
+    built = archives[("gyp-npm", "linux-x86_64")]
+    script = top_script(targets["linux-x86_64"])
+    assert script["disposition"] == "built", script
+    assert script["replaced_by"] == {"sha256": sha(built), "size": len(built)}, script
+    assert script["licence_gate"]["passed"] is True, script["licence_gate"]
+    assert script["licence_gate"]["asset"] == script["replaced_by"], script["licence_gate"]
+    assert (assets / sha(built)).read_bytes() == built, "the build is kept as an asset by its hash"
+    assert "command" not in script and "result" not in script, script
+    # Where the job saw nothing of the script, it stays for the reviewer.
+    assert top_script(targets["windows-x86_64"])["disposition"] is None, targets["windows-x86_64"]["scripts"]
+    for agent_id in (
+        "npxgyp-npm", "prebuild-npm", "path-npm", "subst-npm", "quote-npm", "braced-npm", "glob-npm",
+        "versioned-npm", "gypjs-npm", "run-npm", "triplet-npm", "crossversioned-npm", "dotversioned-npm", "pnpx-npm", "bunx-npm", "bidi-npm", "nel-npm",
+    ):
+        dropped(data, agent_id, "linux-x86_64", "is a build", "left no build")
+    dropped(data, "quote-npm", "linux-x86_64", "cannot be split")
+    for agent_id in ("braced-npm", "glob-npm"):
+        dropped(data, agent_id, "linux-x86_64", "a shell expands")
+    for agent_id in ("bidi-npm", "nel-npm"):
+        dropped(data, agent_id, "linux-x86_64", "could hide what it runs")
+    near = top_script(built_targets(data, "near")["linux-x86_64"])
+    assert near["disposition"] == "local" and near["command"] == "node remake.js", near
+
+
+def check_npm_build_by_difference(scratch: pathlib.Path, signers: Signers) -> None:
+    """A script whose two runs leave other listings of its package, or whose
+    run left none, is a build; one whose runs agree is run locally, with the
+    command it runs, the hosts it reached and the listing both runs left."""
+    data, assets, _ = builds_review(scratch, signers)
+    dropped(data, "differ-npm", "linux-x86_64", "postinstall", TOP, "is a build", "differ", "left no build")
+    dropped(data, "norun-npm", "linux-x86_64", "is a build", "run-2.json", "left no build")
+    dropped(data, "badhost-npm", "linux-x86_64", "10.0.0.1", "host")
+    tree = npm_tree(top=top_manifest(scripts={"postinstall": "node setup.js"}))
+    agreed = tree_of(package_files(tree, **{"build__done": b"1\n"}))
+    script = top_script(built_targets(data, "differ")["darwin-aarch64"])
+    assert script == {
+        "command": "node setup.js",
+        "disposition": "local",
+        "event": "postinstall",
+        "hosts": sorted(BUILT_HOSTS),
+        "package": TOP,
+        "result": {"sha256": sha(agreed), "size": len(agreed)},
+    }, script
+    assert (assets / sha(agreed)).read_bytes() == agreed, "the agreed listing is kept as an asset by its hash"
+    # What one run holds of the listings its local scripts agreed on is
+    # bounded; past it the target is dropped and nothing of it is kept.
+    module = load_intake()
+    gate = module.Gate(set(), None, None)
+    observed = scratch / "npm-builds" / "observed"
+    item = {"manifest": {"scripts": {"postinstall": "node setup.js"}}}
+    undecided = {"package": TOP, "event": "postinstall", "disposition": None}
+    module.GATE_HELD_BYTES = len(agreed) - 1
+    held_assets: dict = {}
+    try:
+        module.classed(observed, "differ-npm", "darwin-aarch64", item, undecided, gate, held_assets)
+    except module.Dropped as failed:
+        assert str(module.GATE_HELD_BYTES) in str(failed) and "holds" in str(failed), str(failed)
+    else:
+        raise AssertionError("a local script's listing past what a run holds was kept")
+    assert not held_assets and gate.held_bytes == 0, "nothing of a refused listing is kept"
+    module.GATE_HELD_BYTES = len(agreed)
+    local = module.classed(observed, "differ-npm", "darwin-aarch64", item, undecided, gate, held_assets)
+    assert local["disposition"] == "local" and held_assets == {sha(agreed): agreed}, local
+    assert gate.held_bytes == len(agreed), gate.held_bytes
+    ran = intake("diff", scratch / "npm-builds" / "review.json")
+    assert ran.returncode == 0, ran.stderr
+    [line] = [line for line in ran.stdout.splitlines() if "**undecided**" not in line and "node setup.js" in line
+              and "local" in line]
+    for said in ("github.com", "registry.npmjs.org", sha(agreed)):
+        assert said in line, line
+
+
+def check_npm_build_on_target(scratch: pathlib.Path, signers: Signers) -> None:
+    """On Windows a script is never run locally, even where its two runs
+    agree: it is a build, and its target is dropped where the job left none."""
+    data, _, _ = builds_review(scratch, signers)
+    dropped(data, "differ-npm", "windows-x86_64", "postinstall", "is a build", "windows-x86_64", "left no build")
+    assert "windows-x86_64" not in built_targets(data, "differ"), "no Windows target is listed with a local script"
+
+
+def check_npm_build_gated(scratch: pathlib.Path, signers: Signers) -> None:
+    """A build is held to the licence gate: with no SBOM, or one the gate
+    refuses, its target is dropped with the gate's reason, and one that
+    passes lists its script as built; the publish job takes that build."""
+    data, assets, archives = builds_review(scratch, signers)
+    dropped(data, "ungated-npm", "linux-x86_64", "no lockfile or SBOM was given")
+    dropped(data, "ungated-npm", "darwin-aarch64", "Unlicense")
+    script = top_script(built_targets(data, "ungated")["windows-x86_64"])
+    built = archives[("ungated-npm", "windows-x86_64")]
+    assert script["disposition"] == "built" and script["replaced_by"]["sha256"] == sha(built), script
+    held = scratch / "npm-builds" / "publish"
+    (held / "assets").mkdir(parents=True)
+    record = script["licence_gate"]
+    # The listing each local script's runs agreed on is published as the
+    # catalog's own data, as a lock is.
+    results = [
+        script["result"]["sha256"]
+        for entry in data["entries"]
+        for target in entry["targets"]
+        for script in target.get("scripts", [])
+        if script.get("disposition") == "local"
+    ]
+    assert results, "the review lists a local script"
+    for named in [sha(built), record["notice"]["sha256"], *(licence["sha256"] for licence in record["licences"]),
+                  *results]:
+        (held / "assets" / named).write_bytes((assets / named).read_bytes())
+    (held / "merged.json").write_text(json.dumps(data))
+    ran = intake("publish-check", "--merged", held / "merged.json", "--assets", held / "assets")
+    assert ran.returncode == 0, f"a gated build or a local script's listing was refused:\n{ran.stdout}{ran.stderr}"
+    # A local script whose command holds what could hide what it runs is
+    # not rendered.
+    module = load_intake()
+    entry, target = next(
+        (entry, target) for entry in data["entries"] for target in entry["targets"]
+        if any(script.get("disposition") == "local" for script in target.get("scripts", []))
+    )
+    # The scripts the reviewer left undecided are decided, so only the
+    # local one is in question.
+    target = copy.deepcopy(target)
+    for script in target["scripts"]:
+        if script.get("disposition") is None:
+            script["disposition"] = "inert"
+    module.npm_checked(entry, target, "the entry")
+    for hiding in ("\u202e", "\x85"):
+        hidden_target = copy.deepcopy(target)
+        next(script for script in hidden_target["scripts"] if script.get("disposition") == "local")["command"] = (
+            f"node x.js {hiding};rm"
+        )
+        try:
+            module.npm_checked(entry, hidden_target, "the entry")
+        except module.Refused as refused:
+            assert "could hide what it runs" in str(refused), str(refused)
+        else:
+            raise AssertionError(f"a local script's command holding {hiding!r} was taken")
+    # A build whose record gates other bytes than it is replaced by may not
+    # be published.
+    mismatched = copy.deepcopy(data)
+    target = built_targets(mismatched, "ungated")["windows-x86_64"]
+    top_script(target)["licence_gate"]["asset"]["sha256"] = "0" * 64
+    (held / "mismatched.json").write_text(json.dumps(mismatched))
+    ran = intake("publish-check", "--merged", held / "mismatched.json", "--assets", held / "assets")
+    assert ran.returncode == 1 and sha(built) in ran.stderr and "no passing licence-gate record" in ran.stderr, (
+        ran.stderr
+    )
+
+
+def check_npm_build_refused(scratch: pathlib.Path, signers: Signers) -> None:
+    """A build is taken only as `pack` writes one, of files and directories
+    alone, holding the files its listing gives: any other drops its target,
+    the gate never reached."""
+    data, _, _ = builds_review(scratch, signers)
+    dropped(data, "recompressed-npm", "linux-x86_64", "built.tar.gz", "not written as `pack` writes")
+    dropped(data, "trailing-npm", "linux-x86_64", "built.tar.gz", "not written as `pack` writes")
+    dropped(data, "linked-npm", "linux-x86_64", "build/link", "neither a file nor a directory")
+    dropped(data, "omitted-npm", "linux-x86_64", "built.json lists")
+    for key in ("recompressed", "trailing", "linked", "omitted"):
+        assert "linux-x86_64" not in built_targets(data, key), f"{key} is listed with a build review refuses"
+
+
+def check_pack(scratch: pathlib.Path) -> None:
+    """`pack` writes a package directory as the deterministic tar.gz review
+    takes a build as, the same bytes each time."""
+    root = scratch / "pack" / "package"
+    files = {"package.json": (b"{}", False), "build/Release/addon.node": (b"\x7fELF\n", True)}
+    for path, (content, runs) in files.items():
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+        (root / path).write_bytes(content)
+        (root / path).chmod(0o755 if runs else 0o644)
+    for name in ("one.tar.gz", "two.tar.gz"):
+        ran = intake("pack", "--root", root, "--out", scratch / "pack" / name)
+        assert ran.returncode == 0, ran.stderr
+    made = (scratch / "pack" / "one.tar.gz").read_bytes()
+    assert made == (scratch / "pack" / "two.tar.gz").read_bytes(), "a pack is the same bytes each time"
+    assert made == packed_as_packing(files), "a pack is the archive review takes a build as"
+    (root / "link").symlink_to("package.json")
+    ran = intake("pack", "--root", root, "--out", scratch / "pack" / "linked.tar.gz")
+    assert ran.returncode == 1 and "link" in ran.stderr and "Traceback" not in ran.stderr, ran.stderr
+
+
+def check_uvx_sdist_built(scratch: pathlib.Path) -> None:
+    """A source distribution the job built a wheel from is listed by its own
+    address, hash and size and installs as that wheel, held to every check a
+    downloaded one is and to the licence gate; one whose wheel fails the gate
+    drops its target, and one with no wheel still waits for a build."""
+    scratch = scratch / "uvx-sdist"
+    observed = scratch / "observed"
+    sboms = scratch / "sboms"
+    sboms.mkdir(parents=True)
+    source = b"the pyagent 1.4.0 source distribution\n"
+    url = PYPI + "ee/ff/pyagent-1.4.0.tar.gz"
+    def built_on(platform: str) -> tuple[bytes, dict]:
+        # One wheel per platform, told apart by its hash.
+        return wheel("pyagent", "1.4.0", console=CONSOLE, extra={"pyagent/platform.txt": platform.encode()})
+
+    failing = json.loads((GATE / "sbom.json").read_text())
+    failing["components"][0]["licenses"] = [{"expression": "Unlicense"}]
+    for platform, sbom in (
+        ("linux-x86_64", (GATE / "sbom.json").read_bytes()),
+        ("darwin-aarch64", json.dumps(failing).encode()),
+        ("windows-x86_64", None),
+    ):
+        lay_out_uvx(observed, "sbuilt-agent", platform, [sdist("pyagent-1.4.0.tar.gz", "pyagent", "1.4.0")])
+        if sbom is None:
+            continue
+        held = observed / "sbuilt-agent" / platform / "wheels/0"
+        (held / "built").mkdir(parents=True)
+        (held / "artifact").write_bytes(source)
+        (held / "fetched.json").write_text(json.dumps({"chain": [url]}))
+        content, listing = built_on(platform)
+        (held / "built/name.json").write_text(json.dumps({"file": OWN}))
+        (held / "built/artifact").write_bytes(content)
+        (held / "built/unpack-check.json").write_text(json.dumps(listing))
+        (sboms / f"{sha(content)}.json").write_bytes(sbom)
+    registry = written(scratch, "registry.json", {"version": "1.4.0", "agents": [{
+        "id": "sbuilt-agent", "name": "sbuilt", "version": "1.4.0", "license": "MIT",
+        "distribution": {"uvx": {"package": "pyagent==1.4.0", "args": ["acp"]}},
+    }]})
+    choices = written(scratch, "choices.json", {"sbuilt-agent": {"key": "sbuilt"}})
+    data, assets = review(scratch, "--interpreters", pinned_interpreters(scratch), "--sboms", sboms,
+                          "--texts", GATE / "texts", registry=registry, choices=choices)
+    [entry] = data["entries"]
+    targets = {target["platform"]: target for target in entry["targets"]}
+    assert sorted(targets) == ["linux-x86_64"], sorted(targets)
+    target = targets["linux-x86_64"]
+    assert target["entry_point"] == "pyagent.acp:main", target["entry_point"]
+    [_, artifact] = target["artifacts"]
+    content, listing = built_on("linux-x86_64")
+    assert (artifact["url"], artifact["sha256"], artifact["size"]) == (url, sha(source), len(source)), artifact
+    assert artifact["format"] == "wheel" and artifact["files"] == listing["files"], artifact
+    assert artifact["replaced_by"] == {"sha256": sha(content), "size": len(content)}, artifact.get("replaced_by")
+    assert artifact["licence_gate"]["passed"] is True, artifact["licence_gate"]
+    assert (assets / sha(content)).read_bytes() == content, "the built wheel is kept as an asset by its hash"
+    dropped(data, "sbuilt-agent", "darwin-aarch64", "Unlicense")
+    dropped(data, "sbuilt-agent", "windows-x86_64", "waits for a build at review")
+    [windows] = [item for item in data["dropped"] if item.get("platform") == "windows-x86_64"]
+    assert windows["build"] == [{"package": "pyagent", "url": url, "version": "1.4.0"}], windows
+
+
 def main() -> int:
     failures = []
     with tempfile.TemporaryDirectory(prefix="intake-") as held:
@@ -3779,6 +4240,13 @@ def main() -> int:
             ("bundle", lambda: check_bundle(scratch)),
             ("freebsd python", lambda: check_freebsd_python(scratch)),
             ("freebsd node", lambda: check_freebsd_node(scratch, signers)),
+            ("npm build by rule", lambda: check_npm_build_by_rule(scratch, signers)),
+            ("npm build by difference", lambda: check_npm_build_by_difference(scratch, signers)),
+            ("npm build on target", lambda: check_npm_build_on_target(scratch, signers)),
+            ("npm build refused", lambda: check_npm_build_refused(scratch, signers)),
+            ("npm build gated", lambda: check_npm_build_gated(scratch, signers)),
+            ("pack", lambda: check_pack(scratch)),
+            ("uvx sdist built", lambda: check_uvx_sdist_built(scratch)),
         ]
         try:
             for name, check in checks:
