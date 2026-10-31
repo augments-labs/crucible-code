@@ -72,8 +72,8 @@ and what is left once any is spent waits for the next run.
 - `--dispositions`, where given: the reviewer's decision on each install
   script `--ignore-scripts` skipped, by registry id and then
   `"<location> <event>"`, one of `inert`, `replaced` or `lost`; `built` and
-  `local` belong to a build route this review does not take, and refuse the
-  run;
+  `local` are what review classes a script the reviewer leaves undecided, from
+  what the job left of it, below, and given here refuse the run;
 - `--deny`: `deny.toml`, whose licence list decides what may be mirrored;
 - `--sboms`, where given: the input of each artifact marked for mirroring,
   its lockfile or SBOM, as `<artifact sha256>.json`, which the licence gate
@@ -187,9 +187,20 @@ list one path, when a wheel lists one member twice (a leading `./` removed
 and case folded, as the client compares names), when a wheel does not end as
 a wheel ends (its end record last, with no comment, and any zip64 record just
 before its locator, which points at it), or when that record claims more
-members or a larger central directory than the stated ceilings. A package pip found only as a source distribution drops its target
-with a `build` list naming each one, clipped as a reason is, so it waits for
-a build at review. An interpreter and its wheels are never marked for
+members or a larger central directory than the stated ceilings. A package
+pip found only as a source distribution installs as the wheel the job built
+from it, which the job leaves under its download's `wheels/<n>/built/`:
+`name.json` (`{"file"}`, the wheel's file name), `artifact`, the wheel, read
+within 1 GiB, and `unpack-check.json` listing it; the source distribution's
+own `artifact` and `fetched.json` are hashed and checked as a wheel's are.
+The built wheel is held to every check a downloaded one is, and to the
+licence gate below over the SBOM named by the wheel's SHA-256, no SBOM
+failing it; the artifact keeps the source distribution's address, hash and
+size, takes the wheel's format and listing, and names the gated wheel as
+`replaced_by`, kept as an asset as a repack is. A failing gate drops the
+target with its reason. A source distribution the job built no wheel from
+drops its target with a `build` list naming each one, clipped as a reason is,
+so it waits for a build at review. An interpreter and its wheels are never marked for
 mirroring, and are never mirrored but on `freebsd-x86_64`, where the
 interpreter installs as its bundle, shipped under its licence gate as below.
 
@@ -254,9 +265,50 @@ one `bin` the agent's own package names, or the one named for the package.
 Each `preinstall`, `install` and `postinstall` script skipped, an `install`
 implied by a `binding.gyp` among them, is listed on the target with the
 reviewer's disposition, where npm's `hasInstallScript` must agree with the
-scripts the package's own `package.json` gives; one with no disposition yet
-is listed as `undecided` in the review data, marked in the diff, and refused
-by `render`.
+scripts the package's own `package.json` gives. One the reviewer did not
+decide is classed from what the job left of it in its target's
+`scripts/<the SHA-256 of "<location> <event>">/`, a name that cannot climb
+out of the target nor collide, checked as every directory on the way is; one
+the job left nothing of is listed as `undecided` in the review data, marked
+in the diff, and refused by `render`. The job leaves there `run-1.json` and
+`run-2.json`, each the `tree` listing of the package's directory after one
+run of the script, at two roots and under two `HOME`s, read within the
+ceiling of a tree listing and refused past the client's ceilings for a tree
+as incomplete, and `hosts.json`, `{"hosts": [...]}`, the at most 64 hosts the
+recording proxy saw over both runs, read within 1 MiB. A script is a build
+by rule when the command its package's `package.json` gives for the event,
+or the `node-gyp rebuild` a `binding.gyp` implies, names a compiler, a
+native-addon builder or a build tool (`cc`, `gcc`, `g++`, `c++`, `clang`,
+`clang++`, `cl`, `cl.exe`, `node-gyp`, `node-gyp-build`, `prebuild-install`,
+`make`, `gmake`, `nmake`, `cmake`, `ninja`, `cargo`, `rustc` or `go`) as any
+word of it split as a shell splits it, by its last path segment, so `npx
+node-gyp` is one, or cannot be split; it is a build on every `windows-*` and
+`freebsd-*` platform, whatever it runs; and it is a build by difference when
+its two runs left listings that differ, or a run left none, a broken one, or
+one past the ceilings. Otherwise it is `local`: the two listings are the same
+bytes, and the entry lists the script with its `command`, the `hosts` it
+reached, each a host's name, and `result`, `{sha256, size}`, the listing,
+kept as an asset within the ceiling of one, so the client shows all three
+before it runs it. A build installs as what the job built: `built.tar.gz`
+beside the runs, the package's directory after the build as `pack` writes
+it, read within 1 GiB, which review writes again through the same writer
+and refuses unless it is the same bytes, holds files and directories alone,
+and holds the files `built.json` lists, as `tree` lists them; the licence
+gate below then runs over the SBOM named by the archive's SHA-256, no SBOM
+failing it, and on a pass the archive is kept as an asset, counted with the
+repacks, and the script is listed `built`, its record and output on the
+script in the review data, where the diff shows them, and left out by
+`render`. A build the job left no `built.tar.gz` of, or whose gate fails,
+drops the target with the reason.
+
+`pack` writes the package directory `--root` after a build to `--out` as
+`repack` writes a tar.gz, whole or not at all: its names in sorted order,
+directory by directory, each directory mode 0755 and each file 0755 where any
+execute bit is set and 0644 otherwise, so two builds of the same files are the
+same bytes; a link or any other kind of name refuses it, as does an archive
+past 1 GiB. The catalog repository's untrusted job runs each build and
+source distribution, under the recording proxy, and leaves what is above;
+review never runs either.
 
 The job before the intake runs, for each `npx` agent, `npm install
 --package-lock-only --ignore-scripts --omit=dev
@@ -583,6 +635,27 @@ INSTALL_EVENTS = ("preinstall", "install", "postinstall")
 # done instead by crucible, or lost with nothing in its place. `built` and
 # `local` belong to the build route, which this review does not take.
 DISPOSITIONS = ("inert", "replaced", "lost")
+# What the intake classes a skipped script the reviewer did not decide: one
+# the job built, whose output installs in its place, or one the client runs
+# on the user's machine, the job having seen it leave the same files twice.
+CLASSED = ("built", "local")
+# The words that make a script a build by rule, whatever its runs leave: a
+# compiler, a native-addon builder or a build tool, tested against each word
+# of the command as a shell splits it, by its last path segment, so `npx
+# node-gyp` and `npm run make` are caught as surely as `node-gyp`. A command
+# that names one for another reason is built too: erring toward a build is the
+# safe direction, since a build is held to the licence gate and a local script
+# runs on the user's machine.
+BUILD_TOOLS = frozenset({
+    "cc", "gcc", "g++", "c++", "clang", "clang++", "cl", "cl.exe", "node-gyp", "node-gyp-build",
+    "prebuild-install", "make", "gmake", "nmake", "cmake", "ninja", "cargo", "rustc", "go",
+})
+# What splits a command into words, as a shell splits it: blanks, its
+# operators, a backquote and the `(` of `$(`, and `=`, so an assignment's
+# value is a word of its own.
+COMMAND_BREAKS = frozenset(" \t;&|()<>`={}!")
+# The platforms where every skipped script is built and none runs locally.
+BUILT_ON = ("windows-", "freebsd-")
 # How many rules a client unpacks a lock's tree by: the first.
 UNPACK_RULES = 1
 
@@ -1626,6 +1699,60 @@ def runtime_bundle(
     return artifact, hosts, listing[0]
 
 
+def wheel_fits(file: str, name: str, item_version: str, platform: str, pin: dict) -> None:
+    """Refuse the wheel named `file` where its name does not agree with the
+    report's `name` and `item_version`, or its tags are none the platform's
+    pinned interpreter accepts."""
+    held = WHEEL_NAME.fullmatch(file)
+    if held is None:
+        raise Dropped(f"{clipped(file)} is not a wheel's file name")
+    if normal(held["name"]) != normal(name) or held["version"] != item_version:
+        raise Dropped(
+            f"wheel {clipped(file)} does not agree with the report, which says it is "
+            f"{clipped(name)} {clipped(item_version)}"
+        )
+    if not fits(f"{held['python']}-{held['abi']}-{held['platform']}", platform, pin["minor"]):
+        raise Dropped(
+            f"wheel {clipped(file)} is built for none of the tags an interpreter of "
+            f"Python {pin['python']} on {platform} accepts"
+        )
+
+
+def sdist_built(
+    inner: pathlib.Path,
+    url: str,
+    sha256: str,
+    size: int,
+    name: str,
+    item_version: str,
+    package: str | None,
+    platform: str,
+    pin: dict,
+    gate: Gate,
+    assets: dict[str, bytes],
+) -> tuple[dict, list[dict], str | None]:
+    """The source distribution downloaded under `inner`, hashed as `sha256`
+    and `size`, as it installs: the wheel the job built from it, under
+    `built/`, held to every check a downloaded wheel is and to the licence
+    gate, from the SBOM named by the wheel's SHA-256. The artifact keeps the
+    source distribution's address, hash and size, and the wheel replaces it."""
+    built = place_of(inner, "built")
+    try:
+        file = obj(read_json(built / "name.json", SMALL_BYTES, "built/name.json"), "built/name.json").get("file")
+        wheel = read(built / "artifact", REPACK_BYTES, "built/artifact")
+    except Refused as refused:
+        raise Dropped(str(refused)) from None
+    file = text(file, "the built wheel's file name")
+    wheel_fits(file, name, item_version, platform, pin)
+    named_script = wheel_read(io.BytesIO(wheel), package)
+    listing = unpacked_at(built)
+    under(listing[0], "site")
+    artifact = artifact_of(url, "wheel", sha256, size, listing, assets)
+    built_sha = hashlib.sha256(wheel).hexdigest()
+    gate.replacing(artifact, None if gate.sboms is None else gate.sboms / f"{built_sha}.json", wheel, assets)
+    return artifact, listing[0], named_script
+
+
 def uvx_target(
     observed: pathlib.Path,
     agent: str,
@@ -1654,24 +1781,17 @@ def uvx_target(
         mine = normal(name) == normal(package) and item_version == released
         own = own or mine
         if not file.endswith(".whl"):
-            # At most `WHEELS` rows, as the report lists no more, each field
-            # clipped as a reason quotes it.
-            build.append({"package": clipped(name), "url": clipped(url), "version": clipped(item_version)})
+            # A source distribution the job built a wheel from is taken as
+            # that wheel; one it did not waits for a build. At most `WHEELS`
+            # rows, as the report lists no more, each field clipped as a
+            # reason quotes it.
+            if os.path.lexists(place_of(observed, agent, platform, "wheels", str(index), "built")):
+                wheels.append((index, url, file, mine, name, item_version))
+            else:
+                build.append({"package": clipped(name), "url": clipped(url), "version": clipped(item_version)})
             continue
-        held = WHEEL_NAME.fullmatch(file)
-        if held is None:
-            raise Dropped(f"{clipped(file)} is not a wheel's file name")
-        if normal(held["name"]) != normal(name) or held["version"] != item_version:
-            raise Dropped(
-                f"wheel {clipped(file)} does not agree with the report, which says it is "
-                f"{clipped(name)} {clipped(item_version)}"
-            )
-        if not fits(f"{held['python']}-{held['abi']}-{held['platform']}", platform, pin["minor"]):
-            raise Dropped(
-                f"wheel {clipped(file)} is built for none of the tags an interpreter of "
-                f"Python {pin['python']} on {platform} accepts"
-            )
-        wheels.append((index, url, file, mine))
+        wheel_fits(file, name, item_version, platform, pin)
+        wheels.append((index, url, file, mine, None, None))
     if not own:
         raise Dropped(f"the report installs no {clipped(package)} {clipped(released)}")
     if build:
@@ -1699,23 +1819,31 @@ def uvx_target(
     artifacts = [artifact]
     listings = [files]
     entry_point = None
-    for index, url, file, mine in wheels:
+    for index, url, file, mine, name, item_version in wheels:
 
         def one() -> tuple[dict, list[str], list[dict], str | None]:
             inner = place_of(observed, agent, platform, "wheels", str(index))
             with opened(inner / "artifact") as download:
                 sha256, size = digested(download)
                 download.seek(0)
-                named_script = wheel_read(download, package if mine else None)
+                # A source distribution's own download is hashed alone; the
+                # wheel built from it is what is read as a wheel.
+                named_script = None if name is not None else wheel_read(download, package if mine else None)
             reached = chained(inner, url, "the report's address")
             elsewhere = next((name for name in reached if name != PYPI_HOST), None)
             if elsewhere is not None:
                 raise Dropped(f"fetched.json reaches {clipped(elsewhere)}, but a wheel is fetched from {PYPI_HOST} alone")
+            if name is not None:
+                artifact, files, named_script = sdist_built(
+                    inner, url, sha256, size, name, item_version, package if mine else None, platform, pin, gate, assets
+                )
+                return artifact, reached, files, named_script
             listing = unpacked_at(inner)
             under(listing[0], "site")
             return artifact_of(url, "wheel", sha256, size, listing, assets), reached, listing[0], named_script
 
-        artifact, reached, files, named_script = staged(f"wheel {clipped(file)}", one)
+        kind = "wheel" if name is None else "source distribution"
+        artifact, reached, files, named_script = staged(f"{kind} {clipped(file)}", one)
         artifacts.append(artifact)
         listings.append(files)
         hosts += [name for name in reached if name not in hosts]
@@ -2856,29 +2984,35 @@ def tree_listing(place: pathlib.Path, name: str, built: bool) -> dict[str, dict]
     """A tree's files by path: npm's, as `tree` lists `npm ci`'s output, or
     crucible's, as `unpack-check` prints the tree a lock unpacks to."""
     try:
-        printed = obj(read_json(place / name, TREE_LISTING_BYTES, f"tree/{name}"), f"tree/{name}")
+        printed = read_json(place / name, TREE_LISTING_BYTES, f"tree/{name}")
     except Refused as refused:
         raise Dropped(str(refused)) from None
+    return listed_tree(printed, f"tree/{name}", built)
+
+
+def listed_tree(printed: object, name: str, built: bool) -> dict[str, dict]:
+    """The files by path of the tree listing `printed`, `name` saying which."""
+    printed = obj(printed, name)
     files = printed.get("files")
     if not isinstance(files, list) or len(files) > TREE_ENTRIES:
-        raise Dropped(f"tree/{name} lists no files, or more than {TREE_ENTRIES}")
+        raise Dropped(f"{name} lists no files, or more than {TREE_ENTRIES}")
     held: dict[str, dict] = {}
     # Two paths a folding file system takes for one are one file listed twice.
     folded: set[str] = set()
     for index, item in enumerate(files):
-        item = obj(item, f"tree/{name} file {index}")
-        path = text(item.get("path"), f"tree/{name} file {index}'s path")
+        item = obj(item, f"{name} file {index}")
+        path = text(item.get("path"), f"{name} file {index}'s path")
         if not inside(path) or path.casefold() in folded:
-            raise Dropped(f"tree/{name} lists {clipped(path)}, which is not inside its tree or is listed twice")
+            raise Dropped(f"{name} lists {clipped(path)}, which is not inside its tree or is listed twice")
         if built and item.get("kind") != "file":
-            raise Dropped(f"tree/{name} lists {clipped(path)} as other than a file")
+            raise Dropped(f"{name} lists {clipped(path)} as other than a file")
         runs = item.get("exec")
         if not isinstance(runs, bool):
-            raise Dropped(f"tree/{name}: {clipped(path)}'s exec flag is not true or false")
+            raise Dropped(f"{name}: {clipped(path)}'s exec flag is not true or false")
         held[path] = {
             "exec": runs,
-            "sha256": digest(item.get("sha256"), f"tree/{name}: {clipped(path)}'s sha256"),
-            "size": number(item.get("size"), f"tree/{name}: {clipped(path)}'s size"),
+            "sha256": digest(item.get("sha256"), f"{name}: {clipped(path)}'s sha256"),
+            "size": number(item.get("size"), f"{name}: {clipped(path)}'s size"),
         }
         folded.add(path.casefold())
     return held
@@ -3005,11 +3139,13 @@ def npm_target(
     resolution: dict,
     node: Node,
     decided: dict[str, str],
+    gate: Gate,
     assets: dict[str, bytes],
 ) -> dict:
     """One platform of an npm agent as the catalog will list it, before its
     probe: Node for it, and the lock of what `npm ci` installs on it, once the
-    tree npm built there is the tree crucible builds from that lock."""
+    tree npm built there is the tree crucible builds from that lock, with
+    each skipped script the reviewer did not decide classed by `classed`."""
     artifact, hosts, cmd = node.artifact(observed, platform, assets)
     installed = npm_installed(resolution, platform)
     lock = npm_lock(installed)
@@ -3024,11 +3160,13 @@ def npm_target(
     bin = chosen_bin(resolution["own"], files)
     named_lock = hashlib.sha256(lock).hexdigest()
     assets[named_lock] = lock
-    scripts = [
-        {"disposition": decided.get(f"{item['location']} {event}"), "event": event, "package": item["location"]}
-        for item in installed
-        for event in item["events"]
-    ]
+    scripts = []
+    for item in installed:
+        for event in item["events"]:
+            script = {"disposition": decided.get(f"{item['location']} {event}"), "event": event, "package": item["location"]}
+            if script["disposition"] is None:
+                script = classed(observed, agent, platform, item, script, gate, assets)
+            scripts.append(script)
     return {
         "artifacts": [artifact],
         "bin": bin,
@@ -3039,6 +3177,190 @@ def npm_target(
         "platform": platform,
         "scripts": scripts,
     }
+
+
+def command_words(command: str) -> list[str] | None:
+    """The words of `command` as a shell splits it on `COMMAND_BREAKS`, each
+    twice, with its backslashes taken as escapes and as written, quotes
+    removed; none where it cannot be split, a quote left open or a
+    backslash ending it. A quote does not hold a word together here, as a
+    quoted `sh -c 'make'` still runs `make`: more words are only more ways
+    to be a build."""
+    words: list[str] = []
+    word = raw = ""
+    quote = None
+    at = 0
+    while at < len(command):
+        character = command[at]
+        if character == "\\" and quote != "'":
+            if at + 1 == len(command):
+                return None
+            word += command[at + 1]
+            raw += character + command[at + 1]
+            at += 2
+            continue
+        if quote is not None and character == quote:
+            quote = None
+        elif quote is None and character in "'\"":
+            quote = character
+        elif character in COMMAND_BREAKS:
+            words += [word, raw]
+            word = raw = ""
+        else:
+            word += character
+            raw += character
+        at += 1
+    if quote is not None:
+        return None
+    return [held for held in words + [word, raw] if held]
+
+
+def builds(command: str) -> str | None:
+    """Why `command` is a build by rule, or none where it names no word of
+    `BUILD_TOOLS`: each word by its last path segment, case folded, with an
+    `@version` and a `.exe` or `.cmd` taken off."""
+    words = command_words(command)
+    if words is None:
+        return "its command cannot be split as a shell splits it"
+    for word in words:
+        name = re.split(r"[/\\]", word)[-1].lower().partition("@")[0]
+        if name in BUILD_TOOLS or name.removesuffix(".exe").removesuffix(".cmd") in BUILD_TOOLS:
+            return f"its command runs {shown(clipped(word))}"
+    return None
+
+
+def run_listing(place: pathlib.Path, name: str) -> tuple[bytes | None, str]:
+    """The bytes of the listing `name` one run of a script left under
+    `place`, or none, and why, where the run left none, a broken one, or one
+    past the client's ceilings for a tree, so it is incomplete."""
+    try:
+        listing = read(place / name, TREE_LISTING_BYTES, name)
+        files = listed_tree(parsed(listing, name), name, built=False)
+    except (Refused, Dropped) as failed:
+        return None, str(failed)
+    if len(files) > TREE_FILES or sum(file["size"] for file in files.values()) > TREE_BYTES:
+        return None, f"{name} lists more than {TREE_FILES} files or {TREE_BYTES} bytes, so it is incomplete"
+    return listing, ""
+
+
+def script_hosts(place: pathlib.Path) -> list[str]:
+    """The hosts `hosts.json` under `place` says a script's runs reached,
+    sorted, each once; refused where one is not a host's name."""
+    try:
+        given = obj(read_json(place / "hosts.json", SMALL_BYTES, "hosts.json"), "hosts.json").get("hosts")
+    except Refused as refused:
+        raise Dropped(str(refused)) from None
+    if not isinstance(given, list) or len(given) > ITEMS:
+        raise Dropped(f"hosts.json gives no list of at most {ITEMS} hosts")
+    for index, name in enumerate(given):
+        if not host(text(name, f"hosts.json host {index}")):
+            raise Dropped(f"hosts.json names {shown(clipped(name))}, which is not a host's name")
+    return sorted(set(given))
+
+
+def classed(
+    observed: pathlib.Path, agent: str, platform: str, item: dict, script: dict, gate: Gate, assets: dict[str, bytes]
+) -> dict:
+    """The skipped script `script` of the installed package `item`, which
+    the reviewer did not decide, classed from what the job left of it under
+    `scripts/<the SHA-256 of "<location> <event>">/`: as it is, undecided,
+    where the job left nothing; otherwise `local` where its two runs left the
+    same listing of its package, and `built` where the job built it and the
+    licence gate passes over that build. It is a build by rule, by its
+    platform, or where its runs differ, are missing or are incomplete; a
+    build the job left no output of, or the gate refuses, drops the target."""
+    location, event = script["package"], script["event"]
+    place = place_of(observed, agent, platform, "scripts", hashlib.sha256(f"{location} {event}".encode()).hexdigest())
+    if not os.path.lexists(place):
+        return script
+    named = f"the {event} script of {shown(clipped(location))}"
+    given = item["manifest"].get("scripts")
+    command = given.get(event) if isinstance(given, dict) else None
+    # The `install` npm implies for a `binding.gyp` runs this.
+    command = text(command if isinstance(command, str) else "node-gyp rebuild", f"{named}'s command")
+    why = builds(command)
+    if why is None and platform.startswith(BUILT_ON):
+        why = f"every script on {platform} is built"
+    first = second = None
+    if why is None:
+        first, missing = run_listing(place, "run-1.json")
+        second, other = run_listing(place, "run-2.json")
+        why = missing or other or (None if first == second else "its two runs left listings of its package that differ")
+    if why is None and first is not None and len(first) > ASSET_BYTES:
+        why = f"the listing its runs left is larger than a catalog asset may be, {ASSET_BYTES} bytes"
+    if why is None and first is not None:
+        hosts = staged(named, lambda: script_hosts(place))
+        result = hashlib.sha256(first).hexdigest()
+        assets[result] = first
+        return {
+            **script,
+            "command": command,
+            "disposition": "local",
+            "hosts": hosts,
+            "result": {"sha256": result, "size": len(first)},
+        }
+    if not os.path.lexists(place / "built.tar.gz"):
+        raise Dropped(f"{named} is a build ({why}), and the job left no build of it")
+    built = {**script, "disposition": "built"}
+    staged(f"the build of {named}", lambda: built_output(place, built, gate, assets))
+    return built
+
+
+class Hashing:
+    """A stream whose bytes read are hashed and counted."""
+
+    def __init__(self, file) -> None:
+        self.file = file
+        self.sha = hashlib.sha256()
+        self.size = 0
+
+    def read(self, count: int = -1) -> bytes:
+        chunk = self.file.read(count)
+        self.sha.update(chunk)
+        self.size += len(chunk)
+        return chunk
+
+
+def built_output(place: pathlib.Path, script: dict, gate: Gate, assets: dict[str, bytes]) -> None:
+    """Gate the build the job left of `script` under `place`, `built.tar.gz`,
+    read within `REPACK_BYTES`, as `pack` writes one: refused unless `Packing`
+    writes its members again to the same bytes, they are files and
+    directories alone, and its files are the ones `built.json` lists. The
+    gate's input is the SBOM named by its SHA-256."""
+    try:
+        made = read(place / "built.tar.gz", REPACK_BYTES, "built.tar.gz")
+        listed = listed_tree(read_json(place / "built.json", TREE_LISTING_BYTES, "built.json"), "built.json", built=False)
+    except Refused as refused:
+        raise Dropped(str(refused)) from None
+    unzipped = Bounded(Unpacking(OneGzip(io.BytesIO(made))), REPACK_DECOMPRESSED, "built.tar.gz")
+    packing = Packing()
+    files: dict[str, dict] = {}
+    try:
+        with tarfile.open(fileobj=unzipped, mode="r|", tarinfo=Member, encoding="utf-8", errors="surrogateescape") as tar:
+            for member in tar:
+                if member.type in (tarfile.REGTYPE, tarfile.AREGTYPE):
+                    content = Hashing(tar.extractfile(member))
+                    packing.add(member.name, "file", member.mode, content=content, size=member.size)
+                    files[member.name] = {
+                        "exec": bool(member.mode & 0o111), "sha256": content.sha.hexdigest(), "size": content.size,
+                    }
+                elif member.type == tarfile.DIRTYPE:
+                    packing.add(member.name, "dir", member.mode)
+                else:
+                    raise Dropped(f"built.tar.gz holds {shown(clipped(member.name))}, which is neither a file nor a directory")
+        while unzipped.read(1 << 20):
+            pass
+        again = packing.made()
+    except Dropped:
+        raise
+    except Exception:  # whatever gzip or tar cannot read is no build `pack` wrote
+        raise Dropped("built.tar.gz is not a gzip-compressed tar this intake can read") from None
+    if again != made:
+        raise Dropped("built.tar.gz is not written as `pack` writes a build")
+    if files != listed:
+        raise Dropped("built.tar.gz does not hold the files built.json lists")
+    sha256 = hashlib.sha256(made).hexdigest()
+    gate.replacing(script, None if gate.sboms is None else gate.sboms / f"{sha256}.json", made, assets)
 
 
 def dispositions_of(path: pathlib.Path | None) -> dict[str, dict[str, str]]:
@@ -3090,23 +3412,24 @@ def unlocked(entry: dict) -> dict:
 
 
 def ungated(entry: object) -> object:
-    """`entry` without each artifact's licence-gate record, which this
+    """`entry` without each artifact's and script's licence-gate record, which this
     review's inputs decide rather than the release, so a version reviewed
     before is not called changed for it."""
     if not isinstance(entry, dict) or not isinstance(entry.get("targets"), list):
         return entry
     targets = []
     for listed in entry["targets"]:
-        if isinstance(listed, dict) and isinstance(listed.get("artifacts"), list):
-            listed = {
-                **listed,
-                "artifacts": [
-                    {field: value for field, value in artifact.items() if field != "licence_gate"}
-                    if isinstance(artifact, dict)
-                    else artifact
-                    for artifact in listed["artifacts"]
-                ],
-            }
+        for part in ("artifacts", "scripts"):
+            if isinstance(listed, dict) and isinstance(listed.get(part), list):
+                listed = {
+                    **listed,
+                    part: [
+                        {field: value for field, value in held.items() if field != "licence_gate"}
+                        if isinstance(held, dict)
+                        else held
+                        for held in listed[part]
+                    ],
+                }
         targets.append(listed)
     return {**entry, "targets": targets}
 
@@ -3208,7 +3531,7 @@ def entry(
             if kind == "binary":
                 targets.append(target(observed, agent_id, platform, spec, runners, mirrored, gate, assets))
             elif kind == "npm":
-                made = npm_target(observed, agent_id, platform, resolution, node, decided, assets)
+                made = npm_target(observed, agent_id, platform, resolution, node, decided, gate, assets)
                 targets.append({"args": args, "env": env, **made})
             else:
                 made = uvx_target(observed, agent_id, platform, name, pinned_version, interpreters, gate, assets)
@@ -3629,7 +3952,7 @@ class Gate:
         return None if self.held_bytes + more > GATE_HELD_BYTES else named
 
     def replacing(self, artifact: dict, source: pathlib.Path | None, output: bytes, assets: dict[str, bytes]) -> None:
-        """Gate `output`, a repack or bundle that installs in `artifact`'s
+        """Gate `output`, a repack, bundle or build that installs in `artifact`'s
         place, over its whole input `source`, and record it with `replaced`;
         where it passes, `output`, its NOTICE and its licence texts are kept
         as assets. A failing record drops the artifact, which has no route
@@ -3957,6 +4280,38 @@ def staged_tree(staged: pathlib.Path) -> dict[str, tuple[str, int]]:
 
     walk(staged, "")
     return found
+
+
+def pack_command(arguments: argparse.Namespace) -> int:
+    """A built package directory written as `Packing` writes a tar.gz, the
+    one form of a build review accepts: its names in the order `staged_tree`
+    walks them, each directory mode 0755 and each file 0755 where any execute
+    bit is set, else 0644, so two builds of the same files are the same bytes.
+    A link, or a name of any other kind, is refused: a build installs files."""
+    root = arguments.root
+    try:
+        if not stat.S_ISDIR(os.lstat(root).st_mode):
+            raise Refused("the built package's root is not a directory")
+    except OSError:
+        raise Refused("the built package's root is missing") from None
+    packing = Packing()
+    try:
+        for path, (kind, mode) in staged_tree(root).items():
+            if kind == "dir":
+                packing.add(path, "dir", 0o755)
+                continue
+            if kind != "file":
+                raise Refused(f"the built package holds {shown(clipped(path))}, a link, and a build installs files")
+            with opened(root / path) as file:
+                size = os.fstat(file.fileno()).st_size
+                packing.add(path, "file", 0o755 if mode & 0o111 else 0o644, content=file, size=size)
+        made = packing.made()
+    except Dropped as dropped:
+        raise Refused(f"the built package cannot be packed: {dropped}") from None
+    if len(made) > REPACK_BYTES:
+        raise Refused(f"the built package packs to more than {REPACK_BYTES} bytes, which review will not read")
+    written_whole(arguments.out, made)
+    return 0
 
 
 # One line `ldd` prints under a file it was given: a library it resolves, one
@@ -4421,14 +4776,28 @@ def npm_checked(entry: dict, target: dict, where: str) -> None:
     present(lock, "sha256", str, f"{where}: a target's lock")
     present(lock, "size", int, f"{where}: a target's lock")
     for script in present(target, "scripts", list, f"{where}: a target"):
-        if not isinstance(script, dict) or script.get("disposition") not in DISPOSITIONS:
+        if not isinstance(script, dict) or script.get("disposition") not in DISPOSITIONS + CLASSED:
             shown_script = script.get("disposition") if isinstance(script, dict) else script
             raise Refused(
                 f"{where}: a script's disposition is {clipped(shown_script)}, and a script is "
-                f"published only once a reviewer decides it is one of {', '.join(DISPOSITIONS)}"
+                f"published only once a reviewer decides it is one of {', '.join(DISPOSITIONS)}, "
+                f"or review classes it {' or '.join(CLASSED)}"
             )
         for name in ("package", "event"):
             present(script, name, str, f"{where}: a script")
+        if script["disposition"] == "local":
+            # What the client shows before it runs a script on the user's machine.
+            try:
+                text(present(script, "command", str, f"{where}: a local script"), "a local script's command")
+                hosts = present(script, "hosts", list, f"{where}: a local script")
+                if len(hosts) > ITEMS or not all(isinstance(name, str) and host(name) for name in hosts):
+                    raise Dropped(f"a local script's hosts are not a list of at most {ITEMS} hosts")
+                result = present(script, "result", dict, f"{where}: a local script")
+                digest(result.get("sha256"), "a local script's result sha256")
+                if number(result.get("size"), "a local script's result size") > ASSET_BYTES:
+                    raise Dropped(f"a local script's result is larger than a catalog asset may be, {ASSET_BYTES} bytes")
+            except Dropped as dropped:
+                raise Refused(f"{where}: {dropped}") from None
 
 
 def rendered(entries: list[dict]) -> list[dict]:
@@ -4445,6 +4814,13 @@ def rendered(entries: list[dict]) -> list[dict]:
                 {name: value for name, value in artifact.items() if name not in ("mirror_licence", "licence_gate")}
                 for artifact in target.get("artifacts", [])
             ]
+            if "scripts" in target:
+                # A built script's record and output are the publish job's;
+                # the catalog lists the script as built.
+                target["scripts"] = [
+                    {name: value for name, value in script.items() if name not in ("licence_gate", "replaced_by")}
+                    for script in target["scripts"]
+                ]
         listed.append(copy)
     return listed
 
@@ -4534,8 +4910,9 @@ def passing(record: object) -> dict | None:
 def published(merged: dict) -> tuple[dict[str, int], dict[str, int | None], dict[str, dict[str, str]]]:
     """What the merged data lets the catalog release hold, by hash: each
     file-list and lock asset, and each NOTICE and licence text a passing
-    licence-gate record gives, with its size; each artifact copy or
-    replacement with the size its record binds, or none where it may not be
+    licence-gate record gives, and each local script's listing, with its
+    size; each artifact copy or replacement, a built script's output among
+    them, with the size its record binds, or none where it may not be
     redistributed (no passing record for those very bytes on every entry that
     holds them, or, for a copy, no mirror mark); and, for each of those, the
     NOTICE and licence texts that must ship beside it, each by its hash and
@@ -4585,6 +4962,26 @@ def published(merged: dict) -> tuple[dict[str, int], dict[str, int | None], dict
                 if lock is not None:
                     # An npm target's lock is an asset as a file list is.
                     listings[digest(lock.get("sha256"), "a lock's sha256")] = number(lock.get("size"), "a lock's size")
+                for script in target.get("scripts", []):
+                    result = script.get("result")
+                    if result is not None:
+                        # A local script's listing is the catalog's own data.
+                        listings[digest(result.get("sha256"), "a result's sha256")] = number(
+                            result.get("size"), "a result's size"
+                        )
+                    record = passing(script.get("licence_gate"))
+                    replacement = script.get("replaced_by")
+                    if replacement is not None:
+                        # A built script's output is a redistribution, as a repack is.
+                        replacement = obj(replacement, "a script's replaced_by")
+                        replaced_sha = digest(replacement.get("sha256"), "a replacement's sha256")
+                        replaced_size = number(replacement.get("size"), "a replacement's size")
+                        gated = None if record is None else record["asset"]
+                        held = gated is not None and gated["sha256"] == replaced_sha and gated["size"] == replaced_size
+                        allow(replaced_sha, replaced_size if held else None, record if held else None)
+                    if record is not None:
+                        for shipped in [record["notice"], *record["licences"]]:
+                            listings[shipped["sha256"]] = shipped["size"]
     except (KeyError, TypeError, AttributeError, Dropped):
         raise Refused("the merged data is not review data as the intake writes it") from None
     return listings, redistributed, beside
@@ -4827,7 +5224,9 @@ def lock_of(lock: object) -> str:
 
 def scripts_of(scripts: object) -> list[str]:
     """Each script `--ignore-scripts` skipped, with its disposition, or marked
-    for the reviewer where it has none."""
+    for the reviewer where it has none; a local one with the command it runs,
+    the hosts it reached and the listing it left, and a built one with its
+    licence-gate record and output."""
     if not isinstance(scripts, list):
         return [f"- scripts: {shown(scripts)}"]
     lines = []
@@ -4835,6 +5234,17 @@ def scripts_of(scripts: object) -> list[str]:
         script = script if isinstance(script, dict) else {}
         disposition = script.get("disposition")
         decided = "**undecided**" if disposition is None else shown(disposition)
+        if disposition == "local":
+            # What the client runs on the user's machine, and what it reaches and leaves.
+            decided += (
+                f", runs {shown(script.get('command'))}, reaching {shown(json.dumps(script.get('hosts')))}, "
+                f"leaving {replaced_of(script.get('result'))}"
+            )
+        elif disposition == "built":
+            decided += (
+                f", licence gate {gate_of(script.get('licence_gate'))}, "
+                f"replaced by {replaced_of(script.get('replaced_by'))}"
+            )
         lines.append(f"- script {shown(script.get('package'))} {shown(script.get('event'))}: {decided}")
     return lines
 
@@ -5160,11 +5570,14 @@ def main() -> int:
     bundling.add_argument("--abi", required=True, help="the FreeBSD package ABI, as FreeBSD:<major>:amd64")
     bundling.add_argument("--out", type=pathlib.Path, required=True, help="where the tar.gz is written")
     bundling.add_argument("--sbom", type=pathlib.Path, required=True, help="where the CycloneDX SBOM is written")
+    packing = commands.add_parser("pack", help="pack a built package directory as review reads a build")
+    packing.add_argument("--root", type=pathlib.Path, required=True, help="the package directory after the build")
+    packing.add_argument("--out", type=pathlib.Path, required=True, help="where the tar.gz is written")
     arguments = parser.parse_args()
     commands_run = {
         "review": review, "diff": diff, "render": render, "publish-check": publish_check,
         "lock": lock, "tree": tree, "recheck": recheck, "licence-gate": licence_gate_command,
-        "repack": repack_command, "bundle": bundle_command,
+        "repack": repack_command, "bundle": bundle_command, "pack": pack_command,
     }
     try:
         return commands_run[arguments.command](arguments)
