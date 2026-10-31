@@ -3774,16 +3774,17 @@ def tree_of(files: dict[str, tuple[bytes, bool]]) -> bytes:
     return json.dumps({"files": listed_files}, sort_keys=True, separators=(",", ":")).encode()
 
 
-def packed_as_packing(files: dict[str, tuple[bytes, bool]]) -> bytes:
+def packed_as_packing(files: dict[str, tuple[bytes, bool]], links: dict[str, str] | None = None) -> bytes:
     """`files` as a deterministic tar.gz, written as `Packing` writes one: a
     GNU tar of each directory above a file and each file, in order, owner 0
-    and mtime 0, in one gzip stream at level 9 naming no file."""
-    names: dict[str, tuple[bytes, bool] | None] = {}
-    for path in sorted(files):
+    and mtime 0, in one gzip stream at level 9 naming no file; with `links`,
+    each a symbolic link to its target, which no build `pack` writes holds."""
+    names: dict[str, tuple[bytes, bool] | str | None] = {}
+    for path in sorted([*files, *(links or {})]):
         parts = path.split("/")
         for depth in range(1, len(parts)):
             names.setdefault("/".join(parts[:depth]), None)
-        names[path] = files[path]
+        names[path] = files[path] if path in files else (links or {})[path]
     sink = io.BytesIO()
     with gzip.GzipFile(filename="", mode="wb", fileobj=sink, compresslevel=9, mtime=0) as zipped:
         with tarfile.open(fileobj=zipped, mode="w", format=tarfile.GNU_FORMAT, encoding="utf-8") as tar:
@@ -3794,6 +3795,9 @@ def packed_as_packing(files: dict[str, tuple[bytes, bool]]) -> bytes:
                 info.mtime = 0
                 if member is None:
                     info.type, info.mode = tarfile.DIRTYPE, 0o755
+                    tar.addfile(info)
+                elif isinstance(member, str):
+                    info.type, info.mode, info.linkname = tarfile.SYMTYPE, 0o777, member
                     tar.addfile(info)
                 else:
                     content, runs = member
@@ -3811,11 +3815,14 @@ def lay_out_script(
     built: dict[str, tuple[bytes, bool]] | None = None,
     sboms: pathlib.Path | None = None,
     sbom: bytes | None = None,
+    packed=packed_as_packing,
+    listed_as=None,
 ) -> bytes | None:
     """What the job leaves for one script: its two runs' listings, the hosts
     it reached, and, where it built, the deterministic tar.gz of its package
-    and that tree's listing, with the build's SBOM by the archive's hash.
-    Returns the archive."""
+    and that tree's listing, with the build's SBOM by the archive's hash;
+    `packed` writes the archive of the built files, and `listed_as`, where
+    given, the files `built.json` lists instead of them. Returns the archive."""
     place.mkdir(parents=True)
     for name, listing in (("run-1.json", first), ("run-2.json", second)):
         if listing is not None:
@@ -3823,9 +3830,9 @@ def lay_out_script(
     (place / "hosts.json").write_text(json.dumps({"hosts": hosts}))
     if built is None:
         return None
-    archive_bytes = packed_as_packing(built)
+    archive_bytes = packed(built)
     (place / "built.tar.gz").write_bytes(archive_bytes)
-    (place / "built.json").write_bytes(tree_of(built))
+    (place / "built.json").write_bytes(tree_of(built if listed_as is None else listed_as(built)))
     if sboms is not None and sbom is not None:
         (sboms / f"{sha(archive_bytes)}.json").write_bytes(sbom)
     return archive_bytes
@@ -3901,6 +3908,21 @@ def builds_review(scratch: pathlib.Path, signers: Signers) -> tuple[dict, pathli
         ("near-npm", "node make.js"),
     ):
         agent(agent_id, command, {"linux-x86_64": {}})
+    # Builds review does not take as a build `pack` wrote: one compressed
+    # otherwise, one with bytes after its gzip stream, one holding a link,
+    # and one whose listing leaves a file out.
+    def recompressed(files: dict) -> bytes:
+        return gzip.compress(gzip.decompress(packed_as_packing(files)), compresslevel=1, mtime=0)
+
+    for agent_id, kept in (
+        ("recompressed-npm", {"packed": recompressed}),
+        ("trailing-npm", {"packed": lambda files: packed_as_packing(files) + b"\0"}),
+        ("linked-npm", {"packed": lambda files: packed_as_packing(files, {"build/link": "done"})}),
+        ("omitted-npm", {"listed_as": lambda files: {
+            path: held for path, held in files.items() if not path.endswith("addon.node")
+        }}),
+    ):
+        agent(agent_id, "node-gyp rebuild", {"linux-x86_64": {"built": True, "sbom": passing_sbom, **kept}})
     # A run the job left no listing of, and hosts that are not hosts.
     agent("norun-npm", "node setup.js", {"linux-x86_64": {"second": None}})
     agent("badhost-npm", "node setup.js", {"linux-x86_64": {"hosts": ["10.0.0.1"]}})
@@ -3994,11 +4016,45 @@ def check_npm_build_gated(scratch: pathlib.Path, signers: Signers) -> None:
     held = scratch / "npm-builds" / "publish"
     (held / "assets").mkdir(parents=True)
     record = script["licence_gate"]
-    for named in [sha(built), record["notice"]["sha256"], *(licence["sha256"] for licence in record["licences"])]:
+    # The listing each local script's runs agreed on is published as the
+    # catalog's own data, as a lock is.
+    results = [
+        script["result"]["sha256"]
+        for entry in data["entries"]
+        for target in entry["targets"]
+        for script in target.get("scripts", [])
+        if script.get("disposition") == "local"
+    ]
+    assert results, "the review lists a local script"
+    for named in [sha(built), record["notice"]["sha256"], *(licence["sha256"] for licence in record["licences"]),
+                  *results]:
         (held / "assets" / named).write_bytes((assets / named).read_bytes())
     (held / "merged.json").write_text(json.dumps(data))
     ran = intake("publish-check", "--merged", held / "merged.json", "--assets", held / "assets")
-    assert ran.returncode == 0, f"a gated build was refused:\n{ran.stdout}{ran.stderr}"
+    assert ran.returncode == 0, f"a gated build or a local script's listing was refused:\n{ran.stdout}{ran.stderr}"
+    # A build whose record gates other bytes than it is replaced by may not
+    # be published.
+    mismatched = copy.deepcopy(data)
+    target = built_targets(mismatched, "ungated")["windows-x86_64"]
+    top_script(target)["licence_gate"]["asset"]["sha256"] = "0" * 64
+    (held / "mismatched.json").write_text(json.dumps(mismatched))
+    ran = intake("publish-check", "--merged", held / "mismatched.json", "--assets", held / "assets")
+    assert ran.returncode == 1 and sha(built) in ran.stderr and "no passing licence-gate record" in ran.stderr, (
+        ran.stderr
+    )
+
+
+def check_npm_build_refused(scratch: pathlib.Path, signers: Signers) -> None:
+    """A build is taken only as `pack` writes one, of files and directories
+    alone, holding the files its listing gives: any other drops its target,
+    the gate never reached."""
+    data, _, _ = builds_review(scratch, signers)
+    dropped(data, "recompressed-npm", "linux-x86_64", "built.tar.gz", "not written as `pack` writes")
+    dropped(data, "trailing-npm", "linux-x86_64", "built.tar.gz", "not written as `pack` writes")
+    dropped(data, "linked-npm", "linux-x86_64", "build/link", "neither a file nor a directory")
+    dropped(data, "omitted-npm", "linux-x86_64", "built.json lists")
+    for key in ("recompressed", "trailing", "linked", "omitted"):
+        assert "linux-x86_64" not in built_targets(data, key), f"{key} is listed with a build review refuses"
 
 
 def check_pack(scratch: pathlib.Path) -> None:
@@ -4121,6 +4177,7 @@ def main() -> int:
             ("npm build by rule", lambda: check_npm_build_by_rule(scratch, signers)),
             ("npm build by difference", lambda: check_npm_build_by_difference(scratch, signers)),
             ("npm build on target", lambda: check_npm_build_on_target(scratch, signers)),
+            ("npm build refused", lambda: check_npm_build_refused(scratch, signers)),
             ("npm build gated", lambda: check_npm_build_gated(scratch, signers)),
             ("pack", lambda: check_pack(scratch)),
             ("uvx sdist built", lambda: check_uvx_sdist_built(scratch)),

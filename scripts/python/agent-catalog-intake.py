@@ -14,8 +14,8 @@ but whole, inside a code span it cannot close, with every character that could
 hide or reorder it written as its code point. Whatever one target or entry
 breaks drops it alone, with its reason, and the run goes on with the others;
 one run reads at most `RUN_BYTES` of observed data within `RUN_SECONDS`, and
-unpacks at most `REPACK_RUN_DECOMPRESSED` from every `.tar.bz2` it repacks,
-and what is left once any is spent waits for the next run.
+unpacks at most `REPACK_RUN_DECOMPRESSED` from every `.tar.bz2` it repacks
+and every build archive it checks, and what is left once any is spent waits for the next run.
 
 `review` reads:
 
@@ -633,7 +633,7 @@ NPM_REFUSED = '\\:<>"|?*'
 INSTALL_EVENTS = ("preinstall", "install", "postinstall")
 # What a reviewer may decide a skipped script was: nothing the agent needs,
 # done instead by crucible, or lost with nothing in its place. `built` and
-# `local` belong to the build route, which this review does not take.
+# `local` are review's to class, from what the job left, never a reviewer's.
 DISPOSITIONS = ("inert", "replaced", "lost")
 # What the intake classes a skipped script the reviewer did not decide: one
 # the job built, whose output installs in its place, or one the client runs
@@ -746,7 +746,7 @@ class Budget:
         self.unpacked += count
         if self.unpacked > REPACK_RUN_DECOMPRESSED:
             raise Spent(
-                f"the run's budget of {REPACK_RUN_DECOMPRESSED} bytes unpacked from every .tar.bz2 is spent; "
+                f"the run's budget of {REPACK_RUN_DECOMPRESSED} bytes unpacked from every .tar.bz2 and build archive is spent; "
                 "it is reviewed at the next run"
             )
 
@@ -1705,15 +1705,15 @@ def wheel_fits(file: str, name: str, item_version: str, platform: str, pin: dict
     pinned interpreter accepts."""
     held = WHEEL_NAME.fullmatch(file)
     if held is None:
-        raise Dropped(f"{clipped(file)} is not a wheel's file name")
+        raise Dropped(f"{shown(clipped(file))} is not a wheel's file name")
     if normal(held["name"]) != normal(name) or held["version"] != item_version:
         raise Dropped(
-            f"wheel {clipped(file)} does not agree with the report, which says it is "
+            f"wheel {shown(clipped(file))} does not agree with the report, which says it is "
             f"{clipped(name)} {clipped(item_version)}"
         )
     if not fits(f"{held['python']}-{held['abi']}-{held['platform']}", platform, pin["minor"]):
         raise Dropped(
-            f"wheel {clipped(file)} is built for none of the tags an interpreter of "
+            f"wheel {shown(clipped(file))} is built for none of the tags an interpreter of "
             f"Python {pin['python']} on {platform} accepts"
         )
 
@@ -3003,12 +3003,12 @@ def listed_tree(printed: object, name: str, built: bool) -> dict[str, dict]:
         item = obj(item, f"{name} file {index}")
         path = text(item.get("path"), f"{name} file {index}'s path")
         if not inside(path) or path.casefold() in folded:
-            raise Dropped(f"{name} lists {clipped(path)}, which is not inside its tree or is listed twice")
+            raise Dropped(f"{name} lists {shown(clipped(path))}, which is not inside its tree or is listed twice")
         if built and item.get("kind") != "file":
-            raise Dropped(f"{name} lists {clipped(path)} as other than a file")
+            raise Dropped(f"{name} lists {shown(clipped(path))} as other than a file")
         runs = item.get("exec")
         if not isinstance(runs, bool):
-            raise Dropped(f"{name}: {clipped(path)}'s exec flag is not true or false")
+            raise Dropped(f"{name}: {shown(clipped(path))}'s exec flag is not true or false")
         held[path] = {
             "exec": runs,
             "sha256": digest(item.get("sha256"), f"{name}: {clipped(path)}'s sha256"),
