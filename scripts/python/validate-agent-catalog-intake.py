@@ -1738,6 +1738,7 @@ def check_uvx(scratch: pathlib.Path) -> None:
     assert "- interpreter args: ` -I `" in lines, ran.stdout
     assert "- entry point: ` pyagent.acp:main `" in lines, ran.stdout
     assert any("never mirrored" in line for line in lines), ran.stdout
+    assert not any("installs as its bundle" in line for line in lines), ran.stdout
     old = copy.deepcopy(data)
     for listed_entry in old["entries"]:
         if listed_entry["key"] == "pyagent":
@@ -3296,6 +3297,47 @@ def check_bz2_review(scratch: pathlib.Path) -> None:
     else:
         raise AssertionError("a repack past what a run holds was kept")
     assert not held_assets, "nothing of a refused repack is kept"
+    module.REPACK_HELD_BYTES = 1 << 30
+
+    # The job's repack is compared to this review's without being held whole,
+    # and refused on its size before any of it is read.
+    module.BUDGET = module.Budget()
+    try:
+        place = scratch / "compare"
+        place.mkdir()
+        for name, held_bytes, words in (
+            ("longer", out + b"x", "not the bytes"),
+            ("flipped", out[:-1] + bytes([out[-1] ^ 1]), "not the bytes"),
+        ):
+            (place / name).write_bytes(held_bytes)
+            before = module.BUDGET.read
+            try:
+                module.same_bytes(place / name, out, "the job's repack")
+            except module.Dropped as failed:
+                assert words in str(failed), f"{name}: {failed}"
+            else:
+                raise AssertionError(f"{name}: a repack that differs was taken")
+            if name == "longer":
+                assert module.BUDGET.read == before, "a repack of another size is refused before it is read"
+        (place / "same").write_bytes(out)
+        module.same_bytes(place / "same", out, "the job's repack")
+    finally:
+        module.BUDGET = None
+
+    # What one run decompresses of every bz2 is bounded; past it the next
+    # target waits for the next run.
+    unpacked_size = len(bz2.decompress(original))
+    module.REPACK_RUN_DECOMPRESSED = unpacked_size * 3 // 2
+    namespace = argparse.Namespace(
+        registry=registry, choices=choices, runners=RUNNERS, observed=observed, deny=ROOT / "deny.toml",
+        assets=scratch / "run-assets", out=scratch / "run-budget.json", merged=None, interpreters=None, node=None,
+        node_keys=None, dispositions=None, sboms=sboms, texts=GATE / "texts",
+    )
+    assert module.review(namespace) == 0
+    spent = json.loads((scratch / "run-budget.json").read_text())
+    dropped(spent, "bz-agent", "darwin-aarch64", "not the bytes")
+    for platform in ("linux-aarch64", "linux-x86_64", "windows-x86_64"):
+        dropped(spent, "bz-agent", platform, str(module.REPACK_RUN_DECOMPRESSED), "next run")
 
 
 BSD_ABI = "FreeBSD:14:amd64"
@@ -3472,6 +3514,7 @@ def check_bundle(scratch: pathlib.Path) -> None:
         for word in words:
             assert word in ran.stderr, f"{name}: {ran.stderr[-600:]!r} lacks {word!r}"
         assert not list(out.parent.iterdir()), f"{name}: a refused bundle left a file"
+        return ran
 
     def needs(line: str):
         return lambda staged_here, sections_here, packages_here: sections_here["bin/node"].append(line)
@@ -3490,6 +3533,14 @@ def check_bundle(scratch: pathlib.Path) -> None:
     refused("unpackaged", ("lib/libfoo.so.1.2", "no listed package installs"),
             lambda s, se, p: p["packages"][1]["files"].remove("/usr/local/lib/libfoo.so.1.2"))
     refused("unparsed", ("does not parse",), needs("libfoo.so.1 -> somewhere"))
+    # What ldd printed is the job's, so a refusal shows it escaped.
+    ran = refused("escape", ("libq.so\\u001b[31m", "cannot be bundled"), needs("libq.so\x1b[31m => not found (0)"))
+    assert "\x1b" not in ran.stderr, ran.stderr[-600:]
+    ran = refused("return", ("does not parse", "\\u000d"), needs(f"libq.so.1 => /opt/lib/libq.so.1 {LDD_ADDRESS}\r"))
+    assert "\r" not in ran.stderr, ran.stderr[-600:]
+    # A listed path installs a staged file only at its place under /usr/local/.
+    refused("elsewhere-installed", ("bin/node", "no listed package installs"),
+            lambda s, se, p: p["packages"][0]["files"].__setitem__(0, "/home/other/bin/node"))
     refused("unsectioned", ("lib/libfoo.so.1.2", "ldd printed nothing"), lambda s, sections_here, p: sections_here.pop(
         "lib/libfoo.so.1.2"))
     refused("foreign", ("not a staged",), ldd=lambda s, se: ldd_text(s, se) + "/usr/local/bin/other:\n")
@@ -3570,6 +3621,11 @@ def check_freebsd_python(scratch: pathlib.Path) -> None:
     dropped(data, "psf-agent", "freebsd-x86_64", "the interpreter", "PSF-2.0", "not on deny.toml's list")
     dropped(data, "other-agent", "freebsd-x86_64", "the interpreter", "not the bytes")
     dropped(data, "moved-agent", "freebsd-x86_64", "the interpreter", "pinned address")
+    # The diff no longer says an interpreter is never mirrored where one ships.
+    ran = intake("diff", scratch / "review.json")
+    assert ran.returncode == 0, ran.stderr
+    [said] = [line for line in ran.stdout.splitlines() if line.startswith("- not mirrored")]
+    assert "except" in said and "` freebsd-x86_64 `" in said and "installs as its bundle" in said, said
     beside = [(record["sha256"], (assets / record["sha256"]).read_bytes())
               for record in [runtime["licence_gate"]["notice"], *runtime["licence_gate"]["licences"]]]
     ran = publish_checked(scratch, "freebsd-python", data, (sha(bundle), bundle), *beside)
@@ -3644,6 +3700,11 @@ def check_freebsd_node(scratch: pathlib.Path, signers: Signers) -> None:
     assert runtime["replaced_by"] == {"sha256": sha(bundle), "size": len(bundle)}, runtime.get("replaced_by")
     assert (assets / sha(bundle)).read_bytes() == bundle, "the bundle is kept as an asset by its hash"
     assert "kept" in targets["linux-x86_64"]["artifacts"][0], "Node's own builds are kept as before"
+    # The diff no longer says Node is never mirrored where its bundle ships.
+    ran = intake("diff", scratch / "review.json")
+    assert ran.returncode == 0, ran.stderr
+    [said] = [line for line in ran.stdout.splitlines() if line.startswith("- not mirrored")]
+    assert "except" in said and "` freebsd-x86_64 `" in said and "installs as its bundle" in said, said
 
     failing = bundled(scratch / "failing", licences=["GPLv2"])
     (observed / "node/freebsd-x86_64/sbom.json").write_text(json.dumps(failing[1]))

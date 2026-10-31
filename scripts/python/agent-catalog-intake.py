@@ -14,7 +14,8 @@ but whole, inside a code span it cannot close, with every character that could
 hide or reorder it written as its code point. Whatever one target or entry
 breaks drops it alone, with its reason, and the run goes on with the others;
 one run reads at most `RUN_BYTES` of observed data within `RUN_SECONDS`, and
-what is left once either is spent waits for the next run.
+unpacks at most `REPACK_RUN_DECOMPRESSED` from every `.tar.bz2` it repacks,
+and what is left once any is spent waits for the next run.
 
 `review` reads:
 
@@ -154,7 +155,10 @@ every library it names must resolve into the staged `lib/` or the base
 system's `/lib/` or `/usr/lib/`, and one `not found`, under `/usr/local/` or
 anywhere else cannot be bundled and refuses the run. A file in `lib/` no
 `ldd` line needs, and a staged file no listed package installs, refuse it
-too. `--packages` is the package list the step's `pkg query` gave, within
+too: a listed path installs the staged file it names under `/usr/local/`
+alone, so `/usr/local/lib/libfoo.so.1` installs `lib/libfoo.so.1`, and a path
+anywhere else installs nothing. A refusal shows what `ldd`, the package list
+or the staged names gave it escaped, as the human diff shows hostile text. `--packages` is the package list the step's `pkg query` gave, within
 16 MiB: `{"packages": [{"name", "version", "licenses", "logic", "files"}]}`,
 `licenses` the ports licence names, `logic` one of `single`, `and` or `or`,
 and `files` the absolute paths it installs. `--abi` is the package ABI,
@@ -186,7 +190,8 @@ before its locator, which points at it), or when that record claims more
 members or a larger central directory than the stated ceilings. A package pip found only as a source distribution drops its target
 with a `build` list naming each one, clipped as a reason is, so it waits for
 a build at review. An interpreter and its wheels are never marked for
-mirroring.
+mirroring, and are never mirrored but on `freebsd-x86_64`, where the
+interpreter installs as its bundle, shipped under its licence gate as below.
 
 An `npx` agent's package is pinned as `name@version`: a lowercase npm name,
 scoped or not, and one exact version, so a range, a tag or an `npm:` alias
@@ -199,8 +204,9 @@ fingerprint is listed, and only the
 `<sha256>  <file>` lines it signed are read, none twice. Each platform's
 build must be the bytes that list gives it, fetched through `nodejs.org`
 alone; its `bin/node` (`node.exe` on Windows) and `LICENSE` are all a client
-keeps of it, and Node is never mirrored. Node publishes no FreeBSD build, so
-on `freebsd-x86_64` Node is the pinned FreeBSD package, bundled as below. The tree is npm's lock, in lockfile version 3, of
+keeps of it, and Node is never mirrored but on `freebsd-x86_64`: Node
+publishes no FreeBSD build, so there Node is the pinned FreeBSD package,
+bundled as below and installed as that bundle, shipped under its licence gate. The tree is npm's lock, in lockfile version 3, of
 which only each package's location, name, version, `resolved`, `integrity`,
 `inBundle`, `hasInstallScript`, `dev`, `optional`, `os`, `cpu` and `libc`
 are read; a `dev` package is never installed. Every location is
@@ -491,11 +497,13 @@ NOTICE_BYTES = 16 << 20
 # What one `review` holds of every NOTICE and licence text it ships.
 GATE_HELD_BYTES = 64 << 20
 # A repack's ceilings: the bytes it writes, as many as a download may be; the
-# bytes a `.tar.bz2` may unpack to, the client's own ceiling on a release; the
-# one compression level it writes at; and what one `review` holds of every
-# repack and FreeBSD bundle it ships.
+# bytes a `.tar.bz2` may unpack to, the client's own ceiling on a release, and
+# every `.tar.bz2` one `review` unpacks together, past which the rest wait for
+# the next run; the one compression level it writes at; and what one `review`
+# holds of every repack and FreeBSD bundle it ships.
 REPACK_BYTES = 1 << 30
 REPACK_DECOMPRESSED = 4 << 30
+REPACK_RUN_DECOMPRESSED = 16 << 30
 REPACK_LEVEL = 9
 REPACK_HELD_BYTES = 1 << 30
 # A FreeBSD bundle's inputs: what `ldd` printed, and the package list.
@@ -505,6 +513,8 @@ PACKAGES_BYTES = 16 << 20
 # its package is fetched from.
 FREEBSD_ABI = re.compile(r"FreeBSD:[1-9][0-9]{0,2}:amd64")
 PKG_HOST = "pkg.freebsd.org"
+# Where a FreeBSD package installs what a bundle stages under bin/ and lib/.
+PKG_PREFIX = "/usr/local/"
 # The SPDX licence each FreeBSD ports licence name stands for. A name not
 # here is `NOASSERTION`, which the licence gate refuses.
 PORTS_LICENCES = {
@@ -648,6 +658,7 @@ class Budget:
 
     def __init__(self) -> None:
         self.read = 0
+        self.unpacked = 0
         self.started = time.monotonic()
 
     def spend(self, count: int) -> None:
@@ -655,6 +666,14 @@ class Budget:
         if self.read > RUN_BYTES or time.monotonic() - self.started > RUN_SECONDS:
             raise Spent(
                 f"the run's budget of {RUN_BYTES} bytes and {RUN_SECONDS} seconds is spent; "
+                "it is reviewed at the next run"
+            )
+
+    def unpack(self, count: int) -> None:
+        self.unpacked += count
+        if self.unpacked > REPACK_RUN_DECOMPRESSED:
+            raise Spent(
+                f"the run's budget of {REPACK_RUN_DECOMPRESSED} bytes unpacked from every .tar.bz2 is spent; "
                 "it is reviewed at the next run"
             )
 
@@ -666,6 +685,12 @@ BUDGET: Budget | None = None
 def spend(count: int) -> None:
     if BUDGET is not None:
         BUDGET.spend(count)
+
+
+def unpack(count: int) -> None:
+    """Spend `count` bytes a repack unpacked against the run's budget."""
+    if BUDGET is not None:
+        BUDGET.unpack(count)
 
 
 def clipped(text: object) -> str:
@@ -755,6 +780,40 @@ def read(path: pathlib.Path, ceiling: int, what: str) -> bytes:
     if len(text) > ceiling:
         raise Refused(f"{what} is larger than {ceiling} bytes")
     return text
+
+
+def same_bytes(path: pathlib.Path, expected: bytes, what: str) -> None:
+    """Drop unless the regular file at `path`, never a link, is `expected`:
+    refused on its size before any of it is read, and otherwise compared a
+    chunk at a time, so it is never held beside `expected` whole."""
+    try:
+        held = os.lstat(path)
+    except OSError:
+        raise Dropped(f"{what} is missing") from None
+    if not stat.S_ISREG(held.st_mode):
+        raise Dropped(f"{what} is not a regular file")
+    try:
+        # Opened without following a link, so a path swapped for one after the
+        # check above reads nothing.
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        raise Dropped(f"{what} is not a regular file") from None
+    differs = Dropped(f"{what} is not the bytes this review's repack of the download is")
+    view = memoryview(expected)
+    at = 0
+    with os.fdopen(descriptor, "rb") as file:
+        held = os.fstat(file.fileno())
+        if not stat.S_ISREG(held.st_mode):
+            raise Dropped(f"{what} is not a regular file")
+        if held.st_size != len(expected):
+            raise differs
+        while chunk := file.read(1 << 20):
+            spend(len(chunk))
+            if view[at:at + len(chunk)] != chunk:
+                raise differs
+            at += len(chunk)
+    if at != len(expected):
+        raise differs
 
 
 def read_json(path: pathlib.Path, ceiling: int, what: str) -> object:
@@ -1167,12 +1226,7 @@ def target(
             made = repacked(download)
     hosts = chained(place, url, "the registry's address")
     if format == "tar.bz2":
-        try:
-            theirs = read(place / "repacked", REPACK_BYTES, "the job's repack")
-        except Refused as refused:
-            raise Dropped(str(refused)) from None
-        if theirs != made:
-            raise Dropped("the job's repack is not the bytes this review's repack of the download is")
+        same_bytes(place / "repacked", made, "the job's repack")
     listing = unpacked_at(place)
     runnable(listing[0], cmd, platform)
     if format == "tar.bz2":
@@ -2050,6 +2104,18 @@ class Bounded:
         self.left -= len(chunk)
         if self.left < 0:
             raise Dropped(f"{self.what} unpacks to more than its ceiling of bytes")
+        return chunk
+
+
+class Unpacking:
+    """A stream whose every byte read is spent with `unpack`."""
+
+    def __init__(self, file) -> None:
+        self.file = file
+
+    def read(self, count: int = -1) -> bytes:
+        chunk = self.file.read(count)
+        unpack(len(chunk))
         return chunk
 
 
@@ -3793,9 +3859,10 @@ def repacked(file) -> bytes:
     nothing after it, its compressed bytes are more than `ARTIFACT_BYTES`, it
     unpacks to more than `REPACK_DECOMPRESSED`, or a member is anything but a
     file, a directory or a symbolic link: a hard link, a device, a FIFO or a
-    sparse member is refused, as the client refuses it."""
+    sparse member is refused, as the client refuses it. In `review`, what it
+    unpacks is spent against the run's `REPACK_RUN_DECOMPRESSED`."""
     stream = OneBz2(file)
-    unzipped = Bounded(stream, REPACK_DECOMPRESSED, "the archive")
+    unzipped = Bounded(Unpacking(stream), REPACK_DECOMPRESSED, "the archive")
     packing = Packing()
     try:
         with tarfile.open(fileobj=unzipped, mode="r|", tarinfo=Member, encoding="utf-8", errors="surrogateescape") as tar:
@@ -3920,25 +3987,27 @@ def ldd_needs(text_read: bytes, root: str, tree: dict[str, tuple[str, int]]) -> 
         if not line.startswith("\t"):
             if not line.endswith(":") or not line.startswith(root + "/"):
                 if line.endswith(":") and line.startswith("/"):
-                    raise Refused(f"ldd printed for {clipped(line[:-1])}, which is not a staged file")
-                raise Refused(f"what ldd printed does not parse at line {number_of}: {clipped(line)}")
+                    raise Refused(f"ldd printed for {shown(clipped(line[:-1]))}, which is not a staged file")
+                raise Refused(f"what ldd printed does not parse at line {number_of}: {shown(clipped(line))}")
             current = line[len(root) + 1:-1]
             if tree.get(current, ("",))[0] != "file":
-                raise Refused(f"ldd printed for {clipped(current)}, which is not a staged file")
+                raise Refused(f"ldd printed for {shown(clipped(current))}, which is not a staged file")
             if current in sections:
-                raise Refused(f"ldd printed for {clipped(current)} twice")
+                raise Refused(f"ldd printed for {shown(clipped(current))} twice")
             sections.add(current)
             continue
         if current is None:
-            raise Refused(f"what ldd printed does not parse at line {number_of}: {clipped(line)}")
+            raise Refused(f"what ldd printed does not parse at line {number_of}: {shown(clipped(line))}")
         if LDD_VDSO.fullmatch(line):
             continue
         missing = LDD_MISSING.fullmatch(line)
         if missing is not None:
-            raise Refused(f"{clipped(missing[1])} cannot be bundled: ldd finds it nowhere for {clipped(current)}")
+            raise Refused(
+                f"{shown(clipped(missing[1]))} cannot be bundled: ldd finds it nowhere for {shown(clipped(current))}"
+            )
         found = LDD_FOUND.fullmatch(line)
         if found is None:
-            raise Refused(f"what ldd printed does not parse at line {number_of}: {clipped(line)}")
+            raise Refused(f"what ldd printed does not parse at line {number_of}: {shown(clipped(line))}")
         resolved_to = os.path.normpath(found[2])
         if resolved_to.startswith(root + "/lib/"):
             rel = resolved_to[len(root) + 1:]
@@ -3947,8 +4016,9 @@ def ldd_needs(text_read: bytes, root: str, tree: dict[str, tuple[str, int]]) -> 
                 continue
         elif resolved_to.startswith(("/lib/", "/usr/lib/")) and not resolved_to.startswith(root + "/"):
             continue
-        raise Refused(f"{clipped(found[1])} cannot be bundled: ldd resolves it to {clipped(found[2])}, which is "
-                      "neither a library staged in the bundle's lib/ nor one of the base system's /lib/ or /usr/lib/")
+        raise Refused(f"{shown(clipped(found[1]))} cannot be bundled: ldd resolves it to {shown(clipped(found[2]))}, "
+                      "which is neither a library staged in the bundle's lib/ nor one of the base system's "
+                      "/lib/ or /usr/lib/")
     return sections, needed
 
 
@@ -3997,7 +4067,7 @@ def bundle_packages(value: object) -> list[dict]:
             raise Refused(f"the package list lists more than {LISTED_ENTRIES} files")
         for path in files:
             if not isinstance(path, str) or not path.startswith("/") or "\0" in path or len(path) > TEXT_BYTES:
-                raise Refused(f"{where} lists {clipped(path)}, which is not an absolute path")
+                raise Refused(f"{where} lists {shown(clipped(path))}, which is not an absolute path")
         held.append({"files": files, "licences": licences, "logic": logic, "name": name, "version": given})
     return held
 
@@ -4017,37 +4087,39 @@ def bundle_command(arguments: argparse.Namespace) -> int:
     an SBOM, both whole or neither; see the module documentation."""
     abi = arguments.abi
     if not FREEBSD_ABI.fullmatch(abi):
-        raise Refused(f"the ABI {clipped(abi)} is not a FreeBSD ABI on amd64, FreeBSD:<major>:amd64")
+        raise Refused(f"the ABI {shown(clipped(abi))} is not a FreeBSD ABI on amd64, FreeBSD:<major>:amd64")
     staged = arguments.staged
     root = os.path.realpath(staged)
     tree = staged_tree(staged)
     for path, (kind, _) in tree.items():
         top, _, below = path.partition("/")
         if top not in ("bin", "lib", "licenses") or (not below and kind != "dir"):
-            raise Refused(f"the staged directory holds {clipped(path)}, which is not under bin/, lib/ or licenses/")
+            raise Refused(f"the staged directory holds {shown(clipped(path))}, which is not under bin/, lib/ or licenses/")
     programs = [path for path in tree if path.startswith("bin/")]
     if len(programs) != 1 or tree[programs[0]][0] != "file":
         raise Refused(f"bin/ holds {len(programs)} names, and a staged runtime is one program, a file")
     packages = bundle_packages(read_json(arguments.packages, PACKAGES_BYTES, "the package list"))
     names = {package["name"] for package in packages}
-    # What the base of each listed file is, after every one of its components:
-    # `/usr/local/lib/libfoo.so.1` installs `lib/libfoo.so.1` and so on.
-    installed: set[str] = set()
-    for package in packages:
-        for path in package["files"]:
-            parts = path.split("/")
-            installed.update("/".join(parts[at:]) for at in range(1, len(parts)))
+    # What each listed file installs in the bundle: its path under the one
+    # prefix packages install to, so `/usr/local/lib/libfoo.so.1` installs
+    # `lib/libfoo.so.1` and a path anywhere else installs nothing.
+    installed = {
+        path.removeprefix(PKG_PREFIX)
+        for package in packages
+        for path in package["files"]
+        if path.startswith(PKG_PREFIX)
+    }
     python = None
     for path, (kind, _) in tree.items():
         parts = path.split("/")
         if parts[0] == "licenses":
             if len(parts) >= 2 and parts[1] not in names:
-                raise Refused(f"{clipped('/'.join(parts[:2]))} names no listed package")
+                raise Refused(f"{shown(clipped('/'.join(parts[:2])))} names no listed package")
             if len(parts) == 2 and kind != "dir":
-                raise Refused(f"{clipped(path)} is not a package's directory of licence files")
+                raise Refused(f"{shown(clipped(path))} is not a package's directory of licence files")
         elif parts[0] == "lib" and len(parts) > 2 or (parts[0] == "lib" and kind == "dir" and len(parts) == 2):
             if not PYTHON.fullmatch(parts[1].removeprefix("python")) or not parts[1].startswith("python"):
-                raise Refused(f"{clipped(path)} is neither a library in lib/ nor under CPython's lib/python3.M/")
+                raise Refused(f"{shown(clipped(path))} is neither a library in lib/ nor under CPython's lib/python3.M/")
             if python not in (None, parts[1]):
                 raise Refused("lib/ holds the standard library of two CPythons")
             python = parts[1]
@@ -4066,17 +4138,17 @@ def bundle_command(arguments: argparse.Namespace) -> int:
     for path, (kind, _) in tree.items():
         parts = path.split("/")
         if parts[0] == "lib" and len(parts) == 2 and kind != "dir" and path not in needed:
-            raise Refused(f"no ldd line needs {clipped(path)}, so it is not bundled")
+            raise Refused(f"no ldd line needs {shown(clipped(path))}, so it is not bundled")
     loaded = [programs[0]] + [
         path for path, (kind, _) in tree.items()
         if kind == "file" and path.startswith("lib/") and (path.count("/") == 1 or path.endswith(".so"))
     ]
     for path in loaded:
         if path not in sections:
-            raise Refused(f"ldd printed nothing for {clipped(path)}, so what it loads is not known")
+            raise Refused(f"ldd printed nothing for {shown(clipped(path))}, so what it loads is not known")
     for path, (kind, _) in tree.items():
         if path.startswith(("bin/", "lib/")) and kind != "dir" and path not in installed:
-            raise Refused(f"no listed package installs {clipped(path)}")
+            raise Refused(f"no listed package installs {shown(clipped(path))}")
     try:
         packing = Packing()
         for path, (kind, mode) in tree.items():
@@ -4794,10 +4866,24 @@ def entry_lines(entry: dict, previous: dict | None, same: bool) -> list[str]:
     lines += compared("registry id", entry.get("registry_id"), against("registry_id"), shown)
     lines += compared("licence", entry.get("license"), against("license"), shown)
     uvx = entry.get("kind") == "uvx"
+    # A FreeBSD runtime is the one artifact of a uvx or npm entry that ships:
+    # it installs as its bundle, which its licence gate binds.
+    bundled = sorted({
+        str(listed.get("platform"))
+        for listed in entry.get("targets", [])
+        for artifact in listed.get("artifacts", [])
+        if isinstance(artifact, dict) and "replaced_by" in artifact
+    })
+
+    def shipped(runtime: str) -> str:
+        if not bundled:
+            return ""
+        return f", except on {words(bundled)}, where {runtime} installs as its bundle, shipped under its licence gate"
+
     if uvx:
-        lines.append("- not mirrored: an interpreter and its wheels are never mirrored")
+        lines.append("- not mirrored: an interpreter and its wheels are never mirrored" + shipped("the interpreter"))
     elif npm:
-        lines.append("- not mirrored: Node and the npm tree are never mirrored")
+        lines.append("- not mirrored: Node and the npm tree are never mirrored" + shipped("Node"))
         revision = entry.get("lock_revision")
         lines.append(
             f"- lock revision {shown(revision)}"
