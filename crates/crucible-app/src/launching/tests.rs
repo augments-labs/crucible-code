@@ -2169,6 +2169,19 @@ fn a_planted_link_is_not_followed() {
     assert_eq!(differing(&package, &listing), "sub");
 }
 
+/// A file with a second name elsewhere can be changed after the check through
+/// that name, so it is not the file that was checked.
+#[cfg(unix)]
+#[test]
+fn a_listed_file_with_another_hard_link_differs() {
+    let sample = Sample::new("differs-hard-link");
+    let (package, listing) = listed_package(&sample);
+    fs::hard_link(package.join("a"), sample.root().join("outside")).expect("linked");
+    let (path, why) = differs(&package, &listing).expect("a difference");
+    assert_eq!(path, "a");
+    assert!(why.contains("link"), "{why}");
+}
+
 /// The built-in Antigravity row alone.
 static ANTIGRAVITY_ONLY: [Row; 1] = [ANTIGRAVITY];
 

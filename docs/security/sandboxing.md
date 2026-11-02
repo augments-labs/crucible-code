@@ -481,7 +481,8 @@ backend gives a command its own, as Linux does, that backend's; and npm's
 inherited. When its first process exits, everything it started is stopped, a
 child still running included, and only once that stop is confirmed is the
 package compared with the review's listing: every path, its kind, whether it
-runs, empty directories and its SHA-256. A stop nobody could confirm, a failure, a
+runs, empty directories and its SHA-256, and on Linux and macOS a listed file
+with a second hard link is a difference. A stop nobody could confirm, a failure, a
 difference or a private directory that cannot be removed refuses the version and removes what was staged. A child is
 stopped, not waited for, so what it had not finished writing is a difference. A
 script runs for at most ten minutes. With the sandbox off, on Windows or on FreeBSD it does not run

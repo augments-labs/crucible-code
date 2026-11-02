@@ -3292,8 +3292,9 @@ impl Launcher<'_> {
     /// one, `npm_package_json`. Once its leader exits, everything it started
     /// is stopped, a child still running included, and only once that stop is
     /// confirmed is its package compared with the listing its review left:
-    /// every path, its kind, whether it runs and its SHA-256, and no other
-    /// entry, empty directories included. So nothing can change the package
+    /// every path, its kind, whether it runs, its SHA-256 and, on unix, that
+    /// it has no other hard link, and no other entry, empty directories
+    /// included. So nothing can change the package
     /// after it was compared, and what a child had not finished writing is a
     /// difference.
     ///
@@ -3416,9 +3417,10 @@ async fn exited(
 
 /// The first way `package` differs from `listed`, a listing of regular files
 /// relative to it, as a path relative to it and how: a listed file missing,
-/// of another kind, size, runnability or SHA-256, or any entry that is
-/// neither a listed file nor a directory above one. Nothing is followed
-/// through a link, and the walk stops at the first difference.
+/// of another kind, size, runnability or SHA-256, on unix one with more than
+/// one hard link, or any entry that is neither a listed file nor a directory
+/// above one. Nothing is followed through a link, and the walk stops at the
+/// first difference.
 fn differs(
     package: &Path,
     listed: &[crucible_external_harnesses::catalog::File],
@@ -3468,6 +3470,12 @@ fn differs(
             };
             if !metadata.is_file() {
                 return Some((path, "as another kind than its review found"));
+            }
+            // A second name can change it after this compares it, and its
+            // review's listing gives no file one.
+            #[cfg(unix)]
+            if std::os::unix::fs::MetadataExt::nlink(&metadata) > 1 {
+                return Some((path, "with a hard link its review did not find"));
             }
             if metadata.len() != *size {
                 return Some((path, "of another size than its review found"));
