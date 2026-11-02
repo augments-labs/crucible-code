@@ -316,7 +316,10 @@ fn a_smoke_of_an_entry_keyed_for_a_built_in_it_does_not_back_is_refused_under_th
         else {
             return Err(format!("{case}: smoked or refused: {}", shape(&installed)).into());
         };
-        assert!(why.contains("is not its entry's own"), "{case}: {why}");
+        assert!(
+            why.contains("is not its entry's own"),
+            "{case}: refused for another reason"
+        );
         assert!(
             facts(&front)?
                 .iter()
@@ -379,6 +382,9 @@ fn a_smoke_of_a_key_past_the_ceiling_keeps_its_refusal() -> Result<(), Failed> {
     else {
         return Err(format!("smoked or refused: {}", shape(&installed)).into());
     };
-    assert!(why.contains("is not one this build asks about"), "{why}");
+    assert!(
+        why.contains("is not one this build asks about"),
+        "refused for another reason"
+    );
     Ok(())
 }

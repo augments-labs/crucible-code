@@ -1596,7 +1596,7 @@ fn an_install_script_leaving_a_closed_directory_refuses_and_leaves_no_staging() 
 #[test]
 fn a_release_whose_install_script_runs_at_install_is_refused_on_macos() -> Result<(), Failed> {
     let runtime = super::runtime()?;
-    let (bench, release) = local("agents-door-npm-macos", "true", &listing(&[]))?;
+    let (bench, _) = local("agents-door-npm-macos", "true", &listing(&[]))?;
     let before = fs::read(bench.user())?;
     let mut front = answering(&bench.server, Some("Install"));
 
