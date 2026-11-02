@@ -1701,8 +1701,11 @@ impl SandboxProcess for StubbornProcess {
 /// first whenever one of them is stopped, told the policy it was started under.
 struct Stopping {
     local: Arc<dyn SandboxService>,
-    stopping: Arc<dyn Fn(&SandboxPolicy) -> std::io::Result<()> + Send + Sync>,
+    stopping: Arc<AsStopped>,
 }
+
+/// What [`Stopping`] does as a process started under a policy is stopped.
+type AsStopped = dyn Fn(&SandboxPolicy) -> std::io::Result<()> + Send + Sync;
 
 impl SandboxService for Stopping {
     fn probe(
@@ -2057,15 +2060,16 @@ async fn an_install_script_is_told_its_package_json_and_only_its_package_is_comp
 /// A listing's entry for a regular file holding `bytes`.
 fn listed(path: &str, bytes: &[u8], exec: bool) -> File {
     use sha2::Digest as _;
+    use std::fmt::Write as _;
+    let mut sha256 = String::new();
+    for byte in sha2::Sha256::digest(bytes) {
+        write!(sha256, "{byte:02x}").expect("a string takes it");
+    }
     File {
         path: path.into(),
         kind: FileKind::File {
             size: bytes.len() as u64,
-            sha256: sha2::Sha256::digest(bytes)
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<String>()
-                .into(),
+            sha256: sha256.into(),
             exec,
         },
     }
