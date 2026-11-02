@@ -743,6 +743,7 @@ fn a_command_that_is_the_pinned_interpreter_is_not_run() -> Result<(), Failed> {
 
 /// The pinned Node takes its preload from every other start, so a sign-in
 /// command naming it is refused rather than started without it.
+#[cfg(feature = "proof")]
 #[test]
 fn a_command_that_is_the_pinned_node_is_not_run() -> Result<(), Failed> {
     let runtime = runtime()?;
