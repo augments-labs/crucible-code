@@ -949,7 +949,9 @@ impl Door<'_> {
             .shelf
             .smoke
             .ok_or_else(|| "no conversation lent a launcher to start it with".to_owned())?;
-        teach(launcher.consent(), offer);
+        if let Some(route) = borrowed(launcher.consent(), offer) {
+            return Err(Unsmoked::Borrowed(route).to_string());
+        }
         match launcher.unsmokable(agent) {
             None => Ok(launcher),
             Some(why) => Err(why.to_string()),
@@ -1001,7 +1003,13 @@ impl Door<'_> {
         // Refused before anything was fetched where none is lent.
         let launcher = self.shelf.smoke.ok_or(AgentsError::Unsupported(UNLENT))?;
         let route = agent_route(agent.as_str());
-        teach(launcher.consent(), offer);
+        if let Some(route) = borrowed(launcher.consent(), offer) {
+            return Err(AgentsError::Script {
+                agent: agent.clone(),
+                version: quoted(&offer.pin.version).into(),
+                why: Unscripted::Borrowed(route),
+            });
+        }
         if let Some(warned) = launcher.consent().asks(&route) {
             if !deciding::warned(self.request.capabilities(), front, &warned).await {
                 return Ok(Err(()));
@@ -2034,15 +2042,29 @@ fn signing(
 }
 
 /// Tells `consent` the route of `offer`, from the row the offer gives, before
-/// that route is looked for. One it cannot hold it does not learn, so a catalog
-/// agent's goes on unknown and refused, while a release of an agent the build
-/// has its own route for stays under that route's words.
-fn teach(consent: &Consent, offer: &Offer) {
-    if let Ok(row) = CatalogRow::new(&offer.entry, &offer.pin.target)
-        && let Ok(warned) = row.warned()
-    {
-        consent.learn(warned);
-    }
+/// that route is looked for, and whether the route is one the offer's key
+/// learned. One it cannot hold it does not learn, so a catalog agent's goes on
+/// unknown and refused.
+fn teach(consent: &Consent, offer: &Offer) -> bool {
+    CatalogRow::new(&offer.entry, &offer.pin.target)
+        .ok()
+        .and_then(|row| row.warned().ok().map(|warned| consent.learn(warned)))
+        .unwrap_or(false)
+}
+
+/// The route `offer`'s key would reach under a yes given to something else:
+/// one `consent` holds, that the key did not learn, where the key is not the
+/// built-in its entry backs. A signed key can spell a built-in's name, and that
+/// agent's yes says nothing about what this entry's vendor does. `None` is no
+/// verdict on the route, which the hold still answers for.
+fn borrowed(consent: &Consent, offer: &Offer) -> Option<String> {
+    let key = offer.entry.key.as_str();
+    let learned = teach(consent, offer);
+    let backs = REGISTRY
+        .all()
+        .any(|row| row.catalogued && row.driver.name() == key);
+    let route = agent_route(key);
+    (!learned && !backs && consent.routes().warned(&route).is_some()).then_some(route)
 }
 
 /// The row the configured `instance` runs as and its agent's name: a catalog

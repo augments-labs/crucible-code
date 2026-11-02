@@ -3334,6 +3334,9 @@ pub enum Unsmoked {
     /// The agent's route is not one this build asks about.
     #[error("its route {0} is not one this build asks about content use on")]
     Unknown(String),
+    /// Its key spells a route its entry did not learn and backs no built-in of.
+    #[error("its route {0} is not its entry's own, so a yes to that route does not stand for it")]
+    Borrowed(String),
     /// Its entry gives no profile to run it under.
     #[error(transparent)]
     Profile(#[from] Unprofiled),
@@ -3368,6 +3371,9 @@ pub enum Unscripted {
     /// The agent's route has no yes, or is not one crucible knows.
     #[error("reaches what {0} reaches, which has no yes")]
     Unheld(String),
+    /// Its key spells a route its entry did not learn and backs no built-in of.
+    #[error("would run under {0}, which is not its entry's own, so its yes does not stand for it")]
+    Borrowed(String),
     /// Its package is not a directory inside the version being staged.
     #[error("belongs to {0}, which is not a directory of the version staged")]
     Unplaced(String),

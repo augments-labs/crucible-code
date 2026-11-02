@@ -2027,6 +2027,25 @@ impl Bench {
         if yes {
             consent.give("agent:goose");
         }
+        self.ask_consenting(
+            (command, front),
+            (confined, &consent),
+            (runtime, sandbox, home),
+        )
+    }
+
+    /// [`Bench::ask_launching`], over `consent` whatever it has learned and been
+    /// given.
+    fn ask_consenting(
+        &self,
+        (command, front): (Command, &mut Answering<'_>),
+        (confined, consent): (bool, &Consent),
+        (runtime, sandbox, home): (
+            &tokio::runtime::Runtime,
+            Arc<dyn SandboxService>,
+            Option<&Path>,
+        ),
+    ) -> Result<Result<Outcome, AgentsError>, Failed> {
         let policy = SandboxPolicy::standard(&self.tree.workspace()?)?.with_enabled(confined);
         let handle = runtime.handle().clone();
         let state = catalog_fetch::state_in(self.home.path());
@@ -2035,7 +2054,7 @@ impl Bench {
                 Arc::clone(&sandbox),
                 handle.clone(),
                 &policy,
-                &consent,
+                consent,
                 &state,
                 self.home.sessions(),
             ),
@@ -2047,7 +2066,7 @@ impl Bench {
             sandbox,
             handle,
             &policy,
-            &consent,
+            consent,
             &state,
             self.home.sessions(),
         );

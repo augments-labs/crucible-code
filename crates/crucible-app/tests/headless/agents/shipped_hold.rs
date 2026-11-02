@@ -27,6 +27,54 @@ fn instance_of(key: &str, program: &str) -> Result<ExternalAgent, Failed> {
     )
 }
 
+/// `entry` signed for the agent keyed `key`.
+pub(super) fn rekeyed(mut entry: Value, key: &str) -> Value {
+    set(&mut entry, "/key", json!(key));
+    set(&mut entry, "/registry_id", json!(key));
+    set(&mut entry, "/admits/name", json!(key));
+    entry
+}
+
+/// The consent [`shipped`] makes, having `route`'s yes.
+pub(super) fn shipped_given(route: &str) -> Result<Consent, Failed> {
+    let consent = shipped()?;
+    consent.give(route);
+    Ok(consent)
+}
+
+/// `bench`'s door asked to install version 1.0.0 of the agent `key`, the sandbox
+/// on, over `consent`.
+pub(super) fn installed_over(
+    bench: &Bench,
+    key: &str,
+    consent: &Consent,
+    front: &mut Answering<'_>,
+    runtime: &tokio::runtime::Runtime,
+) -> Result<Result<Outcome, AgentsError>, Failed> {
+    let sandbox: Arc<dyn SandboxService> =
+        Arc::new(LocalSandbox::new().watching_on(runtime.handle().clone()));
+    let command = Command::InstallAgent {
+        agent: name(key)?,
+        version: name("1.0.0")?,
+    };
+    bench.ask_consenting((command, front), (true, consent), (runtime, sandbox, None))
+}
+
+/// A release of `key` that answers initializing as that agent, and is smoke
+/// tested where it may be.
+fn answering_as(bench: &Bench, key: &str, stated: bool) -> Result<Value, Failed> {
+    let played = peer(&Peer::once(Played::new().hear(1).say(acp::initialized(
+        key,
+        "1.0.0",
+        "agent-login",
+    ))))?;
+    let mut release = rekeyed(bench.server.peer_release("1.0.0", &played), key);
+    if !stated && let Some(object) = release.as_object_mut() {
+        object.remove("content_use");
+    }
+    Ok(release)
+}
+
 /// A registry listing `row` alone, for the conversation that asks after it.
 fn listing(row: CatalogRow) -> &'static Registry {
     Box::leak(Box::new(
@@ -181,10 +229,7 @@ fn a_route_the_consent_cannot_hold_is_refused_whatever_yes_it_has() -> Result<()
         .to_string_lossy()
         .into_owned();
     let keyed = |key: &str, stated: bool| -> Result<CatalogRow, Failed> {
-        let mut entry = goose("1.0.0", ONE);
-        set(&mut entry, "/key", json!(key));
-        set(&mut entry, "/registry_id", json!(key));
-        set(&mut entry, "/admits/name", json!(key));
+        let entry = rekeyed(goose("1.0.0", ONE), key);
         row_of(&if stated { stating(entry) } else { entry })
     };
     let consent = shipped()?;
@@ -239,5 +284,101 @@ fn a_route_the_consent_cannot_hold_is_refused_whatever_yes_it_has() -> Result<()
         "{past:?}"
     );
     assert_eq!(fake_peer::played(&peer_at), 0, "something was started");
+    Ok(())
+}
+
+/// A signed entry keyed `claude` backs no built-in, so the yes to Claude Code's
+/// route does not stand for it: its release is installed without its program
+/// being started, stated or not, and the question and the outcome say why. The
+/// entry that backs Antigravity is smoke tested under that route's yes.
+#[test]
+fn a_smoke_of_an_entry_keyed_for_a_built_in_it_does_not_back_is_refused_under_that_yes()
+-> Result<(), Failed> {
+    let runtime = tokio::runtime::Runtime::new()?;
+    if !enforcing(&runtime)? {
+        return Ok(());
+    }
+    for (case, stated) in [("stated", true), ("unstated", false)] {
+        let bench = Bench::new(&format!("agents-shipped-smoke-claude-{case}"))?;
+        let release = answering_as(&bench, "claude", stated)?;
+        bench
+            .server
+            .catalog(1, std::slice::from_ref(&release), &json!([]))?;
+        let consent = shipped_given("agent:claude")?;
+        let mut front = answering(&bench.server, Some("Install"));
+
+        let installed = installed_over(&bench, "claude", &consent, &mut front, &runtime)?;
+
+        let Ok(Outcome::Moved {
+            unsmoked: Some(why),
+            ..
+        }) = &installed
+        else {
+            return Err(format!("{case}: smoked or refused: {}", shape(&installed)).into());
+        };
+        assert!(why.contains("is not its entry's own"), "{case}: {why}");
+        assert!(
+            facts(&front)?
+                .iter()
+                .any(|fact| fact.starts_with("Not smoke-tested")
+                    && fact.contains("is not its entry's own")),
+            "{case}: {:?}",
+            facts(&front)
+        );
+    }
+
+    let bench = Bench::new("agents-shipped-smoke-antigravity")?;
+    let release = answering_as(&bench, "antigravity", true)?;
+    bench
+        .server
+        .catalog(1, std::slice::from_ref(&release), &json!([]))?;
+    let consent = shipped_given("agent:antigravity")?;
+    let mut front = answering(&bench.server, Some("Install"));
+
+    let installed = installed_over(&bench, "antigravity", &consent, &mut front, &runtime)?;
+
+    assert!(
+        matches!(&installed, Ok(Outcome::Moved { unsmoked: None, .. })),
+        "{}",
+        shape(&installed)
+    );
+    Ok(())
+}
+
+/// A key past the ceiling is learned by nothing, and keeps the refusal of a route
+/// this build does not ask about, whatever yes it has.
+#[test]
+fn a_smoke_of_a_key_past_the_ceiling_keeps_its_refusal() -> Result<(), Failed> {
+    let runtime = tokio::runtime::Runtime::new()?;
+    if !enforcing(&runtime)? {
+        return Ok(());
+    }
+    let bench = Bench::new("agents-shipped-smoke-past")?;
+    let peer_at = bench.tree.0.join("peer");
+    let program = fake_peer::install(&peer_at, "goose", &Peer::of([]))?
+        .to_string_lossy()
+        .into_owned();
+    let consent = shipped_given("agent:past")?;
+    for at in 0..CATALOGED {
+        let key = format!("goose-{at}");
+        let row = row_of(&stating(rekeyed(goose("1.0.0", ONE), &key)))?;
+        let _asked = start((&bench, &consent), row, (&key, &program), &runtime)?;
+    }
+    let release = answering_as(&bench, "past", true)?;
+    bench
+        .server
+        .catalog(1, std::slice::from_ref(&release), &json!([]))?;
+    let mut front = answering(&bench.server, Some("Install"));
+
+    let installed = installed_over(&bench, "past", &consent, &mut front, &runtime)?;
+
+    let Ok(Outcome::Moved {
+        unsmoked: Some(why),
+        ..
+    }) = &installed
+    else {
+        return Err(format!("smoked or refused: {}", shape(&installed)).into());
+    };
+    assert!(why.contains("is not one this build asks about"), "{why}");
     Ok(())
 }

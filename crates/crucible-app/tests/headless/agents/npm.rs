@@ -27,6 +27,7 @@ use std::fs;
 
 use crucible_app::agent_download::DownloadError;
 use crucible_app::client::agents::{AgentsError, How, Outcome};
+use crucible_app::content_use::Consent;
 use crucible_client_api::{Pending, Text};
 use crucible_external_harnesses::catalog::fixture::{Member, tar_gz};
 use crucible_external_harnesses::fake_peer;
@@ -34,6 +35,7 @@ use crucible_external_harnesses::release::{BIN, PRELOAD, Preload, Stub, UnpackEr
 use crucible_external_harnesses::store::StoreError;
 use serde_json::{Value, json};
 
+use super::shipped_hold;
 use super::uvx::{unchanged, version, versioned};
 use super::{
     Bench, CATALOG, Command, Failed, Reply, Server, answering, answers, artifact, asset_path,
@@ -1391,6 +1393,77 @@ fn with_scripts(bench: &Bench, mut release: Value, count: usize) -> Result<Value
         .server
         .catalog(2, std::slice::from_ref(&release), &json!([]))?;
     Ok(release)
+}
+
+/// `name`'s bench, listing goose's scripted release signed for the agent `key`,
+/// stated or not, and the door's answer to installing it under `route`'s yes.
+fn script_of_key_given(
+    name: &str,
+    (key, stated, route): (&str, bool, &str),
+    consent: Option<&Consent>,
+    runtime: &tokio::runtime::Runtime,
+) -> Result<(Bench, Result<Outcome, AgentsError>), Failed> {
+    let (bench, release) = local(name, "true", &listing(&[]))?;
+    let mut release = shipped_hold::rekeyed(release, key);
+    if !stated && let Some(object) = release.as_object_mut() {
+        object.remove("content_use");
+    }
+    bench
+        .server
+        .catalog(2, std::slice::from_ref(&release), &json!([]))?;
+    let given;
+    let consent = match consent {
+        Some(consent) => consent,
+        None => {
+            given = shipped_hold::shipped()?;
+            &given
+        }
+    };
+    consent.give(route);
+    let mut front = answering(&bench.server, Some("Install"));
+    let outcome = shipped_hold::installed_over(&bench, key, consent, &mut front, runtime)?;
+    Ok((bench, outcome))
+}
+
+/// A signed entry keyed `claude` backs no built-in, so the yes to Claude Code's
+/// route does not stand for it: its install script is refused before its tree
+/// is fetched or anything is run, stated or not, and says why.
+#[test]
+fn an_install_script_of_an_entry_keyed_for_a_built_in_it_does_not_back_is_refused_under_that_yes()
+-> Result<(), Failed> {
+    let runtime = super::runtime()?;
+    if !sandboxed(
+        &runtime,
+        "an_install_script_of_an_entry_keyed_for_a_built_in_it_does_not_back_is_refused_under_that_yes",
+    )? {
+        return Ok(());
+    }
+    for (case, stated) in [("stated", true), ("unstated", false)] {
+        let (bench, outcome) = script_of_key_given(
+            &format!("agents-door-npm-keyed-claude-{case}"),
+            ("claude", stated, "agent:claude"),
+            None,
+            &runtime,
+        )?;
+
+        assert!(
+            matches!(&outcome, Err(AgentsError::Script { why, .. })
+                if why.to_string().contains("is not its entry's own")),
+            "{case}: {}",
+            shape(&outcome)
+        );
+        assert!(
+            !bench.home.path().join("programs/claude").exists(),
+            "{case}: a version was put in place"
+        );
+        // What review reads lies on the catalog's host; nothing to run was fetched.
+        let asked = bench.server.asked();
+        assert!(
+            asked.iter().all(|path| path.starts_with("/catalog/")),
+            "{case}: something was fetched: {asked:?}"
+        );
+    }
+    Ok(())
 }
 
 /// A yes covers only what was shown, so a release with more scripts to run
