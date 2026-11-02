@@ -721,10 +721,10 @@ agent's route is asked about where it has no yes yet, and the agent is then
 read: if what it says of the method now differs from the entry, the sign-in is
 refused and the command is not run. Where the sandbox is on, the command reaches
 only the hosts the entry signs in at, and it has five minutes. On Windows with
-the sandbox on, a command whose entry names hosts is refused and not run, because
-that sandbox can close the network but not limit it to hosts; an entry naming no
-hosts runs with the network closed. Each line it
-writes is shown on standard error, led by `sign-in command | ` so that none reads
+the sandbox on, that sandbox can close the network but not limit it to hosts, so
+nothing is run where the entry names hosts, whether for the command to sign in
+at or for the agent itself to reach; where it names neither, the command runs
+with the network closed. Each line it writes is shown on standard error, led by `sign-in command | ` so that none reads
 as crucible's own, with what crucible withholds taken out and a note where the
 line was too long, and each line you type goes to it, echoed by your terminal as
 you type it; crucible treats none of them as a secret. A

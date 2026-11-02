@@ -2842,7 +2842,9 @@ impl<'a> Launcher<'a> {
     /// stopped with everything it started however it ends. A sandbox that can
     /// close the network but not limit it to hosts, as the Windows one, refuses
     /// a command whose entry names hosts, so it is not run; the network is
-    /// neither widened nor closed for it. An entry naming none runs closed.
+    /// neither widened nor closed for it. An entry naming none runs closed,
+    /// where the agent's own reach, which the read before it asks for, was not
+    /// refused first.
     ///
     /// # Errors
     ///
