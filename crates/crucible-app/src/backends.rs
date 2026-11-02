@@ -149,9 +149,9 @@ impl CatalogRow {
         })
     }
 
-    /// The warning a launch of it is held under, which the build gives its
-    /// [`Routes`](crate::content_use::Routes) so the route is asked about; or
-    /// why its entry gives none, in which case it is never launched.
+    /// The warning a launch of it is held under, which the consent of the run
+    /// learns its route from so that the route is asked about; or why its entry
+    /// gives none, in which case it is never launched.
     ///
     /// # Errors
     ///

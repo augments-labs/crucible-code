@@ -150,7 +150,7 @@ pub(super) fn versioned(
     row: CatalogRow,
     executable: &Path,
 ) -> Result<Result<Reading, Unlaunched>, Failed> {
-    let consent = Consent::new(Routes::production().cataloging(row.warned().ok().cloned()));
+    let consent = Consent::new(Routes::production());
     consent.give("agent:goose");
     let registry: &'static Registry = Box::leak(Box::new(
         Registry::new(&[]).cataloging(Box::leak(Box::new([row]))),

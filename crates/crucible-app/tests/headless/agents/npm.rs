@@ -730,16 +730,10 @@ fn sandboxed(runtime: &tokio::runtime::Runtime, test: &str) -> Result<bool, Fail
 /// and whose route has its yes.
 fn installed_in_sandbox(
     bench: &Bench,
-    release: &Value,
     runtime: &tokio::runtime::Runtime,
 ) -> Result<Result<Outcome, AgentsError>, Failed> {
     let mut front = answering(&bench.server, Some("Install"));
-    bench.ask_smoking(
-        (install("1.0.0")?, &mut front),
-        (true, true),
-        release,
-        runtime,
-    )
+    bench.ask_smoking((install("1.0.0")?, &mut front), (true, true), runtime)
 }
 
 /// What a build left of `node_modules/peer` in these tests: the tree's
@@ -1281,16 +1275,11 @@ fn a_release_whose_install_script_runs_at_install_is_refused_without_a_conversat
 fn a_release_whose_install_script_runs_at_install_is_refused_with_the_sandbox_off()
 -> Result<(), Failed> {
     let runtime = super::runtime()?;
-    let (bench, release) = local("agents-door-npm-unconfined", "true", &listing(&[]))?;
+    let (bench, _) = local("agents-door-npm-unconfined", "true", &listing(&[]))?;
     let before = fs::read(bench.user())?;
     let mut front = answering(&bench.server, Some("Install"));
 
-    let outcome = bench.ask_smoking(
-        (install("1.0.0")?, &mut front),
-        (false, true),
-        &release,
-        &runtime,
-    )?;
+    let outcome = bench.ask_smoking((install("1.0.0")?, &mut front), (false, true), &runtime)?;
 
     assert!(
         matches!(&outcome, Err(AgentsError::Unsupported(why)) if why.contains("sandbox")),
@@ -1356,7 +1345,6 @@ fn under_reviewed_an_update_with_an_install_script_to_run_is_still_asked() -> Re
             &mut front,
         ),
         (true, true),
-        &release,
         &runtime,
     )?;
 
@@ -1412,16 +1400,11 @@ fn a_release_with_more_install_scripts_than_a_question_shows_is_refused_before_a
 -> Result<(), Failed> {
     let runtime = super::runtime()?;
     let (bench, release) = local("agents-door-npm-many", "true", &listing(&[]))?;
-    let release = with_scripts(&bench, release, 17)?;
+    with_scripts(&bench, release, 17)?;
     let before = fs::read(bench.user())?;
     let mut front = answering(&bench.server, Some("Install"));
 
-    let outcome = bench.ask_smoking(
-        (install("1.0.0")?, &mut front),
-        (true, true),
-        &release,
-        &runtime,
-    )?;
+    let outcome = bench.ask_smoking((install("1.0.0")?, &mut front), (true, true), &runtime)?;
 
     assert!(
         matches!(&outcome, Err(AgentsError::Unsupported(why)) if why.contains("more install scripts")),
@@ -1444,15 +1427,10 @@ fn every_install_script_of_the_most_a_question_shows_is_named_with_its_hosts() -
     }
     let runtime = super::runtime()?;
     let (bench, release) = local("agents-door-npm-sixteen", "true", &listing(&[]))?;
-    let release = with_scripts(&bench, release, 16)?;
+    with_scripts(&bench, release, 16)?;
     let mut front = answering(&bench.server, Some("Cancel"));
 
-    let outcome = bench.ask_smoking(
-        (install("1.0.0")?, &mut front),
-        (true, true),
-        &release,
-        &runtime,
-    )?;
+    let outcome = bench.ask_smoking((install("1.0.0")?, &mut front), (true, true), &runtime)?;
 
     assert!(
         matches!(&outcome, Ok(Outcome::Undecided)),
@@ -1508,12 +1486,7 @@ fn an_install_scripts_command_cannot_read_as_the_question_s_own_words() -> Resul
     let mut front = answering(&bench.server, Some("Cancel"));
 
     bench
-        .ask_smoking(
-            (install("1.0.0")?, &mut front),
-            (true, true),
-            &release,
-            &runtime,
-        )?
+        .ask_smoking((install("1.0.0")?, &mut front), (true, true), &runtime)?
         .map_err(|why| format!("{why}"))?;
 
     let [(Pending::Install { facts, .. }, _)] = front.put.as_slice() else {
@@ -1538,14 +1511,14 @@ fn an_install_script_leaving_a_closed_directory_refuses_and_leaves_no_staging() 
     )? {
         return Ok(());
     }
-    let (bench, release) = local(
+    let (bench, _) = local(
         "agents-door-npm-closed",
         "mkdir -p left/inner && chmod 000 left/inner left",
         &listing(&[]),
     )?;
     let before = fs::read(bench.user())?;
 
-    let outcome = installed_in_sandbox(&bench, &release, &runtime)?;
+    let outcome = installed_in_sandbox(&bench, &runtime)?;
 
     assert!(
         matches!(&outcome, Err(AgentsError::Script { .. })),
@@ -1565,12 +1538,7 @@ fn a_release_whose_install_script_runs_at_install_is_refused_on_macos() -> Resul
     let before = fs::read(bench.user())?;
     let mut front = answering(&bench.server, Some("Install"));
 
-    let outcome = bench.ask_smoking(
-        (install("1.0.0")?, &mut front),
-        (true, true),
-        &release,
-        &runtime,
-    )?;
+    let outcome = bench.ask_smoking((install("1.0.0")?, &mut front), (true, true), &runtime)?;
 
     assert!(
         matches!(&outcome, Err(AgentsError::Unsupported(why)) if why.contains("platform")),
@@ -1622,13 +1590,13 @@ fn an_install_script_sees_only_the_environment_it_is_given() -> Result<(), Faile
                    echo \"$npm_lifecycle_event $npm_package_name $npm_package_version\" >> seen; \
                    [ -d \"$HOME\" ] && echo home >> seen; \
                    : > \"$TMPDIR/written\" && echo tmp >> seen";
-    let (bench, release) = local(
+    let (bench, _) = local(
         "agents-door-npm-environment",
         command,
         &listing(&[("seen", SEEN, false)]),
     )?;
 
-    let outcome = installed_in_sandbox(&bench, &release, &runtime)?;
+    let outcome = installed_in_sandbox(&bench, &runtime)?;
 
     assert!(
         matches!(
@@ -1701,13 +1669,13 @@ fn an_install_script_writing_outside_its_package_is_held_back_by_the_sandbox() -
          (printf x > ../../escaped) 2>/dev/null || printf b >> blocked",
         outside.display()
     );
-    let (bench, release) = local(
+    let (bench, _) = local(
         "agents-door-npm-outside",
         &command,
         &listing(&[("blocked", b"b", false)]),
     )?;
 
-    let outcome = installed_in_sandbox(&bench, &release, &runtime)?;
+    let outcome = installed_in_sandbox(&bench, &runtime)?;
 
     assert!(
         matches!(&outcome, Ok(Outcome::Moved { .. })),
@@ -1733,10 +1701,10 @@ fn an_install_script_leaving_a_mode_review_did_not_find_refuses_and_leaves_no_st
     )? {
         return Ok(());
     }
-    let (bench, release) = local("agents-door-npm-mode", "chmod +x index.js", &listing(&[]))?;
+    let (bench, _) = local("agents-door-npm-mode", "chmod +x index.js", &listing(&[]))?;
     let before = fs::read(bench.user())?;
 
-    let outcome = installed_in_sandbox(&bench, &release, &runtime)?;
+    let outcome = installed_in_sandbox(&bench, &runtime)?;
 
     assert!(
         matches!(&outcome, Err(AgentsError::Script { .. })),
@@ -1759,13 +1727,13 @@ fn the_check_of_an_install_script_waits_for_a_child_it_left_running_to_be_stoppe
     )? {
         return Ok(());
     }
-    let (bench, release) = local(
+    let (bench, _) = local(
         "agents-door-npm-lingering",
         "printf early > early; (sleep 1; printf late > late) &",
         &listing(&[("early", b"early", false)]),
     )?;
 
-    let outcome = installed_in_sandbox(&bench, &release, &runtime)?;
+    let outcome = installed_in_sandbox(&bench, &runtime)?;
 
     assert!(
         matches!(&outcome, Ok(Outcome::Moved { .. })),

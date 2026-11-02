@@ -387,8 +387,7 @@ mod profiles {
             let tree = Tree::new(name)?;
             let (mut launching, peer) = launching(&tree, &connected([]))?;
             let row = row(more)?;
-            launching.consent =
-                Consent::new(Routes::production().cataloging(row.warned().ok().cloned()));
+            launching.consent = Consent::new(Routes::production());
             let registry: &'static Registry = Box::leak(Box::new(
                 Registry::new(&[]).cataloging(Box::leak(Box::new([row]))),
             ));

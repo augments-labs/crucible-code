@@ -629,6 +629,13 @@ pub(crate) fn bound(driver: Driver, agent: Option<&AgentKey>) -> Cow<'static, st
     }
 }
 
+/// The name an agent's route spells the agent a session is bound to `written`
+/// by, as [`bound`] spells it: a catalog agent's key, and a driver's word.
+#[must_use]
+pub(crate) fn bound_agent(written: &str) -> &str {
+    written.split_once(':').map_or(written, |(_, agent)| agent)
+}
+
 /// The driver of the agent a route names `written`, as [`bound`] spells it,
 /// where it is one this build has.
 #[must_use]
@@ -828,8 +835,20 @@ impl Agent {
     /// sentences to say what to do.
     pub fn program(&self, consent: &Consent, trust: &Trust) -> Result<&Program, Unlaunched> {
         let row = &self.row;
-        let shown = consent
-            .routes()
+        if let AgentRow::Catalog(catalog) = row {
+            match catalog.warned() {
+                Ok(warned) if consent.learn(warned) => {}
+                Ok(_) => return Err(Unlaunched::Unknown(row.route().to_owned())),
+                Err(why) => {
+                    return Err(Unlaunched::Unstated {
+                        agent: row.named().to_owned(),
+                        why: why.clone(),
+                    });
+                }
+            }
+        }
+        let routes = consent.routes();
+        let shown = routes
             .warned(row.route())
             .map_or(row.named(), |warned| &*warned.shown);
         if let AgentRow::Built(built) = row
@@ -838,14 +857,6 @@ impl Agent {
             return Err(Unlaunched::Withheld {
                 agent: shown.to_owned(),
                 documented: built.documented(),
-            });
-        }
-        if let AgentRow::Catalog(catalog) = row
-            && let Err(why) = catalog.warned()
-        {
-            return Err(Unlaunched::Unstated {
-                agent: row.named().to_owned(),
-                why: why.clone(),
             });
         }
         // A directory given to an agent that reads its home from no variable
@@ -868,6 +879,18 @@ impl Agent {
                     Unlaunched::NotInstalled,
                 ))
             }
+        }
+    }
+
+    /// Tells `consent` the route of its catalog row, so that a conversation
+    /// on it is asked about that route before anything is launched: a row's
+    /// program is decided under it again before a start. Nothing for a built-in
+    /// row, or an entry with no statement.
+    fn teach(&self, consent: &Consent) {
+        if let AgentRow::Catalog(catalog) = &self.row
+            && let Ok(warned) = catalog.warned()
+        {
+            consent.learn(warned);
         }
     }
 
@@ -4172,6 +4195,7 @@ impl Runs {
         instance: &str,
         controls: &Controls,
     ) -> Self {
+        agent.teach(launcher.consent);
         Self {
             service: launcher.service,
             runtime: launcher.runtime,
@@ -4409,6 +4433,7 @@ impl Steps {
     /// this hands out for that entry is launched on.
     #[must_use]
     pub fn runs(&self, agent: Agent, instance: &str) -> Runs {
+        agent.teach(&self.consent);
         Runs {
             service: Arc::clone(&self.service),
             runtime: self.runtime.clone(),

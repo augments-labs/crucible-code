@@ -245,7 +245,7 @@ use super::deciding::{self, Confirmation, Front, Shown, mint, turned_away};
 use crate::agent_download::{self, DownloadError, Landing};
 use crate::backends::{AgentRow, CatalogRow, REGISTRY};
 use crate::catalog_fetch::{self, FetchError, Source, Trigger};
-use crate::content_use::{self, agent_route};
+use crate::content_use::{self, Consent, agent_route};
 use crate::launching::{
     self, Agent, Launcher, Steps, Unlaunched, Unpiped, Unscripted, Unsmoked, quoted,
 };
@@ -941,13 +941,17 @@ impl Door<'_> {
             .then_some(at)
     }
 
-    /// The launcher a switch onto a release of `agent` is smoke-tested with,
-    /// or why it is not smoke-tested.
-    fn smoking(&self, agent: &AgentKey) -> Result<&Launcher<'_>, String> {
+    /// The launcher a switch onto `offer` is smoke-tested with, or why it is
+    /// not smoke-tested.
+    fn smoking(&self, offer: &Offer) -> Result<&Launcher<'_>, String> {
+        let agent = &offer.entry.key;
         let launcher = self
             .shelf
             .smoke
             .ok_or_else(|| "no conversation lent a launcher to start it with".to_owned())?;
+        if !learned(launcher.consent(), offer) {
+            return Err(Unsmoked::Unknown(agent_route(agent.as_str())).to_string());
+        }
         match launcher.unsmokable(agent) {
             None => Ok(launcher),
             Some(why) => Err(why.to_string()),
@@ -999,7 +1003,15 @@ impl Door<'_> {
         // Refused before anything was fetched where none is lent.
         let launcher = self.shelf.smoke.ok_or(AgentsError::Unsupported(UNLENT))?;
         let route = agent_route(agent.as_str());
-        if let Some(warned) = launcher.consent().asks(&route).cloned() {
+        let unheld = |route: &str| AgentsError::Script {
+            agent: agent.clone(),
+            version: quoted(&offer.pin.version).into(),
+            why: Unscripted::Unheld(route.to_owned()),
+        };
+        if !learned(launcher.consent(), offer) {
+            return Err(unheld(&route));
+        }
+        if let Some(warned) = launcher.consent().asks(&route) {
             if !deciding::warned(self.request.capabilities(), front, &warned).await {
                 return Ok(Err(()));
             }
@@ -1008,12 +1020,7 @@ impl Door<'_> {
                 .accept(&warned)
                 .map_err(AgentsError::HoldUnkept)?;
         }
-        let held =
-            content_use::held(launcher.consent(), &route).map_err(|_| AgentsError::Script {
-                agent: agent.clone(),
-                version: quoted(&offer.pin.version).into(),
-                why: Unscripted::Unheld(route.clone()),
-            })?;
+        let held = content_use::held(launcher.consent(), &route).map_err(|_| unheld(&route))?;
         Ok(Ok((launcher, held)))
     }
 
@@ -1117,7 +1124,7 @@ impl Door<'_> {
             total,
             tree: tree.as_ref(),
             reached,
-            smoking: self.smoking(agent),
+            smoking: self.smoking(offer),
             // The name the question shows; the one written is chosen again
             // from the file under its lock.
             adding: (how == How::Added).then(|| {
@@ -1507,7 +1514,7 @@ impl Door<'_> {
                 && offer.pin.lock_revision == previous.lock_revision
         });
         let smoking = match &listed {
-            Some(_) => self.smoking(agent),
+            Some(offer) => self.smoking(offer),
             None => Err(format!(
                 "the catalog no longer lists {}, so nothing says what it must answer as",
                 quoted(&previous.version)
@@ -1725,7 +1732,7 @@ impl Door<'_> {
         }
         // Nothing of the agent's is started before its route has a yes, and a
         // yes is written down before anything is.
-        if let Some(warned) = launcher.consent().asks(started.row().route()).cloned() {
+        if let Some(warned) = launcher.consent().asks(started.row().route()) {
             if !deciding::warned(self.request.capabilities(), front, &warned).await {
                 return Ok(Outcome::Undecided);
             }
@@ -2028,6 +2035,16 @@ fn signing(
             method: quoted(method).into(),
         })?;
     Ok((row, agent, found))
+}
+
+/// Whether `consent` answers about the route of `offer`, as it learns it from
+/// the row the offer gives; false for an entry whose row gives no hold, or a
+/// route the consent cannot hold.
+fn learned(consent: &Consent, offer: &Offer) -> bool {
+    CatalogRow::new(&offer.entry, &offer.pin.target)
+        .ok()
+        .and_then(|row| row.warned().ok().map(|warned| consent.learn(warned)))
+        .unwrap_or(false)
 }
 
 /// The row the configured `instance` runs as and its agent's name: a catalog

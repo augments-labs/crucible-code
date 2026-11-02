@@ -21,7 +21,7 @@ fn a_method_that_needs_a_real_terminal_is_refused_however_much_is_lent() -> Resu
     let refused = bench.ask_piped(
         &mut answering(&bench.server, None),
         (local_of(&runtime), false, true),
-        (&release, Some(&person)),
+        Some(&person),
         &runtime,
     )?;
 
@@ -186,34 +186,33 @@ impl Bench {
         &self,
         front: &mut Answering<'_>,
         (sandbox, confined, yes): (Arc<dyn SandboxService>, bool, bool),
-        (release, channel): (&Value, Option<&dyn SignInChannel>),
+        channel: Option<&dyn SignInChannel>,
         runtime: &tokio::runtime::Runtime,
     ) -> Result<Result<Outcome, AgentsError>, Failed> {
-        let steps = self.piped_steps(
-            (Arc::clone(&sandbox), confined, yes),
-            release,
-            &REGISTRY,
-            runtime,
-        )?;
-        self.ask_piped_beside(
-            front,
-            (sandbox, confined, yes),
-            (release, channel, &steps),
-            runtime,
-        )
+        let steps = self.piped_steps((Arc::clone(&sandbox), confined, yes), &REGISTRY, runtime)?;
+        self.ask_piped_beside(front, (sandbox, confined, yes), (channel, &steps), runtime)
     }
 
     /// The steps of a conversation on `sandbox` that confines its commands
-    /// where `confined`, whose route for `release` has its yes where `yes`, and
+    /// where `confined`, whose route for `goose` has its yes where `yes`, and
     /// which knows the agents of `registry`.
     fn piped_steps(
         &self,
         (sandbox, confined, yes): (Arc<dyn SandboxService>, bool, bool),
-        release: &Value,
         registry: &'static Registry,
         runtime: &tokio::runtime::Runtime,
     ) -> Result<Steps, Failed> {
-        let consent = piped_consent(release, yes)?;
+        self.piped_steps_on(&piped_consent(yes)?, (sandbox, confined), registry, runtime)
+    }
+
+    /// [`Bench::piped_steps`], its yeses those of `consent`.
+    fn piped_steps_on(
+        &self,
+        consent: &Consent,
+        (sandbox, confined): (Arc<dyn SandboxService>, bool),
+        registry: &'static Registry,
+        runtime: &tokio::runtime::Runtime,
+    ) -> Result<Steps, Failed> {
         let policy = SandboxPolicy::standard(&self.tree.workspace()?)?.with_enabled(confined);
         let state = catalog_fetch::state_in(self.home.path());
         Ok(Steps::new(
@@ -221,7 +220,7 @@ impl Bench {
                 sandbox,
                 runtime.handle().clone(),
                 &policy,
-                &consent,
+                consent,
                 &state,
                 self.home.sessions(),
             ),
@@ -237,17 +236,33 @@ impl Bench {
         &self,
         front: &mut Answering<'_>,
         (sandbox, confined, yes): (Arc<dyn SandboxService>, bool, bool),
-        (release, channel, steps): (&Value, Option<&dyn SignInChannel>, &Steps),
+        (channel, steps): (Option<&dyn SignInChannel>, &Steps),
         runtime: &tokio::runtime::Runtime,
     ) -> Result<Result<Outcome, AgentsError>, Failed> {
-        let consent = piped_consent(release, yes)?;
+        self.ask_piped_on(
+            (front, request(sign_in("work", "terminal")?)),
+            (&piped_consent(yes)?, sandbox, confined),
+            (channel, steps),
+            runtime,
+        )
+    }
+
+    /// The door asked `request` in the conversation whose steps are `steps`,
+    /// its yeses those of `consent`.
+    fn ask_piped_on(
+        &self,
+        (front, request): (&mut dyn Front, Request),
+        (consent, sandbox, confined): (&Consent, Arc<dyn SandboxService>, bool),
+        (channel, steps): (Option<&dyn SignInChannel>, &Steps),
+        runtime: &tokio::runtime::Runtime,
+    ) -> Result<Result<Outcome, AgentsError>, Failed> {
         let policy = SandboxPolicy::standard(&self.tree.workspace()?)?.with_enabled(confined);
         let state = catalog_fetch::state_in(self.home.path());
         let lent = Launcher::new(
             sandbox,
             runtime.handle().clone(),
             &policy,
-            &consent,
+            consent,
             &state,
             self.home.sessions(),
         );
@@ -257,7 +272,6 @@ impl Bench {
             smoke: Some(&lent),
             steps: Some(steps),
         };
-        let request = request(sign_in("work", "terminal")?);
         let cancel = Cancel::new();
         Ok(runtime.block_on(run(
             &request,
@@ -273,10 +287,10 @@ impl Bench {
     }
 }
 
-/// The yeses of a conversation for the route of `release`, given where `yes`.
-fn piped_consent(release: &Value, yes: bool) -> Result<Consent, Failed> {
-    let row = row_of(release)?;
-    let consent = Consent::new(Routes::production().cataloging(row.warned().ok().cloned()));
+/// The yeses of a conversation, on the consent the build shares, the route of
+/// `goose` given where `yes`.
+fn piped_consent(yes: bool) -> Result<Consent, Failed> {
+    let consent = super::shipped_hold::shipped()?;
     if yes {
         consent.give("agent:goose");
     }
@@ -302,7 +316,7 @@ fn a_command_with_no_channel_is_refused_before_anything_is_asked_or_started() ->
     let refused = bench.ask_piped(
         &mut front,
         (local_of(&runtime), false, false),
-        (&release, None),
+        None,
         &runtime,
     )?;
 
@@ -343,12 +357,7 @@ fn a_command_beside_a_live_run_is_refused_before_anything_is_asked_or_started() 
     .ok_or("a catalog instance naming its agent")?;
     let agent = Agent::configured(&instance, registry, |_| None).ok_or("its catalog row")?;
     let local = local_of(&runtime);
-    let steps = bench.piped_steps(
-        (Arc::clone(&local), false, true),
-        &release,
-        registry,
-        &runtime,
-    )?;
+    let steps = bench.piped_steps((Arc::clone(&local), false, true), registry, &runtime)?;
     let run = runtime.block_on(
         steps
             .runs(agent, "work")
@@ -361,7 +370,7 @@ fn a_command_beside_a_live_run_is_refused_before_anything_is_asked_or_started() 
     let refused = bench.ask_piped_beside(
         &mut front,
         (local, false, false),
-        (&release, Some(&person), &steps),
+        (Some(&person), &steps),
         &runtime,
     )?;
 
@@ -405,7 +414,7 @@ fn a_command_is_carried_to_the_channel_and_back_and_then_read_as_signed_in() -> 
     let signed = bench.ask_piped(
         &mut answering(&bench.server, None),
         (local_of(&runtime), false, true),
-        (&release, Some(&person)),
+        Some(&person),
         &runtime,
     )?;
 
@@ -464,7 +473,7 @@ fn a_secret_line_reaches_the_command_and_never_comes_back_through_the_door() -> 
     let refused = bench.ask_piped(
         &mut answering(&bench.server, None),
         (local_of(&runtime), false, true),
-        (&release, Some(&person)),
+        Some(&person),
         &runtime,
     )?;
 
@@ -518,7 +527,7 @@ fn what_a_command_says_is_bounded_on_its_way_through_the_door_and_the_cut_is_rep
     let signed = bench.ask_piped(
         &mut answering(&bench.server, None),
         (local_of(&runtime), false, true),
-        (&release, Some(&person)),
+        Some(&person),
         &runtime,
     )?;
 
@@ -584,7 +593,7 @@ fn a_live_answer_that_differs_from_the_record_is_refused_before_the_command_runs
         let refused = bench.ask_piped(
             &mut answering(&bench.server, None),
             (local_of(&runtime), false, true),
-            (&release, Some(&person)),
+            Some(&person),
             &runtime,
         )?;
 
@@ -627,7 +636,7 @@ fn a_command_that_ended_well_is_not_believed_over_what_the_agent_says_after() ->
     let unverified = bench.ask_piped(
         &mut answering(&bench.server, None),
         (local_of(&runtime), false, true),
-        (&release, Some(&Person::default())),
+        Some(&Person::default()),
         &runtime,
     )?;
 
@@ -657,7 +666,7 @@ fn a_command_that_is_no_program_of_the_version_installed_is_not_run() -> Result<
     let refused = bench.ask_piped(
         &mut answering(&bench.server, None),
         (local_of(&runtime), false, true),
-        (&release, Some(&Person::default())),
+        Some(&Person::default()),
         &runtime,
     )?;
 
@@ -682,18 +691,17 @@ fn offering(by: &str) -> Result<(Vec<u8>, Vec<u8>), Failed> {
 }
 
 /// Asserts the door refuses signing in by a command that is the program
-/// `release` starts led, as `program` installed: run bare, it would load from
+/// the release starts led, as `program` installed: run bare, it would load from
 /// the working directory, so nothing is started.
 fn refused_as_the_program_led(
     bench: &Bench,
-    release: &Value,
     program: &str,
     runtime: &tokio::runtime::Runtime,
 ) -> Result<(), Failed> {
     let refused = bench.ask_piped(
         &mut answering(&bench.server, None),
         (local_of(runtime), false, true),
-        (release, Some(&Person::default())),
+        Some(&Person::default()),
         runtime,
     )?;
 
@@ -730,7 +738,7 @@ fn a_command_that_is_the_pinned_interpreter_is_not_run() -> Result<(), Failed> {
     )?;
     bench.with_installed_at(&release, &program)?;
 
-    refused_as_the_program_led(&bench, &release, &program, &runtime)
+    refused_as_the_program_led(&bench, &program, &runtime)
 }
 
 /// The pinned Node takes its preload from every other start, so a sign-in
@@ -743,7 +751,7 @@ fn a_command_that_is_the_pinned_node_is_not_run() -> Result<(), Failed> {
     let release = signing_in_with(npm::noded_as(&bench.server, &offering(&program)?), &program)?;
     bench.with_installed_at(&release, &program)?;
 
-    refused_as_the_program_led(&bench, &release, &program, &runtime)
+    refused_as_the_program_led(&bench, &program, &runtime)
 }
 
 /// A link to the pinned interpreter is the pinned interpreter.
@@ -758,7 +766,7 @@ fn a_command_that_links_to_the_pinned_interpreter_is_not_run() -> Result<(), Fai
     let root = bench.with_installed_at(&release, &program)?;
     linked(&root, &root.join(&program), &link)?;
 
-    refused_as_the_program_led(&bench, &release, &program, &runtime)
+    refused_as_the_program_led(&bench, &program, &runtime)
 }
 
 /// A link in the version that leads out of it is refused however executable
@@ -778,7 +786,7 @@ fn a_command_that_links_out_of_the_version_is_not_run() -> Result<(), Failed> {
     let refused = bench.ask_piped(
         &mut answering(&bench.server, None),
         (local_of(&runtime), false, true),
-        (&release, Some(&Person::default())),
+        Some(&Person::default()),
         &runtime,
     )?;
 
@@ -839,7 +847,7 @@ fn a_program_beside_the_pinned_interpreter_is_run_with_the_records_arguments() -
     let signed = bench.ask_piped(
         &mut answering(&bench.server, None),
         (local_of(&runtime), false, true),
-        (&release, Some(&Person::default())),
+        Some(&Person::default()),
         &runtime,
     )?;
 
@@ -908,7 +916,7 @@ fn a_command_reaches_only_the_hosts_its_entry_signs_in_at() -> Result<(), Failed
     let _read = bench.ask_piped(
         &mut answering(&bench.server, None),
         (Arc::new(sandbox), true, true),
-        (&release, Some(&person)),
+        Some(&person),
         &runtime,
     )?;
 
@@ -979,7 +987,6 @@ impl SandboxService for ClosingOnly {
 /// start asked for, the command's, asked for those hosts.
 fn refused_for_its_hosts(
     bench: &Bench,
-    release: &Value,
     (sandbox, prepared): (Arc<dyn SandboxService>, &Mutex<Vec<Prepared>>),
     runtime: &tokio::runtime::Runtime,
 ) -> Result<(), Failed> {
@@ -988,7 +995,7 @@ fn refused_for_its_hosts(
     let refused = bench.ask_piped(
         &mut answering(&bench.server, None),
         (sandbox, true, true),
-        (release, Some(&person)),
+        Some(&person),
         runtime,
     )?;
 
@@ -1036,7 +1043,7 @@ fn a_command_whose_entry_names_hosts_is_refused_where_they_cannot_be_held() -> R
         prepared: Arc::clone(&prepared),
     };
 
-    refused_for_its_hosts(&bench, &release, (Arc::new(sandbox), &prepared), &runtime)
+    refused_for_its_hosts(&bench, (Arc::new(sandbox), &prepared), &runtime)
 }
 
 /// The same refusal from this machine's own sandbox, where it enforces a closed
@@ -1064,7 +1071,7 @@ fn a_command_whose_entry_names_hosts_is_refused_by_a_sandbox_that_only_closes() 
         prepared: Arc::clone(&prepared),
     };
 
-    refused_for_its_hosts(&bench, &release, (Arc::new(sandbox), &prepared), &runtime)
+    refused_for_its_hosts(&bench, (Arc::new(sandbox), &prepared), &runtime)
 }
 
 /// An entry that names no hosts asks for a closed network, which such a sandbox
@@ -1097,7 +1104,7 @@ fn a_command_whose_entry_names_no_hosts_is_run_where_hosts_cannot_be_held() -> R
     let ran = bench.ask_piped(
         &mut answering(&bench.server, None),
         (Arc::new(sandbox), true, true),
-        (&release, Some(&person)),
+        Some(&person),
         &runtime,
     )?;
 
@@ -1112,5 +1119,114 @@ fn a_command_whose_entry_names_no_hosts_is_run_where_hosts_cannot_be_held() -> R
         matches!(prepared.get(1), Some((SandboxNetworkPolicy::Closed, _))),
         "the command was asked for with more than a closed network"
     );
+    Ok(())
+}
+
+/// A client that answers the question a route is put in with `yes`, keeping
+/// each route it was asked about.
+struct Answers {
+    yes: bool,
+    routes: Vec<String>,
+}
+
+impl Front for Answers {
+    fn put<'a>(
+        &'a mut self,
+        pending: &'a Pending,
+        shown: Shown<'a>,
+    ) -> BoxFuture<'a, Option<Decision>> {
+        Box::pin(async move {
+            let Shown::Warning(warned) = shown else {
+                return None;
+            };
+            self.routes.push(warned.route.to_string());
+            let id = pending.id();
+            Some(if self.yes {
+                Decision::Accepted { id }
+            } else {
+                Decision::Declined { id }
+            })
+        })
+    }
+
+    fn refused(&mut self, _refusal: Refusal) {}
+}
+
+/// A catalog agent's sign-in on the build's own consent asks its route's
+/// question: a no starts nothing, and a yes, written down through that consent,
+/// starts it.
+#[test]
+fn a_catalog_agents_sign_in_asks_its_route_and_runs_only_after_the_yes() -> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-piped-shipped")?;
+    let release = signing_in_by(
+        &bench,
+        &Peer::of([
+            Played::new().hear(1).say(offered(&terminal_method())),
+            Played::new()
+                .say("open the link")
+                .prompt("code: ")
+                .hear(1)
+                .say("thanks"),
+            signed_in_after(),
+        ]),
+    )?;
+    let root = bench.with_installed(&release)?;
+    let consent = super::shipped_hold::shipped()?;
+    consent.keeps_in(bench.user());
+    let local = local_of(&runtime);
+    let steps = bench.piped_steps_on(&consent, (Arc::clone(&local), false), &REGISTRY, &runtime)?;
+    let person = Person::typing([("code: ", Typing::Line("the-code".to_owned()))]);
+    let asking = || -> Result<Request, Failed> {
+        Ok(Request::new(
+            Capabilities::none()
+                .with(Capability::Install)
+                .with(Capability::Permissions),
+            Correlation::new(1),
+            sign_in("work", "terminal")?,
+        ))
+    };
+
+    let mut no = Answers {
+        yes: false,
+        routes: Vec::new(),
+    };
+    let declined = bench.ask_piped_on(
+        (&mut no, asking()?),
+        (&consent, Arc::clone(&local), false),
+        (Some(&person), &steps),
+        &runtime,
+    )?;
+    assert!(
+        matches!(declined, Ok(Outcome::Undecided)),
+        "{}",
+        shape(&declined)
+    );
+    assert_eq!(no.routes, ["agent:goose"]);
+    assert_eq!(fake_peer::played(&root), 0, "started before the yes");
+
+    let mut yes = Answers {
+        yes: true,
+        routes: Vec::new(),
+    };
+    let signed = bench.ask_piped_on(
+        (&mut yes, asking()?),
+        (&consent, local, false),
+        (Some(&person), &steps),
+        &runtime,
+    )?;
+    assert!(
+        matches!(
+            &signed,
+            Ok(Outcome::SignedIn {
+                by: Signed::Command,
+                ..
+            })
+        ),
+        "{}",
+        shape(&signed)
+    );
+    assert_eq!(yes.routes, ["agent:goose"]);
+    assert!(fake_peer::played(&root) > 0, "not started after the yes");
     Ok(())
 }

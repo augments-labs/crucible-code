@@ -19,10 +19,13 @@
 //! [`LAUNCHING`] beside whatever its vendor says, because a launch is
 //! execution and not only a request. An agent the catalog reviewed is held
 //! under the statement its own entry carries ([`stated`]): the vendor's words,
-//! the page and the day, owned, built for the route of its key and given to
-//! [`Routes::cataloging`] beside [`WARNED`], which keeps the built-in agents.
-//! An entry with no statement, or one too long to be shown whole
-//! ([`STATEMENT_BYTES`]), gives no hold and its agent is never launched. A
+//! the page and the day, owned, built for the route of its key and learned by
+//! the [`Consent`] of the run beside [`WARNED`], which keeps the built-in
+//! agents, when a row of the verified catalog is built for a launch, a sign-in
+//! or a question about one. Learning gives no yes. A route the consent cannot
+//! hold, past [`CATALOGED`] or restating one it warns about, is never launched,
+//! and neither is an entry with no statement, or one too long to be shown whole
+//! ([`STATEMENT_BYTES`]), which gives no hold. A
 //! client with no terminal is put the same words, closing the warning's
 //! sentence, and so is a run with no terminal that ends unanswered and a
 //! client whose question was declined; [`full_sentence`] is the one place
@@ -557,8 +560,11 @@ pub fn launches(route: &str) -> bool {
 /// cut short.
 pub const STATEMENT_BYTES: usize = 4096;
 
-/// The most catalog agents' routes a [`Routes`] holds, the most rows a registry
-/// lists; a route beyond them is never asked about, and so never launched.
+/// The most catalog agents' routes a [`Consent`] learns in a run, the most rows
+/// a registry lists: the first to be started or asked about are kept. A route
+/// beyond them is never asked about, and so never launched: for the rest of the
+/// run a person sees its agent refused as being on a route this build does not
+/// know.
 pub const CATALOGED: usize = 32;
 
 /// Why a catalog entry gives no hold a launch can be asked under.
@@ -659,7 +665,7 @@ pub fn held(consent: &Consent, route: &str) -> Result<Held, Unheld> {
         return Err(Unheld::Unknown);
     }
     match consent.asks(route) {
-        Some(warned) => Err(Unheld::Asks(Box::new(warned.clone()))),
+        Some(warned) => Err(Unheld::Asks(Box::new(warned))),
         None => Ok(Held::granted(route)),
     }
 }
@@ -795,31 +801,6 @@ impl Routes {
         Self::new(WARNED.to_vec())
     }
 
-    /// These routes and `catalog`'s: the warned route of each catalog agent
-    /// the build lists.
-    #[must_use]
-    pub fn cataloging(self, catalog: impl IntoIterator<Item = Warned>) -> Self {
-        let mut warned = self.warned.to_vec();
-        let mut listed = 0;
-        for one in catalog {
-            if listed == CATALOGED {
-                break;
-            }
-            // Only an agent's route that names no origin and restates none
-            // already warned about; anything else is never asked about, and
-            // so never launched.
-            if !launches(&one.route)
-                || !one.origins.is_empty()
-                || warned.iter().any(|have| have.route == one.route)
-            {
-                continue;
-            }
-            warned.push(one);
-            listed += 1;
-        }
-        Self::new(warned)
-    }
-
     /// Any routes, for a caller that stands its own origins in.
     #[must_use]
     pub fn new(warned: Vec<Warned>) -> Self {
@@ -885,7 +866,10 @@ impl std::fmt::Debug for Resolving {
 /// and the front end that records a yes see the same answer.
 #[derive(Debug, Clone)]
 pub struct Consent {
-    routes: Routes,
+    /// The routes a build has, then the catalog agents' learned this run.
+    routes: Arc<RwLock<Routes>>,
+    /// How many of [`Consent::routes`] are the build's own.
+    built: usize,
     state: Arc<RwLock<State>>,
     /// The user's own configuration file, where a yes is written down.
     file: Arc<std::sync::OnceLock<PathBuf>>,
@@ -914,7 +898,8 @@ impl Consent {
     #[must_use]
     pub fn new(routes: Routes) -> Self {
         Self {
-            routes,
+            built: routes.all().len(),
+            routes: Arc::new(RwLock::new(routes)),
             state: Arc::default(),
             file: Arc::default(),
             resolving: Arc::default(),
@@ -960,16 +945,53 @@ impl Consent {
         Ok(())
     }
 
-    /// The routes it answers about.
+    /// The routes it answers about as of now, the catalog agents' learned so
+    /// far among them.
     #[must_use]
-    pub fn routes(&self) -> &Routes {
-        &self.routes
+    pub fn routes(&self) -> Routes {
+        self.routes
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Learns the route of the catalog agent `warned` is the stated hold of,
+    /// which every clone then answers about, and says whether it answers about
+    /// that route as this agent's: false for one that names an origin or is no
+    /// agent's, one that restates a route the build warns about, and one past
+    /// [`CATALOGED`], none of which is kept, so that its agent is refused
+    /// rather than started unasked.
+    ///
+    /// Only a row of the verified catalog teaches, and no yes comes of it: a
+    /// route that was given none still asks, and one recorded in the user's
+    /// file still answers. A route once learned stays for the run with the
+    /// words it was first learned with, whatever a refreshed catalog says or
+    /// stops listing.
+    pub(crate) fn learn(&self, warned: &Warned) -> bool {
+        let mut routes = self.routes.write().unwrap_or_else(PoisonError::into_inner);
+        if let Some(at) = routes
+            .all()
+            .iter()
+            .position(|have| have.route == warned.route)
+        {
+            return at >= self.built;
+        }
+        if !launches(&warned.route)
+            || !warned.origins.is_empty()
+            || routes.all().len() - self.built >= CATALOGED
+        {
+            return false;
+        }
+        let mut learned = routes.all().to_vec();
+        learned.push(warned.clone());
+        *routes = Routes::new(learned);
+        true
     }
 
     /// The warned route `route` is, where it has no yes.
     #[must_use]
-    pub fn asks(&self, route: &str) -> Option<&Warned> {
-        let warned = self.routes.warned(route)?;
+    pub fn asks(&self, route: &str) -> Option<Warned> {
+        let warned = self.routes().warned(route)?.clone();
         let state = self.state.read().unwrap_or_else(PoisonError::into_inner);
         (!state.recorded.contains(route) && !state.given.contains(route)).then_some(warned)
     }
@@ -1005,7 +1027,7 @@ impl Consent {
             state.serving.get(provider)?.clone()
         };
         if let Some(warned) = self.asks(&model_route(provider, model)) {
-            return Some(warned.clone());
+            return Some(warned);
         }
         // Whatever holds the origins the provider is served at, which may be
         // another provider's route there as well as its own: what is asked
@@ -1013,7 +1035,7 @@ impl Consent {
         let origins: Vec<Origin> = match (&served.at, &served.route) {
             (Some(at), _) => vec![at.clone()],
             (None, Some(route)) => self
-                .routes
+                .routes()
                 .warned(route)
                 .map(|warned| {
                     warned
@@ -1028,7 +1050,7 @@ impl Consent {
         origins
             .iter()
             .find_map(|origin| self.held(origin))
-            .and_then(|route| self.routes.warned(&route).cloned())
+            .and_then(|route| self.routes().warned(&route).cloned())
     }
 
     /// Takes the routes the user's file says yes to, the first time it is
@@ -1126,6 +1148,7 @@ impl Hold for Consent {
     /// `origin` with no yes holds it, which is what keeps a sign-in back
     /// before its row is chosen.
     fn held(&self, origin: &Origin) -> Option<Box<str>> {
+        let routes = self.routes();
         let state = self.state.read().unwrap_or_else(PoisonError::into_inner);
         let said = |route: &str| state.recorded.contains(route) || state.given.contains(route);
         let sent_to = |warned: &Warned| {
@@ -1140,7 +1163,7 @@ impl Hold for Consent {
             let warned = serving
                 .route
                 .as_deref()
-                .and_then(|route| self.routes.warned(route));
+                .and_then(|route| routes.warned(route));
             let claims = match (&serving.at, warned) {
                 (Some(at), _) => at == origin,
                 (None, Some(warned)) => sent_to(warned),
@@ -1158,7 +1181,7 @@ impl Hold for Consent {
             return None;
         }
 
-        self.routes
+        routes
             .all()
             .iter()
             .find(|warned| sent_to(warned) && !said(&warned.route))

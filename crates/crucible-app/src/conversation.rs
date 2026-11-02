@@ -218,7 +218,8 @@ impl Conversation {
         self.consent.as_ref()
     }
 
-    /// The installed agent's route the next turn would start the agent on.
+    /// The installed agent's route the next turn would start the agent on:
+    /// by its key for a catalog agent, whose driver's word names no agent.
     /// `None` off such a route, while a run is held, and while the agent is
     /// disconnected.
     #[must_use]
@@ -226,7 +227,11 @@ impl Conversation {
         self.outside
             .as_deref()
             .filter(|outside| outside.launches())
-            .map(|outside| crate::content_use::agent_route(outside.driver()))
+            .map(|outside| {
+                crate::content_use::agent_route(crate::launching::bound_agent(
+                    outside.route().driver(),
+                ))
+            })
     }
 
     /// What the next turn is asked about before it starts an installed
@@ -234,7 +239,7 @@ impl Conversation {
     /// [`Conversation::launching`] is, and once the yes is given.
     #[must_use]
     pub fn unlaunched(&self) -> Option<crate::content_use::Warned> {
-        self.consent()?.asks(&self.launching()?).cloned()
+        self.consent()?.asks(&self.launching()?)
     }
 
     /// Why a prompt with `attached` would be refused before it starts an

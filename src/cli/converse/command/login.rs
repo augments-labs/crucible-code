@@ -1616,7 +1616,7 @@ const fn credential(way: &Way) -> &'static str {
 /// The screen of one row: its key box, or its sign-in.
 fn screen<T: Terminal>(way: &Way, opened: Opened, walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
     let route = content_use::row_route(way);
-    if let Some(warned) = walk.terms.consent.asks(&route).cloned() {
+    if let Some(warned) = walk.terms.consent.asks(&route) {
         let style = walk.terms.style();
         match warning::ask(walk.renderer, style, &warned, Put::Choice)? {
             Answer::Yes => walk.terms.consent.give(&route),
