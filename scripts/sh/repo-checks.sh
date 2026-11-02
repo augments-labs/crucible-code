@@ -445,7 +445,9 @@ section "every vendor client is built where its hold was decided"
 # said yes to, and launching.rs is the one place an installed agent is started,
 # under that hold, or for the catalog intake's probe under a hold of its own: a
 # probe sends one fixed `initialize` with no user content, the sandbox closes the
-# network, and only a disposable runner may run it without the sandbox;
+# network, and only a disposable runner may run it without the sandbox; it also
+# runs a catalog agent's install script, under the hold its install asked for,
+# in a sandbox reaching only the hosts the entry's review named;
 # conformance.rs launches the fake peer, which reaches no vendor, and compiles only under the proof feature; renewal.rs builds the
 # client sign-ins and renewals go through, handed the application's hold;
 # release.rs lends the client provider turns and web posts share only under a

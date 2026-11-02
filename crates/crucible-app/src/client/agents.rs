@@ -37,9 +37,11 @@
 //! fetched from its own hosts: how it is started, a release a pinned
 //! interpreter starts having its entry point checked as one its launcher can
 //! be written for, and its interpreter's arguments as exactly `-I`, and one a
-//! pinned Node starts being refused where Node is given arguments of its own
-//! or an install script is to be run at install, which this build does not
-//! do; its download hosts,
+//! pinned Node starts being refused where Node is given arguments of its own,
+//! an install script was built at review, which this build does not do, or
+//! one is run at install where it cannot be: with the sandbox off, on a
+//! platform whose sandbox does not hold one in, or with no launcher lent, as
+//! from a command line; its download hosts,
 //! and that every address and mirror it is pinned at is on one of them; for a
 //! release a pinned Node starts, its package lock, fetched from the catalog's
 //! own host by [`catalog_fetch::asset`] and read, and every tarball it pins on
@@ -191,7 +193,7 @@ use crucible_config::{AgentUpdate, Cloud, ConfigError, Driver, ExternalAgent, Ho
 use crucible_execution::{Authentication, Failure};
 use crucible_external_harnesses::catalog::{
     Artifact, AssetRef, AuthMethod, CatalogError, Disposition, Entry, File, FileKind, Files,
-    Format, Launch, Method, Offer, Script, Target, Trust, Unprofiled, file_list,
+    Format, Launch, Method, Offer, Script, Target, Trust, Unprofiled, file_list, result_list,
 };
 use crucible_external_harnesses::release::{
     BIN, LAUNCHER, LaunchScript, NpmTree, PRELOAD, Preload, RELEASE_BYTES, Stub, StubError,
@@ -200,7 +202,7 @@ use crucible_external_harnesses::release::{
 use crucible_external_harnesses::store::{
     Listing, Mismatch, Provenance, Receipt, Store, StoreError, Version,
 };
-use crucible_external_harnesses::{Account, Reading, WITHHELD_BYTES, antigravity};
+use crucible_external_harnesses::{Account, Held, Reading, WITHHELD_BYTES, antigravity};
 use crucible_http::Origin;
 use crucible_runtime::Cancel;
 use crucible_types::AgentKey;
@@ -210,7 +212,8 @@ use super::deciding::{self, Confirmation, Front, Shown, mint, turned_away};
 use crate::agent_download::{self, DownloadError, Landing};
 use crate::backends::{AgentRow, CatalogRow, REGISTRY};
 use crate::catalog_fetch::{self, FetchError, Source, Trigger};
-use crate::launching::{self, Agent, Launcher, Steps, Unlaunched, Unsmoked, quoted};
+use crate::content_use::{self, agent_route};
+use crate::launching::{self, Agent, Launcher, Steps, Unlaunched, Unscripted, Unsmoked, quoted};
 use crate::providers::{Rows, Unnamed};
 use crate::remember::{self, RememberError};
 
@@ -510,6 +513,17 @@ pub enum AgentsError {
         version: Box<str>,
         /// Why.
         why: Unsmoked,
+    },
+    /// An install script the release runs at install did not run as its
+    /// review found it, so nothing was put in place.
+    #[error("{agent} {version} was not installed: its install script {why}")]
+    Script {
+        /// The agent.
+        agent: AgentKey,
+        /// The version refused.
+        version: Box<str>,
+        /// Why.
+        why: Unscripted,
     },
     /// The configuration names no such instance.
     #[error("the configuration names no instance {0}")]
@@ -931,6 +945,36 @@ impl Door<'_> {
             })
     }
 
+    /// The launcher an install script of `offer` is run through, and the hold
+    /// of its agent's route, asked for through `front` where it has no yes
+    /// yet; `Err(())` where that question was answered no.
+    async fn scripting(
+        &self,
+        offer: &Offer,
+        front: &mut dyn Front,
+    ) -> Result<Result<(&Launcher<'_>, Held), ()>, AgentsError> {
+        let agent = &offer.entry.key;
+        // Refused before anything was fetched where none is lent.
+        let launcher = self.shelf.smoke.ok_or(AgentsError::Unsupported(UNLENT))?;
+        let route = agent_route(agent.as_str());
+        if let Some(warned) = launcher.consent().asks(&route).cloned() {
+            if !deciding::warned(self.request.capabilities(), front, &warned).await {
+                return Ok(Err(()));
+            }
+            launcher
+                .consent()
+                .accept(&warned)
+                .map_err(AgentsError::HoldUnkept)?;
+        }
+        let held =
+            content_use::held(launcher.consent(), &route).map_err(|_| AgentsError::Script {
+                agent: agent.clone(),
+                version: quoted(&offer.pin.version).into(),
+                why: Unscripted::Unheld(route.clone()),
+            })?;
+        Ok(Ok((launcher, held)))
+    }
+
     /// Installs `offer` of `agent` after a yes, and moves every instance the
     /// store runs it for onto it.
     async fn switch(
@@ -944,7 +988,7 @@ impl Door<'_> {
         // written for its entry point, which is held before anything is asked;
         // one a pinned Node starts, under the preload alone, with no install
         // script run, and its lock is fetched below.
-        let (script, lock) = launched(&offer)?;
+        let (script, lock) = launched(&offer, self.shelf.smoke)?;
         let mut reached: Vec<String> = Vec::new();
         let hosts = &offer.pin.target.hosts;
         for artifact in &offer.pin.target.artifacts {
@@ -972,6 +1016,9 @@ impl Door<'_> {
         let offer = &offer;
         let agent = &offer.entry.key;
         let target = &offer.pin.target;
+        // What each install script run at install must leave, fetched from
+        // the catalog's own host and read before anything is asked.
+        let locals = locals(&self.shelf.catalog, offer, tree.as_ref()).await?;
         let mut listed = listed(target);
         runnable(&listed, &target.cmd)?;
         let (total, fitted) = sized(offer, tree.as_ref())?;
@@ -1034,6 +1081,16 @@ impl Door<'_> {
                 return Ok(Outcome::Undecided);
             }
         }
+        // An install script reaches what its agent's route answers for, so
+        // none is run before that route has its yes; a version kept runs none.
+        let scripting = if kept || locals.is_empty() {
+            None
+        } else {
+            Some(self.scripting(offer, front).await?)
+        };
+        let Ok(scripting) = scripting.transpose() else {
+            return Ok(Outcome::Undecided);
+        };
 
         if !kept {
             let staging = self.store.stage(agent)?;
@@ -1106,6 +1163,16 @@ impl Door<'_> {
                     .await?,
                 );
                 files.extend(stubbed(&stubs, staging.directory())?);
+            }
+            if let Some((launcher, held)) = &scripting {
+                run_scripts(
+                    (launcher, held),
+                    offer,
+                    &locals,
+                    staging.directory(),
+                    &mut files,
+                )
+                .await?;
             }
             let provenance = Provenance {
                 listing: Listing {
@@ -1898,9 +1965,13 @@ fn sized(offer: &Offer, tree: Option<&NpmTree>) -> Result<(u64, Target), AgentsE
 
 /// What starting `offer` takes beyond its artifacts: the launcher of a
 /// release a pinned interpreter starts, or the lock of one a pinned Node
-/// starts, refused where Node is given arguments of its own or an install
-/// script is to be run at install, which this build does not do.
-fn launched(offer: &Offer) -> Result<(Option<LaunchScript>, Option<AssetRef>), AgentsError> {
+/// starts, refused where Node is given arguments of its own, an install
+/// script was built at review, or one is run at install where `lent`, the
+/// launcher a conversation lends, is none or cannot run it.
+fn launched(
+    offer: &Offer,
+    lent: Option<&Launcher<'_>>,
+) -> Result<(Option<LaunchScript>, Option<AssetRef>), AgentsError> {
     Ok(match &offer.pin.target.launch {
         Launch::Binary => (None, None),
         Launch::Uvx {
@@ -1927,11 +1998,20 @@ fn launched(offer: &Offer) -> Result<(Option<LaunchScript>, Option<AssetRef>), A
             }
             if scripts
                 .iter()
-                .any(|script| matches!(script.disposition, Disposition::Local { .. }))
+                .any(|script| matches!(script.disposition, Disposition::Built))
             {
                 return Err(AgentsError::Unsupported(
-                    "the release has an install script run at install",
+                    "the release has an install script built at review",
                 ));
+            }
+            if scripts
+                .iter()
+                .any(|script| matches!(script.disposition, Disposition::Local { .. }))
+            {
+                let launcher = lent.ok_or(AgentsError::Unsupported(UNLENT))?;
+                if let Some(why) = launcher.unscriptable() {
+                    return Err(AgentsError::Unsupported(why));
+                }
             }
             (None, Some(lock.asset.clone()))
         }
@@ -1939,9 +2019,13 @@ fn launched(offer: &Offer) -> Result<(Option<LaunchScript>, Option<AssetRef>), A
 }
 
 /// The facts naming each install script of a tree, which none is run as npm
-/// would run it, at most [`SCRIPTS`] of them, then how many more.
+/// would run it, at most [`SCRIPTS`] of each kind, then how many more: first
+/// those not run, then those run at install in a sandbox of their own.
 fn unrun(scripts: &[Script]) -> Vec<String> {
-    let mut facts: Vec<String> = scripts
+    let (local, other): (Vec<&Script>, Vec<&Script>) = scripts
+        .iter()
+        .partition(|script| matches!(script.disposition, Disposition::Local { .. }));
+    let mut facts: Vec<String> = other
         .iter()
         .take(SCRIPTS)
         .map(|script| {
@@ -1949,9 +2033,10 @@ fn unrun(scripts: &[Script]) -> Vec<String> {
                 Disposition::Inert => "inert: it does nothing the agent needs",
                 Disposition::Replaced => "replaced: a platform package does its work",
                 Disposition::Lost => "lost: the agent works without what it would add",
-                Disposition::Built => "built at review and installed as an asset",
                 // Refused before the question is put.
-                Disposition::Local { .. } => "run at install, which this build does not do",
+                Disposition::Built => "built at review, which this build does not install",
+                // Named below.
+                Disposition::Local { .. } => "run at install",
             };
             format!(
                 "Install script not run: {} {}, {why}.",
@@ -1960,11 +2045,153 @@ fn unrun(scripts: &[Script]) -> Vec<String> {
             )
         })
         .collect();
-    let more = scripts.len().saturating_sub(SCRIPTS);
+    let more = other.len().saturating_sub(SCRIPTS);
     if more > 0 {
         facts.push(format!("And {more} more install scripts, none run."));
     }
+    for script in local.iter().take(SCRIPTS) {
+        let Disposition::Local { command, hosts, .. } = &script.disposition else {
+            continue;
+        };
+        let reach = if hosts.is_empty() {
+            "no host".to_owned()
+        } else {
+            hosts
+                .iter()
+                .map(|host| quoted(host))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        // The whole command, escaped: it is what the yes is to, and the
+        // catalog bounds it.
+        facts.push(format!(
+            "Install script run at install: {} {}, in a sandbox of its own as sh -c {}, \
+             reaching {reach}, writing only its package and a private temporary directory; \
+             its package must then hold exactly what its review found, or nothing is installed.",
+            quoted(&script.package),
+            quoted(&script.event),
+            crucible_types::shown::escaped(command),
+        ));
+    }
+    let more = local.len().saturating_sub(SCRIPTS);
+    if more > 0 {
+        facts.push(format!(
+            "And {more} more install scripts run at install, each the same way."
+        ));
+    }
     facts
+}
+
+/// Why a release with an install script run at install is refused where no
+/// conversation lent a launcher to run it through.
+const UNLENT: &str = "a release whose install script runs in a conversation's sandbox, from a \
+                      command line (install it from /agents in a conversation)";
+
+/// One install script of a release run at install, as its review found it.
+struct Local<'a> {
+    /// Its package, as its place in the tree.
+    package: &'a str,
+    /// Its package's name and version, as the lock gives them.
+    named: (&'a str, &'a str),
+    /// The npm event it runs on.
+    event: &'a str,
+    /// What `sh -c` is given.
+    command: &'a str,
+    /// The host patterns it may reach.
+    hosts: &'a [Box<str>],
+    /// What its package must hold once it ends.
+    result: Vec<File>,
+}
+
+/// Each install script of `offer` run at install, with the listing its
+/// review left fetched from the catalog's own host and read, each refused
+/// where `tree` installs no package where it says it belongs.
+async fn locals<'a>(
+    source: &Source,
+    offer: &'a Offer,
+    tree: Option<&'a NpmTree>,
+) -> Result<Vec<Local<'a>>, AgentsError> {
+    let Launch::Npm { scripts, .. } = &offer.pin.target.launch else {
+        return Ok(Vec::new());
+    };
+    let mut locals = Vec::new();
+    for script in scripts {
+        let Disposition::Local {
+            command,
+            hosts,
+            result,
+        } = &script.disposition
+        else {
+            continue;
+        };
+        let package = tree
+            .and_then(|tree| {
+                tree.packages()
+                    .iter()
+                    .find(|package| package.location == script.package)
+            })
+            .ok_or(AgentsError::Unsupported(
+                "a release whose install script belongs to no package its lock installs",
+            ))?;
+        let bytes = catalog_fetch::asset(source, result)
+            .await
+            .map_err(AgentsError::FileListUnfetched)?;
+        let result = result_list(&offer.entry, &bytes).map_err(AgentsError::FileListUnread)?;
+        locals.push(Local {
+            package: &script.package,
+            named: (&package.name, &package.version),
+            event: &script.event,
+            command,
+            hosts,
+            result,
+        });
+    }
+    Ok(locals)
+}
+
+/// Runs each of `locals` of `offer` in the version staged at `staging`, one
+/// at a time, and puts what each left into `files` as its review listed it, in
+/// place of what its package's tarball unpacked to.
+async fn run_scripts(
+    (launcher, held): (&Launcher<'_>, &Held),
+    offer: &Offer,
+    locals: &[Local<'_>],
+    staging: &Path,
+    files: &mut Vec<File>,
+) -> Result<(), AgentsError> {
+    let agent = &offer.entry.key;
+    let node = staging.join(&*offer.pin.target.cmd);
+    let node = node.parent().unwrap_or(staging);
+    for local in locals {
+        launcher
+            .script(
+                held,
+                launching::Scripted {
+                    agent,
+                    staging,
+                    package: local.package,
+                    named: local.named,
+                    event: local.event,
+                    command: local.command,
+                    hosts: local.hosts,
+                    node,
+                    result: &local.result,
+                },
+            )
+            .await
+            .map_err(|why| AgentsError::Script {
+                agent: agent.clone(),
+                version: quoted(&offer.pin.version).into(),
+                why,
+            })?;
+        let prefix = format!("{}/", local.package);
+        files.retain(|file| !file.path.starts_with(&prefix));
+        files.extend(local.result.iter().map(|file| File {
+            path: format!("{prefix}{}", file.path).into(),
+            kind: file.kind.clone(),
+        }));
+    }
+    Ok(())
 }
 
 /// The most install scripts a question names one by one.

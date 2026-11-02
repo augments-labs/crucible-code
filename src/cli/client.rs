@@ -672,6 +672,7 @@ pub(crate) const fn coded(refused: &AgentsError) -> ErrorCode {
         | AgentsError::Remember(_)
         | AgentsError::Unadded { .. }
         | AgentsError::Smoke { .. }
+        | AgentsError::Script { .. }
         | AgentsError::Unclouded { .. }
         | AgentsError::Unlocated(_)
         | AgentsError::Conversation(_)

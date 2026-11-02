@@ -1694,6 +1694,218 @@ impl SandboxProcess for StubbornProcess {
     }
 }
 
+/// A sandbox whose processes run as the local one's do, with `stopping` run
+/// first whenever one of them is stopped.
+struct Stopping {
+    local: Arc<dyn SandboxService>,
+    stopping: Arc<dyn Fn() -> std::io::Result<()> + Send + Sync>,
+}
+
+impl SandboxService for Stopping {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        self.local.probe()
+    }
+
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            let session: Box<dyn SandboxSession> = Box::new(StoppingSession(
+                self.local.prepare(request).await?,
+                self.stopping.clone(),
+            ));
+            Ok(session)
+        })
+    }
+}
+
+/// Its session.
+struct StoppingSession(
+    Box<dyn SandboxSession>,
+    Arc<dyn Fn() -> std::io::Result<()> + Send + Sync>,
+);
+
+impl SandboxSession for StoppingSession {
+    fn inspection(&self) -> &SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn materialize(&mut self) -> BoxFuture<'_, Result<(), SandboxError>> {
+        self.0.materialize()
+    }
+
+    fn stage<'a>(
+        self: Box<Self>,
+        command: SandboxCommand,
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxLaunch>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let launch: Box<dyn SandboxLaunch> =
+                Box::new(StoppingLaunch(self.0.stage(command).await?, self.1));
+            Ok(launch)
+        })
+    }
+}
+
+/// Its staged launch.
+struct StoppingLaunch(
+    Box<dyn SandboxLaunch>,
+    Arc<dyn Fn() -> std::io::Result<()> + Send + Sync>,
+);
+
+impl SandboxLaunch for StoppingLaunch {
+    fn inspection(&self) -> &SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn release<'a>(self: Box<Self>) -> BoxFuture<'a, Result<Box<dyn SandboxProcess>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let process: Box<dyn SandboxProcess> =
+                Box::new(StoppingProcess(self.0.release().await?, self.1));
+            Ok(process)
+        })
+    }
+}
+
+/// Its process.
+struct StoppingProcess(
+    Box<dyn SandboxProcess>,
+    Arc<dyn Fn() -> std::io::Result<()> + Send + Sync>,
+);
+
+impl SandboxProcess for StoppingProcess {
+    fn take_stdin(&mut self) -> Option<Box<dyn std::io::Write + Send>> {
+        self.0.take_stdin()
+    }
+
+    fn take_async_stdin(&mut self) -> Option<Box<dyn SandboxInput>> {
+        self.0.take_async_stdin()
+    }
+
+    fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.0.take_stdout()
+    }
+
+    fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.0.take_stderr()
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        self.0.try_wait()
+    }
+
+    fn stop(&mut self) -> BoxFuture<'_, std::io::Result<()>> {
+        Box::pin(async move {
+            (self.1)()?;
+            self.0.stop().await
+        })
+    }
+
+    fn inspection(&self) -> &SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn usage(&self) -> SandboxUsage {
+        self.0.usage()
+    }
+
+    fn violation(&self) -> Option<SandboxViolation> {
+        self.0.violation()
+    }
+}
+
+/// A script with nothing to do and an empty listing, run in a version staged
+/// in `sample`, under a sandbox that does `stopping` as it is stopped; `None`
+/// where this machine's sandbox does not enforce its rules.
+async fn scripted_stopping(
+    sample: &Sample,
+    stopping: impl Fn(&Path) -> std::io::Result<()> + Send + Sync + 'static,
+) -> Option<Result<(), Unscripted>> {
+    let staging = sample.root().join("staged").join("1.0.0");
+    let package = staging.join("node_modules").join("peer");
+    fs::create_dir_all(&package).expect("a package");
+    let sandbox = Stopping {
+        local: local(),
+        stopping: Arc::new({
+            let package = package.clone();
+            move || stopping(&package)
+        }),
+    };
+    let consent = granted();
+    let policy = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
+    let (state, sessions) = (sample.state(), sample.sessions());
+    let launcher = Launcher::new(
+        Arc::new(sandbox),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
+    let held = crate::content_use::held(&consent, "agent:claude").expect("the route's yes");
+    let agent = AgentKey::new("claude").expect("a key");
+    let ran = launcher
+        .script(
+            &held,
+            Scripted {
+                agent: &agent,
+                staging: &staging,
+                package: "node_modules/peer",
+                named: ("peer", "1.0.0"),
+                event: "postinstall",
+                command: ":",
+                hosts: &[],
+                node: &staging,
+                result: &[],
+            },
+        )
+        .await;
+    if matches!(ran, Err(Unscripted::Unconfined)) {
+        eprintln!("skipped, as this machine's sandbox does not enforce its rules");
+        return None;
+    }
+    Some(ran)
+}
+
+/// What is compared is what the stop left, so whatever writes until it is
+/// stopped is seen.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_install_script_is_compared_only_after_it_is_stopped() {
+    let sample = Sample::new("script-compared-after-stop");
+    let Some(ran) =
+        scripted_stopping(&sample, |package| fs::write(package.join("late"), b"late")).await
+    else {
+        return;
+    };
+    assert!(
+        matches!(&ran, Err(Unscripted::Differs { path, .. }) if path.contains("late")),
+        "{ran:?}"
+    );
+}
+
+/// A stop nobody could confirm may have left something writing, so nothing
+/// is compared at all.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_install_script_not_confirmed_stopped_is_refused() {
+    let sample = Sample::new("script-unstopped");
+    let Some(ran) = scripted_stopping(&sample, |_| {
+        Err(std::io::Error::other("the scope did not answer"))
+    })
+    .await
+    else {
+        return;
+    };
+    assert!(matches!(&ran, Err(Unscripted::Unstopped(_))), "{ran:?}");
+}
+
 /// The built-in Antigravity row alone.
 static ANTIGRAVITY_ONLY: [Row; 1] = [ANTIGRAVITY];
 

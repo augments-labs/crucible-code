@@ -1027,6 +1027,7 @@ pub(super) fn refused(refusal: &AgentsError) -> String {
         | AgentsError::FileListUnfetched(_)
         | AgentsError::FileListUnread(_)
         | AgentsError::Smoke { .. }
+        | AgentsError::Script { .. }
         | AgentsError::NoMethod { .. }
         | AgentsError::Conversation(_)
         | AgentsError::Unnamed(_)
@@ -1117,6 +1118,7 @@ pub(super) fn sentence(refusal: &AgentsError) -> String {
         | AgentsError::FileListUnfetched(_)
         | AgentsError::FileListUnread(_)
         | AgentsError::Smoke { .. }
+        | AgentsError::Script { .. }
         | AgentsError::NoMethod { .. }
         | AgentsError::Conversation(_)
         | AgentsError::Unnamed(_)

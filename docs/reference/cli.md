@@ -636,7 +636,11 @@ server, which [`/login`](../providers/agents.md#antigravity) then runs. A
 version already in place is not downloaded again. It ends 0 once the version is
 in place, with `Installed goose 1.0.0 at …/programs/goose/1.0.0/goose. /login
 offers it under Use an installed coding agent.` or `goose 1.0.0 is already
-installed at …`, and 1 when nothing was put in place.
+installed at …`, and 1 when nothing was put in place. A release with an install
+script to run at install is refused here before anything is fetched, saying to
+install it from `/agents` in a conversation, where the
+[sandbox it runs in](../security/sandboxing.md#installed-agents-releases) is
+lent.
 
 ### `agents add AGENT [VERSION]`
 

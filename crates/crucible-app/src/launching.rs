@@ -233,6 +233,15 @@
 //! entry refused as an unconfirmed run does. `Steps::running` says which of a
 //! set of entries have a run live, as `Steps::unstopped` says which could not
 //! be confirmed stopped, for an operation that must not start beside either.
+//!
+//! An install script of a catalog release is the one thing started here that
+//! is not an agent: `Launcher::script` runs it once, while the version it
+//! belongs to is staged, under the hold of its agent's route, and only where
+//! the sandbox is on, on a platform whose sandbox holds it in. Its policy is
+//! `install_policy`'s and no other's: nothing of the conversation's roots
+//! or domains is in it. It runs the catalog's command, never one read from
+//! what was staged, and answers to the listing its review left, compared only
+//! once everything it started is confirmed stopped.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -258,14 +267,15 @@ use crucible_external_harnesses::{
 use crucible_models::Effort;
 use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
-    SandboxCapability, SandboxDomainPattern, SandboxDomainPolicy, SandboxEnablement,
-    SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
-    SandboxNetworkEndpoint, SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy,
-    SandboxPolicyError, SandboxResourceLimits, SandboxService,
+    SandboxCapability, SandboxCommand, SandboxDomainPattern, SandboxDomainPolicy,
+    SandboxEnablement, SandboxEnvironment, SandboxError, SandboxFeature, SandboxFilesystemAccess,
+    SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxManifest, SandboxNetworkEndpoint,
+    SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxOutput, SandboxPolicy,
+    SandboxPolicyError, SandboxRead, SandboxRequest, SandboxResourceLimits, SandboxService,
 };
 use crucible_session::{ExternalRef, RouteBinding};
 use crucible_tools::Mode;
-use crucible_types::AgentKey;
+use crucible_types::{AgentKey, Ancestry, SandboxId, ToolId};
 use tokio::runtime::Handle;
 
 use crate::access::Route;
@@ -3055,6 +3065,483 @@ pub enum Unsmoked {
     /// It did not answer initializing as its entry reviewed it.
     #[error("it did not answer initialize as its catalog entry reviewed it: {0}")]
     Answered(String),
+}
+
+/// Why an install script run at install did not leave its package as its
+/// review found it, so nothing of the version it was run for was kept.
+#[derive(Debug, thiserror::Error)]
+pub enum Unscripted {
+    /// The sandbox is off, or holds nothing in on this platform.
+    #[error("runs only in the sandbox, which cannot hold it in here")]
+    Unconfined,
+    /// The agent's route has no yes, or is not one crucible knows.
+    #[error("reaches what {0} reaches, which has no yes")]
+    Unheld(String),
+    /// Its package is not a directory inside the version being staged.
+    #[error("belongs to {0}, which is not a directory of the version staged")]
+    Unplaced(String),
+    /// Its policy could not be built.
+    #[error("could not be given its sandbox policy: {0}")]
+    Policy(#[from] SandboxPolicyError),
+    /// The sandbox refused or failed to run it.
+    #[error("could not be run in the sandbox: {0}")]
+    Sandbox(#[from] SandboxError),
+    /// Its private home or temporary directory could not be made.
+    #[error("could not be given a private home and temporary directory: {0}")]
+    Private(std::io::Error),
+    /// Its status could not be read.
+    #[error("could not be watched to its end: {0}")]
+    Unwatched(std::io::Error),
+    /// It ran past the bound and was stopped.
+    #[error("ran past {} seconds and was stopped", .0.as_secs())]
+    Overran(Duration),
+    /// It ended in failure.
+    #[error("ended with {0}")]
+    Failed(std::process::ExitStatus),
+    /// What it ran could not be confirmed stopped, so nothing is compared.
+    #[error("could not be confirmed stopped: {0}")]
+    Unstopped(std::io::Error),
+    /// Its package holds something other than its review's listing.
+    #[error("left {path} {why}")]
+    Differs {
+        /// The path, quoted, relative to its package.
+        path: String,
+        /// How it differs.
+        why: &'static str,
+    },
+}
+
+/// The longest an install script runs before it is stopped and refused.
+#[cfg(not(feature = "proof"))]
+const SCRIPTING: Duration = Duration::from_secs(600);
+/// Under the proof feature, short, so a test of the bound ends soon.
+#[cfg(feature = "proof")]
+const SCRIPTING: Duration = Duration::from_secs(30);
+
+/// How often an install script's leader is asked whether it has exited.
+const POLLING: Duration = Duration::from_millis(20);
+
+/// The system directories an install script's `PATH` gives after the pinned
+/// Node's: fixed, so nothing of the user's own `PATH` is inherited.
+const SYSTEM_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
+
+/// The policy an install script is run under, built fresh for it from these
+/// alone, and from no conversation's: `staging`, the version being staged,
+/// which it may read; `package`, the directory inside it the script is run
+/// in and the one place there it may write; `tmp`, its private temporary
+/// directory, which it may also write; `home`, its private home, which it
+/// may read; and `hosts`, the host patterns its catalog entry lets it reach,
+/// none closing the network. Nothing else of the user's is readable but what
+/// the sandbox gives every command it runs.
+///
+/// # Errors
+///
+/// A [`SandboxPolicyError`] where a place cannot be followed or a host is
+/// not one a policy can name.
+pub(crate) fn install_policy(
+    staging: &Path,
+    package: &Path,
+    tmp: &Path,
+    home: &Path,
+    hosts: &[Box<str>],
+) -> Result<SandboxPolicy, SandboxPolicyError> {
+    let package = resolved(package)?;
+    let mut filesystem = vec![
+        SandboxFilesystemRule::new(
+            &resolved(staging)?,
+            SandboxFilesystemAccess::ReadOnly,
+            SandboxFilesystemProvenance::Runtime,
+        )?,
+        SandboxFilesystemRule::new(
+            &package,
+            SandboxFilesystemAccess::ReadWrite,
+            SandboxFilesystemProvenance::Runtime,
+        )?,
+        SandboxFilesystemRule::new(
+            &resolved(tmp)?,
+            SandboxFilesystemAccess::ReadWrite,
+            SandboxFilesystemProvenance::Runtime,
+        )?,
+        SandboxFilesystemRule::new(
+            &resolved(home)?,
+            SandboxFilesystemAccess::ReadOnly,
+            SandboxFilesystemProvenance::Runtime,
+        )?,
+    ];
+    for metadata in SandboxFilesystemRule::protected_beneath(&package)? {
+        if !filesystem.iter().any(|old| old.path() == metadata.path()) {
+            filesystem.push(metadata);
+        }
+    }
+    let network = if hosts.is_empty() {
+        SandboxNetworkPolicy::Closed
+    } else {
+        let allowed = hosts
+            .iter()
+            .map(|host| SandboxDomainPattern::new(host))
+            .collect::<Result<Vec<_>, _>>()?;
+        SandboxNetworkPolicy::Domains(SandboxDomainPolicy::new(
+            allowed,
+            [],
+            false,
+            [],
+            SandboxNetworkProvenance::User,
+        )?)
+    };
+    SandboxPolicy::new(
+        true,
+        filesystem,
+        &package,
+        network,
+        // Bounded by the wait for its end, not by a ceiling on one command.
+        SandboxResourceLimits {
+            command_time: None,
+            cpu_seconds: None,
+            output_bytes: None,
+            ..SandboxResourceLimits::confining()
+        },
+    )
+}
+
+/// One install script to run in a version being staged, as its catalog
+/// entry's review found it.
+pub(crate) struct Scripted<'a> {
+    /// The agent the version is of.
+    pub agent: &'a AgentKey,
+    /// The version being staged.
+    pub staging: &'a Path,
+    /// Its package, as its place in the tree.
+    pub package: &'a str,
+    /// The package's name and version, as its lock gives them.
+    pub named: (&'a str, &'a str),
+    /// The npm event it runs on.
+    pub event: &'a str,
+    /// What `sh -c` is given.
+    pub command: &'a str,
+    /// The host patterns it may reach.
+    pub hosts: &'a [Box<str>],
+    /// The directory the pinned Node is in, inside the version.
+    pub node: &'a Path,
+    /// What its package must hold once it ends, relative to the package.
+    pub result: &'a [crucible_external_harnesses::catalog::File],
+}
+
+/// A private home and temporary directory for one install script, beside the
+/// version being staged, removed when this is dropped.
+struct Private([PathBuf; 2]);
+
+impl Private {
+    /// Makes both, new, beside `staging`, entered by their owner alone.
+    fn made(staging: &Path) -> std::io::Result<Self> {
+        let name = staging
+            .file_name()
+            .map(OsStr::to_os_string)
+            .unwrap_or_default();
+        let beside = |suffix: &str| {
+            let mut name = name.clone();
+            name.push(suffix);
+            staging.with_file_name(name)
+        };
+        let made = Self([beside(".home"), beside(".tmp")]);
+        for place in &made.0 {
+            // One a dead run left is not this run's to keep.
+            let _ = std::fs::remove_dir_all(place);
+            let mut builder = std::fs::DirBuilder::new();
+            #[cfg(unix)]
+            std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+            builder.create(place)?;
+        }
+        Ok(made)
+    }
+}
+
+impl Drop for Private {
+    fn drop(&mut self) {
+        for place in &self.0 {
+            let _ = std::fs::remove_dir_all(place);
+        }
+    }
+}
+
+impl Launcher<'_> {
+    /// Why an install script run at install would not be run here; nothing
+    /// where it would be, which is only where the sandbox is on, on a
+    /// platform whose sandbox holds it in.
+    #[must_use]
+    pub(crate) fn unscriptable(&self) -> Option<&'static str> {
+        if cfg!(any(windows, target_os = "freebsd")) {
+            Some(
+                "a release whose install script runs in the sandbox, on a platform whose sandbox \
+                 this build does not run one in",
+            )
+        } else if !self.conversation.enabled() {
+            Some("a release whose install script runs in the sandbox, with the sandbox off")
+        } else {
+            None
+        }
+    }
+
+    /// Runs `run`'s install script once, under `held`, the hold of the
+    /// agent's route, in a sandbox [`install_policy`] builds for it alone: as
+    /// `sh -c` its command, in its package's directory, with exactly `PATH`
+    /// (the pinned Node's directory first, then [`SYSTEM_PATH`]), a private
+    /// `HOME` and `TMPDIR` removed afterwards, `npm_lifecycle_event`, and its
+    /// package's `npm_package_name`, `npm_package_version` and, where it has
+    /// one, `npm_package_json`. Once its leader exits, everything it started
+    /// is stopped, a child still running included, and only once that stop is
+    /// confirmed is its package compared with the listing its review left:
+    /// every path, its kind, whether it runs and its SHA-256, and no other
+    /// entry, empty directories included. So nothing can change the package
+    /// after it was compared, and what a child had not finished writing is a
+    /// difference.
+    ///
+    /// # Errors
+    ///
+    /// [`Unscripted`] for why it was not run, did not end within
+    /// [`SCRIPTING`] or in success, could not be confirmed stopped, or left
+    /// its package other than its listing says.
+    pub(crate) async fn script(&self, held: &Held, run: Scripted<'_>) -> Result<(), Unscripted> {
+        if self.unscriptable().is_some() {
+            return Err(Unscripted::Unconfined);
+        }
+        // What the script reaches answers to its agent's route, so the hold
+        // is that route's and no other's.
+        let route = agent_route(run.agent.as_str());
+        if held.route() != route {
+            return Err(Unscripted::Unheld(route));
+        }
+        let staging = resolved(run.staging)?;
+        let unplaced = || Unscripted::Unplaced(quoted(run.package));
+        let package = resolved(&staging.join(run.package)).map_err(|_| unplaced())?;
+        if !package.starts_with(&staging)
+            || !std::fs::symlink_metadata(&package).is_ok_and(|found| found.is_dir())
+        {
+            return Err(unplaced());
+        }
+        let private = Private::made(&staging).map_err(Unscripted::Private)?;
+        let [home, tmp] = &private.0;
+        let policy = install_policy(&staging, &package, tmp, home, run.hosts)?;
+        let mut path = run.node.as_os_str().to_os_string();
+        path.push(":");
+        path.push(SYSTEM_PATH);
+        let manifest = package.join("package.json");
+        let mut pairs: Vec<(&str, &OsStr)> = vec![
+            ("PATH", &path),
+            ("HOME", home.as_os_str()),
+            ("TMPDIR", tmp.as_os_str()),
+            ("npm_lifecycle_event", OsStr::new(run.event)),
+            ("npm_package_name", OsStr::new(run.named.0)),
+            ("npm_package_version", OsStr::new(run.named.1)),
+        ];
+        if std::fs::symlink_metadata(&manifest).is_ok_and(|found| found.is_file()) {
+            pairs.push(("npm_package_json", manifest.as_os_str()));
+        }
+        let command = SandboxCommand::new(
+            "/bin/sh",
+            [OsString::from("-c"), OsString::from(run.command)],
+            SandboxEnvironment::new(pairs)?,
+        )?;
+        let request = SandboxRequest::new(
+            SandboxId::new(),
+            Ancestry::new(),
+            ToolId::new("install-script"),
+            policy,
+            SandboxManifest::empty(),
+        );
+        let mut session = tokio::time::timeout(PREPARING, self.service.prepare(request))
+            .await
+            .unwrap_or_else(|_| {
+                Err(SandboxError::BackendUnavailable {
+                    reason: "the sandbox did not prepare the install script in time".into(),
+                })
+            })?;
+        if !session.inspection().confined() {
+            return Err(Unscripted::Unconfined);
+        }
+        session.materialize().await?;
+        let mut process = session.start(command).await?;
+        let drains = [process.take_stdout(), process.take_stderr()]
+            .into_iter()
+            .flatten()
+            .map(|output| self.runtime.spawn(drained(output)))
+            .collect::<Vec<_>>();
+        let ended = tokio::time::timeout(SCRIPTING, exited(process.as_mut())).await;
+        let stopped = process.stop().await;
+        for drain in &drains {
+            drain.abort();
+        }
+        stopped.map_err(Unscripted::Unstopped)?;
+        match ended {
+            Err(_) => return Err(Unscripted::Overran(SCRIPTING)),
+            Ok(Err(why)) => return Err(Unscripted::Unwatched(why)),
+            Ok(Ok(status)) if !status.success() => return Err(Unscripted::Failed(status)),
+            Ok(Ok(_)) => {}
+        }
+        drop(private);
+        match differs(&package, run.result) {
+            Some((path, why)) => Err(Unscripted::Differs {
+                path: quoted(&path),
+                why,
+            }),
+            None => Ok(()),
+        }
+    }
+}
+
+/// Reads `output` to its end and keeps none of it: an install script's
+/// output is not shown, and a pipe left unread would hold it.
+async fn drained(mut output: Box<dyn SandboxOutput>) {
+    let mut buffer = vec![0_u8; 1 << 13];
+    loop {
+        match output.read(&mut buffer).await {
+            Ok(SandboxRead::End) | Err(_) => return,
+            Ok(SandboxRead::Bytes(_) | SandboxRead::Limited { .. } | SandboxRead::Pending) => {}
+        }
+    }
+}
+
+/// The status `process`'s leader exits with, asked every [`POLLING`].
+async fn exited(
+    process: &mut dyn crucible_sandbox::SandboxProcess,
+) -> std::io::Result<std::process::ExitStatus> {
+    loop {
+        if let Some(status) = process.try_wait()? {
+            return Ok(status);
+        }
+        tokio::time::sleep(POLLING).await;
+    }
+}
+
+/// The first way `package` differs from `listed`, a listing of regular files
+/// relative to it, as a path relative to it and how: a listed file missing,
+/// of another kind, size, runnability or SHA-256, or any entry that is
+/// neither a listed file nor a directory above one. Nothing is followed
+/// through a link, and the walk stops at the first difference.
+fn differs(
+    package: &Path,
+    listed: &[crucible_external_harnesses::catalog::File],
+) -> Option<(String, &'static str)> {
+    use crucible_external_harnesses::catalog::FileKind;
+    let mut files: HashMap<&str, (u64, &str, bool)> = HashMap::new();
+    let mut above: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for file in listed {
+        if let FileKind::File { size, sha256, exec } = &file.kind {
+            files.insert(&file.path, (*size, sha256, *exec));
+        }
+        let mut path: &str = &file.path;
+        while let Some((parent, _)) = path.rsplit_once('/') {
+            above.insert(parent);
+            path = parent;
+        }
+    }
+    let mut seen = 0_usize;
+    let mut pending = vec![String::new()];
+    while let Some(directory) = pending.pop() {
+        let at = under(package, &directory);
+        let Ok(entries) = std::fs::read_dir(&at) else {
+            return Some((directory, "unreadable"));
+        };
+        for entry in entries {
+            let Ok(entry) = entry else {
+                return Some((directory, "unreadable"));
+            };
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let path = if directory.is_empty() {
+                name
+            } else {
+                format!("{directory}/{name}")
+            };
+            let Ok(metadata) = std::fs::symlink_metadata(entry.path()) else {
+                return Some((path, "unreadable"));
+            };
+            if above.contains(path.as_str()) {
+                if !metadata.is_dir() {
+                    return Some((path, "as another kind than its review found"));
+                }
+                pending.push(path);
+                continue;
+            }
+            let Some((size, sha256, exec)) = files.get(path.as_str()) else {
+                return Some((path, "where its review found nothing"));
+            };
+            if !metadata.is_file() {
+                return Some((path, "as another kind than its review found"));
+            }
+            if metadata.len() != *size {
+                return Some((path, "of another size than its review found"));
+            }
+            if runs(&metadata) != *exec {
+                return Some((path, "with another mode than its review found"));
+            }
+            match digested(&entry.path(), *size) {
+                Ok(found) if found == *sha256 => {}
+                Ok(_) => return Some((path, "holding other bytes than its review found")),
+                Err(_) => return Some((path, "unreadable")),
+            }
+            seen += 1;
+        }
+    }
+    if seen == files.len() {
+        return None;
+    }
+    // Every entry found was listed, so what is left is missing.
+    let mut missing: Vec<&str> = files
+        .keys()
+        .copied()
+        .filter(|path| !under(package, path).is_file())
+        .collect();
+    missing.sort_unstable();
+    missing
+        .first()
+        .map(|path| ((*path).to_owned(), "missing, which its review found"))
+}
+
+/// Where the relative `path`, `/` between its parts, is under `root`.
+fn under(root: &Path, path: &str) -> PathBuf {
+    path.split('/')
+        .filter(|part| !part.is_empty())
+        .fold(root.to_path_buf(), |path, part| path.join(part))
+}
+
+/// Whether a file with `metadata` can be run by anyone.
+#[cfg(unix)]
+fn runs(metadata: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt as _;
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+/// No install script is run where there are no modes to compare.
+#[cfg(not(unix))]
+fn runs(_metadata: &std::fs::Metadata) -> bool {
+    false
+}
+
+/// The SHA-256, in lowercase hexadecimal, of the ordinary file at `path`,
+/// read no further than one byte past `size`.
+fn digested(path: &Path, size: u64) -> std::io::Result<String> {
+    use sha2::Digest as _;
+    use std::io::Read as _;
+    let file = crucible_privacy::open_read_ordinary(path).map_err(std::io::Error::other)?;
+    let mut reader = file.take(size.saturating_add(1));
+    let mut digest = sha2::Sha256::new();
+    let mut chunk = vec![0_u8; 1 << 16];
+    loop {
+        let read = match reader.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        digest.update(chunk.get(..read).unwrap_or_default());
+    }
+    Ok(digest
+        .finalize()
+        .iter()
+        .fold(String::with_capacity(64), |mut text, byte| {
+            use std::fmt::Write as _;
+            let _ = write!(text, "{byte:02x}");
+            text
+        }))
 }
 
 /// How long a smoke test waits for the agent's answer to `initialize`.

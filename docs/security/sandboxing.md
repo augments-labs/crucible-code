@@ -467,6 +467,26 @@ more. Unless it answers as its catalog entry reviewed it, nothing is moved
 onto it. Where any of those conditions does not hold, the confirmation says
 the switch is not smoke-tested, and why.
 
+A release's install script that its catalog review marks to run at install runs
+once, after the yes to the install and under the yes about content use for the
+agent's route, as `sh -c` with the command the catalog gives, never one read
+from what was downloaded. Its policy is built for it alone and takes nothing
+from the conversation's: the package directory being staged and a private
+temporary directory are the only places it can write, the staged version is
+readable, and it can reach only the hosts the review named, or none. Its
+environment is `PATH`, with the pinned Node's directory first and then a fixed
+system path; `HOME` and `TMPDIR`, private and removed afterwards, or where the
+backend gives a command its own, as Linux does, that backend's; and npm's
+`npm_lifecycle_event` and `npm_package_*` for that package. Nothing else is
+inherited. When its first process exits, everything it started is stopped, a
+child still running included, and only once that stop is confirmed is the
+package compared with the review's listing: every path, its kind, whether it
+runs, empty directories and its SHA-256. A stop nobody could confirm, a failure
+or a difference refuses the version and removes what was staged. A child is
+stopped, not waited for, so what it had not finished writing is a difference. A
+script runs for at most ten minutes. With the sandbox off, on Windows or on FreeBSD it does not run
+at all, and the install is refused before anything is fetched.
+
 ## Environment and credentials
 
 The command environment is an explicit, bounded map rather than a copy of the
