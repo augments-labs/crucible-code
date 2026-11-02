@@ -1,4 +1,5 @@
 {
+  "most_scripts_shown": 16,
   "cases": [
     {"name": "a build alone", "scripts": [["node_modules/peer", "built"]], "refused": false},
     {"name": "a build beside a script nothing runs", "scripts": [["node_modules/peer", "built"], ["node_modules/peer", "inert"]], "refused": false},

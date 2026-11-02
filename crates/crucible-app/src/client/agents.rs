@@ -2031,13 +2031,10 @@ fn launched(
                 .iter()
                 .filter(|script| matches!(script.disposition, Disposition::Local { .. }))
                 .count();
-            let built = scripts
-                .iter()
-                .filter(|script| matches!(script.disposition, Disposition::Built { .. }))
-                .count();
-            if local.saturating_add(built) > SCRIPTS {
+            if more_scripts_than_shown(scripts) {
                 return Err(AgentsError::Unsupported(
-                    "a release with more install scripts to run at install than a question shows",
+                    "a release with more install scripts run at install and built at review \
+                     together than a question shows",
                 ));
             }
             if local > 0 {
@@ -2434,7 +2431,24 @@ async fn run_scripts(
 }
 
 /// The most install scripts a question names one by one.
-const SCRIPTS: usize = 16;
+pub(super) const SCRIPTS: usize = 16;
+
+/// Whether `scripts` holds more run at install and built at review together
+/// than [`SCRIPTS`]; one a reviewer decided otherwise is not counted.
+/// `tests/fixtures/agent-catalog/overlapping-scripts.json` holds the number,
+/// and this and the catalog intake to it, which publishes no such target.
+pub(super) fn more_scripts_than_shown(scripts: &[Script]) -> bool {
+    scripts
+        .iter()
+        .filter(|script| {
+            matches!(
+                script.disposition,
+                Disposition::Built { .. } | Disposition::Local { .. }
+            )
+        })
+        .count()
+        > SCRIPTS
+}
 
 /// How many packages of `tree` are under each licence its lock gives, those
 /// that give none counted together, the most packages first and then by

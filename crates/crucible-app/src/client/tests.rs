@@ -1194,3 +1194,46 @@ fn a_build_beside_another_script_on_its_directory_is_the_table_the_intake_holds_
         );
     }
 }
+
+/// The door counts what the catalog intake counts, up to the number both are
+/// held to: scripts run at install and built at review, and no other.
+#[test]
+fn a_question_shows_the_number_of_scripts_the_intake_holds_too() {
+    use crucible_external_harnesses::catalog::{AssetRef, Disposition, Script};
+    use serde_json::Value;
+
+    use super::agents::{SCRIPTS, more_scripts_than_shown};
+
+    let table = include_str!("../../../../tests/fixtures/agent-catalog/overlapping-scripts.json");
+    let table: Value = serde_json::from_str(table).expect("the table reads");
+    let most = table.get("most_scripts_shown").and_then(Value::as_u64);
+    assert_eq!(most, u64::try_from(SCRIPTS).ok());
+    let asset = || AssetRef {
+        sha256: "0".repeat(64).into(),
+        size: 2,
+    };
+    let script = |disposition| Script {
+        package: "node_modules/peer".into(),
+        event: "postinstall".into(),
+        disposition,
+    };
+    let local = || Disposition::Local {
+        command: "node setup.js".into(),
+        hosts: Vec::new(),
+        result: asset(),
+    };
+    let mut scripts: Vec<Script> = (0..SCRIPTS).map(|_| script(local())).collect();
+    assert!(!more_scripts_than_shown(&scripts));
+    for decided in [Disposition::Inert, Disposition::Replaced, Disposition::Lost] {
+        scripts.push(script(decided));
+        assert!(!more_scripts_than_shown(&scripts));
+        scripts.pop();
+    }
+    scripts.push(script(Disposition::Built {
+        asset: asset(),
+        files: asset(),
+        unpacked: 2,
+        decompressed: 2,
+    }));
+    assert!(more_scripts_than_shown(&scripts));
+}

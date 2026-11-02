@@ -323,6 +323,9 @@ one inside the other is dropped naming the package, as a client refuses it;
 `render` refuses one too. Nothing merges two builds, so on a platform where
 every script is built a package with two scripts keeps its target only where a
 reviewer decides all of them but one, or the job left nothing of the others.
+A target with more than `SCRIPTS` scripts built or run locally together is
+dropped too, and refused by `render`, as a client refuses it; a script a
+reviewer decided, or nobody has, is not counted.
 
 `pack` writes the package directory `--root` after a build to `--out` as
 `repack` writes a tar.gz, whole or not at all: its names in sorted order,
@@ -663,6 +666,8 @@ DISPOSITIONS = ("inert", "replaced", "lost")
 # the job built, whose output installs in its place, or one the client runs
 # on the user's machine, the job having seen it leave the same files twice.
 CLASSED = ("built", "local")
+# The most of those a client's question names, past which it refuses the release.
+SCRIPTS = 16
 # The words that make a script a build by rule, whatever its runs leave: a
 # compiler, a native-addon builder, a build tool, or a package manager, which
 # can reach a build through another script, so no subcommand of one is taken
@@ -3206,6 +3211,8 @@ def npm_target(
     overlapping = overlapping_build(scripts)
     if overlapping is not None:
         raise Dropped(overlap_said(overlapping))
+    if more_scripts_than_shown(scripts):
+        raise Dropped(MORE_SCRIPTS)
     return {
         "artifacts": [artifact],
         "bin": bin,
@@ -3216,6 +3223,16 @@ def npm_target(
         "platform": platform,
         "scripts": scripts,
     }
+
+
+MORE_SCRIPTS = f"it has more scripts built or run at install together than the {SCRIPTS} a client's question shows, which a client refuses"
+
+
+def more_scripts_than_shown(scripts: list[dict]) -> bool:
+    """Whether `scripts` holds more built or local ones together than `SCRIPTS`,
+    the number `tests/fixtures/agent-catalog/overlapping-scripts.json` holds this
+    and the client's door to."""
+    return sum(script["disposition"] in CLASSED for script in scripts) > SCRIPTS
 
 
 def overlapping_build(scripts: list[dict]) -> str | None:
@@ -4914,6 +4931,8 @@ def npm_checked(entry: dict, target: dict, where: str) -> None:
     overlapping = overlapping_build(target["scripts"])
     if overlapping is not None:
         raise Refused(f"{where}: {overlap_said(overlapping)}")
+    if more_scripts_than_shown(target["scripts"]):
+        raise Refused(f"{where}: {MORE_SCRIPTS}")
 
 
 def rendered(entries: list[dict]) -> list[dict]:

@@ -3013,6 +3013,11 @@ def check_npm_render(scratch: pathlib.Path) -> None:
         ("local-host", lambda t: t["scripts"][0].update(
             disposition="local", command="node x.js", hosts=["no host"], result={"sha256": "0" * 64, "size": 2}
         ), "hosts"),
+        ("many", lambda t: t.update(scripts=[
+            {"package": f"node_modules/{at}", "event": "postinstall", "disposition": "local", "command": "node x.js",
+             "hosts": [], "result": {"sha256": "0" * 64, "size": 2}}
+            for at in range(json.loads(OVERLAPPING.read_text())["most_scripts_shown"] + 1)
+        ]), "more scripts"),
         ("two-builds", lambda t: t.update(scripts=[
             {"package": t["scripts"][0]["package"], "event": event, "disposition": "built",
              "replaced_by": {"sha256": "0" * 64, "size": 2}, "files": {"sha256": "0" * 64, "size": 2},
@@ -3996,9 +4001,34 @@ def builds_review(scratch: pathlib.Path, signers: Signers) -> tuple[dict, pathli
     # one; there it takes a reviewer deciding one of them to keep the target.
     several("twolocal-npm", {pre: setup, post: setup}, {"linux-x86_64": (), "darwin-aarch64": (pre, post)})
     several("onedecided-npm", {pre: setup, post: setup}, {"darwin-aarch64": (post,)})
+
+    # A client's question names every script built or run at install, so a
+    # target with more than it shows is not listed; the agent's own script
+    # counts, one no reviewer's decision or job output classed does not.
+    def crowd(agent_id: str, count: int) -> None:
+        places = [f"node_modules/many-{at}" for at in range(count - 1)]
+        tree = npm_tree(top=top_manifest(scripts={"postinstall": setup}), extra={
+            place: (
+                {"version": "1.0.0", "resolved": f"{NPM}many-{at}/-/many-{at}-1.0.0.tgz", "hasInstallScript": True},
+                {"package.json": manifest(name=f"many-{at}", version="1.0.0", license="MIT", scripts={"postinstall": setup})},
+            )
+            for at, place in enumerate(places)
+        })
+        npm_case(observed, agents, choices, agent_id, tree)
+        same = tree_of(package_files(tree, **{"build__crowd": b"1\n"}))
+        for location in (TOP, *places):
+            lay_out_script(script_place(observed, agent_id, "linux-x86_64", location, "postinstall"), same, same)
+
+    most = json.loads(OVERLAPPING.read_text())["most_scripts_shown"]
+    crowd("crowdfits-npm", most)
+    crowd("crowdover-npm", most + 1)
+    crowd("crowddecided-npm", most + 1)
     registry = written(scratch, "registry.json", {"version": "1.0.0", "agents": agents})
     choices_path = written(scratch, "choices.json", choices)
-    dispositions = decided(scratch, {"onedecided-npm": {f"{TOP} preinstall": "inert"}})
+    dispositions = decided(scratch, {
+        "onedecided-npm": {f"{TOP} preinstall": "inert"},
+        "crowddecided-npm": {"node_modules/many-0 postinstall": "inert"},
+    })
     data, assets = npm_review(
         scratch, signers, registry, choices_path, "--sboms", sboms, "--texts", GATE / "texts", "--dispositions", dispositions,
     )
@@ -4183,6 +4213,30 @@ def check_npm_build_overlap(scratch: pathlib.Path, signers: Signers) -> None:
     for case in json.loads(OVERLAPPING.read_text())["cases"]:
         scripts = [{"package": package, "disposition": disposition} for package, disposition in case["scripts"]]
         assert (module.overlapping_build(scripts) is not None) == case["refused"], case["name"]
+
+
+def check_npm_scripts_shown(scratch: pathlib.Path, signers: Signers) -> None:
+    """A target with more scripts built or run at install than a client's
+    question shows is dropped, as a client refuses it; a script a reviewer
+    decided is not counted, nor is one nobody classed, on the table's number
+    the client's door is held to too."""
+    data, _, _ = builds_review(scratch, signers)
+    module = load_intake()
+    most = json.loads(OVERLAPPING.read_text())["most_scripts_shown"]
+    dropped(data, "crowdover-npm", "linux-x86_64", "more scripts", str(most))
+    assert module.SCRIPTS == most, module.SCRIPTS
+    assert "linux-x86_64" not in built_targets(data, "crowdover")
+    for key, deciding in (("crowdfits", []), ("crowddecided", ["inert"])):
+        scripts = built_targets(data, key)["linux-x86_64"]["scripts"]
+        assert sum(script["disposition"] in module.CLASSED for script in scripts) == most, key
+        assert [s["disposition"] for s in scripts if s["disposition"] in module.DISPOSITIONS] == deciding, key
+    held = [{"package": f"node_modules/{at}", "disposition": "local"} for at in range(most)]
+    assert not module.more_scripts_than_shown(held)
+    built = {"package": "node_modules/over", "disposition": "built"}
+    assert module.more_scripts_than_shown([*held, built])
+    for disposition in (*module.DISPOSITIONS, None):
+        beside = {"package": "node_modules/over", "disposition": disposition}
+        assert not module.more_scripts_than_shown([*held, beside]), disposition
 
 
 def check_npm_build_gated(scratch: pathlib.Path, signers: Signers) -> None:
@@ -4410,6 +4464,7 @@ def main() -> int:
             ("npm build refused", lambda: check_npm_build_refused(scratch, signers)),
             ("npm build gated", lambda: check_npm_build_gated(scratch, signers)),
             ("npm build overlap", lambda: check_npm_build_overlap(scratch, signers)),
+            ("npm scripts shown", lambda: check_npm_scripts_shown(scratch, signers)),
             ("pack", lambda: check_pack(scratch)),
             ("uvx sdist built", lambda: check_uvx_sdist_built(scratch)),
         ]
