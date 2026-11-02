@@ -58,6 +58,7 @@
 //! | connect, no instance named, of a client claiming install | a catalog agent, then install, update or roll back | [`LoginOutcome::AgentChosen`], that move, nothing started, asked of its route or written |
 //! | connect, no instance named, of a client claiming install | a catalog agent, then a sign-in method of its instance | [`LoginOutcome::AgentChosen`], that sign-in, nothing started, asked of its route or written |
 //! | connect, of a client claiming install, the agent read signed out, its instance in the file | a sign-in method | [`LoginOutcome::AgentChosen`], that sign-in, after the route's yes where it was asked and the agent's status read, nothing more |
+//! | connect, no instance named, of a client claiming install, the user file not readable | a catalog agent | said so, no move offered, then [`LoginOutcome::Undecided`] |
 //!
 //! A removal whose write fails after the conversation's run on the instance
 //! was stopped is told that the instance is stopped for this run only: the
@@ -156,7 +157,7 @@ use crucible_client_api::{
     AgentAction, Capability, Command, ErrorCode, LoginOutcome, LogoutOutcome, Name, Outcome,
     Problem, Refusal, Request, Text,
 };
-use crucible_config::{ConfigError, Driver, ExternalAgent};
+use crucible_config::{ConfigError, Driver, ExternalAgent, Home, Settings};
 use crucible_execution::Authentication;
 use crucible_execution::{Admission, Ending, Failure};
 use crucible_external_harnesses::catalog::{AuthMethod, Method, Route, Trust};
@@ -988,7 +989,7 @@ async fn choose(
             })
             .collect();
         let keys = releases.as_ref().map_or_else(Vec::new, |releases| {
-            catalog_rows(desk, releases, &cataloged, &mut choices)
+            catalog_rows(releases, &cataloged, &mut choices)
         });
         choices.push(("Cancel".to_owned(), "Change nothing.".to_owned()));
         let mut facts = vec![
@@ -1007,7 +1008,7 @@ async fn choose(
             // Past the shipping agents, a catalog agent's row, and past those,
             // Cancel.
             let key = keys.get(picked.checked_sub(rows.len())?)?;
-            match manage(desk, front, capabilities, releases.as_ref()?, key).await? {
+            match manage(front, capabilities, releases.as_ref()?, key).await? {
                 Some(action) => return Some(Picked::Moving(action)),
                 None => continue,
             }
@@ -1154,10 +1155,10 @@ fn listed(trust: &Trust) -> (Vec<(AgentKey, Box<str>)>, bool) {
 
 /// Adds to `choices` a row for each catalog agent in `cataloged`, named by
 /// its key and saying the version the catalog offers first, with the note on
-/// the one instance of it configured, where one is; but not one whose name is
-/// a choice already. Answers the agent of each row added, in order.
+/// the one instance of it configured, where one is, or that the instances could
+/// not be read; but not one whose name is a choice already. Answers the agent
+/// of each row added, in order.
 fn catalog_rows<'a>(
-    desk: &Desk<'_>,
     releases: &Releases,
     cataloged: &'a [(AgentKey, Box<str>)],
     choices: &mut Vec<(String, String)>,
@@ -1172,9 +1173,10 @@ fn catalog_rows<'a>(
             "Manage {name}, which the catalog offers at {}.",
             quoted(version)
         );
-        let note = match instances_of(desk, key).as_slice() {
-            [one] => releases.note(key, one.executable()),
-            _ => None,
+        let note = match instances_of(releases, key).as_deref() {
+            Ok([one]) => releases.note(key, one.executable()),
+            Ok(_) => None,
+            Err(_) => Some("Its instances could not be read.".to_owned()),
         };
         choices.push((name, noting(said, note)));
         keys.push(key);
@@ -1182,14 +1184,18 @@ fn catalog_rows<'a>(
     keys
 }
 
-/// The instances the configuration names of the catalog agent `key`.
-fn instances_of(desk: &Desk<'_>, key: &AgentKey) -> Vec<ExternalAgent> {
-    desk.switching
-        .settings
+/// The instances of the catalog agent `key` the user file names now, read as
+/// the agents door reads them, so one the door added while this client ran is
+/// found without a restart.
+fn instances_of(releases: &Releases, key: &AgentKey) -> Result<Vec<ExternalAgent>, ConfigError> {
+    let home = Home::find(&|name| {
+        (name == crucible_config::HOME).then(|| releases.home.clone().into_os_string())
+    })?;
+    Ok(Settings::read_home(&home)?
         .external_agents()
         .into_iter()
         .filter(|one| one.driver() == Driver::Catalog && one.agent() == Some(key))
-        .collect()
+        .collect())
 }
 
 /// Asks `front` what Crucible should do with the catalog agent `key`, which
@@ -1200,11 +1206,12 @@ fn instances_of(desk: &Desk<'_>, key: &AgentKey) -> Vec<ExternalAgent> {
 /// It says which versions crucible's store holds of the agent, that instance
 /// or that there is none, and the instance's note; then offers the moves that
 /// apply, as [`moves`] finds them, a sign-in by each method the agent's entry
-/// gives for a configured instance, and going back. Answers the move chosen,
+/// gives for a configured instance, and going back. Where the user file cannot
+/// be read it says so, in what the door says of it, and offers going back alone,
+/// since the door refuses every move on that same read. Answers the move chosen,
 /// `Some(None)` where the client went back to the list of agents, and nothing
 /// where it cancelled or answered nothing.
 async fn manage(
-    desk: &Desk<'_>,
     front: &mut dyn Front,
     capabilities: crucible_client_api::Capabilities,
     releases: &Releases,
@@ -1212,7 +1219,19 @@ async fn manage(
 ) -> Option<Option<AgentAction>> {
     let shown = quoted(key.as_str());
     let noted = |one: &ExternalAgent| releases.note(key, one.executable());
-    let instance = match among(front, capabilities, &shown, instances_of(desk, key), &noted).await?
+    let read = instances_of(releases, key);
+    let unread = read
+        .as_ref()
+        .err()
+        .map(|unread| quoted(&unread.to_string()));
+    let instance = match among(
+        front,
+        capabilities,
+        &shown,
+        read.unwrap_or_default(),
+        &noted,
+    )
+    .await?
     {
         Configured::One(one) => Some(one),
         Configured::Unconfigured => None,
@@ -1223,12 +1242,19 @@ async fn manage(
         .as_ref()
         .and_then(|one| releases.store.version_of(key, Path::new(one.executable())));
     let mut facts = vec![held(&installed)];
-    facts.push(instance.as_ref().map_or_else(
-        || "No instance of it is configured, so there is nothing to sign in.".to_owned(),
-        |one| format!("Agent: {}, run as {}.", one.name(), one.executable()),
-    ));
+    facts.push(match (&instance, &unread) {
+        (Some(one), _) => format!("Agent: {}, run as {}.", one.name(), one.executable()),
+        (None, Some(unread)) => unread.clone(),
+        (None, None) => {
+            "No instance of it is configured, so there is nothing to sign in.".to_owned()
+        }
+    });
     facts.extend(instance.as_ref().and_then(noted));
-    let mut offered = moves(releases, key, &installed, running.as_ref());
+    let mut offered = if unread.is_some() {
+        Vec::new()
+    } else {
+        moves(releases, key, &installed, running.as_ref())
+    };
     if let Some(one) = &instance {
         let named: Vec<String> = offered.iter().map(|(name, ..)| name.clone()).collect();
         let mut taken: Vec<&str> = named.iter().map(String::as_str).collect();
