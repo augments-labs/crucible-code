@@ -866,12 +866,14 @@ fn a_program_beside_the_pinned_interpreter_is_run_with_the_records_arguments() -
 /// The sign-in reaches the hosts its entry names and nothing else: the sandbox
 /// is asked for those alone, and the command cannot connect to an address that
 /// is open to this machine. Runs where the sandbox holds a program to its
-/// network, as `CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX` makes a job insist;
-/// elsewhere a policy reaches the same hosts by the launcher's own test.
+/// network and can limit it to hosts, as `CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX`
+/// makes a job insist of the first; elsewhere a policy reaches the same hosts by
+/// the launcher's own test, and a sandbox that can only close the network refuses
+/// the command, as the tests after this one prove.
 #[test]
 fn a_command_reaches_only_the_hosts_its_entry_signs_in_at() -> Result<(), Failed> {
     let runtime = runtime()?;
-    if !enforcing(&runtime)? {
+    if !enforcing(&runtime)? || !limits_to_hosts(&runtime) {
         return Ok(());
     }
     let listener = TcpListener::bind(("127.0.0.1", 0))?;
@@ -923,5 +925,192 @@ fn a_command_reaches_only_the_hosts_its_entry_signs_in_at() -> Result<(), Failed
         .map(SandboxDomainPattern::as_str)
         .collect();
     assert_eq!(hosts, ["accounts.vendor.example"]);
+    Ok(())
+}
+
+/// Whether this machine's sandbox can limit a program's network to hosts rather
+/// than only close it.
+fn limits_to_hosts(runtime: &tokio::runtime::Runtime) -> bool {
+    let service = LocalSandbox::new().watching_on(runtime.handle().clone());
+    runtime
+        .block_on(service.probe())
+        .is_ok_and(|(_, capabilities)| {
+            capabilities.claim(SandboxFeature::NetworkAllowlist) == SandboxCapability::Enforced
+        })
+}
+
+/// A sandbox that can close the network and cannot limit it to hosts, as the
+/// Windows one: it keeps what each start asked of it, refuses a grant of hosts
+/// as that one does, and runs anything else as this machine's sandbox does, so
+/// that this runs wherever that one holds a program at all.
+struct ClosingOnly {
+    local: Arc<dyn SandboxService>,
+    prepared: Arc<Mutex<Vec<Prepared>>>,
+}
+
+impl SandboxService for ClosingOnly {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        self.local.probe()
+    }
+
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            let network = request.policy().network().clone();
+            if let Ok(mut prepared) = self.prepared.lock() {
+                prepared.push((network.clone(), None));
+            }
+            if matches!(network, SandboxNetworkPolicy::Domains(_)) {
+                return Err(SandboxError::Unsupported {
+                    feature: SandboxFeature::NetworkAllowlist,
+                });
+            }
+            self.local.prepare(request).await
+        })
+    }
+}
+
+/// Asserts the door, on `sandbox`, refuses `release`'s command for the hosts its
+/// entry names: an error comes back, the person is told nothing, and the last
+/// start asked for, the command's, asked for those hosts.
+fn refused_for_its_hosts(
+    bench: &Bench,
+    release: &Value,
+    (sandbox, prepared): (Arc<dyn SandboxService>, &Mutex<Vec<Prepared>>),
+    runtime: &tokio::runtime::Runtime,
+) -> Result<(), Failed> {
+    let person = Person::default();
+
+    let refused = bench.ask_piped(
+        &mut answering(&bench.server, None),
+        (sandbox, true, true),
+        (release, Some(&person)),
+        runtime,
+    )?;
+
+    assert!(
+        matches!(&refused, Err(AgentsError::Piped(Unpiped::Unlaunched(_)))),
+        "{}",
+        shape(&refused)
+    );
+    assert!(person.told().is_empty(), "the person was told something");
+    let prepared: Vec<Prepared> = prepared.lock().map(|kept| kept.clone()).unwrap_or_default();
+    assert_eq!(prepared.len(), 2, "the agent's read and then the command");
+    let (reach, _) = prepared.get(1).ok_or("the command was not asked for")?;
+    let SandboxNetworkPolicy::Domains(domains) = reach else {
+        return Err("the command was not asked for with its sign-in hosts".into());
+    };
+    assert!(
+        domains
+            .allowed()
+            .iter()
+            .map(SandboxDomainPattern::as_str)
+            .eq(["accounts.vendor.example"]),
+        "the command was asked for with other hosts"
+    );
+    Ok(())
+}
+
+/// A sandbox that can close the network but not limit it to hosts refuses a
+/// command whose entry names hosts: it is neither widened nor run closed.
+#[test]
+fn a_command_whose_entry_names_hosts_is_refused_where_they_cannot_be_held() -> Result<(), Failed> {
+    let runtime = runtime()?;
+    if !enforcing(&runtime)? {
+        return Ok(());
+    }
+    let bench = Bench::new("agents-door-piped-closing-only")?;
+    // One reply to every start, since nothing may write where it is installed.
+    let release = signing_in_by(
+        &bench,
+        &Peer::once(Played::new().hear(1).say(offered(&terminal_method()))),
+    )?;
+    bench.with_installed(&release)?;
+    let prepared: Arc<Mutex<Vec<Prepared>>> = Arc::default();
+    let sandbox = ClosingOnly {
+        local: local_of(&runtime),
+        prepared: Arc::clone(&prepared),
+    };
+
+    refused_for_its_hosts(&bench, &release, (Arc::new(sandbox), &prepared), &runtime)
+}
+
+/// The same refusal from this machine's own sandbox, where it enforces a closed
+/// network and its filesystem rules and cannot limit a network to hosts: Windows
+/// today. Nothing here runs where it can.
+#[test]
+fn a_command_whose_entry_names_hosts_is_refused_by_a_sandbox_that_only_closes() -> Result<(), Failed>
+{
+    let runtime = runtime()?;
+    if !enforcing(&runtime)? || limits_to_hosts(&runtime) {
+        return Ok(());
+    }
+    let bench = Bench::new("agents-door-piped-only-closes")?;
+    // One reply to every start, since nothing may write where it is installed.
+    let release = signing_in_by(
+        &bench,
+        &Peer::once(Played::new().hear(1).say(offered(&terminal_method()))),
+    )?;
+    bench.with_installed(&release)?;
+    let prepared: Arc<Mutex<Vec<Prepared>>> = Arc::default();
+    let sandbox = Recording {
+        local: local_of(&runtime),
+        settings: bench.tree.0.join("nothing"),
+        refusing: false,
+        prepared: Arc::clone(&prepared),
+    };
+
+    refused_for_its_hosts(&bench, &release, (Arc::new(sandbox), &prepared), &runtime)
+}
+
+/// An entry that names no hosts asks for a closed network, which such a sandbox
+/// can hold, so its command is run.
+#[test]
+fn a_command_whose_entry_names_no_hosts_is_run_where_hosts_cannot_be_held() -> Result<(), Failed> {
+    let runtime = runtime()?;
+    if !enforcing(&runtime)? {
+        return Ok(());
+    }
+    let bench = Bench::new("agents-door-piped-no-hosts")?;
+    // One reply to every start, since nothing may write where it is installed.
+    let mut release = signing_in_by(
+        &bench,
+        &Peer::once(Played::new().hear(1).say(offered(&terminal_method()))),
+    )?;
+    release
+        .as_object_mut()
+        .ok_or("a release is an object")?
+        .remove("sign_in_hosts");
+    bench.with_installed(&release)?;
+    let prepared: Arc<Mutex<Vec<Prepared>>> = Arc::default();
+    let sandbox = ClosingOnly {
+        local: local_of(&runtime),
+        prepared: Arc::clone(&prepared),
+    };
+    let person = Person::typing([("", Typing::Line("begin".to_owned()))]);
+
+    // Whether the agent reads as signed in afterwards is another test's.
+    let ran = bench.ask_piped(
+        &mut answering(&bench.server, None),
+        (Arc::new(sandbox), true, true),
+        (&release, Some(&person)),
+        &runtime,
+    )?;
+
+    assert!(
+        !matches!(&ran, Err(AgentsError::Piped(Unpiped::Unlaunched(_)))),
+        "{}",
+        shape(&ran)
+    );
+    assert!(!person.told().is_empty(), "the command said nothing");
+    let prepared: Vec<Prepared> = prepared.lock().map(|kept| kept.clone()).unwrap_or_default();
+    assert!(
+        matches!(prepared.get(1), Some((SandboxNetworkPolicy::Closed, _))),
+        "the command was asked for with more than a closed network"
+    );
     Ok(())
 }

@@ -720,7 +720,10 @@ from the catalog's signed entry, and it is run from the version installed. The
 agent's route is asked about where it has no yes yet, and the agent is then
 read: if what it says of the method now differs from the entry, the sign-in is
 refused and the command is not run. Where the sandbox is on, the command reaches
-only the hosts the entry signs in at, and it has five minutes. Each line it
+only the hosts the entry signs in at, and it has five minutes. On Windows with
+the sandbox on, a command whose entry names hosts is refused and not run, because
+that sandbox can close the network but not limit it to hosts; an entry naming no
+hosts runs with the network closed. Each line it
 writes is shown on standard error, led by `sign-in command | ` so that none reads
 as crucible's own, with what crucible withholds taken out and a note where the
 line was too long, and each line you type goes to it, echoed by your terminal as

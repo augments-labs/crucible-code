@@ -2839,7 +2839,10 @@ impl<'a> Launcher<'a> {
     /// agent, asked now, says the same of the method; and then it runs under the sandbox, for at
     /// most `SIGNING_IN` or until `cancel`, reaching its entry's sign-in
     /// hosts alone, from the directory of the version installed, and it is
-    /// stopped with everything it started however it ends.
+    /// stopped with everything it started however it ends. A sandbox that can
+    /// close the network but not limit it to hosts, as the Windows one, refuses
+    /// a command whose entry names hosts, so it is not run; the network is
+    /// neither widened nor closed for it. An entry naming none runs closed.
     ///
     /// # Errors
     ///
