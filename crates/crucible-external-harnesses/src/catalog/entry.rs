@@ -56,6 +56,9 @@ pub const VERSION_BYTES: usize = 64;
 /// intake bounds every catalog text.
 const COMMAND_BYTES: usize = 4096;
 
+/// The most hosts a script run at install may reach, as the intake lets it.
+const REACHED: usize = 64;
+
 /// One reviewed version of one agent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
@@ -565,7 +568,7 @@ impl Script {
             "built" => Disposition::Built,
             "local" => Disposition::Local {
                 command: fields.command("command")?,
-                hosts: fields.texts("hosts")?,
+                hosts: fields.reached("hosts")?,
                 result: fields.object("result")?.asset(Some(ASSET_BYTES))?,
             },
             _ => {
@@ -1051,6 +1054,20 @@ impl<'a> Fields<'a> {
             .collect()
     }
 
+    /// The hosts a script run at install may reach, each by name or a pattern
+    /// under one: a signed entry widens that no further than review would.
+    fn reached(&self, name: &str) -> Result<Vec<Box<str>>, CatalogError> {
+        let reached = self.each(
+            name,
+            reachable,
+            "is not a host by name or a pattern under one",
+        )?;
+        if reached.len() > REACHED {
+            return Err(self.wrong(name, "names more hosts than a script may reach"));
+        }
+        Ok(reached)
+    }
+
     fn texts(&self, name: &str) -> Result<Vec<Box<str>>, CatalogError> {
         self.each(name, |text| !text.is_empty(), "is empty")
     }
@@ -1106,4 +1123,25 @@ fn checked(variable: &str, field: impl Fn() -> String) -> Result<(), CatalogErro
         });
     }
     Ok(())
+}
+
+/// Whether `pattern` is a host's name of two labels or more and no address, or
+/// `*.` over one, as the intake's rule has it.
+fn reachable(pattern: &str) -> bool {
+    let named = pattern.strip_prefix("*.").unwrap_or(pattern);
+    let label = |label: &str| {
+        (1..=63).contains(&label.len())
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    };
+    named.len() <= 253
+        && named.contains('.')
+        && named.split('.').all(label)
+        && !named
+            .rsplit('.')
+            .next()
+            .is_some_and(|last| last.bytes().all(|byte| byte.is_ascii_digit()))
 }

@@ -903,6 +903,60 @@ fn a_local_script_without_a_command_it_can_show_is_refused() {
     assert!(failures.is_empty(), "{failures:#?}");
 }
 
+/// What a local script may reach is held to the intake's rule where it is
+/// read, so a signed entry cannot widen it to everything or to an address.
+#[test]
+fn a_local_script_reaching_anything_but_a_host_by_name_is_refused() {
+    let host = "entries[2].targets[0].scripts[4].hosts[0]";
+    let at = "/entries/2/targets/0/scripts/4/hosts/0";
+    let cases = [
+        "*",
+        "*.",
+        "*.com",
+        "*.*.example.com",
+        "localhost",
+        "127.0.0.1",
+        "169.254.169.254",
+        "::1",
+        "[::1]",
+        "example.com:80",
+        "https://example.com",
+        "example.com/",
+        "example.com.",
+        "EXAMPLE.com",
+        "-a.example.com",
+        "a-.example.com",
+        "a..example.com",
+    ]
+    .into_iter()
+    .map(|pattern| (host, at.to_owned(), json!(pattern)))
+    .chain([
+        (
+            host,
+            at.to_owned(),
+            json!(format!("{}.com", "a".repeat(64))),
+        ),
+        (
+            host,
+            at.to_owned(),
+            json!(format!("{}com", "a.".repeat(127))),
+        ),
+    ])
+    .collect::<Vec<_>>();
+    let failures = misnamed(cases, None);
+    assert!(failures.is_empty(), "{failures:#?}");
+    let many = vec![json!("a.example.com"); 65];
+    let failures = misnamed(
+        vec![(
+            "entries[2].targets[0].scripts[4].hosts",
+            "/entries/2/targets/0/scripts/4/hosts".to_owned(),
+            json!(many),
+        )],
+        None,
+    );
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
 #[test]
 fn every_path_address_digest_and_word_is_checked_where_it_is_read() {
     let goose = "/entries/0/targets/0/artifacts/0";
