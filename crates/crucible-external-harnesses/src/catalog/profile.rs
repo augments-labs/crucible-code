@@ -49,6 +49,12 @@
 //! names nothing of it, it has no `Display`, no refusal of it repeats it, and
 //! it is taken only where the `state` its query carries is the one the link
 //! carried. Neither is read for fields where it has no `?`.
+//!
+//! A sign-in method run as a command is started with the arguments and variables
+//! its record gives, and none of those of its target
+//! ([`CatalogProfile::sign_in_request`]): it is what was reviewed, and the
+//! target's were reviewed for the agent. What it reaches is
+//! [`CatalogProfile::sign_in_hosts`] alone.
 
 use std::ffi::OsString;
 use std::net::{IpAddr, SocketAddr};
@@ -249,6 +255,13 @@ impl CatalogProfile {
         &self.sign_in
     }
 
+    /// The hosts a sign-in link it prints may open, which are all a sign-in
+    /// run as a command may reach.
+    #[must_use]
+    pub fn sign_in_hosts(&self) -> &[SandboxDomainPattern] {
+        &self.signing.hosts
+    }
+
     /// The hosts it reaches, which its sandbox lets it.
     #[must_use]
     pub fn reach(&self) -> &[SandboxDomainPattern] {
@@ -360,16 +373,43 @@ impl CatalogProfile {
         ambient: impl IntoIterator<Item = (OsString, OsString)>,
         profile: Option<&Path>,
     ) -> Request {
+        self.started(&self.args, &self.env, ambient, profile)
+    }
+
+    /// What a sign-in method run as a command is started with: `arguments` and
+    /// `variables` as its record gives them, in place of those of its target,
+    /// and otherwise as `request` says. A variable a loader reads was
+    /// refused when the catalog was read.
+    #[must_use]
+    pub fn sign_in_request(
+        &self,
+        arguments: &[Box<str>],
+        variables: &[Variable],
+        ambient: impl IntoIterator<Item = (OsString, OsString)>,
+        profile: Option<&Path>,
+    ) -> Request {
+        self.started(arguments, variables, ambient, profile)
+    }
+
+    /// `arguments` and `variables` with what of `ambient` is passed beside
+    /// them, and the profile directory.
+    fn started(
+        &self,
+        arguments: &[Box<str>],
+        variables: &[Variable],
+        ambient: impl IntoIterator<Item = (OsString, OsString)>,
+        profile: Option<&Path>,
+    ) -> Request {
         let held = self.signing.profile_env.as_deref();
-        let set = |name: &str| self.env.iter().any(|variable| named(name, &variable.name));
+        let set = |name: &str| variables.iter().any(|variable| named(name, &variable.name));
         let shell = passed(ambient)
             .into_iter()
             .filter(|(name, _)| !set(name) && !held.is_some_and(|held| named(name, held)))
             .collect();
         let mut request =
-            Request::showing(self.args.iter().map(ToString::to_string).collect(), shell);
+            Request::showing(arguments.iter().map(ToString::to_string).collect(), shell);
         request.environment.extend(
-            self.env
+            variables
                 .iter()
                 .map(|variable| (variable.name.to_string(), variable.value.to_string())),
         );
