@@ -79,7 +79,7 @@ crucible-workspace = { path = "crates/crucible-workspace" }
 # Features are named per crate rather than here, so a crate that needs the
 # executor does not compile the process, network and file integrations that
 # belong to the boundaries owning them; `full` is not used anywhere.
-tokio = { version = "=1.53.3", default-features = false }
+tokio = { version = "=1.54.1", default-features = false }
 
 # Argument parsing. `derive` keeps the CLI surface declared next to the type it
 # produces rather than in a builder chain that drifts from it.
