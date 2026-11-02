@@ -362,6 +362,54 @@ impl Published {
         published
     }
 
+    /// Starts the host, its catalog offering the agent `key` too, whose
+    /// release is the fake peer playing `script` and whose one sign-in method,
+    /// `method`, the catalog records as a command it runs piped. The entry
+    /// names no host and no reach of its own, so a sandbox that can only close
+    /// the network runs it too. Nothing of the program is held back.
+    ///
+    /// `built` is a scratch directory the peer is built into to read it back.
+    pub(crate) fn signing_in_by(
+        key: &str,
+        script: &Script,
+        method: &serde_json::Value,
+        built: &Path,
+    ) -> Self {
+        let installed = fake_peer::install(built, key, script).expect("the fake peer installs");
+        let program = fs::read(&installed).expect("the peer's program");
+        let played = fs::read(built.join("script")).expect("the peer's script");
+        let mut entry = offered(key, OFFERED, &program);
+        let name = installed
+            .file_name()
+            .and_then(OsStr::to_str)
+            .expect("a program name in UTF-8");
+        let target = entry
+            .pointer_mut("/targets/0")
+            .expect("an offer has a target");
+        target["cmd"] = name.into();
+        target["hosts"] = serde_json::json!([]);
+        target["artifacts"] = serde_json::json!([piece(name, &program), piece("script", &played),]);
+        let mut recorded = method.clone();
+        let fields = recorded.as_object_mut().expect("a method is a JSON object");
+        fields.remove("type");
+        fields.insert("kind".to_owned(), "terminal".into());
+        fields.insert("route".to_owned(), "piped".into());
+        let fields = entry.as_object_mut().expect("an offer is an object");
+        fields.insert("auth_methods".to_owned(), serde_json::json!([recorded]));
+        fields.insert(
+            "content_use".to_owned(),
+            serde_json::json!({
+                "text": "The vendor may use what you send to improve goose.",
+                "source": "https://vendor.example/terms/data",
+                "date": "24 Oct 2026",
+                "origins": ["https://api.vendor.example"],
+            }),
+        );
+        let published = Self::serving_beside(vec![(entry, program)], vec![played]);
+        published.release();
+        published
+    }
+
     /// How many requests the host has been sent.
     pub(crate) fn asked(&self) -> usize {
         self.asked.load(Ordering::Acquire)
@@ -370,6 +418,12 @@ impl Published {
     /// Starts the host, its catalog offering Antigravity and then each of
     /// `more`, an entry beside the program it names.
     fn serving(more: Vec<(serde_json::Value, Vec<u8>)>) -> Self {
+        Self::serving_beside(more, Vec::new())
+    }
+
+    /// [`Published::serving`], with each of `beside` kept on the host too, a
+    /// file of a release that no entry is led by.
+    fn serving_beside(more: Vec<(serde_json::Value, Vec<u8>)>, beside: Vec<Vec<u8>>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("a port on this machine");
         let port = listener.local_addr().expect("its address").port();
         let program = released(b"agy-acp-server, as reviewed\n");
@@ -404,7 +458,9 @@ impl Published {
             .chain(
                 offers
                     .into_iter()
-                    .map(|(_, program)| (format!("/catalog/{}", digest(&program)), program)),
+                    .map(|(_, program)| program)
+                    .chain(beside)
+                    .map(|program| (format!("/catalog/{}", digest(&program)), program)),
             )
             .collect(),
         );
@@ -623,6 +679,22 @@ fn offered(key: &str, version: &str, program: &[u8]) -> serde_json::Value {
                 "replaced_by": {"sha256": digest(program), "size": program.len()}
             }]
         }]
+    })
+}
+
+/// One file of a release as a catalog entry lists it: named `path`, holding
+/// `bytes`, kept on the catalog's own host and fetched from there by its
+/// digest.
+fn piece(path: &str, bytes: &[u8]) -> serde_json::Value {
+    serde_json::json!({
+        "url": format!("https://downloads.example.com/{path}"),
+        "sha256": "a".repeat(64),
+        "size": bytes.len(),
+        "format": "bare",
+        "unpacked": bytes.len(),
+        "decompressed": bytes.len(),
+        "files": [{"path": path, "size": bytes.len(), "sha256": digest(bytes), "exec": true}],
+        "replaced_by": {"sha256": digest(bytes), "size": bytes.len()}
     })
 }
 
