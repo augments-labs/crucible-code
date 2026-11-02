@@ -950,6 +950,12 @@ fn goose_row() -> Result<CatalogRow, Failed> {
             "kind": "binary",
             "license": "Apache-2.0",
             "review": "https://example.com/review/1",
+            "content_use": {
+                "text": "The vendor may use what you send.",
+                "source": "https://vendor.example/terms",
+                "date": "24 Oct 2026",
+                "origins": ["https://api.vendor.example"],
+            },
             "admits": {"name": "goose", "version": "1.4.1"},
             "targets": [{
                 "platform": "any",

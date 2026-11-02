@@ -243,7 +243,7 @@ use tokio::runtime::Handle;
 use super::accounts;
 use super::deciding::{self, Confirmation, Front, Shown, mint, turned_away};
 use crate::agent_download::{self, DownloadError, Landing};
-use crate::backends::{AgentRow, CatalogRow, REGISTRY};
+use crate::backends::{AgentRow, CatalogRow, REGISTRY, Unbelieved, believed_row, kept_word};
 use crate::catalog_fetch::{self, FetchError, Source, Trigger};
 use crate::content_use::{self, Consent, agent_route};
 use crate::launching::{
@@ -801,18 +801,15 @@ struct Door<'a> {
 }
 
 impl Door<'_> {
-    /// The agents offered, but those whose key is a word a built-in driver is
-    /// spelled with: the entry that backs a built-in is that driver's, and is
-    /// no catalog row.
+    /// The agents offered, but those whose key is a word a built-in driver or
+    /// the native runner is spelled with: the entry that backs a built-in is
+    /// that driver's, and is no catalog row.
     fn listing(&self, unrefreshed: Option<FetchError>) -> Outcome {
         let mut agents: Vec<Listed> = Vec::new();
         let mut more = false;
         for offer in self.trust.offers(None) {
             let key = &offer.entry.key;
-            if Driver::ALL
-                .iter()
-                .any(|driver| driver.name() == key.as_str())
-            {
+            if kept_word(key.as_str()) {
                 continue;
             }
             if let Some(listed) = agents.iter_mut().find(|listed| listed.agent == *key) {
@@ -2068,8 +2065,7 @@ fn borrowed(consent: &Consent, offer: &Offer) -> Option<String> {
 }
 
 /// The row the configured `instance` runs as and its agent's name: a catalog
-/// agent's row made from the entry `trust` offers for the release it runs in
-/// `store`, or else the newest offered, and Antigravity's built in.
+/// agent's row as [`believed_row`] makes it, and Antigravity's built in.
 fn signing_row(
     trust: &Trust,
     store: &Store,
@@ -2080,19 +2076,28 @@ fn signing_row(
             let key = instance
                 .agent()
                 .ok_or_else(|| AgentsError::Unsigned(quoted(instance.name()).into()))?;
-            let offers = trust.offers(Some(key));
-            let running = store.version_of(key, Path::new(instance.executable()));
-            let offer = offers
-                .iter()
-                .find(|offer| {
-                    running.as_ref().is_some_and(|version| {
-                        version.version() == &*offer.pin.version
-                            && version.lock_revision() == offer.pin.lock_revision
-                    })
-                })
-                .or_else(|| offers.first())
-                .ok_or_else(|| AgentsError::Unlisted(key.clone()))?;
-            AgentRow::Catalog(CatalogRow::new(&offer.entry, &offer.pin.target)?)
+            match believed_row(trust, store, key, Path::new(instance.executable())) {
+                Ok(row) => AgentRow::Catalog(row),
+                Err(Unbelieved::NoCatalog { key }) => return Err(AgentsError::Unlisted(key)),
+                Err(Unbelieved::Unprofiled { why, .. }) => return Err(why.into()),
+                // Where it is signed in is what the agent decides, whichever
+                // release it is: one the user runs, or the catalog has moved
+                // past, signs in as the release an update would install, and
+                // a run of it is refused or not as a run is.
+                Err(
+                    Unbelieved::NotInstalled { .. }
+                    | Unbelieved::Unreceipted { .. }
+                    | Unbelieved::Elsewhere { .. }
+                    | Unbelieved::Unoffered { .. },
+                ) => {
+                    let offers = trust.offers(Some(key));
+                    let offer = offers
+                        .first()
+                        .ok_or_else(|| AgentsError::Unlisted(key.clone()))?;
+                    AgentRow::Catalog(CatalogRow::new(&offer.entry, &offer.pin.target)?)
+                }
+                Err(why) => return Err(Unlaunched::from(why).into()),
+            }
         }
         Driver::Antigravity => REGISTRY
             .built(Driver::Antigravity)

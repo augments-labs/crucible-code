@@ -88,6 +88,44 @@ each time it is shown, so an instance added while crucible runs is found without
 a restart. Where that file cannot be read, the row and its screen say so and
 offer only *Go back*.
 
+Where an instance runs a version in crucible's store, the same screen offers
+*Connect*, which moves the conversation onto the agent in a new session. An
+agent you added with [`/agents`](#agents) is connected to and spoken with this
+way. Its route is put to you first, with the vendor's statement of content use
+the catalog carries, and nothing of the agent's starts before your yes. It
+reaches no provider of crucible's, so no provider's `access` is written, and
+a session on it is resumed by `--continue` and `/resume` under the same question
+if the route has no yes.
+
+What crucible runs is the release the catalog crucible most lately believed
+offers at the version the instance's `executable` names. It is read from the
+store and the trust state on this machine each time, so starting crucible, or
+resuming a session on the agent, fetches nothing and never holds up the prompt.
+Where it cannot be run the agent is refused before anything starts, with what to
+do:
+
+- A version the catalog has revoked says so, with the catalog's reason where it
+  gives one: run `crucible agents update <key>`.
+- A version the catalog no longer offers says so: run
+  `crucible agents update <key>`.
+- A catalog that was never fetched, has expired or offers no such agent says so:
+  run `crucible agents search`, which fetches it.
+- A trust state that cannot be read says which file and why: repair or remove
+  that file.
+- A program that is not in crucible's store, or is not the one the entry names at
+  that version: run `crucible agents install <key>`.
+- A version in the store with no record of being installed: run
+  `crucible agents remove <key>`, then `crucible agents install <key>`.
+- An entry crucible cannot read the launch of says why: run
+  `crucible agents update <key>`.
+- A key spelling a built-in driver's word, or `native`, is kept for what is built
+  in, so no catalog agent runs under it: run `crucible agents remove <key>` and
+  choose another agent.
+- An entry with no statement of content use says so, since there is nothing to
+  ask you, and an installed update cannot change it until the catalog does.
+- An agent past the number of catalog routes a run can hold is refused as a route
+  this build does not know.
+
 `/logout` lists each agent named under `externalAgents` after the stored
 credentials, as an external agent instance, and `/logout <name>` takes one
 directly. Taking one offers *Connect*, which reaches the agent's own provider

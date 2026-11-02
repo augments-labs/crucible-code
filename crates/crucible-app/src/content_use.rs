@@ -22,9 +22,9 @@
 //! the page and the day, owned, built for the route of its key and learned by
 //! the [`Consent`] of the run beside [`WARNED`], which keeps the built-in
 //! agents, when a row of the verified catalog is built for a launch, a sign-in
-//! or a question about one. A shipped build builds such a row at the agents
-//! door alone: its registry lists none, so a conversation does not start on
-//! one. Learning gives no yes. A route the consent cannot
+//! or a question about one. A shipped build's registry lists none, so it builds
+//! such a row for each of those, the agents door and a conversation alike.
+//! Learning gives no yes. A route the consent cannot
 //! hold, past [`CATALOGED`] or restating one it warns about, is never launched,
 //! and neither is an entry with no statement, or one too long to be shown whole
 //! ([`STATEMENT_BYTES`]), which gives no hold. A

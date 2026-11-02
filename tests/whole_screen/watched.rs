@@ -294,6 +294,8 @@ pub(crate) struct Published {
     released: Arc<AtomicBool>,
     /// Whether the case is over, which ends every answer and the listener.
     done: Arc<AtomicBool>,
+    /// How many requests it has been sent, whatever they asked for.
+    asked: Arc<AtomicUsize>,
 }
 
 impl Published {
@@ -307,6 +309,56 @@ impl Published {
     pub(crate) fn offering(key: &str) -> Self {
         let program = released(format!("{key}, as reviewed\n").as_bytes());
         Self::serving(vec![(offered(key, OFFERED, &program), program)])
+    }
+
+    /// Starts the host, its catalog offering goose at [`OFFERED`] as the
+    /// fake peer installed at `program`: that program and the `script` beside
+    /// it, each kept on this host, and the vendor's statement of content use
+    /// where `stating`.
+    pub(crate) fn peer(program: &Path, stating: bool) -> Self {
+        let bytes = fs::read(program).expect("the fake peer's program");
+        let script = fs::read(program.with_file_name("script")).expect("the fake peer's script");
+        let command = format!("goose{}", std::env::consts::EXE_SUFFIX);
+        let mut entry = offered("goose", OFFERED, &bytes);
+        let artifact = |path: &str, bytes: &[u8]| {
+            serde_json::json!({
+                "url": format!("https://downloads.example.com/{path}"),
+                "sha256": "a".repeat(64),
+                "size": bytes.len(),
+                "format": "bare",
+                "unpacked": bytes.len(),
+                "decompressed": bytes.len(),
+                "files": [{
+                    "path": path,
+                    "size": bytes.len(),
+                    "sha256": digest(bytes),
+                    "exec": true
+                }],
+                "replaced_by": {"sha256": digest(bytes), "size": bytes.len()}
+            })
+        };
+        let target = entry
+            .pointer_mut("/targets/0")
+            .expect("an offer has a target");
+        target["cmd"] = serde_json::json!(command);
+        target["artifacts"] =
+            serde_json::json!([artifact(&command, &bytes), artifact("script", &script)]);
+        if stating {
+            entry["content_use"] = serde_json::json!({
+                "text": "The vendor may use what you send to improve goose.",
+                "source": "https://vendor.example/terms/data",
+                "date": "24 Oct 2026",
+                "origins": ["https://api.vendor.example"],
+            });
+        }
+        let published = Self::serving(vec![(entry, bytes), (serde_json::Value::Null, script)]);
+        published.release();
+        published
+    }
+
+    /// How many requests the host has been sent.
+    pub(crate) fn asked(&self) -> usize {
+        self.asked.load(Ordering::Acquire)
     }
 
     /// Starts the host, its catalog offering Antigravity and then each of
@@ -328,7 +380,11 @@ impl Published {
         let catalog = serde_json::json!({
             "schema": 1,
             "serial": SNAPSHOT.serial() + 1,
-            "entries": offers.iter().map(|(entry, _)| entry).collect::<Vec<_>>(),
+            "entries": offers
+                .iter()
+                .map(|(entry, _)| entry)
+                .filter(|entry| !entry.is_null())
+                .collect::<Vec<_>>(),
             "revoked": [],
         });
         let signed = signed(&serde_json::to_vec(&catalog).expect("a catalog in JSON"));
@@ -348,12 +404,15 @@ impl Published {
         );
         let released = Arc::new(AtomicBool::new(false));
         let done = Arc::new(AtomicBool::new(false));
-        let (releasing, finishing) = (Arc::clone(&released), Arc::clone(&done));
+        let asked = Arc::new(AtomicUsize::new(0));
+        let (releasing, finishing, counting) =
+            (Arc::clone(&released), Arc::clone(&done), Arc::clone(&asked));
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
                 if finishing.load(Ordering::Acquire) {
                     break;
                 }
+                counting.fetch_add(1, Ordering::AcqRel);
                 let (routes, released, done) = (
                     Arc::clone(&routes),
                     Arc::clone(&releasing),
@@ -367,6 +426,7 @@ impl Published {
             key,
             released,
             done,
+            asked,
         }
     }
 
@@ -601,6 +661,9 @@ struct TerminalFixture<'a> {
     /// Whether the far side starts in the mode a new terminal opens in,
     /// echoing and reading whole lines, rather than raw.
     cooked: bool,
+    /// Whether the agents this build can start are the ones it ships, with no
+    /// list of a test's in their place.
+    shipped: bool,
 }
 
 impl TerminalFixture<'_> {
@@ -646,6 +709,7 @@ impl Watched {
                 native: false,
                 profile: Profile::default(),
                 cooked: false,
+                shipped: false,
             },
             None,
         )
@@ -710,6 +774,7 @@ impl Watched {
                 native: false,
                 profile: Profile::default(),
                 cooked: false,
+                shipped: false,
             },
             Some(&Launch {
                 env: &offered,
@@ -807,6 +872,7 @@ impl Watched {
                 native,
                 profile: Profile::default(),
                 cooked: false,
+                shipped: false,
             },
             Some(&Launch {
                 env: &[
@@ -839,6 +905,7 @@ impl Watched {
                 native: false,
                 profile,
                 cooked: false,
+                shipped: false,
             },
             None,
         )
@@ -885,6 +952,7 @@ impl Watched {
                 native: true,
                 profile,
                 cooked: false,
+                shipped: false,
             },
             None,
         )
@@ -1002,6 +1070,7 @@ impl Watched {
                 native: screen == "native",
                 profile: Profile::default(),
                 cooked: false,
+                shipped: false,
             },
             None,
         )
@@ -1102,6 +1171,7 @@ impl Watched {
                 native: false,
                 profile: Profile::default(),
                 cooked: true,
+                shipped: false,
             },
             None,
         )
@@ -1131,8 +1201,40 @@ impl Watched {
                 native: false,
                 profile: Profile::default(),
                 cooked: false,
+                shipped: false,
             },
             None,
+        )
+    }
+
+    /// Starts crucible with `document` and `args` on the registry that ships,
+    /// its catalog of agents the one `published` serves.
+    pub(crate) fn shipped(
+        case: &str,
+        (columns, rows): (u16, u16),
+        (document, args): (&str, &[&str]),
+        published: &Published,
+    ) -> Self {
+        let named = published.named();
+        Self::configured_with_terminal(
+            case,
+            document,
+            false,
+            &TerminalFixture {
+                columns,
+                rows,
+                reply: None,
+                native: false,
+                profile: Profile::default(),
+                cooked: false,
+                shipped: true,
+            },
+            Some(&Launch {
+                document,
+                env: &[("CRUCIBLE_CODE_PROOF_CATALOG", &named)],
+                args,
+                home: None,
+            }),
         )
     }
 
@@ -1149,6 +1251,7 @@ impl Watched {
                 native: false,
                 profile: Profile::default(),
                 cooked: false,
+                shipped: false,
             },
             Some(launch),
         )
@@ -2110,7 +2213,7 @@ fn start(
         // No installed agent is offered unless the case asks for one, so a
         // screen drawn before agents shipped is drawn the same whatever this
         // release ships.
-        .env("CRUCIBLE_CODE_PROOF_REGISTRY", "empty")
+        .envs((!terminal.shipped).then_some(("CRUCIBLE_CODE_PROOF_REGISTRY", "empty")))
         .envs(keyed.then_some(("ANTHROPIC_API_KEY", "not-a-key-and-nothing-reads-it")))
         .envs(launch.map(|launch| launch.env).unwrap_or_default().iter().copied())
         .args(launch.map(|launch| launch.args).unwrap_or_default())
