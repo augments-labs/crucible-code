@@ -16,7 +16,8 @@
 //! the environment it is given and must leave its package as its review
 //! listed it; one that cannot be so run, or was built at review, is refused
 //! before anything is fetched. A test that needs the sandbox to enforce says
-//! so and skips where this machine's does not.
+//! so and skips where this machine's does not; one that needs a script run, or
+//! the question before one, says so and skips anywhere but Linux.
 //!
 //! The registry here is the fake host's `registry/`, which a test build alone
 //! fetches a registry address from, and only for a catalog on this machine.
@@ -689,10 +690,25 @@ fn local(name: &str, command: &str, result: &[u8]) -> Result<(Bench, Value), Fai
     Ok((bench, release))
 }
 
+/// Whether this platform runs an install script at install at all; where it
+/// does not, the release is refused before the question, and the test that
+/// needs that question says so.
+#[allow(clippy::print_stderr)]
+fn scripts_run_here(test: &str) -> bool {
+    let run = cfg!(target_os = "linux");
+    if !run {
+        eprintln!("{test}: skipped, as install scripts run on Linux alone");
+    }
+    run
+}
+
 /// Whether this machine's sandbox can hold an install script in; where it
 /// cannot, the test that needs it says so and passes over nothing.
 #[allow(clippy::print_stderr)]
 fn sandboxed(runtime: &tokio::runtime::Runtime, test: &str) -> Result<bool, Failed> {
+    if !scripts_run_here(test) {
+        return Ok(false);
+    }
     let enforced = super::enforcing(runtime)?;
     if !enforced {
         eprintln!("{test}: skipped, as this machine's sandbox does not enforce its rules");
@@ -746,6 +762,11 @@ fn a_release_whose_install_script_was_built_at_review_is_refused_before_anything
 #[test]
 fn a_release_whose_install_script_runs_at_install_is_refused_without_a_conversation()
 -> Result<(), Failed> {
+    if !scripts_run_here(
+        "a_release_whose_install_script_runs_at_install_is_refused_without_a_conversation",
+    ) {
+        return Ok(());
+    }
     let (bench, _) = local("agents-door-npm-unlent", "true", &listing(&[]))?;
     let before = fs::read(bench.user())?;
     let mut front = answering(&bench.server, Some("Install"));
@@ -792,6 +813,9 @@ fn a_release_whose_install_script_runs_at_install_is_refused_with_the_sandbox_of
 /// one to run is asked about, and a no runs nothing and moves nothing.
 #[test]
 fn under_reviewed_an_update_with_an_install_script_to_run_is_still_asked() -> Result<(), Failed> {
+    if !scripts_run_here("under_reviewed_an_update_with_an_install_script_to_run_is_still_asked") {
+        return Ok(());
+    }
     let runtime = super::runtime()?;
     let bench = Bench::new("agents-door-npm-reviewed")?;
     bench.configure(
@@ -861,6 +885,226 @@ fn under_reviewed_an_update_with_an_install_script_to_run_is_still_asked() -> Re
         bench.executable()?,
         bench.program("1.0.0").to_string_lossy()
     );
+    Ok(())
+}
+
+/// The release [`local`] gives, with `count` install scripts, each its own
+/// command, all of them to run at install.
+fn with_scripts(bench: &Bench, mut release: Value, count: usize) -> Result<Value, Failed> {
+    let result = listing(&[]);
+    let scripts: Vec<Value> = (0..count)
+        .map(|at| {
+            json!({
+                "package": "node_modules/peer",
+                "event": "postinstall",
+                "disposition": "local",
+                "command": format!("command number {at}."),
+                "hosts": [format!("host{at}.example.com")],
+                "result": {"sha256": digest(&result), "size": result.len()},
+            })
+        })
+        .collect();
+    set(&mut release, "/targets/0/scripts", json!(scripts));
+    bench
+        .server
+        .catalog(2, std::slice::from_ref(&release), &json!([]))?;
+    Ok(release)
+}
+
+/// A yes covers only what was shown, so a release with more scripts to run
+/// than a question names is not offered that yes.
+#[test]
+fn a_release_with_more_install_scripts_than_a_question_shows_is_refused_before_anything_is_fetched()
+-> Result<(), Failed> {
+    let runtime = super::runtime()?;
+    let (bench, release) = local("agents-door-npm-many", "true", &listing(&[]))?;
+    let release = with_scripts(&bench, release, 17)?;
+    let before = fs::read(bench.user())?;
+    let mut front = answering(&bench.server, Some("Install"));
+
+    let outcome = bench.ask_smoking(
+        (install("1.0.0")?, &mut front),
+        (true, true),
+        &release,
+        &runtime,
+    )?;
+
+    assert!(
+        matches!(&outcome, Err(AgentsError::Unsupported(why)) if why.contains("more install scripts")),
+        "{}",
+        shape(&outcome)
+    );
+    assert!(front.put.is_empty());
+    assert_eq!(bench.server.asked(), CATALOG);
+    unchanged(&bench, &before, "too many scripts")
+}
+
+/// The most a question shows are each shown, with its own command and hosts.
+#[test]
+fn every_install_script_of_the_most_a_question_shows_is_named_with_its_hosts() -> Result<(), Failed>
+{
+    if !scripts_run_here(
+        "every_install_script_of_the_most_a_question_shows_is_named_with_its_hosts",
+    ) {
+        return Ok(());
+    }
+    let runtime = super::runtime()?;
+    let (bench, release) = local("agents-door-npm-sixteen", "true", &listing(&[]))?;
+    let release = with_scripts(&bench, release, 16)?;
+    let mut front = answering(&bench.server, Some("Cancel"));
+
+    let outcome = bench.ask_smoking(
+        (install("1.0.0")?, &mut front),
+        (true, true),
+        &release,
+        &runtime,
+    )?;
+
+    assert!(
+        matches!(&outcome, Ok(Outcome::Undecided)),
+        "{}",
+        shape(&outcome)
+    );
+    let [(Pending::Install { facts, .. }, _)] = front.put.as_slice() else {
+        return Err(format!("asked {}", front.put.len()).into());
+    };
+    for at in 0..16 {
+        let (command, host) = (
+            format!("command number {at}."),
+            format!("host{at}.example.com"),
+        );
+        assert!(
+            facts.iter().any(|fact| {
+                let fact = fact.as_str();
+                fact.contains(&command) && fact.contains(&host)
+            }),
+            "script {at} is named"
+        );
+    }
+    assert!(
+        !facts
+            .iter()
+            .any(|fact| fact.as_str().contains("more install scripts")),
+        "nothing is summed up"
+    );
+    Ok(())
+}
+
+/// A command is delimited, so nothing at its end can read as the sentence's
+/// own clause about what it reaches.
+#[test]
+fn an_install_scripts_command_cannot_read_as_the_question_s_own_words() -> Result<(), Failed> {
+    if !scripts_run_here("an_install_scripts_command_cannot_read_as_the_question_s_own_words") {
+        return Ok(());
+    }
+    let runtime = super::runtime()?;
+    let (bench, mut release) = local(
+        "agents-door-npm-delimited",
+        r#"printf "a\b", reaching no host"#,
+        &listing(&[]),
+    )?;
+    set(
+        &mut release,
+        "/targets/0/scripts/0/hosts",
+        json!(["downloads.example.com"]),
+    );
+    bench
+        .server
+        .catalog(2, std::slice::from_ref(&release), &json!([]))?;
+    let mut front = answering(&bench.server, Some("Cancel"));
+
+    bench
+        .ask_smoking(
+            (install("1.0.0")?, &mut front),
+            (true, true),
+            &release,
+            &runtime,
+        )?
+        .map_err(|why| format!("{why}"))?;
+
+    let [(Pending::Install { facts, .. }, _)] = front.put.as_slice() else {
+        return Err(format!("asked {}", front.put.len()).into());
+    };
+    let told = r#"sh -c "printf \"a\\b\", reaching no host", reaching "#;
+    assert!(
+        facts.iter().any(|fact| fact.as_str().contains(told)),
+        "the command is delimited"
+    );
+    Ok(())
+}
+
+/// A mode a script leaves does not keep what it left from being removed.
+#[test]
+fn an_install_script_leaving_a_closed_directory_refuses_and_leaves_no_staging() -> Result<(), Failed>
+{
+    let runtime = super::runtime()?;
+    if !sandboxed(
+        &runtime,
+        "an_install_script_leaving_a_closed_directory_refuses_and_leaves_no_staging",
+    )? {
+        return Ok(());
+    }
+    let (bench, release) = local(
+        "agents-door-npm-closed",
+        "mkdir -p left/inner && chmod 000 left/inner left",
+        &listing(&[]),
+    )?;
+    let before = fs::read(bench.user())?;
+
+    let outcome = installed_in_sandbox(&bench, &release, &runtime)?;
+
+    assert!(
+        matches!(&outcome, Err(AgentsError::Script { .. })),
+        "{}",
+        shape(&outcome)
+    );
+    unchanged(&bench, &before, "a closed directory")
+}
+
+/// On macOS nothing could prove a script's every process stopped, so one is
+/// not run there, with the sandbox on and a conversation lending it.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_release_whose_install_script_runs_at_install_is_refused_on_macos() -> Result<(), Failed> {
+    let runtime = super::runtime()?;
+    let (bench, release) = local("agents-door-npm-macos", "true", &listing(&[]))?;
+    let before = fs::read(bench.user())?;
+    let mut front = answering(&bench.server, Some("Install"));
+
+    let outcome = bench.ask_smoking(
+        (install("1.0.0")?, &mut front),
+        (true, true),
+        &release,
+        &runtime,
+    )?;
+
+    assert!(
+        matches!(&outcome, Err(AgentsError::Unsupported(why)) if why.contains("platform")),
+        "{}",
+        shape(&outcome)
+    );
+    assert!(front.put.is_empty());
+    assert_eq!(bench.server.asked(), CATALOG);
+    unchanged(&bench, &before, "macOS")
+}
+
+/// From a command line too, macOS is told it is the platform, and not to try
+/// from a conversation.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_release_whose_install_script_runs_at_install_says_macos_from_a_command_line()
+-> Result<(), Failed> {
+    let (bench, _) = local("agents-door-npm-macos-unlent", "true", &listing(&[]))?;
+    let mut front = answering(&bench.server, Some("Install"));
+
+    let (outcome, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+
+    assert!(
+        matches!(&outcome, Err(AgentsError::Unsupported(why)) if why.contains("platform")),
+        "{}",
+        shape(&outcome)
+    );
+    assert_eq!(bench.server.asked(), CATALOG);
     Ok(())
 }
 

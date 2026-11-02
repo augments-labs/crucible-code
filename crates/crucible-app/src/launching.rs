@@ -237,7 +237,9 @@
 //! An install script of a catalog release is the one thing started here that
 //! is not an agent: `Launcher::script` runs it once, while the version it
 //! belongs to is staged, under the hold of its agent's route, and only where
-//! the sandbox is on, on a platform whose sandbox holds it in. Its policy is
+//! the sandbox is on, on Linux alone: only there does a PID namespace let a
+//! stop reach everything it started, so only there can its result be trusted
+//! after the comparison. Its policy is
 //! `install_policy`'s and no other's: nothing of the conversation's roots
 //! or domains is in it. It runs the catalog's command, never one read from
 //! what was staged, and answers to the listing its review left, compared only
@@ -3265,17 +3267,71 @@ impl Drop for Private {
     }
 }
 
+/// Whether an install script runs on `os`, as [`std::env::consts::OS`] names
+/// it: only Linux, whose PID namespace lets a stop reach everything a script
+/// started, however it hid. So what it left can be compared and trusted.
+fn scripts_run_on(os: &str) -> bool {
+    os == "linux"
+}
+
+/// Why no install script runs on this platform, whatever a conversation
+/// lends; nothing where one can.
+#[must_use]
+pub(crate) fn unscripted_platform() -> Option<&'static str> {
+    (!scripts_run_on(std::env::consts::OS)).then_some(
+        "a release whose install script runs in the sandbox, on a platform where this build \
+         runs none: only Linux can prove every process it started has stopped",
+    )
+}
+
+/// Gives each directory under `roots` back to its owner, read, write and enter
+/// alike, so what a stopped script closed can be removed. Best effort: at most
+/// [`REOPENED`] entries are looked at, and what is not reopened fails its
+/// removal. A link is never followed: nothing is left to swap one in on Linux,
+/// the one platform a script runs on, once the namespace it ran in is gone.
+#[cfg(unix)]
+fn reopened(roots: &[&Path]) {
+    use std::os::unix::fs::PermissionsExt as _;
+    let mut pending: Vec<PathBuf> = roots.iter().map(|root| root.to_path_buf()).collect();
+    let mut left = REOPENED;
+    while let Some(directory) = pending.pop() {
+        let Ok(found) = std::fs::symlink_metadata(&directory) else {
+            continue;
+        };
+        if !found.is_dir() {
+            continue;
+        }
+        let mode = found.permissions().mode() & 0o7777;
+        if mode & 0o700 != 0o700 {
+            let opened = std::fs::Permissions::from_mode(mode | 0o700);
+            let _ = std::fs::set_permissions(&directory, opened);
+        }
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Some(less) = left.checked_sub(1) else {
+                return;
+            };
+            left = less;
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                pending.push(entry.path());
+            }
+        }
+    }
+}
+
+/// The most entries of a stopped script's directories [`reopened`] looks at.
+#[cfg(unix)]
+const REOPENED: usize = 1 << 16;
+
 impl Launcher<'_> {
     /// Why an install script run at install would not be run here; nothing
-    /// where it would be, which is only where the sandbox is on, on a
-    /// platform whose sandbox holds it in.
+    /// where it would be, which is only where the sandbox is on, on Linux.
     #[must_use]
     pub(crate) fn unscriptable(&self) -> Option<&'static str> {
-        if cfg!(any(windows, target_os = "freebsd")) {
-            Some(
-                "a release whose install script runs in the sandbox, on a platform whose sandbox \
-                 this build does not run one in",
-            )
+        if let Some(why) = unscripted_platform() {
+            Some(why)
         } else if !self.conversation.enabled() {
             Some("a release whose install script runs in the sandbox, with the sandbox off")
         } else {
@@ -3373,21 +3429,42 @@ impl Launcher<'_> {
         for drain in &drains {
             drain.abort();
         }
-        stopped.map_err(Unscripted::Unstopped)?;
-        match ended {
-            Err(_) => return Err(Unscripted::Overran(SCRIPTING)),
-            Ok(Err(why)) => return Err(Unscripted::Unwatched(why)),
-            Ok(Ok(status)) if !status.success() => return Err(Unscripted::Failed(status)),
-            Ok(Ok(_)) => {}
-        }
-        private.removed().map_err(Unscripted::Private)?;
-        match differs(&package, run.result) {
-            Some((path, why)) => Err(Unscripted::Differs {
-                path: quoted(&path),
-                why,
-            }),
-            None => Ok(()),
-        }
+        // A mode it left must not keep what it left from being removed, on any
+        // way out from here. The package waits for its comparison, where a
+        // directory it closed is a difference.
+        #[cfg(unix)]
+        reopened(&[home, tmp]);
+        let answer = answered(stopped, ended, &private, &package, run.result);
+        #[cfg(unix)]
+        reopened(&[&package]);
+        answer
+    }
+}
+
+/// How a script that has been told to stop ended: refused unless that stop is
+/// confirmed, it ended within its bound and in success, `private` is gone and
+/// `package` is as `result` lists.
+fn answered(
+    stopped: std::io::Result<()>,
+    ended: Result<std::io::Result<std::process::ExitStatus>, tokio::time::error::Elapsed>,
+    private: &Private,
+    package: &Path,
+    result: &[crucible_external_harnesses::catalog::File],
+) -> Result<(), Unscripted> {
+    stopped.map_err(Unscripted::Unstopped)?;
+    match ended {
+        Err(_) => return Err(Unscripted::Overran(SCRIPTING)),
+        Ok(Err(why)) => return Err(Unscripted::Unwatched(why)),
+        Ok(Ok(status)) if !status.success() => return Err(Unscripted::Failed(status)),
+        Ok(Ok(_)) => {}
+    }
+    private.removed().map_err(Unscripted::Private)?;
+    match differs(package, result) {
+        Some((path, why)) => Err(Unscripted::Differs {
+            path: quoted(&path),
+            why,
+        }),
+        None => Ok(()),
     }
 }
 

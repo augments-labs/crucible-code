@@ -640,7 +640,8 @@ installed at …`, and 1 when nothing was put in place. A release with an instal
 script to run at install is refused here before anything is fetched, saying to
 install it from `/agents` in a conversation, where the
 [sandbox it runs in](../security/sandboxing.md#installed-agents-releases) is
-lent.
+lent. Such a script runs on Linux alone, so elsewhere the release is refused from
+`/agents` too.
 
 ### `agents add AGENT [VERSION]`
 

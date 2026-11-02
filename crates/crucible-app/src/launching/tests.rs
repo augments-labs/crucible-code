@@ -2009,32 +2009,134 @@ async fn private_directories_that_cannot_be_removed_refuse_the_install_script() 
     let stuck = Arc::new(Mutex::new(None));
     let recorded = stuck.clone();
     let Some((ran, _staged)) = scripted_stopping(&sample, NOTHING, move |_, policy| {
-        let tmp = privately(policy)
-            .into_iter()
-            .find(|place| place.to_string_lossy().ends_with("tmp"))
-            .ok_or_else(|| std::io::Error::other("no private temporary directory"))?;
-        let place = tmp.join("stuck");
-        fs::create_dir_all(place.join("inner"))?;
-        fs::set_permissions(&place, fs::Permissions::from_mode(0o000))?;
-        let enforced = fs::read_dir(&place).is_err();
-        *recorded.lock().unwrap_or_else(PoisonError::into_inner) = Some((place, enforced));
+        let staging = privately(policy)
+            .first()
+            .and_then(|place| place.parent().map(Path::to_path_buf))
+            .ok_or_else(|| std::io::Error::other("no private directory"))?;
+        fs::set_permissions(&staging, fs::Permissions::from_mode(0o500))?;
+        let enforced = fs::write(staging.join("probe"), b"").is_err();
+        *recorded.lock().unwrap_or_else(PoisonError::into_inner) = Some((staging, enforced));
         Ok(())
     })
     .await
     else {
         return;
     };
-    let (place, enforced) = stuck
+    let (staging, enforced) = stuck
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .take()
         .expect("the stop ran");
-    fs::set_permissions(&place, fs::Permissions::from_mode(0o700)).ok();
+    fs::set_permissions(&staging, fs::Permissions::from_mode(0o700)).ok();
     if !enforced {
         eprintln!("skipped, as a mode does not hold this user back");
         return;
     }
     assert!(matches!(&ran, Err(Unscripted::Private(_))), "{ran:?}");
+}
+
+/// Runs `script`, whose stop leaves mode-000 directories nested in its package
+/// and in its private temporary directory and a link out of its package, and
+/// ends as `stopped` says; then checks that nothing of the run is left once
+/// the refusal is dropped and that the link was not followed. `None` where
+/// the sandbox does not enforce, or a mode does not hold this user back.
+#[cfg(unix)]
+async fn left_closed(
+    name: &str,
+    script: ToRun<'_>,
+    stopped: fn() -> std::io::Result<()>,
+) -> Option<Result<(), Unscripted>> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let closed = || fs::Permissions::from_mode(0o000);
+    let sample = Sample::new(name);
+    let outside = sample.root().join("outside");
+    fs::create_dir(&outside).expect("made");
+    fs::set_permissions(&outside, fs::Permissions::from_mode(0o500)).expect("set");
+    let private = Arc::new(Mutex::new((Vec::new(), true)));
+    let (recorded, linked) = (private.clone(), outside.clone());
+    let (ran, staged) = scripted_stopping(&sample, script, move |_, policy| {
+        let places = privately(policy);
+        let tmp = places
+            .iter()
+            .find(|place| place.to_string_lossy().ends_with("tmp"))
+            .ok_or_else(|| std::io::Error::other("no private temporary directory"))?;
+        let staging = tmp
+            .parent()
+            .ok_or_else(|| std::io::Error::other("no staging"))?;
+        let package = staging.join("node_modules").join("peer");
+        std::os::unix::fs::symlink(&linked, package.join("link"))?;
+        let mut enforced = true;
+        for top in [package.join("left"), tmp.join("left")] {
+            let inner = top.join("inner");
+            fs::create_dir_all(&inner)?;
+            fs::set_permissions(&inner, closed())?;
+            fs::set_permissions(&top, closed())?;
+            enforced &= fs::read_dir(&top).is_err();
+        }
+        *recorded.lock().unwrap_or_else(PoisonError::into_inner) = (places, enforced);
+        stopped()
+    })
+    .await?;
+    let (places, enforced) =
+        std::mem::take(&mut *private.lock().unwrap_or_else(PoisonError::into_inner));
+    if !enforced {
+        eprintln!("skipped, as a mode does not hold this user back");
+        return None;
+    }
+    assert_eq!(places.len(), 2, "{places:?}");
+    assert!(places.iter().all(|place| !place.exists()), "{places:?}");
+    let directory = staged.directory().to_path_buf();
+    drop(staged);
+    assert!(!directory.exists(), "the refused staging is removed");
+    let mode = fs::metadata(&outside)
+        .expect("still there")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o500, "a link is not followed");
+    Some(ran)
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn closed_directories_do_not_keep_a_refused_difference_from_being_removed() {
+    let ran = left_closed("script-closed-differs", NOTHING, || Ok(())).await;
+    if let Some(ran) = ran {
+        assert!(matches!(&ran, Err(Unscripted::Differs { .. })), "{ran:?}");
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn closed_directories_do_not_keep_a_failed_script_from_being_removed() {
+    let script = ToRun {
+        command: "exit 3",
+        ..NOTHING
+    };
+    let ran = left_closed("script-closed-failed", script, || Ok(())).await;
+    if let Some(ran) = ran {
+        assert!(matches!(&ran, Err(Unscripted::Failed(_))), "{ran:?}");
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn closed_directories_do_not_keep_an_unconfirmed_stop_from_being_removed() {
+    let ran = left_closed("script-closed-unstopped", NOTHING, || {
+        Err(std::io::Error::other("the scope did not answer"))
+    })
+    .await;
+    if let Some(ran) = ran {
+        assert!(matches!(&ran, Err(Unscripted::Unstopped(_))), "{ran:?}");
+    }
+}
+
+/// Only Linux can prove a script's every process stopped.
+#[test]
+fn install_scripts_run_on_linux_alone() {
+    assert!(scripts_run_on("linux"));
+    for other in ["macos", "windows", "freebsd", "netbsd"] {
+        assert!(!scripts_run_on(other), "{other}");
+    }
 }
 
 /// The package's manifest is named to the script where its package has one,

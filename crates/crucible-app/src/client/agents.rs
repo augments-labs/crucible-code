@@ -39,8 +39,8 @@
 //! be written for, and its interpreter's arguments as exactly `-I`, and one a
 //! pinned Node starts being refused where Node is given arguments of its own,
 //! an install script was built at review, which this build does not do, or
-//! one is run at install where it cannot be: with the sandbox off, on a
-//! platform whose sandbox does not hold one in, or with no launcher lent, as
+//! one is run at install where it cannot be: with the sandbox off, anywhere
+//! but Linux, with more than a question shows, or with no launcher lent, as
 //! from a command line; its download hosts,
 //! and that every address and mirror it is pinned at is on one of them; for a
 //! release a pinned Node starts, its package lock, fetched from the catalog's
@@ -48,8 +48,8 @@
 //! a host the target lists, so the question names the package count, how
 //! many packages are under each licence the lock gives, each quoted, where
 //! any package gives one, at most eight and then how many more, every install script and what the reviewer decided of
-//! it, at most sixteen and then how many more, and the hosts the registry is
-//! reached through; its
+//! it, at most sixteen left unrun and then how many more and each one run at
+//! install, and the hosts the registry is reached through; its
 //! file lists, where a list the catalog keeps as an asset is first fetched
 //! from the catalog's own host by [`catalog_fetch::asset`] and read as one
 //! given inline, a list that does not arrive as listed or does not read
@@ -2014,10 +2014,21 @@ fn launched(
                     "the release has an install script built at review",
                 ));
             }
-            if scripts
+            let local = scripts
                 .iter()
-                .any(|script| matches!(script.disposition, Disposition::Local { .. }))
-            {
+                .filter(|script| matches!(script.disposition, Disposition::Local { .. }))
+                .count();
+            if local > SCRIPTS {
+                return Err(AgentsError::Unsupported(
+                    "a release with more install scripts to run at install than a question shows",
+                ));
+            }
+            if local > 0 {
+                // First, so nothing says to try from a conversation where that
+                // would be refused too.
+                if let Some(why) = launching::unscripted_platform() {
+                    return Err(AgentsError::Unsupported(why));
+                }
                 let launcher = lent.ok_or(AgentsError::Unsupported(UNLENT))?;
                 if let Some(why) = launcher.unscriptable() {
                     return Err(AgentsError::Unsupported(why));
@@ -2029,8 +2040,9 @@ fn launched(
 }
 
 /// The facts naming each install script of a tree, which none is run as npm
-/// would run it, at most [`SCRIPTS`] of each kind, then how many more: first
-/// those not run, then those run at install in a sandbox of their own.
+/// would run it: first those not run, at most [`SCRIPTS`] and then how many
+/// more; then those run at install in a sandbox of their own, every one, as
+/// [`launched`] refuses a release with more than [`SCRIPTS`] of them.
 fn unrun(scripts: &[Script]) -> Vec<String> {
     let (local, other): (Vec<&Script>, Vec<&Script>) = scripts
         .iter()
@@ -2059,7 +2071,7 @@ fn unrun(scripts: &[Script]) -> Vec<String> {
     if more > 0 {
         facts.push(format!("And {more} more install scripts, none run."));
     }
-    for script in local.iter().take(SCRIPTS) {
+    for script in &local {
         let Disposition::Local { command, hosts, .. } = &script.disposition else {
             continue;
         };
@@ -2072,21 +2084,17 @@ fn unrun(scripts: &[Script]) -> Vec<String> {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
-        // The whole command, escaped: it is what the yes is to, and the
-        // catalog bounds it.
+        // The whole command, escaped and delimited: it is what the yes is
+        // to, the catalog bounds it, and nothing in it can read as this
+        // sentence's own words.
+        let delimited = command.replace('\\', "\\\\").replace('"', "\\\"");
         facts.push(format!(
-            "Install script run at install: {} {}, in a sandbox of its own as sh -c {}, \
+            "Install script run at install: {} {}, in a sandbox of its own as sh -c \"{}\", \
              reaching {reach}, writing only its package and a private temporary directory; \
              its package must then hold exactly what its review found, or nothing is installed.",
             quoted(&script.package),
             quoted(&script.event),
-            crucible_types::shown::escaped(command),
-        ));
-    }
-    let more = local.len().saturating_sub(SCRIPTS);
-    if more > 0 {
-        facts.push(format!(
-            "And {more} more install scripts run at install, each the same way."
+            crucible_types::shown::escaped(&delimited),
         ));
     }
     facts
