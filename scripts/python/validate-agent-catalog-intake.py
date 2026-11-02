@@ -3891,6 +3891,10 @@ def builds_review(scratch: pathlib.Path, signers: Signers) -> tuple[dict, pathli
         "darwin-aarch64": {},
         "windows-x86_64": {},
     })
+    agent("agreed-npm", "node setup.js", {
+        "linux-x86_64": {},
+        "darwin-aarch64": {"built": True, "sbom": passing_sbom},
+    })
     # A build the gate refuses, or has no input for, drops its target.
     agent("ungated-npm", "node setup.js", {
         "linux-x86_64": {"second": differs, "built": True},
@@ -3998,7 +4002,13 @@ def check_npm_build_by_difference(scratch: pathlib.Path, signers: Signers) -> No
     dropped(data, "badhost-npm", "linux-x86_64", "10.0.0.1", "host")
     tree = npm_tree(top=top_manifest(scripts={"postinstall": "node setup.js"}))
     agreed = tree_of(package_files(tree, **{"build__done": b"1\n"}))
-    script = top_script(built_targets(data, "differ")["darwin-aarch64"])
+    # On macOS nothing could prove a script's every process stopped, so it is
+    # built however it runs: dropped with no build, and built with one.
+    dropped(data, "differ-npm", "darwin-aarch64", "every script on darwin-aarch64 is built", "left no build")
+    agreed_targets = built_targets(data, "agreed")
+    built_there = top_script(agreed_targets["darwin-aarch64"])
+    assert built_there["disposition"] == "built" and "command" not in built_there, built_there
+    script = top_script(agreed_targets["linux-x86_64"])
     assert script == {
         "command": "node setup.js",
         "disposition": "local",
@@ -4018,14 +4028,14 @@ def check_npm_build_by_difference(scratch: pathlib.Path, signers: Signers) -> No
     module.GATE_HELD_BYTES = len(agreed) - 1
     held_assets: dict = {}
     try:
-        module.classed(observed, "differ-npm", "darwin-aarch64", item, undecided, gate, held_assets)
+        module.classed(observed, "agreed-npm", "linux-x86_64", item, undecided, gate, held_assets)
     except module.Dropped as failed:
         assert str(module.GATE_HELD_BYTES) in str(failed) and "holds" in str(failed), str(failed)
     else:
         raise AssertionError("a local script's listing past what a run holds was kept")
     assert not held_assets and gate.held_bytes == 0, "nothing of a refused listing is kept"
     module.GATE_HELD_BYTES = len(agreed)
-    local = module.classed(observed, "differ-npm", "darwin-aarch64", item, undecided, gate, held_assets)
+    local = module.classed(observed, "agreed-npm", "linux-x86_64", item, undecided, gate, held_assets)
     assert local["disposition"] == "local" and held_assets == {sha(agreed): agreed}, local
     assert gate.held_bytes == len(agreed), gate.held_bytes
     ran = intake("diff", scratch / "npm-builds" / "review.json")

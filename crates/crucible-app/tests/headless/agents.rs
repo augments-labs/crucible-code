@@ -541,6 +541,7 @@ const fn shape(outcome: &Result<Outcome, AgentsError>) -> &'static str {
         Err(AgentsError::Remember(_)) => "Err(Remember)",
         Err(AgentsError::Unadded { .. }) => "Err(Unadded)",
         Err(AgentsError::Smoke { .. }) => "Err(Smoke)",
+        Err(AgentsError::Script { .. }) => "Err(Script)",
         Err(AgentsError::NoInstance(_)) => "Err(NoInstance)",
         Err(AgentsError::Unsigned(_)) => "Err(Unsigned)",
         Err(AgentsError::NoMethod { .. }) => "Err(NoMethod)",

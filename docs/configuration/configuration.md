@@ -331,7 +331,8 @@ agent; see [installed coding agents](../providers/agents.md).
 
 `reviewed` skips one question only: the one before an update. A first install, a
 rollback and a removal are still asked, and so is a version the catalog does not
-list. Every other check an update makes still runs and still refuses: the
+list. A release with an install script to run at install is always asked, showing
+the script's command and the hosts it can reach. Every other check an update makes still runs and still refuses: the
 catalog's signature, the download's pin and hosts, revocation, and the smoke
 test where your sandbox allows one. Your yes to the vendor receiving what you
 send is a separate question that `reviewed` never answers. An update taken this

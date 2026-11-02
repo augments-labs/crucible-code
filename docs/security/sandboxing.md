@@ -467,6 +467,32 @@ more. Unless it answers as its catalog entry reviewed it, nothing is moved
 onto it. Where any of those conditions does not hold, the confirmation says
 the switch is not smoke-tested, and why.
 
+A release's install script that its catalog review marks to run at install runs
+once, after the yes to the install and under the yes about content use for the
+agent's route, as `sh -c` with the command the catalog gives, never one read
+from what was downloaded. Its policy is built for it alone and takes nothing
+from the conversation's: the package directory being staged and a private
+temporary directory are the only places it can write, the staged version is
+readable, and it can reach only the hosts the review named, or none. Its
+environment is `PATH`, with the pinned Node's directory first and then a fixed
+system path; the private `HOME` and `TMPDIR` the backend gives every command;
+and npm's `npm_lifecycle_event` and `npm_package_*` for that package. Nothing else is
+inherited. When its first process exits, everything it started is stopped, a
+child still running included, and only once that stop is confirmed is the
+package compared with the review's listing: every path, its kind, whether it
+runs, empty directories and its SHA-256, and a listed file with a second hard
+link is a difference. A stop nobody could confirm, a failure, a
+difference or a private directory that cannot be removed refuses the version
+and removes what was staged, whatever modes the script left on its directories.
+A child is stopped, not waited for, so what it had not finished writing is a difference. A
+script runs for at most ten minutes. A release with more scripts to run than
+the question shows, sixteen, is refused, and a host a script may reach is a name
+of two labels or more, or `*.` over one, never an address. Scripts run on Linux
+alone, where a PID namespace lets the stop reach everything a script started.
+With the sandbox off, on macOS, where nothing could prove a descendant that left
+its process group stopped, on Windows or on FreeBSD, none runs, and the install
+is refused before anything is fetched.
+
 ## Environment and credentials
 
 The command environment is an explicit, bounded map rather than a copy of the

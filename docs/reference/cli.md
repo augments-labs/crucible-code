@@ -636,7 +636,12 @@ server, which [`/login`](../providers/agents.md#antigravity) then runs. A
 version already in place is not downloaded again. It ends 0 once the version is
 in place, with `Installed goose 1.0.0 at …/programs/goose/1.0.0/goose. /login
 offers it under Use an installed coding agent.` or `goose 1.0.0 is already
-installed at …`, and 1 when nothing was put in place.
+installed at …`, and 1 when nothing was put in place. A release with an install
+script to run at install is refused here before anything is fetched, saying to
+install it from `/agents` in a conversation, where the
+[sandbox it runs in](../security/sandboxing.md#installed-agents-releases) is
+lent. Such a script runs on Linux alone, so elsewhere the release is refused from
+`/agents` too.
 
 ### `agents add AGENT [VERSION]`
 
@@ -657,8 +662,9 @@ configuration file says
 [`agents.update = "reviewed"`](../configuration/configuration.md#agents), an
 update that setting allows is taken without the question, so it needs no
 terminal, and says so on a line of its own: `Taken without asking, under
-agents.update = "reviewed".` Every other check still runs. It ends 0 once the
-instances are moved, and 1 otherwise.
+agents.update = "reviewed".` A release with an install script to run at install
+is always asked, showing its command and hosts. Every other check still runs.
+It ends 0 once the instances are moved, and 1 otherwise.
 
 ### `agents rollback AGENT`
 

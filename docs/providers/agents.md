@@ -266,9 +266,18 @@ installs it, and the version is refused where none at the top settles it. A
 tarball that is not its pin, or that the registry no longer has, puts nothing
 in place; a host that answers 404 or 410 is said to be
 likely permanent, since the version can likely no longer be installed. An entry
-that gives Node arguments of its own, or has an install script run at install,
-is refused before anything is asked. A version already installed is known by
-its receipt: Node's files, the preload, `.bin` and its stubs as the catalog
+that gives Node arguments of its own, or an install script built at review, is
+refused before anything is fetched or asked. An install script the review marks
+to run at install is named in the question with the command it runs and the
+hosts it reaches, and runs after the yes, in a sandbox of its own; it must leave
+its package exactly as the review listed it, or the version is refused and
+nothing of it is kept, and `crucible agents verify` covers the files it leaves.
+It needs the sandbox and runs on Linux alone: with the sandbox off, on macOS,
+on Windows or on FreeBSD, or from `crucible agents install`, which has no
+conversation to lend one and says to install it from `/agents` in a
+conversation, it is refused before anything is fetched, and so is a release with
+more than sixteen such scripts, more than the question can show. A version
+already installed is known by its receipt: Node's files, the preload, `.bin` and its stubs as the catalog
 pins them, and
 the tree's files only as lying where the lock installs a package, which the
 question says.
