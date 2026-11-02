@@ -219,7 +219,8 @@ impl Conversation {
     }
 
     /// The installed agent's route the next turn would start the agent on:
-    /// by its key for a catalog agent, whose driver's word names no agent.
+    /// by its key for a catalog agent, whose driver's word names no agent, on
+    /// a registry that lists one, which a shipped build's does not.
     /// `None` off such a route, while a run is held, and while the agent is
     /// disconnected.
     #[must_use]

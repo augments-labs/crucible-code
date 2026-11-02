@@ -355,7 +355,8 @@ impl Registry {
     }
 }
 
-/// The registry this build ships.
+/// The registry this build ships, which lists no catalog row: the agents door
+/// builds those per question, and no conversation starts on one.
 pub static REGISTRY: Registry = Registry::new(&[CLAUDE, ANTIGRAVITY]);
 
 /// Claude Code's row, as this release ships it.

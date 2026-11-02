@@ -823,6 +823,10 @@ impl Agent {
     /// start itself refuse the same launch for the same reason. What the
     /// refusal says to do about a program not found is what `trust` offers.
     ///
+    /// Deciding teaches: a catalog row's stated route is learned by `consent`
+    /// first, whatever else is then refused, and takes one of its
+    /// [`CATALOGED`](crate::content_use::CATALOGED) places for the run.
+    ///
     /// # Errors
     ///
     /// [`Unlaunched::Withheld`] for a row this release does not ship, else
@@ -885,7 +889,10 @@ impl Agent {
     /// Tells `consent` the route of its catalog row, so that a conversation
     /// on it is asked about that route before anything is launched: a row's
     /// program is decided under it again before a start. Nothing for a built-in
-    /// row, or an entry with no statement.
+    /// row, or an entry with no statement. A shipped [`REGISTRY`] lists no
+    /// catalog row, so only a registry that does reaches this with one.
+    ///
+    /// [`REGISTRY`]: crate::backends::REGISTRY
     fn teach(&self, consent: &Consent) {
         if let AgentRow::Catalog(catalog) = &self.row
             && let Ok(warned) = catalog.warned()
@@ -2786,7 +2793,8 @@ impl<'a> Launcher<'a> {
 
     /// Why a start of `agent` would be refused before any process, as
     /// [`Agent::release`] decides it with the trust state as it is now, before
-    /// its route is asked about; nothing where it would not be.
+    /// its route is asked about; nothing where it would not be. Asking teaches
+    /// the consent a catalog row's route, as [`Agent::program`] says.
     pub(crate) fn refusal(&self, agent: &Agent) -> Option<Unlaunched> {
         agent
             .release(
@@ -4485,7 +4493,8 @@ impl Steps {
 
     /// Why a start of the configured `agent`, whose registry row is `row`,
     /// would be refused before any process, as [`Agent::release`] decides it;
-    /// nothing where it would not be.
+    /// nothing where it would not be. Asking teaches the consent a catalog row's
+    /// route, as [`Agent::program`] says.
     #[must_use]
     pub fn refusal(&self, row: &AgentRow, agent: &ExternalAgent) -> Option<Unlaunched> {
         Agent::of_row(agent, row.clone(), |name| {
