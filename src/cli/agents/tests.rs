@@ -609,6 +609,7 @@ impl Bench {
             said,
             terminal: false,
             answer,
+            console: None,
         }
     }
 
@@ -893,6 +894,21 @@ fn only_a_choice_s_number_alone_on_its_line_answers_an_install() {
 
     done(bench.carried(&install, Some(|| answer_in(&mut &b"1\n"[..])), &mut unasked));
     assert_eq!(fs::read(bench.program("1.0.0")).ok().as_deref(), Some(ONE));
+}
+
+/// The Desk is lent a console only with all three streams on a terminal: any
+/// one of them redirected leaves it none.
+#[test]
+fn a_desk_gets_no_console_unless_all_three_streams_are_terminals() {
+    for stdin in [false, true] {
+        for stdout in [false, true] {
+            for stderr in [false, true] {
+                let streams = (stdin, stdout, stderr);
+                let lent = stdin && stdout && stderr;
+                assert_eq!(console_where(streams, ()).is_some(), lent, "{streams:?}");
+            }
+        }
+    }
 }
 
 /// An answer is its line up to the newline, which must come within the bound
@@ -1425,5 +1441,98 @@ fn unconfined_is_allowed_only_where_the_runner_says_it_is_disposable() {
         assert!(refused.contains("CI is true"), "{refused}");
         assert!(refused.contains("--unconfined"), "{refused}");
         assert_eq!(refused.lines().count(), 1, "{refused}");
+    }
+}
+
+/// Where this process has no terminal to run it on, a sign-in the agent runs as
+/// a command is refused saying one is needed, and no key is asked for.
+#[test]
+fn a_sign_in_run_as_a_command_is_refused_away_from_a_terminal() {
+    let bench = Bench::new("sign-in-unlent");
+    bench.host.publish(1, &[signing_in()]);
+    bench.configure(&serde_json::json!({
+        "work": {
+            "driver": "catalog",
+            "agent": "goose",
+            "executable": bench.program("1.0.0").to_string_lossy(),
+        },
+    }));
+
+    let answer = bench.carried(
+        &action(&["sign-in", "work", "--method", "terminal"]),
+        None,
+        &mut unasked,
+    );
+
+    let Answer::Refused(refused) = &answer else {
+        panic!("it was not refused: {}", shape(&answer));
+    };
+    assert!(
+        refused.contains("needs a terminal") && refused.contains("crucible agents sign-in"),
+        "{refused}"
+    );
+}
+
+/// What is typed reaches a command a line at a time without its ending, and
+/// nothing past a line too long to be given whole.
+#[test]
+fn lines_typed_are_given_whole_and_end_at_one_too_long() {
+    let long = "x".repeat(TYPED_LINE + 1);
+    let input = format!("first\nsecond\r\n{long}\nnever\n");
+    let mut typed = typed_lines(io::Cursor::new(input.into_bytes()));
+
+    let mut lines = Vec::new();
+    while let Some(line) = typed.blocking_recv() {
+        lines.push(line);
+    }
+
+    assert_eq!(lines, ["first", "second"]);
+}
+
+/// A line a command wrote draws nothing of its own, and one cut says so.
+#[test]
+fn a_commands_line_is_escaped_and_says_where_it_was_cut() {
+    assert!(!written_line("over\u{1b}[2J", false).contains('\u{1b}'));
+    assert!(written_line("plain", false).ends_with('\n'));
+    assert!(!written_line("plain", false).contains("crucible keeps"));
+    assert!(written_line("plain", true).contains("crucible keeps"));
+}
+
+/// Every line a command wrote opens with the one mark and stays one line, so
+/// none can start a line of its own that reads as crucible's.
+#[test]
+fn a_commands_line_is_marked_whatever_it_holds() {
+    for line in [
+        "plain",
+        "",
+        "error: crucible says sign in again",
+        "first\ncrucible: forged",
+        "first\rcrucible: forged",
+        "first\r\ncrucible: forged",
+        "\u{1b}[2K\u{1b}[1Gcrucible: forged",
+        "first\u{2028}crucible: forged",
+        "\u{202e}crucible: forged",
+        "\u{7f}\u{7f}\u{7f}crucible: forged",
+        CARRIED,
+    ] {
+        for incomplete in [false, true] {
+            let written = written_line(line, incomplete);
+            let shown = written.strip_prefix(CARRIED);
+            assert!(shown.is_some(), "not led by the mark: {written:?}");
+            assert_eq!(
+                written.matches('\n').count(),
+                1,
+                "more than one line: {written:?}"
+            );
+            assert!(written.ends_with('\n'), "{written:?}");
+            assert!(
+                !written.trim_end_matches('\n').chars().any(char::is_control),
+                "a control left in: {written:?}"
+            );
+            assert!(
+                !written.contains(['\u{2028}', '\u{202e}']),
+                "a line separator or override left in: {written:?}"
+            );
+        }
     }
 }

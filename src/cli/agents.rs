@@ -13,7 +13,13 @@
 //! move says which instances it moved and why it was not smoke-tested, where
 //! it was not. A sign-in that finds no key kept for its method asks for one at
 //! the prompt `crucible auth login` hides a key at, and hands it to the door to
-//! keep. How far a download has come goes to standard error, on one line
+//! keep. A sign-in the agent runs as a command, with no real terminal, needs
+//! standard input, standard output and standard error all at one: the door is
+//! lent a launcher, under the sandbox the user's own file says, and a
+//! [`Console`], which writes each line the command says to standard error and
+//! sends the command each line typed. Anywhere else nothing is lent and the
+//! door refuses it, saying a terminal is needed. How far a download has come
+//! goes to standard error, on one line
 //! rewritten in place where standard error is a terminal and as one line where
 //! it is not; the answer goes to standard output and a refusal to standard
 //! error, written [`failing`]. What the catalog says is hostile, so whatever
@@ -32,18 +38,20 @@
 //! output, and a refusal to standard error, written [`failing`].
 
 use std::fmt::Write as _;
-use std::io::{self, BufRead, IsTerminal as _, Read as _, Write as _};
+use std::io::{self, BufRead, BufReader, IsTerminal as _, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use crucible_app::catalog_fetch::trust_in;
-use crucible_app::client::agents::{self as door, AgentsError, How, Listed, Outcome, Shelf, Typed};
+use crucible_app::client::agents::{
+    self as door, AgentsError, How, Listed, Outcome, SaidLine, Shelf, SignInChannel, Typed, Typing,
+};
 use crucible_app::client::{Confirmation, Front, Shown};
 use crucible_app::installing;
 use crucible_app::probing::{self, Mode};
-use crucible_app::services::serving;
+use crucible_app::services::{Services, serving};
 use crucible_client_api::{
     Capabilities, Capability, Command, Correlation, Decision, ErrorCode, InstallProgress, Name,
     Pending, Refusal, Request, Said,
@@ -54,6 +62,7 @@ use crucible_sandbox::SandboxService;
 use crucible_types::AgentKey;
 use crucible_types::shown::escaped;
 use tokio::runtime::Handle;
+use tokio::sync::{Mutex, mpsc};
 
 use super::AgentsAction;
 use super::auth::{self, Unstored};
@@ -97,6 +106,11 @@ fn served(action: &AgentsAction) -> ExitCode {
     };
     let terminal = io::stderr().is_terminal();
     let answer = askable(io::stdin().is_terminal(), terminal).then_some(answer as fn() -> String);
+    let streams = (
+        io::stdin().is_terminal(),
+        io::stdout().is_terminal(),
+        terminal,
+    );
     let (answer, stopped) = serving(|services| match services.runtime().handle() {
         Ok(runtime) => Desk {
             home: &home,
@@ -105,6 +119,7 @@ fn served(action: &AgentsAction) -> ExitCode {
             said: &said,
             terminal,
             answer,
+            console: console_where(streams, services),
         }
         .carried(action, &mut typed),
         Err(unstarted) => Answer::Refused(caused(&unstarted)),
@@ -145,6 +160,13 @@ fn askable(stdin: bool, stderr: bool) -> bool {
 /// input, output and error are each a terminal.
 fn promptable(stdin: bool, stdout: bool, stderr: bool) -> bool {
     stdin && stdout && stderr
+}
+
+/// What a [`Desk`] is lent to read lines at a console: `services`, where
+/// standard input, output and error, in that order, are each a terminal, and
+/// otherwise nothing.
+fn console_where<T>((stdin, stdout, stderr): (bool, bool, bool), services: T) -> Option<T> {
+    promptable(stdin, stdout, stderr).then_some(services)
 }
 
 /// Why a key cannot be asked for here, where standard input, output or error
@@ -206,6 +228,10 @@ struct Desk<'a> {
     terminal: bool,
     /// Where a question's answer is read from, where it can be asked at all.
     answer: Option<fn() -> String>,
+    /// What a sign-in the agent runs as a command is started with, where this
+    /// process has a terminal at standard input and both outputs to run it on.
+    /// With none, the door is lent nothing and refuses one.
+    console: Option<&'a Services>,
 }
 
 impl Desk<'_> {
@@ -332,6 +358,13 @@ impl Desk<'_> {
             (Ok(instance), Ok(method)) => Command::SignInAgent { instance, method },
             (Err(refusal), _) | (_, Err(refusal)) => return Answer::Refused(refusal.to_string()),
         };
+        if let Some(services) = self.console {
+            match door::runs_a_command(self.home, instance, &method) {
+                Ok(true) => return self.answered(self.at_console(services, command), None),
+                Ok(false) => {}
+                Err(refused) => return Answer::Refused(caused(&refused)),
+            }
+        }
         match self.ask(command.clone()) {
             Err(AgentsError::Unstored { .. }) => {}
             asked => return self.answered(asked, None),
@@ -357,13 +390,43 @@ impl Desk<'_> {
             Correlation::new(1),
             command,
         );
+        self.asked(&request, &self.shelf, None)
+    }
+
+    /// `command`, a sign-in the agent runs as a command, carried out with the
+    /// door lent this terminal to carry it to and a launcher to start it with;
+    /// and with the agent's route asked here, since it will be started.
+    fn at_console(&self, services: &Services, command: Command) -> Result<Outcome, AgentsError> {
+        let request = Request::new(
+            Capabilities::none()
+                .with(Capability::Install)
+                .with(Capability::Permissions),
+            Correlation::new(1),
+            command,
+        );
+        let console = Console::new(self.said);
+        door::lending_here(self.home, services, self.runtime, |launcher, steps| {
+            let lending = super::client::shelf(self.home, Some(launcher), Some(steps));
+            self.asked(&request, &lending, Some(&console))
+        })?
+    }
+
+    /// `request` carried out at the agents door lent `lending` and `sign_in`.
+    fn asked(
+        &self,
+        request: &Request,
+        lending: &Shelf<'_>,
+        sign_in: Option<&dyn SignInChannel>,
+    ) -> Result<Outcome, AgentsError> {
         let (said, terminal) = (self.said, self.terminal);
         let mut front = Asked {
             said,
             answer: self.answer,
         };
-        // Nothing here cancels a download: one that is interrupted is
-        // interrupted with the process, and commits nothing.
+        // Nothing here cancels: a download that is interrupted is interrupted
+        // with the process and commits nothing, and a command run to sign in
+        // has its input closed by that, and is ended only where the sandbox
+        // ties it to this process.
         let cancel = Cancel::new();
         let mut shown: Option<Progress> = None;
         let outcome = {
@@ -376,9 +439,10 @@ impl Desk<'_> {
                 progress: &mut progress,
                 cancel: &cancel,
                 link: &|link| said(&linked(link.as_str(), link.incomplete())),
+                sign_in,
             };
             self.runtime
-                .block_on(door::run(&request, &self.shelf, &mut front, watching))
+                .block_on(door::run(request, lending, &mut front, watching))
         };
         if let Some(progress) = &shown {
             said(progress.ended());
@@ -667,17 +731,36 @@ struct Asked<'a> {
 }
 
 impl Front for Asked<'_> {
-    /// Writes an install's question whole and reads which way it goes on;
-    /// nobody answers anything else, nor anything where there is no
-    /// terminal.
+    /// Writes an install's question or the agent's route's whole and reads
+    /// which way it goes on; nobody answers anything else, nor anything where
+    /// there is no terminal.
     fn put<'a>(
         &'a mut self,
         pending: &'a Pending,
         shown: Shown<'a>,
     ) -> BoxFuture<'a, Option<Decision>> {
         Box::pin(async move {
-            let (Shown::Install(confirmation), Some(answer)) = (shown, self.answer) else {
-                return None;
+            let answer = self.answer?;
+            let confirmation = match shown {
+                Shown::Install(confirmation) => confirmation,
+                Shown::Warning(warned) => {
+                    (self.said)(&visible(&format!(
+                        "{}\n  {}\n  {}\n  {}\nSign in anyway? [y/N] ",
+                        escaped(&warned.shown),
+                        escaped(&warned.warning.sentence),
+                        escaped(&warned.warning.cited()),
+                        escaped(&warned.warning.link),
+                    )));
+                    let answered = tokio::task::spawn_blocking(answer).await.ok()?;
+                    let id = pending.id();
+                    let yes = matches!(answered.trim().to_ascii_lowercase().as_str(), "y" | "yes");
+                    return Some(if yes {
+                        Decision::Accepted { id }
+                    } else {
+                        Decision::Declined { id }
+                    });
+                }
+                _ => return None,
             };
             let Pending::Install { choices, .. } = pending else {
                 return None;
@@ -707,6 +790,102 @@ impl Front for Asked<'_> {
     fn draws_whole(&self) -> bool {
         true
     }
+}
+
+/// The longest line typed to a sign-in command, in bytes. A longer one is not
+/// cut into something other than what was typed: the command's input closes.
+const TYPED_LINE: usize = 64 * 1024;
+
+/// How many lines typed ahead of a sign-in command wait for it.
+const TYPED_AHEAD: usize = 16;
+
+/// This process's own terminal, lent to a sign-in the agent runs as a command.
+///
+/// The door is driven on the one thread that writes here, between its waits, so
+/// each line is written whole and nothing draws beside it; the only other thread
+/// is the one that reads standard input and writes nothing. It sets no terminal
+/// mode, so a line is echoed and edited as the terminal does by itself. A line
+/// typed here cannot be told to be a secret: what it was asked for is the
+/// command's to know, and it sends it as any other.
+struct Console<'a> {
+    /// Where each line is written.
+    said: &'a (dyn Fn(&str) + Sync),
+    /// The lines typed, from when the first is first asked for, so that what
+    /// the door itself asks on this terminal is read before anything else is.
+    typed: OnceLock<Mutex<mpsc::Receiver<String>>>,
+}
+
+impl<'a> Console<'a> {
+    /// A console writing to `said` and reading standard input.
+    fn new(said: &'a (dyn Fn(&str) + Sync)) -> Self {
+        Self {
+            said,
+            typed: OnceLock::new(),
+        }
+    }
+}
+
+impl SignInChannel for Console<'_> {
+    fn said(&self, line: SaidLine) {
+        (self.said)(&written_line(line.as_str(), line.incomplete()));
+    }
+
+    fn line(&self) -> BoxFuture<'_, Option<Typing>> {
+        Box::pin(async move {
+            let typed = self
+                .typed
+                .get_or_init(|| Mutex::new(typed_lines(BufReader::new(io::stdin()))));
+            typed.lock().await.recv().await.map(Typing::Line)
+        })
+    }
+}
+
+/// What leads every line a sign-in command wrote. The line is escaped after it,
+/// so what the command writes cannot end this line and begin one without it,
+/// and nothing it writes reads as crucible's own.
+const CARRIED: &str = "sign-in command | ";
+
+/// A line a sign-in command wrote, as it is written here.
+fn written_line(line: &str, incomplete: bool) -> String {
+    let cut = if incomplete {
+        " (the command printed more of this than crucible keeps)"
+    } else {
+        ""
+    };
+    visible(&format!("{CARRIED}{}{cut}\n", escaped(line)))
+}
+
+/// Each line `input` gives, without its line ending, each read to at most
+/// [`TYPED_LINE`] bytes, on a thread of its own, since a person takes their time
+/// and nothing can interrupt the read. No more are given after a longer one, or
+/// after its end. The thread ends with them, or is left waiting on the terminal
+/// until this process ends, which follows a sign-in at once.
+fn typed_lines(input: impl BufRead + Send + 'static) -> mpsc::Receiver<String> {
+    let (sent, typed) = mpsc::channel(TYPED_AHEAD);
+    let reading = move || {
+        let mut input = input;
+        loop {
+            let mut line = Vec::new();
+            let limit = u64::try_from(TYPED_LINE).unwrap_or(u64::MAX);
+            let Ok(read) = (&mut input).take(limit).read_until(b'\n', &mut line) else {
+                return;
+            };
+            if read == 0 || (read == TYPED_LINE && line.last() != Some(&b'\n')) {
+                return;
+            }
+            let line = String::from_utf8_lossy(&line);
+            let line = line.strip_suffix('\n').unwrap_or(&line);
+            let line = line.strip_suffix('\r').unwrap_or(line);
+            if sent.blocking_send(line.to_owned()).is_err() {
+                return;
+            }
+        }
+    };
+    // With no thread to read on, the command is told its input has ended.
+    let _ = std::thread::Builder::new()
+        .name("agents-sign-in-input".to_owned())
+        .spawn(reading);
+    typed
 }
 
 /// `confirmation` as it is asked: what it asks, each fact on a line of its

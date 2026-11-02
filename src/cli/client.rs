@@ -570,6 +570,9 @@ fn overseen<O: Overseer, R: Send>(
                     let link = (link.as_str().to_owned(), link.incomplete());
                     told_.lock().unwrap_or_else(PoisonError::into_inner).link = Some(link);
                 },
+                // A conversation has no one to carry a sign-in's lines to: its
+                // drawing thread is what the terminal belongs to.
+                sign_in: None,
             };
             door(&mut front, watching)
         });
@@ -654,6 +657,7 @@ pub(crate) const fn coded(refused: &AgentsError) -> ErrorCode {
         | AgentsError::Unsigned(_)
         | AgentsError::NoMethod { .. }
         | AgentsError::Keyless(_)
+        | AgentsError::Unlent(_)
         | AgentsError::Typed => ErrorCode::InvalidArgument,
         AgentsError::Config(_)
         | AgentsError::NotInstalled(_)
@@ -682,6 +686,7 @@ pub(crate) const fn coded(refused: &AgentsError) -> ErrorCode {
         | AgentsError::Unprofiled(_)
         | AgentsError::Unlaunched(_)
         | AgentsError::HoldUnkept(_)
+        | AgentsError::Piped(_)
         | AgentsError::Unverified(_) => ErrorCode::Failed,
     }
 }

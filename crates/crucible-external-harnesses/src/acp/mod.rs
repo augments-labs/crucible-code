@@ -49,6 +49,13 @@
 //! method alone, and for none where the agent does not offer it. A sign-in the
 //! agent answers as done is then read as a status step reads it, on the same
 //! start, so it reads signed in only where a session opens after it.
+//!
+//! A sign-in method the agent says is run at a terminal is not asked for over
+//! this wire. What it says of one is kept in the [`Initialized`], at most
+//! `METHODS` of them and `TERMINAL_BYTES` of each, so that the catalog's
+//! record can be held against it ([`Initialized::states`]): one past either
+//! bound, or not in the shape the protocol gives it, is not believed, and
+//! agrees with no record.
 
 mod permission;
 mod session;
@@ -67,7 +74,7 @@ use serde_json::{Value, json};
 use crate::acp::permission::Permissions;
 use crate::acp::session::Updates;
 use crate::acp::wire::{Frame, Refused};
-use crate::catalog::{Admits, CatalogProfile};
+use crate::catalog::{Admits, CatalogProfile, Method, Route};
 use crate::{Account, Act, Dialect, Ran, Reading, Request, Shape, Told};
 
 /// The protocol version this client speaks.
@@ -92,6 +99,10 @@ pub(crate) const NAME_BYTES: usize = 256;
 
 /// The most sign-in methods an agent's description keeps.
 const METHODS: usize = 16;
+
+/// The most of one sign-in method run at a terminal that is believed, as the
+/// agent wrote it, in bytes: past it, the method agrees with no record.
+const TERMINAL_BYTES: usize = 8 * 1024;
 
 /// The most options one permission question keeps.
 const OPTIONS: usize = 16;
@@ -221,6 +232,122 @@ pub struct Initialized {
     signs_out: bool,
     /// The sign-in methods it offers, by id.
     methods: Vec<Text>,
+    /// What it says of each sign-in method run at a terminal, or `None` where
+    /// it offered more than `METHODS` of them, when it agrees with no record.
+    terminals: Option<Vec<Terminal>>,
+}
+
+/// One sign-in method an agent says is run at a terminal.
+#[derive(Clone, PartialEq, Eq)]
+struct Terminal {
+    /// The id it names the method by.
+    id: Box<str>,
+    /// What it says the method runs; nothing where that is not believed, for
+    /// being longer than [`TERMINAL_BYTES`] or not in the protocol's shape.
+    stated: Option<Stated>,
+}
+
+/// What an agent says a sign-in method run at a terminal runs.
+#[derive(Clone, PartialEq, Eq)]
+struct Stated {
+    /// The command.
+    command: Box<str>,
+    /// Its arguments, in order.
+    args: Vec<Box<str>>,
+    /// Its environment, by name.
+    env: Vec<(Box<str>, Box<str>)>,
+    /// Whether it needs a real terminal, where the agent says.
+    tty: Option<bool>,
+}
+
+// By id alone: what a method's environment holds is the agent's to say and
+// nobody's to print.
+impl std::fmt::Debug for Terminal {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.debug_struct("Terminal")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Terminal {
+    /// The sign-in method `method` says is run at a terminal, where it is one
+    /// and has an id a method can be told by.
+    fn read(method: &Value) -> Option<Self> {
+        if method.get("type").and_then(Value::as_str) != Some("terminal") {
+            return None;
+        }
+        let id = method.get("id").and_then(Value::as_str)?;
+        if id.len() > NAME_BYTES {
+            return None;
+        }
+        let believable =
+            serde_json::to_string(method).is_ok_and(|written| written.len() <= TERMINAL_BYTES);
+        Some(Self {
+            id: id.into(),
+            stated: believable.then(|| Stated::read(method)).flatten(),
+        })
+    }
+}
+
+impl Stated {
+    /// What `method` says it runs, where all of it is in the protocol's shape:
+    /// arguments and an environment left out are none.
+    fn read(method: &Value) -> Option<Self> {
+        let args = match method.get("args") {
+            None => Vec::new(),
+            Some(args) => args
+                .as_array()?
+                .iter()
+                .map(|arg| arg.as_str().map(Box::from))
+                .collect::<Option<_>>()?,
+        };
+        let mut env: Vec<(Box<str>, Box<str>)> = match method.get("env") {
+            None => Vec::new(),
+            Some(env) => env
+                .as_object()?
+                .iter()
+                .map(|(name, value)| Some((name.as_str().into(), value.as_str()?.into())))
+                .collect::<Option<_>>()?,
+        };
+        env.sort();
+        Some(Self {
+            command: method.get("command")?.as_str()?.into(),
+            args,
+            env,
+            tty: method.pointer("/_meta/tty").and_then(Value::as_bool),
+        })
+    }
+
+    /// Whether this is what the catalog's `method` records: its route only
+    /// where the agent states one, since the protocol gives no other.
+    fn is(&self, method: &Method) -> bool {
+        let Method::Terminal {
+            command,
+            args,
+            env,
+            route,
+        } = method
+        else {
+            return false;
+        };
+        let mut recorded: Vec<(&str, &str)> = env
+            .iter()
+            .map(|variable| (&*variable.name, &*variable.value))
+            .collect();
+        recorded.sort_unstable();
+        let stated: Vec<(&str, &str)> = self
+            .env
+            .iter()
+            .map(|(name, value)| (&**name, &**value))
+            .collect();
+        *self.command == **command
+            && self.args == *args
+            && stated == recorded
+            && self
+                .tty
+                .is_none_or(|tty| tty == (*route == Route::Terminal))
+    }
 }
 
 impl Initialized {
@@ -237,6 +364,13 @@ impl Initialized {
                 .fold(capabilities, |value, key| value?.get(key))
                 .is_some_and(|value| !value.is_null() && value != &Value::Bool(false))
         };
+        let terminals: Vec<Terminal> = result
+            .get("authMethods")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Terminal::read)
+            .collect();
         Self {
             protocol: result
                 .get("protocolVersion")
@@ -255,6 +389,7 @@ impl Initialized {
                 .filter_map(|method| named(method.get("id")))
                 .take(METHODS)
                 .collect(),
+            terminals: (terminals.len() <= METHODS).then_some(terminals),
         }
     }
 
@@ -292,6 +427,23 @@ impl Initialized {
     #[must_use]
     pub const fn signs_out(&self) -> bool {
         self.signs_out
+    }
+
+    /// Whether what it says of the sign-in method `id` run at a terminal is
+    /// what the catalog's `method` records. Not where it offers no such method,
+    /// where it offered more than are kept, nor where any it offers by that id
+    /// says otherwise or is not believed.
+    #[must_use]
+    pub fn states(&self, id: &str, method: &Method) -> bool {
+        let Some(terminals) = &self.terminals else {
+            return false;
+        };
+        let mut named = terminals
+            .iter()
+            .filter(|terminal| &*terminal.id == id)
+            .peekable();
+        named.peek().is_some()
+            && named.all(|terminal| terminal.stated.as_ref().is_some_and(|said| said.is(method)))
     }
 
     /// Whether it offers the sign-in method `id`.
@@ -435,6 +587,13 @@ impl Acp {
             "clientInfo": {"name": "crucible", "version": env!("CARGO_PKG_VERSION")},
         });
         self.send("initialize", &params, Awaited::Initialize)
+    }
+
+    /// What the agent said of itself, once initializing it was answered and
+    /// admitted.
+    #[must_use]
+    pub const fn initialized(&self) -> Option<&Initialized> {
+        self.initialized.as_ref()
     }
 
     /// What the agent's answer to initializing it says, where its profile
@@ -687,6 +846,7 @@ impl Acp {
                     Ok(initialized) => initialized,
                     Err(failure) => return done(Reading::Unreadable(failure)),
                 };
+                self.initialized = Some(initialized.clone());
                 self.after_initializing(step, &initialized)
             }
             // A sign-in the agent says took is read as a status step reads

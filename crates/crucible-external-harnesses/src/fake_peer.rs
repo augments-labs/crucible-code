@@ -24,6 +24,9 @@
 //! a reply can try to reach an address and say one line or another by whether
 //! it could, which is how a test sees what a sandbox's network allowed.
 //!
+//! A reply can say a line with no ending, as a prompt is, and say back what it
+//! heard, as a command that echoes its input does.
+//!
 //! What it hears is kept, bounded, in a file named `heard`, and the arguments
 //! of each start in one named `argued`, so a test can say what reached it; a
 //! reply can also start a grandchild that beats into a file named `lingering`
@@ -168,6 +171,11 @@ enum Step {
     Say(String),
     /// Reads this many lines, or every line until its input closes.
     Hear(Option<u32>),
+    /// Reads this many lines, writing each back to standard output as it is
+    /// read, as a command that echoes what is typed to it does.
+    Echo(u32),
+    /// Writes this to standard output and ends no line, as a prompt does.
+    Prompt(String),
     /// Writes this line to standard error.
     Mutter(String),
     /// Writes this many bytes, none of them a newline.
@@ -223,6 +231,21 @@ impl Reply {
     #[must_use]
     pub fn hear_out(mut self) -> Self {
         self.steps.push(Step::Hear(None));
+        self
+    }
+
+    /// Then reads `count` lines and writes each back to standard output; input
+    /// that closes first ends the reply.
+    #[must_use]
+    pub fn echo(mut self, count: u32) -> Self {
+        self.steps.push(Step::Echo(count));
+        self
+    }
+
+    /// Then writes `text` to standard output, ending no line, as a prompt does.
+    #[must_use]
+    pub fn prompt(mut self, text: impl Into<String>) -> Self {
+        self.steps.push(Step::Prompt(text.into()));
         self
     }
 
@@ -304,6 +327,8 @@ impl Reply {
                             "reached": reached,
                         }
                     }),
+                    Step::Echo(count) => json!({ "echo": count }),
+                    Step::Prompt(text) => json!({ "prompt": text }),
                     Step::Linger => json!({ "linger": null }),
                     Step::Exit(status) => json!({ "exit": status }),
                 })
@@ -323,6 +348,8 @@ impl Reply {
                     "say" => Step::Say(value.as_str()?.to_owned()),
                     "hear" if value.is_null() => Step::Hear(None),
                     "hear" => Step::Hear(Some(u32::try_from(value.as_u64()?).ok()?)),
+                    "echo" => Step::Echo(u32::try_from(value.as_u64()?).ok()?),
+                    "prompt" => Step::Prompt(value.as_str()?.to_owned()),
                     "mutter" => Step::Mutter(value.as_str()?.to_owned()),
                     "flood" => {
                         let stream = match value.get("to")?.as_str()? {
@@ -720,6 +747,26 @@ fn perform(directory: &Path, reply: &Reply) -> io::Result<ExitCode> {
                     remember(directory, HEARD, &line);
                     left = left.map(|left| left.saturating_sub(1));
                 }
+            }
+            Step::Echo(count) => {
+                for _ in 0..*count {
+                    let mut line = Vec::new();
+                    let read = (&mut input)
+                        .take(crucible_transport::FRAME_BYTES as u64 + 1)
+                        .read_until(b'\n', &mut line)?;
+                    if read == 0 {
+                        return Ok(ExitCode::SUCCESS);
+                    }
+                    remember(directory, HEARD, &line);
+                    let mut out = io::stdout().lock();
+                    out.write_all(&line)?;
+                    out.flush()?;
+                }
+            }
+            Step::Prompt(text) => {
+                let mut out = io::stdout().lock();
+                out.write_all(text.as_bytes())?;
+                out.flush()?;
             }
             Step::Mutter(line) => {
                 let mut err = io::stderr().lock();

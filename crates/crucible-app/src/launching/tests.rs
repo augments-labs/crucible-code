@@ -4892,3 +4892,55 @@ fn a_link_into_a_version_whose_name_extends_its_own_is_not_given() {
     assert_eq!(preloaded, Err(Unlaunchable::Missing));
     assert_eq!(launched, Err(Unlaunchable::Missing));
 }
+
+/// A policy a sign-in is confined by reaches its entry's hosts and no others,
+/// whatever the conversation's is, and none the conversation denies; with no
+/// hosts it reaches nothing; and an unconfined conversation gets no grant it
+/// could not hold to.
+#[test]
+fn a_sign_in_reaches_its_entrys_hosts_alone() {
+    let at = std::env::temp_dir();
+    let at = fs::canonicalize(&at).unwrap();
+    let denied = SandboxDomainPattern::new("denied.vendor.example").unwrap();
+    let conversation = SandboxPolicy::new(
+        true,
+        [SandboxFilesystemRule::new(
+            &at,
+            SandboxFilesystemAccess::ReadWrite,
+            SandboxFilesystemProvenance::Workspace,
+        )
+        .unwrap()],
+        &at,
+        SandboxNetworkPolicy::Domains(
+            SandboxDomainPolicy::new(
+                [SandboxDomainPattern::new("widely.example").unwrap()],
+                [denied.clone()],
+                false,
+                [],
+                SandboxNetworkProvenance::User,
+            )
+            .unwrap(),
+        ),
+        SandboxResourceLimits::confining(),
+    )
+    .unwrap();
+
+    let signing = signing_from(&conversation, &["accounts.vendor.example"]).unwrap();
+    let SandboxNetworkPolicy::Domains(reach) = signing.network() else {
+        panic!("a sign-in with hosts reaches them");
+    };
+    let allowed: Vec<&str> = reach
+        .allowed()
+        .iter()
+        .map(SandboxDomainPattern::as_str)
+        .collect();
+    assert_eq!(allowed, ["accounts.vendor.example"]);
+    assert_eq!(reach.denied(), [denied]);
+
+    let closed = signing_from(&conversation, &[]).unwrap();
+    assert!(matches!(closed.network(), SandboxNetworkPolicy::Closed));
+
+    let unconfined = conversation.clone().with_enabled(false);
+    let kept = signing_from(&unconfined, &["accounts.vendor.example"]).unwrap();
+    assert!(!kept.enabled());
+}

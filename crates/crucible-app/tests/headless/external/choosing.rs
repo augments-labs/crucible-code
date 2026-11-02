@@ -688,8 +688,9 @@ fn a_catalog_agent_with_two_versions_stored_offers_update_or_roll_back() -> Resu
 }
 
 /// A sign-in method's name the catalog gave is put with its control
-/// characters escaped, so it draws nothing of its own; a method only a
-/// terminal runs is not offered; and a method chosen ends the connect on a
+/// characters escaped, so it draws nothing of its own; a method run at a real
+/// terminal is not offered, and one run as a command with no real terminal is;
+/// and a method chosen ends the connect on a
 /// sign-in of the instance by it.
 #[test]
 fn a_catalog_method_s_name_is_escaped_in_the_question() -> Result<(), Failed> {
@@ -703,6 +704,8 @@ fn a_catalog_method_s_name_is_escaped_in_the_question() -> Result<(), Failed> {
                 {"id": "api-key", "kind": "env_var", "name": "API key", "var": "GOOSE_API_KEY"},
                 {"id": "terminal", "kind": "terminal", "name": "Sign in at a terminal",
                  "command": "goose", "args": ["login"], "env": {}, "route": "piped"},
+                {"id": "console", "kind": "terminal", "name": "Sign in at the console",
+                 "command": "goose", "args": ["login"], "env": {}, "route": "terminal"},
             ]),
         );
         object.insert("sign_in_hosts".into(), json!(["accounts.vendor.example"]));
@@ -726,7 +729,13 @@ fn a_catalog_method_s_name_is_escaped_in_the_question() -> Result<(), Failed> {
     let named: Vec<&str> = choices.iter().map(|(name, _)| *name).collect();
     assert_eq!(
         named,
-        ["Install", "Sign in\\u{1b}[2J here", "API key", "Go back"]
+        [
+            "Install",
+            "Sign in\\u{1b}[2J here",
+            "API key",
+            "Sign in at a terminal",
+            "Go back"
+        ]
     );
     let drawn = picking.put.iter().any(|put| match put {
         Pending::Account {

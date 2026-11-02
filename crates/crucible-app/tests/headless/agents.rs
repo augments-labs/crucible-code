@@ -30,11 +30,12 @@ use crucible_app::agent_download::DownloadError;
 use crucible_app::backends::{AgentRow, CatalogRow, REGISTRY, Registry};
 use crucible_app::catalog_fetch::{self, Source};
 use crucible_app::client::agents::{
-    AgentsError, How, Outcome, Shelf, Signed, Typed, Watching, keep_key, run, sign_in_methods,
+    AgentsError, How, Outcome, SaidLine, Shelf, SignInChannel, Signed, Typed, Typing, Watching,
+    keep_key, run, sign_in_methods,
 };
 use crucible_app::client::{Front, Shown};
 use crucible_app::content_use::{Consent, Routes};
-use crucible_app::launching::{Agent, Launcher, Runs, Steps, Unlaunched};
+use crucible_app::launching::{Agent, Launcher, Runs, Steps, Unlaunched, Unpiped};
 use crucible_app::outside::Relaunch as _;
 use crucible_client_api::{
     Capabilities, Capability, Command, Correlation, Decision, ErrorCode, InstallProgress, Name,
@@ -69,6 +70,8 @@ mod file_list;
 #[cfg(feature = "proof")]
 #[path = "agents/npm.rs"]
 mod npm;
+#[path = "agents/piped.rs"]
+mod piped;
 #[path = "agents/uvx.rs"]
 mod uvx;
 
@@ -487,6 +490,7 @@ impl Bench {
                     progress: &mut progress,
                     cancel: &cancel,
                     link: &|_| {},
+                    sign_in: None,
                 },
             ))?
         };
@@ -557,6 +561,8 @@ const fn shape(outcome: &Result<Outcome, AgentsError>) -> &'static str {
         Err(AgentsError::Unlaunched(_)) => "Err(Unlaunched)",
         Err(AgentsError::HoldUnkept(_)) => "Err(HoldUnkept)",
         Err(AgentsError::Unverified(_)) => "Err(Unverified)",
+        Err(AgentsError::Unlent(_)) => "Err(Unlent)",
+        Err(AgentsError::Piped(_)) => "Err(Piped)",
         Err(AgentsError::Unstopped(_)) => "Err(Unstopped)",
         Err(AgentsError::Running(_)) => "Err(Running)",
     }
@@ -1215,6 +1221,7 @@ fn a_client_that_did_not_claim_install_is_refused_before_anything_is_fetched() -
                 progress: &mut |_| {},
                 cancel: &cancel,
                 link: &|_| {},
+                sign_in: None,
             },
         ))?;
 
@@ -2069,6 +2076,7 @@ impl Bench {
                 progress: &mut |_| {},
                 cancel: &cancel,
                 link: &|_| {},
+                sign_in: None,
             },
         )))
     }
@@ -2715,7 +2723,7 @@ fn a_method_the_agent_carries_out_needs_a_conversation_and_one_not_offered_is_re
         shape(browser)
     );
     assert!(
-        matches!(terminal, Err(AgentsError::Unsupported(_))),
+        matches!(terminal, Err(AgentsError::Unlent(_))),
         "{}",
         shape(terminal)
     );
@@ -3459,6 +3467,8 @@ fn the_methods_an_instance_signs_in_by_are_named_in_the_order_its_agent_offers_t
              "command": "goose", "args": ["login"], "env": {}, "route": "piped"},
             {"id": "api-key", "kind": "env_var", "name": "API key", "var": "GOOSE_API_KEY"},
             {"id": "browser", "kind": "agent", "name": "Sign in with a browser"},
+            {"id": "console", "kind": "terminal", "name": "Sign in at the console",
+             "command": "goose", "args": ["login"], "env": {}, "route": "terminal"},
         ]),
     );
     bench.server.catalog(1, &[release], &json!([]))?;
@@ -3815,6 +3825,7 @@ impl Bench {
                 progress: &mut |_| {},
                 cancel: &cancel,
                 link: &|_| {},
+                sign_in: None,
             },
         )))
     }

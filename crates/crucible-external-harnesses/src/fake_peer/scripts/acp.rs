@@ -45,6 +45,25 @@ pub fn initialized(name: &str, version: &str, sign_in: &str) -> String {
     )
 }
 
+/// The answer to initializing of an agent called `name` at `version` that
+/// offers `methods`, as the wire gives them.
+#[must_use]
+pub fn offering(name: &str, version: &str, methods: &Value) -> String {
+    response(
+        0,
+        &json!({
+            "protocolVersion": 1,
+            "agentInfo": {"name": name, "version": version},
+            "agentCapabilities": {
+                "loadSession": true,
+                "sessionCapabilities": {"resume": {}},
+                "auth": {"logout": {}},
+            },
+            "authMethods": methods,
+        }),
+    )
+}
+
 /// The answer to initializing of the agent the catalog intake's fixtures
 /// describe: it signs in in a browser or at a terminal.
 #[must_use]

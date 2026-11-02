@@ -9,7 +9,7 @@ use crucible_types::TurnId;
 use serde_json::{Value, json};
 
 use crate::acp::{Acp, Allowing, Initialized, Profile, SignIn};
-use crate::catalog::Admits;
+use crate::catalog::{Admits, Method, Route, Variable};
 use crate::{Account, Act, Dialect, Reading, Shape, Told};
 
 /// Admits every agent.
@@ -787,4 +787,146 @@ fn only_a_kept_session_the_agent_cannot_find_is_said_to_be_gone() {
         };
         assert_eq!(failure.fate(), fate, "{method}: {refused}");
     }
+}
+
+/// The catalog's record of a method run as a command with no real terminal.
+fn recorded() -> Method {
+    Method::Terminal {
+        command: "agent".into(),
+        args: vec!["login".into(), "--device".into()],
+        env: vec![
+            Variable {
+                name: "LOGIN".into(),
+                value: "1".into(),
+            },
+            Variable {
+                name: "AFTER".into(),
+                value: "2".into(),
+            },
+        ],
+        route: Route::Piped,
+    }
+}
+
+/// What an agent that offers `methods` is initialized to.
+fn offering(methods: &Value) -> Initialized {
+    let mut acp = Acp::new(PROFILE);
+    let _ = acp.account(
+        Account::Status,
+        Shape {
+            workspace: Some(Path::new("/work")),
+            ..Shape::default()
+        },
+    );
+    let _ = acp.spoken(Account::Status).unwrap();
+    let answer = response(
+        0,
+        &json!({
+            "protocolVersion": 1,
+            "agentInfo": {"name": "agent", "version": "1.0.0"},
+            "agentCapabilities": {},
+            "authMethods": methods,
+        }),
+    );
+    let _ = acp.told(Account::Status, &answer).unwrap();
+    acp.initialized().cloned().unwrap()
+}
+
+/// `method` as the live answer states `recorded`, then changed by `change`.
+fn stating(change: impl FnOnce(&mut Value)) -> Value {
+    let mut method = json!({
+        "type": "terminal",
+        "id": "cli",
+        "name": "At a terminal",
+        "command": "agent",
+        "args": ["login", "--device"],
+        "env": {"AFTER": "2", "LOGIN": "1"},
+    });
+    change(&mut method);
+    method
+}
+
+/// The agent's own word agrees with the record, whatever order it gives its
+/// environment in, and whatever else it offers.
+#[test]
+fn a_terminal_method_that_says_what_the_catalog_records_agrees() {
+    let said = offering(&json!([{"id": "web", "name": "In a browser"}, stating(|_| {})]));
+    assert!(said.states("cli", &recorded()));
+}
+
+/// Anything it says differently is a disagreement, as is not offering it, or
+/// offering it as something other than a command.
+#[test]
+fn a_terminal_method_that_differs_in_any_part_does_not_agree() {
+    let differing = [
+        stating(|method| method["command"] = json!("other")),
+        stating(|method| method["args"] = json!(["login"])),
+        stating(|method| method["args"] = json!(["--device", "login"])),
+        stating(|method| method["env"] = json!({"LOGIN": "1"})),
+        stating(|method| method["env"] = json!({"AFTER": "2", "LOGIN": "changed"})),
+        stating(|method| method["id"] = json!("elsewhere")),
+        stating(|method| method["type"] = json!("env_var")),
+    ];
+    for method in differing {
+        let said = offering(&json!([method]));
+        assert!(!said.states("cli", &recorded()), "{method}");
+    }
+    let said = offering(&json!([]));
+    assert!(!said.states("cli", &recorded()));
+}
+
+/// Two methods by one id, one of them the record's, are not believed: the
+/// agent has not said one thing of it.
+#[test]
+fn a_second_method_by_the_same_id_saying_otherwise_does_not_agree() {
+    let said = offering(&json!([
+        stating(|_| {}),
+        stating(|method| method["command"] = json!("other")),
+    ]));
+    assert!(!said.states("cli", &recorded()));
+}
+
+/// The route is compared only where the agent states one, since the protocol
+/// gives none of its own.
+#[test]
+fn the_route_is_compared_only_where_the_agent_states_it() {
+    let needing = offering(&json!([stating(|method| {
+        method["_meta"] = json!({"tty": true});
+    })]));
+    let not_needing = offering(&json!([stating(|method| {
+        method["_meta"] = json!({"tty": false});
+    })]));
+    let silent = offering(&json!([stating(|_| {})]));
+
+    assert!(!needing.states("cli", &recorded()));
+    assert!(not_needing.states("cli", &recorded()));
+    assert!(silent.states("cli", &recorded()));
+}
+
+/// A method past the bound of bytes, or not in the protocol's shape, is not
+/// believed, so a record of it is not agreed with.
+#[test]
+fn a_method_past_its_bound_or_out_of_shape_does_not_agree() {
+    let long = "x".repeat(16 * 1024);
+    for method in [
+        stating(|method| method["name"] = json!(long)),
+        stating(|method| method["args"] = json!("login --device")),
+        stating(|method| method["args"] = json!(["login", 1])),
+        stating(|method| method["env"] = json!({"LOGIN": 1})),
+    ] {
+        let said = offering(&json!([method]));
+        assert!(!said.states("cli", &recorded()));
+    }
+}
+
+/// More methods run at a terminal than are kept: the ones past the bound cannot
+/// be held against the record, so none agrees.
+#[test]
+fn more_terminal_methods_than_are_kept_does_not_agree() {
+    let mut methods = vec![stating(|_| {})];
+    methods.extend((0..16).map(|at| stating(|method| method["id"] = json!(format!("m{at}")))));
+
+    let said = offering(&json!(methods));
+
+    assert!(!said.states("cli", &recorded()));
 }

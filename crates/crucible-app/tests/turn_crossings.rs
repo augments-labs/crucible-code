@@ -310,7 +310,7 @@ const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
     // none: carrying the one command out.
     (
         "src/cli/agents.rs",
-        ".block_on(door::run(&request, &self.shelf, &mut front, watching))",
+        ".block_on(door::run(request, lending, &mut front, watching))",
         1,
     ),
     // `installing`'s download of a release, which `crucible agents install`

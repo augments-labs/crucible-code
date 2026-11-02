@@ -70,7 +70,12 @@ download while it runs, changing nothing; once all of it has arrived, the panel
 waits for the install to finish. A long file list the catalog keeps apart from
 the release is fetched from the catalog's own host before the question, and the
 hosts the release is downloaded from are reached only after the yes. While a
-sign-in waits for you, the link the agent prints is shown for you to open. The
+sign-in waits for you, the link the agent prints is shown for you to open. A
+method the agent runs as a command is offered too, but it needs a terminal to
+carry it to, which `/login` does not lend: choosing it says to run `crucible
+agents sign-in` from one, and nothing is started, as
+[its reference](../reference/cli.md#agents-sign-in-instance---method-name) sets
+out. A method that needs a real terminal is not offered. The
 first time you choose a method that takes a key, `/login` asks for the key as
 hidden input; crucible keeps it for that agent and method and asks for it no
 more, and Escape there keeps nothing. A sign-in read as signed in means the

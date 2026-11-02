@@ -159,7 +159,7 @@ use crucible_client_api::{
 use crucible_config::{ConfigError, Driver, ExternalAgent};
 use crucible_execution::Authentication;
 use crucible_execution::{Admission, Ending, Failure};
-use crucible_external_harnesses::catalog::{AuthMethod, Method, Trust};
+use crucible_external_harnesses::catalog::{AuthMethod, Method, Route, Trust};
 use crucible_external_harnesses::store::{Receipt, Store, StoreError, Version};
 use crucible_external_harnesses::{
     Account as Step, Contended, Coordinator, Discovery, Ended, Journal, Reading, Stage, Work,
@@ -1385,9 +1385,30 @@ fn sign_ins(
     let mut more = false;
     for method in methods {
         let says = match (&method.method, &method.description) {
-            // The agents door does not run a sign-in at a terminal.
-            (Method::Terminal { .. }, _) => continue,
-            (Method::Agent | Method::EnvVar { .. }, Some(description)) => quoted(description),
+            // The agents door does not run a sign-in at a real terminal.
+            (
+                Method::Terminal {
+                    route: Route::Terminal,
+                    ..
+                },
+                _,
+            ) => continue,
+            (
+                Method::Agent
+                | Method::EnvVar { .. }
+                | Method::Terminal {
+                    route: Route::Piped,
+                    ..
+                },
+                Some(description),
+            ) => quoted(description),
+            (
+                Method::Terminal {
+                    route: Route::Piped,
+                    ..
+                },
+                None,
+            ) => "Sign in by a command the agent runs, typed to at a terminal.".to_owned(),
             (Method::Agent, None) => "Sign in through the agent's own program.".to_owned(),
             (Method::EnvVar { .. }, None) => {
                 "Sign in with a key Crucible keeps for the agent.".to_owned()

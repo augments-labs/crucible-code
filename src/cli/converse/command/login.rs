@@ -1037,6 +1037,8 @@ pub(super) fn refused(refusal: &AgentsError) -> String {
         | AgentsError::Credentials(_)
         | AgentsError::Unprofiled(_)
         | AgentsError::Unlaunched(_)
+        | AgentsError::Unlent(_)
+        | AgentsError::Piped(_)
         | AgentsError::Unverified(_) => format!("! {}", sentence(refusal)),
     }
 }
@@ -1128,6 +1130,8 @@ pub(super) fn sentence(refusal: &AgentsError) -> String {
         | AgentsError::Credentials(_)
         | AgentsError::Unprofiled(_)
         | AgentsError::Unlaunched(_)
+        | AgentsError::Unlent(_)
+        | AgentsError::Piped(_)
         | AgentsError::Unverified(_) => refusal.to_string(),
     };
     within(&said, REFUSAL)
@@ -1261,6 +1265,7 @@ fn carried_out(outcome: &door::Outcome) -> Option<String> {
             let with = match by {
                 Signed::Agent => "",
                 Signed::Kept => ", with the key crucible keeps",
+                Signed::Command => ", after the sign-in command it runs",
             };
             format!(
                 "the agent of {} opened a session by {}{with}",
