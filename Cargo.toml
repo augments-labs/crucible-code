@@ -307,7 +307,7 @@ serde_core = "=1.0.229"
 # and a combining mark takes none, so counting `char`s puts the cursor somewhere
 # the renderer did not predict and the next frame erases the wrong lines. This
 # is the Unicode Annex #11 table as data, with no dependencies of its own.
-unicode-width = "=0.2.2"
+unicode-width = "=0.2.3"
 
 # `openat`, and the flags that decide what one component of a path may be. A
 # path is proven inside the workspace and then opened, and between those two
