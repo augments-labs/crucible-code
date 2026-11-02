@@ -78,11 +78,13 @@
 //! which this carries out at the application's agents door: an install, an
 //! update or a rollback, under a panel saying how far the download has got,
 //! which Escape gives up; or a sign-in by the method chosen, with the link
-//! the agent prints shown while it waits. A method that takes a key the agent
-//! has none kept for asks for it in the key box, crucible keeps it, and the
-//! sign-in is asked for once more. What came of it is said in a line, a
-//! refusal with every instance name it gives quoted, and the agent screen
-//! stands again with the agent's new state.
+//! the agent prints shown while it waits. A method the agent runs as a command
+//! stands [`sign_in`]'s panel once the command runs, and where the output is
+//! redirected the door refuses it, there being nowhere to carry it to. A method
+//! that takes a key the agent has none kept for asks for it in the key box,
+//! crucible keeps it, and the sign-in is asked for once more. What came of it
+//! is said in a line, a refusal with every instance name it gives quoted, and
+//! the agent screen stands again with the agent's new state.
 
 use std::borrow::Cow;
 use std::time::Duration;
@@ -713,7 +715,16 @@ impl<T: Terminal> Overseer for Overseeing<'_, T> {
     }
 
     fn stand(&mut self, carrying: &mut Carrying<'_>) -> Result<(), Fatal> {
-        watched(self.renderer, self.style, self.title, &self.doing, carrying)
+        if carrying.listening() {
+            sign_in::stood(self.renderer, self.style, self.title, &self.doing, carrying)
+        } else {
+            watched(self.renderer, self.style, self.title, &self.doing, carrying)
+        }
+    }
+
+    /// Only a terminal has a panel to stand it in.
+    fn carries_lines(&self) -> bool {
+        self.renderer.is_terminal()
     }
 }
 
@@ -757,7 +768,7 @@ fn watched<T: Terminal>(
         |pressed, working: &mut Working| working.pressed(&pressed),
         BEAT,
         |working: &mut Working| {
-            if !carrying.working() {
+            if !carrying.working() || carrying.listening() {
                 return Moved::Took;
             }
             if working.told(carrying.watched()) {
@@ -2477,6 +2488,8 @@ pub(super) fn moved_off(provider: &str) -> String {
          /resume lists the one it left"
     )
 }
+
+mod sign_in;
 
 #[cfg(test)]
 mod tests;

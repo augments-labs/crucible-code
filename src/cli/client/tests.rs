@@ -975,6 +975,39 @@ fn a_move_whose_overseer_fails_is_cancelled_and_waited_for_before_the_failure_is
     assert!(cancel.requested(), "the move was not given up");
 }
 
+/// An overseer that stands no panel, saying only whether it has one to carry a
+/// sign-in's lines to.
+struct Carrier {
+    lends: bool,
+}
+
+impl super::Overseer for Carrier {
+    type Error = &'static str;
+
+    fn answer(&mut self, _: &super::Question) -> Result<Option<super::Reply>, Self::Error> {
+        Ok(None)
+    }
+
+    fn stand(&mut self, _: &mut super::Carrying<'_>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn carries_lines(&self) -> bool {
+        self.lends
+    }
+}
+
+#[test]
+fn a_sign_in_channel_is_lent_only_by_an_overseer_with_somewhere_to_carry_it() {
+    for lends in [true, false] {
+        let mut overseer = Carrier { lends };
+        let lent = super::overseen(&Client::new(), &mut overseer, |_, watching| {
+            watching.sign_in.is_some()
+        });
+        assert_eq!(lent, Ok(lends));
+    }
+}
+
 #[test]
 fn a_refusal_beside_a_run_is_busy_and_no_other_refusal_is() {
     use crucible_app::client::agents::AgentsError;
