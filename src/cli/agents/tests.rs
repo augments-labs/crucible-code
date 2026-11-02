@@ -896,6 +896,21 @@ fn only_a_choice_s_number_alone_on_its_line_answers_an_install() {
     assert_eq!(fs::read(bench.program("1.0.0")).ok().as_deref(), Some(ONE));
 }
 
+/// The Desk is lent a console only with all three streams on a terminal: any
+/// one of them redirected leaves it none.
+#[test]
+fn a_desk_gets_no_console_unless_all_three_streams_are_terminals() {
+    for stdin in [false, true] {
+        for stdout in [false, true] {
+            for stderr in [false, true] {
+                let streams = (stdin, stdout, stderr);
+                let lent = stdin && stdout && stderr;
+                assert_eq!(console_where(streams, ()).is_some(), lent, "{streams:?}");
+            }
+        }
+    }
+}
+
 /// An answer is its line up to the newline, which must come within the bound
 /// it is read to, and nothing where it does not; the one carriage return a
 /// console ends a line with before it is not part of it, and a second is.

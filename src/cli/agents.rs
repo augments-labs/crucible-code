@@ -106,7 +106,7 @@ fn served(action: &AgentsAction) -> ExitCode {
     };
     let terminal = io::stderr().is_terminal();
     let answer = askable(io::stdin().is_terminal(), terminal).then_some(answer as fn() -> String);
-    let console = promptable(
+    let streams = (
         io::stdin().is_terminal(),
         io::stdout().is_terminal(),
         terminal,
@@ -119,7 +119,7 @@ fn served(action: &AgentsAction) -> ExitCode {
             said: &said,
             terminal,
             answer,
-            console: console.then_some(services),
+            console: console_where(streams, services),
         }
         .carried(action, &mut typed),
         Err(unstarted) => Answer::Refused(caused(&unstarted)),
@@ -160,6 +160,13 @@ fn askable(stdin: bool, stderr: bool) -> bool {
 /// input, output and error are each a terminal.
 fn promptable(stdin: bool, stdout: bool, stderr: bool) -> bool {
     stdin && stdout && stderr
+}
+
+/// What a [`Desk`] is lent to read lines at a console: `services`, where
+/// standard input, output and error, in that order, are each a terminal, and
+/// otherwise nothing.
+fn console_where<T>((stdin, stdout, stderr): (bool, bool, bool), services: T) -> Option<T> {
+    promptable(stdin, stdout, stderr).then_some(services)
 }
 
 /// Why a key cannot be asked for here, where standard input, output or error
@@ -416,8 +423,10 @@ impl Desk<'_> {
             said,
             answer: self.answer,
         };
-        // Nothing here cancels a download: one that is interrupted is
-        // interrupted with the process, and commits nothing.
+        // Nothing here cancels: a download that is interrupted is interrupted
+        // with the process and commits nothing, and a command run to sign in
+        // has its input closed by that, and is ended only where the sandbox
+        // ties it to this process.
         let cancel = Cancel::new();
         let mut shown: Option<Progress> = None;
         let outcome = {

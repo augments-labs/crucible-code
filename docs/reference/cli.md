@@ -723,17 +723,19 @@ refused and the command is not run. Where the sandbox is on, the command reaches
 only the hosts the entry signs in at, and it has five minutes. Each line it
 writes is shown on standard error, with what crucible withholds taken out and a
 note where the line was too long, and each line you type goes to it, echoed by
-your terminal as you type it. A command that writes more than crucible keeps is
-stopped and the sign-in refused. Interrupting crucible ends it and closes the
-command's input. The command ending well does not count: the instance is signed
-in only once the agent, read afterwards, says so. A method that needs a real
-terminal is not listed, and naming it is refused.
+your terminal as you type it; crucible treats none of them as a secret. A
+command that writes more than crucible keeps is stopped and the sign-in refused.
+Interrupting crucible closes the command's input, and ends the command only
+where the sandbox ties it to crucible, on Linux with the sandbox on; elsewhere
+it may keep running. The command ending well does not count: the instance is
+signed in only once the agent, read afterwards, says so. A method that needs a
+real terminal is not listed, and naming it is refused.
 
 A method the agent carries out itself, such as signing in through a browser,
 starts the agent, which needs a conversation to start it in: sign in by it from
-`/login`'s agent screen instead. A method run at a terminal is not run through
-this command either. Each is refused with why, nothing is started, and a
-refusal ends 1.
+`/login`'s agent screen instead. A method that needs a real terminal is not run
+through this command either. Each is refused with why, nothing is started, and
+a refusal ends 1.
 
 ### `agents unpack-check ENTRY ARTIFACT OUT`
 

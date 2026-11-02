@@ -176,36 +176,75 @@ impl Bench {
         (release, channel): (&Value, Option<&dyn SignInChannel>),
         runtime: &tokio::runtime::Runtime,
     ) -> Result<Result<Outcome, AgentsError>, Failed> {
-        let row = row_of(release)?;
-        let consent = Consent::new(Routes::production().cataloging(row.warned().ok().cloned()));
-        if yes {
-            consent.give("agent:goose");
-        }
+        let steps = self.piped_steps(
+            (Arc::clone(&sandbox), confined, yes),
+            release,
+            &REGISTRY,
+            runtime,
+        )?;
+        self.ask_piped_beside(
+            front,
+            (sandbox, confined, yes),
+            (release, channel),
+            &steps,
+            runtime,
+        )
+    }
+
+    /// The steps of a conversation on `sandbox` that confines its commands
+    /// where `confined`, whose route for `release` has its yes where `yes`, and
+    /// which knows the agents of `registry`.
+    fn piped_steps(
+        &self,
+        (sandbox, confined, yes): (Arc<dyn SandboxService>, bool, bool),
+        release: &Value,
+        registry: &'static Registry,
+        runtime: &tokio::runtime::Runtime,
+    ) -> Result<Steps, Failed> {
+        let consent = piped_consent(release, yes)?;
         let policy = SandboxPolicy::standard(&self.tree.workspace()?)?.with_enabled(confined);
-        let handle = runtime.handle().clone();
         let state = catalog_fetch::state_in(self.home.path());
-        let launcher = |sandbox| {
+        Ok(Steps::new(
             Launcher::new(
                 sandbox,
-                handle.clone(),
+                runtime.handle().clone(),
                 &policy,
                 &consent,
                 &state,
                 self.home.sessions(),
-            )
-        };
-        let steps = Steps::new(
-            launcher(Arc::clone(&sandbox)),
+            ),
             Arc::new(SandboxEnablement::new(confined, false)),
-            &REGISTRY,
+            registry,
             None,
+        ))
+    }
+
+    /// The door asked as [`Bench::ask_piped`] asks it, in the conversation
+    /// whose steps are `steps`.
+    fn ask_piped_beside(
+        &self,
+        front: &mut Answering<'_>,
+        (sandbox, confined, yes): (Arc<dyn SandboxService>, bool, bool),
+        (release, channel): (&Value, Option<&dyn SignInChannel>),
+        steps: &Steps,
+        runtime: &tokio::runtime::Runtime,
+    ) -> Result<Result<Outcome, AgentsError>, Failed> {
+        let consent = piped_consent(release, yes)?;
+        let policy = SandboxPolicy::standard(&self.tree.workspace()?)?.with_enabled(confined);
+        let state = catalog_fetch::state_in(self.home.path());
+        let lent = Launcher::new(
+            sandbox,
+            runtime.handle().clone(),
+            &policy,
+            &consent,
+            &state,
+            self.home.sessions(),
         );
-        let lent = launcher(sandbox);
         let lending = Shelf {
             catalog: self.server.source(),
             home: &self.home,
             smoke: Some(&lent),
-            steps: Some(&steps),
+            steps: Some(steps),
         };
         let request = request(sign_in("work", "terminal")?);
         let cancel = Cancel::new();
@@ -221,6 +260,16 @@ impl Bench {
             },
         )))
     }
+}
+
+/// The yeses of a conversation for the route of `release`, given where `yes`.
+fn piped_consent(release: &Value, yes: bool) -> Result<Consent, Failed> {
+    let row = row_of(release)?;
+    let consent = Consent::new(Routes::production().cataloging(row.warned().ok().cloned()));
+    if yes {
+        consent.give("agent:goose");
+    }
+    Ok(consent)
 }
 
 /// The local sandbox of `runtime`, as a door's launcher is given one.
@@ -255,6 +304,69 @@ fn a_command_with_no_channel_is_refused_before_anything_is_asked_or_started() ->
     );
     assert!(front.put.is_empty(), "something was asked");
     assert_eq!(fake_peer::played(&root), 0, "something was started");
+    Ok(())
+}
+
+/// A method run as a command is refused beside a live run of its instance as
+/// one the agent carries out is, with someone lent to carry it to and no yes
+/// for its route, before the route is asked about or the command started.
+#[test]
+fn a_command_beside_a_live_run_is_refused_before_anything_is_asked_or_started() -> Result<(), Failed>
+{
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-piped-live")?;
+    let release = signing_in_by(&bench, &Peer::of([signed_in_after()]))?;
+    let root = bench.with_installed(&release)?;
+
+    let registry: &'static Registry = Box::leak(Box::new(
+        Registry::new(&[]).cataloging(Box::leak(Box::new([row_of(&release)?]))),
+    ));
+    let key = AgentKey::new("goose")?;
+    let instance = ExternalAgent::unwritten(
+        "work",
+        Driver::Catalog,
+        &bench.executable()?,
+        None,
+        Some(&key),
+    )
+    .ok_or("a catalog instance naming its agent")?;
+    let agent = Agent::configured(&instance, registry, |_| None).ok_or("its catalog row")?;
+    let local = local_of(&runtime);
+    let steps = bench.piped_steps(
+        (Arc::clone(&local), false, true),
+        &release,
+        registry,
+        &runtime,
+    )?;
+    let run = runtime.block_on(
+        steps
+            .runs(agent, "work")
+            .launch(Mode::Ask, None, None, None),
+    )?;
+    assert!(started(&root, 1), "the run was not started");
+
+    let person = Person::default();
+    let mut front = answering(&bench.server, None);
+    let refused = bench.ask_piped_beside(
+        &mut front,
+        (local, false, false),
+        (&release, Some(&person)),
+        &steps,
+        &runtime,
+    )?;
+
+    let Err(AgentsError::Running(live)) = &refused else {
+        return Err(shape(&refused).into());
+    };
+    assert!(
+        live.iter().any(|live| &**live == "work"),
+        "the refusal does not name the instance with the run"
+    );
+    assert!(front.put.is_empty(), "a route was asked");
+    assert!(person.told().is_empty(), "the command was carried");
+    assert_eq!(fake_peer::played(&root), 1, "a second process was started");
+    drop(front);
+    runtime.block_on(run.close())?;
     Ok(())
 }
 

@@ -186,19 +186,20 @@
 //! and bounded by line and in total, a cut said where it fell; each line the
 //! channel gives goes to its input, and a [`Typing::Secret`] is withheld from
 //! all it is seen to say and carried nowhere else. It ending well is not taken
-//! as signed in: the agent is then read as for any other sign-in. A business sign-in to Antigravity is billed to
-//! the Google Cloud project and location its entry names: one whose entry
-//! names neither is refused naming both keys, and one whose location's host
-//! no sandbox policy can name is refused naming that key, each before anything
-//! is asked, written or started; otherwise the two are written in the agent's
-//! profile once its route has its yes, just before it starts. A sign-in on an
-//! instance that names a `profileDir` its agent's entry has no variable for is
-//! refused as a start of it is, naming the instance, and nothing is made or
-//! started, since the agent would never read that directory. Where the sandbox
-//! is on, the agent is let write the places its entry says it keeps its
-//! sign-in in, so that what it signs in stays; a listing says of an agent whose
-//! entry names neither such a place nor a variable that a sign-in made under
-//! the sandbox is not kept ([`Listed::keeps_no_sign_in`]).
+//! as signed in: the agent is then read as for any other sign-in. A business
+//! sign-in to Antigravity is billed to the Google Cloud project and location
+//! its entry names: one whose entry names neither is refused naming both keys,
+//! and one whose location's host no sandbox policy can name is refused naming
+//! that key, each before anything is asked, written or started; otherwise the
+//! two are written in the agent's profile once its route has its yes, just
+//! before it starts. A sign-in on an instance that names a `profileDir` its
+//! agent's entry has no variable for is refused as a start of it is, naming the
+//! instance, and nothing is made or started, since the agent would never read
+//! that directory. Where the sandbox is on, the agent is let write the places
+//! its entry says it keeps its sign-in in, so that what it signs in stays; a
+//! listing says of an agent whose entry names neither such a place nor a
+//! variable that a sign-in made under the sandbox is not kept
+//! ([`Listed::keeps_no_sign_in`]).
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
