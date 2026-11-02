@@ -27,7 +27,6 @@ use std::fs;
 
 use crucible_app::agent_download::DownloadError;
 use crucible_app::client::agents::{AgentsError, How, Outcome};
-use crucible_app::content_use::Consent;
 use crucible_client_api::{Pending, Text};
 use crucible_external_harnesses::catalog::fixture::{Member, tar_gz};
 use crucible_external_harnesses::fake_peer;
@@ -1400,7 +1399,6 @@ fn with_scripts(bench: &Bench, mut release: Value, count: usize) -> Result<Value
 fn script_of_key_given(
     name: &str,
     (key, stated, route): (&str, bool, &str),
-    consent: Option<&Consent>,
     runtime: &tokio::runtime::Runtime,
 ) -> Result<(Bench, Result<Outcome, AgentsError>), Failed> {
     let (bench, release) = local(name, "true", &listing(&[]))?;
@@ -1411,17 +1409,9 @@ fn script_of_key_given(
     bench
         .server
         .catalog(2, std::slice::from_ref(&release), &json!([]))?;
-    let given;
-    let consent = match consent {
-        Some(consent) => consent,
-        None => {
-            given = shipped_hold::shipped()?;
-            &given
-        }
-    };
-    consent.give(route);
+    let consent = shipped_hold::shipped_given(route)?;
     let mut front = answering(&bench.server, Some("Install"));
-    let outcome = shipped_hold::installed_over(&bench, key, consent, &mut front, runtime)?;
+    let outcome = shipped_hold::installed_over(&bench, key, &consent, &mut front, runtime)?;
     Ok((bench, outcome))
 }
 
@@ -1442,7 +1432,6 @@ fn an_install_script_of_an_entry_keyed_for_a_built_in_it_does_not_back_is_refuse
         let (bench, outcome) = script_of_key_given(
             &format!("agents-door-npm-keyed-claude-{case}"),
             ("claude", stated, "agent:claude"),
-            None,
             &runtime,
         )?;
 
