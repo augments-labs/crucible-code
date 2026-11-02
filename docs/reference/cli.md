@@ -713,6 +713,22 @@ gemini-api-key; its agent is given it the next time it starts.` and ends 0.
 No conversation starts the agent, so the sign-in is checked only when it next
 starts.
 
+A method the agent runs as a command needs standard input, output and error on
+a terminal; elsewhere it is refused, saying a terminal is needed, and nothing
+is asked or started. The command, its arguments and its environment come only
+from the catalog's signed entry, and it is run from the version installed. The
+agent's route is asked about where it has no yes yet, and the agent is then
+read: if what it says of the method now differs from the entry, the sign-in is
+refused and the command is not run. Where the sandbox is on, the command reaches
+only the hosts the entry signs in at, and it has five minutes. Each line it
+writes is shown on standard error, with what crucible withholds taken out and a
+note where the line was too long, and each line you type goes to it, echoed by
+your terminal as you type it. A command that writes more than crucible keeps is
+stopped and the sign-in refused. Interrupting crucible ends it and closes the
+command's input. The command ending well does not count: the instance is signed
+in only once the agent, read afterwards, says so. A method that needs a real
+terminal is not listed, and naming it is refused.
+
 A method the agent carries out itself, such as signing in through a browser,
 starts the agent, which needs a conversation to start it in: sign in by it from
 `/login`'s agent screen instead. A method run at a terminal is not run through

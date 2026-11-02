@@ -1701,7 +1701,7 @@ fn a_key_with_nothing_in_it_or_longer_than_the_door_keeps_is_refused_before_anyt
 fn a_sign_in_reads_as_the_agent_opening_a_session_and_promises_nothing_more() {
     use crucible_app::client::agents::{Outcome as Door, Signed};
 
-    for by in [Signed::Agent, Signed::Kept] {
+    for by in [Signed::Agent, Signed::Kept, Signed::Command] {
         let said = carried_out(&Door::SignedIn {
             instance: "space".into(),
             method: "google".into(),

@@ -69,6 +69,11 @@
 //! same gates, each under a hold of its own. An account step the dialect
 //! speaks over the program's own wire is bounded: a version or status within
 //! the time a launch has to prepare, a sign-in within five minutes.
+//! `Launcher::piped` starts the sign-in command an agent's entry records, under
+//! the same hold and bound, from the version installed, and carries its lines
+//! to the channel lent. It is confined as an account step is, except that its
+//! network is the entry's sign-in hosts and no others; a conversation that is
+//! not sandboxed gives it what it gives any start of the agent.
 //!
 //! A program that is the interpreter a release pins, which runs the agent
 //! through the launcher its install wrote, is given the catalog's
@@ -258,16 +263,16 @@ use crucible_execution::{
 };
 use crucible_external_harnesses::acp::{Acp, Allowing};
 use crucible_external_harnesses::catalog::{
-    self, CatalogProfile, Entry, Method, Target, Trust, Unprofiled, Unusable, Variable,
+    self, AuthMethod, CatalogProfile, Entry, Method, Target, Trust, Unprofiled, Unusable, Variable,
 };
 use crucible_external_harnesses::release::{BIN, LAUNCHER, LaunchScript, PRELOAD, Preload};
 use crucible_external_harnesses::store::Store;
 use crucible_external_harnesses::{
-    Account, Act, Control, Dialect, Discovery, Held, Host, Launch, PREPARING, Program, Ran,
-    Reading, Refusal, Request, Shape, Told, antigravity,
+    Account, Act, Control, Dialect, Discovery, Held, Host, Launch, PREPARING, Piped, Program, Ran,
+    Reading, Refusal, Request, Shape, SignInChannel, Told, Unstopped, antigravity,
 };
 use crucible_models::Effort;
-use crucible_runtime::BoxFuture;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_sandbox::{
     SandboxCapability, SandboxCommand, SandboxDomainPattern, SandboxDomainPolicy,
     SandboxEnablement, SandboxEnvironment, SandboxError, SandboxFeature, SandboxFilesystemAccess,
@@ -465,6 +470,51 @@ pub enum Unlaunched {
     /// The host refused the launch.
     #[error(transparent)]
     Refused(#[from] Refusal),
+}
+
+/// Why a sign-in run as a command was not run, or was not known to have signed
+/// the agent in. None says anything a person typed to it.
+#[derive(Debug, thiserror::Error)]
+pub enum Unpiped {
+    /// The directory it was asked from could not be opened.
+    #[error("the directory this was asked from could not be opened, so nothing was started")]
+    Here,
+    /// Something before or after it could not be started.
+    #[error(transparent)]
+    Unlaunched(#[from] Unlaunched),
+    /// What the agent says of the method now is not what the catalog records.
+    #[error(
+        "the agent does not say of the sign-in method {0} what the catalog records, so it was \
+         not run"
+    )]
+    Disagrees(String),
+    /// The agent's answer, asked what it signs in by, could not be read.
+    #[error("the agent could not be asked what it signs in by: {0}")]
+    Unreadable(Failure),
+    /// The agent is not a release in crucible's install store.
+    #[error("a sign-in run as a command is run only from a catalog agent's installed version")]
+    Unstored,
+    /// What the catalog records lies outside the version installed.
+    #[error("the sign-in command {0} is not a program in the version installed")]
+    Outside(String),
+    /// The person gave it up.
+    #[error("the sign-in was stopped")]
+    Stopped,
+    /// It wrote more than is carried.
+    #[error("the sign-in said more than is carried, and was stopped")]
+    Cut,
+    /// It was still going when its time passed.
+    #[error("the sign-in did not finish in time, and was stopped")]
+    Overran,
+    /// It ended, in failure.
+    #[error("the sign-in command ended without signing in")]
+    Failed,
+    /// Its output or its input failed.
+    #[error("the sign-in command's output or input failed, and it was stopped")]
+    Lost,
+    /// What it started could not be confirmed to have stopped.
+    #[error(transparent)]
+    Unstopped(#[from] Unstopped),
 }
 
 /// Why what a pinned interpreter or a pinned Node runs cannot be given to it.
@@ -1451,6 +1501,17 @@ pub fn policy(
             )?,
         })
     };
+    rebuilt(conversation, filesystem, network, limits)
+}
+
+/// `conversation` with these places, this network and these limits in place of
+/// its own, and everything else as it is.
+fn rebuilt(
+    conversation: &SandboxPolicy,
+    filesystem: Vec<SandboxFilesystemRule>,
+    network: SandboxNetworkPolicy,
+    limits: SandboxResourceLimits,
+) -> Result<SandboxPolicy, SandboxPolicyError> {
     SandboxPolicy::new(
         conversation.enabled(),
         filesystem,
@@ -1464,6 +1525,52 @@ pub fn policy(
             .with_command_policy(conversation.commands().clone())
             .with_session_state(conversation.persistent(), conversation.snapshots())
     })
+}
+
+/// A network that reaches `hosts` and nothing else, none closing it; and none
+/// of the hosts in `denied`, which is a user's word this does not overrule.
+fn reaching_only(
+    hosts: &[&str],
+    denied: &[SandboxDomainPattern],
+) -> Result<SandboxNetworkPolicy, SandboxPolicyError> {
+    if hosts.is_empty() {
+        return Ok(SandboxNetworkPolicy::Closed);
+    }
+    let allowed = hosts
+        .iter()
+        .map(|host| SandboxDomainPattern::new(host))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(SandboxNetworkPolicy::Domains(SandboxDomainPolicy::new(
+        allowed,
+        denied.iter().cloned(),
+        false,
+        [],
+        SandboxNetworkProvenance::User,
+    )?))
+}
+
+/// What a child that runs a sign-in as a command is started from: the
+/// conversation, reaching the agent's sign-in `hosts` where it is confined, and
+/// nothing the conversation or the agent's own reach would have let it. An
+/// unconfined run reaches the whole network whatever its policy names, and a
+/// grant of hosts is one it could not hold to.
+fn signing_from(
+    conversation: &SandboxPolicy,
+    hosts: &[&str],
+) -> Result<SandboxPolicy, SandboxPolicyError> {
+    if !conversation.enabled() {
+        return Ok(conversation.clone());
+    }
+    let denied: &[SandboxDomainPattern] = match conversation.network() {
+        SandboxNetworkPolicy::Closed => &[],
+        SandboxNetworkPolicy::Domains(domains) => domains.denied(),
+    };
+    rebuilt(
+        conversation,
+        conversation.filesystem().to_vec(),
+        reaching_only(hosts, denied)?,
+        conversation.limits(),
+    )
 }
 
 /// How a path an agent's entry gives lies against a place no agent is made
@@ -2419,6 +2526,8 @@ enum Life<'a> {
     Conversation { resume: Option<&'a str> },
     /// As long as one account step.
     Step,
+    /// As long as a sign-in run as a command, `program` being that command.
+    SigningIn { program: &'a Program },
 }
 
 impl Life<'_> {
@@ -2428,7 +2537,8 @@ impl Life<'_> {
     /// it partway through.
     const fn limits(self, limits: SandboxResourceLimits) -> SandboxResourceLimits {
         match self {
-            Self::Conversation { .. } => SandboxResourceLimits {
+            // A sign-in waits on a person, for as long as it is given.
+            Self::Conversation { .. } | Self::SigningIn { .. } => SandboxResourceLimits {
                 command_time: None,
                 cpu_seconds: None,
                 output_bytes: None,
@@ -2713,6 +2823,111 @@ impl<'a> Launcher<'a> {
         Ok(dialect.read(step, &ran))
     }
 
+    /// Signs `agent` in by the catalog's record `signing` of a method run as a
+    /// command with no real terminal, carried to `channel` and back, and then
+    /// reads with `dialect` whether that signed it in, as a sign-in the agent
+    /// carried out is read.
+    ///
+    /// Nothing the catalog's record says is run until the agent, asked now,
+    /// says the same of the method; and then it runs under the sandbox, for at
+    /// most `SIGNING_IN` or until `cancel`, reaching its entry's sign-in
+    /// hosts alone, from the directory of the version installed, and it is
+    /// stopped with everything it started however it ends.
+    ///
+    /// # Errors
+    ///
+    /// [`Unpiped`] for why it was not run or was not known to have signed in.
+    // Each is an input of its own to the step, as `account`'s are.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn piped(
+        &self,
+        agent: &Agent,
+        control: &Control,
+        signing: &AuthMethod,
+        dialect: &mut dyn Dialect,
+        channel: &dyn SignInChannel,
+        cancel: &Cancel,
+        shown: &(dyn Fn(Text) + Sync),
+    ) -> Result<Reading, Unpiped> {
+        let unagreed = || Unpiped::Disagrees(quoted(&signing.id));
+        let AgentRow::Catalog(catalog) = &agent.row else {
+            return Err(Unpiped::Unstored);
+        };
+        let Method::Terminal {
+            command,
+            args,
+            env,
+            route: catalog::Route::Piped,
+        } = &signing.method
+        else {
+            return Err(unagreed());
+        };
+        let mut asked = Smoking(Acp::cataloged(catalog.profile().clone(), Allowing::Nothing));
+        match self
+            .account(agent, control, &mut asked, Account::Status, shown)
+            .await?
+        {
+            Reading::Version(_) => {}
+            Reading::Unreadable(failure) => return Err(Unpiped::Unreadable(failure)),
+            Reading::Signed(_) => {
+                return Err(Unpiped::Unreadable(Failure::new(
+                    "the agent did not say what it signs in by",
+                )));
+            }
+        }
+        if !asked
+            .0
+            .initialized()
+            .is_some_and(|said| said.states(&signing.id, &signing.method))
+        {
+            return Err(unagreed());
+        }
+        let program = self.signing_program(agent, command)?;
+        let request = catalog.profile().sign_in_request(
+            args,
+            env,
+            std::env::vars_os(),
+            agent.profile.as_deref(),
+        );
+        let host = self
+            .start(
+                agent,
+                control,
+                request,
+                Life::SigningIn { program: &program },
+            )
+            .await?;
+        match host.piped(channel, cancel, SIGNING_IN).await? {
+            Piped::Succeeded => {}
+            Piped::Failed => return Err(Unpiped::Failed),
+            Piped::Cut => return Err(Unpiped::Cut),
+            Piped::Overran => return Err(Unpiped::Overran),
+            Piped::Cancelled => return Err(Unpiped::Stopped),
+            Piped::Lost => return Err(Unpiped::Lost),
+        }
+        Ok(self
+            .account(agent, control, dialect, Account::Status, shown)
+            .await?)
+    }
+
+    /// The program `command` names, relative to the directory of `agent`'s
+    /// version installed, and refused where it leads out of that directory.
+    fn signing_program(&self, agent: &Agent, command: &str) -> Result<Program, Unpiped> {
+        let trust = Trust::load(self.state, SystemTime::now());
+        let (_, stored) = agent.release(self.consent, &trust, &programs_beside(self.state))?;
+        let stored = stored.ok_or(Unpiped::Unstored)?;
+        let outside = || Unpiped::Outside(quoted(command));
+        let root = std::fs::canonicalize(&stored.root).map_err(|_| outside())?;
+        let place = std::fs::canonicalize(root.join(command)).map_err(|_| outside())?;
+        if !place.starts_with(&root) {
+            return Err(outside());
+        }
+        match Discovery::of(Some(&place)) {
+            Discovery::Found(program) => Ok(program),
+            Discovery::Missing | Discovery::NotExecutable(_) => Err(outside()),
+        }
+    }
+
     /// `request` as `agent` is started with it, and the places under its
     /// home that its child may write.
     ///
@@ -2768,7 +2983,13 @@ impl<'a> Launcher<'a> {
         let trust = Trust::load(self.state, SystemTime::now());
         let (program, stored) =
             agent.release(self.consent, &trust, &programs_beside(self.state))?;
-        let program = program.clone();
+        // What a sign-in runs is checked against the same release, and its
+        // run answers to that release's being usable as the agent's does.
+        let signing_in = match life {
+            Life::SigningIn { program } => Some(program),
+            Life::Conversation { .. } | Life::Step => None,
+        };
+        let program = signing_in.unwrap_or(program).clone();
         let held = content_use::held(self.consent, row.route()).map_err(|unheld| match unheld {
             Unheld::Asks(warned) => Unlaunched::Asks(warned),
             Unheld::Unknown => Unlaunched::Unknown(row.route().to_owned()),
@@ -2783,10 +3004,25 @@ impl<'a> Launcher<'a> {
         let mut reaches = row.reaches();
         reaches.extend(located.as_ref().map(SandboxNetworkEndpoint::host));
         let crucible = self.state.parent().unwrap_or(self.state);
-        let (request, kept) = self.homed_request(agent, keyed(request, row, crucible), crucible)?;
+        // A sign-in run as a command is given what its record says, and no key
+        // kept for another method; what leads the agent's own program is no
+        // part of it; and it reaches the hosts its entry signs in at alone.
+        let request = if signing_in.is_some() {
+            request
+        } else {
+            keyed(request, row, crucible)
+        };
+        let signing_conversation = signing_in
+            .is_some()
+            .then(|| signing_from(self.conversation, &row.sign_in_hosts()))
+            .transpose()?;
+        if signing_conversation.is_some() {
+            reaches.clear();
+        }
+        let (request, kept) = self.homed_request(agent, request, crucible)?;
         let mut request = request;
         let mut policy = policy(
-            self.conversation,
+            signing_conversation.as_ref().unwrap_or(self.conversation),
             agent.profile.as_deref(),
             &kept,
             &reaches,
@@ -2794,11 +3030,13 @@ impl<'a> Launcher<'a> {
         )?;
         if let Some(stored) = &stored {
             policy = read_only(&policy, &stored.root)?;
+            let leading: &[String] = if signing_in.is_some() {
+                &[]
+            } else {
+                &stored.leading
+            };
             request = binned(
-                led(
-                    updating_off(request, stored.updater_off.as_ref()),
-                    &stored.leading,
-                ),
+                led(updating_off(request, stored.updater_off.as_ref()), leading),
                 stored.bin.as_deref(),
             );
         }
@@ -2816,7 +3054,7 @@ impl<'a> Launcher<'a> {
         }
         let resume = match life {
             Life::Conversation { resume } => resume,
-            Life::Step => None,
+            Life::Step | Life::SigningIn { .. } => None,
         };
         if let Some(profile) = &agent.profile {
             // Made only where the child may write it, so that a profile the
@@ -3175,21 +3413,8 @@ pub(crate) fn install_policy(
             filesystem.push(metadata);
         }
     }
-    let network = if hosts.is_empty() {
-        SandboxNetworkPolicy::Closed
-    } else {
-        let allowed = hosts
-            .iter()
-            .map(|host| SandboxDomainPattern::new(host))
-            .collect::<Result<Vec<_>, _>>()?;
-        SandboxNetworkPolicy::Domains(SandboxDomainPolicy::new(
-            allowed,
-            [],
-            false,
-            [],
-            SandboxNetworkProvenance::User,
-        )?)
-    };
+    let hosts: Vec<&str> = hosts.iter().map(|host| &**host).collect();
+    let network = reaching_only(&hosts, &[])?;
     SandboxPolicy::new(
         true,
         filesystem,

@@ -243,6 +243,22 @@ impl AgentRow {
         }
     }
 
+    /// The hosts a sign-in its agent runs as a command may reach: a catalog
+    /// agent's entry's, and none for an agent the catalog does not list, which
+    /// has no such method.
+    #[must_use]
+    pub fn sign_in_hosts(&self) -> Vec<&str> {
+        match self {
+            Self::Built(_) => Vec::new(),
+            Self::Catalog(row) => row
+                .profile
+                .sign_in_hosts()
+                .iter()
+                .map(SandboxDomainPattern::as_str)
+                .collect(),
+        }
+    }
+
     /// The methods its agent signs in by, in the order offered: a catalog
     /// agent's entry's, and Antigravity's own four; none for Claude Code,
     /// which signs in at its own command.

@@ -609,6 +609,7 @@ impl Bench {
             said,
             terminal: false,
             answer,
+            console: None,
         }
     }
 
@@ -1426,4 +1427,58 @@ fn unconfined_is_allowed_only_where_the_runner_says_it_is_disposable() {
         assert!(refused.contains("--unconfined"), "{refused}");
         assert_eq!(refused.lines().count(), 1, "{refused}");
     }
+}
+
+/// Where this process has no terminal to run it on, a sign-in the agent runs as
+/// a command is refused saying one is needed, and no key is asked for.
+#[test]
+fn a_sign_in_run_as_a_command_is_refused_away_from_a_terminal() {
+    let bench = Bench::new("sign-in-unlent");
+    bench.host.publish(1, &[signing_in()]);
+    bench.configure(&serde_json::json!({
+        "work": {
+            "driver": "catalog",
+            "agent": "goose",
+            "executable": bench.program("1.0.0").to_string_lossy(),
+        },
+    }));
+
+    let answer = bench.carried(
+        &action(&["sign-in", "work", "--method", "terminal"]),
+        None,
+        &mut unasked,
+    );
+
+    let Answer::Refused(refused) = &answer else {
+        panic!("it was not refused: {}", shape(&answer));
+    };
+    assert!(
+        refused.contains("needs a terminal") && refused.contains("crucible agents sign-in"),
+        "{refused}"
+    );
+}
+
+/// What is typed reaches a command a line at a time without its ending, and
+/// nothing past a line too long to be given whole.
+#[test]
+fn lines_typed_are_given_whole_and_end_at_one_too_long() {
+    let long = "x".repeat(TYPED_LINE + 1);
+    let input = format!("first\nsecond\r\n{long}\nnever\n");
+    let mut typed = typed_lines(io::Cursor::new(input.into_bytes()));
+
+    let mut lines = Vec::new();
+    while let Some(line) = typed.blocking_recv() {
+        lines.push(line);
+    }
+
+    assert_eq!(lines, ["first", "second"]);
+}
+
+/// A line a command wrote draws nothing of its own, and one cut says so.
+#[test]
+fn a_commands_line_is_escaped_and_says_where_it_was_cut() {
+    assert!(!written_line("over\u{1b}[2J", false).contains('\u{1b}'));
+    assert!(written_line("plain", false).ends_with('\n'));
+    assert!(!written_line("plain", false).contains("crucible keeps"));
+    assert!(written_line("plain", true).contains("crucible keeps"));
 }

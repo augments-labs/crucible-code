@@ -174,8 +174,19 @@
 //! stopped is. The runs are known only to the conversation that made
 //! them, through the steps it lent, so a launcher lent with none is refused as
 //! no conversation. A sign-in link the agent prints is told to
-//! [`Watching::link`] as the agent's wire passed it. A method run at a
-//! terminal is refused here. A business sign-in to Antigravity is billed to
+//! [`Watching::link`] as the agent's wire passed it. A method that needs a
+//! real terminal is refused here and named by no list of methods. A method the
+//! agent runs as a command with no real terminal is started only where the
+//! front end lent [`Watching::sign_in`], since someone must read what it says
+//! and answer it: with nothing lent it is refused saying a terminal is needed,
+//! before the route is asked or anything started. Once the route has its yes,
+//! and beside no run as above, the agent is first read over its own wire, and
+//! what it says of the method now must be what its signed entry records
+//! ([`Unpiped::Disagrees`]). What the command says reaches the channel redacted
+//! and bounded by line and in total, a cut said where it fell; each line the
+//! channel gives goes to its input, and a [`Typing::Secret`] is withheld from
+//! all it is seen to say and carried nowhere else. It ending well is not taken
+//! as signed in: the agent is then read as for any other sign-in. A business sign-in to Antigravity is billed to
 //! the Google Cloud project and location its entry names: one whose entry
 //! names neither is refused naming both keys, and one whose location's host
 //! no sandbox policy can name is refused naming that key, each before anything
@@ -192,6 +203,7 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use crucible_auth::Store as Credentials;
@@ -201,10 +213,12 @@ use crucible_client_api::{
     Request, Text,
 };
 use crucible_config::{AgentUpdate, Cloud, ConfigError, Driver, ExternalAgent, Home, Settings};
+/// A line a sign-in command said, as a channel is given it.
+pub use crucible_execution::Text as SaidLine;
 use crucible_execution::{Authentication, Failure};
 use crucible_external_harnesses::catalog::{
     Artifact, AssetRef, AuthMethod, CatalogError, Disposition, Entry, File, FileKind, Files,
-    Format, Launch, Method, Offer, Script, Target, Trust, Unprofiled, built_list, file_list,
+    Format, Launch, Method, Offer, Route, Script, Target, Trust, Unprofiled, built_list, file_list,
     result_list,
 };
 use crucible_external_harnesses::release::{
@@ -215,9 +229,14 @@ use crucible_external_harnesses::store::{
     Fetched, Listing, Mismatch, Provenance, Receipt, Store, StoreError, Version,
 };
 use crucible_external_harnesses::{Account, Held, Reading, WITHHELD_BYTES, antigravity};
-use crucible_http::Origin;
+pub use crucible_external_harnesses::{SignInChannel, Typed, Typing};
+use crucible_http::{Origin, ProxyEnv};
 use crucible_runtime::Cancel;
+use crucible_sandbox::SandboxService;
+use crucible_sandbox_local::LocalSandbox;
 use crucible_types::AgentKey;
+use crucible_workspace::Workspace;
+use tokio::runtime::Handle;
 
 use super::accounts;
 use super::deciding::{self, Confirmation, Front, Shown, mint, turned_away};
@@ -225,9 +244,12 @@ use crate::agent_download::{self, DownloadError, Landing};
 use crate::backends::{AgentRow, CatalogRow, REGISTRY};
 use crate::catalog_fetch::{self, FetchError, Source, Trigger};
 use crate::content_use::{self, agent_route};
-use crate::launching::{self, Agent, Launcher, Steps, Unlaunched, Unscripted, Unsmoked, quoted};
+use crate::launching::{
+    self, Agent, Launcher, Steps, Unlaunched, Unpiped, Unscripted, Unsmoked, quoted,
+};
 use crate::providers::{Rows, Unnamed};
 use crate::remember::{self, RememberError};
+use crate::services::Services;
 
 /// The most catalog agents a listing names; one with more says so.
 pub const LISTED: usize = 32;
@@ -262,6 +284,10 @@ pub struct Watching<'a> {
     /// Told each sign-in link the agent prints, as its wire passed it, for a
     /// person to open while the sign-in waits.
     pub link: &'a (dyn Fn(crucible_execution::Text) + Sync),
+    /// Where a sign-in the agent runs as a command is carried, where this front
+    /// end has someone to carry it to; a method of that kind is refused without
+    /// one.
+    pub sign_in: Option<&'a dyn SignInChannel>,
 }
 
 impl std::fmt::Debug for Watching<'_> {
@@ -400,25 +426,9 @@ pub enum Signed {
     /// A key typed for the method and kept, which the start was given in the
     /// method's variable.
     Kept,
-}
-
-/// A key a person typed on this machine for an agent to sign in with: a
-/// secret from the moment it was read. Its `Debug` names nothing of it, it has
-/// no `Display`, and no refusal of it repeats it.
-pub struct Typed(String);
-
-impl Typed {
-    /// The key as it was typed.
-    #[must_use]
-    pub const fn new(typed: String) -> Self {
-        Self(typed)
-    }
-}
-
-impl std::fmt::Debug for Typed {
-    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        out.write_str("Typed(<redacted>)")
-    }
+    /// A command the agent's entry records, run with the person at the channel
+    /// lent for it.
+    Command,
 }
 
 /// Why a command at the agents door did not do what it was asked.
@@ -452,6 +462,16 @@ pub enum AgentsError {
         /// The instances.
         instances: Vec<Box<str>>,
     },
+    /// A sign-in method run as a command was asked for by a front end with no
+    /// one to carry it to.
+    #[error(
+        "the sign-in method {0} runs a command that needs a terminal: run `crucible agents \
+         sign-in` from one"
+    )]
+    Unlent(Box<str>),
+    /// A sign-in run as a command was not run, or did not end signed in.
+    #[error(transparent)]
+    Piped(#[from] Unpiped),
     /// The release is of a kind this door does not install yet.
     #[error("{0}, which this build does not install through the agents door")]
     Unsupported(&'static str),
@@ -683,7 +703,7 @@ pub async fn run(
     };
     if let Command::SignInAgent { instance, method } = command {
         return door
-            .sign_in(instance.as_str(), method.as_str(), front, watching.link)
+            .sign_in(instance.as_str(), method.as_str(), front, &watching)
             .await;
     }
     let Some(agent) = agent else {
@@ -1597,8 +1617,9 @@ impl Door<'_> {
         instance: &str,
         method: &str,
         front: &mut dyn Front,
-        link: &(dyn Fn(crucible_execution::Text) + Sync),
+        watching: &Watching<'_>,
     ) -> Result<Outcome, AgentsError> {
+        let link = watching.link;
         let Some(configured) = self.instances.iter().find(|one| one.name() == instance) else {
             return Ok(Outcome::Refused(ErrorCode::InvalidArgument.into()));
         };
@@ -1610,7 +1631,7 @@ impl Door<'_> {
                 by,
             })
         };
-        let (launcher, by, billed) = match &found.method {
+        let (launcher, by, billed, channel) = match &found.method {
             Method::EnvVar { .. } => {
                 let rows = Rows::production();
                 let name = rows.signing_in(&agent, &found.id)?;
@@ -1632,13 +1653,31 @@ impl Door<'_> {
                         method: found.id.clone(),
                     });
                 };
-                (launcher, Signed::Kept, None)
+                (launcher, Signed::Kept, None, None)
             }
-            Method::Terminal { .. } => {
+            Method::Terminal {
+                route: Route::Terminal,
+                ..
+            } => {
                 return Err(AgentsError::Unsupported(
-                    "a sign-in run at a terminal, which this build does not run through the \
-                     agents door",
+                    "a sign-in run at a real terminal, which this build does not run through \
+                     the agents door",
                 ));
+            }
+            Method::Terminal {
+                route: Route::Piped,
+                ..
+            } => {
+                // Refused before anything is asked or started: with no one to
+                // carry it to, a yes would be asked for nothing.
+                let channel = watching
+                    .sign_in
+                    .ok_or_else(|| AgentsError::Unlent(quoted(&found.id).into()))?;
+                let launcher = self
+                    .shelf
+                    .smoke
+                    .ok_or_else(|| AgentsError::Conversation(quoted(&found.id).into()))?;
+                (launcher, Signed::Command, None, Some(channel))
             }
             Method::Agent => {
                 let billed = match &row {
@@ -1654,7 +1693,7 @@ impl Door<'_> {
                     .shelf
                     .smoke
                     .ok_or_else(|| AgentsError::Conversation(quoted(&found.id).into()))?;
-                (launcher, Signed::Agent, billed)
+                (launcher, Signed::Agent, billed, None)
             }
         };
         // The agent's program is started beside any run of an instance on its
@@ -1706,7 +1745,8 @@ impl Door<'_> {
             )
             .map_err(AgentsError::Unverified)?;
         drop(trust);
-        if !dialect.signing_in_with(&found.id) {
+        // A command is not asked for over the wire, so the wire has no say.
+        if channel.is_none() && !dialect.signing_in_with(&found.id) {
             return Err(AgentsError::Unsupported(
                 "an agent whose wire signs in by no method named",
             ));
@@ -1723,10 +1763,27 @@ impl Door<'_> {
         })?;
         // The start is given every key kept for the agent, so a kept key's
         // method is asked for with its key already in the agent's environment.
-        match launcher
-            .account(&started, &control, dialect.as_mut(), Account::SignIn, link)
-            .await?
-        {
+        let reading = match channel {
+            Some(channel) => {
+                launcher
+                    .piped(
+                        &started,
+                        &control,
+                        &found,
+                        dialect.as_mut(),
+                        channel,
+                        watching.cancel,
+                        link,
+                    )
+                    .await?
+            }
+            None => {
+                launcher
+                    .account(&started, &control, dialect.as_mut(), Account::SignIn, link)
+                    .await?
+            }
+        };
+        match reading {
             Reading::Signed(Authentication::SignedIn) => signed(by),
             Reading::Unreadable(failure) => Err(AgentsError::Unverified(failure)),
             Reading::Signed(_) | Reading::Version(_) => Err(AgentsError::Unverified(Failure::new(
@@ -1805,7 +1862,7 @@ pub fn keep_key(home: &Home, instance: &str, method: &str, key: Typed) -> Result
     }
     let rows = Rows::production();
     let name = rows.signing_in(&agent, &found.id)?;
-    let Typed(typed) = key;
+    let typed = key.applied();
     let typed = typed.trim();
     let sound = (WITHHELD_BYTES..=KEY_BYTES).contains(&typed.len())
         && typed.bytes().all(|byte| byte.is_ascii_graphic());
@@ -1843,8 +1900,91 @@ pub fn sign_in_methods(home: &Home, instance: &str) -> Result<Vec<Box<str>>, Age
     Ok(row
         .methods()
         .into_iter()
+        .filter(|offered| {
+            !matches!(
+                offered.method,
+                Method::Terminal {
+                    route: Route::Terminal,
+                    ..
+                }
+            )
+        })
         .map(|offered| offered.id)
         .collect())
+}
+
+/// Whether the method the configured `instance` offers as `method` is one run
+/// as a command with no real terminal, which a front end lends a channel for.
+///
+/// # Errors
+///
+/// As signing in by it would, for an instance or a method there is not.
+pub fn runs_a_command(home: &Home, instance: &str, method: &str) -> Result<bool, AgentsError> {
+    let settings = Settings::read_home(home)?;
+    let instances = settings.external_agents();
+    let configured = instances
+        .iter()
+        .find(|one| one.name() == instance)
+        .ok_or_else(|| AgentsError::NoInstance(quoted(instance).into()))?;
+    let trust = Trust::load(&catalog_fetch::state_in(home.path()), SystemTime::now());
+    let store = Store::new(home.path().join("programs"));
+    let (_, _, found) = signing(&trust, &store, configured, method)?;
+    Ok(matches!(
+        found.method,
+        Method::Terminal {
+            route: Route::Piped,
+            ..
+        }
+    ))
+}
+
+/// `with` lent what a front end with no conversation needs to start an agent:
+/// a launcher and the steps it counts as, under the sandbox the user's own file
+/// says for the directory this process is in, with the content-use answers of
+/// `services`. A checkout's own file has no say in how a sign-in is confined,
+/// as it has none at this door.
+///
+/// # Errors
+///
+/// [`AgentsError::Config`] where the configuration or the policy cannot be
+/// read, and [`AgentsError::Piped`] where this directory cannot be opened.
+pub fn lending_here<R>(
+    home: &Home,
+    services: &Services,
+    runtime: &Handle,
+    with: impl FnOnce(&Launcher<'_>, &Steps) -> R,
+) -> Result<R, AgentsError> {
+    let settings = Settings::read_home(home)?;
+    let here = std::env::current_dir()
+        .ok()
+        .and_then(|here| Workspace::open(here).ok())
+        .ok_or(Unpiped::Here)?;
+    let policy = settings.sandbox().enforcing_policy(&here)?;
+    services.consent().keeps_in(crucible_config::user(home));
+    services
+        .consent()
+        .recorded(settings.content_accepted().into_iter().map(str::to_owned));
+    let sandbox: Arc<dyn SandboxService> = Arc::new(
+        LocalSandbox::new()
+            .watching_on(runtime.clone())
+            .through(ProxyEnv::read(|name: &str| std::env::var(name).ok())),
+    );
+    let state = catalog_fetch::state_in(home.path());
+    let launcher = Launcher::new(
+        sandbox,
+        runtime.clone(),
+        &policy,
+        services.consent(),
+        &state,
+        home.sessions(),
+    );
+    let steps = Steps::new(
+        launcher,
+        settings.sandbox().enablement(),
+        &REGISTRY,
+        std::env::var_os("PATH"),
+    );
+    Ok(steps.lending(|launcher| with(launcher, &steps)))
 }
 
 /// The Google Cloud project and location the configured `instance`, named
