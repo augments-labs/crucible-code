@@ -3241,10 +3241,11 @@ impl Private {
     fn made(staging: &Path) -> std::io::Result<Self> {
         let made = Self([staging.join(".script-home"), staging.join(".script-tmp")]);
         for place in &made.0 {
-            let mut builder = std::fs::DirBuilder::new();
             #[cfg(unix)]
-            std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-            builder.create(place)?;
+            std::os::unix::fs::DirBuilderExt::mode(&mut std::fs::DirBuilder::new(), 0o700)
+                .create(place)?;
+            #[cfg(not(unix))]
+            std::fs::DirBuilder::new().create(place)?;
         }
         Ok(made)
     }
