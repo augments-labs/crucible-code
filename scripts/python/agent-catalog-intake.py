@@ -290,8 +290,10 @@ segment, case folded, with an `@version`, one `.exe`, `.cmd`, `.bat`, `.js`,
 or ending, as a cross compiler's target triplet does, in `-gcc`, `-g++`,
 `-cc`, `-c++`, `-clang`, `-clang++` or `-ld`, so `npx node-gyp`, `gcc-12`,
 `x86_64-linux-gnu-gcc` and `npm run build` are each one, or cannot be
-split; it is a build on every `windows-*` and
-`freebsd-*` platform, whatever it runs; and it is a build by difference when
+split; it is a build on every `windows-*`, `freebsd-*` and `darwin-*` platform,
+whatever it runs, as a client runs a script only on Linux, where a PID namespace
+lets a stop reach everything it started, which macOS gives no way to prove; and
+it is a build by difference when
 its two runs left listings that differ, or a run left none, a broken one, or
 one past the ceilings. Otherwise it is `local`: the two listings are the same
 bytes, and the entry lists the script with its `command`, the `hosts` it
@@ -677,7 +679,7 @@ EXPANDS = frozenset("$`*?[]~{}%")
 # value is a word of its own.
 COMMAND_BREAKS = frozenset(" \t;&|()<>`={}!")
 # The platforms where every skipped script is built and none runs locally.
-BUILT_ON = ("windows-", "freebsd-")
+BUILT_ON = ("windows-", "freebsd-", "darwin-")
 # How many rules a client unpacks a lock's tree by: the first.
 UNPACK_RULES = 1
 
