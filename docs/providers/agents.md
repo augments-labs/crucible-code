@@ -83,6 +83,11 @@ agent then opened a session. Escape on a question changes nothing and goes
 back; apart from that one yes and what you choose here, nothing is written
 until the agent reads signed in.
 
+A catalog agent's row reads its instances from your user configuration file
+each time it is shown, so an instance added while crucible runs is found without
+a restart. Where that file cannot be read, the row and its screen say so and
+offer only *Go back*.
+
 `/logout` lists each agent named under `externalAgents` after the stored
 credentials, as an external agent instance, and `/logout <name>` takes one
 directly. Taking one offers *Connect*, which reaches the agent's own provider

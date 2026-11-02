@@ -67,6 +67,8 @@ use super::{Failed, Tree};
 mod adding;
 #[path = "agents/file_list.rs"]
 mod file_list;
+#[path = "agents/login_row.rs"]
+mod login_row;
 #[cfg(feature = "proof")]
 #[path = "agents/npm.rs"]
 mod npm;
@@ -4838,11 +4840,22 @@ fn connecting(
     bench: &Bench,
     front: &mut Connecting,
 ) -> Result<(crucible_client_api::Outcome, usize), Failed> {
+    connecting_after(bench, front, || Ok(()))
+}
+
+/// As [`connecting`], with `meanwhile` done once the conversation has read
+/// its settings and before the connect is asked.
+fn connecting_after(
+    bench: &Bench,
+    front: &mut Connecting,
+    meanwhile: impl FnOnce() -> Result<(), Failed>,
+) -> Result<(crucible_client_api::Outcome, usize), Failed> {
     let mut conversation = super::conversation(&bench.tree, super::Script::new(Vec::new()), false)?
         .consenting(Consent::new(Routes::production()));
     let shipping = conversation.agents().shipping().count();
     let mut desk = super::Desk::new(&bench.tree, &[])?;
     desk.settings = super::written(&bench.tree)?;
+    meanwhile()?;
     let (workspace, sessions) = (bench.tree.workspace()?, bench.tree.sessions());
     let at = crucible_app::client::Desk {
         switching: desk.with(),
