@@ -3976,6 +3976,59 @@ def check_npm_build_by_rule(scratch: pathlib.Path, signers: Signers) -> None:
     assert script["licence_gate"]["asset"] == script["replaced_by"], script["licence_gate"]
     assert (assets / sha(built)).read_bytes() == built, "the build is kept as an asset by its hash"
     assert "command" not in script and "result" not in script, script
+    # The file list the client unpacks the build against names every member,
+    # and is kept as an asset of the catalog's own.
+    members = []
+    with tarfile.open(fileobj=io.BytesIO(built), mode="r:gz") as tar:
+        for member in tar:
+            if member.isdir():
+                members.append({"kind": "dir", "path": member.name})
+            else:
+                content = tar.extractfile(member).read()
+                members.append({"exec": bool(member.mode & 0o111), "kind": "file", "path": member.name,
+                                "sha256": sha(content), "size": len(content)})
+    assert any(member["kind"] == "dir" for member in members) and any(member["kind"] == "file" for member in members)
+    listed = (assets / script["files"]["sha256"]).read_bytes()
+    assert script["files"] == {"sha256": sha(listed), "size": len(listed)}, script["files"]
+    assert json.loads(listed) == members, listed
+    assert script["unpacked"] == sum(member.get("size", 0) for member in members), script["unpacked"]
+    assert script["decompressed"] == len(gzip.decompress(built)), script["decompressed"]
+    # The catalog lists the output as the script's asset, and the gate's
+    # record stays the publish job's.
+    module = load_intake()
+    rendered = top_script(next(
+        target for entry in module.rendered(data["entries"]) if entry["key"] == "gyp"
+        for target in entry["targets"] if target["platform"] == "linux-x86_64"
+    ))
+    assert rendered == {
+        "asset": {"sha256": sha(built), "size": len(built)},
+        "decompressed": script["decompressed"],
+        "disposition": "built",
+        "event": script["event"],
+        "files": script["files"],
+        "package": script["package"],
+        "unpacked": script["unpacked"],
+    }, rendered
+    # A list past what a catalog asset may be drops the target, its gate never
+    # reached, and one that fits goes on to it.
+    observed = scratch / "npm-builds" / "observed"
+    item = {"manifest": {"scripts": {"postinstall": "node-gyp rebuild"}}}
+    undecided = {"package": TOP, "event": "postinstall", "disposition": None}
+    gate = module.Gate(set(), None, None)
+    module.ASSET_BYTES = len(listed)
+    try:
+        module.classed(observed, "gyp-npm", "linux-x86_64", item, undecided, gate, {})
+    except module.Dropped as failed:
+        assert "no lockfile or SBOM was given" in str(failed), str(failed)
+    else:
+        raise AssertionError("a build was taken with no SBOM")
+    module.ASSET_BYTES = len(listed) - 1
+    try:
+        module.classed(observed, "gyp-npm", "linux-x86_64", item, undecided, gate, {})
+    except module.Dropped as failed:
+        assert str(module.ASSET_BYTES) in str(failed) and "file list" in str(failed), str(failed)
+    else:
+        raise AssertionError("a build's file list past a catalog asset was kept")
     # Where the job saw nothing of the script, it stays for the reviewer.
     assert top_script(targets["windows-x86_64"])["disposition"] is None, targets["windows-x86_64"]["scripts"]
     for agent_id in (
@@ -4077,12 +4130,18 @@ def check_npm_build_gated(scratch: pathlib.Path, signers: Signers) -> None:
         if script.get("disposition") == "local"
     ]
     assert results, "the review lists a local script"
-    for named in [sha(built), record["notice"]["sha256"], *(licence["sha256"] for licence in record["licences"]),
-                  *results]:
+    for named in [sha(built), script["files"]["sha256"], record["notice"]["sha256"],
+                  *(licence["sha256"] for licence in record["licences"]), *results]:
         (held / "assets" / named).write_bytes((assets / named).read_bytes())
     (held / "merged.json").write_text(json.dumps(data))
     ran = intake("publish-check", "--merged", held / "merged.json", "--assets", held / "assets")
     assert ran.returncode == 0, f"a gated build or a local script's listing was refused:\n{ran.stdout}{ran.stderr}"
+    # The file list a built script is unpacked against is published with it.
+    other_files = copy.deepcopy(data)
+    top_script(built_targets(other_files, "ungated")["windows-x86_64"])["files"]["sha256"] = "0" * 64
+    (held / "other-files.json").write_text(json.dumps(other_files))
+    ran = intake("publish-check", "--merged", held / "other-files.json", "--assets", held / "assets")
+    assert ran.returncode == 1 and script["files"]["sha256"] in ran.stderr, ran.stderr
     # A local script whose command holds what could hide what it runs is
     # not rendered.
     module = load_intake()
@@ -4097,6 +4156,23 @@ def check_npm_build_gated(scratch: pathlib.Path, signers: Signers) -> None:
         if script.get("disposition") is None:
             script["disposition"] = "inert"
     module.npm_checked(entry, target, "the entry")
+    # A built script is rendered with its asset and its list, so one missing
+    # either is no entry to publish.
+    built_entry = next(entry for entry in data["entries"] if entry["key"] == "ungated")
+    built_target = copy.deepcopy(built_targets(data, "ungated")["windows-x86_64"])
+    for decided in built_target["scripts"]:
+        if decided.get("disposition") is None:
+            decided["disposition"] = "inert"
+    module.npm_checked(built_entry, built_target, "the entry")
+    for field in ("replaced_by", "files", "unpacked", "decompressed"):
+        bare = copy.deepcopy(built_target)
+        del top_script(bare)[field]
+        try:
+            module.npm_checked(built_entry, bare, "the entry")
+        except module.Refused as refused:
+            assert field in str(refused), str(refused)
+        else:
+            raise AssertionError(f"a built script without {field} was taken")
     for hiding in ("\u202e", "\x85"):
         hidden_target = copy.deepcopy(target)
         next(script for script in hidden_target["scripts"] if script.get("disposition") == "local")["command"] = (
