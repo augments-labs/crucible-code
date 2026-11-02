@@ -41,7 +41,7 @@ use super::{
 };
 
 /// Node's path in the version, as the catalog lists it.
-fn node() -> String {
+pub(super) fn node() -> String {
     format!("node/bin/node{}", std::env::consts::EXE_SUFFIX)
 }
 
@@ -96,6 +96,14 @@ fn noded(server: &Server, played: &Played, tree: &Tree, node_args: &Value) -> Va
             "artifacts": [artifact(&node(), program), artifact("node/bin/script", script)]
         }]
     }))
+}
+
+/// `goose` 1.0.0 as a pinned Node starts it, the fake peer playing `played` as
+/// Node, with its whole tree on `server`.
+pub(super) fn noded_as(server: &Server, played: &Played) -> Value {
+    let tree = tree();
+    server.serve(TARBALL, Reply::Body(tree.tarball.clone()));
+    noded(server, played, &tree, &json!([]))
 }
 
 /// A bench named `name` whose catalog lists goose 1.0.0 as a pinned Node

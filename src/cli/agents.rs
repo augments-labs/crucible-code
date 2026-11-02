@@ -840,6 +840,11 @@ impl SignInChannel for Console<'_> {
     }
 }
 
+/// What leads every line a sign-in command wrote. The line is escaped after it,
+/// so what the command writes cannot end this line and begin one without it,
+/// and nothing it writes reads as crucible's own.
+const CARRIED: &str = "sign-in command | ";
+
 /// A line a sign-in command wrote, as it is written here.
 fn written_line(line: &str, incomplete: bool) -> String {
     let cut = if incomplete {
@@ -847,7 +852,7 @@ fn written_line(line: &str, incomplete: bool) -> String {
     } else {
         ""
     };
-    visible(&format!("{}{cut}\n", escaped(line)))
+    visible(&format!("{CARRIED}{}{cut}\n", escaped(line)))
 }
 
 /// Each line `input` gives, without its line ending, each read to at most

@@ -721,9 +721,10 @@ agent's route is asked about where it has no yes yet, and the agent is then
 read: if what it says of the method now differs from the entry, the sign-in is
 refused and the command is not run. Where the sandbox is on, the command reaches
 only the hosts the entry signs in at, and it has five minutes. Each line it
-writes is shown on standard error, with what crucible withholds taken out and a
-note where the line was too long, and each line you type goes to it, echoed by
-your terminal as you type it; crucible treats none of them as a secret. A
+writes is shown on standard error, led by `sign-in command | ` so that none reads
+as crucible's own, with what crucible withholds taken out and a note where the
+line was too long, and each line you type goes to it, echoed by your terminal as
+you type it; crucible treats none of them as a secret. A
 command that writes more than crucible keeps is stopped and the sign-in refused.
 Interrupting crucible closes the command's input, and ends the command only
 where the sandbox ties it to crucible, on Linux with the sandbox on; elsewhere

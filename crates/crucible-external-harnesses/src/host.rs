@@ -45,7 +45,8 @@
 //! carried once the program has gone quiet, but not while what it wrote could
 //! be the beginning of a value that is withheld. A line the channel sends goes
 //! to its input; one marked as a secret is withheld from what is carried from
-//! that moment, before a byte of it is written, and no failure repeats it. Its
+//! that moment, before a byte of it is written, and no failure repeats it; one
+//! holding a line ending is refused and not written at all. Its
 //! wait is bounded, the channel's person can give it up, and however it ends
 //! everything it started is stopped.
 
@@ -1443,12 +1444,17 @@ impl Host {
 
     /// Writes `typing` to the child's input. A secret is withheld from all
     /// that is carried before a byte of it goes out, and what comes of it
-    /// names nothing of it.
+    /// names nothing of it. One holding a line ending is refused before
+    /// anything is withheld or written: it would reach the child as more than
+    /// one line, and each would be carried, none being the value withheld.
     async fn applied(&mut self, typing: Typing) -> Result<(), Unapplied> {
         let line = match typing {
             Typing::Line(line) => line,
             Typing::Secret(typed) => {
                 let secret = typed.applied();
+                if secret.contains(['\n', '\r']) {
+                    return Err(Unapplied);
+                }
                 if self.withheld.len() >= WITHHELD_VALUES {
                     return Err(Unapplied);
                 }
@@ -1521,7 +1527,8 @@ impl fmt::Debug for Typed {
 pub enum Typing {
     /// A line that may be shown.
     Line(String),
-    /// A line that is a secret.
+    /// A line that is a secret. It is withheld by exact match on a line, so an
+    /// agent that splits or encodes what it is given is not stopped.
     Secret(Typed),
 }
 

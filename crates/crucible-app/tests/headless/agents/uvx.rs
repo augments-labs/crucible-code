@@ -42,7 +42,7 @@ use super::{
 };
 
 /// The interpreter's path in the version, as the catalog lists it.
-fn python() -> String {
+pub(super) fn python() -> String {
     format!("python/bin/python3{}", std::env::consts::EXE_SUFFIX)
 }
 
@@ -118,6 +118,12 @@ fn interpreted(
             ]
         }]
     }))
+}
+
+/// `goose` 1.0.0 as a pinned interpreter starts it, the fake peer playing
+/// `played` as the interpreter.
+pub(super) fn interpreted_as(server: &Server, played: &(Vec<u8>, Vec<u8>)) -> Value {
+    interpreted(server, "goose_acp.cli:main", played, &wheel())
 }
 
 /// Where version 1.0.0 is put.

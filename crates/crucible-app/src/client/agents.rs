@@ -180,8 +180,9 @@
 //! front end lent [`Watching::sign_in`], since someone must read what it says
 //! and answer it: with nothing lent it is refused saying a terminal is needed,
 //! before the route is asked or anything started. Once the route has its yes,
-//! and beside no run as above, the agent is first read over its own wire, and
-//! what it says of the method now must be what its signed entry records
+//! and beside no run as above, a command that is no program of the version
+//! installed is refused ([`Unpiped::Outside`]) before anything starts; the agent
+//! is then read over its own wire, and what it says of the method now must be what its signed entry records
 //! ([`Unpiped::Disagrees`]). What the command says reaches the channel redacted
 //! and bounded by line and in total, a cut said where it fell; each line the
 //! channel gives goes to its input, and a [`Typing::Secret`] is withheld from

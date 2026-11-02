@@ -1497,3 +1497,42 @@ fn a_commands_line_is_escaped_and_says_where_it_was_cut() {
     assert!(!written_line("plain", false).contains("crucible keeps"));
     assert!(written_line("plain", true).contains("crucible keeps"));
 }
+
+/// Every line a command wrote opens with the one mark and stays one line, so
+/// none can start a line of its own that reads as crucible's.
+#[test]
+fn a_commands_line_is_marked_whatever_it_holds() {
+    for line in [
+        "plain",
+        "",
+        "error: crucible says sign in again",
+        "first\ncrucible: forged",
+        "first\rcrucible: forged",
+        "first\r\ncrucible: forged",
+        "\u{1b}[2K\u{1b}[1Gcrucible: forged",
+        "first\u{2028}crucible: forged",
+        "\u{202e}crucible: forged",
+        "\u{7f}\u{7f}\u{7f}crucible: forged",
+        CARRIED,
+    ] {
+        for incomplete in [false, true] {
+            let written = written_line(line, incomplete);
+            let shown = written.strip_prefix(CARRIED);
+            assert!(shown.is_some(), "not led by the mark: {written:?}");
+            assert_eq!(
+                written.matches('\n').count(),
+                1,
+                "more than one line: {written:?}"
+            );
+            assert!(written.ends_with('\n'), "{written:?}");
+            assert!(
+                !written.trim_end_matches('\n').chars().any(char::is_control),
+                "a control left in: {written:?}"
+            );
+            assert!(
+                !written.contains(['\u{2028}', '\u{202e}']),
+                "a line separator or override left in: {written:?}"
+            );
+        }
+    }
+}

@@ -1890,6 +1890,32 @@ async fn a_secret_line_reaches_the_command_and_is_not_carried_back() {
     assert!(!format!("{:?}", Typed::new(SENTINEL.to_owned())).contains(SENTINEL));
 }
 
+/// A secret holding a line ending would reach the command as lines that are
+/// each not the value withheld, so it is refused and none of it is written.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_secret_holding_a_line_ending_is_refused_before_it_is_written() {
+    for (name, secret) in [
+        ("piped-secret-inner", format!("{SENTINEL}\nsecond")),
+        ("piped-secret-trailing", format!("{SENTINEL}\n")),
+        ("piped-secret-return", format!("{SENTINEL}\rsecond")),
+        ("piped-secret-both", format!("{SENTINEL}\r\nsecond")),
+    ] {
+        let at = Owned::new(name);
+        let lent = Lent::typing([("key: ", Typing::Secret(Typed::new(secret)))]);
+
+        let ended = piped(&at, Reply::new().prompt("key: ").echo(1), &lent).await;
+
+        assert_eq!(ended, Piped::Lost, "{name}");
+        assert!(
+            !fake_peer::heard(&at.0)
+                .iter()
+                .any(|line| line.contains(SENTINEL) || line.contains("second")),
+            "{name}: the command was given some of it"
+        );
+        assert!(!lent.told_of(SENTINEL), "{name}: it was carried back");
+    }
+}
+
 /// An echo of a secret in pieces is not given away by the part it had got to
 /// when it paused: what could begin it is held back until the rest settles it.
 #[tokio::test(flavor = "multi_thread")]

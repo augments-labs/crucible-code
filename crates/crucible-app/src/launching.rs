@@ -87,8 +87,14 @@
 //! step, the smoke test of a release and the intake's probe all take what
 //! leads the arguments from one function, so none starts the interpreter any
 //! other way, and a probe of an unpacked release with no launcher at its top
-//! is refused. A turn and an account step take the launch from the release's
-//! own entry where the catalog still lists it, else from the release an
+//! is refused. A sign-in command run with no real terminal is the one start
+//! that takes no leading arguments, since the signed record's arguments are
+//! what was reviewed. That is safe because the command is refused where it
+//! is, its links followed, the program the release's start leads, which with
+//! nothing leading it would load from the working directory; a script in the
+//! version stays allowed, since its interpreter loads it from its own path, not
+//! from that directory. A turn and an account step take the launch from the
+//! release's own entry where the catalog still lists it, else from the release an
 //! update would install; where neither is one a pinned interpreter starts, a
 //! version holding anything at the launcher's place, a link included, is
 //! refused rather than started as a program of its own, since its
@@ -2828,8 +2834,9 @@ impl<'a> Launcher<'a> {
     /// reads with `dialect` whether that signed it in, as a sign-in the agent
     /// carried out is read.
     ///
-    /// Nothing the catalog's record says is run until the agent, asked now,
-    /// says the same of the method; and then it runs under the sandbox, for at
+    /// A command that is no program of the version installed is refused before
+    /// anything starts. Nothing the catalog's record says is run until the
+    /// agent, asked now, says the same of the method; and then it runs under the sandbox, for at
     /// most `SIGNING_IN` or until `cancel`, reaching its entry's sign-in
     /// hosts alone, from the directory of the version installed, and it is
     /// stopped with everything it started however it ends.
@@ -2862,6 +2869,7 @@ impl<'a> Launcher<'a> {
         else {
             return Err(unagreed());
         };
+        let program = self.signing_program(agent, command)?;
         let mut asked = Smoking(Acp::cataloged(catalog.profile().clone(), Allowing::Nothing));
         match self
             .account(agent, control, &mut asked, Account::Status, shown)
@@ -2882,7 +2890,6 @@ impl<'a> Launcher<'a> {
         {
             return Err(unagreed());
         }
-        let program = self.signing_program(agent, command)?;
         let request = catalog.profile().sign_in_request(
             args,
             env,
@@ -2911,15 +2918,23 @@ impl<'a> Launcher<'a> {
     }
 
     /// The program `command` names, relative to the directory of `agent`'s
-    /// version installed, and refused where it leads out of that directory.
+    /// version installed, and refused where it leads out of that directory or,
+    /// where the release's start is led, where it is the very program that
+    /// start leads: run bare, an interpreter or a Node would load from the
+    /// working directory what the leading arguments keep it from.
     fn signing_program(&self, agent: &Agent, command: &str) -> Result<Program, Unpiped> {
         let trust = Trust::load(self.state, SystemTime::now());
-        let (_, stored) = agent.release(self.consent, &trust, &programs_beside(self.state))?;
+        let (leads, stored) = agent.release(self.consent, &trust, &programs_beside(self.state))?;
         let stored = stored.ok_or(Unpiped::Unstored)?;
         let outside = || Unpiped::Outside(quoted(command));
         let root = std::fs::canonicalize(&stored.root).map_err(|_| outside())?;
         let place = std::fs::canonicalize(root.join(command)).map_err(|_| outside())?;
         if !place.starts_with(&root) {
+            return Err(outside());
+        }
+        if !stored.leading.is_empty()
+            && std::fs::canonicalize(leads.path()).map_err(|_| outside())? == place
+        {
             return Err(outside());
         }
         match Discovery::of(Some(&place)) {

@@ -129,7 +129,14 @@ fn signed_in_after() -> Played {
 /// A release of goose that is the fake peer playing `script`, whose entry
 /// records `terminal_method` as a method run with no real terminal.
 fn signing_in_by(bench: &Bench, script: &Peer) -> Result<Value, Failed> {
-    let mut release = bench.server.peer_release("1.0.0", &peer(script)?);
+    signing_in_with(
+        bench.server.peer_release("1.0.0", &peer(script)?),
+        &command(),
+    )
+}
+
+/// `release` with the one method `terminal`, which runs `by` through the door.
+fn signing_in_with(mut release: Value, by: &str) -> Result<Value, Failed> {
     let object = release.as_object_mut().ok_or("a release is an object")?;
     object.insert(
         "auth_methods".into(),
@@ -137,7 +144,7 @@ fn signing_in_by(bench: &Bench, script: &Peer) -> Result<Value, Failed> {
             "id": "terminal",
             "kind": "terminal",
             "name": "Sign in at a terminal",
-            "command": command(),
+            "command": by,
             "args": ["login"],
             "env": {"SIGNING": "in"},
             "route": "piped",
@@ -151,10 +158,16 @@ impl Bench {
     /// `release` of goose published, installed through the door and configured
     /// as the instance `work`, with nothing of it started.
     fn with_installed(&self, release: &Value) -> Result<PathBuf, Failed> {
+        self.with_installed_at(release, &command())
+    }
+
+    /// [`Bench::with_installed`], the instance running `program` of the
+    /// version.
+    fn with_installed_at(&self, release: &Value, program: &str) -> Result<PathBuf, Failed> {
         self.server
             .catalog(1, std::slice::from_ref(release), &json!([]))?;
         let root = self.programs().join("1.0.0");
-        self.configure(&root.join(command()), &json!({}))?;
+        self.configure(&root.join(program), &json!({}))?;
         let (installed, _) = self.ask(
             install("1.0.0")?,
             &mut answering(&self.server, Some("Install")),
@@ -653,7 +666,200 @@ fn a_command_that_is_no_program_of_the_version_installed_is_not_run() -> Result<
         "{}",
         shape(&refused)
     );
-    assert_eq!(fake_peer::played(&root), 1);
+    assert_eq!(
+        fake_peer::played(&root),
+        0,
+        "refused before anything starts"
+    );
+    Ok(())
+}
+
+/// A method offering `by`, the peer that would be asked of it.
+fn offering(by: &str) -> Result<(Vec<u8>, Vec<u8>), Failed> {
+    let mut method = terminal_method();
+    set(&mut method, "/command", json!(by));
+    peer(&Peer::of([Played::new().hear(1).say(offered(&method))]))
+}
+
+/// Asserts the door refuses signing in by a command that is the program
+/// `release` starts led, as `program` installed: run bare, it would load from
+/// the working directory, so nothing is started.
+fn refused_as_the_program_led(
+    bench: &Bench,
+    release: &Value,
+    program: &str,
+    runtime: &tokio::runtime::Runtime,
+) -> Result<(), Failed> {
+    let refused = bench.ask_piped(
+        &mut answering(&bench.server, None),
+        (local_of(runtime), false, true),
+        (release, Some(&Person::default())),
+        runtime,
+    )?;
+
+    assert!(
+        matches!(&refused, Err(AgentsError::Piped(Unpiped::Outside(_)))),
+        "{}",
+        shape(&refused)
+    );
+    let beside = bench
+        .programs()
+        .join("1.0.0")
+        .join(program)
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or("the program lies in a directory")?;
+    assert_eq!(
+        fake_peer::played(&beside),
+        0,
+        "refused before anything starts"
+    );
+    Ok(())
+}
+
+/// The pinned interpreter takes `-I` and its launcher from every other start,
+/// so a sign-in command naming it is refused rather than started without them.
+#[test]
+fn a_command_that_is_the_pinned_interpreter_is_not_run() -> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-piped-interpreter")?;
+    let program = uvx::python();
+    let release = signing_in_with(
+        uvx::interpreted_as(&bench.server, &offering(&program)?),
+        &program,
+    )?;
+    bench.with_installed_at(&release, &program)?;
+
+    refused_as_the_program_led(&bench, &release, &program, &runtime)
+}
+
+/// The pinned Node takes its preload from every other start, so a sign-in
+/// command naming it is refused rather than started without it.
+#[test]
+fn a_command_that_is_the_pinned_node_is_not_run() -> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-piped-node")?;
+    let program = npm::node();
+    let release = signing_in_with(npm::noded_as(&bench.server, &offering(&program)?), &program)?;
+    bench.with_installed_at(&release, &program)?;
+
+    refused_as_the_program_led(&bench, &release, &program, &runtime)
+}
+
+/// A link to the pinned interpreter is the pinned interpreter.
+#[cfg(unix)]
+#[test]
+fn a_command_that_links_to_the_pinned_interpreter_is_not_run() -> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-piped-interpreter-link")?;
+    let program = uvx::python();
+    let link = format!("{program}-again");
+    let release = signing_in_with(uvx::interpreted_as(&bench.server, &offering(&link)?), &link)?;
+    let root = bench.with_installed_at(&release, &program)?;
+    linked(&root, &root.join(&program), &link)?;
+
+    refused_as_the_program_led(&bench, &release, &program, &runtime)
+}
+
+/// A link in the version that leads out of it is refused however executable
+/// what it leads to is, and what it leads to is not run.
+#[cfg(unix)]
+#[test]
+fn a_command_that_links_out_of_the_version_is_not_run() -> Result<(), Failed> {
+    const LINK: &str = "leading-out";
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-piped-link-out")?;
+    let release = signing_in_with(bench.server.peer_release("1.0.0", &offering(LINK)?), LINK)?;
+    let root = bench.with_installed(&release)?;
+    let elsewhere = Tree::new("agents-door-piped-link-out-elsewhere")?;
+    let outside = fake_peer::install(&elsewhere.0, "goose", &Peer::of([signed_in_after()]))?;
+    linked(&root, &outside, LINK)?;
+
+    let refused = bench.ask_piped(
+        &mut answering(&bench.server, None),
+        (local_of(&runtime), false, true),
+        (&release, Some(&Person::default())),
+        &runtime,
+    )?;
+
+    assert!(
+        matches!(&refused, Err(AgentsError::Piped(Unpiped::Outside(_)))),
+        "{}",
+        shape(&refused)
+    );
+    assert_eq!(fake_peer::played(&elsewhere.0), 0, "what it leads to ran");
+    assert_eq!(
+        fake_peer::played(&root),
+        0,
+        "refused before anything starts"
+    );
+    Ok(())
+}
+
+/// A link at `link` under `root` to `target`, the version's own modes put back,
+/// as something planted there after it was installed would stand.
+#[cfg(unix)]
+fn linked(root: &Path, target: &Path, link: &str) -> Result<(), Failed> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let at = root.join(link);
+    let parent = at.parent().ok_or("a link lies in a directory")?;
+    let kept = fs::metadata(parent)?.permissions();
+    fs::set_permissions(parent, fs::Permissions::from_mode(0o755))?;
+    std::os::unix::fs::symlink(target, &at)?;
+    fs::set_permissions(parent, kept)?;
+    Ok(())
+}
+
+/// A script in a version a pinned interpreter starts is still a program of the
+/// version: it is not what the start leads, and it runs with the arguments the
+/// record gives and nothing leading them.
+#[test]
+fn a_program_beside_the_pinned_interpreter_is_run_with_the_records_arguments() -> Result<(), Failed>
+{
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-piped-beside-interpreter")?;
+    let program = uvx::python();
+    let script = format!("python/bin/login{}", std::env::consts::EXE_SUFFIX);
+    let mut method = terminal_method();
+    set(&mut method, "/command", json!(script));
+    let played = peer(&Peer::of([
+        Played::new().hear(1).say(offered(&method)),
+        Played::new().say("open the link"),
+        signed_in_after(),
+    ]))?;
+    let mut release = signing_in_with(uvx::interpreted_as(&bench.server, &played), &script)?;
+    release
+        .pointer_mut("/targets/0/artifacts")
+        .and_then(Value::as_array_mut)
+        .ok_or("a release lists its artifacts")?
+        .push(artifact(&script, &played.0));
+    let root = bench.with_installed_at(&release, &program)?;
+
+    let signed = bench.ask_piped(
+        &mut answering(&bench.server, None),
+        (local_of(&runtime), false, true),
+        (&release, Some(&Person::default())),
+        &runtime,
+    )?;
+
+    assert!(
+        matches!(
+            &signed,
+            Ok(Outcome::SignedIn {
+                by: Signed::Command,
+                ..
+            })
+        ),
+        "{}",
+        shape(&signed)
+    );
+    let started = fake_peer::argued(&root.join("python/bin"));
+    assert_eq!(
+        started.get(1).map(Vec::as_slice),
+        Some(["login".to_owned()].as_slice()),
+        "{started:?}"
+    );
     Ok(())
 }
 
