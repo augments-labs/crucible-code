@@ -918,8 +918,22 @@ fn an_install_script_sees_only_the_environment_it_is_given() -> Result<(), Faile
     let staging = bench.programs().join(".staging");
     assert!(
         !staging.exists() || fs::read_dir(staging)?.next().is_none(),
-        "its private home and temporary directory are removed"
+        "nothing of the staging is left"
     );
+    for private in [".script-home", ".script-tmp"] {
+        assert!(!root.join(private).exists(), "{private} is removed");
+        assert!(
+            receipt
+                .pointer("/files")
+                .and_then(Value::as_array)
+                .is_some_and(|files| files.iter().all(|file| {
+                    file.pointer("/path")
+                        .and_then(Value::as_str)
+                        .is_none_or(|path| !path.starts_with(private))
+                })),
+            "the receipt does not list {private}"
+        );
+    }
     Ok(())
 }
 

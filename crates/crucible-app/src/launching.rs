@@ -3086,8 +3086,8 @@ pub enum Unscripted {
     /// The sandbox refused or failed to run it.
     #[error("could not be run in the sandbox: {0}")]
     Sandbox(#[from] SandboxError),
-    /// Its private home or temporary directory could not be made.
-    #[error("could not be given a private home and temporary directory: {0}")]
+    /// Its private home or temporary directory could not be made or removed.
+    #[error("could not be given, or rid of, a private home and temporary directory: {0}")]
     Private(std::io::Error),
     /// Its status could not be read.
     #[error("could not be watched to its end: {0}")]
@@ -3226,32 +3226,34 @@ pub(crate) struct Scripted<'a> {
     pub result: &'a [crucible_external_harnesses::catalog::File],
 }
 
-/// A private home and temporary directory for one install script, beside the
-/// version being staged, removed when this is dropped.
+/// A private home and temporary directory for one install script, inside the
+/// version being staged, beside its package and never in it: staging is held
+/// for as long as the script runs, where a name beside it would be cleared by
+/// another stage of the same agent. Both are gone before the package is
+/// compared, so neither reaches the comparison, the receipt or the store.
 struct Private([PathBuf; 2]);
 
 impl Private {
-    /// Makes both, new, beside `staging`, entered by their owner alone.
+    /// Makes both, new, in `staging`, entered by their owner alone. A name
+    /// already taken there is something staged, and is refused.
     fn made(staging: &Path) -> std::io::Result<Self> {
-        let name = staging
-            .file_name()
-            .map(OsStr::to_os_string)
-            .unwrap_or_default();
-        let beside = |suffix: &str| {
-            let mut name = name.clone();
-            name.push(suffix);
-            staging.with_file_name(name)
-        };
-        let made = Self([beside(".home"), beside(".tmp")]);
+        let made = Self([staging.join(".script-home"), staging.join(".script-tmp")]);
         for place in &made.0 {
-            // One a dead run left is not this run's to keep.
-            let _ = std::fs::remove_dir_all(place);
             let mut builder = std::fs::DirBuilder::new();
             #[cfg(unix)]
             std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
             builder.create(place)?;
         }
         Ok(made)
+    }
+
+    /// Removes both, or says why not: what is left of them would be committed
+    /// with the version.
+    fn removed(&self) -> std::io::Result<()> {
+        for place in &self.0 {
+            std::fs::remove_dir_all(place)?;
+        }
+        Ok(())
     }
 }
 
@@ -3377,7 +3379,7 @@ impl Launcher<'_> {
             Ok(Ok(status)) if !status.success() => return Err(Unscripted::Failed(status)),
             Ok(Ok(_)) => {}
         }
-        drop(private);
+        private.removed().map_err(Unscripted::Private)?;
         match differs(&package, run.result) {
             Some((path, why)) => Err(Unscripted::Differs {
                 path: quoted(&path),

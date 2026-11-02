@@ -8,9 +8,12 @@ use crucible_config::{Driver, Serves};
 use crucible_execution::{
     Authentication, Decision, Event, Failure, Outcome, SessionRef, Sink, Text, TurnRequest,
 };
-use crucible_external_harnesses::catalog::{Catalog, Held, Trust, Variable, fixture};
+use crucible_external_harnesses::catalog::{
+    Catalog, File, FileKind, Held, Trust, Variable, fixture,
+};
 use crucible_external_harnesses::fake_peer::scripts::acp;
 use crucible_external_harnesses::fake_peer::{self, Plain, Reply, Script};
+use crucible_external_harnesses::store::{Staging, Store};
 use crucible_external_harnesses::{
     Account, Act, Control, Dialect, Discovery, Ran, Reading, Refusal, Request, Shape, Told,
 };
@@ -1695,10 +1698,10 @@ impl SandboxProcess for StubbornProcess {
 }
 
 /// A sandbox whose processes run as the local one's do, with `stopping` run
-/// first whenever one of them is stopped.
+/// first whenever one of them is stopped, told the policy it was started under.
 struct Stopping {
     local: Arc<dyn SandboxService>,
-    stopping: Arc<dyn Fn() -> std::io::Result<()> + Send + Sync>,
+    stopping: Arc<dyn Fn(&SandboxPolicy) -> std::io::Result<()> + Send + Sync>,
 }
 
 impl SandboxService for Stopping {
@@ -1713,9 +1716,10 @@ impl SandboxService for Stopping {
         request: SandboxRequest,
     ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
         Box::pin(async move {
+            let (policy, stopping) = (request.policy().clone(), self.stopping.clone());
             let session: Box<dyn SandboxSession> = Box::new(StoppingSession(
                 self.local.prepare(request).await?,
-                self.stopping.clone(),
+                Arc::new(move || stopping(&policy)),
             ));
             Ok(session)
         })
@@ -1822,22 +1826,44 @@ impl SandboxProcess for StoppingProcess {
     }
 }
 
-/// A script with nothing to do and an empty listing, run in a version staged
-/// in `sample`, under a sandbox that does `stopping` as it is stopped; `None`
-/// where this machine's sandbox does not enforce its rules.
+/// One install script to run in [`scripted_stopping`].
+#[derive(Clone, Copy)]
+struct ToRun<'a> {
+    /// What `sh -c` is given.
+    command: &'a str,
+    /// What its package holds before it runs.
+    holding: &'a [(&'a str, &'a [u8])],
+    /// What its package must hold once it ends.
+    result: &'a [File],
+}
+
+/// A script with nothing to do, in a package that holds nothing.
+const NOTHING: ToRun<'static> = ToRun {
+    command: ":",
+    holding: &[],
+    result: &[],
+};
+
+/// `script` run in a version staged in a store in `sample`, under a sandbox
+/// that does `stopping` as it is stopped, told the store and the policy, and
+/// the staging, still held; `None` where this machine's sandbox does not
+/// enforce its rules.
 async fn scripted_stopping(
     sample: &Sample,
-    stopping: impl Fn(&Path) -> std::io::Result<()> + Send + Sync + 'static,
-) -> Option<Result<(), Unscripted>> {
-    let staging = sample.root().join("staged").join("1.0.0");
-    let package = staging.join("node_modules").join("peer");
+    script: ToRun<'_>,
+    stopping: impl Fn(&Store, &SandboxPolicy) -> std::io::Result<()> + Send + Sync + 'static,
+) -> Option<(Result<(), Unscripted>, Staging)> {
+    let agent = AgentKey::new("claude").expect("a key");
+    let store = Store::new(sample.root().join("programs"));
+    let staged = store.stage(&agent).expect("staged");
+    let package = staged.directory().join("node_modules").join("peer");
     fs::create_dir_all(&package).expect("a package");
+    for (path, bytes) in script.holding {
+        fs::write(package.join(path), bytes).expect("written");
+    }
     let sandbox = Stopping {
         local: local(),
-        stopping: Arc::new({
-            let package = package.clone();
-            move || stopping(&package)
-        }),
+        stopping: Arc::new(move |policy| stopping(&store, policy)),
     };
     let consent = granted();
     let policy = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
@@ -1851,20 +1877,19 @@ async fn scripted_stopping(
         &sessions,
     );
     let held = crate::content_use::held(&consent, "agent:claude").expect("the route's yes");
-    let agent = AgentKey::new("claude").expect("a key");
     let ran = launcher
         .script(
             &held,
             Scripted {
                 agent: &agent,
-                staging: &staging,
+                staging: staged.directory(),
                 package: "node_modules/peer",
                 named: ("peer", "1.0.0"),
                 event: "postinstall",
-                command: ":",
+                command: script.command,
                 hosts: &[],
-                node: &staging,
-                result: &[],
+                node: staged.directory(),
+                result: script.result,
             },
         )
         .await;
@@ -1872,7 +1897,21 @@ async fn scripted_stopping(
         eprintln!("skipped, as this machine's sandbox does not enforce its rules");
         return None;
     }
-    Some(ran)
+    Some((ran, staged))
+}
+
+/// The private home and temporary directory `policy` names, by their names'
+/// ends, wherever they were made.
+fn privately(policy: &SandboxPolicy) -> Vec<PathBuf> {
+    policy
+        .filesystem()
+        .iter()
+        .map(|rule| rule.path().to_path_buf())
+        .filter(|path| {
+            let path = path.to_string_lossy();
+            path.ends_with("home") || path.ends_with("tmp")
+        })
+        .collect()
 }
 
 /// What is compared is what the stop left, so whatever writes until it is
@@ -1880,8 +1919,21 @@ async fn scripted_stopping(
 #[tokio::test(flavor = "multi_thread")]
 async fn an_install_script_is_compared_only_after_it_is_stopped() {
     let sample = Sample::new("script-compared-after-stop");
-    let Some(ran) =
-        scripted_stopping(&sample, |package| fs::write(package.join("late"), b"late")).await
+    let package = sample
+        .root()
+        .join("programs")
+        .join("claude")
+        .join(".staging");
+    let Some((ran, _staged)) = scripted_stopping(&sample, NOTHING, move |_, _| {
+        for entry in fs::read_dir(&package)?.flatten() {
+            let inside = entry.path().join("node_modules").join("peer");
+            if inside.is_dir() {
+                fs::write(inside.join("late"), b"late")?;
+            }
+        }
+        Ok(())
+    })
+    .await
     else {
         return;
     };
@@ -1892,11 +1944,14 @@ async fn an_install_script_is_compared_only_after_it_is_stopped() {
 }
 
 /// A stop nobody could confirm may have left something writing, so nothing
-/// is compared at all.
+/// is compared at all, and nothing of the run is left.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_install_script_not_confirmed_stopped_is_refused() {
     let sample = Sample::new("script-unstopped");
-    let Some(ran) = scripted_stopping(&sample, |_| {
+    let private = Arc::new(Mutex::new(Vec::new()));
+    let recorded = private.clone();
+    let Some((ran, staged)) = scripted_stopping(&sample, NOTHING, move |_, policy| {
+        *recorded.lock().unwrap_or_else(PoisonError::into_inner) = privately(policy);
         Err(std::io::Error::other("the scope did not answer"))
     })
     .await
@@ -1904,6 +1959,214 @@ async fn an_install_script_not_confirmed_stopped_is_refused() {
         return;
     };
     assert!(matches!(&ran, Err(Unscripted::Unstopped(_))), "{ran:?}");
+    let private = private.lock().unwrap_or_else(PoisonError::into_inner);
+    assert_eq!(private.len(), 2, "{private:?}");
+    assert!(private.iter().all(|place| !place.exists()), "{private:?}");
+    let directory = staged.directory().to_path_buf();
+    drop(staged);
+    assert!(!directory.exists(), "the refused staging is removed");
+}
+
+/// Another stage of the same agent clears what a dead process left in the
+/// staging area, and a run's private directories are not that.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_stage_during_an_install_script_leaves_its_private_directories() {
+    let sample = Sample::new("script-second-stage");
+    let found = Arc::new(Mutex::new(Vec::new()));
+    let recorded = found.clone();
+    let Some((ran, _staged)) = scripted_stopping(&sample, NOTHING, move |store, policy| {
+        let agent = AgentKey::new("claude").expect("a key");
+        let _second = store.stage(&agent).expect("a second stage");
+        *recorded.lock().unwrap_or_else(PoisonError::into_inner) = privately(policy)
+            .into_iter()
+            .map(|place| (place.exists(), place))
+            .collect();
+        Ok(())
+    })
+    .await
+    else {
+        return;
+    };
+    assert!(ran.is_ok(), "{ran:?}");
+    let found = found.lock().unwrap_or_else(PoisonError::into_inner);
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(found.iter().all(|(there, _)| *there), "{found:?}");
+    // Nothing of them reaches what the store would commit.
+    assert!(found.iter().all(|(_, place)| !place.exists()), "{found:?}");
+}
+
+/// What the script's private directories hold cannot reach the version: where
+/// they cannot be removed, nothing is installed. Run as root, which any mode
+/// lets through, there is nothing to prove.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn private_directories_that_cannot_be_removed_refuse_the_install_script() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let sample = Sample::new("script-unremovable");
+    let stuck = Arc::new(Mutex::new(None));
+    let recorded = stuck.clone();
+    let Some((ran, _staged)) = scripted_stopping(&sample, NOTHING, move |_, policy| {
+        let tmp = privately(policy)
+            .into_iter()
+            .find(|place| place.to_string_lossy().ends_with("tmp"))
+            .ok_or_else(|| std::io::Error::other("no private temporary directory"))?;
+        let place = tmp.join("stuck");
+        fs::create_dir_all(place.join("inner"))?;
+        fs::set_permissions(&place, fs::Permissions::from_mode(0o000))?;
+        let enforced = fs::read_dir(&place).is_err();
+        *recorded.lock().unwrap_or_else(PoisonError::into_inner) = Some((place, enforced));
+        Ok(())
+    })
+    .await
+    else {
+        return;
+    };
+    let (place, enforced) = stuck
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take()
+        .expect("the stop ran");
+    fs::set_permissions(&place, fs::Permissions::from_mode(0o700)).ok();
+    if !enforced {
+        eprintln!("skipped, as a mode does not hold this user back");
+        return;
+    }
+    assert!(matches!(&ran, Err(Unscripted::Private(_))), "{ran:?}");
+}
+
+/// The package's manifest is named to the script where its package has one,
+/// and the private directories are never taken for part of the package.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_install_script_is_told_its_package_json_and_only_its_package_is_compared() {
+    let sample = Sample::new("script-manifest");
+    let result = [
+        listed("package.json", b"{}", false),
+        listed("seen", b"yes", false),
+    ];
+    let script = ToRun {
+        command: "[ \"$npm_package_json\" = \"$PWD/package.json\" ] && printf yes > seen",
+        holding: &[("package.json", b"{}")],
+        result: &result,
+    };
+    let Some((ran, _staged)) = scripted_stopping(&sample, script, |_, _| Ok(())).await else {
+        return;
+    };
+    assert!(ran.is_ok(), "{ran:?}");
+}
+
+/// A listing's entry for a regular file holding `bytes`.
+fn listed(path: &str, bytes: &[u8], exec: bool) -> File {
+    use sha2::Digest as _;
+    File {
+        path: path.into(),
+        kind: FileKind::File {
+            size: bytes.len() as u64,
+            sha256: sha2::Sha256::digest(bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+                .into(),
+            exec,
+        },
+    }
+}
+
+/// A package in `sample`, holding `a` and `sub/b` as the listing returned says.
+fn listed_package(sample: &Sample) -> (PathBuf, Vec<File>) {
+    let package = sample.root().join("package");
+    fs::create_dir_all(package.join("sub")).expect("a package");
+    fs::write(package.join("a"), b"aaa").expect("written");
+    fs::write(package.join("sub").join("b"), b"bbb").expect("written");
+    (
+        package,
+        vec![listed("a", b"aaa", false), listed("sub/b", b"bbb", false)],
+    )
+}
+
+/// The path `differs` names and that it names one.
+fn differing(package: &Path, listing: &[File]) -> String {
+    differs(package, listing).expect("a difference").0
+}
+
+#[test]
+fn a_package_as_its_listing_says_does_not_differ() {
+    let sample = Sample::new("differs-same");
+    let (package, listing) = listed_package(&sample);
+    assert_eq!(differs(&package, &listing), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_where_a_file_is_listed_differs() {
+    let sample = Sample::new("differs-link");
+    let (package, listing) = listed_package(&sample);
+    fs::remove_file(package.join("a")).expect("removed");
+    std::os::unix::fs::symlink("sub/b", package.join("a")).expect("linked");
+    assert_eq!(differing(&package, &listing), "a");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_fifo_where_a_file_is_listed_differs_without_being_opened() {
+    let sample = Sample::new("differs-fifo");
+    let (package, listing) = listed_package(&sample);
+    fs::remove_file(package.join("a")).expect("removed");
+    let made = std::process::Command::new("mkfifo")
+        .arg(package.join("a"))
+        .status()
+        .expect("mkfifo runs");
+    assert!(made.success());
+    assert_eq!(differing(&package, &listing), "a");
+}
+
+#[test]
+fn a_directory_where_a_file_is_listed_differs() {
+    let sample = Sample::new("differs-directory");
+    let (package, listing) = listed_package(&sample);
+    fs::remove_file(package.join("a")).expect("removed");
+    fs::create_dir(package.join("a")).expect("made");
+    assert_eq!(differing(&package, &listing), "a");
+}
+
+#[test]
+fn an_empty_directory_nobody_listed_differs() {
+    let sample = Sample::new("differs-empty");
+    let (package, listing) = listed_package(&sample);
+    fs::create_dir(package.join("extra")).expect("made");
+    assert_eq!(differing(&package, &listing), "extra");
+}
+
+#[test]
+fn other_bytes_of_the_same_size_differ() {
+    let sample = Sample::new("differs-bytes");
+    let (package, listing) = listed_package(&sample);
+    fs::write(package.join("sub").join("b"), b"ccc").expect("written");
+    let (path, why) = differs(&package, &listing).expect("a difference");
+    assert_eq!(path, "sub/b");
+    assert!(why.contains("other bytes"), "{why}");
+}
+
+#[test]
+fn a_listed_file_missing_differs() {
+    let sample = Sample::new("differs-missing");
+    let (package, listing) = listed_package(&sample);
+    fs::remove_file(package.join("sub").join("b")).expect("removed");
+    assert_eq!(differing(&package, &listing), "sub/b");
+}
+
+/// A directory above a listed file swapped for a link to a copy of what was
+/// listed is not followed to that copy.
+#[cfg(unix)]
+#[test]
+fn a_planted_link_is_not_followed() {
+    let sample = Sample::new("differs-planted");
+    let (package, listing) = listed_package(&sample);
+    let elsewhere = sample.root().join("elsewhere");
+    fs::create_dir(&elsewhere).expect("made");
+    fs::write(elsewhere.join("b"), b"bbb").expect("written");
+    fs::remove_dir_all(package.join("sub")).expect("removed");
+    std::os::unix::fs::symlink(&elsewhere, package.join("sub")).expect("linked");
+    assert_eq!(differing(&package, &listing), "sub");
 }
 
 /// The built-in Antigravity row alone.
