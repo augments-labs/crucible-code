@@ -661,8 +661,9 @@ configuration file says
 [`agents.update = "reviewed"`](../configuration/configuration.md#agents), an
 update that setting allows is taken without the question, so it needs no
 terminal, and says so on a line of its own: `Taken without asking, under
-agents.update = "reviewed".` Every other check still runs. It ends 0 once the
-instances are moved, and 1 otherwise.
+agents.update = "reviewed".` A release with an install script to run at install
+is always asked, showing its command and hosts. Every other check still runs.
+It ends 0 once the instances are moved, and 1 otherwise.
 
 ### `agents rollback AGENT`
 

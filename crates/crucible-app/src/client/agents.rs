@@ -108,10 +108,12 @@
 //! revocation has not withdrawn it, it is strictly newer than every version
 //! being moved, and the catalog it comes from is no older than the one each of
 //! those was taken from. Anything else, a version not spelled as dotted
-//! numbers included, is asked about as it is without the setting. Every other
-//! step runs and refuses as it does after a yes, and the outcome says the
-//! update was taken under that setting and why it was not smoke-tested where
-//! it was not. A first install, an add, a rollback and a removal are always
+//! numbers included, is asked about as it is without the setting. So is a
+//! release with an install script to run at install, whatever its version:
+//! its command and hosts are what that yes is to, and the setting does not
+//! stand in for reading them. Every other step runs and refuses as it does
+//! after a yes, and the outcome says the update was taken under that setting
+//! and why it was not smoke-tested where it was not. A first install, an add, a rollback and a removal are always
 //! asked.
 //!
 //! A switch is smoke-tested before any instance is moved onto it only where a
@@ -837,7 +839,8 @@ impl Door<'_> {
     /// the release is not revoked, is strictly newer than every version being
     /// moved, and comes from a catalog no older than the one each of those was
     /// taken from, so a stale or replayed catalog cannot step an agent back.
-    /// A version number that is not plain dotted numbers is never newer.
+    /// A version number that is not plain dotted numbers is never newer, and
+    /// a release with an install script to run at install never stands.
     fn stands_for(
         &self,
         agent: &AgentKey,
@@ -847,6 +850,13 @@ impl Door<'_> {
         if self
             .trust
             .revoked(agent, &offer.pin.version, offer.pin.lock_revision)
+        {
+            return false;
+        }
+        if let Launch::Npm { scripts, .. } = &offer.pin.target.launch
+            && scripts
+                .iter()
+                .any(|script| matches!(script.disposition, Disposition::Local { .. }))
         {
             return false;
         }

@@ -33,8 +33,8 @@ use serde_json::{Value, json};
 
 use super::uvx::{unchanged, version, versioned};
 use super::{
-    Bench, CATALOG, Failed, Reply, Server, answering, answers, artifact, asset_path, digest, facts,
-    install, peer, platform, row_of, set, shape, stating,
+    Bench, CATALOG, Command, Failed, Reply, Server, answering, answers, artifact, asset_path,
+    digest, facts, install, name, peer, platform, row_of, set, shape, stating,
 };
 
 /// Node's path in the version, as the catalog lists it.
@@ -785,6 +785,83 @@ fn a_release_whose_install_script_runs_at_install_is_refused_with_the_sandbox_of
     assert!(front.put.is_empty());
     assert_eq!(bench.server.asked(), CATALOG);
     unchanged(&bench, &before, "the sandbox off")
+}
+
+/// `agents.update = "reviewed"` stands in for the question before an update,
+/// which is where a script's command and hosts are shown, so an update with
+/// one to run is asked about, and a no runs nothing and moves nothing.
+#[test]
+fn under_reviewed_an_update_with_an_install_script_to_run_is_still_asked() -> Result<(), Failed> {
+    let runtime = super::runtime()?;
+    let bench = Bench::new("agents-door-npm-reviewed")?;
+    bench.configure(
+        &bench.program("1.0.0"),
+        &json!({"agents": {"update": "reviewed"}}),
+    )?;
+    bench.server.publish(1, &[("1.0.0", super::ONE)], &[]);
+    let mut front = answering(&bench.server, Some("Install"));
+    let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+    assert!(
+        matches!(&installed, Ok(Outcome::Moved { .. })),
+        "{}",
+        shape(&installed)
+    );
+    let result = listing(&[]);
+    bench
+        .server
+        .serve(&asset_path(&result), Reply::Body(result.clone()));
+    let mut release = scripted(
+        &bench.server,
+        &peer(&answers("2.0.0"))?,
+        &tree(),
+        &json!({
+            "package": "node_modules/peer",
+            "event": "postinstall",
+            "disposition": "local",
+            "command": "touch ran",
+            "hosts": ["downloads.example.com"],
+            "result": {"sha256": digest(&result), "size": result.len()},
+        }),
+    );
+    set(&mut release, "/version", json!("2.0.0"));
+    set(&mut release, "/admits/version", json!("2.0.0"));
+    bench
+        .server
+        .catalog(2, std::slice::from_ref(&release), &json!([]))?;
+    let mut front = answering(&bench.server, Some("Cancel"));
+
+    let updated = bench.ask_smoking(
+        (
+            Command::UpdateAgent {
+                agent: name("goose")?,
+            },
+            &mut front,
+        ),
+        (true, true),
+        &release,
+        &runtime,
+    )?;
+
+    assert!(
+        matches!(&updated, Ok(Outcome::Undecided)),
+        "{}",
+        shape(&updated)
+    );
+    let [(Pending::Install { facts, .. }, _)] = front.put.as_slice() else {
+        return Err(format!("asked {}", front.put.len()).into());
+    };
+    assert!(
+        facts.iter().any(|fact| {
+            let fact = fact.as_str();
+            fact.contains("touch ran") && fact.contains("downloads.example.com")
+        }),
+        "the question shows the command and its hosts"
+    );
+    assert_eq!(
+        bench.executable()?,
+        bench.program("1.0.0").to_string_lossy()
+    );
+    Ok(())
 }
 
 /// What the script below writes into `seen`: the names of its environment
