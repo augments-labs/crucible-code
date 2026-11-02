@@ -20,7 +20,7 @@ use super::{
     Admits, AssetRef, AuthMethod, Catalog, CatalogError, CatalogProfile, ContentUse, Disposition,
     Entry, File, FileKind, Files, Format, GRACE, Held, INDEX_BYTES, KEYS, Keys, Kind, Launch, Lock,
     Method, Revoked, Route, SCHEMA_SHOWN, SNAPSHOT, Script, Trust, TrustError, Unprofiled,
-    Unusable, VERSION_BYTES, Variable, file_list, result_list,
+    Unusable, VERSION_BYTES, Variable, built_list, file_list, result_list,
 };
 use crate::acp::SignIn;
 use crate::antigravity::AGENT;
@@ -170,7 +170,12 @@ fn npm() -> Value {
                 {"package": "node_modules/a", "event": "postinstall", "disposition": "inert"},
                 {"package": "node_modules/b", "event": "install", "disposition": "replaced"},
                 {"package": "node_modules/c", "event": "preinstall", "disposition": "lost"},
-                {"package": "node_modules/d", "event": "install", "disposition": "built"},
+                {
+                    "package": "node_modules/d", "event": "install", "disposition": "built",
+                    "asset": {"sha256": hash('5'), "size": 2_000},
+                    "files": {"sha256": hash('6'), "size": 100},
+                    "unpacked": 7_000, "decompressed": 8_000
+                },
                 {
                     "package": "node_modules/e", "event": "postinstall", "disposition": "local",
                     "command": "node install.js", "hosts": ["*.example.com"],
@@ -517,7 +522,22 @@ fn a_signed_catalog_parses_its_interpreter_and_node_entries() {
                 script("node_modules/a", "postinstall", Disposition::Inert),
                 script("node_modules/b", "install", Disposition::Replaced),
                 script("node_modules/c", "preinstall", Disposition::Lost),
-                script("node_modules/d", "install", Disposition::Built),
+                script(
+                    "node_modules/d",
+                    "install",
+                    Disposition::Built {
+                        asset: AssetRef {
+                            sha256: hash('5').into(),
+                            size: 2_000,
+                        },
+                        files: AssetRef {
+                            sha256: hash('6').into(),
+                            size: 100,
+                        },
+                        unpacked: 7_000,
+                        decompressed: 8_000,
+                    },
+                ),
                 script(
                     "node_modules/e",
                     "postinstall",
@@ -903,6 +923,39 @@ fn a_local_script_without_a_command_it_can_show_is_refused() {
     assert!(failures.is_empty(), "{failures:#?}");
 }
 
+/// A built script is installed from the asset it names and read against the
+/// list it names, so one naming neither is not an entry the catalog holds; the
+/// fixture's own, with both, is.
+#[test]
+fn a_built_script_without_its_asset_or_its_file_list_is_refused() {
+    let built = "/entries/2/targets/0/scripts/3";
+    let mut named = catalog();
+    let script = named.pointer_mut(built).expect("the built script");
+    script["asset"] = json!({"sha256": hash('6'), "size": 9_000});
+    script["files"] = json!({"sha256": hash('7'), "size": 700});
+    script["unpacked"] = json!(90_000);
+    script["decompressed"] = json!(100_000);
+    let read = fetched(&named);
+    assert!(read.is_ok(), "{:?}", read.map(|_| "believed"));
+    for field in ["asset", "files", "unpacked", "decompressed"] {
+        let mut bare = named.clone();
+        bare.pointer_mut(built)
+            .and_then(Value::as_object_mut)
+            .expect("the built script")
+            .remove(field);
+        let missing = fetched(&bare);
+        let whole = format!("entries[2].targets[0].scripts[3].{field}");
+        assert!(
+            matches!(
+                &missing,
+                Err(CatalogError::Field { field, why: "is missing" }) if **field == *whole
+            ),
+            "a built script without {field}: {:?}",
+            missing.map(|_| "believed")
+        );
+    }
+}
+
 /// What a local script may reach is held to the intake's rule where it is
 /// read, so a signed entry cannot widen it to everything or to an address.
 #[test]
@@ -1109,6 +1162,52 @@ fn an_artifact_without_its_file_list_is_refused() {
 /// a file list is; a bare list, or a member of any other kind, is refused.
 // A test whose good catalog lists no goose has nothing else to report.
 #[allow(clippy::panic)]
+#[test]
+fn a_built_scripts_list_reads_files_and_directories_and_refuses_a_link() {
+    let catalog = believed();
+    let Some(goose) = catalog.entries().first() else {
+        panic!("an entry");
+    };
+    let dir = json!({"path": "build", "kind": "dir"});
+    let file = json!({"exec": true, "path": "build/x.node", "sha256": hash('9'), "size": 3});
+    let listing = serde_json::to_vec(&json!([dir, file])).unwrap_or_default();
+
+    let read = built_list(goose, &listing);
+
+    assert_eq!(
+        read.ok(),
+        Some(vec![
+            File {
+                path: "build".into(),
+                kind: FileKind::Dir,
+            },
+            File {
+                path: "build/x.node".into(),
+                kind: FileKind::File {
+                    size: 3,
+                    sha256: hash('9').into(),
+                    exec: true
+                },
+            },
+        ])
+    );
+    let linked = serde_json::to_vec(&json!([
+        dir,
+        {"path": "build/y.node", "kind": "link", "target": "x.node"}
+    ]))
+    .unwrap_or_default();
+    assert!(
+        matches!(
+            built_list(goose, &linked),
+            Err(CatalogError::Field {
+                why: "is not a file or a directory",
+                ..
+            })
+        ),
+        "a build is files and directories alone"
+    );
+}
+
 #[test]
 fn a_script_result_reads_the_files_its_listing_gives_and_files_alone() {
     let catalog = believed();

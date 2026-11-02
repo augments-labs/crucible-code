@@ -245,9 +245,10 @@ gives it, such as `3 packages of its tree under "MIT".`, the most common first,
 a package that gives none counted as such (none is counted where no package
 gives one), at most eight and then how many more, each install
 script in the tree and what the reviewer decided of it (none is run: one that
-does nothing the agent needs, one a platform package does the work of, one
-whose result is built at review, or one whose loss the agent works without), at
-most sixteen and then how many more, and how the agent is started, such as
+does nothing the agent needs, one a platform package does the work of, or one
+whose loss the agent works without), at most sixteen and then how many more,
+each script built at review, with its package and the size of its build, and
+how the agent is started, such as
 `node/bin/node --require preload.cjs node_modules/goose/bin/goose.js acp`.
 After the yes, Node is fetched as any agent's program is, then the tarballs,
 eight at a time, each held to the size and SHA-512 its lock pins from the first
@@ -266,8 +267,17 @@ installs it, and the version is refused where none at the top settles it. A
 tarball that is not its pin, or that the registry no longer has, puts nothing
 in place; a host that answers 404 or 410 is said to be
 likely permanent, since the version can likely no longer be installed. An entry
-that gives Node arguments of its own, or an install script built at review, is
-refused before anything is fetched or asked. An install script the review marks
+that gives Node arguments of its own is refused before anything is fetched or
+asked. An install script built at review runs nothing on your machine, so it
+works on every platform, with the sandbox on or off, from `/agents` and from
+`crucible agents install`: its build comes from the catalog's own host, held to
+the size and SHA-256 the catalog pins, and its package's directory is replaced
+by it, ending exactly as the review listed it, with `crucible agents verify`
+covering its files. A build holding a link, a path its list does not name, or
+missing one it does, puts nothing in place. Before anything is asked, a release
+is refused where two builds, or a build and a script run at install, fall on one
+package or on packages one inside the other, or where a build leaves out a
+program its package declares. An install script the review marks
 to run at install is named in the question with the command it runs and the
 hosts it reaches, and runs after the yes, in a sandbox of its own; it must leave
 its package exactly as the review listed it, or the version is refused and
@@ -276,10 +286,11 @@ It needs the sandbox and runs on Linux alone: with the sandbox off, on macOS,
 on Windows or on FreeBSD, or from `crucible agents install`, which has no
 conversation to lend one and says to install it from `/agents` in a
 conversation, it is refused before anything is fetched, and so is a release with
-more than sixteen such scripts, more than the question can show. A version
-already installed is known by its receipt: Node's files, the preload, `.bin` and its stubs as the catalog
+more than sixteen such scripts and builds together, more than the question can
+show. A version
+already installed is known by its receipt: Node's files, the preload, `.bin` and its stubs, and a build's files, as the catalog
 pins them, and
-the tree's files only as lying where the lock installs a package, which the
+the other files of the tree only as lying where the lock installs a package, which the
 question says.
 
 *Verify*, offered where a version is installed, hashes every file of each
