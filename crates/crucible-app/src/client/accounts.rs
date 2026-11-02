@@ -792,7 +792,7 @@ async fn launch_asked(
             .await,
         );
     }
-    let warned = consent.asks(row.route()).cloned()?;
+    let warned = consent.asks(row.route())?;
     if !super::deciding::warned(capabilities, front, &warned).await {
         return Some(Account::Undecided);
     }
@@ -1581,9 +1581,13 @@ fn would_run(
 fn shown_as(conversation: &Conversation, row: &AgentRow) -> String {
     conversation
         .consent()
-        .and_then(|consent| consent.routes().warned(row.route()))
-        .map_or(row.named(), |warned| &*warned.shown)
-        .to_owned()
+        .and_then(|consent| {
+            let routes = consent.routes();
+            routes
+                .warned(row.route())
+                .map(|warned| warned.shown.to_string())
+        })
+        .unwrap_or_else(|| row.named().to_owned())
 }
 
 /// What a start of `row`'s agent, shown as `shown`, is refused with where
@@ -1712,7 +1716,7 @@ async fn connect(
     // Nothing of the agent's is started before its route has a yes, and a yes
     // is written down before anything is.
     if let Some(consent) = conversation.consent()
-        && let Some(warned) = consent.asks(row.route).cloned()
+        && let Some(warned) = consent.asks(row.route)
     {
         // A launch that is refused whatever the answer is not asked about.
         let install = installable(Releases::of(capabilities, desk).as_ref(), row);

@@ -184,7 +184,9 @@ So is an entry whose statement cannot be shown whole. The vendor's words and the
 origins together may run to 4096 bytes, and a statement longer than that, or
 whose page is not an `https` address naming a host, is treated as none rather
 than cut short. A build holds at most 32 catalog agents to a statement, and a
-catalog agent can never take a route Claude Code or Antigravity already has.
+catalog agent can never take a route Claude Code or Antigravity already has: an
+entry keyed with one of those names has its install script refused and is not
+smoke-tested under that route's yes, unless it is the entry behind that built-in.
 Signing out of a catalog agent is refused before anything is changed where its
 route has no hold, as a launch is.
 

@@ -259,7 +259,10 @@ fn the_routes_warned_are_those_whose_vendor_says_so() {
 
     // A catalog agent adds exactly its own route to what a build warns about,
     // and no catalog statement moves a built-in route.
-    let listed = Routes::production().cataloging([hold("goose"), hold("claude")]);
+    let consent = Consent::new(Routes::production());
+    assert!(consent.learn(&hold("goose")));
+    assert!(!consent.learn(&hold("claude")));
+    let listed = consent.routes();
     let all: BTreeSet<&str> = listed.all().iter().map(|warned| &*warned.route).collect();
     let mut with_goose = expected;
     with_goose.insert("agent:goose");
@@ -1236,7 +1239,12 @@ fn a_statement_is_the_hold_of_its_agents_route() {
     );
     assert!(launches(&warned.route));
 
-    let consent = Consent::new(Routes::production().cataloging([warned.clone()]));
+    let consent = Consent::new(Routes::production());
+    assert!(matches!(
+        held(&consent, "agent:goose"),
+        Err(Unheld::Unknown)
+    ));
+    assert!(consent.learn(&warned));
     assert_eq!(consent.routes().warned("agent:goose"), Some(&warned));
     assert!(consent.routes().warned("agent:claude").is_some());
     assert!(matches!(
@@ -1301,42 +1309,84 @@ fn an_entry_without_a_usable_statement_gives_no_hold() {
     }
 }
 
-/// A build's catalog routes are bounded, may not shadow or restate a built-in
-/// route, and name only agents; a statement that would is not asked about, so
-/// its agent is not launched.
+/// A consent's catalog routes are bounded, first come, may not shadow or restate
+/// a built-in route, and name only agents; a statement that would is not asked
+/// about, so its agent is not launched.
 #[test]
-fn the_catalog_adds_only_its_own_bounded_agent_routes() {
+fn a_consent_learns_only_bounded_agent_routes_and_its_clones_share_them() {
+    let consent = Consent::new(Routes::production());
     let mut imposter = hold("claude");
     imposter.warning.sentence = "Nothing is used.".to_owned().into();
     let mut stray = hold("goose");
     stray.route = "key:google".to_owned().into();
     let mut sending = hold("goose");
     sending.origins = &["https://api.vendor.example"];
-    let routes = Routes::production().cataloging([imposter, stray, sending]);
-    assert_eq!(routes.all().len(), WARNED.len());
+    for refused in [&imposter, &stray, &sending] {
+        assert!(!consent.learn(refused), "{}", refused.route);
+    }
+    assert_eq!(consent.routes().all().len(), WARNED.len());
     assert!(
-        routes
+        consent
+            .routes()
             .warned("agent:claude")
             .is_some_and(|claude| claude.warning.sentence != "Nothing is used.")
     );
 
-    let many = (0..CATALOGED + 5).map(|at| {
+    // What one clone learns the build's other clones answer about.
+    let clone = consent.clone();
+    let numbered = |at: usize| {
         let mut warned = hold("goose");
         warned.route = format!("agent:goose-{at}").into();
         warned
-    });
-    let routes = Routes::production().cataloging(many);
-    assert_eq!(routes.all().len(), WARNED.len() + CATALOGED);
+    };
+    for at in 0..CATALOGED {
+        assert!(clone.learn(&numbered(at)), "{at}");
+    }
+    assert!(!clone.learn(&numbered(CATALOGED)));
+    assert_eq!(consent.routes().all().len(), WARNED.len() + CATALOGED);
     assert!(
-        routes
-            .warned(&format!("agent:goose-{}", CATALOGED - 1))
+        consent
+            .asks(&format!("agent:goose-{}", CATALOGED - 1))
             .is_some()
     );
-    assert!(routes.warned(&format!("agent:goose-{CATALOGED}")).is_none());
+    assert!(
+        consent
+            .routes()
+            .warned(&format!("agent:goose-{CATALOGED}"))
+            .is_none()
+    );
+    // One already kept is still answered about with the ceiling reached.
+    assert!(clone.learn(&numbered(0)));
+}
 
-    // The same route given twice is asked about once.
-    let twice = Routes::production().cataloging([hold("goose"), hold("goose")]);
-    assert_eq!(twice.all().len(), WARNED.len() + 1);
+/// A route already learned is asked about once, in the words it was first
+/// learned with; a refreshed statement does not move them during a run, and no
+/// yes comes of learning, nor goes with a second lesson.
+#[test]
+fn a_learned_route_keeps_its_first_statement_and_gains_no_yes() {
+    let consent = Consent::new(Routes::production());
+    let first = hold("goose");
+    let mut refreshed = hold("goose");
+    refreshed.warning.sentence = "Something else is used.".to_owned().into();
+    assert!(consent.learn(&first));
+    assert!(consent.learn(&refreshed));
+    assert_eq!(consent.routes().all().len(), WARNED.len() + 1);
+    assert_eq!(consent.asks("agent:goose"), Some(first.clone()));
+
+    consent.give("agent:goose");
+    assert!(consent.learn(&refreshed));
+    assert_eq!(consent.asks("agent:goose"), None);
+
+    // A yes the user's file already holds answers the route as it is learned.
+    let consent = Consent::new(Routes::production());
+    consent.recorded(["agent:goose".to_owned()]);
+    assert!(matches!(
+        held(&consent, "agent:goose"),
+        Err(Unheld::Unknown)
+    ));
+    assert!(consent.learn(&first));
+    assert_eq!(consent.asks("agent:goose"), None);
+    assert!(held(&consent, "agent:goose").is_ok());
 }
 
 /// Whatever a statement says, the whole of the hold fits what a client is

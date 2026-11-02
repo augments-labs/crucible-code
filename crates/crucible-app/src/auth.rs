@@ -590,7 +590,7 @@ impl Desk {
         let consent = services.consent();
         Self::agreed(consent, &self.home, settings);
         let route = content_use::row_route(&way.0);
-        if let Some(warned) = consent.asks(&route).cloned() {
+        if let Some(warned) = consent.asks(&route) {
             if !signer.agrees(&warned) {
                 return Ok(Signed::Declined);
             }

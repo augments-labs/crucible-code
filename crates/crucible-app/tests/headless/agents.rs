@@ -34,7 +34,7 @@ use crucible_app::client::agents::{
     keep_key, run, sign_in_methods,
 };
 use crucible_app::client::{Front, Shown};
-use crucible_app::content_use::{Consent, Routes};
+use crucible_app::content_use::{CATALOGED, Consent, Routes};
 use crucible_app::launching::{Agent, Launcher, Runs, Steps, Unlaunched, Unpiped};
 use crucible_app::outside::Relaunch as _;
 use crucible_client_api::{
@@ -72,6 +72,8 @@ mod file_list;
 mod npm;
 #[path = "agents/piped.rs"]
 mod piped;
+#[path = "agents/shipped_hold.rs"]
+mod shipped_hold;
 #[path = "agents/uvx.rs"]
 mod uvx;
 
@@ -1787,7 +1789,7 @@ fn launched(
     row: CatalogRow,
     executable: &Path,
 ) -> Result<(Result<(), Unlaunched>, Option<Unlaunched>), Failed> {
-    let consent = Consent::new(Routes::production().cataloging(row.warned().ok().cloned()));
+    let consent = Consent::new(Routes::production());
     consent.give("agent:goose");
     let registry: &'static Registry = Box::leak(Box::new(
         Registry::new(&[]).cataloging(Box::leak(Box::new([row.clone()]))),
@@ -1995,23 +1997,17 @@ fn enforcing(runtime: &tokio::runtime::Runtime) -> Result<bool, Failed> {
 impl Bench {
     /// `command` asked of the door on `runtime`, lent a launcher whose sandbox
     /// is on where `confined`, whose network is closed, and whose route
-    /// `agent:goose` has its yes where `yes`, as `release` states its content
-    /// use, and the steps of a conversation that has made no run.
+    /// `agent:goose` has its yes where `yes`, and the steps of a conversation
+    /// that has made no run.
     fn ask_smoking(
         &self,
         (command, front): (Command, &mut Answering<'_>),
         (confined, yes): (bool, bool),
-        release: &Value,
         runtime: &tokio::runtime::Runtime,
     ) -> Result<Result<Outcome, AgentsError>, Failed> {
         let sandbox: Arc<dyn SandboxService> =
             Arc::new(LocalSandbox::new().watching_on(runtime.handle().clone()));
-        self.ask_launching(
-            (command, front),
-            (confined, yes),
-            release,
-            (runtime, sandbox, None),
-        )
+        self.ask_launching((command, front), (confined, yes), (runtime, sandbox, None))
     }
 
     /// [`Bench::ask_smoking`], its sandbox the one given, and the lent
@@ -2021,18 +2017,35 @@ impl Bench {
         &self,
         (command, front): (Command, &mut Answering<'_>),
         (confined, yes): (bool, bool),
-        release: &Value,
         (runtime, sandbox, home): (
             &tokio::runtime::Runtime,
             Arc<dyn SandboxService>,
             Option<&Path>,
         ),
     ) -> Result<Result<Outcome, AgentsError>, Failed> {
-        let row = row_of(release)?;
-        let consent = Consent::new(Routes::production().cataloging(row.warned().ok().cloned()));
+        let consent = Consent::new(Routes::production());
         if yes {
             consent.give("agent:goose");
         }
+        self.ask_consenting(
+            (command, front),
+            (confined, &consent),
+            (runtime, sandbox, home),
+        )
+    }
+
+    /// [`Bench::ask_launching`], over `consent` whatever it has learned and been
+    /// given.
+    fn ask_consenting(
+        &self,
+        (command, front): (Command, &mut Answering<'_>),
+        (confined, consent): (bool, &Consent),
+        (runtime, sandbox, home): (
+            &tokio::runtime::Runtime,
+            Arc<dyn SandboxService>,
+            Option<&Path>,
+        ),
+    ) -> Result<Result<Outcome, AgentsError>, Failed> {
         let policy = SandboxPolicy::standard(&self.tree.workspace()?)?.with_enabled(confined);
         let handle = runtime.handle().clone();
         let state = catalog_fetch::state_in(self.home.path());
@@ -2041,7 +2054,7 @@ impl Bench {
                 Arc::clone(&sandbox),
                 handle.clone(),
                 &policy,
-                &consent,
+                consent,
                 &state,
                 self.home.sessions(),
             ),
@@ -2053,7 +2066,7 @@ impl Bench {
             sandbox,
             handle,
             &policy,
-            &consent,
+            consent,
             &state,
             self.home.sessions(),
         );
@@ -2130,7 +2143,7 @@ fn a_switch_is_smoke_tested_where_the_route_has_its_yes_and_the_sandbox_closes_t
         .catalog(2, &[release.clone(), goose("1.0.0", ONE)], &json!([]))?;
     let mut front = answering(&bench.server, Some("Update"));
 
-    let updated = bench.ask_smoking((update()?, &mut front), (true, true), &release, &runtime)?;
+    let updated = bench.ask_smoking((update()?, &mut front), (true, true), &runtime)?;
 
     assert!(
         matches!(&updated, Ok(Outcome::Moved { version, .. }) if &**version == "2.0.0"),
@@ -2172,7 +2185,7 @@ fn a_smoke_with_a_wrong_agent_info_keeps_the_old_executable() -> Result<(), Fail
         .catalog(2, &[release.clone(), goose("1.0.0", ONE)], &json!([]))?;
     let mut front = answering(&bench.server, Some("Update"));
 
-    let updated = bench.ask_smoking((update()?, &mut front), (true, true), &release, &runtime)?;
+    let updated = bench.ask_smoking((update()?, &mut front), (true, true), &runtime)?;
 
     let failed = updated.err().ok_or("the switch went ahead")?.to_string();
     assert!(
@@ -2206,7 +2219,7 @@ fn the_fake_peer_writing_into_its_root_fails_its_smoke_and_keeps_the_old_executa
         .catalog(2, &[release.clone(), goose("1.0.0", ONE)], &json!([]))?;
     let mut front = answering(&bench.server, Some("Update"));
 
-    let updated = bench.ask_smoking((update()?, &mut front), (true, true), &release, &runtime)?;
+    let updated = bench.ask_smoking((update()?, &mut front), (true, true), &runtime)?;
 
     assert!(updated.is_err(), "{}", shape(&updated));
     let root = bench.programs().join("2.0.0");
@@ -2244,8 +2257,7 @@ fn a_switch_says_why_it_is_not_smoke_tested_where_the_sandbox_is_off_or_the_rout
             .catalog(2, &[release.clone(), goose("1.0.0", ONE)], &json!([]))?;
         let mut front = answering(&bench.server, Some("Update"));
 
-        let updated =
-            bench.ask_smoking((update()?, &mut front), (confined, yes), &release, &runtime)?;
+        let updated = bench.ask_smoking((update()?, &mut front), (confined, yes), &runtime)?;
 
         assert!(
             matches!(&updated, Ok(Outcome::Moved { version, .. }) if &**version == "2.0.0"),
@@ -2284,7 +2296,7 @@ fn asked_from_the_store(name: &str, script: &Peer) -> Result<Reading, Failed> {
         return Err(format!("installed: {}", shape(&installed)).into());
     }
     let row = row_of(&release)?;
-    let consent = Consent::new(Routes::production().cataloging(row.warned().ok().cloned()));
+    let consent = Consent::new(Routes::production());
     consent.give("agent:goose");
     let registry: &'static Registry = Box::leak(Box::new(
         Registry::new(&[]).cataloging(Box::leak(Box::new([row]))),
@@ -2422,7 +2434,7 @@ fn a_version_the_catalog_no_longer_lists_is_started_with_its_updater_off() -> Re
     );
 
     let row = row_of(&release)?;
-    let consent = Consent::new(Routes::production().cataloging(row.warned().ok().cloned()));
+    let consent = Consent::new(Routes::production());
     consent.give("agent:goose");
     let registry: &'static Registry = Box::leak(Box::new(
         Registry::new(&[]).cataloging(Box::leak(Box::new([row]))),
@@ -2771,7 +2783,6 @@ fn a_method_the_agent_carries_out_is_asked_for_by_name_once_its_route_has_a_yes(
             &mut answering(&bench.server, None),
         ),
         (false, false),
-        &release,
         &runtime,
     )?;
     assert!(
@@ -2790,7 +2801,6 @@ fn a_method_the_agent_carries_out_is_asked_for_by_name_once_its_route_has_a_yes(
             &mut answering(&bench.server, None),
         ),
         (false, true),
-        &release,
         &runtime,
     )?;
 
@@ -2877,7 +2887,6 @@ fn a_sign_in_on_an_instance_naming_a_profile_directory_its_entry_has_no_variable
             &mut answering(&bench.server, None),
         ),
         (false, true),
-        &release,
         &runtime,
     )?;
 
@@ -2923,7 +2932,6 @@ fn a_sign_in_on_an_instance_naming_a_profile_directory_its_entry_gives_a_variabl
             &mut answering(&bench.server, None),
         ),
         (false, true),
-        &release,
         &runtime,
     )?;
 
@@ -3005,7 +3013,6 @@ fn a_sandboxed_sign_in_may_write_where_its_entry_keeps_the_sign_in() -> Result<(
             &mut answering(&bench.server, None),
         ),
         (true, true),
-        &release,
         (&runtime, Arc::new(sandbox), Some(&home)),
     )?;
 
@@ -3104,7 +3111,6 @@ fn a_sign_in_the_agent_says_took_is_unverified_where_no_session_opens_after_it()
             &mut answering(&bench.server, None),
         ),
         (false, true),
-        &release,
         &runtime,
     )?;
 
@@ -3147,7 +3153,6 @@ fn a_kept_key_is_asked_for_by_its_method_where_a_conversation_lent_its_launcher(
                 &mut answering(&bench.server, None),
             ),
             (false, yes),
-            &release,
             &runtime,
         )
     };
@@ -4128,7 +4133,7 @@ fn a_kept_key_is_given_at_launch_and_withheld_from_what_the_agent_says() -> Resu
 #[cfg(unix)]
 fn said_from_the_store(bench: &Bench, release: &Value) -> Result<String, Failed> {
     let row = row_of(release)?;
-    let consent = Consent::new(Routes::production().cataloging(row.warned().ok().cloned()));
+    let consent = Consent::new(Routes::production());
     consent.give("agent:goose");
     let registry: &'static Registry = Box::leak(Box::new(
         Registry::new(&[]).cataloging(Box::leak(Box::new([row]))),

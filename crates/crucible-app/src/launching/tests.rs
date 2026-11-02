@@ -683,10 +683,10 @@ fn entry_keeping(
 }
 
 /// A consent that has said yes to the catalog agent keyed `peer`, whose route
-/// is the hold its entry's statement gives.
+/// it has learned from the hold its entry's statement gives.
 fn peer_granted() -> Consent {
-    let hold = cataloged().warned().cloned().expect("a statement");
-    let consent = Consent::new(Routes::production().cataloging([hold]));
+    let consent = Consent::new(Routes::production());
+    assert!(consent.learn(cataloged().warned().expect("a statement")));
     consent.give("agent:peer");
     consent
 }
@@ -835,9 +835,8 @@ async fn a_catalog_agent_with_a_statement_asks_its_own_hold_before_anything_is_s
     let sample = Sample::new("launch-catalog-stated");
     let peer = installed(&sample, &Script::of([Reply::lines(["1.0.0"])]));
     let row = cataloged();
-    let hold = row.warned().cloned().expect("a statement");
     let agent = peer_agent(row, &peer);
-    let consent = Consent::new(Routes::production().cataloging([hold]));
+    let consent = Consent::new(Routes::production());
     consent.give("agent:another");
     let policy = conversation(&sample);
     let state = sample.root();

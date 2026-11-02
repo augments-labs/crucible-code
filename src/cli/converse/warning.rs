@@ -273,7 +273,7 @@ fn unsent(conversation: &Conversation, terms: &Terms, work: &Work) -> Option<War
             .consent
             .unanswered(provider, conversation.settled().model()),
         None => match work {
-            Work::Turn(..) => terms.consent.asks(&conversation.launching()?).cloned(),
+            Work::Turn(..) => terms.consent.asks(&conversation.launching()?),
             Work::Room(_) => None,
         },
     }

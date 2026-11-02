@@ -629,6 +629,13 @@ pub(crate) fn bound(driver: Driver, agent: Option<&AgentKey>) -> Cow<'static, st
     }
 }
 
+/// The name an agent's route spells the agent a session is bound to `written`
+/// by, as [`bound`] spells it: a catalog agent's key, and a driver's word.
+#[must_use]
+pub(crate) fn bound_agent(written: &str) -> &str {
+    written.split_once(':').map_or(written, |(_, agent)| agent)
+}
+
 /// The driver of the agent a route names `written`, as [`bound`] spells it,
 /// where it is one this build has.
 #[must_use]
@@ -816,6 +823,10 @@ impl Agent {
     /// start itself refuse the same launch for the same reason. What the
     /// refusal says to do about a program not found is what `trust` offers.
     ///
+    /// Deciding teaches: a catalog row's stated route is learned by `consent`
+    /// first, whatever else is then refused, and takes one of its
+    /// [`CATALOGED`](crate::content_use::CATALOGED) places for the run.
+    ///
     /// # Errors
     ///
     /// [`Unlaunched::Withheld`] for a row this release does not ship, else
@@ -828,8 +839,20 @@ impl Agent {
     /// sentences to say what to do.
     pub fn program(&self, consent: &Consent, trust: &Trust) -> Result<&Program, Unlaunched> {
         let row = &self.row;
-        let shown = consent
-            .routes()
+        if let AgentRow::Catalog(catalog) = row {
+            match catalog.warned() {
+                Ok(warned) if consent.learn(warned) => {}
+                Ok(_) => return Err(Unlaunched::Unknown(row.route().to_owned())),
+                Err(why) => {
+                    return Err(Unlaunched::Unstated {
+                        agent: row.named().to_owned(),
+                        why: why.clone(),
+                    });
+                }
+            }
+        }
+        let routes = consent.routes();
+        let shown = routes
             .warned(row.route())
             .map_or(row.named(), |warned| &*warned.shown);
         if let AgentRow::Built(built) = row
@@ -838,14 +861,6 @@ impl Agent {
             return Err(Unlaunched::Withheld {
                 agent: shown.to_owned(),
                 documented: built.documented(),
-            });
-        }
-        if let AgentRow::Catalog(catalog) = row
-            && let Err(why) = catalog.warned()
-        {
-            return Err(Unlaunched::Unstated {
-                agent: row.named().to_owned(),
-                why: why.clone(),
             });
         }
         // A directory given to an agent that reads its home from no variable
@@ -868,6 +883,21 @@ impl Agent {
                     Unlaunched::NotInstalled,
                 ))
             }
+        }
+    }
+
+    /// Tells `consent` the route of its catalog row, so that a conversation
+    /// on it is asked about that route before anything is launched: a row's
+    /// program is decided under it again before a start. Nothing for a built-in
+    /// row, or an entry with no statement. A shipped [`REGISTRY`] lists no
+    /// catalog row, so only a registry that does reaches this with one.
+    ///
+    /// [`REGISTRY`]: crate::backends::REGISTRY
+    fn teach(&self, consent: &Consent) {
+        if let AgentRow::Catalog(catalog) = &self.row
+            && let Ok(warned) = catalog.warned()
+        {
+            consent.learn(warned);
         }
     }
 
@@ -2763,7 +2793,8 @@ impl<'a> Launcher<'a> {
 
     /// Why a start of `agent` would be refused before any process, as
     /// [`Agent::release`] decides it with the trust state as it is now, before
-    /// its route is asked about; nothing where it would not be.
+    /// its route is asked about; nothing where it would not be. Asking teaches
+    /// the consent a catalog row's route, as [`Agent::program`] says.
     pub(crate) fn refusal(&self, agent: &Agent) -> Option<Unlaunched> {
         agent
             .release(
@@ -3303,6 +3334,9 @@ pub enum Unsmoked {
     /// The agent's route is not one this build asks about.
     #[error("its route {0} is not one this build asks about content use on")]
     Unknown(String),
+    /// Its key spells a route its entry did not learn and backs no built-in of.
+    #[error("its route {0} is not its entry's own, so a yes to that route does not stand for it")]
+    Borrowed(String),
     /// Its entry gives no profile to run it under.
     #[error(transparent)]
     Profile(#[from] Unprofiled),
@@ -3337,6 +3371,9 @@ pub enum Unscripted {
     /// The agent's route has no yes, or is not one crucible knows.
     #[error("reaches what {0} reaches, which has no yes")]
     Unheld(String),
+    /// Its key spells a route its entry did not learn and backs no built-in of.
+    #[error("would run under {0}, which is not its entry's own, so its yes does not stand for it")]
+    Borrowed(String),
     /// Its package is not a directory inside the version being staged.
     #[error("belongs to {0}, which is not a directory of the version staged")]
     Unplaced(String),
@@ -4172,6 +4209,7 @@ impl Runs {
         instance: &str,
         controls: &Controls,
     ) -> Self {
+        agent.teach(launcher.consent);
         Self {
             service: launcher.service,
             runtime: launcher.runtime,
@@ -4409,6 +4447,7 @@ impl Steps {
     /// this hands out for that entry is launched on.
     #[must_use]
     pub fn runs(&self, agent: Agent, instance: &str) -> Runs {
+        agent.teach(&self.consent);
         Runs {
             service: Arc::clone(&self.service),
             runtime: self.runtime.clone(),
@@ -4460,7 +4499,8 @@ impl Steps {
 
     /// Why a start of the configured `agent`, whose registry row is `row`,
     /// would be refused before any process, as [`Agent::release`] decides it;
-    /// nothing where it would not be.
+    /// nothing where it would not be. Asking teaches the consent a catalog row's
+    /// route, as [`Agent::program`] says.
     #[must_use]
     pub fn refusal(&self, row: &AgentRow, agent: &ExternalAgent) -> Option<Unlaunched> {
         Agent::of_row(agent, row.clone(), |name| {

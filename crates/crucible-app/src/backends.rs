@@ -149,9 +149,9 @@ impl CatalogRow {
         })
     }
 
-    /// The warning a launch of it is held under, which the build gives its
-    /// [`Routes`](crate::content_use::Routes) so the route is asked about; or
-    /// why its entry gives none, in which case it is never launched.
+    /// The warning a launch of it is held under, which the consent of the run
+    /// learns its route from so that the route is asked about; or why its entry
+    /// gives none, in which case it is never launched.
     ///
     /// # Errors
     ///
@@ -355,7 +355,8 @@ impl Registry {
     }
 }
 
-/// The registry this build ships.
+/// The registry this build ships, which lists no catalog row: the agents door
+/// builds those per question, and no conversation starts on one.
 pub static REGISTRY: Registry = Registry::new(&[CLAUDE, ANTIGRAVITY]);
 
 /// Claude Code's row, as this release ships it.
