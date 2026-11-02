@@ -949,9 +949,7 @@ impl Door<'_> {
             .shelf
             .smoke
             .ok_or_else(|| "no conversation lent a launcher to start it with".to_owned())?;
-        if !learned(launcher.consent(), offer) {
-            return Err(Unsmoked::Unknown(agent_route(agent.as_str())).to_string());
-        }
+        teach(launcher.consent(), offer);
         match launcher.unsmokable(agent) {
             None => Ok(launcher),
             Some(why) => Err(why.to_string()),
@@ -1003,14 +1001,7 @@ impl Door<'_> {
         // Refused before anything was fetched where none is lent.
         let launcher = self.shelf.smoke.ok_or(AgentsError::Unsupported(UNLENT))?;
         let route = agent_route(agent.as_str());
-        let unheld = |route: &str| AgentsError::Script {
-            agent: agent.clone(),
-            version: quoted(&offer.pin.version).into(),
-            why: Unscripted::Unheld(route.to_owned()),
-        };
-        if !learned(launcher.consent(), offer) {
-            return Err(unheld(&route));
-        }
+        teach(launcher.consent(), offer);
         if let Some(warned) = launcher.consent().asks(&route) {
             if !deciding::warned(self.request.capabilities(), front, &warned).await {
                 return Ok(Err(()));
@@ -1020,7 +1011,12 @@ impl Door<'_> {
                 .accept(&warned)
                 .map_err(AgentsError::HoldUnkept)?;
         }
-        let held = content_use::held(launcher.consent(), &route).map_err(|_| unheld(&route))?;
+        let held =
+            content_use::held(launcher.consent(), &route).map_err(|_| AgentsError::Script {
+                agent: agent.clone(),
+                version: quoted(&offer.pin.version).into(),
+                why: Unscripted::Unheld(route.clone()),
+            })?;
         Ok(Ok((launcher, held)))
     }
 
@@ -2037,14 +2033,16 @@ fn signing(
     Ok((row, agent, found))
 }
 
-/// Whether `consent` answers about the route of `offer`, as it learns it from
-/// the row the offer gives; false for an entry whose row gives no hold, or a
-/// route the consent cannot hold.
-fn learned(consent: &Consent, offer: &Offer) -> bool {
-    CatalogRow::new(&offer.entry, &offer.pin.target)
-        .ok()
-        .and_then(|row| row.warned().ok().map(|warned| consent.learn(warned)))
-        .unwrap_or(false)
+/// Tells `consent` the route of `offer`, from the row the offer gives, before
+/// that route is looked for. One it cannot hold it does not learn, so a catalog
+/// agent's goes on unknown and refused, while a release of an agent the build
+/// has its own route for stays under that route's words.
+fn teach(consent: &Consent, offer: &Offer) {
+    if let Ok(row) = CatalogRow::new(&offer.entry, &offer.pin.target)
+        && let Ok(warned) = row.warned()
+    {
+        consent.learn(warned);
+    }
 }
 
 /// The row the configured `instance` runs as and its agent's name: a catalog
