@@ -10,14 +10,18 @@
 //! `proof` feature alone, which only `[dev-dependencies]` turn on, so nothing
 //! that ships carries a signer.
 
+use std::io::Write as _;
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use blake2::{Blake2b512, Digest as _};
+use flate2::Compression;
+use flate2::write::GzEncoder;
 use ring::rand::{SecureRandom as _, SystemRandom};
 use ring::signature::{Ed25519KeyPair, KeyPair as _};
+use tar::{EntryType, Header};
 
 use super::Keys;
 
@@ -34,6 +38,61 @@ pub struct Signed {
     pub signature: Vec<u8>,
     /// The one key it verifies under.
     pub keys: Keys,
+}
+
+/// One member of an archive a test releases as a catalog asset.
+#[derive(Debug, Clone, Copy)]
+pub enum Member<'a> {
+    /// A file with these bytes, runnable or not.
+    File(&'a str, &'a [u8], bool),
+    /// A directory.
+    Dir(&'a str),
+    /// A symbolic link to the target.
+    Symlink(&'a str, &'a str),
+    /// A hard link to the target.
+    Hard(&'a str, &'a str),
+}
+
+/// `members` as a gzip-compressed tar, written in order with no time or owner
+/// in them.
+///
+/// # Panics
+///
+/// When the archive cannot be written in memory, which leaves the test asking
+/// for it nothing to report.
+#[must_use]
+#[allow(clippy::expect_used)]
+pub fn tar_gz(members: &[Member<'_>]) -> Vec<u8> {
+    let mut builder = tar::Builder::new(Vec::new());
+    for member in members {
+        let (name, kind, bytes, mode, link): (_, _, &[u8], _, _) = match *member {
+            Member::File(name, bytes, exec) => (
+                name,
+                EntryType::Regular,
+                bytes,
+                if exec { 0o755 } else { 0o644 },
+                None,
+            ),
+            Member::Dir(name) => (name, EntryType::Directory, b"", 0o755, None),
+            Member::Symlink(name, target) => (name, EntryType::Symlink, b"", 0o777, Some(target)),
+            Member::Hard(name, target) => (name, EntryType::Link, b"", 0o644, Some(target)),
+        };
+        let mut header = Header::new_gnu();
+        header.set_path(name).expect("a name");
+        if let Some(link) = link {
+            header.set_link_name(link).expect("a target");
+        }
+        header.set_entry_type(kind);
+        header.set_size(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+        header.set_mode(mode);
+        header.set_mtime(0);
+        header.set_cksum();
+        builder.append(&header, bytes).expect("a member");
+    }
+    let tar = builder.into_inner().expect("a tar");
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(&tar).expect("its bytes");
+    encoder.finish().expect("a gzip stream")
 }
 
 /// The key this process signs with, minted on first use.

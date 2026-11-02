@@ -42,6 +42,8 @@
 //! - The names written are compared case-folded, so two that one file system
 //!   takes for one are refused, and no name is written twice, or as a
 //!   directory and as something else.
+//! - [`Unpacker::unpack_plain_from`] refuses a link of either kind, listed or
+//!   not, so what it writes is files and directories alone.
 //! - A link is made last, with the target the archive gives it, and only when
 //!   that target resolves to a file written here, inside the staging
 //!   directory, through directories alone and at most [`LINK_STEPS`] links.
@@ -372,6 +374,29 @@ impl Unpacker {
         };
         let list = listing(files, artifact.unpacked)?;
         Walk::new(artifact, staging, Some(list)).run(io::BufReader::new(file))
+    }
+
+    /// Unpacks the download `artifact` pins as [`Unpacker::unpack_from`] does,
+    /// but for one rule: a link of either kind is refused whatever its list
+    /// says, so what it writes is files and directories alone.
+    ///
+    /// # Errors
+    ///
+    /// As [`Unpacker::unpack_from`], and [`UnpackError::Kind`] for a member
+    /// that is a link.
+    pub fn unpack_plain_from(
+        file: &mut fs::File,
+        artifact: &Artifact,
+        staging: &Path,
+    ) -> Result<Staged, UnpackError> {
+        pinned_file(file, artifact)?;
+        let Files::Listed(files) = &artifact.files else {
+            return Err(UnpackError::Asset);
+        };
+        let list = listing(files, artifact.unpacked)?;
+        Walk::new(artifact, staging, Some(list))
+            .plain()
+            .run(io::BufReader::new(file))
     }
 
     /// Unpacks `bytes`, the download `artifact` pins, into `staging`, a
@@ -983,6 +1008,8 @@ pub(super) struct Walk<'a> {
     links: Vec<(String, String)>,
     /// The bytes written.
     unpacked: u64,
+    /// Whether a link of either kind is refused, listed or not.
+    plain: bool,
 }
 
 impl<'a> Walk<'a> {
@@ -1006,6 +1033,15 @@ impl<'a> Walk<'a> {
             regular: HashMap::new(),
             links: Vec::new(),
             unpacked: 0,
+            plain: false,
+        }
+    }
+
+    /// This walk, writing files and directories alone.
+    fn plain(self) -> Self {
+        Self {
+            plain: true,
+            ..self
         }
     }
 
@@ -1203,6 +1239,19 @@ impl<'a> Walk<'a> {
                 name: shown(raw),
                 kind,
             });
+        }
+        if self.plain {
+            let link = match body {
+                Body::Symlink(_) => Some("a symbolic link"),
+                Body::Hard { .. } => Some("a hard link"),
+                _ => None,
+            };
+            if let Some(kind) = link {
+                return Err(UnpackError::Kind {
+                    name: shown(raw),
+                    kind,
+                });
+            }
         }
         let listed = match &self.list {
             Some(list) => Some(

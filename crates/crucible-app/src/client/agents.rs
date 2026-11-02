@@ -38,10 +38,10 @@
 //! interpreter starts having its entry point checked as one its launcher can
 //! be written for, and its interpreter's arguments as exactly `-I`, and one a
 //! pinned Node starts being refused where Node is given arguments of its own,
-//! an install script was built at review, which this build does not do, or
-//! one is run at install where it cannot be: with the sandbox off, anywhere
-//! but Linux, with more than a question shows, or with no launcher lent, as
-//! from a command line; its download hosts,
+//! with more install scripts run at install or built at review than a question
+//! shows, or with one run at install where it cannot be: with the sandbox off,
+//! anywhere but Linux, or with no launcher lent, as from a command line; its
+//! download hosts,
 //! and that every address and mirror it is pinned at is on one of them; for a
 //! release a pinned Node starts, its package lock, fetched from the catalog's
 //! own host by [`catalog_fetch::asset`] and read, and every tarball it pins on
@@ -81,6 +81,14 @@
 //! written at the top of the version and `.bin` beside it, holding a stub for
 //! each program the tree declares, each named in the receipt; a program
 //! whose script no tarball wrote is refused before anything is committed.
+//! A script built at review runs nothing here, on any platform and with no
+//! launcher or sandbox: its asset is fetched from the catalog's own host by
+//! the same download and held to its pin, its package's directory removed
+//! and made new, so it ends as its review listed it and not as its tarball
+//! left it, and the asset unpacked there with [`Unpacker::unpack_plain_from`],
+//! its files named in the receipt in place of what lay there, so `crucible
+//! agents verify` covers them. A list that leaves out a program its package
+//! declares is refused before the question.
 //! Only then is every instance whose
 //! `executable` lies in the agent's directory in the store written to the new
 //! program, in one update of the user file, each
@@ -111,7 +119,8 @@
 //! numbers included, is asked about as it is without the setting. So is a
 //! release with an install script to run at install, whatever its version:
 //! its command and hosts are what that yes is to, and the setting does not
-//! stand in for reading them. Every other step runs and refuses as it does
+//! stand in for reading them. A built script runs no code, so it is an
+//! artifact like any other, and the setting stands for it. Every other step runs and refuses as it does
 //! after a yes, and the outcome says the update was taken under that setting
 //! and why it was not smoke-tested where it was not. A first install, an add, a rollback and a removal are always
 //! asked.
@@ -195,14 +204,15 @@ use crucible_config::{AgentUpdate, Cloud, ConfigError, Driver, ExternalAgent, Ho
 use crucible_execution::{Authentication, Failure};
 use crucible_external_harnesses::catalog::{
     Artifact, AssetRef, AuthMethod, CatalogError, Disposition, Entry, File, FileKind, Files,
-    Format, Launch, Method, Offer, Script, Target, Trust, Unprofiled, file_list, result_list,
+    Format, Launch, Method, Offer, Script, Target, Trust, Unprofiled, built_list, file_list,
+    result_list,
 };
 use crucible_external_harnesses::release::{
     BIN, LAUNCHER, LaunchScript, NpmTree, PRELOAD, Preload, RELEASE_BYTES, Stub, StubError,
     UnpackError, Unpacker, Wheels,
 };
 use crucible_external_harnesses::store::{
-    Listing, Mismatch, Provenance, Receipt, Store, StoreError, Version,
+    Fetched, Listing, Mismatch, Provenance, Receipt, Store, StoreError, Version,
 };
 use crucible_external_harnesses::{Account, Held, Reading, WITHHELD_BYTES, antigravity};
 use crucible_http::Origin;
@@ -996,17 +1006,13 @@ impl Door<'_> {
     ) -> Result<Outcome, AgentsError> {
         // A release a pinned interpreter starts is started through a launcher
         // written for its entry point, which is held before anything is asked;
-        // one a pinned Node starts, under the preload alone, with no install
-        // script run, and its lock is fetched below.
+        // one a pinned Node starts, under the preload alone, and its lock is
+        // fetched below.
         let (script, lock) = launched(&offer, self.shelf.smoke)?;
         let mut reached: Vec<String> = Vec::new();
         let hosts = &offer.pin.target.hosts;
         for artifact in &offer.pin.target.artifacts {
-            for place in agent_download::reachable(&self.shelf.catalog, hosts, artifact)? {
-                if !reached.contains(&place) {
-                    reached.push(place);
-                }
-            }
+            reach(&self.shelf.catalog, hosts, artifact, &mut reached)?;
         }
         fetch_file_lists(&self.shelf.catalog, &mut offer).await?;
         // The lock from the catalog's own host, read, and every tarball it
@@ -1029,9 +1035,20 @@ impl Door<'_> {
         // What each install script run at install must leave, fetched from
         // the catalog's own host and read before anything is asked.
         let locals = locals(&self.shelf.catalog, offer, tree.as_ref()).await?;
+        // What each built script's asset unpacks to, the same way, and where
+        // that asset is fetched from for the question to name.
+        let builts = builts(&self.shelf.catalog, offer, tree.as_ref()).await?;
+        for built in &builts {
+            reach(
+                &self.shelf.catalog,
+                &target.hosts,
+                &built.artifact,
+                &mut reached,
+            )?;
+        }
         let mut listed = listed(target);
         runnable(&listed, &target.cmd)?;
-        let (total, fitted) = sized(offer, tree.as_ref())?;
+        let (total, fitted) = sized(offer, tree.as_ref(), &builts)?;
         let version = Version::new(&offer.pin.version, offer.pin.lock_revision)?;
         let root = self.store.directory(agent, &version);
         let program = root.join(&*target.cmd);
@@ -1053,8 +1070,11 @@ impl Door<'_> {
             ]);
             listed.extend(stubs.iter().map(Stub::file));
         }
+        for built in &builts {
+            listed.extend(under(built.package, built.files()));
+        }
         let kept = match self.store.receipt(agent, &version)? {
-            Some(receipt) if same(&receipt, target, &listed, tree.as_ref()) => true,
+            Some(receipt) if same(&receipt, target, &listed, tree.as_ref(), &builts) => true,
             Some(_) => {
                 return Err(AgentsError::Kept {
                     agent: agent.clone(),
@@ -1109,29 +1129,15 @@ impl Door<'_> {
             let mut fetched = Vec::new();
             let mut before: u64 = 0;
             for artifact in &target.artifacts {
-                let progress = &mut *watching.progress;
-                let mut told = |done: u64, _: u64| {
-                    let done = before.saturating_add(done).min(total);
-                    if let Some(said) = name
-                        .clone()
-                        .and_then(|name| InstallProgress::new(name, done, total))
-                    {
-                        progress(said);
-                    }
-                };
-                let mut landing = staging.download()?;
-                let arrived = agent_download::artifact(
+                let mut told = telling(name.as_ref(), before, total, &mut *watching.progress);
+                let arrived = landed(
                     &self.shelf.catalog,
                     &target.hosts,
                     artifact,
-                    Landing {
-                        file: &mut landing,
-                        progress: &mut told,
-                    },
-                    watching.cancel,
+                    &staging,
+                    (&mut told, watching.cancel),
                 )
                 .await?;
-                drop(landing);
                 before = before.saturating_add(arrived.size);
                 let mut reading = staging.downloaded()?;
                 let staged = if script.is_some() && artifact.format == Format::Wheel {
@@ -1149,16 +1155,7 @@ impl Door<'_> {
                 // The last artifact's download is unpacked; emptied, it takes
                 // no room the tarballs need.
                 drop(staging.download()?);
-                let progress = &mut *watching.progress;
-                let mut told = |done: u64, _: u64| {
-                    let done = before.saturating_add(done).min(total);
-                    if let Some(said) = name
-                        .clone()
-                        .and_then(|name| InstallProgress::new(name, done, total))
-                    {
-                        progress(said);
-                    }
-                };
+                let mut told = telling(name.as_ref(), before, total, &mut *watching.progress);
                 files.extend(
                     noded(
                         &self.shelf.catalog,
@@ -1173,6 +1170,19 @@ impl Door<'_> {
                     .await?,
                 );
                 files.extend(stubbed(&stubs, staging.directory())?);
+            }
+            for built in &builts {
+                let mut told = telling(name.as_ref(), before, total, &mut *watching.progress);
+                let arrived = landed(
+                    &self.shelf.catalog,
+                    &target.hosts,
+                    &built.artifact,
+                    &staging,
+                    (&mut told, watching.cancel),
+                )
+                .await?;
+                before = before.saturating_add(arrived.size);
+                built.install(&mut staging.downloaded()?, staging.directory(), &mut files)?;
             }
             if let Some((launcher, held)) = &scripting {
                 run_scripts(
@@ -1916,11 +1926,15 @@ fn signing_row(
     Ok((row, agent))
 }
 
-/// What downloading `offer` and `tree`, where it has one, takes, in bytes,
-/// refused where it or what it unpacks to is more than a release may be;
-/// and its target as the install store's room is asked for it, with one more
-/// artifact standing for the tree.
-fn sized(offer: &Offer, tree: Option<&NpmTree>) -> Result<(u64, Target), AgentsError> {
+/// What downloading `offer`, `tree`, where it has one, and `builts` takes, in
+/// bytes, refused where it or what it unpacks to is more than a release may
+/// be; and its target as the install store's room is asked for it, with one
+/// more artifact standing for the tree and one for each build.
+fn sized(
+    offer: &Offer,
+    tree: Option<&NpmTree>,
+    builts: &[Built<'_>],
+) -> Result<(u64, Target), AgentsError> {
     let mut downloaded: u64 = 0;
     let mut unpacked: u64 = 0;
     let within = |sum: Option<u64>| {
@@ -1936,6 +1950,11 @@ fn sized(offer: &Offer, tree: Option<&NpmTree>) -> Result<(u64, Target), AgentsE
         unpacked = within(unpacked.checked_add(artifact.unpacked))?;
     }
     let mut room = offer.pin.target.clone();
+    for built in builts {
+        downloaded = within(downloaded.checked_add(built.artifact.size))?;
+        unpacked = within(unpacked.checked_add(built.artifact.unpacked))?;
+        room.artifacts.push(built.artifact.clone());
+    }
     if let Some(tree) = tree {
         // Every tarball is downloaded once, however many packages it is
         // unpacked for, and each package unpacks its own; both sums are
@@ -1975,9 +1994,11 @@ fn sized(offer: &Offer, tree: Option<&NpmTree>) -> Result<(u64, Target), AgentsE
 
 /// What starting `offer` takes beyond its artifacts: the launcher of a
 /// release a pinned interpreter starts, or the lock of one a pinned Node
-/// starts, refused where Node is given arguments of its own, an install
-/// script was built at review, or one is run at install where `lent`, the
-/// launcher a conversation lends, is none or cannot run it.
+/// starts, refused where Node is given arguments of its own, where more
+/// install scripts run at install or were built at review than a question
+/// shows, or where one is run at install where `lent`, the launcher a
+/// conversation lends, is none or cannot run it. A built script runs nothing
+/// here, so it asks for neither a launcher nor a sandbox.
 fn launched(
     offer: &Offer,
     lent: Option<&Launcher<'_>>,
@@ -2006,21 +2027,14 @@ fn launched(
                     "the release gives its pinned Node arguments of its own",
                 ));
             }
-            if scripts
-                .iter()
-                .any(|script| matches!(script.disposition, Disposition::Built))
-            {
-                return Err(AgentsError::Unsupported(
-                    "the release has an install script built at review",
-                ));
-            }
             let local = scripts
                 .iter()
                 .filter(|script| matches!(script.disposition, Disposition::Local { .. }))
                 .count();
-            if local > SCRIPTS {
+            if more_scripts_than_shown(scripts) {
                 return Err(AgentsError::Unsupported(
-                    "a release with more install scripts to run at install than a question shows",
+                    "a release with more install scripts run at install and built at review \
+                     together than a question shows",
                 ));
             }
             if local > 0 {
@@ -2040,13 +2054,18 @@ fn launched(
 }
 
 /// The facts naming each install script of a tree, which none is run as npm
-/// would run it: first those not run, at most [`SCRIPTS`] and then how many
-/// more; then those run at install in a sandbox of their own, every one, as
-/// [`launched`] refuses a release with more than [`SCRIPTS`] of them.
+/// would run it: first those that change nothing, at most [`SCRIPTS`] and then
+/// how many more; then those built at review, by their package and the size of
+/// their asset, and those run at install in a sandbox of their own, every one
+/// of both, as [`launched`] refuses a release with more than [`SCRIPTS`] of
+/// them.
 fn unrun(scripts: &[Script]) -> Vec<String> {
-    let (local, other): (Vec<&Script>, Vec<&Script>) = scripts
-        .iter()
-        .partition(|script| matches!(script.disposition, Disposition::Local { .. }));
+    let (installed, other): (Vec<&Script>, Vec<&Script>) = scripts.iter().partition(|script| {
+        matches!(
+            script.disposition,
+            Disposition::Built { .. } | Disposition::Local { .. }
+        )
+    });
     let mut facts: Vec<String> = other
         .iter()
         .take(SCRIPTS)
@@ -2055,10 +2074,8 @@ fn unrun(scripts: &[Script]) -> Vec<String> {
                 Disposition::Inert => "inert: it does nothing the agent needs",
                 Disposition::Replaced => "replaced: a platform package does its work",
                 Disposition::Lost => "lost: the agent works without what it would add",
-                // Refused before the question is put.
-                Disposition::Built => "built at review, which this build does not install",
                 // Named below.
-                Disposition::Local { .. } => "run at install",
+                Disposition::Built { .. } | Disposition::Local { .. } => "installed",
             };
             format!(
                 "Install script not run: {} {}, {why}.",
@@ -2071,7 +2088,18 @@ fn unrun(scripts: &[Script]) -> Vec<String> {
     if more > 0 {
         facts.push(format!("And {more} more install scripts, none run."));
     }
-    for script in &local {
+    for script in installed.iter().copied() {
+        if let Disposition::Built { asset, .. } = &script.disposition {
+            facts.push(format!(
+                "Install script not run: {} {}, built at review: its package's directory is \
+                 replaced by the catalog's build, {} bytes.",
+                quoted(&script.package),
+                quoted(&script.event),
+                asset.size,
+            ));
+        }
+    }
+    for script in installed {
         let Disposition::Local { command, hosts, .. } = &script.disposition else {
             continue;
         };
@@ -2167,6 +2195,196 @@ async fn locals<'a>(
     Ok(locals)
 }
 
+/// One install script of a release built at review, its asset described as
+/// the download the owner of an archive unpacks.
+struct Built<'a> {
+    /// Its package, as its place in the tree.
+    package: &'a str,
+    /// Its asset, under that asset's pin, with the list it is held to.
+    artifact: Artifact,
+}
+
+impl Built<'_> {
+    /// What its package's directory holds once it is installed.
+    fn files(&self) -> &[File] {
+        match &self.artifact.files {
+            Files::Listed(files) => files,
+            // `builts` makes every one with its list read.
+            Files::Asset(_) => &[],
+        }
+    }
+
+    /// Makes its package's directory in `staging` exactly what its review
+    /// listed: the download in `reading` was held to its pin as it arrived,
+    /// what the package's tarball left there is removed rather than
+    /// overlaid, and the archive unpacks into a directory made new, so
+    /// nothing it holds is written through. Its files take the place in
+    /// `files` of whatever lay under the package, a package nested there
+    /// included, since the build's listing is of the whole directory.
+    fn install(
+        &self,
+        reading: &mut std::fs::File,
+        staging: &Path,
+        files: &mut Vec<File>,
+    ) -> Result<(), AgentsError> {
+        let directory = walked(staging, self.package)?;
+        std::fs::remove_dir_all(&directory).map_err(DownloadError::Write)?;
+        owner_only(&directory)?;
+        let staged = Unpacker::unpack_plain_from(reading, &self.artifact, &directory)?;
+        let prefix = format!("{}/", self.package);
+        files.retain(|file| !file.path.starts_with(&prefix));
+        files.extend(under(self.package, staged.files()));
+        Ok(())
+    }
+}
+
+/// The directory `package` names under `staging`, any part of it the tree did
+/// not unpack made, and refused where a part of it is not a directory, a link
+/// among them: nothing is followed out of the staging.
+fn walked(staging: &Path, package: &str) -> Result<PathBuf, AgentsError> {
+    let mut directory = staging.to_path_buf();
+    for part in package.split('/') {
+        directory.push(part);
+        match std::fs::symlink_metadata(&directory) {
+            Ok(held) if held.is_dir() => {}
+            Ok(_) => {
+                return Err(AgentsError::Unsupported(
+                    "a release whose build's package is not a directory its tree unpacks",
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                owner_only(&directory)?;
+            }
+            Err(error) => return Err(DownloadError::Write(error).into()),
+        }
+    }
+    Ok(directory)
+}
+
+/// Makes `directory`, reachable by its owner alone, as an unpack makes one.
+fn owner_only(directory: &Path) -> Result<(), DownloadError> {
+    let made = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    let made = {
+        let mut made = made;
+        std::os::unix::fs::DirBuilderExt::mode(&mut made, 0o700);
+        made
+    };
+    made.create(directory).map_err(DownloadError::Write)
+}
+
+/// `files` as the receipt names them, under `package`.
+fn under<'a>(package: &'a str, files: &'a [File]) -> impl Iterator<Item = File> + 'a {
+    files.iter().map(move |file| File {
+        path: format!("{package}/{}", file.path).into(),
+        kind: file.kind.clone(),
+    })
+}
+
+/// Whether `one` is `other`, or lies above or below it.
+fn nested(one: &str, other: &str) -> bool {
+    let below = |lower: &str, upper: &str| {
+        lower
+            .strip_prefix(upper)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    };
+    below(one, other) || below(other, one)
+}
+
+/// Whether a build in `scripts` lies beside another build or a script run at
+/// install on its directory or any part of it. A build replaces its package's
+/// whole directory, so which of them the package would end as is nothing its
+/// review found. `tests/fixtures/agent-catalog/overlapping-scripts.json` is the
+/// rule's table, held to this and to the catalog intake, which publishes no
+/// such target.
+pub(super) fn overlapping_build(scripts: &[Script]) -> bool {
+    scripts.iter().enumerate().any(|(index, script)| {
+        matches!(script.disposition, Disposition::Built { .. })
+            && scripts.iter().enumerate().any(|(at, other)| {
+                at != index
+                    && matches!(
+                        other.disposition,
+                        Disposition::Built { .. } | Disposition::Local { .. }
+                    )
+                    && nested(&script.package, &other.package)
+            })
+    })
+}
+
+/// Each install script of `offer` built at review, with the list its asset is
+/// held to fetched from the catalog's own host and read, refused where `tree`
+/// installs no package where it says it belongs, or where
+/// [`overlapping_build`] holds.
+async fn builts<'a>(
+    source: &Source,
+    offer: &'a Offer,
+    tree: Option<&NpmTree>,
+) -> Result<Vec<Built<'a>>, AgentsError> {
+    let Launch::Npm { scripts, .. } = &offer.pin.target.launch else {
+        return Ok(Vec::new());
+    };
+    if overlapping_build(scripts) {
+        return Err(AgentsError::Unsupported(
+            "a release with two builds, or a build and a script run at install, of one package",
+        ));
+    }
+    let mut builts = Vec::new();
+    for script in scripts {
+        let Disposition::Built {
+            asset,
+            files,
+            unpacked,
+            decompressed,
+        } = &script.disposition
+        else {
+            continue;
+        };
+        if !tree.is_some_and(|tree| {
+            tree.packages()
+                .iter()
+                .any(|package| package.location == script.package)
+        }) {
+            return Err(AgentsError::Unsupported(
+                "a release whose install script belongs to no package its lock installs",
+            ));
+        }
+        let bytes = catalog_fetch::asset(source, files)
+            .await
+            .map_err(AgentsError::FileListUnfetched)?;
+        let list = built_list(&offer.entry, &bytes).map_err(AgentsError::FileListUnread)?;
+        let prefix = format!("{}/", script.package);
+        if tree.is_some_and(|tree| {
+            tree.programs().any(|(_, path)| {
+                path.strip_prefix(&*prefix).is_some_and(|path| {
+                    !list.iter().any(|file| {
+                        *file.path == *path && matches!(file.kind, FileKind::File { .. })
+                    })
+                })
+            })
+        }) {
+            return Err(AgentsError::Unsupported(
+                "a release whose build leaves out a program its package declares",
+            ));
+        }
+        builts.push(Built {
+            package: &script.package,
+            artifact: Artifact {
+                url: String::new().into(),
+                mirror: None,
+                sha256: asset.sha256.clone(),
+                size: asset.size,
+                format: Format::TarGz,
+                unpacked: *unpacked,
+                decompressed: *decompressed,
+                files: Files::Listed(list),
+                kept: Vec::new(),
+                replaced_by: Some(asset.clone()),
+            },
+        });
+    }
+    Ok(builts)
+}
+
 /// Runs each of `locals` of `offer` in the version staged at `staging`, one
 /// at a time, and puts what each left into `files` as its review listed it, in
 /// place of what its package's tarball unpacked to.
@@ -2213,7 +2431,24 @@ async fn run_scripts(
 }
 
 /// The most install scripts a question names one by one.
-const SCRIPTS: usize = 16;
+pub(super) const SCRIPTS: usize = 16;
+
+/// Whether `scripts` holds more run at install and built at review together
+/// than [`SCRIPTS`]; one a reviewer decided otherwise is not counted.
+/// `tests/fixtures/agent-catalog/overlapping-scripts.json` holds the number,
+/// and this and the catalog intake to it, which publishes no such target.
+pub(super) fn more_scripts_than_shown(scripts: &[Script]) -> bool {
+    scripts
+        .iter()
+        .filter(|script| {
+            matches!(
+                script.disposition,
+                Disposition::Built { .. } | Disposition::Local { .. }
+            )
+        })
+        .count()
+        > SCRIPTS
+}
 
 /// How many packages of `tree` are under each licence its lock gives, those
 /// that give none counted together, the most packages first and then by
@@ -2266,6 +2501,65 @@ fn licences(tree: &NpmTree) -> Vec<String> {
 
 /// The most licences a question counts the packages under one by one.
 const LICENCES: usize = 8;
+
+/// Adds to `reached` each place `artifact` may be fetched from that it does
+/// not hold yet, for the question to name.
+fn reach(
+    source: &Source,
+    hosts: &[Box<str>],
+    artifact: &Artifact,
+    reached: &mut Vec<String>,
+) -> Result<(), AgentsError> {
+    for place in agent_download::reachable(source, hosts, artifact)? {
+        if !reached.contains(&place) {
+            reached.push(place);
+        }
+    }
+    Ok(())
+}
+
+/// What a download is told to say of itself: its bytes on top of the `before`
+/// the install has already fetched, of the `total` it will.
+fn telling<'a>(
+    name: Option<&'a Name>,
+    before: u64,
+    total: u64,
+    progress: &'a mut (dyn FnMut(InstallProgress) + Send),
+) -> impl FnMut(u64, u64) + Send + 'a {
+    move |done, _| {
+        let done = before.saturating_add(done).min(total);
+        if let Some(said) = name
+            .cloned()
+            .and_then(|name| InstallProgress::new(name, done, total))
+        {
+            progress(said);
+        }
+    }
+}
+
+/// Downloads `artifact` to `staging`'s download file, held to its pin as it
+/// arrives, and closes the file so it can be read back.
+async fn landed(
+    source: &Source,
+    hosts: &[Box<str>],
+    artifact: &Artifact,
+    staging: &crucible_external_harnesses::store::Staging,
+    (told, cancel): (&mut (dyn FnMut(u64, u64) + Send), &Cancel),
+) -> Result<Fetched, AgentsError> {
+    let mut landing = staging.download()?;
+    let arrived = agent_download::artifact(
+        source,
+        hosts,
+        artifact,
+        Landing {
+            file: &mut landing,
+            progress: told,
+        },
+        cancel,
+    )
+    .await?;
+    Ok(arrived)
+}
 
 /// The files of `tree` installed into `staging`: each tarball
 /// downloaded by [`agent_download::tarballs`] into a directory of the
@@ -2476,8 +2770,14 @@ fn runnable(listed: &[File], cmd: &str) -> Result<(), AgentsError> {
 /// pins: the same artifacts, by size and SHA-256 as pinned, and the same files;
 /// beside a `tree`, the files where its lock installs a package are set
 /// apart first, since its lock lists none of them, and every other file is
-/// held to `listed`.
-fn same(receipt: &Receipt, target: &Target, listed: &[File], tree: Option<&NpmTree>) -> bool {
+/// held to `listed`, what `builts` left under its package among them.
+fn same(
+    receipt: &Receipt,
+    target: &Target,
+    listed: &[File],
+    tree: Option<&NpmTree>,
+    builts: &[Built<'_>],
+) -> bool {
     let pinned = target
         .artifacts
         .iter()
@@ -2494,14 +2794,18 @@ fn same(receipt: &Receipt, target: &Target, listed: &[File], tree: Option<&NpmTr
         files.sort_by(|one, other| one.path.cmp(&other.path));
         files
     };
+    let beneath = |file: &File, location: &str| {
+        file.path
+            .strip_prefix(location)
+            .is_some_and(|rest| rest.starts_with('/'))
+    };
     let installed = |file: &File| {
-        tree.is_some_and(|tree| {
-            tree.packages().iter().any(|package| {
-                file.path
-                    .strip_prefix(&*package.location)
-                    .is_some_and(|rest| rest.starts_with('/'))
+        !builts.iter().any(|built| beneath(file, built.package))
+            && tree.is_some_and(|tree| {
+                tree.packages()
+                    .iter()
+                    .any(|package| beneath(file, &package.location))
             })
-        })
     };
     let own: Vec<File> = receipt
         .files

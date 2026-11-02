@@ -266,8 +266,20 @@ pub enum Disposition {
     Replaced,
     /// What it would add is lost, and the agent works without it.
     Lost,
-    /// Its result was built at review and is installed as an asset.
-    Built,
+    /// Its result was built at review and is installed as an asset: nothing
+    /// of it runs at install.
+    Built {
+        /// The gzipped tarball of its package's directory after the build,
+        /// paths relative to that directory.
+        asset: AssetRef,
+        /// The files and directories that tarball unpacks to, read by
+        /// [`built_list`].
+        files: AssetRef,
+        /// The total size of what is unpacked from it.
+        unpacked: u64,
+        /// The most it may decompress to.
+        decompressed: u64,
+    },
     /// It is run at install, in the sandbox, and must then match.
     Local {
         /// What `sh -c` is given to run it, in its package's directory.
@@ -565,7 +577,12 @@ impl Script {
             "inert" => Disposition::Inert,
             "replaced" => Disposition::Replaced,
             "lost" => Disposition::Lost,
-            "built" => Disposition::Built,
+            "built" => Disposition::Built {
+                asset: fields.object("asset")?.asset(None)?,
+                files: fields.object("files")?.asset(Some(ASSET_BYTES))?,
+                unpacked: fields.number("unpacked")?,
+                decompressed: fields.number("decompressed")?,
+            },
             "local" => Disposition::Local {
                 command: fields.command("command")?,
                 hosts: fields.reached("hosts")?,
@@ -761,6 +778,36 @@ pub fn result_list(entry: &Entry, bytes: &[u8]) -> Result<Vec<File>, CatalogErro
         return Err(CatalogError::Field {
             field: format!("{list}.files[{index}]").into(),
             why: "is not a file",
+        });
+    }
+    Ok(files)
+}
+
+/// The files and directories a built install script's `files` asset of
+/// `entry` says its package's directory holds, each path relative to that
+/// directory, every member read as [`file_list`] reads one. A build is
+/// installed as files alone, so a link in the list is no listing of one.
+///
+/// # Errors
+///
+/// A [`CatalogError::Field`] naming the listing, or the first member at
+/// fault, where it is not a list, or a member is a link.
+pub fn built_list(entry: &Entry, bytes: &[u8]) -> Result<Vec<File>, CatalogError> {
+    let list = format!("{} {} script build", entry.key.as_str(), entry.version);
+    let Ok(Value::Array(members)) = serde_json::from_slice::<Value>(bytes) else {
+        return Err(CatalogError::Field {
+            field: list.into(),
+            why: "is not a JSON list of files",
+        });
+    };
+    let files = read_members(&list, &members)?;
+    if let Some(index) = files
+        .iter()
+        .position(|file| matches!(file.kind, FileKind::Link { .. }))
+    {
+        return Err(CatalogError::Field {
+            field: format!("{list}[{index}]").into(),
+            why: "is not a file or a directory",
         });
     }
     Ok(files)

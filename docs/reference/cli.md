@@ -641,7 +641,8 @@ script to run at install is refused here before anything is fetched, saying to
 install it from `/agents` in a conversation, where the
 [sandbox it runs in](../security/sandboxing.md#installed-agents-releases) is
 lent. Such a script runs on Linux alone, so elsewhere the release is refused from
-`/agents` too.
+`/agents` too. A script built at review runs nothing, so a release with one is
+installed here as from `/agents`, on every platform.
 
 ### `agents add AGENT [VERSION]`
 
@@ -663,7 +664,9 @@ configuration file says
 update that setting allows is taken without the question, so it needs no
 terminal, and says so on a line of its own: `Taken without asking, under
 agents.update = "reviewed".` A release with an install script to run at install
-is always asked, showing its command and hosts. Every other check still runs.
+is always asked, showing its command and hosts; one built at review runs no
+code, so the setting stands for it as for any other download. Every other check
+still runs.
 It ends 0 once the instances are moved, and 1 otherwise.
 
 ### `agents rollback AGENT`

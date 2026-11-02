@@ -14,8 +14,9 @@
 //!
 //! An install script run at install runs in a sandbox of its own, sees only
 //! the environment it is given and must leave its package as its review
-//! listed it; one that cannot be so run, or was built at review, is refused
-//! before anything is fetched. A test that needs the sandbox to enforce says
+//! listed it; one that cannot be so run is refused before anything is
+//! fetched. One built at review runs nothing, so its tests need no sandbox and
+//! run on every platform. A test that needs the sandbox to enforce says
 //! so and skips where this machine's does not; one that needs a script run, or
 //! the question before one, says so and skips anywhere but Linux.
 //!
@@ -27,8 +28,9 @@ use std::fs;
 use crucible_app::agent_download::DownloadError;
 use crucible_app::client::agents::{AgentsError, How, Outcome};
 use crucible_client_api::{Pending, Text};
+use crucible_external_harnesses::catalog::fixture::{Member, tar_gz};
 use crucible_external_harnesses::fake_peer;
-use crucible_external_harnesses::release::{BIN, PRELOAD, Preload, Stub, proof};
+use crucible_external_harnesses::release::{BIN, PRELOAD, Preload, Stub, UnpackError, proof};
 use crucible_external_harnesses::store::StoreError;
 use serde_json::{Value, json};
 
@@ -732,31 +734,515 @@ fn installed_in_sandbox(
     )
 }
 
-#[test]
-fn a_release_whose_install_script_was_built_at_review_is_refused_before_anything_is_fetched()
--> Result<(), Failed> {
-    let bench = Bench::new("agents-door-npm-built")?;
-    let release = scripted(
+/// What a build left of `node_modules/peer` in these tests: the tree's
+/// `index.js`, an addon of its own, and none of the tarball's `bin`.
+const ADDON: &[u8] = b"the addon the build made\n";
+
+fn build() -> Vec<Member<'static>> {
+    vec![
+        Member::Dir("build"),
+        Member::File("build/addon.node", ADDON, true),
+        Member::File("index.js", proof::NPM_INDEX, false),
+    ]
+}
+
+/// The list a built script's asset is read against, naming `members`.
+fn build_list(members: &[Member<'_>]) -> Vec<u8> {
+    let listed: Vec<Value> = members
+        .iter()
+        .filter_map(|member| match *member {
+            Member::File(path, bytes, exec) => Some(json!({
+                "path": path, "kind": "file", "size": bytes.len(),
+                "sha256": digest(bytes), "exec": exec,
+            })),
+            Member::Dir(path) => Some(json!({"path": path, "kind": "dir"})),
+            Member::Symlink(..) | Member::Hard(..) => None,
+        })
+        .collect();
+    json!(listed).to_string().into_bytes()
+}
+
+/// A script of `package` on `event` built at review as `archive`, listed by
+/// `list`, each kept on `server`.
+fn built_script(server: &Server, package: &str, event: &str, archive: &[u8], list: &[u8]) -> Value {
+    server.serve(&asset_path(archive), Reply::Body(archive.to_vec()));
+    server.serve(&asset_path(list), Reply::Body(list.to_vec()));
+    json!({
+        "package": package,
+        "event": event,
+        "disposition": "built",
+        "asset": {"sha256": digest(archive), "size": archive.len()},
+        "files": {"sha256": digest(list), "size": list.len()},
+        "unpacked": 1 << 20,
+        "decompressed": 1 << 20,
+    })
+}
+
+/// A bench named `name` whose catalog lists goose 1.0.0 with the one install
+/// script `peer`'s `postinstall`, built at review as an archive of `archived`
+/// and listed as `listed`; and that archive.
+fn built_as(
+    name: &str,
+    archived: &[Member<'_>],
+    listed: &[Member<'_>],
+) -> Result<(Bench, Vec<u8>), Failed> {
+    let bench = Bench::new(name)?;
+    let archive = tar_gz(archived);
+    let script = built_script(
         &bench.server,
-        &peer(&answers("1.0.0"))?,
-        &tree(),
-        &json!({"package": "node_modules/peer", "event": "postinstall", "disposition": "built"}),
+        "node_modules/peer",
+        "postinstall",
+        &archive,
+        &build_list(listed),
     );
+    let release = scripted(&bench.server, &peer(&answers("1.0.0"))?, &tree(), &script);
     bench.server.catalog(1, &[release], &json!([]))?;
     bench.configure(&version(&bench).join(node()), &json!({}))?;
-    let before = fs::read(bench.user())?;
+    Ok((bench, archive))
+}
+
+/// A script built at review runs nothing at install, so it takes no launcher
+/// and no sandbox: its asset comes from the catalog's host, the package's
+/// directory ends as the review listed it, whatever the tarball left there,
+/// the receipt names its files and verify covers them; a second install of the
+/// version fetches nothing.
+#[test]
+fn a_script_built_at_review_is_installed_from_the_catalog_and_listed_in_the_receipt()
+-> Result<(), Failed> {
+    let (bench, archive) = built_as("agents-door-npm-built", &build(), &build())?;
     let mut front = answering(&bench.server, Some("Install"));
 
     let (outcome, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
 
     assert!(
-        matches!(&outcome, Err(AgentsError::Unsupported(why)) if why.contains("built")),
+        matches!(
+            &outcome,
+            Ok(Outcome::Moved {
+                downloaded: true,
+                ..
+            })
+        ),
         "{}",
         shape(&outcome)
     );
-    assert!(front.put.is_empty());
-    assert_eq!(bench.server.asked(), CATALOG);
-    unchanged(&bench, &before, "a script built at review")
+    assert!(
+        bench.server.asked().contains(&asset_path(&archive)),
+        "the build came from the catalog's own host"
+    );
+    let root = version(&bench);
+    let package = root.join("node_modules").join("peer");
+    let addon = package.join("build").join("addon.node");
+    assert_eq!(fs::read(&addon)?, ADDON);
+    assert_eq!(fs::read(package.join("index.js"))?, proof::NPM_INDEX);
+    assert!(
+        !package.join("bin").exists(),
+        "what the tarball left and the review's listing does not name is gone"
+    );
+    let receipt: Value = serde_json::from_slice(&fs::read(root.join(".receipt"))?)?;
+    let named: Vec<&str> = receipt
+        .pointer("/files")
+        .and_then(Value::as_array)
+        .ok_or("the receipt's files")?
+        .iter()
+        .filter_map(|file| file.pointer("/path").and_then(Value::as_str))
+        .collect();
+    assert!(named.contains(&"node_modules/peer/build/addon.node"));
+    assert!(named.contains(&"node_modules/peer/index.js"));
+    assert!(!named.contains(&"node_modules/peer/bin/peer.js"));
+
+    let verify = || -> Result<Command, Failed> {
+        Ok(Command::VerifyAgent {
+            agent: name("goose")?,
+        })
+    };
+    let mut quiet = answering(&bench.server, None);
+    let (whole, _) = bench.ask(verify()?, &mut quiet, false)?;
+    assert!(
+        matches!(&whole, Ok(Outcome::Verified { versions, .. })
+            if versions.iter().all(|(_, differs)| differs.is_empty())),
+        "{}",
+        shape(&whole)
+    );
+    bench.server.forget();
+    let mut again = answering(&bench.server, Some("Install"));
+    let (kept, _) = bench.ask(install("1.0.0")?, &mut again, false)?;
+    assert!(
+        matches!(
+            &kept,
+            Ok(Outcome::Moved {
+                downloaded: false,
+                ..
+            })
+        ),
+        "{}",
+        shape(&kept)
+    );
+    assert!(!bench.server.asked().contains(&asset_path(&archive)));
+
+    fs::write(&addon, b"changed")?;
+    let (differs, _) = bench.ask(verify()?, &mut quiet, false)?;
+    assert!(
+        matches!(&differs, Ok(Outcome::Verified { versions, .. })
+            if versions.iter().any(|(_, differs)| !differs.is_empty())),
+        "{}",
+        shape(&differs)
+    );
+    Ok(())
+}
+
+/// The question names the package and the size of what replaces it, and its
+/// list is read before it is put; a no fetches none of the build.
+#[test]
+fn the_question_names_a_built_scripts_package_and_its_assets_size() -> Result<(), Failed> {
+    let (bench, archive) = built_as("agents-door-npm-built-facts", &build(), &build())?;
+    let list = build_list(&build());
+    let before = fs::read(bench.user())?;
+    let mut front = answering(&bench.server, None);
+
+    let (outcome, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+
+    assert!(
+        matches!(outcome, Ok(Outcome::Undecided)),
+        "{}",
+        shape(&outcome)
+    );
+    let [(Pending::Install { facts, .. }, asked)] = front.put.as_slice() else {
+        return Err("one install question was put".into());
+    };
+    let said = format!("{} bytes", archive.len());
+    assert!(
+        facts.iter().map(Text::as_str).any(|fact| {
+            fact.starts_with(
+                "Install script not run: node_modules/peer postinstall, built at review",
+            ) && fact.contains(&said)
+        }),
+        "the built script is named with its asset's size"
+    );
+    assert!(asked.contains(&asset_path(&list)));
+    assert!(!asked.contains(&asset_path(&archive)));
+    assert!(!bench.server.asked().contains(&asset_path(&archive)));
+    unchanged(&bench, &before, "declined")
+}
+
+/// A build runs no code at install, so `agents.update = "reviewed"` stands
+/// for its question, as it does for any artifact.
+#[test]
+fn under_reviewed_an_update_with_a_built_script_is_taken_without_the_question() -> Result<(), Failed>
+{
+    let bench = Bench::new("agents-door-npm-built-reviewed")?;
+    bench.configure(
+        &bench.program("1.0.0"),
+        &json!({"agents": {"update": "reviewed"}}),
+    )?;
+    bench.server.publish(1, &[("1.0.0", super::ONE)], &[]);
+    let mut front = answering(&bench.server, Some("Install"));
+    let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+    assert!(
+        matches!(&installed, Ok(Outcome::Moved { .. })),
+        "{}",
+        shape(&installed)
+    );
+    let script = built_script(
+        &bench.server,
+        "node_modules/peer",
+        "postinstall",
+        &tar_gz(&build()),
+        &build_list(&build()),
+    );
+    let mut release = scripted(&bench.server, &peer(&answers("2.0.0"))?, &tree(), &script);
+    set(&mut release, "/version", json!("2.0.0"));
+    set(&mut release, "/admits/version", json!("2.0.0"));
+    bench.server.catalog(2, &[release], &json!([]))?;
+    let mut front = answering(&bench.server, Some("Cancel"));
+
+    let (updated, _) = bench.ask(
+        Command::UpdateAgent {
+            agent: name("goose")?,
+        },
+        &mut front,
+        false,
+    )?;
+
+    assert!(front.put.is_empty(), "nothing was put to the client");
+    assert!(
+        matches!(
+            &updated,
+            Ok(Outcome::Moved {
+                how: How::Updated,
+                standing: true,
+                ..
+            })
+        ),
+        "{}",
+        shape(&updated)
+    );
+    assert_eq!(
+        fs::read(
+            bench
+                .programs()
+                .join("2.0.0")
+                .join("node_modules")
+                .join("peer")
+                .join("build")
+                .join("addon.node")
+        )?,
+        ADDON
+    );
+    Ok(())
+}
+
+/// An asset from any host but the catalog's, one that is not its hash and one
+/// that is not its size, each leave nothing behind.
+#[test]
+fn a_built_asset_from_another_host_or_not_its_pin_is_refused_and_leaves_no_staging()
+-> Result<(), Failed> {
+    let elsewhere = Server::start()?;
+    let archive = tar_gz(&build());
+    elsewhere.serve("/stolen", Reply::Body(archive.clone()));
+    let mut flipped = archive.clone();
+    if let Some(last) = flipped.last_mut() {
+        *last ^= 0xff;
+    }
+    let mut short = archive.clone();
+    short.pop();
+    let cases: [(&str, Reply); 3] = [
+        ("redirected", Reply::Redirect(elsewhere.at("/stolen"))),
+        ("flipped", Reply::Body(flipped)),
+        ("short", Reply::Body(short)),
+    ];
+    for (case, reply) in cases {
+        let (bench, archive) =
+            built_as(&format!("agents-door-npm-built-{case}"), &build(), &build())?;
+        bench.server.serve(&asset_path(&archive), reply);
+        let before = fs::read(bench.user())?;
+        let mut front = answering(&bench.server, Some("Install"));
+
+        let (outcome, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+
+        assert!(
+            matches!(&outcome, Err(AgentsError::Download(_))),
+            "{case}: {}",
+            shape(&outcome)
+        );
+        assert!(elsewhere.asked().is_empty(), "{case}");
+        unchanged(&bench, &before, case)?;
+    }
+    Ok(())
+}
+
+/// The package ends as the listing says or nothing is installed: an archive
+/// holding what the listing does not name, missing what it does, or holding a
+/// member that is neither a file nor a directory, is refused, the links
+/// whether or not the listing names their paths.
+#[test]
+fn a_built_asset_that_is_not_its_listing_or_holds_a_link_is_refused_and_leaves_no_staging()
+-> Result<(), Failed> {
+    let file = Member::File("index.js", proof::NPM_INDEX, false);
+    let copy = Member::File("copy.js", proof::NPM_INDEX, false);
+    let cases: [(&str, Vec<Member<'_>>, Vec<Member<'_>>, &str); 5] = [
+        ("unlisted", vec![file, copy], vec![file], "unlisted"),
+        ("missing", vec![file], vec![file, copy], "missing"),
+        (
+            "symlink",
+            vec![file, Member::Symlink("copy.js", "index.js")],
+            vec![file, copy],
+            "kind",
+        ),
+        (
+            "hard",
+            vec![file, Member::Hard("copy.js", "index.js")],
+            vec![file, copy],
+            "kind",
+        ),
+        (
+            "linked",
+            vec![file, Member::Symlink("copy.js", "index.js")],
+            vec![file],
+            "kind",
+        ),
+    ];
+    for (case, archived, listed, refused) in cases {
+        let (bench, _) = built_as(&format!("agents-door-npm-built-{case}"), &archived, &listed)?;
+        let before = fs::read(bench.user())?;
+        let mut front = answering(&bench.server, Some("Install"));
+
+        let (outcome, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+
+        let held = matches!(
+            (&outcome, refused),
+            (
+                Err(AgentsError::Unpacked(UnpackError::Unlisted { .. })),
+                "unlisted"
+            ) | (
+                Err(AgentsError::Unpacked(UnpackError::Missing { .. })),
+                "missing"
+            ) | (Err(AgentsError::Unpacked(UnpackError::Kind { .. })), "kind")
+        );
+        assert!(held, "{case}: {}", shape(&outcome));
+        unchanged(&bench, &before, case)?;
+    }
+    Ok(())
+}
+
+/// A build's list that leaves out a program its package declares would leave
+/// a stub with nothing to start, so it is refused before the question; the
+/// same list holding it is taken.
+#[test]
+fn a_build_that_leaves_out_a_program_its_package_declares_is_refused_before_the_question()
+-> Result<(), Failed> {
+    let declared = amended(
+        &tree(),
+        &[(0, json!({"bin": {"peer": "./bin/peer.js"}}))],
+        &[],
+    )?;
+    let without = build();
+    let mut with = build();
+    with.extend([
+        Member::Dir("bin"),
+        Member::File("bin/peer.js", proof::NPM_BIN, true),
+    ]);
+    for (case, members) in [("without", &without), ("with", &with)] {
+        let bench = Bench::new(&format!("agents-door-npm-built-program-{case}"))?;
+        let archive = tar_gz(members);
+        let script = built_script(
+            &bench.server,
+            "node_modules/peer",
+            "postinstall",
+            &archive,
+            &build_list(members),
+        );
+        let release = scripted(&bench.server, &peer(&answers("1.0.0"))?, &declared, &script);
+        bench.server.catalog(1, &[release], &json!([]))?;
+        bench.configure(&version(&bench).join(node()), &json!({}))?;
+        let mut front = answering(&bench.server, Some("Install"));
+
+        let (outcome, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+
+        if case == "without" {
+            assert!(
+                matches!(&outcome, Err(AgentsError::Unsupported(said)) if said.contains("a program")),
+                "{}",
+                shape(&outcome)
+            );
+            assert!(front.put.is_empty(), "no question");
+            assert!(!bench.server.asked().contains(&asset_path(&archive)));
+        } else {
+            assert!(outcome.is_ok(), "{}", shape(&outcome));
+        }
+    }
+    Ok(())
+}
+
+/// A question names every built script, so a release with more than it shows
+/// is refused before anything but its catalog is fetched; so is one a package
+/// its lock does not install, and one with two builds of a package or of one
+/// inside another, whose listings cannot both be what it ends as. The whole rule
+/// is the table the client's and the intake's tests share.
+#[test]
+fn a_release_whose_built_scripts_cannot_be_installed_is_refused_before_the_question()
+-> Result<(), Failed> {
+    let archive = tar_gz(&build());
+    let list = build_list(&build());
+    let cases = [
+        (
+            "many",
+            (0..17)
+                .map(|index| (format!("node_modules/{index}"), "postinstall"))
+                .collect(),
+            "more install scripts",
+        ),
+        (
+            "absent",
+            vec![("node_modules/absent".to_owned(), "postinstall")],
+            "belongs to no package",
+        ),
+        (
+            "twice",
+            vec![
+                ("node_modules/peer".to_owned(), "preinstall"),
+                ("node_modules/peer".to_owned(), "postinstall"),
+            ],
+            "two builds",
+        ),
+        (
+            "nested",
+            vec![
+                ("node_modules/peer".to_owned(), "postinstall"),
+                (
+                    "node_modules/peer/node_modules/inner".to_owned(),
+                    "postinstall",
+                ),
+            ],
+            "two builds",
+        ),
+    ];
+    for (case, scripts, why) in cases {
+        let bench = Bench::new(&format!("agents-door-npm-built-{case}"))?;
+        let scripts: Vec<Value> = scripts
+            .iter()
+            .map(|(package, event)| built_script(&bench.server, package, event, &archive, &list))
+            .collect();
+        let mut release = scripted(
+            &bench.server,
+            &peer(&answers("1.0.0"))?,
+            &tree(),
+            &json!(null),
+        );
+        set(&mut release, "/targets/0/scripts", json!(scripts));
+        bench.server.catalog(1, &[release], &json!([]))?;
+        bench.configure(&version(&bench).join(node()), &json!({}))?;
+        let before = fs::read(bench.user())?;
+        let mut front = answering(&bench.server, Some("Install"));
+
+        let (outcome, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+
+        assert!(
+            matches!(&outcome, Err(AgentsError::Unsupported(said)) if said.contains(why)),
+            "{case}: {}",
+            shape(&outcome)
+        );
+        assert!(front.put.is_empty(), "{case}");
+        assert!(
+            !bench.server.asked().contains(&asset_path(&archive)),
+            "{case}"
+        );
+        unchanged(&bench, &before, case)?;
+    }
+    Ok(())
+}
+
+/// The receipt of a version in place is held to the build the catalog lists,
+/// so a version whose build the catalog changed is refused rather than kept.
+#[test]
+fn a_version_in_place_with_another_build_than_the_catalog_lists_is_refused() -> Result<(), Failed> {
+    let (bench, _) = built_as("agents-door-npm-built-kept", &build(), &build())?;
+    let mut front = answering(&bench.server, Some("Install"));
+    let (installed, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+    assert!(
+        matches!(&installed, Ok(Outcome::Moved { .. })),
+        "{}",
+        shape(&installed)
+    );
+    let other = [Member::File("index.js", proof::NPM_INDEX, false)];
+    let script = built_script(
+        &bench.server,
+        "node_modules/peer",
+        "postinstall",
+        &tar_gz(&other),
+        &build_list(&other),
+    );
+    let release = scripted(&bench.server, &peer(&answers("1.0.0"))?, &tree(), &script);
+    bench.server.catalog(2, &[release], &json!([]))?;
+    let mut front = answering(&bench.server, Some("Install"));
+
+    let (outcome, _) = bench.ask(install("1.0.0")?, &mut front, false)?;
+
+    assert!(
+        matches!(&outcome, Err(AgentsError::Kept { .. })),
+        "{}",
+        shape(&outcome)
+    );
+    Ok(())
 }
 
 #[test]

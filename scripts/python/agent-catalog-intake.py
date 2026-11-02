@@ -309,9 +309,23 @@ and holds the files `built.json` lists, as `tree` lists them; the licence
 gate below then runs over the SBOM named by the archive's SHA-256, no SBOM
 failing it, and on a pass the archive is kept as an asset, counted with the
 repacks, and the script is listed `built`, its record and output on the
-script in the review data, where the diff shows them, and left out by
-`render`. A build the job left no `built.tar.gz` of, or whose gate fails,
-drops the target with the reason.
+script in the review data, where the diff shows them. `render` leaves the
+record out and lists the output as the script's `asset`, beside `files`, the
+archive's members in their order as a JSON list of file objects, `unpacked`,
+the size of its files, and `decompressed`, the size of its tar: what a client
+fetches the build by and holds it to. That list is kept as an asset of at
+most `ASSET_BYTES`, counted with the listings, and is written for at most
+`TARBALL_MEMBERS` members, past either of which the target is dropped. A
+build the job left no `built.tar.gz` of, or whose gate fails, drops the target
+with the reason. A build replaces its package's whole directory, so a target
+with two builds, or a build and a local script, on one package or on packages
+one inside the other is dropped naming the package, as a client refuses it;
+`render` refuses one too. Nothing merges two builds, so on a platform where
+every script is built a package with two scripts keeps its target only where a
+reviewer decides all of them but one, or the job left nothing of the others.
+A target with more than `SCRIPTS` scripts built or run locally together is
+dropped too, and refused by `render`, as a client refuses it; a script a
+reviewer decided, or nobody has, is not counted.
 
 `pack` writes the package directory `--root` after a build to `--out` as
 `repack` writes a tar.gz, whole or not at all: its names in sorted order,
@@ -401,7 +415,8 @@ one (1 where none), `--signed-at` is the signing time in whole seconds,
 source ever made, once each, since a revocation outlives the data that made
 it. Entries pass through but for what only a reviewer reads (each target's
 `probe` record, an artifact's `mirror_licence` mark and `licence_gate`
-record); a long file list is
+record, and a built script's record, its output listed as its `asset`); a long
+file list is
 already an asset the entry names by hash and size. The bytes are sorted keys,
 no spaces, UTF-8 and no floats, so the same data and time give the same bytes.
 Nothing is written, and the run is refused, for a catalog over `INDEX_BYTES`
@@ -651,6 +666,8 @@ DISPOSITIONS = ("inert", "replaced", "lost")
 # the job built, whose output installs in its place, or one the client runs
 # on the user's machine, the job having seen it leave the same files twice.
 CLASSED = ("built", "local")
+# The most of those a client's question names, past which it refuses the release.
+SCRIPTS = 16
 # The words that make a script a build by rule, whatever its runs leave: a
 # compiler, a native-addon builder, a build tool, or a package manager, which
 # can reach a build through another script, so no subcommand of one is taken
@@ -3191,6 +3208,11 @@ def npm_target(
             if script["disposition"] is None:
                 script = classed(observed, agent, platform, item, script, gate, assets)
             scripts.append(script)
+    overlapping = overlapping_build(scripts)
+    if overlapping is not None:
+        raise Dropped(overlap_said(overlapping))
+    if more_scripts_than_shown(scripts):
+        raise Dropped(MORE_SCRIPTS)
     return {
         "artifacts": [artifact],
         "bin": bin,
@@ -3201,6 +3223,40 @@ def npm_target(
         "platform": platform,
         "scripts": scripts,
     }
+
+
+MORE_SCRIPTS = f"it has more scripts built or run at install together than the {SCRIPTS} a client's question shows, which a client refuses"
+
+
+def more_scripts_than_shown(scripts: list[dict]) -> bool:
+    """Whether `scripts` holds more built or local ones together than `SCRIPTS`,
+    the number `tests/fixtures/agent-catalog/overlapping-scripts.json` holds this
+    and the client's door to."""
+    return sum(script["disposition"] in CLASSED for script in scripts) > SCRIPTS
+
+
+def overlapping_build(scripts: list[dict]) -> str | None:
+    """The package of a build in `scripts` beside another build or a local
+    script on its directory or any part of it, which a client refuses, or none.
+    `tests/fixtures/agent-catalog/overlapping-scripts.json` is the rule's table,
+    held to this and to the client's door."""
+    for at, script in enumerate(scripts):
+        if script["disposition"] != "built":
+            continue
+        for other_at, other in enumerate(scripts):
+            if other_at == at or other["disposition"] not in CLASSED:
+                continue
+            one, two = script["package"], other["package"]
+            if one == two or one.startswith(two + "/") or two.startswith(one + "/"):
+                return one
+    return None
+
+
+def overlap_said(package: str) -> str:
+    return (
+        f"{shown(clipped(package))} holds two builds, or a build and a script run at install, "
+        "on one package or on packages one inside the other, which a client refuses"
+    )
 
 
 def command_words(command: str) -> list[str] | None:
@@ -3361,7 +3417,9 @@ def built_output(place: pathlib.Path, script: dict, gate: Gate, assets: dict[str
     read within `REPACK_BYTES`, as `pack` writes one: refused unless `Packing`
     writes its members again to the same bytes, they are files and
     directories alone, and its files are the ones `built.json` lists. The
-    gate's input is the SBOM named by its SHA-256."""
+    gate's input is the SBOM named by its SHA-256. What a client holds the
+    build to goes on `script`: its list of members and the sizes of what it
+    unpacks to."""
     try:
         made = read(place / "built.tar.gz", REPACK_BYTES, "built.tar.gz")
         listed = listed_tree(read_json(place / "built.json", TREE_LISTING_BYTES, "built.json"), "built.json", built=False)
@@ -3370,6 +3428,7 @@ def built_output(place: pathlib.Path, script: dict, gate: Gate, assets: dict[str
     unzipped = Bounded(Unpacking(OneGzip(io.BytesIO(made))), REPACK_DECOMPRESSED, "built.tar.gz")
     packing = Packing()
     files: dict[str, dict] = {}
+    members: list[dict] = []
     try:
         with tarfile.open(fileobj=unzipped, mode="r|", tarinfo=Member, encoding="utf-8", errors="surrogateescape") as tar:
             for member in tar:
@@ -3379,8 +3438,10 @@ def built_output(place: pathlib.Path, script: dict, gate: Gate, assets: dict[str
                     files[member.name] = {
                         "exec": bool(member.mode & 0o111), "sha256": content.sha.hexdigest(), "size": content.size,
                     }
+                    members.append({"path": member.name, "kind": "file", **files[member.name]})
                 elif member.type == tarfile.DIRTYPE:
                     packing.add(member.name, "dir", member.mode)
+                    members.append({"path": member.name, "kind": "dir"})
                 else:
                     raise Dropped(f"built.tar.gz holds {shown(clipped(member.name))}, which is neither a file nor a directory")
         while unzipped.read(1 << 20):
@@ -3394,8 +3455,18 @@ def built_output(place: pathlib.Path, script: dict, gate: Gate, assets: dict[str
         raise Dropped("built.tar.gz is not written as `pack` writes a build")
     if files != listed:
         raise Dropped("built.tar.gz does not hold the files built.json lists")
+    if len(members) > TARBALL_MEMBERS:
+        raise Dropped(f"built.tar.gz holds more than {TARBALL_MEMBERS} members")
+    listing = json.dumps(members, sort_keys=True, separators=(",", ":")).encode()
+    if len(listing) > ASSET_BYTES:
+        raise Dropped(f"built.tar.gz's file list is larger than a catalog asset may be, {ASSET_BYTES} bytes")
     sha256 = hashlib.sha256(made).hexdigest()
     gate.replacing(script, None if gate.sboms is None else gate.sboms / f"{sha256}.json", made, assets)
+    if not gate.kept({"files": listing}, assets):
+        raise Dropped(f"built.tar.gz's file list would bring what this review holds past {GATE_HELD_BYTES} bytes")
+    script["files"] = {"sha256": hashlib.sha256(listing).hexdigest(), "size": len(listing)}
+    script["unpacked"] = sum(entry["size"] for entry in files.values())
+    script["decompressed"] = REPACK_DECOMPRESSED - unzipped.left
 
 
 def dispositions_of(path: pathlib.Path | None) -> dict[str, dict[str, str]]:
@@ -4843,6 +4914,25 @@ def npm_checked(entry: dict, target: dict, where: str) -> None:
                     raise Dropped(f"a local script's result is larger than a catalog asset may be, {ASSET_BYTES} bytes")
             except Dropped as dropped:
                 raise Refused(f"{where}: {dropped}") from None
+        elif script["disposition"] == "built":
+            # What a client fetches a build by and holds it to.
+            try:
+                output = present(script, "asset", dict, f"{where}: a built script")
+                digest(output.get("sha256"), "a built script's asset sha256")
+                number(output.get("size"), "a built script's asset size")
+                files = present(script, "files", dict, f"{where}: a built script")
+                digest(files.get("sha256"), "a built script's files sha256")
+                if number(files.get("size"), "a built script's files size") > ASSET_BYTES:
+                    raise Dropped(f"a built script's files are larger than a catalog asset may be, {ASSET_BYTES} bytes")
+                number(present(script, "unpacked", int, f"{where}: a built script"), "a built script's unpacked")
+                number(present(script, "decompressed", int, f"{where}: a built script"), "a built script's decompressed")
+            except Dropped as dropped:
+                raise Refused(f"{where}: {dropped}") from None
+    overlapping = overlapping_build(target["scripts"])
+    if overlapping is not None:
+        raise Refused(f"{where}: {overlap_said(overlapping)}")
+    if more_scripts_than_shown(target["scripts"]):
+        raise Refused(f"{where}: {MORE_SCRIPTS}")
 
 
 def rendered(entries: list[dict]) -> list[dict]:
@@ -4860,10 +4950,14 @@ def rendered(entries: list[dict]) -> list[dict]:
                 for artifact in target.get("artifacts", [])
             ]
             if "scripts" in target:
-                # A built script's record and output are the publish job's;
-                # the catalog lists the script as built.
+                # A built script's record is the publish job's; the catalog
+                # lists its output as the asset a client fetches.
                 target["scripts"] = [
-                    {name: value for name, value in script.items() if name not in ("licence_gate", "replaced_by")}
+                    {
+                        ("asset" if name == "replaced_by" else name): value
+                        for name, value in script.items()
+                        if name != "licence_gate"
+                    }
                     for script in target["scripts"]
                 ]
         listed.append(copy)
@@ -4955,8 +5049,8 @@ def passing(record: object) -> dict | None:
 def published(merged: dict) -> tuple[dict[str, int], dict[str, int | None], dict[str, dict[str, str]]]:
     """What the merged data lets the catalog release hold, by hash: each
     file-list and lock asset, and each NOTICE and licence text a passing
-    licence-gate record gives, and each local script's listing, with its
-    size; each artifact copy or replacement, a built script's output among
+    licence-gate record gives, and each local script's listing and built
+    script's list, with its size; each artifact copy or replacement, a built script's output among
     them, with the size its record binds, or none where it may not be
     redistributed (no passing record for those very bytes on every entry that
     holds them, or, for a copy, no mirror mark); and, for each of those, the
@@ -5008,12 +5102,13 @@ def published(merged: dict) -> tuple[dict[str, int], dict[str, int | None], dict
                     # An npm target's lock is an asset as a file list is.
                     listings[digest(lock.get("sha256"), "a lock's sha256")] = number(lock.get("size"), "a lock's size")
                 for script in target.get("scripts", []):
-                    result = script.get("result")
-                    if result is not None:
-                        # A local script's listing is the catalog's own data.
-                        listings[digest(result.get("sha256"), "a result's sha256")] = number(
-                            result.get("size"), "a result's size"
-                        )
+                    # A local script's listing, and a built script's list of
+                    # its output, are the catalog's own data.
+                    for result in (script.get("result"), script.get("files")):
+                        if result is not None:
+                            listings[digest(result.get("sha256"), "a result's sha256")] = number(
+                                result.get("size"), "a result's size"
+                            )
                     record = passing(script.get("licence_gate"))
                     replacement = script.get("replaced_by")
                     if replacement is not None:
@@ -5288,7 +5383,8 @@ def scripts_of(scripts: object) -> list[str]:
         elif disposition == "built":
             decided += (
                 f", licence gate {gate_of(script.get('licence_gate'))}, "
-                f"replaced by {replaced_of(script.get('replaced_by'))}"
+                f"replaced by {replaced_of(script.get('replaced_by'))}, "
+                f"unpacked by {replaced_of(script.get('files'))}"
             )
         lines.append(f"- script {shown(script.get('package'))} {shown(script.get('event'))}: {decided}")
     return lines
