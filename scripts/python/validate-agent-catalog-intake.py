@@ -48,6 +48,7 @@ UNPACKED = json.loads((FIXTURES / "unpack-check/binary.json").read_text())
 PROBED = json.loads((FIXTURES / "probe/fake-peer.json").read_text())
 UNCONFINED = json.loads((FIXTURES / "probe/unconfined.json").read_text())
 RENDER = FIXTURES / "render"
+OVERLAPPING = FIXTURES / "overlapping-scripts.json"
 SIGNED_AT = 1_790_000_000
 
 
@@ -3012,6 +3013,12 @@ def check_npm_render(scratch: pathlib.Path) -> None:
         ("local-host", lambda t: t["scripts"][0].update(
             disposition="local", command="node x.js", hosts=["no host"], result={"sha256": "0" * 64, "size": 2}
         ), "hosts"),
+        ("two-builds", lambda t: t.update(scripts=[
+            {"package": t["scripts"][0]["package"], "event": event, "disposition": "built",
+             "replaced_by": {"sha256": "0" * 64, "size": 2}, "files": {"sha256": "0" * 64, "size": 2},
+             "unpacked": 2, "decompressed": 2}
+            for event in ("preinstall", "postinstall")
+        ]), "two builds"),
         ("no-bin", lambda t: t.pop("bin"), "bin"),
         ("rules", lambda t: t["lock"].update(unpack_rules=2), "unpack_rules"),
         ("no-lock", lambda t: t.pop("lock"), "lock"),
@@ -3023,6 +3030,17 @@ def check_npm_render(scratch: pathlib.Path) -> None:
     data = copy.deepcopy(merged)
     data["entries"][index].pop("lock_revision")
     refused(scratch, "npm-revision.json", "lock_revision", merged=written(scratch, "m-npm-revision.json", data))
+    # A built script renders, its record left out and its output as its asset.
+    data = copy.deepcopy(merged)
+    script = data["entries"][index]["targets"][0]["scripts"][0]
+    script.update(
+        disposition="built", replaced_by={"sha256": "0" * 64, "size": 2}, licence_gate={"status": "passed"},
+        files={"sha256": "1" * 64, "size": 2}, unpacked=2, decompressed=2,
+    )
+    _, catalog = rendered(scratch, "npm-built.json", merged=written(scratch, "m-npm-built.json", data))
+    listed = next(entry for entry in catalog["entries"] if entry["kind"] == "npm")["targets"][0]["scripts"][0]
+    assert listed["asset"] == {"sha256": "0" * 64, "size": 2}, listed
+    assert "replaced_by" not in listed and "licence_gate" not in listed, listed
 
 
 # The members of the `.tar.bz2` fixture, in archive order: name, kind, mode,
@@ -3944,9 +3962,46 @@ def builds_review(scratch: pathlib.Path, signers: Signers) -> tuple[dict, pathli
     # A run the job left no listing of, and hosts that are not hosts.
     agent("norun-npm", "node setup.js", {"linux-x86_64": {"second": None}})
     agent("badhost-npm", "node setup.js", {"linux-x86_64": {"hosts": ["10.0.0.1"]}})
+
+    # More than one script over one package's directory: a client refuses a
+    # build beside another build or a script run at install on that directory
+    # or any part of it, so review does not list such a target.
+    def several(agent_id: str, scripts: dict[tuple[str, str], str], laid: dict[str, tuple[tuple[str, str], ...]]) -> None:
+        own = {event: command for (location, event), command in scripts.items() if location == TOP}
+        inner = {event: command for (location, event), command in scripts.items() if location == BUNDLED}
+        tree = npm_tree(
+            top=top_manifest(scripts=own),
+            changes={BUNDLED: {"hasInstallScript": True}} if inner else None,
+            top_files={"node_modules/bundled-dep/package.json": manifest(
+                name="bundled-dep", version="1.0.0", license="ISC", bin={"bundled": "./index.js"}, scripts=inner,
+            )} if inner else None,
+        )
+        npm_case(observed, agents, choices, agent_id, tree)
+        same = tree_of(package_files(tree, **{"build__done": b"1\n"}))
+        for platform, built in laid.items():
+            for script in scripts:
+                lay_out_script(
+                    script_place(observed, agent_id, platform, *script), same, same,
+                    built=package_files(tree, **{"build__Release__addon.node": f"\x7fELF {agent_id}\n".encode()})
+                    if script in built else None,
+                    sboms=sboms, sbom=passing_sbom,
+                )
+
+    pre, post = (TOP, "preinstall"), (TOP, "postinstall")
+    gyp, setup = "node-gyp rebuild", "node setup.js"
+    several("twobuilds-npm", {pre: gyp, post: gyp}, {"linux-x86_64": (pre, post)})
+    several("buildlocal-npm", {pre: gyp, post: setup}, {"linux-x86_64": (pre,)})
+    several("nestedbuilds-npm", {post: gyp, (BUNDLED, "postinstall"): gyp}, {"linux-x86_64": (post, (BUNDLED, "postinstall"))})
+    # Two scripts run at install are no build, except where every script is
+    # one; there it takes a reviewer deciding one of them to keep the target.
+    several("twolocal-npm", {pre: setup, post: setup}, {"linux-x86_64": (), "darwin-aarch64": (pre, post)})
+    several("onedecided-npm", {pre: setup, post: setup}, {"darwin-aarch64": (post,)})
     registry = written(scratch, "registry.json", {"version": "1.0.0", "agents": agents})
     choices_path = written(scratch, "choices.json", choices)
-    data, assets = npm_review(scratch, signers, registry, choices_path, "--sboms", sboms, "--texts", GATE / "texts")
+    dispositions = decided(scratch, {"onedecided-npm": {f"{TOP} preinstall": "inert"}})
+    data, assets = npm_review(
+        scratch, signers, registry, choices_path, "--sboms", sboms, "--texts", GATE / "texts", "--dispositions", dispositions,
+    )
     held.update(data=data, assets=assets, archives=archives)
     return data, assets, archives
 
@@ -4094,7 +4149,7 @@ def check_npm_build_by_difference(scratch: pathlib.Path, signers: Signers) -> No
     ran = intake("diff", scratch / "npm-builds" / "review.json")
     assert ran.returncode == 0, ran.stderr
     [line] = [line for line in ran.stdout.splitlines() if "**undecided**" not in line and "node setup.js" in line
-              and "local" in line]
+              and "local" in line and sha(agreed) in line]
     for said in ("github.com", "registry.npmjs.org", sha(agreed)):
         assert said in line, line
 
@@ -4105,6 +4160,29 @@ def check_npm_build_on_target(scratch: pathlib.Path, signers: Signers) -> None:
     data, _, _ = builds_review(scratch, signers)
     dropped(data, "differ-npm", "windows-x86_64", "postinstall", "is a build", "windows-x86_64", "left no build")
     assert "windows-x86_64" not in built_targets(data, "differ"), "no Windows target is listed with a local script"
+
+
+def check_npm_build_overlap(scratch: pathlib.Path, signers: Signers) -> None:
+    """A build beside another build or a script run at install, on one package
+    or on packages one inside the other, drops its target naming the package,
+    as a client refuses it; the rule is the table the client's door is tested
+    against too."""
+    data, _, _ = builds_review(scratch, signers)
+    for agent_id, platform in (
+        ("twobuilds-npm", "linux-x86_64"),
+        ("buildlocal-npm", "linux-x86_64"),
+        ("nestedbuilds-npm", "linux-x86_64"),
+        ("twolocal-npm", "darwin-aarch64"),
+    ):
+        dropped(data, agent_id, platform, "two builds", TOP)
+        assert platform not in built_targets(data, agent_id.removesuffix("-npm")), agent_id
+    for key, platform, kept in (("twolocal", "linux-x86_64", ["local", "local"]), ("onedecided", "darwin-aarch64", ["inert", "built"])):
+        scripts = built_targets(data, key)[platform]["scripts"]
+        assert [script["disposition"] for script in scripts if script["package"] == TOP] == kept, key
+    module = load_intake()
+    for case in json.loads(OVERLAPPING.read_text())["cases"]:
+        scripts = [{"package": package, "disposition": disposition} for package, disposition in case["scripts"]]
+        assert (module.overlapping_build(scripts) is not None) == case["refused"], case["name"]
 
 
 def check_npm_build_gated(scratch: pathlib.Path, signers: Signers) -> None:
@@ -4158,13 +4236,13 @@ def check_npm_build_gated(scratch: pathlib.Path, signers: Signers) -> None:
     module.npm_checked(entry, target, "the entry")
     # A built script is rendered with its asset and its list, so one missing
     # either is no entry to publish.
-    built_entry = next(entry for entry in data["entries"] if entry["key"] == "ungated")
-    built_target = copy.deepcopy(built_targets(data, "ungated")["windows-x86_64"])
+    built_entry = next(entry for entry in module.rendered(data["entries"]) if entry["key"] == "ungated")
+    built_target = copy.deepcopy(next(item for item in built_entry["targets"] if item["platform"] == "windows-x86_64"))
     for decided in built_target["scripts"]:
         if decided.get("disposition") is None:
             decided["disposition"] = "inert"
     module.npm_checked(built_entry, built_target, "the entry")
-    for field in ("replaced_by", "files", "unpacked", "decompressed"):
+    for field in ("asset", "files", "unpacked", "decompressed"):
         bare = copy.deepcopy(built_target)
         del top_script(bare)[field]
         try:
@@ -4331,6 +4409,7 @@ def main() -> int:
             ("npm build on target", lambda: check_npm_build_on_target(scratch, signers)),
             ("npm build refused", lambda: check_npm_build_refused(scratch, signers)),
             ("npm build gated", lambda: check_npm_build_gated(scratch, signers)),
+            ("npm build overlap", lambda: check_npm_build_overlap(scratch, signers)),
             ("pack", lambda: check_pack(scratch)),
             ("uvx sdist built", lambda: check_uvx_sdist_built(scratch)),
         ]

@@ -2294,12 +2294,30 @@ fn nested(one: &str, other: &str) -> bool {
     below(one, other) || below(other, one)
 }
 
+/// Whether a build in `scripts` lies beside another build or a script run at
+/// install on its directory or any part of it. A build replaces its package's
+/// whole directory, so which of them the package would end as is nothing its
+/// review found. `tests/fixtures/agent-catalog/overlapping-scripts.json` is the
+/// rule's table, held to this and to the catalog intake, which publishes no
+/// such target.
+pub(super) fn overlapping_build(scripts: &[Script]) -> bool {
+    scripts.iter().enumerate().any(|(index, script)| {
+        matches!(script.disposition, Disposition::Built { .. })
+            && scripts.iter().enumerate().any(|(at, other)| {
+                at != index
+                    && matches!(
+                        other.disposition,
+                        Disposition::Built { .. } | Disposition::Local { .. }
+                    )
+                    && nested(&script.package, &other.package)
+            })
+    })
+}
+
 /// Each install script of `offer` built at review, with the list its asset is
-/// held to fetched from the catalog's own host and read, each refused where
-/// `tree` installs no package where it says it belongs. A build replaces its
-/// package's whole directory, so one is refused beside another build or a
-/// script run at install on that directory or any part of it: which of them
-/// the package would end as is nothing its review found.
+/// held to fetched from the catalog's own host and read, refused where `tree`
+/// installs no package where it says it belongs, or where
+/// [`overlapping_build`] holds.
 async fn builts<'a>(
     source: &Source,
     offer: &'a Offer,
@@ -2308,8 +2326,13 @@ async fn builts<'a>(
     let Launch::Npm { scripts, .. } = &offer.pin.target.launch else {
         return Ok(Vec::new());
     };
+    if overlapping_build(scripts) {
+        return Err(AgentsError::Unsupported(
+            "a release with two builds, or a build and a script run at install, of one package",
+        ));
+    }
     let mut builts = Vec::new();
-    for (index, script) in scripts.iter().enumerate() {
+    for script in scripts {
         let Disposition::Built {
             asset,
             files,
@@ -2326,18 +2349,6 @@ async fn builts<'a>(
         }) {
             return Err(AgentsError::Unsupported(
                 "a release whose install script belongs to no package its lock installs",
-            ));
-        }
-        if scripts.iter().enumerate().any(|(at, other)| {
-            at != index
-                && matches!(
-                    other.disposition,
-                    Disposition::Built { .. } | Disposition::Local { .. }
-                )
-                && nested(&script.package, &other.package)
-        }) {
-            return Err(AgentsError::Unsupported(
-                "a release with two builds, or a build and a script run at install, of one package",
             ));
         }
         let bytes = catalog_fetch::asset(source, files)

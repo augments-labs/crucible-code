@@ -1135,8 +1135,9 @@ fn a_build_that_leaves_out_a_program_its_package_declares_is_refused_before_the_
 
 /// A question names every built script, so a release with more than it shows
 /// is refused before anything but its catalog is fetched; so is one a package
-/// its lock does not install, and one with two builds of a package, whose
-/// listings cannot both be what it ends as.
+/// its lock does not install, and one with two builds of a package or of one
+/// inside another, whose listings cannot both be what it ends as. The whole rule
+/// is the table the client's and the intake's tests share.
 #[test]
 fn a_release_whose_built_scripts_cannot_be_installed_is_refused_before_the_question()
 -> Result<(), Failed> {
@@ -1160,6 +1161,17 @@ fn a_release_whose_built_scripts_cannot_be_installed_is_refused_before_the_quest
             vec![
                 ("node_modules/peer".to_owned(), "preinstall"),
                 ("node_modules/peer".to_owned(), "postinstall"),
+            ],
+            "two builds",
+        ),
+        (
+            "nested",
+            vec![
+                ("node_modules/peer".to_owned(), "postinstall"),
+                (
+                    "node_modules/peer/node_modules/inner".to_owned(),
+                    "postinstall",
+                ),
             ],
             "two builds",
         ),

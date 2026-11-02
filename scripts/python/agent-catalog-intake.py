@@ -317,7 +317,12 @@ fetches the build by and holds it to. That list is kept as an asset of at
 most `ASSET_BYTES`, counted with the listings, and is written for at most
 `TARBALL_MEMBERS` members, past either of which the target is dropped. A
 build the job left no `built.tar.gz` of, or whose gate fails, drops the target
-with the reason.
+with the reason. A build replaces its package's whole directory, so a target
+with two builds, or a build and a local script, on one package or on packages
+one inside the other is dropped naming the package, as a client refuses it;
+`render` refuses one too. Nothing merges two builds, so on a platform where
+every script is built a package with two scripts keeps its target only where a
+reviewer decides all of them but one, or the job left nothing of the others.
 
 `pack` writes the package directory `--root` after a build to `--out` as
 `repack` writes a tar.gz, whole or not at all: its names in sorted order,
@@ -3198,6 +3203,9 @@ def npm_target(
             if script["disposition"] is None:
                 script = classed(observed, agent, platform, item, script, gate, assets)
             scripts.append(script)
+    overlapping = overlapping_build(scripts)
+    if overlapping is not None:
+        raise Dropped(overlap_said(overlapping))
     return {
         "artifacts": [artifact],
         "bin": bin,
@@ -3208,6 +3216,30 @@ def npm_target(
         "platform": platform,
         "scripts": scripts,
     }
+
+
+def overlapping_build(scripts: list[dict]) -> str | None:
+    """The package of a build in `scripts` beside another build or a local
+    script on its directory or any part of it, which a client refuses, or none.
+    `tests/fixtures/agent-catalog/overlapping-scripts.json` is the rule's table,
+    held to this and to the client's door."""
+    for at, script in enumerate(scripts):
+        if script["disposition"] != "built":
+            continue
+        for other_at, other in enumerate(scripts):
+            if other_at == at or other["disposition"] not in CLASSED:
+                continue
+            one, two = script["package"], other["package"]
+            if one == two or one.startswith(two + "/") or two.startswith(one + "/"):
+                return one
+    return None
+
+
+def overlap_said(package: str) -> str:
+    return (
+        f"{shown(clipped(package))} holds two builds, or a build and a script run at install, "
+        "on one package or on packages one inside the other, which a client refuses"
+    )
 
 
 def command_words(command: str) -> list[str] | None:
@@ -4868,9 +4900,9 @@ def npm_checked(entry: dict, target: dict, where: str) -> None:
         elif script["disposition"] == "built":
             # What a client fetches a build by and holds it to.
             try:
-                output = present(script, "replaced_by", dict, f"{where}: a built script")
-                digest(output.get("sha256"), "a built script's replaced_by sha256")
-                number(output.get("size"), "a built script's replaced_by size")
+                output = present(script, "asset", dict, f"{where}: a built script")
+                digest(output.get("sha256"), "a built script's asset sha256")
+                number(output.get("size"), "a built script's asset size")
                 files = present(script, "files", dict, f"{where}: a built script")
                 digest(files.get("sha256"), "a built script's files sha256")
                 if number(files.get("size"), "a built script's files size") > ASSET_BYTES:
@@ -4879,6 +4911,9 @@ def npm_checked(entry: dict, target: dict, where: str) -> None:
                 number(present(script, "decompressed", int, f"{where}: a built script"), "a built script's decompressed")
             except Dropped as dropped:
                 raise Refused(f"{where}: {dropped}") from None
+    overlapping = overlapping_build(target["scripts"])
+    if overlapping is not None:
+        raise Refused(f"{where}: {overlap_said(overlapping)}")
 
 
 def rendered(entries: list[dict]) -> list[dict]:
