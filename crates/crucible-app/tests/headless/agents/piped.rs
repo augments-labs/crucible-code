@@ -185,8 +185,7 @@ impl Bench {
         self.ask_piped_beside(
             front,
             (sandbox, confined, yes),
-            (release, channel),
-            &steps,
+            (release, channel, &steps),
             runtime,
         )
     }
@@ -225,8 +224,7 @@ impl Bench {
         &self,
         front: &mut Answering<'_>,
         (sandbox, confined, yes): (Arc<dyn SandboxService>, bool, bool),
-        (release, channel): (&Value, Option<&dyn SignInChannel>),
-        steps: &Steps,
+        (release, channel, steps): (&Value, Option<&dyn SignInChannel>, &Steps),
         runtime: &tokio::runtime::Runtime,
     ) -> Result<Result<Outcome, AgentsError>, Failed> {
         let consent = piped_consent(release, yes)?;
@@ -350,8 +348,7 @@ fn a_command_beside_a_live_run_is_refused_before_anything_is_asked_or_started() 
     let refused = bench.ask_piped_beside(
         &mut front,
         (local, false, false),
-        (&release, Some(&person)),
-        &steps,
+        (&release, Some(&person), &steps),
         &runtime,
     )?;
 
