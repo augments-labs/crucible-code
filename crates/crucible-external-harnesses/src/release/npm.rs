@@ -1077,7 +1077,7 @@ impl Unpacking<'_> {
                 kind,
             });
         }
-        ended(archive, &ahead, budget).map_err(refused)
+        ended(archive, &ahead, budget, "gzip").map_err(refused)
     }
 }
 

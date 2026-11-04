@@ -115,22 +115,22 @@ repacked from an artifact is gated the same way, and where it passes it is
 the artifact's `replaced_by`, the asset installed in its place, by the hash
 and size its record binds.
 
-A `.tar.bz2` download, which the client does not unpack, is repacked by
-`review` itself from the bytes it hashed, as `repack` writes it, and dropped
-unless that repack is the job's `repacked` byte for byte, so the listing is of
-the bytes that ship; one not marked for mirroring is dropped, since it cannot
-be repacked. The artifact keeps the download's address, hash and size, its
-`format` is `tar.gz`, its listing is the repack's, and the licence gate runs
-over the repack, from the input named by the download's SHA-256; a failing
-record drops the target, which has no route to install but its repack. A
-FreeBSD runtime is taken the same way from its pinned `.pkg`, with the
-bundle's SBOM as the gate's input, and every file of the bundle kept; a
-FreeBSD runtime missing or refused drops only the targets on
-`freebsd-x86_64`. `review` cannot rebuild a FreeBSD bundle as it rebuilds a
-repack: the bundle is the untrusted job's output, held only by the pinned
-`.pkg`, the client's listing of it, the licence gate, and the FreeBSD probe.
-A passing repack or bundle is written under `--assets` by its SHA-256, the
-run holding at most 1 GiB of them together, and one past that is dropped.
+A `.tar.bz2` download is repacked by `review` itself to `tar.gz`, the one
+archive format the signed catalog ships, from the bytes it hashed, as
+`repack` writes it, and dropped unless that repack is the job's `repacked`
+byte for byte, so the listing is of the bytes that ship; one not marked for
+mirroring is dropped, since it cannot be repacked. The artifact keeps the
+download's address, hash and size, its `format` is `tar.gz`, its listing is
+the repack's, and the licence gate runs over the repack, from the input named
+by the download's SHA-256; a failing record drops the target, which has no
+route to install but its repack. A FreeBSD runtime is taken the same way from
+its pinned `.pkg`, with the bundle's SBOM as the gate's input, and every file
+of the bundle kept; a FreeBSD runtime missing or refused drops only the
+targets on `freebsd-x86_64`. `review` cannot rebuild a FreeBSD bundle as it
+rebuilds a repack: the bundle is the untrusted job's output, held only by the
+pinned `.pkg`, the client's listing of it, the licence gate, and the FreeBSD
+probe. A passing repack or bundle is written under `--assets` by its SHA-256,
+the run holding at most 1 GiB of them together, and one past that is dropped.
 
 `repack` writes the tar.gz `review` makes of a `.tar.bz2` (`--input`) to
 `--out`, whole or not at all: a GNU tar, which the client's tar reader reads,
@@ -1310,9 +1310,9 @@ def target(
 ) -> dict:
     """One registry target as the catalog will list it, before its probe; an
     artifact marked for mirroring carries the licence gate's record. A
-    `.tar.bz2`, which the client does not unpack, is repacked here from the
-    download, and installs as that repack where the job's is the same bytes
-    and the gate passes over it."""
+    `.tar.bz2` is repacked here to `tar.gz`, the one archive format the signed
+    catalog ships, and installs as that repack where the job's is the same
+    bytes and the gate passes over it."""
     if not PLATFORM.fullmatch(platform):
         raise Dropped("is not a platform the catalog names")
     spec = obj(spec, "the target")

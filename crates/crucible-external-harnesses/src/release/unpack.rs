@@ -2,8 +2,8 @@
 //! directory only as the catalog lists it, or surveyed so that a list can be
 //! recorded for it.
 //!
-//! The artifact is a zip, a gzip-compressed tar or the program itself, and it
-//! is read as hostile however it was pinned:
+//! The artifact is a zip, a gzip- or bzip2-compressed tar, or the program
+//! itself, and it is read as hostile however it was pinned:
 //!
 //! - It is believed only once its size and SHA-256 are its pin's: the
 //!   artifact's own, or the asset's that was built at review in its place.
@@ -81,6 +81,7 @@ use std::fs;
 use std::io::{self, Cursor, Read, Seek as _, Write as _};
 use std::path::{Path, PathBuf};
 
+use bzip2::bufread::BzDecoder as Bz2Decoder;
 use flate2::bufread::GzDecoder;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
@@ -902,6 +903,25 @@ impl<R: Read> Read for Bounded<'_, R> {
     }
 }
 
+/// A decompressor that gives back the reader it read the compressed stream
+/// from, so what follows that one stream can be refused.
+pub(super) trait Decompressed<R>: Read {
+    /// The reader it read from.
+    fn into_inner(self) -> R;
+}
+
+impl<R: io::BufRead> Decompressed<R> for GzDecoder<R> {
+    fn into_inner(self) -> R {
+        GzDecoder::into_inner(self)
+    }
+}
+
+impl<R: io::BufRead> Decompressed<R> for Bz2Decoder<R> {
+    fn into_inner(self) -> R {
+        Bz2Decoder::into_inner(self)
+    }
+}
+
 /// What the entries before a tar member say of it: a GNU long name, a GNU
 /// long link target and an extended header, each held only once its ceiling
 /// allows it.
@@ -1104,10 +1124,11 @@ impl<'a> Walk<'a> {
         let budget = Budget::new(self.artifact.decompressed);
         match (self.artifact.format, self.place.is_some()) {
             (Format::Zip, false) | (Format::Wheel, true) => self.zipped(reader, &budget)?,
-            (Format::TarGz, false) => self.tarred(reader, &budget)?,
+            (Format::TarGz, false) => self.tarred(reader, &budget, GzDecoder::new, "gzip")?,
+            (Format::TarBz2, false) => self.tarred(reader, &budget, Bz2Decoder::new, "bzip2")?,
             (Format::Bare, false) => self.bare(reader, &budget)?,
             (Format::Wheel, false) => return Err(UnpackError::Wheel),
-            (Format::Zip | Format::TarGz | Format::Bare, true) => {
+            (Format::Zip | Format::TarGz | Format::TarBz2 | Format::Bare, true) => {
                 return Err(UnpackError::NotWheel);
             }
         }
@@ -1161,8 +1182,8 @@ impl<'a> Walk<'a> {
         Ok(())
     }
 
-    /// Walks a gzip-compressed tar, decompressed through `budget`, and then
-    /// the rest of its one gzip stream, refusing anything after it.
+    /// Walks a tar compressed by `decode`, decompressed through `budget`, and
+    /// then the rest of its one compressed stream, refusing anything after it.
     ///
     /// Each header is read as it is written. A GNU long name or long link
     /// target, and an extended header, is held to its own ceiling before a
@@ -1171,9 +1192,15 @@ impl<'a> Walk<'a> {
     /// before the header's own name. An extended header that gives a member
     /// another size than its header is refused, since the member would then
     /// be read as another.
-    fn tarred<R: io::BufRead>(&mut self, reader: R, budget: &Budget) -> Result<(), UnpackError> {
+    fn tarred<R: io::BufRead, D: Decompressed<R>>(
+        &mut self,
+        reader: R,
+        budget: &Budget,
+        decode: fn(R) -> D,
+        stream: &'static str,
+    ) -> Result<(), UnpackError> {
         let mut archive = tar::Archive::new(Bounded {
-            inner: GzDecoder::new(reader),
+            inner: decode(reader),
             budget,
         });
         let mut ahead = Ahead::default();
@@ -1218,7 +1245,7 @@ impl<'a> Walk<'a> {
             };
             self.member(&raw, body, budget)?;
         }
-        ended(archive, &ahead, budget)
+        ended(archive, &ahead, budget, stream)
     }
 
     /// Takes a program published bare as one member, named as its list names
@@ -1570,13 +1597,14 @@ pub(crate) fn link_resolves(
     Err("goes through more than eight links")
 }
 
-/// Reads what is left of a gzip-compressed tar `archive` once its last member
-/// has been taken, through its `budget`, refusing an entry that describes a
-/// member the archive does not hold, and anything after its one gzip stream.
-pub(super) fn ended<R: io::BufRead>(
-    archive: tar::Archive<Bounded<'_, GzDecoder<R>>>,
+/// Reads what is left of a compressed tar `archive` once its last member has
+/// been taken, through its `budget`, refusing an entry that describes a member
+/// the archive does not hold, and anything after its one compressed stream.
+pub(super) fn ended<R: io::BufRead, D: Decompressed<R>>(
+    archive: tar::Archive<Bounded<'_, D>>,
     ahead: &Ahead,
     budget: &Budget,
+    stream: &'static str,
 ) -> Result<(), UnpackError> {
     if !ahead.is_empty() {
         return Err(UnpackError::Corrupt(io::Error::other(
@@ -1585,16 +1613,16 @@ pub(super) fn ended<R: io::BufRead>(
     }
     let mut contents = archive.into_inner();
     io::copy(&mut contents, &mut io::sink()).map_err(|error| budget.failed(error))?;
-    let mut rest = contents.inner.into_inner();
+    let mut rest = Decompressed::into_inner(contents.inner);
     if io::BufRead::fill_buf(&mut rest)
         .map_err(UnpackError::Corrupt)?
         .is_empty()
     {
         Ok(())
     } else {
-        Err(UnpackError::Corrupt(io::Error::other(
-            "the archive goes on past its gzip stream",
-        )))
+        Err(UnpackError::Corrupt(io::Error::other(format!(
+            "the archive goes on past its {stream} stream"
+        ))))
     }
 }
 
