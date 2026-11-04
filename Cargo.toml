@@ -265,6 +265,14 @@ blake2 = { version = "=0.11.0", default-features = false }
 flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
 tar = { version = "=0.4.46", default-features = false }
 
+# A catalog agent's release may also be a bzip2-compressed tar. `std`
+# decompresses neither bzip2 nor tar, and a hand-written bzip2 decoder is an
+# archive parser this tree does not own. The crate's default backend is
+# `libbz2-rs-sys`, a pure-Rust implementation, so the build needs no C
+# toolchain and the C `bzip2-sys` backend stays off; its bzip2 licence is
+# permissive and is named in `deny.toml`.
+bzip2 = "=0.6.1"
+
 # An agent's release that crucible downloads for the user is a zip archive,
 # which `std` does not read, and a hand-written reader of one is an archive
 # parser. Only its reader is used, over stored and deflated members, which
