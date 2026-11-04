@@ -35,10 +35,11 @@ crucible makes requests of its own for seven things, and nothing else:
   or `/login`'s agent choice, or running a `crucible agents` command, asks for
   the catalog whatever it says.
 - **`cdn.agentclientprotocol.com`**, for the ACP Registry's index when
-  `/catalog` opens or an install, add, update or rollback starts. It is asked
-  within one megabyte and thirty seconds, and the cached index is reused for
-  five minutes. The registry is unsigned and not reviewed by Crucible: there
-  is no signature, serial, expiry, revocation list or anti-rollback.
+  `/catalog` opens, when `crucible agents search` runs, or when an install,
+  add, update or rollback starts. It is asked within one megabyte and thirty
+  seconds, and the cached index is reused for five minutes. The registry is
+  unsigned and not reviewed by Crucible: there is no signature, serial,
+  expiry, revocation list or anti-rollback.
 - **The archive host a registry entry names, and GitHub's release-asset
   hosts**, for a registry agent's install. The archive is downloaded within the
   registry's 512 MiB cap, at the host the entry names, and a redirect is

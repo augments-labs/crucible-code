@@ -151,9 +151,11 @@ do:
 A release read from the ACP Registry has no review, revocation list or
 anti-rollback. What holds it is the registry's SHA-256, recorded in its receipt,
 and the probe record taken at its install; there is no catalog signature or
-trust state to read, and a same-version archive the registry replaces is
-accepted at the next install. A registry release whose receipt has no probe
-record for this machine is not started, and `crucible agents probe` takes one.
+trust state to read. A fresh install accepts a same-version archive the
+registry replaces; an installed version keeps the hash its receipt recorded and
+refuses a different same-version archive until it is removed. A registry release
+whose receipt has no probe record for this machine is not started, and
+`crucible agents probe` takes one.
 The revocation and trust-state lines above are a signed catalog release's.
 
 `/logout` lists each agent named under `externalAgents` after the stored

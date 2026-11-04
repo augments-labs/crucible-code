@@ -912,14 +912,18 @@ whatever this is set to, since you asked; only the asking crucible does on its
 own obeys it.
 
 The ACP Registry is not fetched on that schedule. Its index is fetched when
-`/catalog` opens or an install, add, update or rollback starts, within one
-megabyte and thirty seconds, and is otherwise read from the cached copy, as
-`/login`'s agent choice does. The cached copy is reused for five minutes. It is unsigned and not reviewed by
-Crucible: there is no signature, serial, expiry, revocation list or
-anti-rollback, and a same-version archive the registry replaces is accepted at
-the next install. A cached index that could not be refreshed is used with a
-line saying it was not verified; with no cached copy the read is refused with
-the line that stopped it. `updates.check` does not govern it.
+`/catalog` opens, when `crucible agents search` runs, or when an install, add,
+update or rollback starts, within one megabyte and thirty seconds. `remove` and
+`verify` never fetch it, and `sign-in` reads only the cached copy, as `/login`'s
+agent choice does. The cached copy is reused for five minutes. It is unsigned
+and not reviewed by Crucible: there is no signature, serial, expiry, revocation
+list or
+anti-rollback. A fresh install accepts a same-version archive the registry
+replaces; an installed version keeps the hash its receipt recorded and refuses
+a different same-version archive until it is removed. A cached index that could
+not be refreshed is used with a line saying it was not verified; with no cached
+copy the read is refused with the line that stopped it. `updates.check` does
+not govern it.
 
 `never` stops the asking. crucible then never contacts GitHub on its own, for a
 release or for the catalog, and never says anything about releases. Running

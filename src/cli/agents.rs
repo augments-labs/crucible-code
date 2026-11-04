@@ -474,13 +474,16 @@ impl Desk<'_> {
                 agents,
                 more,
                 unrefreshed,
-                registry: _,
+                registry,
             } => {
                 if let Some(why) = unrefreshed {
                     (self.said)(&failing(&format!(
                         "the catalog could not be refreshed, so this is what was known before: {}",
                         caused(&why)
                     )));
+                }
+                if let Some(line) = registry {
+                    (self.said)(&failing(line.as_ref()));
                 }
                 Answer::Done(listing(&agents, more, matching))
             }

@@ -460,10 +460,12 @@ and neither rule applies to it.
 A release read from the ACP Registry has no review, revocation list or
 anti-rollback. There is no catalog signature or trust state for it: the
 registry's SHA-256, recorded in its receipt, and the probe record taken at its
-install are what hold it, and a same-version archive the registry replaces is
-accepted at the next install. A receipt without that probe record for this
-machine is not started; `crucible agents probe` takes one. The revocation and
-trust-state rule above is a signed catalog release's.
+install are what hold it. A fresh install accepts a same-version archive the
+registry replaces; an installed version keeps the hash its receipt recorded and
+refuses a different same-version archive until it is removed. A receipt without
+that probe record for this machine is not started; `crucible agents probe`
+takes one. The revocation and trust-state rule above is a signed catalog
+release's.
 
 Its consent and its network are the registry's relaxations. Its install is
 asked about under the generic warning that its vendor has not stated what it

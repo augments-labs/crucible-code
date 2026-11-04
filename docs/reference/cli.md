@@ -579,12 +579,15 @@ Registry offer, the way [`/catalog`](../providers/agents.md#catalog) and
 `AGENT` is the agent as the catalog or the registry names it, such as `goose` or
 `antigravity`; a name neither offers for your platform is refused, and so is
 `claude`: Claude Code installs and updates itself, and neither offers it. Each
-asks for the catalog and the registry first, whatever
-[`updates`](../configuration/configuration.md#updates) says, and where either
-could not be fetched goes on with what crucible believed or cached before. A
-catalog trust state that cannot be read or used, or a registry with no cached
-index, offers no registry release. Nothing about your session or directory is
-sent. The `/agents` slash command is not offered: that name is reserved for a
+asks for the catalog first, whatever
+[`updates`](../configuration/configuration.md#updates) says, and where it could
+not be fetched goes on with what crucible believed before. The registry is
+fetched by `/catalog` and by `search`, `install`, `add`, `update` and
+`rollback`; `remove` and `verify` never fetch it, and `sign-in` reads only the
+cached copy. A catalog trust state that cannot be read or used offers no
+catalog release; a registry with no cached index offers no registry release.
+Neither suppresses the other. Nothing about your session or directory is sent.
+The `/agents` slash command is not offered: that name is reserved for a
 subagents mechanism, and these commands keep the name `crucible agents`.
 
 A command that would download, write or remove anything first asks on this
