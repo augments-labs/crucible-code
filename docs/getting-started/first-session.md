@@ -1057,7 +1057,7 @@ back to correct.
 | `/fast` | Asks the model in force for its vendor's [fast form](../providers/fast.md), at its price, or for standard |
 | `/login` | Signs in with your provider account |
 | `/logout` | Signs out from your provider account |
-| `/catalog` | Lists the coding agents the catalog offers, and adds one |
+| `/catalog` | Lists the coding agents the ACP Registry offers, and adds one |
 | `/mode` | The [permission mode](../permissions/modes.md) in force, or the one you name |
 | `/sandbox` | Shows the [sandbox](../security/sandboxing.md) in force, and turns it on or off |
 | `/theme` | Picks the colours crucible draws with, and the one code is drawn in |
@@ -1067,6 +1067,9 @@ back to correct.
 | `/compact` | Replaces what is behind you with the model's own notes on it, making room |
 | `/clear` | Starts a new session, leaving this one on `/resume` |
 | `/exit` | Ends the session |
+
+`/agents` is not a command in this release; the name is reserved for the
+subagents mechanism. The command line keeps its name, `crucible agents`.
 
 `/model` on its own stands a shelf over the whole shell, with the model being
 asked now named above it: a search line across the top, the providers this build

@@ -172,20 +172,27 @@ the page and the day, and names the origins after the vendor's words. The
 origins are shown and nothing more: crucible's own requests to them are not
 held.
 
-An entry with no statement is listed and cannot be launched. The refusal says so
-before anything is asked or started, and a yes given to another agent's route
-does not stand in for it:
+A signed catalog entry with no statement is listed and cannot be launched. The
+refusal says so before anything is asked or started, and a yes given to another
+agent's route does not stand in for it:
 
 ```text
 goose cannot be launched: its catalog entry gives no statement of how its vendor uses what is sent.
 ```
 
-So is an entry whose statement cannot be shown whole. The vendor's words and the
-origins together may run to 4096 bytes, and a statement longer than that, or
-whose page is not an `https` address naming a host, is treated as none rather
-than cut short. A build holds at most 32 catalog agents to a statement, and a
-catalog agent can never take a route Claude Code or Antigravity already has: an
-entry keyed with one of those names has its install script refused and is not
+A registry entry with no vendor statement is not refused: it is held by the
+generic warning, which says the vendor has not stated what it does with what is
+sent and that the agent's network reach is unrecorded, so the conversation's
+network policy is the agent's network. The same yes covers the probe whose
+record its install keeps, and its first launch is held by that warning.
+
+So is a signed catalog entry whose statement cannot be shown whole. The vendor's
+words and the origins together may run to 4096 bytes, and a statement longer
+than that, or whose page is not an `https` address naming a host, is treated as
+none rather than cut short. A build holds at most 32 catalog agents to a
+statement, and a catalog agent can never take a route Claude Code or Antigravity
+already has: an entry keyed with one of those names has its install script
+refused and is not
 smoke-tested under that route's yes, unless it is the entry behind that built-in.
 Signing out of a catalog agent is refused before anything is changed where its
 route has no hold, as a launch is.

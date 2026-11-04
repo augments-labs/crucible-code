@@ -68,7 +68,7 @@ fn an_entry_is_its_key_and_newest_version_over_its_licence_and_what_is_held() {
     let mut listing = three();
     let rows = drawn(&mut listing, 100, 30).join("\n");
 
-    assert!(rows.contains("Agents · 3 of 3 offered"), "{rows}");
+    assert!(rows.contains("ACP Registry · 3 of 3 offered"), "{rows}");
     assert!(rows.contains("goose 1.0.0"), "{rows}");
     assert!(rows.contains("Apache-2.0 · not installed"), "{rows}");
     assert!(rows.contains("opencode 0.9.1"), "{rows}");
@@ -139,7 +139,7 @@ fn what_is_typed_keeps_the_agents_whose_key_or_licence_holds_it() {
     typed(&mut listing, "mit");
     let rows = drawn(&mut listing, 100, 30).join("\n");
     assert_eq!(kept(&listing), ["opencode", "aider"]);
-    assert!(rows.contains("Agents · 2 of 3 offered"), "{rows}");
+    assert!(rows.contains("ACP Registry · 2 of 3 offered"), "{rows}");
     assert!(!rows.contains("goose"), "{rows}");
 
     listing.query.clear();

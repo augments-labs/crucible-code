@@ -1,8 +1,8 @@
-//! `/catalog`: the coding agents the agent catalog offers, searched by name or
+//! `/catalog`: the coding agents the ACP Registry offers, searched by name or
 //! licence, each with where it comes from, and one added after a yes.
 //!
-//! Opening it asks the agents door for the catalog through
-//! [`Terms::carry`], which reads it again whatever `updates.check` says, and
+//! Opening it asks the agents door for the catalog and the registry through
+//! [`Terms::carry`], which reads them again whatever `updates.check` says, and
 //! stands the answer as a [`Picker`]: one entry an agent, in the door's order,
 //! its key and newest version over its licence and one word for whether the
 //! install store holds a version of it, never which, since the picker cuts a
@@ -19,19 +19,22 @@
 //! **Add** asks the door to install the newest version offered and write one
 //! more instance of the agent, the one question it stops on answered and the
 //! download stood as `/login`'s agent screen answers and stands them; the line
-//! after names the instance written, and the catalog is asked for again so the
+//! after names the instance written, and the registry is asked for again so the
 //! entry reads as the store now stands. **Verify**, offered where a version is
 //! installed, hashes every file of each against its receipt, only when chosen,
 //! and says on the same screen which files differ. Installing another version,
 //! updating, rolling back, removing and signing in stay on `/login`'s agent
 //! screen.
 //!
-//! Every string the catalog, the store or the configuration gave is hostile:
-//! each is drawn with its control and format characters written as escapes
-//! and cut where a line would be pushed out of sight, so none can draw a line
-//! of its own or reach the terminal as a control sequence. The agent's key is
-//! an [`AgentKey`](crucible_types::AgentKey), which holds nothing that needs
-//! it.
+//! Every string the registry, the catalog, the store or the configuration gave
+//! is hostile: each is drawn with its control and format characters written as
+//! escapes and cut where a line would be pushed out of sight, so none can draw
+//! a line of its own or reach the terminal as a control sequence. The agent's
+//! key is an [`AgentKey`](crucible_types::AgentKey), which holds nothing that
+//! needs it.
+//!
+//! `/agents` is not a command in this release: the name is reserved for the
+//! subagents mechanism, and the command line keeps its name, `crucible agents`.
 
 use crucible_app::Conversation;
 use crucible_app::catalog_fetch::FetchError;
@@ -53,8 +56,8 @@ use super::{Terms, say};
 #[cfg(test)]
 mod tests;
 
-/// The word every screen here opens with.
-const TITLE: &str = "Agents";
+/// The word every screen here opens with: the registry the agents come from.
+const TITLE: &str = "ACP Registry";
 
 /// What the search line says while nothing is typed into it.
 const HINT: &str = "an agent, or a licence";
@@ -68,11 +71,11 @@ const TAKES: &str = "Enter to open · Esc to cancel";
 /// What the agent's screen says its Escape does.
 const BACK: &str = "esc to go back";
 
-/// What the panel over the catalog being read says is under way.
-const READING: &str = "reading the agent catalog";
+/// What the panel over the registry being read says is under way.
+const READING: &str = "reading the ACP Registry";
 
-/// What a catalog offering nothing says, in place of a list.
-const NONE_OFFERED: &str = "no agent is offered by the catalog";
+/// What a registry offering nothing says, in place of a list.
+const NONE_OFFERED: &str = "no agent is offered by the ACP Registry";
 
 /// The closing line of a list the door cut.
 const MORE: &str = "more agents are offered than are shown here";

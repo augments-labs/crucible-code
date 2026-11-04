@@ -1468,6 +1468,12 @@ fn instance(window: &Watched, name: &str, case: &str) -> serde_json::Value {
 fn the_agents_the_catalog_offers_are_listed() {
     browsed("listed", |window| {
         let picture = window.picture();
+        // The panel names where its agents come from, the ACP Registry, so a
+        // reader knows the source before reading a row.
+        assert!(
+            picture.contains("ACP Registry · 1 of 1 offered"),
+            "{picture}"
+        );
         assert!(picture.contains("goose 1.0.0"), "{picture}");
         assert!(picture.contains("Apache-2.0"), "{picture}");
     });
@@ -1534,7 +1540,7 @@ fn an_agent_added_after_a_yes_downloads_and_names_the_instance_written() {
             window.types_until("", "50%");
             let downloading = window.picture();
             assert!(
-                downloading.contains("Agents · downloading goose"),
+                downloading.contains("ACP Registry · downloading goose"),
                 "{case}: {downloading}"
             );
             assert!(!downloading.contains("Log in"), "{case}: {downloading}");
@@ -1685,7 +1691,7 @@ fn an_add_left_at_its_question_writes_nothing_and_places_nothing() {
         assert!(!kept.exists(), "{case}: the store holds {}", kept.display());
 
         let screen = window.picture();
-        assert!(screen.contains("Agents · goose"), "{case}: {screen}");
+        assert!(screen.contains("ACP Registry · goose"), "{case}: {screen}");
         assert!(screen.contains("Not installed."), "{case}: {screen}");
         assert!(screen.contains("› Add"), "{case}: {screen}");
     }

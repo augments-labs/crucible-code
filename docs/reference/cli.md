@@ -573,23 +573,30 @@ is installed, and the name GitHub gave is not printed.
 
 ## Coding agents the catalog offers
 
-These commands read and change the coding agents the agent catalog offers,
-the way [`/catalog`](../providers/agents.md#catalog) and `/login`'s agent screen
-do, before any conversation exists, and start none. `AGENT` is the agent as
-the catalog names it, such as `goose` or `antigravity`; a name the catalog does
-not offer for your platform is refused, and so is `claude`: Claude Code
-installs and updates itself, and the catalog does not offer it. Each asks for
-the catalog first, whatever
+These commands read and change the coding agents the catalog and the ACP
+Registry offer, the way [`/catalog`](../providers/agents.md#catalog) and
+`/login`'s agent screen do, before any conversation exists, and start none.
+`AGENT` is the agent as the catalog or the registry names it, such as `goose` or
+`antigravity`; a name neither offers for your platform is refused, and so is
+`claude`: Claude Code installs and updates itself, and neither offers it. Each
+asks for the catalog first, whatever
 [`updates`](../configuration/configuration.md#updates) says, and where it could
-not be fetched goes on with the catalog crucible believed before. A catalog
-trust state that cannot be read or used offers no release. Nothing about your
-session or directory is sent.
+not be fetched goes on with what crucible believed before. The registry is
+fetched by `/catalog` and by `search`, `install`, `add`, `update` and
+`rollback`; `remove` and `verify` never fetch it, and `sign-in` reads only the
+cached copy. A catalog trust state that cannot be read or used offers no
+catalog release; a registry with no cached index offers no registry release.
+Neither suppresses the other. Nothing about your session or directory is sent.
+The `/agents` slash command is not offered: that name is reserved for a
+subagents mechanism, and these commands keep the name `crucible agents`.
 
 A command that would download, write or remove anything first asks on this
 terminal, on standard error, what it will do: for an install, the version it
 puts in place, its size, the hosts it is fetched from, its licence, terms and
-caution, how it is started and which configured instances it moves. The
-choices follow, numbered, such as
+caution, how it is started and which configured instances it moves. A registry
+install's question also names the archive's address, says it is downloaded up
+to the registry's 512 MiB cap, and says the same yes covers the survey and the
+vendor's program run once as a probe. The choices follow, numbered, such as
 `1. Install: Put 1.0.0 in place and move the instances named onto it` and
 `2. Cancel: Leave everything as it is`. Type the choice's number alone, such
 as `1`, and Enter. Any other answer is no, and nothing changes: Enter alone, a
@@ -600,14 +607,19 @@ changes: there is no flag that answers for you and no answer read from a pipe.
 The command then ends 1, saying nothing was changed because it asks its
 question on a terminal.
 
-A download is held to the release the catalog pins from its first byte. It
-reaches only the hosts the catalog lists for it, follows a redirect only to
-one of them and at most four times, and is given up on if it is larger than
-the pinned size, if it takes longer than 45 minutes or if nothing arrives for a
-whole minute. A body of another size or SHA-256 is refused whole, and nothing
-from it is unpacked. Each version goes under `programs/` and the agent's name
-in crucible's home, in a directory of its own with a receipt that says where it
-came from, and is there whole or not at all. While it downloads, a terminal is
+A catalog download is held to the release the catalog pins from its first
+byte. It reaches only the hosts the catalog lists for it, follows a redirect
+only to one of them and at most four times, and is given up on if it is larger
+than the pinned size, if it takes longer than 45 minutes or if nothing arrives
+for a whole minute. A release read from the ACP Registry has no pinned size: it is
+downloaded within the registry's 512 MiB cap, its actual size is recorded, and
+the same 45-minute and one-minute bounds apply. A registry archive is reached
+at the host the entry names, and a redirect only to `github.com` or one of
+GitHub's release-asset hosts. A body of another size or SHA-256 is refused
+whole, and nothing from it is unpacked. Each version goes under `programs/` and
+the agent's name in crucible's home, in a directory of its own with a receipt
+that says where it came from, and is there whole or not at all. While it
+downloads, a terminal is
 shown the percent that has arrived; any other standard error is told once that
 the download began. What was done, and where, goes to standard output, and a
 refusal is one line on standard error. An install, update or rollback names
@@ -618,23 +630,27 @@ smoke-tested: no conversation lent a launcher to start it with.`
 
 ### `agents search [TEXT]`
 
-`crucible agents search` writes one line for each agent the catalog offers:
-its name, the versions offered for your platform, newest first, and the
-versions installed, such as `goose: offers 2.0.0, 1.0.0; installed 1.0.0` or
-`codex: offers 0.1.0; not installed`. `TEXT` keeps only the agents whose name
-holds it, ignoring case. Antigravity, which `/login` sets up, is left out, as
-it is from `/catalog`. Where the catalog could not be fetched, standard error
-says so once, with why. It asks nothing, changes nothing and ends 0.
+`crucible agents search` writes one line for each agent the catalog and the
+ACP Registry offer: its name, the versions offered for your platform, newest
+first, and the versions installed, such as `goose: offers 2.0.0, 1.0.0;
+installed 1.0.0` or `codex: offers 0.1.0; not installed`. `TEXT` keeps only the
+agents whose name holds it, ignoring case. Antigravity, which `/login` sets up,
+is left out, as it is from `/catalog`. Where the catalog or the registry could
+not be read, standard error says so once, with why. When the registry is read,
+standard error also carries its source line — where it was read and that it is
+not reviewed by Crucible — beside the one-line-per-agent list on standard
+output. It asks nothing, changes nothing and ends 0.
 
 ### `agents install AGENT [VERSION]`
 
 `crucible agents install` puts `VERSION` of the agent in place and moves onto
 it every configured instance that runs the agent from crucible's install
-store. Without `VERSION`, it is the newest the catalog offers for your
-platform; `crucible agents install antigravity` installs Antigravity's agent
-server, which [`/login`](../providers/agents.md#antigravity) then runs. A
-version already in place is not downloaded again. It ends 0 once the version is
-in place, with `Installed goose 1.0.0 at …/programs/goose/1.0.0/goose. /login
+store. Without `VERSION`, it is the newest the catalog or the registry offers
+for your platform; `crucible agents install antigravity` installs
+Antigravity's agent server, which
+[`/login`](../providers/agents.md#antigravity) then runs. A version already in
+place is not downloaded again. It ends 0 once the version is in
+place, with `Installed goose 1.0.0 at …/programs/goose/1.0.0/goose. /login
 offers it under Use an installed coding agent.` or `goose 1.0.0 is already
 installed at …`, and 1 when nothing was put in place. A release with an install
 script to run at install is refused here before anything is fetched, saying to
@@ -656,16 +672,18 @@ It ends 0 once the instance is written, saying its name, and 1 otherwise.
 ### `agents update AGENT`
 
 `crucible agents update` moves the instances that run the agent from
-crucible's install store onto the newest version the catalog offers for your
-platform. Where they are already on it, it says so, asks nothing and ends 0;
-where none runs the agent from the store, it is refused. Where your own
-configuration file says
+crucible's install store onto the newest version the catalog or the registry
+offers for your platform. Where they are already on it, it says so, asks
+nothing and ends 0; where none runs the agent from the store, it is refused.
+Where your own configuration file says
 [`agents.update = "reviewed"`](../configuration/configuration.md#agents), an
 update that setting allows is taken without the question, so it needs no
 terminal, and says so on a line of its own: `Taken without asking, under
-agents.update = "reviewed".` A release with an install script to run at install
-is always asked, showing its command and hosts; one built at review runs no
-code, so the setting stands for it as for any other download. Every other check
+agents.update = "reviewed".` A registry release is always asked: the registry
+has no serial, review, revocation list or anti-rollback, so nothing it lists
+satisfies `reviewed`. A release with an install script to run at install is
+always asked, showing its command and hosts; one built at review runs no code,
+so the setting stands for it as for any other download. Every other check
 still runs.
 It ends 0 once the instances are moved, and 1 otherwise.
 
@@ -673,9 +691,10 @@ It ends 0 once the instances are moved, and 1 otherwise.
 
 `crucible agents rollback` moves the instances that run the agent from
 crucible's install store back to the version installed most lately of those
-the store still holds and they do not run, less any the catalog has revoked,
-and downloads nothing. It ends 0 once they are moved, and 1 otherwise, as when
-the store holds no such version.
+the store still holds and they do not run, less any the signed catalog has
+revoked; a registry release has no revocation list or anti-rollback, so its
+receipt and the version held are the check. It downloads nothing. It ends 0
+once they are moved, and 1 otherwise, as when the store holds no such version.
 
 ### `agents remove AGENT`
 
@@ -700,8 +719,9 @@ such as `gemini-api-key`. Without `--method`, it takes the only method the
 instance's agent offers; where the agent offers several, it is refused with
 their names, such as `google signs in by several methods: oauth-personal,
 oauth-business, gemini-api-key, agent-platform; name one with --method`. The
-methods are read from your configuration and the catalog crucible believes,
-and nothing is fetched to read them.
+methods are read from your configuration and the catalog or registry crucible
+believes; a registry release's methods come from the probe record its receipt
+holds, and nothing is fetched to read them.
 
 A method that takes a key, where no key is kept for it yet, asks for the key at
 a prompt that hides what you type, which needs standard input, output and
@@ -716,11 +736,13 @@ starts.
 A method the agent runs as a command needs standard input, output and error on
 a terminal; elsewhere it is refused, saying a terminal is needed, and nothing
 is asked or started. The command, its arguments and its environment come only
-from the catalog's signed entry, and it is run from the version installed. The
-agent's route is asked about where it has no yes yet, and the agent is then
-read: if what it says of the method now differs from the entry, the sign-in is
+from the catalog's signed entry, or for a registry release from what its probe
+record holds, and it is run from the version installed. The agent's route is
+asked about where it has no yes yet, and the agent is then read: if what it
+says of the method now differs from the entry or the record, the sign-in is
 refused and the command is not run. Where the sandbox is on, the command reaches
-only the hosts the entry signs in at, and it has five minutes. On Windows with
+only the hosts the entry signs in at, or for a registry release the network
+policy of the conversation, and it has five minutes. On Windows with
 the sandbox on, that sandbox can close the network but not limit it to hosts, so
 nothing is run where the entry names hosts, whether for the command to sign in
 at or for the agent itself to reach; where it names neither, the command runs
@@ -737,16 +759,17 @@ method under the same checks in
 [a panel of its own](../providers/agents.md#catalog), where Tab hides the next line you
 type.
 
-A method the catalog records as needing a real terminal is run on this
+A method the entry records as needing a real terminal is run on this
 process's terminal, on Unix alone, after a confirmation made for that run that
 says the command runs outside the sandbox. Standard input, output and error must
 all be terminals; anywhere else the method is refused before anything is asked
 or started. It is refused too while a project requires the sandbox, since no
-sandbox backend can give a child a terminal. The command is the catalog's
-recorded one, run from the version installed with the environment the entry
-gives it, and it has ten minutes. Ctrl+C reaches the command alone, because the
-child is the terminal's foreground process group; when the bound passes the
-whole group is killed, so nothing the command started outlives it. The terminal
+sandbox backend can give a child a terminal. The command is the entry's
+recorded one, or a registry release's from its probe record, run from the
+version installed with the environment the entry gives it, and it has ten
+minutes. Ctrl+C reaches the command alone, because the child is the terminal's
+foreground process group; when the bound passes the whole group is killed, so
+nothing the command started outlives it. The terminal
 is handed back and every row painted again whatever the command's outcome, and,
 as for the piped route, the agent read afterwards decides whether it is signed
 in.

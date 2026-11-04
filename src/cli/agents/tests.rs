@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clap::Parser as _;
-use crucible_app::catalog_fetch::Source;
+use crucible_app::catalog_fetch::{RegistrySource, Source};
 use crucible_external_harnesses::catalog::SNAPSHOT;
 use crucible_external_harnesses::catalog::fixture::signed;
 use crucible_external_harnesses::fake_peer::scripts::acp;
@@ -599,11 +599,21 @@ impl Bench {
         said: &'a (dyn Fn(&str) + Sync),
         answer: Option<fn() -> String>,
     ) -> Desk<'a> {
+        self.desk_with_registry(None, said, answer)
+    }
+
+    /// The same desk, with `registry` read as the ACP Registry's source.
+    fn desk_with_registry<'a>(
+        &'a self,
+        registry: Option<RegistrySource>,
+        said: &'a (dyn Fn(&str) + Sync),
+        answer: Option<fn() -> String>,
+    ) -> Desk<'a> {
         Desk {
             home: &self.home,
             shelf: Shelf {
                 catalog: self.host.source(),
-                registry: None,
+                registry,
                 home: &self.home,
                 smoke: None,
                 steps: None,
@@ -984,6 +994,40 @@ fn search_lists_what_each_agent_offers_and_has_installed() {
     let unmatched = done(bench.carried(&action(&["search", "nothing"]), None, &mut unasked));
 
     insta::assert_snapshot!("search", format!("{listed}--\n{matched}--\n{unmatched}"));
+}
+
+/// `search` says why the ACP Registry could not be read, beside the catalog's
+/// own line, and still lists what the catalog offers and ends 0.
+#[test]
+fn search_says_why_the_registry_could_not_be_read() {
+    let bench = Bench::new("search-registry-unread");
+    // A cache that cannot be read, so the registry's own line is not the
+    // catalog refresh's line.
+    fs::create_dir_all(
+        bench
+            .home
+            .path()
+            .join("caches")
+            .join("acp-registry")
+            .join("registry.json"),
+    )
+    .expect("a cache that cannot be read");
+    let mut registry = RegistrySource::published(&|_| None);
+    registry.url = format!("http://{}/catalog/registry.json", bench.host.named());
+    let said = |text: &str| bench.say(text);
+
+    let listed = done(
+        bench
+            .desk_with_registry(Some(registry), &said, None)
+            .carried(&action(&["search"]), &mut unasked),
+    );
+
+    assert_eq!(listed, "The catalog lists no agent.\n");
+    let heard = bench.heard();
+    assert!(
+        heard.contains("the cached ACP Registry index could not be read"),
+        "{heard}"
+    );
 }
 
 /// `verify` says each installed version is as it was installed, and ends 1

@@ -60,18 +60,22 @@ with its control characters taken out. *Check again* reads it again.
 
 The same screen offers what the agent catalog lets crucible do for the agent:
 *Install* where its program is not there, *Update* and *Roll back* where one
-installed from the catalog can move, and a sign-in by each method the agent
-offers, named as the agent names it. `/login` carries the one you choose out
-itself and then shows the agent screen again, so the agent's row reads as it
+installed from the catalog or the registry can move, and a sign-in by each
+method the agent offers, named as the agent names it. `/login` carries the one
+you choose out itself and then shows the agent screen again, so the agent's row
+reads as it
 now stands. An install, update or rollback asks first, saying what it will put
 in place and fetch; a download then shows how far it has come, as a share where
 its size is known and in bytes where it is not, and Escape cancels the
 download while it runs, changing nothing; once all of it has arrived, the panel
 waits for the install to finish. A long file list the catalog keeps apart from
 the release is fetched from the catalog's own host before the question, and the
-hosts the release is downloaded from are reached only after the yes. While a
-sign-in waits for you, the link the agent prints is shown for you to open. A
-method the agent runs as a command is offered too, and runs in a panel in
+hosts the release is downloaded from are reached only after the yes. For an
+agent read from the ACP Registry the question instead names the archive's
+address and its 512 MiB cap, and the archive's host and the registry's redirect
+hosts are reached only after the yes. While a sign-in waits for you, the link
+the agent prints is shown for you to open. A method the agent runs as a command
+is offered too, and runs in a panel in
 `/login`, with the checks
 [its reference](../reference/cli.md#agents-sign-in-instance---method-name) sets
 out. The panel shows what the command writes, with what crucible withholds taken
@@ -108,10 +112,11 @@ Where an instance runs a version in crucible's store, the same screen offers
 *Connect*, which moves the conversation onto the agent in a new session. An
 agent you added with [`/catalog`](#catalog) is connected to and spoken with this
 way. Its route is put to you first, with the vendor's statement of content use
-the catalog carries, and nothing of the agent's starts before your yes. It
-reaches no provider of crucible's, so no provider's `access` is written, and
-a session on it is resumed by `--continue` and `/resume` under the same question
-if the route has no yes.
+the catalog carries, or, for an agent read from the ACP Registry, the generic
+warning that its vendor has not stated one, and nothing of the agent's starts
+before your yes. It reaches no provider of crucible's, so no provider's
+`access` is written, and a session on it is resumed by `--continue` and
+`/resume` under the same question if the route has no yes.
 
 What crucible runs is the release the catalog crucible most lately believed
 offers at the version the instance's `executable` names. It is read from the
@@ -137,10 +142,21 @@ do:
 - A key spelling a built-in driver's word, or `native`, is kept for what is built
   in, so no catalog agent runs under it: run `crucible agents remove <key>` and
   choose another agent.
-- An entry with no statement of content use says so, since there is nothing to
-  ask you, and an installed update cannot change it until the catalog does.
+- A signed catalog entry with no statement of content use says so, since there
+  is nothing to ask you, and an installed update cannot change it until the
+  catalog does.
 - An agent past the number of catalog routes a run can hold is refused as a route
   this build does not know.
+
+A release read from the ACP Registry has no review, revocation list or
+anti-rollback. What holds it is the registry's SHA-256, recorded in its receipt,
+and the probe record taken at its install; there is no catalog signature or
+trust state to read. A fresh install accepts a same-version archive the
+registry replaces; an installed version keeps the hash its receipt recorded and
+refuses a different same-version archive until it is removed. A registry release
+whose receipt has no probe record for this machine is not started, and
+`crucible agents probe` takes one.
+The revocation and trust-state lines above are a signed catalog release's.
 
 `/logout` lists each agent named under `externalAgents` after the stored
 credentials, as an external agent instance, and `/logout <name>` takes one
@@ -238,8 +254,8 @@ the reading drops to what was left. `/context` gives the same figure in its
 
 ## `/catalog`
 
-`/catalog` lists the coding agents the agent catalog offers, asking for the
-catalog whatever [`updates`](../configuration/configuration.md#updates) says,
+`/catalog` lists the coding agents the ACP Registry offers, reading the
+registry whatever [`updates`](../configuration/configuration.md#updates) says,
 since you asked. Each agent stands on two rows: its key and newest version,
 over its licence and whether any version of it is installed, such as
 `Apache-2.0 · not installed` or `MIT · installed`. In a window 70 columns or
@@ -247,9 +263,9 @@ wider, a pane beside the list says the marked agent's licence, terms link and
 caution, and which versions are installed. Typing narrows the list to the
 agents whose key or licence holds what is typed, ignoring case, and the
 heading says how many are left of how many are offered, such as
-`Agents · 1 of 3 offered`; with no match the list says
-`no agent matches "the text"`. Where the catalog could not be fetched, the list
-says so, with why, and is the catalog crucible believed before. A window with
+`ACP Registry · 1 of 3 offered`; with no match the list says
+`no agent matches "the text"`. Where the registry could not be read, the list
+says so, with why, and is the index crucible cached before. A window with
 no keys to read, or no room for the list, has the agents printed one to a line
 instead.
 
@@ -258,21 +274,23 @@ platform, read from its one address within 1 MiB and thirty seconds, and cached
 in crucible's home where the next five minutes reuse it. Only an entry whose
 target for this machine carries a SHA-256 and an archive crucible unpacks is
 offered: one without a hash, or whose archive is another format, is absent. The
-registry is not reviewed by Crucible: it has no signature, serial, expiry or
-revocation list, so an offered version can be withdrawn or replaced only by the
-registry's own change. The list says so beside its agents, with the day the
-index was read and, where the cached index was used, why it was not verified.
-Its vendors give no statement of what they do with what is sent, so an agent it
-lists is asked about once before its first start under a generic warning that
-says so, naming the registry and the day it was read. It also says that the
-agent's network reach is not recorded: a registry agent runs under the network
-policy of the conversation that starts it, and Crucible adds no vendor hosts.
+registry is not reviewed by Crucible: it has no signature, serial, expiry,
+revocation list or anti-rollback, so an offered version can be withdrawn or
+replaced only by the registry's own change. The list says so beside its agents,
+with the day the index was read and, where the cached index was used, why it
+was not verified. Its vendors give no statement of what they do with what is
+sent, and the registry records none, so an agent it lists is asked about once
+before its first start under a generic warning that says so, naming the
+registry and the day it was read. It also says that the agent's network reach
+is not recorded: a registry agent runs under the network policy of the
+conversation that starts it, and Crucible adds no vendor hosts.
 
 Taking an agent opens its own screen, which says where it comes from: the
-versions offered, its licence, its terms link and caution where the catalog
-gives them, each version installed with a receipt, and whether a sign-in made
-under the sandbox is kept. Every word on it is the catalog's or the store's,
-with any control character written out as an escape rather than acted on.
+versions offered, its licence, its terms link and caution where its entry gives
+them, each version installed with a receipt, and whether a sign-in made under
+the sandbox is kept. Every word on it is the registry's, the catalog's or the
+store's, with any control character written out as an escape rather than acted
+on.
 
 *Add* installs the newest version offered and writes one more instance of the
 agent under
@@ -294,12 +312,13 @@ typed still in the search.
 For a release read from the ACP Registry, your yes also covers running the
 vendor's program once in the closed sandbox after the download, as the probe
 whose answer the receipt records; a probe that fails installs nothing. The
-receipt written when a version is installed records where it came from: the
-review that admitted it, or for a release read from the ACP Registry the
-registry document it was read from, with when the release was fetched. It also
-records what the install found, rather than what the catalog predicted: the
-bytes its files take up and the bytes its artifacts decompressed to, and for a
-registry release the platform its program was probed on and what it answered
+receipt written when a version is installed records where it came from: for a
+signed catalog release the review that admitted it, or for a release read from
+the ACP Registry the registry document it was read from, with when the release
+was fetched. It also records what the install found, rather than what the
+catalog predicted: the bytes its files take up and the bytes its artifacts
+decompressed to, and for a registry release the platform its program was
+probed on and what it answered
 `initialize` with, so a later session can list and start it without starting the
 vendor's program again. Its sign-in methods, and the one variable a typed key
 is given in, come from that record too. A registry release whose receipt has no
@@ -401,6 +420,8 @@ stay on `/login`'s agent screen, described above.
 lists, adds, checks, installs, updates, rolls back, removes and signs in from
 the command line too, with no conversation. `/catalog` cannot be opened
 while a turn runs, since it installs an agent and writes your configuration.
+`/agents` is not a command in this release; the name is reserved for the
+subagents mechanism, and the command line keeps its name, `crucible agents`.
 
 ## Claude Code
 

@@ -221,8 +221,8 @@ choosing that `providers.<name>.access.instance` uses. At most 32.
 
 | Key | Means |
 | --- | --- |
-| `driver` | Which agent it is: `claude`, which reaches `anthropic`; `antigravity`, which reaches `google`; or `catalog`, an agent the catalog reviewed, which `agent` names and which reaches no provider. Required. |
-| `agent` | For `catalog`, and required for it: the key the catalog reviewed the agent under, 1 to 32 lowercase letters, digits and hyphens. A driver's word, `native`, and a name Windows keeps for a device (`con`, `prn`, `aux`, `nul`, `com0` to `com9`, `lpt0` to `lpt9`) are never a key. Refused for any other driver. |
+| `driver` | Which agent it is: `claude`, which reaches `anthropic`; `antigravity`, which reaches `google`; or `catalog`, an agent from the catalog or the ACP Registry, which `agent` names and which reaches no provider. Required. |
+| `agent` | For `catalog`, and required for it: the key the catalog or the ACP Registry offers the agent under, 1 to 32 lowercase letters, digits and hyphens. A driver's word, `native`, and a name Windows keeps for a device (`con`, `prn`, `aux`, `nul`, `com0` to `com9`, `lpt0` to `lpt9`) are never a key. Refused for any other driver. |
 | `executable` | Its program: an absolute path, or a bare name found on `PATH`. Required. |
 | `enabled` | `false` keeps the entry and sends it no new work; a provider whose `access` still names it is refused at start. Defaults to `true`. |
 | `authentication` | How it signs in: `account`, its own login, the only value. |
@@ -295,11 +295,12 @@ what signs in as you:
 - crucible's own home, and the directory it keeps your session logs in, wherever
   it is kept.
 
-This list is a floor beneath the signature of the catalog, which vouches for
-what an entry names, and not every place that runs as you or holds what signs
-in as you. A place must also begin with a name that is hidden by its leading
-dot, `Library` or `AppData`, so that none of your own files, such as
-`Documents`, `src` or `go/bin`, can be one an agent keeps its sign-in in, while
+This list is a floor beneath what a catalog signature vouches for, and it
+holds whole for an ACP Registry entry, which nothing has reviewed. It is not
+every place that runs as you or holds what signs in as you. A place must also
+begin with a name that is hidden by its leading dot, `Library` or `AppData`, so
+that none of your own files, such as `Documents`, `src` or `go/bin`, can be one
+an agent keeps its sign-in in, while
 `.goose`, `Library/Application Support/goose` and `AppData/Roaming/goose` can.
 An agent whose entry names one of them, a place within one, a place that
 contains one, or a place that does not begin so, is refused when it is started,
@@ -323,7 +324,7 @@ agent; see [installed coding agents](../providers/agents.md).
 
 | Key | Means |
 | --- | --- |
-| `update` | `ask`, the default, puts every update of an installed catalog agent to you; `reviewed` takes an update to a version the reviewed catalog lists, and has not revoked, without asking. |
+| `update` | `ask`, the default, puts every update of an installed catalog agent to you; `reviewed` takes an update to a version the reviewed catalog lists, and has not revoked, without asking. A release read from the ACP Registry is always asked. |
 
 ```json
 { "agents": { "update": "reviewed" } }
@@ -331,12 +332,15 @@ agent; see [installed coding agents](../providers/agents.md).
 
 `reviewed` skips one question only: the one before an update. A first install, a
 rollback and a removal are still asked, and so is a version the catalog does not
-list. A release with an install script to run at install is always asked, showing
-the script's command and the hosts it can reach. Every other check an update makes still runs and still refuses: the
-catalog's signature, the download's pin and hosts, revocation, and the smoke
-test where your sandbox allows one. Your yes to the vendor receiving what you
-send is a separate question that `reviewed` never answers. An update taken this
-way is reported as taken under `agents.update = "reviewed"`.
+list. A release with an install script to run at install is always asked,
+showing the script's command and the hosts it can reach. Every other check an
+update makes still runs and still refuses: the catalog's signature, the
+download's pin and hosts, revocation, and the smoke test where your sandbox
+allows one. A registry release has no signature, review, revocation list or
+serial: its receipt's archive hash and probe record are what hold it, and
+`reviewed` never takes an update to it. Your yes to the vendor receiving what you send is a
+separate question that `reviewed` never answers. An update taken this way is
+reported as taken under `agents.update = "reviewed"`.
 
 Only an update to a version strictly newer than the one in place, from a catalog
 no older than the one it was installed from, is taken unasked; anything else is
@@ -906,6 +910,20 @@ is not asked for again at the next start. Opening `/catalog` or `/login`'s agent
 choice, or running any `crucible agents` command, asks for the catalog
 whatever this is set to, since you asked; only the asking crucible does on its
 own obeys it.
+
+The ACP Registry is not fetched on that schedule. Its index is fetched when
+`/catalog` opens, when `crucible agents search` runs, or when an install, add,
+update or rollback starts, within one megabyte and thirty seconds. `remove` and
+`verify` never fetch it, and `sign-in` reads only the cached copy, as `/login`'s
+agent choice does. The cached copy is reused for five minutes. It is unsigned
+and not reviewed by Crucible: there is no signature, serial, expiry, revocation
+list or
+anti-rollback. A fresh install accepts a same-version archive the registry
+replaces; an installed version keeps the hash its receipt recorded and refuses
+a different same-version archive until it is removed. A cached index that could
+not be refreshed is used with a line saying it was not verified; with no cached
+copy the read is refused with the line that stopped it. `updates.check` does
+not govern it.
 
 `never` stops the asking. crucible then never contacts GitHub on its own, for a
 release or for the catalog, and never says anything about releases. Running

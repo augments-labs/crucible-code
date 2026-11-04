@@ -440,7 +440,7 @@ escapes the owned process group.
 An installed coding agent whose program lies in a version crucible installed
 for it, under `programs/<agent>/<version>/` in crucible's home, is started
 with that version's directory read-only, whatever writable root it lies in. It
-can read and run the files that were reviewed and change none of them, so a
+can read and run the files it was installed with and change none of them, so a
 rollback goes back to the bytes it ran before and verifying an installed agent
 checks the bytes that run. A profile directory configured inside that
 directory is refused rather than made writable. The agent is also started with
@@ -457,15 +457,33 @@ because whether it was revoked cannot be known; the refusal names the file to
 repair or remove. A program configured outside `programs` is the user's own,
 and neither rule applies to it.
 
+A release read from the ACP Registry has no review, revocation list or
+anti-rollback. There is no catalog signature or trust state for it: the
+registry's SHA-256, recorded in its receipt, and the probe record taken at its
+install are what hold it. A fresh install accepts a same-version archive the
+registry replaces; an installed version keeps the hash its receipt recorded and
+refuses a different same-version archive until it is removed. A receipt without
+that probe record for this machine is not started; `crucible agents probe`
+takes one. The revocation and trust-state rule above is a signed catalog
+release's.
+
+Its consent and its network are the registry's relaxations. Its install is
+asked about under the generic warning that its vendor has not stated what it
+does with what is sent, and the same yes covers the probe; its first start is
+held by that warning too. Its network reach is not recorded: Crucible adds no
+vendor hosts, and the agent runs under the network policy of the conversation
+that starts it, so with that network closed it cannot reach its model. The
+install and launch screens say the reach is unrecorded.
+
 A switch to another version is smoke-tested before any instance is moved onto
 it only where the sandbox is on, the network is closed for commands and the
 agent's route already has its yes about content use; the yes to the switch
 does not count as that yes. The new version is started once in the sandbox,
 with the network closed, no host to reach, its version's directory read-only
 and nothing else of the user's readable, and is sent `initialize` and nothing
-more. Unless it answers as its catalog entry reviewed it, nothing is moved
-onto it. Where any of those conditions does not hold, the confirmation says
-the switch is not smoke-tested, and why.
+more. Unless it answers as its entry says, nothing is moved onto it. Where any
+of those conditions does not hold, the confirmation says the switch is not
+smoke-tested, and why.
 
 A release's install script that its catalog review marks to run at install runs
 once, after the yes to the install and under the yes about content use for the
@@ -504,8 +522,9 @@ put in a process group of its own, which becomes the terminal's foreground
 group, so Ctrl+C reaches it alone; when its ten minutes pass the whole group is
 killed and waited for. The terminal is handed back and every row painted again
 afterwards, and the agent's own status read afterwards is what decides whether
-the sign-in took. The command's environment is the catalog's record merged with
-the shell's allowlist of passed variables, starting from a cleared
+the sign-in took. The command's environment is the entry's record, or a
+registry release's probe record, merged with the shell's allowlist of passed
+variables, starting from a cleared
 environment, and it is run from the version installed, which stays read-only
 for the agent's other runs.
 
