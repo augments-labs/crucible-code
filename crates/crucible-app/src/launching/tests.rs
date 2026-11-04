@@ -740,7 +740,7 @@ async fn a_catalog_row_is_launched_as_its_entry_reviewed_it() {
         assert_eq!(
             matches!(read, Reading::Signed(Authentication::SignedIn)),
             signed_in,
-            "{calls_itself}: {read:?}"
+            "{calls_itself}"
         );
         assert_eq!(
             fake_peer::argued(peer.parent().expect("a directory")),
