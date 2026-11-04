@@ -12,7 +12,7 @@ expression: window.picture()
 |  /fast            pick how fast it answers                                     |
 |  /login           sign in to a provider account                                |
 |  /logout          remove a stored account or API key                           |
-|  /catalog         browse and add coding agents                                 |
+|  /catalog         browse and add coding agents from the ACP Registry           |
 |  /mode            ask · allowEdits · fullAccess                                |
 |  /sandbox         sandbox disabled (enter to configure)                        |
 |  /theme           pick the colours crucible draws with                         |

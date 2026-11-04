@@ -331,7 +331,7 @@ impl Command {
             // does not know yet which of them is theirs.
             Self::Login => "sign in to a provider account",
             Self::Logout => "remove a stored account or API key",
-            Self::Agents => "browse and add coding agents",
+            Self::Agents => "browse and add coding agents from the ACP Registry",
             // The ring itself rather than a sentence about it. `/mode` is the
             // one command that takes a word after it, and the words it takes
             // are the useful half of what there is to say.

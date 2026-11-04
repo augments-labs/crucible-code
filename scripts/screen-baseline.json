@@ -200,7 +200,7 @@
       "opened": [
         "Watched::open(\"commands\", 80, 24)"
       ],
-      "sha256": "dbd683f8d25fa297929fa9aeff97487d6068f5cf9e09e25f7a0cba0d1083f092"
+      "sha256": "135bccfdb4393a3888e59c8ad926bee52f95df668f13ba840b4f4979aead59e3"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_slash_typed_mid_turn_opens_the_command_list.snap",
@@ -209,7 +209,7 @@
         "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"list-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "cef8f3365065c3e5104882c5cc794e5111192bce785fff5aab9030e605ead01e"
+      "sha256": "df5d23c5349415433f8650fd63a1ee320bd7647a33dde2a1d6e06700fba32270"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_take_back_the_box_has_no_room_for_says_so_beside_the_title.snap",
@@ -252,7 +252,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
       ],
-      "sha256": "3ca0d300d4b14ab70cae823ebeed83a3fdb3c43c3471d00fcd257ffd6ff20985"
+      "sha256": "e9180408d84834151e1421f6d37d54e044f0beef22719317114977554addc824"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__added_agent_40_native.snap",
@@ -261,7 +261,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
       ],
-      "sha256": "1fadc3fb3e259a73757b9af615010df7bb4f0a9afabe48ba4e70ed3a3258a9d2"
+      "sha256": "7ee386702eb72375dbfe0aef3669acf2eadc5a07b12602aa103c0810a6184124"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__added_agent_80_fullscreen.snap",
@@ -270,7 +270,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
       ],
-      "sha256": "1d8bdacef24944f38b9d0f20f571fe5d70078c205025d4daf48a7e16565cb7d2"
+      "sha256": "01abcd6f4e1c03c7d3c2fca747630f20e8759df9ada2b63bb902845211ba5b1d"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__added_agent_80_native.snap",
@@ -279,7 +279,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
       ],
-      "sha256": "5ae843eb01fa94ff39797b48b61a531f5c46cb2d6cd61b6d576435e1d626758f"
+      "sha256": "4ebb2aa11cd68d31ac3994435bb26d2a8108747afee08195f0d300c29c270f37"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__adding_agent_40_fullscreen.snap",
@@ -288,7 +288,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
       ],
-      "sha256": "7126262df98a2b7b788d672fae531cfa96d14c9a31b3123404538c86668396c1"
+      "sha256": "8e24351e0ee36d7e8cf747a4f042cb69fd6314262efcf359ea22a6c203f9b63a"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__adding_agent_40_native.snap",
@@ -297,7 +297,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
       ],
-      "sha256": "8cb8bcfcc9a70639841a661cf08e2390da48332bbaaedc5e49dd59ee0e803642"
+      "sha256": "ae2cf546522d3a161a5124fc14d560ffeed706ff88a0d0015bde0035d200950a"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__adding_agent_80_fullscreen.snap",
@@ -306,7 +306,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
       ],
-      "sha256": "a8c3ace8e5fc01cc8b5b4baf248fb52ae96b13da69fb3a8929b4e8da9beed095"
+      "sha256": "29435402c115771a75dc1022985ba50442e7160eac6fe749347ae702d0ed541d"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__adding_agent_80_native.snap",
@@ -315,7 +315,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
       ],
-      "sha256": "60859c0b70f25774fb40a5b20cb2426ad444f4dda1372dc8817c31fffad8ab6e"
+      "sha256": "e99f6bcd9d5244203ba0993150f3bbe13a265a151c7c7105f954b1e015c2d8fa"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agent_agents_40_fullscreen.snap",
@@ -756,7 +756,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
       ],
-      "sha256": "e52738783445c681fd3aa6825b2b9ea7c2610c261540cd463db12d85acafa0c3"
+      "sha256": "111b2b6893ff1c9ccc55081ed068c37a6ba1b4b77e7540e80cadcd04acad8891"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agents_listed_40_native.snap",
@@ -765,7 +765,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
       ],
-      "sha256": "da377a7e01d9471a7de3d99679bd8abf2eed5f42de8ae015d6d13922c7b5aa63"
+      "sha256": "8a1882cfb9fd87173e8634183ccaa78cc5f24e6a3fa4ba476fdfd5540dfe6b11"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agents_listed_80_fullscreen.snap",
@@ -774,7 +774,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
       ],
-      "sha256": "d54ad8276c03fbdd0f17f81d122f8309f2d7be1867b8b9b8e50b7e91406bcb14"
+      "sha256": "0f266a12cf24654f24e21596502cb8d3a82de138ebad1b74dd68364afd06c93d"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agents_listed_80_native.snap",
@@ -783,7 +783,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
       ],
-      "sha256": "c0782d4f5251e67303e869657e59649a6636fc2a93b61ba3b37e60cd4bcdee0f"
+      "sha256": "cac87b7ea6f64ceadeac81b56f00f618d8c02d018159a79db0f96a756c04dd8d"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agents_narrowed_40_fullscreen.snap",
@@ -792,7 +792,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
       ],
-      "sha256": "f5ab16117af3292b335d7f0541711491fcb01ba719cdb667479e60353f84afe6"
+      "sha256": "c3972cf590c6ded0d2192a6e77d4ae89ce54fe9f9dcdff11a9eeda5ff5a65376"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agents_narrowed_40_native.snap",
@@ -801,7 +801,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
       ],
-      "sha256": "3a243aa3fe83b106836d279c787076e83dc721d9c7bdbbecd4041a7a9ca69285"
+      "sha256": "b69f97d0511bcc620de1ebc18acad84ce881db53f26bb767377fce567445a14e"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agents_narrowed_80_fullscreen.snap",
@@ -810,7 +810,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
       ],
-      "sha256": "2eff3951b4a998a8724796309762880fe4a0f7311971c67070f699e2f475bf1f"
+      "sha256": "39d282b65f96bdcceff189748627d42f6da2124865f43e582846123af78ff990"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agents_narrowed_80_native.snap",
@@ -819,7 +819,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
       ],
-      "sha256": "2a506354bd9624c4c965e0c956484dfb80e0ec049b064a220e99e98e1e85463f"
+      "sha256": "7b5d46dba2049c1aff93236596c3defe594baaee6fd77ffae04fcbab945f96df"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agents_provenance_40_fullscreen.snap",
@@ -828,7 +828,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
       ],
-      "sha256": "7c9aca2cccb4582ef2c8e1d57dff4d67e7f130da7d4230d1ad2c95cde5aba540"
+      "sha256": "6c1e146a0ad8307f8e35526a4b34eef7f5227d6ee95f67df1c2e3e6ee041eca3"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agents_provenance_40_native.snap",
@@ -837,7 +837,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
       ],
-      "sha256": "52c8ba0ecf51349f34b8ece79106a8e4e5968a4afb946c2e26def717df82e210"
+      "sha256": "3c91321c86cdf32d81db54b92ff04a7a1b4189487b50bfb7272938f4c5d703eb"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agents_provenance_80_fullscreen.snap",
@@ -846,7 +846,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
       ],
-      "sha256": "9b5ceb06f6046ef9c1d87cde033724a76cc362075bf0dc748a75b6b769d3af47"
+      "sha256": "abdbc53ae8d401b5c020b235be440a4c78301ab8f0d70404c3f64496bf21d371"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__agents_provenance_80_native.snap",
@@ -855,7 +855,7 @@
         "Vendor::answering(\"Not asked.\")",
         "Watched::capturing_agents_published( &case, (size, native), &vendor, None, &published, )"
       ],
-      "sha256": "6b35837e0014075d0852140b57131068bd6dea454f0aa341b5e533de22311960"
+      "sha256": "0da3a725d5bd5f388205a89c9e8b7eac54074f687514ae7aa466ccf64b16f33f"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__agents__install_done_40_fullscreen.snap",
