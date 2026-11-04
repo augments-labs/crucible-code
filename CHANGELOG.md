@@ -8,6 +8,42 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.49.0] - 2026-11-04
+
+**Crucible 0.49.0 can browse, install, launch, update and sign in to the ACP Registry's binary agents from `/catalog`, `/login` or `crucible agents`.** A sign-in that needs a real terminal now suspends Crucible and runs the vendor's command outside the sandbox after a per-run yes. The registry is not reviewed, so a generic content-use warning and the conversation's network policy hold it, and its reach is unrecorded.
+
+### Added
+
+- **ACP Registry agents can be browsed, installed, launched and kept current from `/catalog`.** After your yes Crucible downloads the registry's archive within its cap, surveys it, and runs the vendor's program once in the closed sandbox to probe it. The registry is not reviewed, so the generic warning and the conversation's network policy are what hold it.
+- **`/catalog` lists the coding agents the ACP Registry offers.** Search by name or licence, open one to see its versions, licence, terms, caution and receipts, and add it after one yes; the line after names the instance written to your configuration.
+- **npm agents whose install script was built at review now install.** crucible fetches the build from the catalog's own host, holds it to its hash and size, and replaces the package's directory with it. Nothing from it runs at install, so it works on every platform with no sandbox, and `crucible agents verify` covers its files.
+- **Catalog agents are configured by key.** An `externalAgents` entry with `driver: "catalog"` names the reviewed agent it runs by `agent`, a key of lowercase letters, digits and hyphens that is never a driver's word, `native` or a Windows device name. A session such an agent ran is bound to that key, so pointing the entry at another agent does not resume it.
+- **A catalog agent can keep its own sign-in.** `profileDir` now reaches a catalog agent through the variable its entry names, and is refused, naming the entry, where the entry names none. Under the sandbox, an agent without a `profileDir` may write the hidden places under your home where its entry says it keeps its sign-in, never ones that run as you, hold what signs in as you, or lead out of your home; one with a `profileDir` is given only that directory. An agent whose entry names neither says in the agents listing that it keeps no sign-in under the sandbox.
+- **`crucible agents sign-in` can run an agent's own sign-in command.** When an agent's sign-in is a command that reads and writes lines, it now runs through the sign-in door in its sandbox, reaching only the hosts its catalog entry signs in at, and you answer its prompts at your terminal. Each line it prints is marked as the command's.
+- **crucible asks GitHub for its reviewed agent catalog once a day.** Beside the release check and under the same `updates.check` setting, crucible fetches a small signed index from the catalog's GitHub release, at most once a day whether or not the attempt succeeds. The index is believed only if it verifies under a key built into crucible, and none is built in yet. `updates.check = "never"` stops it.
+- **Antigravity can sign in with Gemini Enterprise.** An `antigravity` entry's `cloudProject` and `cloudLocation` name the Google Cloud project and location a business sign-in is billed to, and crucible writes them into the agent's own settings at that sign-in. Its sandbox now also reaches the Gemini API, Agent Platform and Gemini Enterprise hosts, plus the configured location's own host.
+- **Reviewed install scripts now run at install on Linux.** A catalog release whose review marks an install script to run at install can now be installed from `/agents` in a conversation on Linux, and is always asked about, even under `agents.update = "reviewed"`: the script runs in a sandbox of its own and must leave its package exactly as the review listed it. Such a release is refused before anything is fetched with the sandbox off, on macOS, Windows or FreeBSD, with more than sixteen such scripts, or from `crucible agents install`.
+- **`/login` installs, updates, rolls back and signs in an agent itself.** Choosing *Install*, *Update*, *Roll back* or a sign-in method on `/login`'s agent screen now carries it out there, asking first, showing a download's progress with Escape to cancel it while it runs, and returning to the agent screen with the row's new state. A method that takes a key asks for it once, as hidden input, and crucible keeps it for that agent and method.
+- **npm agents install through `/catalog`.** A catalog agent that runs on Node now installs after your yes, with every package pinned by SHA-512 and its install scripts listed first.
+- **npm agents show their tree's licences and get their programs.** The install question counts the licences of every package, and the agent's `.bin` holds each program its tree declares.
+- **Agents the catalog ships as Python packages now install and start.** crucible installs the Python build the catalog pins, together with the agent's wheels and a fixed `launch.py`, and never uses a Python of yours. The install question's `Started as:` line shows the whole start, such as `python/bin/python3 -I launch.py acp`, and crucible refuses to start such an agent in any other way.
+- **A sign-in that needs a real terminal now suspends Crucible and runs outside the sandbox after a per-run confirmation.** The child gets the terminal, its own process group and a ten-minute bound, and Ctrl+C reaches only it. Where the sandbox is required or output is redirected, the route is refused.
+
+### Changed
+
+- **`crucible agents` searches, installs, adds, updates, rolls back, removes, verifies and signs in catalog agents from the command line.** An install, add, update, rollback or removal asks on the terminal first and takes only a choice's number as its answer, unless `agents.update = "reviewed"` already allows that update; with no terminal to ask on it changes nothing and ends 1, so a script that ran `crucible agents install antigravity` unattended now installs nothing. `sign-in` takes `--method` or the only method offered, and asks for a key at a hidden prompt. `install` now takes the agent as the catalog names it, with an optional version.
+- **A home file that writes one agent profile directory two ways is now refused.** Two `externalAgents` entries that name the same directory differently, such as with and without a trailing `/`, or through a link where both directories exist, would have signed in and out under separate records for one set of credentials, so the file is refused naming both entries and asking for one spelling. Entries spelled alike still share their profile, nothing is rewritten, and a 0.48.2 file that spells each directory once reads as before.
+
+### Fixed
+
+- **A catalog agent's install script, smoke run and sign-in now ask for its own content-use yes.** A released build used to refuse them, because it could not hold a route it had not been compiled with; it now learns the route from the signed entry, and a yes for one agent never covers another. An entry named after Claude Code cannot borrow that agent's yes.
+- **`/login` finds a catalog agent's instance added while crucible runs.** It no longer says none is configured until a restart, and a configuration file it cannot read is said.
+- **A question asked before a change stands whole in native mode.** The install, add, sign-in and sign-out questions of `/login`, `/logout` and `/agents` now take the whole window where they need it, as on the full screen, so you see the headline, every fact and every choice before you answer. Transcript rows they push off the top stay in your terminal's scrollback.
+
+### Documentation
+
+- **The `/catalog` panel and its docs now say the agents come from the ACP Registry.** They state the generic content-use warning, the unrecorded network reach and the absence of review, revocation and anti-rollback, and `/agents` is reserved for a future mechanism.
+
 ## [0.48.2] - 2026-10-23
 
 **Crucible 0.48.2 fixes how installed coding agents stop, sign out and resume,
@@ -5454,6 +5490,7 @@ that say what it is allowed to become.
 - Linux x86-64 only. The release builds one artifact.
 
 [Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.48.2...HEAD
+[0.49.0]: https://github.com/augments-labs/crucible-code/compare/v0.48.2...v0.49.0
 [0.48.2]: https://github.com/augments-labs/crucible-code/compare/v0.48.1...v0.48.2
 [0.48.1]: https://github.com/augments-labs/crucible-code/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/augments-labs/crucible-code/compare/v0.47.1...v0.48.0
