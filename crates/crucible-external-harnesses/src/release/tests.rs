@@ -1743,6 +1743,7 @@ fn the_release_a_test_publishes_for_the_intake_surveys_to_its_list() {
     assert_eq!(surveyed.decompressed(), 10 * 512);
 }
 
+mod bz2;
 mod streamed;
 
 #[test]

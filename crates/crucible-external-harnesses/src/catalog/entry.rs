@@ -325,6 +325,8 @@ pub enum Format {
     Zip,
     /// A gzip-compressed tar.
     TarGz,
+    /// A bzip2-compressed tar.
+    TarBz2,
     /// The program itself.
     Bare,
     /// A Python wheel.
@@ -632,9 +634,12 @@ impl Artifact {
         let format = match &*fields.text("format")? {
             "zip" => Format::Zip,
             "tar.gz" => Format::TarGz,
+            "tar.bz2" => Format::TarBz2,
             "bare" => Format::Bare,
             "wheel" => Format::Wheel,
-            _ => return Err(fields.wrong("format", "is not zip, tar.gz, bare or wheel")),
+            _ => {
+                return Err(fields.wrong("format", "is not zip, tar.gz, tar.bz2, bare or wheel"));
+            }
         };
         let files = match fields.field("files") {
             None if !listed => Files::Listed(Vec::new()),

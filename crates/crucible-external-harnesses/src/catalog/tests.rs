@@ -855,7 +855,7 @@ fn a_field_that_is_not_what_it_must_be_is_refused_by_its_name() {
         (
             "entries[0].targets[0].artifacts[0].format",
             format!("{goose}/format"),
-            json!("tar.bz2"),
+            json!("tar.xz"),
         ),
         (
             "entries[0].targets[0].artifacts[0].files",
