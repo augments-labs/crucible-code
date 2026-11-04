@@ -66,6 +66,13 @@
 //! its lock lists none of them; a receipt is bounded, so a tree of very many
 //! files can make a version that is refused rather than kept.
 //!
+//! A release the ACP Registry offers is asked about as a registry row, and
+//! its question says that crucible will download the vendor's archive, survey
+//! it and run the vendor's program once for a probe after the yes; a failed
+//! probe installs nothing. Its receipt records the source, the platform the
+//! probe was taken for, what the program answered and the sizes the survey
+//! found.
+//!
 //! After a yes, the release the question named is the one installed: each
 //! artifact is downloaded within its pin by [`crate::agent_download`] into a
 //! file beside the staging directory, unpacked from it into that directory
@@ -232,7 +239,7 @@ use crucible_external_harnesses::release::{
     UnpackError, Unpacker, Wheels,
 };
 use crucible_external_harnesses::store::{
-    Fetched, Listing, Mismatch, Provenance, Receipt, Store, StoreError, Version,
+    Fetched, Listing, Mismatch, Provenance, Receipt, Source as Released, Store, StoreError, Version,
 };
 use crucible_external_harnesses::{Account, Held, Reading, WITHHELD_BYTES, antigravity};
 pub use crucible_external_harnesses::{SignInChannel, Typed, Typing};
@@ -742,7 +749,8 @@ pub async fn run(
             } else {
                 How::Installed
             };
-            door.switch(offer, how, front, watching).await
+            door.switch(offer, how, Released::Catalog, front, watching)
+                .await
         }
         Command::UpdateAgent { .. } => {
             let mut offers = door.trust.offers(Some(&agent));
@@ -767,7 +775,8 @@ pub async fn run(
                     version: offer.pin.version,
                 });
             }
-            door.switch(offer, How::Updated, front, watching).await
+            door.switch(offer, How::Updated, Released::Catalog, front, watching)
+                .await
         }
         Command::RollbackAgent { .. } => door.rollback(&agent, front).await,
         Command::RemoveAgent { .. } => door.remove(&agent, front).await,
@@ -1042,10 +1051,15 @@ impl Door<'_> {
 
     /// Installs `offer` of `agent` after a yes, and moves every instance the
     /// store runs it for onto it.
+    // The install reads as one sequence from the question through the commit;
+    // its inputs are the offer, the move and the four values the door lent,
+    // and splitting it would put the order it must keep in more than one place.
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     async fn switch(
         &self,
         mut offer: Offer,
         how: How,
+        source: Released,
         front: &mut dyn Front,
         watching: Watching<'_>,
     ) -> Result<Outcome, AgentsError> {
@@ -1151,7 +1165,7 @@ impl Door<'_> {
         let standing =
             self.standing && how == How::Updated && self.stands_for(agent, offer, &moving);
         if !standing {
-            let confirmation = Self::installing(offer, how, &plan, &moving);
+            let confirmation = Self::installing(offer, how, &plan, &moving, source);
             if confirmed(self.request, front, &confirmation).await != Some(0) {
                 return Ok(Outcome::Undecided);
             }
@@ -1173,6 +1187,7 @@ impl Door<'_> {
             let mut files = Vec::new();
             let mut fetched = Vec::new();
             let mut before: u64 = 0;
+            let mut decompressed: u64 = 0;
             for artifact in &target.artifacts {
                 let mut told = telling(name.as_ref(), before, total, &mut *watching.progress);
                 let arrived = landed(
@@ -1191,6 +1206,7 @@ impl Door<'_> {
                     Unpacker::unpack_from(&mut reading, artifact, staging.directory())?
                 };
                 files.extend_from_slice(staged.files());
+                decompressed = decompressed.saturating_add(staged.decompressed());
                 fetched.push(arrived);
             }
             if let Some(script) = &script {
@@ -1245,8 +1261,11 @@ impl Door<'_> {
                     review: offer.entry.review.clone(),
                     terms: offer.entry.terms.clone(),
                 },
+                source,
+                probe: None,
                 fetched: SystemTime::now(),
                 artifacts: fetched,
+                decompressed,
             };
             self.store.commit(staging, &version, &files, provenance)?;
         }
@@ -1275,13 +1294,21 @@ impl Door<'_> {
         how: How,
         plan: &Plan<'_>,
         moving: &[(&ExternalAgent, Version)],
+        source: Released,
     ) -> Confirmation {
         let kept = plan.kept;
         let target = &offer.pin.target;
         let entry = &offer.entry;
         let total = plan.total;
         let (key, version) = (entry.key.as_str(), quoted(&offer.pin.version));
-        let putting = format!("Put {version} in place and move the instances named onto it");
+        let putting = if source == Released::Registry {
+            format!(
+                "Download {version}, survey it, run it once in the sandbox to probe it, put it in \
+                 place and move the instances named onto it"
+            )
+        } else {
+            format!("Put {version} in place and move the instances named onto it")
+        };
         let (asks, choice, does) = match (how, &plan.adding) {
             (How::Updated, _) => (format!("Update {key} to {version}?"), "Update", putting),
             (How::Added, Some(name)) => (
@@ -1302,6 +1329,14 @@ impl Door<'_> {
         } else {
             format!("{key} {version}, {total} bytes to download.")
         }];
+        if source == Released::Registry {
+            facts.push(
+                "Crucible will download the vendor's archive, survey it, and run the vendor's \
+                 program once in the closed sandbox for a probe after your yes; a failed probe \
+                 installs nothing."
+                    .to_owned(),
+            );
+        }
         if kept && plan.tree.is_some() {
             facts.push(
                 "Known by its receipt: Node's artifacts by SHA-256, and Node's files, the preload \
@@ -3186,5 +3221,109 @@ async fn confirmed(
         if turned_away(front, refusal, &mut tries) {
             return None;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crucible_external_harnesses::release::OwnedPin;
+
+    use super::*;
+
+    /// An offer of a release whose one artifact is a zip of one program, so a
+    /// question can be put without a catalog or a store.
+    fn offered() -> Offer {
+        let hash = "a".repeat(64);
+        let entry = Entry::unsigned(
+            serde_json::json!({
+                "key": "goose",
+                "registry_id": "goose-acp",
+                "version": "1.4.1",
+                "kind": "binary",
+                "license": "Apache-2.0",
+                "review": "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json",
+                "admits": {"name": "goose", "version": "1.4.1"},
+                "auth_methods": [],
+                "targets": [{
+                    "platform": "linux-x86_64",
+                    "cmd": "goose",
+                    "args": [],
+                    "env": {},
+                    "hosts": ["github.com"],
+                    "artifacts": [{
+                        "url": "https://github.com/example/goose/releases/download/v1.4.1/goose.zip",
+                        "sha256": hash,
+                        "size": 100,
+                        "format": "zip",
+                        "unpacked": 100,
+                        "decompressed": 100,
+                        "files": [{"path": "goose", "size": 100, "sha256": "a".repeat(64), "exec": true}]
+                    }]
+                }]
+            })
+            .to_string()
+            .as_bytes(),
+        )
+        .expect("an entry");
+        let target = entry.here().cloned().expect("a target for this platform");
+        Offer {
+            pin: OwnedPin {
+                key: entry.key.clone(),
+                version: entry.version.clone(),
+                lock_revision: None,
+                admits: entry.admits.clone(),
+                target,
+            },
+            entry,
+            serial: 0,
+        }
+    }
+
+    fn plan() -> Plan<'static> {
+        Plan {
+            kept: false,
+            total: 100,
+            tree: None,
+            reached: vec!["github.com".to_owned()],
+            smoking: Err("no conversation lent a launcher to start it with".to_owned()),
+            adding: None,
+        }
+    }
+
+    #[test]
+    fn a_registry_install_question_says_the_probe_runs_the_vendors_program() {
+        let offer = offered();
+
+        let question = Door::installing(&offer, How::Installed, &plan(), &[], Released::Registry);
+
+        let said = question.facts.join(" ");
+        assert!(said.contains("run the vendor's program"), "{said}");
+        assert!(said.contains("probe"), "{said}");
+        assert!(
+            question
+                .choices
+                .first()
+                .is_some_and(|(_, does)| does.contains("probe")),
+            "{:?}",
+            question.choices
+        );
+    }
+
+    #[test]
+    fn a_catalog_install_question_does_not_say_a_probe_runs() {
+        let offer = offered();
+
+        let question = Door::installing(&offer, How::Installed, &plan(), &[], Released::Catalog);
+
+        let said = question.facts.join(" ");
+        assert!(!said.contains("probe"), "{said}");
+        assert!(
+            !question
+                .choices
+                .first()
+                .is_some_and(|(_, does)| does.contains("probe")),
+            "{:?}",
+            question.choices
+        );
     }
 }

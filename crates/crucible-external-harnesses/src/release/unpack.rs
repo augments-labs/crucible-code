@@ -62,6 +62,11 @@
 //!   and the pin fixes its bytes, so what a survey recorded is what an unpack
 //!   reads.
 //!
+//! A survey reads the archive either from the bytes a caller holds, once they
+//! are the pin's, or from the file it was downloaded into, so no archive is
+//! held whole: [`Unpacker::survey_from`] hashes and counts as it reads, and
+//! then reads the same file again as the archive.
+//!
 //! A wheel is a zip, and its reader walks it with this one, through
 //! [`Walk::placing`]: each of its members is held to every rule above, under
 //! the name it is installed as.
@@ -415,6 +420,25 @@ impl Unpacker {
     ) -> Result<Staged, UnpackError> {
         pinned(bytes, artifact)?;
         Walk::new(artifact, staging, None).run(Cursor::new(bytes))
+    }
+
+    /// Unpacks the download `artifact` pins, read from `file` rather than
+    /// held in memory, into `staging`, by every rule [`Unpacker::survey`]
+    /// holds an archive to: the file is read through once for its size and
+    /// SHA-256 before anything else is done with it, and then read again as
+    /// the archive.
+    ///
+    /// # Errors
+    ///
+    /// As [`Unpacker::survey`], and [`UnpackError::Corrupt`] where the file
+    /// could not be read.
+    pub fn survey_from(
+        file: &mut fs::File,
+        artifact: &Artifact,
+        staging: &Path,
+    ) -> Result<Staged, UnpackError> {
+        pinned_file(file, artifact)?;
+        Walk::new(artifact, staging, None).run(io::BufReader::new(file))
     }
 }
 

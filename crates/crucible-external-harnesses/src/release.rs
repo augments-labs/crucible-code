@@ -15,7 +15,11 @@
 //! the catalog lists it; the rules it holds an archive to are written above
 //! it, in its own module. Its [`Unpacker::survey`] holds an archive to the
 //! same rules with no list, so the list the catalog's intake records is one
-//! an unpack accepts. A wheel of a release started by a pinned interpreter
+//! an unpack accepts, and [`Unpacker::survey_from`] does the same reading a
+//! file rather than bytes held in memory, so an archive no one pinned at an
+//! exact size is never held whole: a registry archive is downloaded within
+//! [`ARCHIVE_BYTES`], surveyed from its file, and held to [`UNPACKED_BYTES`]
+//! and [`RELEASE_BYTES`]. A wheel of a release started by a pinned interpreter
 //! is unpacked by [`Wheels`] into the same staging directory, by the same
 //! rules, under `site/`, and [`LaunchScript`] is the file that starts it. A
 //! release that Node runs is a package tree, which [`NpmTree`] reads from the
@@ -54,6 +58,12 @@ pub use wheel::{LAUNCHER, LaunchScript, Wheels};
 
 /// The most a release may be: its archive, and what it unpacks to.
 pub const RELEASE_BYTES: u64 = 4 << 30;
+
+/// The most a registry archive may be before it is unpacked, compressed.
+pub const ARCHIVE_BYTES: u64 = 512 << 20;
+
+/// The most a registry archive may unpack to.
+pub const UNPACKED_BYTES: u64 = 2 << 30;
 
 /// The most of a name the archive gives that a refusal repeats.
 const NAMED: usize = 64;

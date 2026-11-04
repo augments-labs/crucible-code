@@ -9,11 +9,13 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crucible_types::AgentKey;
+use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 
 use super::{
-    Adoption, Differs, Fetched, Listing, Mismatch, Origin, PROGRAMS_BYTES, Pause, Provenance,
-    RECEIPT_BYTES, Receipt, Store, StoreError, Version,
+    Adoption, Differs, Fetched, Listing, Mismatch, Origin, PROGRAMS_BYTES, Pause, Probe,
+    ProbedKind, ProbedMethod, Provenance, RECEIPT_BYTES, Receipt, Source, Store, StoreError,
+    Version,
 };
 use crate::catalog::{Admits, Artifact, AssetRef, File, FileKind, Files, Format, Launch, Target};
 use crate::release::{OwnedPin, Unpacker, proof};
@@ -121,6 +123,8 @@ fn at(seconds: u64) -> SystemTime {
 fn provenance(artifact: &Artifact, seconds: u64) -> Provenance {
     Provenance {
         listing: listing(),
+        source: Source::Catalog,
+        probe: None,
         fetched: at(seconds),
         artifacts: vec![Fetched {
             url: artifact.url.clone(),
@@ -128,6 +132,7 @@ fn provenance(artifact: &Artifact, seconds: u64) -> Provenance {
             size: artifact.size,
             sha256: artifact.sha256.clone(),
         }],
+        decompressed: 10 * 512,
     }
 }
 
@@ -286,6 +291,10 @@ fn a_version_is_committed_by_rename_from_staging_with_its_receipt() {
         version: "1.0.0".into(),
         lock_revision: None,
         listing: listing(),
+        source: Source::Catalog,
+        probe: None,
+        unpacked: unpacked_of(&listed()),
+        decompressed: 10 * 512,
         fetched: at(10),
         origin: Origin::Fetched,
         artifacts: provenance(&artifact, 10).artifacts,
@@ -606,6 +615,10 @@ fn an_earlier_install_that_matches_the_list_is_adopted_with_a_receipt() {
             version: "1.3.0".into(),
             lock_revision: None,
             listing: listing(),
+            source: Source::Catalog,
+            probe: None,
+            unpacked: u64::try_from(SERVER.len() + HARNESS.len()).expect("a size"),
+            decompressed: 0,
             fetched: at(40),
             origin: Origin::Adopted,
             artifacts: vec![Fetched {
@@ -630,6 +643,171 @@ fn an_earlier_install_that_matches_the_list_is_adopted_with_a_receipt() {
         store.adopt(&pin, listing(), at(50)).ok(),
         Some(Adoption::Adopted(receipt))
     );
+}
+
+/// The bytes `files` hold together.
+fn unpacked_of(files: &[File]) -> u64 {
+    files
+        .iter()
+        .filter_map(|file| match file.kind {
+            FileKind::File { size, .. } => Some(size),
+            FileKind::Dir | FileKind::Link { .. } => None,
+        })
+        .fold(0, u64::saturating_add)
+}
+
+/// The probe record of a release `target` was probed for, with one method of
+/// each kind.
+fn probe(target: &str) -> Probe {
+    Probe {
+        target: target.into(),
+        admits: Admits {
+            name: "goose".into(),
+            version: "1.0.0".into(),
+        },
+        auth_methods: vec![
+            ProbedMethod {
+                id: "browser".into(),
+                name: "Sign in".into(),
+                kind: ProbedKind::Agent,
+            },
+            ProbedMethod {
+                id: "login".into(),
+                name: "Log in".into(),
+                kind: ProbedKind::Terminal {
+                    command: "goose".into(),
+                    args: vec!["login".into()],
+                    env: vec![crate::catalog::Variable {
+                        name: "GOOSE_LOGIN".into(),
+                        value: "1".into(),
+                    }],
+                    tty: Some(true),
+                },
+            },
+        ],
+    }
+}
+
+#[test]
+fn a_registry_receipt_round_trips_its_source_probe_and_actual_sizes() {
+    let owned = Owned::new("store-registry-receipt");
+    let store = Store::new(programs(&owned));
+    let goose = key("goose");
+    let one = version("1.0.0", None);
+    let (archive, artifact) = release();
+    let staging = store.stage(&goose).expect("a staging directory");
+    let staged = Unpacker::unpack(&archive, &artifact, staging.directory()).expect("unpacked");
+    let probed = probe("linux-x86_64");
+    let provenance = Provenance {
+        listing: Listing {
+            serial: 0,
+            review: "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json".into(),
+            terms: None,
+        },
+        source: Source::Registry,
+        probe: Some(probed.clone()),
+        fetched: at(60),
+        artifacts: vec![Fetched {
+            url: artifact.url.clone(),
+            hosts: vec!["github.com".into()],
+            size: artifact.size,
+            sha256: artifact.sha256.clone(),
+        }],
+        decompressed: staged.decompressed(),
+    };
+
+    let receipt = store
+        .commit(staging, &one, staged.files(), provenance)
+        .expect("committed");
+
+    assert_eq!(receipt.source, Source::Registry);
+    assert_eq!(receipt.probe.as_deref(), Some(&probed));
+    assert_eq!(receipt.unpacked, staged.unpacked());
+    assert_eq!(receipt.decompressed, staged.decompressed());
+    assert_eq!(
+        receipt.artifacts.first().map(|fetched| fetched.size),
+        Some(artifact.size)
+    );
+    assert_eq!(
+        store.receipt(&goose, &one).ok().flatten(),
+        Some(receipt.clone())
+    );
+    assert_eq!(receipt.unprobed("linux-x86_64"), None);
+    assert!(receipt.unprobed("darwin-aarch64").is_some());
+}
+
+#[test]
+fn an_old_format_1_receipt_reads_as_reviewed() {
+    let owned = Owned::new("store-format-1");
+    let store = Store::new(programs(&owned));
+    let goose = key("goose");
+    let one = version("1.0.0", None);
+    let receipt = install(&store, &goose, &one, 10);
+    let directory = store.directory(&goose, &one);
+    let path = directory.join(".receipt");
+    let read: Value =
+        serde_json::from_slice(&fs::read(&path).expect("the receipt")).expect("a receipt as JSON");
+    let mut object = read.as_object().expect("an object").clone();
+    object.insert("format".into(), json!(1));
+    for field in ["source", "probe", "unpacked", "decompressed"] {
+        object.remove(field);
+    }
+    fs::write(&path, serde_json::to_vec(&object).expect("JSON")).expect("the old receipt");
+
+    let old = store
+        .receipt(&goose, &one)
+        .ok()
+        .flatten()
+        .expect("the old receipt reads");
+
+    assert_eq!(old.source, Source::Catalog);
+    assert_eq!(old.probe, None);
+    assert_eq!(old.unpacked, receipt.unpacked);
+    assert_eq!(old.decompressed, 0);
+    assert_eq!(old.listing, receipt.listing);
+    assert_eq!(old.files, receipt.files);
+}
+
+#[test]
+fn a_new_receipt_is_written_in_format_2_with_the_source_it_came_from() {
+    let owned = Owned::new("store-format-2");
+    let store = Store::new(programs(&owned));
+    let goose = key("goose");
+    let one = version("1.0.0", None);
+    let receipt = install(&store, &goose, &one, 10);
+    let path = store.directory(&goose, &one).join(".receipt");
+
+    let written: Value =
+        serde_json::from_slice(&fs::read(&path).expect("the receipt")).expect("a receipt as JSON");
+
+    assert_eq!(written.get("format"), Some(&json!(2)));
+    assert_eq!(written.get("source"), Some(&json!("catalog")));
+    assert_eq!(written.get("probe"), Some(&Value::Null));
+    assert_eq!(written.get("unpacked"), Some(&json!(receipt.unpacked)));
+    assert_eq!(
+        written.get("decompressed"),
+        Some(&json!(receipt.decompressed))
+    );
+}
+
+/// A registry release with no probe record for this platform is refused, and
+/// names the command that takes one; a catalog release with none is not, and
+/// neither is a registry release probed for this platform.
+#[test]
+fn a_registry_receipt_without_a_probe_record_refuses_and_names_the_probe_command() {
+    let owned = Owned::new("store-unprobed");
+    let store = Store::new(programs(&owned));
+    let goose = key("goose");
+    let mut catalog = install(&store, &goose, &version("1.0.0", None), 10);
+
+    assert_eq!(catalog.unprobed("linux-x86_64"), None);
+
+    catalog.source = Source::Registry;
+    let refused = catalog.unprobed("linux-x86_64").expect("no probe record");
+    assert!(refused.contains("crucible agents probe"), "{refused}");
+    catalog.probe = Some(Box::new(probe("darwin-aarch64")));
+    assert!(catalog.unprobed("linux-x86_64").is_some());
+    assert_eq!(catalog.unprobed("darwin-aarch64"), None);
 }
 
 #[test]
@@ -800,8 +978,8 @@ fn a_receipt_in_a_format_this_crucible_does_not_know_or_that_is_not_one_is_refus
     for (what, text, format) in [
         (
             "another format",
-            replaced(r#""format":1"#, r#""format":2"#),
-            Some(2),
+            replaced(r#""format":2"#, r#""format":3"#),
+            Some(3),
         ),
         ("not JSON", "a receipt".to_owned(), None),
         ("not a receipt", "{}".to_owned(), None),
@@ -1284,8 +1462,8 @@ fn a_version_whose_receipt_cannot_be_read_is_never_pruned_and_is_to_be_checked()
     install(&store, &goose, &three, 30);
     let path = store.directory(&goose, &one).join(".receipt");
     let later = fs::read_to_string(&path).expect("the receipt").replacen(
-        r#""format":1"#,
         r#""format":2"#,
+        r#""format":3"#,
         1,
     );
     fs::write(&path, later).expect("a receipt a later crucible wrote");
@@ -1455,8 +1633,8 @@ fn a_version_whose_receipt_cannot_be_read_is_replaced_only_when_asked() {
     install(&store, &goose, &one, 10);
     let path = store.directory(&goose, &one).join(".receipt");
     let later = fs::read_to_string(&path).expect("the receipt").replacen(
-        r#""format":1"#,
         r#""format":2"#,
+        r#""format":3"#,
         1,
     );
     fs::write(&path, &later).expect("a later crucible's receipt");

@@ -37,14 +37,21 @@
 //! unpacker makes a link only when it does.
 //!
 //! The receipt is the truth about what is installed, whatever a catalog says
-//! later. It records the catalog serial and the review the release was taken
-//! from, the terms link accepted, when it was fetched, each artifact's address,
-//! the hosts the download came through, its size and SHA-256, and every file
-//! with its size, SHA-256 and exec flag, or kind and link target. It is JSON in
-//! format [`FORMAT`], read only up to [`RECEIPT_BYTES`], and one in another
-//! format, or that names another release or a path outside its version, is
-//! refused. Nothing in it is signed: the owner-only mode of the store's
-//! directories and of the receipt is what protects it.
+//! later. It records the source the release came from ([`Source`]): a
+//! catalog's serial and the review (or, for the ACP Registry, the registry
+//! document) the release was taken from, the terms link accepted, when it was
+//! fetched, each artifact's address, the hosts the download came through, its
+//! size and SHA-256, and every file with its size, SHA-256 and exec flag, or
+//! kind and link target. It records what the install surveyed: the bytes its
+//! files take up, the bytes its archives decompressed to, and, where the
+//! agent was probed at install, the platform it was probed for and what it
+//! answered `initialize` with ([`Probe`]), so a later session need not start
+//! the vendor's program again. It is JSON in format [`FORMAT`], read only up
+//! to [`RECEIPT_BYTES`], and one in another format, or that names another
+//! release or a path outside its version, is refused; a receipt in the first
+//! format this store wrote reads as reviewed. Nothing in it is signed: the
+//! owner-only mode of the store's directories and of the receipt is what
+//! protects it.
 //!
 //! Every change to an agent's store, a staging directory made, a commit, an
 //! adoption or a prune, takes an exclusive lock on `programs/<key>/.lock`,
@@ -116,7 +123,7 @@ use crucible_types::AgentKey;
 use serde_json::{Map, Value, json};
 use sha2::{Digest as _, Sha256};
 
-use crate::catalog::{File, FileKind, Files, Target};
+use crate::catalog::{Admits, File, FileKind, Files, Target, Variable};
 use crate::release::{OwnedPin, link_resolves};
 
 /// The most the store holds, in bytes: the bound on an artifact's download,
@@ -129,7 +136,21 @@ pub const PROGRAMS_BYTES: u64 = 16 << 30;
 pub const RECEIPT_BYTES: usize = 16 << 20;
 
 /// The receipt format this store writes and reads.
-pub const FORMAT: u64 = 1;
+pub const FORMAT: u64 = 2;
+
+/// Why a registry release is not started: the receipt says nothing of what
+/// its program answered when it was probed, for the platform it runs on.
+pub const UNPROBED: &str = "this release has no probe record for this platform, so run `crucible \
+                            agents probe` and install it again";
+
+/// The most sign-in methods a probe record keeps, as the probe keeps.
+const PROBED: usize = 16;
+
+/// The most bytes any one text of a probe record keeps, as the probe keeps.
+const PROBED_BYTES: usize = 256;
+
+/// The longest platform a probe record may name, in bytes.
+const PLATFORM_BYTES: usize = 64;
 
 /// How long a change waits for another process's change to the same agent's
 /// store to finish: a few renames, a receipt or the removal of a version. An
@@ -270,12 +291,151 @@ pub struct Staging {
 /// What the catalog said of the release a receipt is for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Listing {
-    /// The serial of the catalog it was taken from.
+    /// The serial of the catalog it was taken from; zero for a release from
+    /// the ACP Registry, which has none.
     pub serial: u64,
-    /// The review pull request that admitted it.
+    /// The review pull request that admitted it, or for a release from the
+    /// ACP Registry the registry document it was read from.
     pub review: Box<str>,
     /// The terms the user accepted by installing it, where it has any.
     pub terms: Option<Box<str>>,
+}
+
+/// Where a release a receipt describes came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    /// The catalog crucible reviewed.
+    Catalog,
+    /// The ACP Registry, as it was read.
+    Registry,
+}
+
+impl Source {
+    /// It as a receipt spells it.
+    const fn spelled(self) -> &'static str {
+        match self {
+            Self::Catalog => "catalog",
+            Self::Registry => "registry",
+        }
+    }
+
+    /// The source `text` spells, where it spells one.
+    fn read(text: &str) -> Option<Self> {
+        match text {
+            "catalog" => Some(Self::Catalog),
+            "registry" => Some(Self::Registry),
+            _ => None,
+        }
+    }
+}
+
+/// What the install-time probe saw when it started the vendor's program once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Probe {
+    /// The platform it was taken for, as `<os>-<arch>`.
+    pub target: Box<str>,
+    /// The `agentInfo` the agent answered `initialize` with.
+    pub admits: Admits,
+    /// The sign-in methods it offered.
+    pub auth_methods: Vec<ProbedMethod>,
+}
+
+/// One sign-in method as the probe recorded it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProbedMethod {
+    /// The id the agent names it by.
+    pub id: Box<str>,
+    /// Its name, as the agent gave it.
+    pub name: Box<str>,
+    /// What it is.
+    pub kind: ProbedKind,
+}
+
+/// What the probe recorded a sign-in method as.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProbedKind {
+    /// The agent signs in itself.
+    Agent,
+    /// A key is given in a variable the agent names.
+    EnvVar,
+    /// A command of the agent's own, run at a terminal.
+    Terminal {
+        /// The program, relative to the version's directory.
+        command: Box<str>,
+        /// Its arguments.
+        args: Vec<Box<str>>,
+        /// Its environment.
+        env: Vec<Variable>,
+        /// Whether it needs a real terminal, where the agent says.
+        tty: Option<bool>,
+    },
+    /// Something this crucible does not carry out.
+    Other,
+}
+
+impl Probe {
+    /// It as a receipt keeps it.
+    fn json(&self) -> Value {
+        json!({
+            "target": &*self.target,
+            "admits": {
+                "name": &*self.admits.name,
+                "version": &*self.admits.version,
+            },
+            "auth_methods": self
+                .auth_methods
+                .iter()
+                .map(ProbedMethod::json)
+                .collect::<Vec<_>>(),
+        })
+    }
+}
+
+impl ProbedMethod {
+    /// It as a receipt keeps it.
+    fn json(&self) -> Value {
+        let mut method = json!({"id": &*self.id, "name": &*self.name});
+        let Some(object) = method.as_object_mut() else {
+            return method;
+        };
+        match &self.kind {
+            ProbedKind::Agent => {
+                object.insert("kind".into(), json!("agent"));
+            }
+            ProbedKind::EnvVar => {
+                object.insert("kind".into(), json!("env_var"));
+            }
+            ProbedKind::Terminal {
+                command,
+                args,
+                env,
+                tty,
+            } => {
+                object.insert("kind".into(), json!("terminal"));
+                object.insert("command".into(), json!(&**command));
+                object.insert(
+                    "args".into(),
+                    json!(args.iter().map(|arg| &**arg).collect::<Vec<_>>()),
+                );
+                object.insert(
+                    "env".into(),
+                    json!(
+                        env.iter()
+                            .map(|variable| (&*variable.name, &*variable.value))
+                            .collect::<std::collections::BTreeMap<_, _>>()
+                    ),
+                );
+                object.insert(
+                    "tty".into(),
+                    tty.map_or_else(|| json!("unknown"), |needs| json!(needs)),
+                );
+            }
+            ProbedKind::Other => {
+                object.insert("kind".into(), json!("other"));
+            }
+        }
+        method
+    }
 }
 
 /// Where a release being committed came from.
@@ -283,10 +443,17 @@ pub struct Listing {
 pub struct Provenance {
     /// What the catalog said of it.
     pub listing: Listing,
+    /// Where it came from.
+    pub source: Source,
+    /// What the probe saw at install, where the agent was probed.
+    pub probe: Option<Probe>,
     /// When its artifacts were fetched.
     pub fetched: SystemTime,
     /// Each artifact, as it was fetched.
     pub artifacts: Vec<Fetched>,
+    /// The bytes read out of its artifacts once decompressed, as the survey
+    /// found them.
+    pub decompressed: u64,
 }
 
 /// One artifact of a release, as it was fetched.
@@ -296,7 +463,8 @@ pub struct Fetched {
     pub url: Box<str>,
     /// The hosts the download came through.
     pub hosts: Vec<Box<str>>,
-    /// Its size in bytes.
+    /// Its size in bytes: the pin's, or what arrived where the download was
+    /// held to a cap rather than an exact size.
     pub size: u64,
     /// Its SHA-256, in lowercase hexadecimal.
     pub sha256: Box<str>,
@@ -323,6 +491,17 @@ pub struct Receipt {
     pub lock_revision: Option<u64>,
     /// What the catalog said of it.
     pub listing: Listing,
+    /// Where it came from.
+    pub source: Source,
+    /// What the probe saw at install, where the agent was probed: what it
+    /// answered `initialize` with, for the platform it was taken for, so a
+    /// later session need not start the vendor's program again.
+    pub probe: Option<Box<Probe>>,
+    /// The bytes its files take up, as the survey found them.
+    pub unpacked: u64,
+    /// The bytes read out of its artifacts once decompressed, as the survey
+    /// found them.
+    pub decompressed: u64,
     /// When its artifacts were fetched, to the second; for a version adopted,
     /// when it was adopted, since the install before kept no time.
     pub fetched: SystemTime,
@@ -418,7 +597,10 @@ pub enum StoreError {
     #[error("this version has no receipt, so it was not installed whole or not by this store")]
     Unreceipted,
     /// The receipt is in another format, as one written by a later crucible.
-    #[error("the version's receipt is in format {0}, and this crucible reads format {FORMAT}")]
+    #[error(
+        "the version's receipt is in format {0}, and this crucible reads format {FORMAT} or the \
+         format before it"
+    )]
     Format(u64),
     /// The receipt is not one: not JSON, without the fields of one, naming
     /// another release or a path outside its version.
@@ -642,11 +824,25 @@ impl Drop for InUse {
 
 impl Receipt {
     /// The bytes its files hold, past which nothing is counted.
-    fn unpacked(&self) -> u64 {
+    fn files_bytes(&self) -> u64 {
         self.files.iter().fold(0, |total, file| match file.kind {
             FileKind::File { size, .. } => total.saturating_add(size),
             FileKind::Dir | FileKind::Link { .. } => total,
         })
+    }
+
+    /// Why a registry release this receipt records is not started on
+    /// `target`: it has no probe record, or none taken for that platform.
+    /// Nothing for a release taken from the catalog, whose entry recorded
+    /// what the agent answers.
+    #[must_use]
+    pub fn unprobed(&self, target: &str) -> Option<&'static str> {
+        (self.source == Source::Registry
+            && self
+                .probe
+                .as_ref()
+                .is_none_or(|probe| &*probe.target != target))
+        .then_some(UNPROBED)
     }
 
     /// It as the file holds it, once it is no larger than [`RECEIPT_BYTES`].
@@ -671,6 +867,10 @@ impl Receipt {
             "serial": self.listing.serial,
             "review": &*self.listing.review,
             "terms": self.listing.terms.as_deref(),
+            "source": self.source.spelled(),
+            "probe": self.probe.as_ref().map(|probe| probe.json()),
+            "unpacked": self.unpacked,
+            "decompressed": self.decompressed,
             "fetched": seconds(self.fetched),
             "origin": match self.origin {
                 Origin::Fetched => "fetched",
@@ -1007,6 +1207,10 @@ impl Store {
             version: version.text.clone(),
             lock_revision: version.lock_revision,
             listing: provenance.listing,
+            source: provenance.source,
+            probe: provenance.probe.map(Box::new),
+            unpacked: wanted,
+            decompressed: provenance.decompressed,
             fetched: whole(provenance.fetched),
             origin: Origin::Fetched,
             artifacts: provenance.artifacts,
@@ -1167,11 +1371,19 @@ impl Store {
         // Kept from now on as a version this store made, only its owner may
         // reach it.
         crucible_privacy::directory(&directory).map_err(privacy(&directory))?;
+        let unpacked = files.iter().fold(0_u64, |total, file| match file.kind {
+            FileKind::File { size, .. } => total.saturating_add(size),
+            FileKind::Dir | FileKind::Link { .. } => total,
+        });
         let receipt = Receipt {
             key: pin.key.clone(),
             version: version.text.clone(),
             lock_revision: version.lock_revision,
             listing,
+            source: Source::Catalog,
+            probe: None,
+            unpacked,
+            decompressed: 0,
             fetched: whole(at),
             origin: Origin::Adopted,
             artifacts: pin
@@ -1531,7 +1743,7 @@ impl Store {
                     continue;
                 }
                 let bytes = match kept {
-                    Kept::Receipted(receipt) => receipt.unpacked(),
+                    Kept::Receipted(receipt) => receipt.files_bytes(),
                     // What has no receipt to say still takes its room.
                     Kept::Unreceipted | Kept::Unreadable => {
                         holding(&entry.path().join(version.name()))?
@@ -1952,24 +2164,56 @@ fn recorded(directory: &Path, bytes: &[u8]) -> Result<(), StoreError> {
     Ok(())
 }
 
-/// The receipt `bytes` hold, or why they are not one of this format.
+/// The receipt `bytes` hold, or why they are not one of this format, or one
+/// of the first this crucible wrote, which it reads as reviewed.
 fn decoded(bytes: &[u8]) -> Result<Receipt, StoreError> {
     let document: Value = serde_json::from_slice(bytes).map_err(|_| StoreError::Corrupt)?;
     let fields = document.as_object().ok_or(StoreError::Corrupt)?;
     match fields.get("format").and_then(Value::as_u64) {
-        Some(FORMAT) => {}
-        Some(other) => return Err(StoreError::Format(other)),
-        None => return Err(StoreError::Corrupt),
+        Some(FORMAT) => read_receipt(fields, true).ok_or(StoreError::Corrupt),
+        Some(1) => read_receipt(fields, false).ok_or(StoreError::Corrupt),
+        Some(other) => Err(StoreError::Format(other)),
+        None => Err(StoreError::Corrupt),
     }
-    read_receipt(fields).ok_or(StoreError::Corrupt)
 }
 
-/// The receipt the object `fields`, which is in this format, holds.
-fn read_receipt(fields: &Map<String, Value>) -> Option<Receipt> {
+/// The receipt the object `fields` holds, in the format this crucible writes
+/// where `current` says so, and in the first it wrote otherwise, where it
+/// records no source and no probe and is read as reviewed.
+fn read_receipt(fields: &Map<String, Value>, current: bool) -> Option<Receipt> {
     let text = |name: &str| fields.get(name)?.as_str();
     let terms = match fields.get("terms")? {
         Value::Null => None,
         terms => Some(terms.as_str()?.into()),
+    };
+    let files: Vec<File> = fields
+        .get("files")?
+        .as_array()?
+        .iter()
+        .map(read_file)
+        .collect::<Option<_>>()?;
+    let (source, probe, unpacked, decompressed) = if current {
+        let probe = match fields.get("probe")? {
+            Value::Null => None,
+            probe => Some(Box::new(read_probe(probe)?)),
+        };
+        let unpacked = fields.get("unpacked")?.as_u64()?;
+        let decompressed = fields.get("decompressed")?.as_u64()?;
+        if unpacked > PROGRAMS_BYTES {
+            return None;
+        }
+        (
+            Source::read(text("source")?)?,
+            probe,
+            unpacked,
+            decompressed,
+        )
+    } else {
+        let unpacked = files.iter().fold(0_u64, |total, file| match file.kind {
+            FileKind::File { size, .. } => total.saturating_add(size),
+            FileKind::Dir | FileKind::Link { .. } => total,
+        });
+        (Source::Catalog, None, unpacked, 0)
     };
     Some(Receipt {
         key: AgentKey::new(text("key")?).ok()?,
@@ -1983,6 +2227,10 @@ fn read_receipt(fields: &Map<String, Value>) -> Option<Receipt> {
             review: text("review")?.into(),
             terms,
         },
+        source,
+        probe,
+        unpacked,
+        decompressed,
         fetched: UNIX_EPOCH.checked_add(Duration::from_secs(fields.get("fetched")?.as_u64()?))?,
         origin: match text("origin")? {
             "fetched" => Origin::Fetched,
@@ -1995,13 +2243,98 @@ fn read_receipt(fields: &Map<String, Value>) -> Option<Receipt> {
             .iter()
             .map(read_fetched)
             .collect::<Option<_>>()?,
-        files: fields
-            .get("files")?
-            .as_array()?
-            .iter()
-            .map(read_file)
-            .collect::<Option<_>>()?,
+        files,
     })
+}
+
+/// The probe record `value` holds.
+fn read_probe(value: &Value) -> Option<Probe> {
+    let fields = value.as_object()?;
+    let target = fields.get("target")?.as_str()?;
+    if target.is_empty() || target.len() > PLATFORM_BYTES {
+        return None;
+    }
+    let admits = fields.get("admits")?.as_object()?;
+    let name = admits.get("name")?.as_str()?;
+    let version = admits.get("version")?.as_str()?;
+    if !kept_text(name) || !kept_text(version) {
+        return None;
+    }
+    let methods = fields.get("auth_methods")?.as_array()?;
+    if methods.len() > PROBED {
+        return None;
+    }
+    Some(Probe {
+        target: target.into(),
+        admits: Admits {
+            name: name.into(),
+            version: version.into(),
+        },
+        auth_methods: methods.iter().map(read_method).collect::<Option<_>>()?,
+    })
+}
+
+/// The sign-in method `value` records.
+fn read_method(value: &Value) -> Option<ProbedMethod> {
+    let fields = value.as_object()?;
+    let id = fields.get("id")?.as_str()?;
+    let name = fields.get("name")?.as_str()?;
+    if !kept_text(id) || !kept_text(name) {
+        return None;
+    }
+    let kind = match fields.get("kind")?.as_str()? {
+        "agent" => ProbedKind::Agent,
+        "env_var" => ProbedKind::EnvVar,
+        "terminal" => {
+            let command = fields.get("command")?.as_str()?;
+            if !kept_text(command) {
+                return None;
+            }
+            let args = match fields.get("args")? {
+                Value::Array(args) if args.len() <= PROBED => args
+                    .iter()
+                    .map(|arg| Some(arg.as_str()?.into()))
+                    .collect::<Option<Vec<_>>>()?,
+                _ => return None,
+            };
+            let env = match fields.get("env")? {
+                Value::Object(env) if env.len() <= PROBED => env
+                    .iter()
+                    .map(|(name, value)| {
+                        Some(Variable {
+                            name: name.as_str().into(),
+                            value: value.as_str()?.into(),
+                        })
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+                _ => return None,
+            };
+            let tty = match fields.get("tty")? {
+                Value::Bool(needs) => Some(*needs),
+                Value::String(text) if text == "unknown" => None,
+                _ => return None,
+            };
+            ProbedKind::Terminal {
+                command: command.into(),
+                args,
+                env,
+                tty,
+            }
+        }
+        "other" => ProbedKind::Other,
+        _ => return None,
+    };
+    Some(ProbedMethod {
+        id: id.into(),
+        name: name.into(),
+        kind,
+    })
+}
+
+/// Whether `text` is one a probe record keeps: not empty, and no longer than
+/// the probe keeps any one text.
+fn kept_text(text: &str) -> bool {
+    !text.is_empty() && text.len() <= PROBED_BYTES
 }
 
 /// The artifact `value` records.

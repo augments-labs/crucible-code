@@ -28,7 +28,7 @@ use crucible_client_api::{
 use crucible_config::{Driver, Serves};
 use crucible_external_harnesses::catalog::{File, FileKind, SNAPSHOT, Trust, fixture};
 use crucible_external_harnesses::fake_peer::{self, Reply, Script as Peer, scripts::claude};
-use crucible_external_harnesses::store::{Listing, Provenance, Store, Version};
+use crucible_external_harnesses::store::{Listing, Provenance, Source, Store, Version};
 use crucible_sandbox::{SandboxPolicy, SandboxService};
 use crucible_sandbox_local::LocalSandbox;
 use crucible_types::AgentKey;
@@ -303,8 +303,11 @@ fn stored(
             review: "https://example.com/review/12".into(),
             terms: None,
         },
+        source: Source::Catalog,
+        probe: None,
         fetched,
         artifacts: Vec::new(),
+        decompressed: u64::try_from(program.len())?,
     };
     store.commit(staging, &version, &[file], provenance)?;
     Ok(store.directory(&key, &version).join("goose"))
