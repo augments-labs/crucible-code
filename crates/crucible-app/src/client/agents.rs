@@ -810,7 +810,7 @@ pub async fn run(
                 .into_iter()
                 .find(|offer| *offer.pin.version == *version.as_str());
             let Some(offer) = offer else {
-                return Err(match door.registry_notice.clone() {
+                return Err(match door.unread_line() {
                     Some(why) => AgentsError::UnreadInstall {
                         agent,
                         version: version.as_str().into(),
@@ -835,7 +835,7 @@ pub async fn run(
         Command::UpdateAgent { .. } => {
             let mut offers = door.offers(&agent)?;
             if offers.is_empty() {
-                return Err(match door.registry_notice.clone() {
+                return Err(match door.unread_line() {
                     Some(why) => AgentsError::UnreadUpdate { agent, why },
                     None => AgentsError::Unlisted(agent),
                 });
@@ -1011,6 +1011,21 @@ impl Door<'_> {
             read: view.index.read_date(),
             unverified: self.registry_notice.as_deref(),
         })
+    }
+
+    /// Why no registry offer was read, with the cached index's read day where
+    /// one was read: a stale cache is told from a fresh one in the refusal.
+    fn unread_line(&self) -> Option<Box<str>> {
+        self.registry_notice
+            .as_ref()
+            .map(|why| match &self.registry {
+                Some(view) => format!(
+                    "{why}; the cached index was read {}",
+                    view.index.read_date()
+                )
+                .into(),
+                None => why.clone(),
+            })
     }
 
     /// The agents offered, but those whose key is a word a built-in driver or

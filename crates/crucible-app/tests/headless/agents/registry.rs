@@ -5,7 +5,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crucible_app::backends::{AgentRow, CatalogRow, REGISTRY, Unbelieved, believed_registry};
 use crucible_app::catalog_fetch::{self, RegistrySource, Source};
@@ -931,5 +931,50 @@ fn a_registry_install_with_no_index_names_the_unread_line() -> Result<(), Failed
         panic!("the update did not name the unread line: {outcome:?}");
     };
     assert!(why.contains("404"), "{why}");
+    Ok(())
+}
+
+#[test]
+fn a_stale_cache_install_and_update_name_the_day_it_was_read() -> Result<(), Failed> {
+    let bench = Bench::new("registry-stale-cache-date")?;
+    // 20_733 days after 1970-01-01 is 2026-10-07.
+    let read = UNIX_EPOCH + Duration::from_hours(20_733 * 24);
+    cache_at(&bench.home, read, &empty_registry(registry_json("1.0.0")));
+    let url = bench.server.at("/registry.json");
+    let mut front = Answering {
+        choice: None,
+        server: &bench.server,
+        put: Vec::new(),
+        meanwhile: None,
+    };
+
+    let outcome = door_at(
+        &bench,
+        &mut front,
+        Command::InstallAgent {
+            agent: name("goose")?,
+            version: name("1.0.0")?,
+        },
+        &url,
+    )?;
+    let Err(AgentsError::UnreadInstall { why, .. }) = outcome else {
+        panic!("the install did not name the unread line: {outcome:?}");
+    };
+    assert!(why.contains("2026-10-07"), "{why}");
+    assert!(why.contains("not verified"), "{why}");
+
+    let outcome = door_at(
+        &bench,
+        &mut front,
+        Command::UpdateAgent {
+            agent: name("goose")?,
+        },
+        &url,
+    )?;
+    let Err(AgentsError::UnreadUpdate { why, .. }) = outcome else {
+        panic!("the update did not name the unread line: {outcome:?}");
+    };
+    assert!(why.contains("2026-10-07"), "{why}");
+    assert!(why.contains("not verified"), "{why}");
     Ok(())
 }
