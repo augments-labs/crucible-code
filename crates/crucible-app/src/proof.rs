@@ -3,7 +3,9 @@
 //! Compiled only with the `proof` feature, which nothing but a dev-dependency
 //! turns on, so a build that ships has none of it. A test of the whole program
 //! steers the binary it runs with two variables declared and read here and
-//! nowhere else, and with both unset the binary does what ships.
+//! nowhere else. With both unset it lists the agents a release lists, except
+//! that its registry source answers a dead loopback address rather than the
+//! network: a test build never reaches the live registry.
 //!
 //! The first chooses the agents the binary can start: `fake` lists every agent
 //! this build knows how to run as though this release shipped it, and `empty`
