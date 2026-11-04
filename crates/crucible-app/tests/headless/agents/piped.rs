@@ -18,6 +18,7 @@ type Lent<'a> = (
 /// handover, before anything is asked or started, and a channel lent for the
 /// piped route is no handover.
 #[test]
+#[cfg(unix)]
 fn a_method_that_needs_a_real_terminal_is_refused_however_much_is_lent() -> Result<(), Failed> {
     let runtime = runtime()?;
     let bench = Bench::new("agents-door-real-terminal")?;
@@ -44,6 +45,7 @@ fn a_method_that_needs_a_real_terminal_is_refused_however_much_is_lent() -> Resu
 
 /// A front end lent a terminal, keeping what the door asked of it.
 #[derive(Default)]
+#[cfg(unix)]
 struct Handed {
     offered: Mutex<Vec<u32>>,
     resumed: std::sync::atomic::AtomicUsize,
@@ -58,6 +60,7 @@ impl Handed {
     }
 }
 
+#[cfg(unix)]
 impl SignInTerminal for Handed {
     fn handed(&self, pid: u32) {
         if let Ok(mut offered) = self.offered.lock() {
@@ -174,6 +177,7 @@ fn signing_in_by(bench: &Bench, script: &Peer) -> Result<Value, Failed> {
 
 /// The same, with the method's route the real terminal, which the door runs
 /// unconfined and hands this process's terminal to.
+#[cfg(unix)]
 fn signing_in_at_terminal(bench: &Bench, script: &Peer) -> Result<Value, Failed> {
     let mut release = signing_in_by(bench, script)?;
     set(&mut release, "/auth_methods/0/route", json!("terminal"));
@@ -238,6 +242,7 @@ impl Bench {
     }
 
     /// The door asked as [`Bench::ask_piped`] asks it, with `terminal` lent.
+    #[cfg(unix)]
     fn ask_piped_terminal(
         &self,
         front: &mut Answering<'_>,
@@ -364,6 +369,7 @@ impl Bench {
 
 /// The steps of a conversation whose sandbox is required by its project file,
 /// whatever its user chose.
+#[cfg(unix)]
 fn required_steps(bench: &Bench, runtime: &tokio::runtime::Runtime) -> Result<Steps, Failed> {
     let policy = SandboxPolicy::standard(&bench.tree.workspace()?)?.with_enabled(true);
     let state = catalog_fetch::state_in(bench.home.path());
@@ -385,6 +391,7 @@ fn required_steps(bench: &Bench, runtime: &tokio::runtime::Runtime) -> Result<St
 /// A sign-in at a real terminal is refused while the sandbox is required,
 /// before anything is asked or started, and the terminal is never lent.
 #[test]
+#[cfg(unix)]
 fn a_real_terminal_sign_in_is_refused_while_the_sandbox_is_required() -> Result<(), Failed> {
     let runtime = runtime()?;
     let bench = Bench::new("agents-door-terminal-required")?;
@@ -415,6 +422,7 @@ fn a_real_terminal_sign_in_is_refused_while_the_sandbox_is_required() -> Result<
 /// handed to it, takes the terminal back, and is believed only as the agent is
 /// read afterwards.
 #[test]
+#[cfg(unix)]
 fn a_real_terminal_sign_in_runs_with_a_handover_and_is_read_as_signed_in() -> Result<(), Failed> {
     let runtime = runtime()?;
     let bench = Bench::new("agents-door-terminal-ran")?;
@@ -459,6 +467,7 @@ fn a_real_terminal_sign_in_runs_with_a_handover_and_is_read_as_signed_in() -> Re
 }
 
 /// `front` as the shared reference [`Bench::ask_piped_on`] takes.
+#[cfg(unix)]
 fn front_ref<'a>(front: &'a mut Answering<'_>) -> &'a mut dyn Front {
     front
 }

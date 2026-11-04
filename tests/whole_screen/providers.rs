@@ -205,6 +205,7 @@ fn signing_in(
 }
 
 /// The same, its method recorded as needing a real terminal.
+#[cfg_attr(not(unix), allow(dead_code))]
 fn signing_in_at_terminal(
     case: &str,
     native: bool,
@@ -426,6 +427,7 @@ fn escape_stops_a_sign_in_command_and_says_what_the_door_answered() {
 /// offered, or is run without the per-run confirmation that says it is
 /// unconfined.
 #[test]
+#[cfg(unix)]
 fn a_real_terminal_sign_in_asks_to_run_unconfined_and_starts_nothing_on_cancel() {
     let case = "sign-in-real-terminal";
     let (mut window, _published, root) = signing_in_at_terminal(
