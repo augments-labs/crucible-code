@@ -77,6 +77,11 @@ pub(crate) use crucible_tui::Suspend;
 #[derive(Debug)]
 pub(crate) struct Suspend;
 
+// The stand-in keeps `Suspend`'s call shape on a platform with no terminal to
+// hand over, so no call site needs a `cfg`, and it holds no state to read. A
+// `resumed` that cannot fail is still written as the `Result` its Unix twin
+// returns, so the caller's `let _ =` is the same on every platform.
+#[allow(clippy::unused_self, clippy::unnecessary_wraps)]
 #[cfg(not(unix))]
 impl Suspend {
     pub(crate) fn holding(_: crucible_tui::Held, _: impl Fn() + Send + Sync + 'static) -> Self {
@@ -89,7 +94,9 @@ impl Suspend {
         ))
     }
 
-    pub(crate) fn resumed(&self) {}
+    pub(crate) fn resumed(&self) -> Result<(), HandoverFailed> {
+        Ok(())
+    }
 }
 
 use super::converse::Terms;

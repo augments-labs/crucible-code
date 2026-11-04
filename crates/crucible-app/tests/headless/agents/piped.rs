@@ -3,8 +3,10 @@
 //! own word differs from its signed entry, carried both ways where neither, and
 //! believed only as the agent reads afterwards.
 
+#[cfg(unix)]
 use std::time::Instant;
 
+#[cfg(unix)]
 use crucible_app::client::agents::HandoverFailed;
 use crucible_sandbox::SandboxDomainPattern;
 
@@ -58,6 +60,7 @@ struct Handed {
     refuse: std::sync::atomic::AtomicBool,
 }
 
+#[cfg(unix)]
 impl Handed {
     fn offered(&self) -> Vec<u32> {
         self.offered
