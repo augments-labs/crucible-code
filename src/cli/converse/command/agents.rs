@@ -36,6 +36,7 @@
 use crucible_app::Conversation;
 use crucible_app::catalog_fetch::FetchError;
 use crucible_app::client::agents::{self as door, AgentsError, How};
+use crucible_app::content_use;
 use crucible_client_api::{Command, Name};
 use crucible_tui::{
     Caret, Editor, Glyphs, Kept, Key, Offered, Panel, Picker, Pressed, Renderer, Row, Slot,
@@ -137,8 +138,8 @@ pub(super) fn run<T: Terminal>(
                 agents,
                 more,
                 unrefreshed,
-                registry: _,
-            }) => Listing::new(agents, more, unrefreshed.as_ref()),
+                registry,
+            }) => Listing::new(agents, more, unrefreshed.as_ref(), registry.as_deref()),
             Ok(door::Outcome::Refused(refusal)) => return say(renderer, &format!("! {refusal}")),
             Ok(_) => return say(renderer, ASTRAY),
             Err(refusal) => return say(renderer, &refused(&refusal)),
@@ -259,13 +260,21 @@ struct Entry {
 impl Listing {
     /// The list over what the door listed: `agents`, whether there were
     /// `more`, and why the catalog was `unrefreshed`, where it was.
-    fn new(agents: Vec<door::Listed>, more: bool, unrefreshed: Option<&FetchError>) -> Self {
+    fn new(
+        agents: Vec<door::Listed>,
+        more: bool,
+        unrefreshed: Option<&FetchError>,
+        registry: Option<&str>,
+    ) -> Self {
         let mut notice = Vec::new();
         if more {
             notice.push(MORE.to_owned());
         }
         if let Some(why) = unrefreshed {
             notice.push(unrefreshed_line(why));
+        }
+        if let Some(line) = registry {
+            notice.push(shown(line));
         }
         Self {
             agents: agents.into_iter().map(Entry::new).collect(),
@@ -676,6 +685,28 @@ fn described(listed: &door::Listed) -> Vec<String> {
             within(why, REFUSAL)
         ),
     });
+    if let Some(probe) = &listed.probed {
+        let methods: Vec<String> = probe
+            .auth_methods
+            .iter()
+            .take(NAMED_AT_MOST)
+            .map(|method| shown(&method.id))
+            .collect();
+        let methods = if methods.is_empty() {
+            "none".to_owned()
+        } else {
+            methods.join(", ")
+        };
+        told.push(format!(
+            "Probed: {} {}; sign-in methods: {}.",
+            shown(&probe.admits.name),
+            shown(&probe.admits.version),
+            methods
+        ));
+    }
+    if listed.registry {
+        told.push(content_use::UNRECORDED.to_owned());
+    }
     told
 }
 
@@ -776,6 +807,7 @@ fn added(outcome: &door::Outcome) -> Option<String> {
         version,
         instances,
         left,
+        probe,
         unsmoked,
         unpruned,
         ..
@@ -789,6 +821,25 @@ fn added(outcome: &door::Outcome) -> Option<String> {
         "Added {agent} {version} as the instance {}.",
         named(written)
     )];
+    if let Some(probe) = probe {
+        let methods: Vec<String> = probe
+            .auth_methods
+            .iter()
+            .take(NAMED_AT_MOST)
+            .map(|method| shown(&method.id))
+            .collect();
+        let methods = if methods.is_empty() {
+            "none".to_owned()
+        } else {
+            methods.join(", ")
+        };
+        said.push(format!(
+            "Probed: {} {}; sign-in methods: {}.",
+            shown(&probe.admits.name),
+            shown(&probe.admits.version),
+            methods
+        ));
+    }
     if !moved.is_empty() {
         said.push(format!("{} moved onto {version}.", names(moved)));
     }

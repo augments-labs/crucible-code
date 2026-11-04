@@ -3369,10 +3369,18 @@ impl<'a> Launcher<'a> {
         } else {
             keyed(request, row, crucible)
         };
-        let signing_conversation = signing_in
-            .is_some()
-            .then(|| signing_from(self.conversation, &row.sign_in_hosts()))
-            .transpose()?;
+        // A registry row records no sign-in hosts, so its sign-in command runs
+        // under the conversation's own network policy, as the agent's run
+        // does; every other row is held to the hosts its entry names.
+        let unrecorded = matches!(
+            row,
+            AgentRow::Catalog(row) if row.source() == ReleaseSource::Registry
+        );
+        let signing_conversation = if signing_in.is_some() && !unrecorded {
+            Some(signing_from(self.conversation, &row.sign_in_hosts())?)
+        } else {
+            None
+        };
         if signing_conversation.is_some() {
             reaches.clear();
         }

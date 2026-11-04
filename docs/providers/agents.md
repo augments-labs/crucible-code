@@ -260,9 +260,13 @@ target for this machine carries a SHA-256 and an archive crucible unpacks is
 offered: one without a hash, or whose archive is another format, is absent. The
 registry is not reviewed by Crucible: it has no signature, serial, expiry or
 revocation list, so an offered version can be withdrawn or replaced only by the
-registry's own change. Its vendors give no statement of what they do with what
-is sent, so an agent it lists is asked about once before its first start under
-a generic warning that says so, naming the registry and the day it was read.
+registry's own change. The list says so beside its agents, with the day the
+index was read and, where the cached index was used, why it was not verified.
+Its vendors give no statement of what they do with what is sent, so an agent it
+lists is asked about once before its first start under a generic warning that
+says so, naming the registry and the day it was read. It also says that the
+agent's network reach is not recorded: a registry agent runs under the network
+policy of the conversation that starts it, and Crucible adds no vendor hosts.
 
 Taking an agent opens its own screen, which says where it comes from: the
 versions offered, its licence, its terms link and caution where the catalog
@@ -275,13 +279,16 @@ agent under
 [`externalAgents`](../configuration/configuration.md#externalagents), named by
 the agent's key, or by the key and the next free number, such as `goose-2`,
 where that name is taken. It asks first, as `/login`'s *Install* does, saying
-what it will put in place, fetch and write; the download then shows how far it
+what it will put in place, fetch and write; a registry agent's question also
+says which archive is downloaded and that the same yes covers the survey and
+the vendor's program run once as a probe. The download then shows how far it
 has come, and Escape cancels it, changing nothing. After the yes, a line in the
 transcript names the instance written, such as `Added goose 1.0.0 as the
 instance "goose".`, then the other instances moved onto that version, any that
 changed meanwhile and were left as they are, whether the agent was smoke-tested
-and the older versions kept; the list stands again as the store now stands,
-with what you had typed still in the search.
+and the older versions kept; a registry agent's line also says what the probe
+recorded. The list stands again as the store now stands, with what you had
+typed still in the search.
 
 For a release read from the ACP Registry, your yes also covers running the
 vendor's program once in the closed sandbox after the download, as the probe
@@ -293,8 +300,9 @@ records what the install found, rather than what the catalog predicted: the
 bytes its files take up and the bytes its artifacts decompressed to, and for a
 registry release the platform its program was probed on and what it answered
 `initialize` with, so a later session can list and start it without starting the
-vendor's program again. A registry release whose receipt has no such record for
-this machine is not started: `crucible agents probe` takes one.
+vendor's program again. Its sign-in methods, and the one variable a typed key
+is given in, come from that record too. A registry release whose receipt has no
+such record for this machine is not started: `crucible agents probe` takes one.
 
 An agent the catalog ships as a Python package comes with the Python it is
 run by, pinned in the same release, so no Python on your machine is looked for

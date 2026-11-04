@@ -500,6 +500,7 @@ impl Desk<'_> {
                 left,
                 downloaded,
                 standing,
+                probe: _,
                 unsmoked,
                 unpruned,
             } => {

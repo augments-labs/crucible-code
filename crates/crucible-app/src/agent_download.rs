@@ -296,7 +296,24 @@ pub async fn capped(
     mut landing: Landing<'_>,
     cancel: &Cancel,
 ) -> Result<Fetched, DownloadError> {
-    let places = capped_places(source, hosts, address)?;
+    // Only a test build fetches a registry archive from the catalog it serves
+    // on this machine: the registry's address is rewritten to the archive's
+    // digest under that catalog's base, where the test host keeps it.
+    let requested = address.to_owned();
+    #[cfg(feature = "proof")]
+    let fixture = fixture_registry(source, address, sha256);
+    #[cfg(not(feature = "proof"))]
+    let fixture: Option<(String, String)> = None;
+    let mut places = capped_places(source, hosts, address)?;
+    if let Some((rewritten, place)) = &fixture {
+        // The test catalog's own host is a place a test build may reach, even
+        // where the catalog lists no redirect hosts.
+        places.push(place.clone());
+        listed_on(&places, rewritten)?;
+    }
+    let address = fixture
+        .as_ref()
+        .map_or(address, |(rewritten, _)| rewritten.as_str());
     let listed: Vec<&str> = places.iter().map(String::as_str).collect();
     let pin = Pinned {
         address,
@@ -306,11 +323,29 @@ pub async fn capped(
     let (through, size) =
         fetch(source, &listed, pin, &mut landing, cancel, Bounds::SHIPPED).await?;
     Ok(Fetched {
-        url: address.into(),
+        url: requested.into(),
         hosts: through,
         size,
         sha256: sha256.into(),
     })
+}
+
+/// Where a test build fetches a registry archive from: the digest of its bytes
+/// under the catalog a test serves on this machine, as [`crate::proof::looped`]
+/// reads that catalog's address; nothing where the archive is already on that
+/// host, so a fixture that serves it at its own path is left as it is.
+#[cfg(feature = "proof")]
+fn fixture_registry(source: &Source, address: &str, sha256: &str) -> Option<(String, String)> {
+    if !crate::proof::looped(&source.base) {
+        return None;
+    }
+    let base = Origin::of(&source.base)?;
+    let at = Origin::of(address)?;
+    if at.host() == base.host() && at.port() == base.port() {
+        return None;
+    }
+    let address = format!("{}/{}", source.base.trim_end_matches('/'), sha256);
+    Some((address, format!("{}:{}", base.host(), base.port())))
 }
 
 /// Every place a registry archive at `address` may be downloaded from or

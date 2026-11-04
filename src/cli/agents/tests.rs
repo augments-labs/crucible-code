@@ -836,6 +836,7 @@ fn what_a_move_names_is_written_escaped_on_its_own_line() {
         left: Vec::new(),
         downloaded: false,
         standing: false,
+        probe: None,
         unsmoked: Some("it said\n\u{1b}[31mno".into()),
         unpruned: None,
     }));

@@ -160,8 +160,11 @@ use crucible_client_api::{
 use crucible_config::{ConfigError, Driver, ExternalAgent, Home, Settings};
 use crucible_execution::Authentication;
 use crucible_execution::{Admission, Ending, Failure};
+use crucible_external_harnesses::catalog::registry::RegistryIndex;
 use crucible_external_harnesses::catalog::{AuthMethod, Method, Route, Trust};
-use crucible_external_harnesses::store::{Receipt, Store, StoreError, Version};
+use crucible_external_harnesses::store::{
+    Probe, Receipt, Source as ReleaseSource, Store, StoreError, Version,
+};
 use crucible_external_harnesses::{
     Account as Step, Contended, Coordinator, Discovery, Ended, Journal, Reading, Stage, Work,
 };
@@ -1073,9 +1076,7 @@ async fn choose(
     let rows: Vec<&'static crate::backends::Row> = conversation.agents().shipping().collect();
     let shown = |row: &'static crate::backends::Row| shown_as(conversation, &AgentRow::Built(row));
     let releases = Releases::of(capabilities, desk);
-    let (cataloged, more) = releases
-        .as_ref()
-        .map_or_else(Default::default, |releases| listed(&releases.trust));
+    let (cataloged, more) = releases.as_ref().map_or_else(Default::default, listed);
     for _ in 0..CHECKS {
         let mut choices: Vec<(String, String)> = rows
             .iter()
@@ -1172,6 +1173,10 @@ struct Releases {
     home: PathBuf,
     trust: Trust,
     store: Store,
+    /// The cached ACP Registry index, where one could be read: its offers are
+    /// listed after the signed catalog's and their release is held to its own
+    /// receipt, not to the signed trust state.
+    registry: Option<RegistryIndex>,
 }
 
 impl Releases {
@@ -1186,7 +1191,72 @@ impl Releases {
             home: home.to_path_buf(),
             trust: crate::catalog_fetch::trust_in(home),
             store: Store::new(home.join("programs")),
+            registry: crate::catalog_fetch::cached_registry(home)
+                .ok()
+                .map(|read| read.index),
         })
+    }
+
+    /// Every release this client offers for `agent`: the signed catalog's
+    /// where it lists the agent, else the ACP Registry's.
+    fn offers(&self, key: &AgentKey) -> Vec<crucible_external_harnesses::catalog::Offer> {
+        let signed = self.trust.offers(Some(key));
+        if !signed.is_empty() {
+            return signed;
+        }
+        self.registry
+            .as_ref()
+            .and_then(|index| index.offer(key).ok())
+            .and_then(|offer| offer.offer().ok())
+            .into_iter()
+            .collect()
+    }
+
+    /// Whether `key` is a registry row: no signed offer lists it, and the
+    /// cached index does.
+    fn registry_key(&self, key: &AgentKey) -> bool {
+        self.trust.offers(Some(key)).is_empty()
+            && self
+                .registry
+                .as_ref()
+                .is_some_and(|index| index.entry(key).is_some())
+    }
+
+    /// The probe record the version `version` of `key` was installed under,
+    /// where its receipt carries one.
+    fn probe(&self, key: &AgentKey, version: &Version) -> Option<Probe> {
+        let receipt = self.store.receipt(key, version).ok().flatten()?;
+        (receipt.source == ReleaseSource::Registry)
+            .then_some(receipt.probe)
+            .flatten()
+            .map(|probe| *probe)
+    }
+
+    /// The sign-in methods a registry agent's installed release records, read
+    /// from the cached index and the receipt's probe record, with no trust
+    /// state and no re-probe.
+    fn registry_methods(&self, key: &AgentKey, version: &Version) -> Vec<AuthMethod> {
+        let Some(index) = &self.registry else {
+            return Vec::new();
+        };
+        let Some(probe) = self.probe(key, version) else {
+            return Vec::new();
+        };
+        let Ok(offer) = index.offer(key) else {
+            return Vec::new();
+        };
+        let Some(receipt) = self.store.receipt(key, version).ok().flatten() else {
+            return Vec::new();
+        };
+        offer
+            .installed(&receipt, &probe)
+            .ok()
+            .and_then(|entry| {
+                let target = entry.here().cloned()?;
+                crate::backends::CatalogRow::registry(&entry, &target, index.read_date().into())
+                    .ok()
+            })
+            .map_or_else(Vec::new, |row| AgentRow::Catalog(row).methods())
     }
 
     /// The agent `row` runs, where crucible installs its release.
@@ -1203,14 +1273,24 @@ impl Releases {
         let Some(version) = self.store.version_of(key, Path::new(executable)) else {
             return Some("Runs your own program, not a release Crucible installed.".to_owned());
         };
-        self.trust
-            .revoked(key, version.version(), version.lock_revision())
-            .then(|| {
-                format!(
-                    "Runs version {}, which the agent catalog revoked.",
-                    quoted(version.version())
-                )
-            })
+        // A registry release has no signed revocations; its receipt's own
+        // hash and probe record are what hold it.
+        let registry = self
+            .store
+            .receipt(key, &version)
+            .ok()
+            .flatten()
+            .is_some_and(|receipt| receipt.source == ReleaseSource::Registry);
+        (!registry
+            && self
+                .trust
+                .revoked(key, version.version(), version.lock_revision()))
+        .then(|| {
+            format!(
+                "Runs version {}, which the agent catalog revoked.",
+                quoted(version.version())
+            )
+        })
     }
 
     /// What the row of the shipping agent `row` says, where crucible installs
@@ -1240,14 +1320,14 @@ impl Releases {
 }
 
 /// The catalog agents a connect naming no instance lists after the shipping
-/// agents, as the agents door lists them: each agent `trust` offers, once, by
-/// its key, with the first version offered, but one whose key is a word a
-/// built-in driver is spelled with; at most [`LISTED`], and whether more are
-/// offered than are listed.
-fn listed(trust: &Trust) -> (Vec<(AgentKey, Box<str>)>, bool) {
+/// agents, as the agents door lists them: each agent the signed catalog
+/// offers, then each the ACP Registry offers, once, by its key, with the first
+/// version offered, but one whose key is a word a built-in driver is spelled
+/// with; at most [`LISTED`], and whether more are offered than are listed.
+fn listed(releases: &Releases) -> (Vec<(AgentKey, Box<str>)>, bool) {
     let mut agents: Vec<(AgentKey, Box<str>)> = Vec::new();
     let mut more = false;
-    for offer in trust.offers(None) {
+    for offer in releases.trust.offers(None) {
         let key = offer.entry.key;
         if crate::backends::kept_word(key.as_str())
             || agents.iter().any(|(listed, _)| *listed == key)
@@ -1259,6 +1339,23 @@ fn listed(trust: &Trust) -> (Vec<(AgentKey, Box<str>)>, bool) {
             continue;
         }
         agents.push((key, offer.pin.version));
+    }
+    // The ACP Registry's offers come after the signed catalog's: a signed or
+    // compiled entry is never shadowed by the unsigned registry.
+    if let Some(index) = &releases.registry {
+        for offer in index.offers() {
+            let key = offer.entry().id.clone();
+            if crate::backends::kept_word(key.as_str())
+                || agents.iter().any(|(listed, _)| *listed == key)
+            {
+                continue;
+            }
+            if agents.len() == LISTED {
+                more = true;
+                continue;
+            }
+            agents.push((key, offer.version().into()));
+        }
     }
     (agents, more)
 }
@@ -1371,7 +1468,7 @@ async fn manage(
         let named: Vec<String> = offered.iter().map(|(name, ..)| name.clone()).collect();
         let mut taken: Vec<&str> = named.iter().map(String::as_str).collect();
         taken.extend([CONNECT, "Go back"]);
-        let methods = methods_of(&releases.trust, key, running.as_ref());
+        let methods = methods_of(releases, key, running.as_ref());
         let (signing, more) = sign_ins(one, methods, &taken);
         if more {
             facts.push(MORE_METHODS.to_owned());
@@ -1447,8 +1544,9 @@ fn moves(
         return Vec::new();
     };
     let shown = quoted(key.as_str());
-    let offers = releases.trust.offers(Some(key));
+    let offers = releases.offers(key);
     let first = offers.first().map(|offer| &offer.pin);
+    let registry = releases.registry_key(key);
     let mut offered = Vec::new();
     if let (Ok([]), Some(first)) = (installed.as_deref(), first)
         && let Ok(version) = Name::new(&first.version)
@@ -1478,9 +1576,10 @@ fn moves(
             receipts.iter().any(|receipt| {
                 (&*receipt.version != running.version()
                     || receipt.lock_revision != running.lock_revision())
-                    && !releases
-                        .trust
-                        .revoked(key, &receipt.version, receipt.lock_revision)
+                    && (registry
+                        || !releases
+                            .trust
+                            .revoked(key, &receipt.version, receipt.lock_revision))
             })
         })
     };
@@ -1496,9 +1595,13 @@ fn moves(
 
 /// The sign-in methods the entry of the catalog agent `key` gives, as the
 /// agents door reads them: from the release `running` where the catalog
-/// offers it, else from the first offered.
-fn methods_of(trust: &Trust, key: &AgentKey, running: Option<&Version>) -> Vec<AuthMethod> {
-    let offers = trust.offers(Some(key));
+/// offers it, else from the first offered; for a registry release, from the
+/// cached index and the receipt's probe record, with no re-probe.
+fn methods_of(releases: &Releases, key: &AgentKey, running: Option<&Version>) -> Vec<AuthMethod> {
+    if let Some(version) = running.filter(|_| releases.registry_key(key)) {
+        return releases.registry_methods(key, version);
+    }
+    let offers = releases.trust.offers(Some(key));
     let offer = offers
         .iter()
         .find(|offer| {

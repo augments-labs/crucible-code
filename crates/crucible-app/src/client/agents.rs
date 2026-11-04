@@ -342,6 +342,12 @@ pub struct Listed {
     /// nor a place it keeps its sign-in in, so that a sign-in made under the
     /// sandbox is not kept.
     pub keeps_no_sign_in: bool,
+    /// Whether the row is the ACP Registry's, whose reach and sign-in hosts
+    /// are not recorded.
+    pub registry: bool,
+    /// The probe record the newest offered version was installed under, where
+    /// it is a registry release installed under one.
+    pub probed: Option<Probe>,
 }
 
 /// Which move a confirmed switch was.
@@ -372,8 +378,10 @@ pub enum Outcome {
         /// Why the catalog was not refreshed first, where it was not: what is
         /// named is what was believed before.
         unrefreshed: Option<FetchError>,
-        /// Why the ACP Registry index was the cached one, or why none could be
-        /// read: the line a listing shows beside the agents it lists.
+        /// The line a listing shows beside the agents it lists for the ACP
+        /// Registry: the day the index was read and that it is not reviewed,
+        /// why it was the cached one where it was not verified, or why none
+        /// could be read.
         registry: Option<Box<str>>,
     },
     /// Nobody said yes, so nothing was fetched or changed.
@@ -398,6 +406,9 @@ pub enum Outcome {
         /// Whether it was an update taken without asking, because the user's
         /// own file says `agents.update = "reviewed"`.
         standing: bool,
+        /// The probe record a registry release was installed under, where one
+        /// was taken.
+        probe: Option<Probe>,
         /// Why the switch was not smoke-tested, where it was not.
         unsmoked: Option<Box<str>>,
         /// Why the store was not pruned afterwards, where it was not.
@@ -578,6 +589,20 @@ pub enum AgentsError {
     /// `-I`.
     #[error(transparent)]
     Unpacked(#[from] UnpackError),
+    /// The vendor's program did not answer the install-time probe, so nothing
+    /// was put in place.
+    #[error(
+        "{agent} {version} did not answer the install-time probe, so nothing was installed: \
+         {why}"
+    )]
+    Probe {
+        /// The agent.
+        agent: AgentKey,
+        /// The version.
+        version: Box<str>,
+        /// Why the probe answered nothing it could record.
+        why: Box<crate::probing::Unprobed>,
+    },
     /// A program a package tree declares could not be given a stub in
     /// `.bin`.
     #[error(transparent)]
@@ -1059,11 +1084,14 @@ impl Door<'_> {
                 caution: offer.entry.caution,
                 installed,
                 keeps_no_sign_in,
+                registry: false,
+                probed: None,
             });
         }
         // The ACP Registry's agents, after what the signed catalog offers: a
         // key it lists once is not listed twice, and a key a built-in driver
         // is spelled with gets no registry row.
+        let mut from_registry = false;
         if let Some(view) = &self.registry {
             for offer in view.index.offers() {
                 let key = &offer.entry().id;
@@ -1074,6 +1102,8 @@ impl Door<'_> {
                     more = true;
                     continue;
                 }
+                let probed = self.probed(key, offer.version());
+                from_registry = true;
                 agents.push(Listed {
                     agent: key.clone(),
                     offered: vec![offer.version().into()],
@@ -1084,15 +1114,58 @@ impl Door<'_> {
                     // The registry gives an agent no variable for its home and
                     // no place it keeps its sign-in in.
                     keeps_no_sign_in: true,
+                    registry: true,
+                    probed,
                 });
             }
         }
+        // A registry the read failed for says why only where it lists an
+        // agent: a catalog with no registry row keeps its screen.
+        let registry = (from_registry || self.registry.is_some())
+            .then(|| self.registry_line())
+            .flatten();
         Outcome::Catalog {
             agents,
             more,
             unrefreshed,
-            registry: self.registry_notice.clone(),
+            registry,
         }
+    }
+
+    /// The line a listing shows beside what it lists of the ACP Registry: the
+    /// day the index was read and that it is not reviewed by Crucible, and why
+    /// it was the cached one where it was not verified; or why none could be
+    /// read.
+    fn registry_line(&self) -> Option<Box<str>> {
+        match (&self.registry, &self.registry_notice) {
+            (Some(view), Some(why)) => Some(
+                format!(
+                    "Source: ACP Registry, read {}; {why}; not reviewed by Crucible.",
+                    view.index.read_date()
+                )
+                .into(),
+            ),
+            (Some(view), None) => Some(
+                format!(
+                    "Source: ACP Registry, read {}; not reviewed by Crucible.",
+                    view.index.read_date()
+                )
+                .into(),
+            ),
+            (None, Some(why)) => Some(why.clone()),
+            (None, None) => None,
+        }
+    }
+
+    /// The probe record the version `version` of `agent` was installed under,
+    /// where the store holds one and it was a registry release.
+    fn probed(&self, agent: &AgentKey, version: &str) -> Option<Probe> {
+        let version = Version::new(version, None).ok()?;
+        let receipt = self.store.receipt(agent, &version).ok().flatten()?;
+        (receipt.source == Released::Registry)
+            .then_some(receipt.probe)
+            .flatten()
+            .map(|probe| *probe)
     }
 
     /// The versions of `agent` the store holds with a receipt, or why its
@@ -1420,21 +1493,6 @@ impl Door<'_> {
                 return Ok(Outcome::Undecided);
             }
         }
-        // A registry offer's file list is the survey T55's install selector
-        // supplies. Before that, an offer with no listed program is refused
-        // here, after the question and before anything is downloaded, so a
-        // provisional offer can never commit an unprobed release or move an
-        // instance it cannot launch. A registry install also needs the probe
-        // record the receipt keeps.
-        if source == Released::Registry {
-            runnable(&listed, &target.cmd)?;
-            if probe.is_none() {
-                return Err(AgentsError::Unsupported(
-                    "a registry install with no probe record, which this build does not take \
-                     before an install",
-                ));
-            }
-        }
         // An install script reaches what its agent's route answers for, so
         // none is run before that route has its yes; a version kept runs none.
         let scripting = if kept || locals.is_empty() {
@@ -1446,7 +1504,74 @@ impl Door<'_> {
             return Ok(Outcome::Undecided);
         };
 
-        if !kept {
+        // A registry offer's file list is the survey, which is taken after the
+        // yes: the one archive is downloaded within the registry's cap, its
+        // file list is what the survey wrote, and the vendor's program is run
+        // once in the closed sandbox for the receipt's probe record. A failed
+        // probe installs nothing, so neither a provisional offer nor an
+        // unprobed receipt is ever committed.
+        let mut registered: Option<Probe> = None;
+        if !kept && source == Released::Registry {
+            let staging = self.store.stage(agent)?;
+            let Some(artifact) = target.artifacts.first() else {
+                return Err(AgentsError::Unsupported(
+                    "a registry release with no archive",
+                ));
+            };
+            let name = Name::new(agent.as_str()).ok();
+            let mut told = telling(name.as_ref(), 0, total, &mut *watching.progress);
+            let arrived = landed(
+                &self.shelf.catalog,
+                &target.hosts,
+                artifact,
+                &staging,
+                (&mut told, watching.cancel),
+                true,
+            )
+            .await?;
+            let surveyed = {
+                let artifact = crate::installing::registry_artifact(
+                    &arrived.url,
+                    &arrived.sha256,
+                    arrived.size,
+                    artifact.format,
+                );
+                let mut reading = staging.downloaded()?;
+                Unpacker::survey_from(&mut reading, &artifact, staging.directory())?
+            };
+            let files = surveyed.files().to_vec();
+            runnable(&files, &target.cmd)?;
+            let entry = probe_entry(offer)?;
+            // The probe starts its own services and runtime, so it runs on a
+            // blocking thread of this one rather than inside the turn.
+            let root = staging.directory().to_owned();
+            let record = tokio::task::spawn_blocking(move || {
+                crate::installing::probed(&root, &entry, crate::probing::BOUND)
+            })
+            .await
+            .map_err(|_| AgentsError::Unsupported("a registry probe that did not finish"))?
+            .map_err(|why| AgentsError::Probe {
+                agent: agent.clone(),
+                version: offer.pin.version.clone(),
+                why: Box::new(why),
+            })?;
+            let provenance = Provenance {
+                listing: Listing {
+                    serial: offer.serial,
+                    review: offer.entry.review.clone(),
+                    terms: offer.entry.terms.clone(),
+                },
+                source,
+                probe: Some(record.clone()),
+                fetched: SystemTime::now(),
+                artifacts: vec![arrived],
+                decompressed: surveyed.decompressed(),
+            };
+            self.store.commit(staging, &version, &files, provenance)?;
+            registered = Some(record);
+        }
+
+        if !kept && source != Released::Registry {
             let staging = self.store.stage(agent)?;
             let name = Name::new(agent.as_str()).ok();
             let mut files = Vec::new();
@@ -1461,6 +1586,7 @@ impl Door<'_> {
                     artifact,
                     &staging,
                     (&mut told, watching.cancel),
+                    false,
                 )
                 .await?;
                 before = before.saturating_add(arrived.size);
@@ -1505,6 +1631,7 @@ impl Door<'_> {
                     &built.artifact,
                     &staging,
                     (&mut told, watching.cancel),
+                    false,
                 )
                 .await?;
                 before = before.saturating_add(arrived.size);
@@ -1527,7 +1654,7 @@ impl Door<'_> {
                     terms: offer.entry.terms.clone(),
                 },
                 source,
-                probe,
+                probe: probe.clone(),
                 fetched: SystemTime::now(),
                 artifacts: fetched,
                 decompressed,
@@ -1548,6 +1675,7 @@ impl Door<'_> {
             left,
             downloaded: !kept,
             standing,
+            probe: registered.or(probe),
             unsmoked: plan.smoking.as_ref().err().map(|why| why.as_str().into()),
             unpruned: self.prune(agent, &program).err().map(Box::new),
         })
@@ -1618,6 +1746,16 @@ impl Door<'_> {
                     quoted(&fact.read)
                 ),
             });
+            // The registry's generic warning is the route's hold; the install
+            // says it now, and the launch puts it again before anything starts.
+            facts.push(
+                content_use::generic(entry.key.as_str(), &fact.read)
+                    .warning
+                    .sentence
+                    .into_owned(),
+            );
+            // No registry entry records the hosts an agent reaches.
+            facts.push(content_use::UNRECORDED.to_owned());
         }
         if kept && plan.tree.is_some() {
             facts.push(
@@ -1939,6 +2077,7 @@ impl Door<'_> {
             left,
             downloaded: false,
             standing: false,
+            probe: previous.probe.map(|probe| *probe),
             unsmoked: smoking.as_ref().err().map(|why| why.as_str().into()),
             unpruned: self.prune(agent, &program).err().map(Box::new),
         })
@@ -3196,26 +3335,87 @@ fn telling<'a>(
 
 /// Downloads `artifact` to `staging`'s download file, held to its pin as it
 /// arrives, and closes the file so it can be read back.
+// Each is an input of its own to the download, and a value gathering them
+// would be built at each caller and taken apart here.
+#[allow(clippy::too_many_arguments)]
 async fn landed(
     source: &Source,
     hosts: &[Box<str>],
     artifact: &Artifact,
     staging: &crucible_external_harnesses::store::Staging,
     (told, cancel): (&mut (dyn FnMut(u64, u64) + Send), &Cancel),
+    bounded: bool,
 ) -> Result<Fetched, AgentsError> {
     let mut landing = staging.download()?;
-    let arrived = agent_download::artifact(
-        source,
-        hosts,
-        artifact,
-        Landing {
-            file: &mut landing,
-            progress: told,
-        },
-        cancel,
-    )
-    .await?;
+    let landing = Landing {
+        file: &mut landing,
+        progress: told,
+    };
+    let arrived = if bounded {
+        // A registry archive has no exact size: the capped path accepts one
+        // shorter than its bound and records the size that arrived.
+        agent_download::capped(
+            source,
+            hosts,
+            &artifact.url,
+            &artifact.sha256,
+            landing,
+            cancel,
+        )
+        .await?
+    } else {
+        agent_download::artifact(source, hosts, artifact, landing, cancel).await?
+    };
     Ok(arrived)
+}
+
+/// The provisional entry of a registry offer, as [`crate::installing::probed`]
+/// reads it: the platform's target, its program and arguments, and the archive
+/// the survey was taken from. The probe starts the program from the surveyed
+/// staging, so the entry carries no file list; it is read again through
+/// `Entry::unsigned` before anything runs, as every provisional entry is.
+fn probe_entry(offer: &Offer) -> Result<Vec<u8>, AgentsError> {
+    let target = &offer.pin.target;
+    let artifact = target.artifacts.first().ok_or(AgentsError::Unsupported(
+        "a registry release with no archive",
+    ))?;
+    let format = match artifact.format {
+        Format::Zip => "zip",
+        Format::TarGz => "tar.gz",
+        Format::TarBz2 => "tar.bz2",
+        Format::Bare => "bare",
+        Format::Wheel => "wheel",
+    };
+    let document = serde_json::json!({
+        "key": offer.entry.key.as_str(),
+        "registry_id": &*offer.entry.registry_id,
+        "version": &*offer.entry.version,
+        "kind": "binary",
+        "license": &*offer.entry.license,
+        "review": &*offer.entry.review,
+        "admits": {
+            "name": &*offer.entry.admits.name,
+            "version": &*offer.entry.admits.version,
+        },
+        "targets": [{
+            "platform": &*target.platform,
+            "cmd": &*target.cmd,
+            "args": target.args.iter().map(|argument| &**argument).collect::<Vec<_>>(),
+            "env": target.env.iter().map(|variable| (&*variable.name, &*variable.value)).collect::<std::collections::BTreeMap<_, _>>(),
+            "hosts": target.hosts.iter().map(|host| &**host).collect::<Vec<_>>(),
+            "artifacts": [{
+                "url": &*artifact.url,
+                "sha256": &*artifact.sha256,
+                "size": artifact.size,
+                "format": format,
+                "unpacked": artifact.unpacked,
+                "decompressed": artifact.decompressed,
+                "files": [],
+            }],
+        }],
+    });
+    serde_json::to_vec(&document)
+        .map_err(|_| AgentsError::Unsupported("a registry probe entry that cannot be written"))
 }
 
 /// The files of `tree` installed into `staging`: each tarball

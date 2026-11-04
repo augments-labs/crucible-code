@@ -17,6 +17,8 @@ fn listed(key: &str, offered: &[&str], license: &str, installed: &[&str]) -> doo
         caution: None,
         installed: Ok(installed.iter().map(|&version| version.into()).collect()),
         keeps_no_sign_in: false,
+        registry: false,
+        probed: None,
     }
 }
 
@@ -29,6 +31,7 @@ fn three() -> Listing {
             listed("aider", &["2.1.0"], "MIT", &[]),
         ],
         false,
+        None,
         None,
     )
 }
@@ -81,7 +84,7 @@ fn the_preview_holds_the_licence_the_versions_held_the_terms_and_the_caution() {
     let mut agent = listed("opencode", &["0.9.1", "0.9.0"], "MIT", &["0.9.1", "0.9.0"]);
     agent.terms = Some("https://example.com/opencode/terms".into());
     agent.caution = Some("Read the opencode terms first.".into());
-    let mut listing = Listing::new(vec![agent], false, None);
+    let mut listing = Listing::new(vec![agent], false, None, None);
 
     let rows = drawn(&mut listing, 100, 30).join("\n");
     for told in [
@@ -99,7 +102,7 @@ fn what_the_catalog_says_of_an_agent_cannot_draw_a_line_or_reach_the_terminal() 
     let mut hostile = listed("goose", &["1.0\u{1b}[2J"], "MIT\nfake: line", &["0.1\u{7}"]);
     hostile.terms = Some("https://example.com/\u{1b}]8;;x\u{7}".into());
     hostile.caution = Some("read\u{202e}this\nfirst".into());
-    let mut listing = Listing::new(vec![hostile], false, None);
+    let mut listing = Listing::new(vec![hostile], false, None, None);
 
     let rows = drawn(&mut listing, 120, 30);
     let told = provenance(&listing.agents.first().expect("an entry").listed, None);
@@ -228,7 +231,7 @@ fn a_long_list_of_versions_names_the_first_few_and_counts_the_rest() {
 fn a_store_that_could_not_be_read_says_so_on_the_entry_and_why_on_the_screen() {
     let mut agent = listed("goose", &["1.0.0"], "MIT", &[]);
     agent.installed = Err("permission\u{1b} denied".into());
-    let mut listing = Listing::new(vec![agent], false, None);
+    let mut listing = Listing::new(vec![agent], false, None, None);
 
     let rows = drawn(&mut listing, 100, 30).join("\n");
     assert!(rows.contains("MIT · the store could not be read"), "{rows}");
@@ -245,6 +248,7 @@ fn the_closing_lines_say_more_are_offered_and_that_the_catalog_was_not_refreshed
         vec![listed("goose", &["1.0.0"], "MIT", &[])],
         true,
         Some(&FetchError::Status(503)),
+        None,
     );
 
     let rows = drawn(&mut listing, 200, 30).join("\n");
@@ -276,6 +280,7 @@ fn with_no_list_to_stand_each_agent_is_printed_on_a_line_of_its_own_escaped_and_
         ],
         true,
         None,
+        None,
     );
 
     // Wide enough that no line folds, so a row is a line said.
@@ -295,7 +300,7 @@ fn with_no_list_to_stand_each_agent_is_printed_on_a_line_of_its_own_escaped_and_
 
 #[test]
 fn an_empty_catalog_says_that_none_is_offered() {
-    let listing = Listing::new(Vec::new(), false, None);
+    let listing = Listing::new(Vec::new(), false, None, None);
 
     assert_eq!(said(&listing, 80), [NONE_OFFERED]);
 }
@@ -310,6 +315,7 @@ fn an_add_names_the_instance_written_which_is_the_last_the_door_gives() {
         left: vec!["mine\u{1b}".into()],
         downloaded: false,
         standing: false,
+        probe: None,
         unsmoked: None,
         unpruned: None,
     })
@@ -332,6 +338,7 @@ fn an_add_that_was_not_smoke_tested_or_pruned_says_why() {
         left: Vec::new(),
         downloaded: true,
         standing: false,
+        probe: None,
         unsmoked: Some("the sandbox is off".into()),
         unpruned: Some(Box::new(AgentsError::TooLarge)),
     })
@@ -354,6 +361,7 @@ fn a_move_that_is_not_an_add_is_not_said_as_one() {
         left: Vec::new(),
         downloaded: true,
         standing: false,
+        probe: None,
         unsmoked: None,
         unpruned: None,
     };
@@ -423,7 +431,7 @@ fn listing(agents: usize, closing: bool, typed: &str) -> Listing {
             agent
         })
         .collect();
-    let mut listing = Listing::new(listed, closing, closing.then_some(&FetchError::Late));
+    let mut listing = Listing::new(listed, closing, closing.then_some(&FetchError::Late), None);
     let _ = listing.query.paste(typed);
     listing
 }

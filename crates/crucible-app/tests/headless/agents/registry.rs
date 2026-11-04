@@ -875,7 +875,7 @@ fn the_registry_sign_in_row_reads_its_route_and_refuses_a_terminal_method() -> R
 }
 
 #[test]
-fn a_registry_install_from_a_provisional_offer_is_refused_before_a_download() -> Result<(), Failed>
+fn a_registry_install_from_a_provisional_offer_downloads_after_the_question() -> Result<(), Failed>
 {
     let bench = Bench::new("registry-provisional-install")?;
     cache(&bench.home, &registry_json("2.0.0"));
@@ -897,10 +897,9 @@ fn a_registry_install_from_a_provisional_offer_is_refused_before_a_download() ->
         },
     )?;
 
-    let Err(AgentsError::Program(program)) = outcome else {
-        panic!("the provisional install was not refused: {outcome:?}");
+    let Err(AgentsError::Download(_)) = outcome else {
+        panic!("the provisional install did not try the download: {outcome:?}");
     };
-    assert_eq!(&*program, "goose");
     assert!(!front.put.is_empty(), "the question was not put");
     assert_eq!(
         Path::new(&bench.executable()?),
@@ -996,5 +995,139 @@ fn a_stale_cache_install_and_update_name_the_day_it_was_read() -> Result<(), Fai
     };
     assert!(why.contains("2026-10-07"), "{why}");
     assert!(why.contains("not verified"), "{why}");
+    Ok(())
+}
+
+/// Installing a registry release downloads its one archive within the
+/// registry's bounded path, surveys it from the file it landed in, runs the
+/// vendor's program once in the closed sandbox, and stores the probe record in
+/// the receipt; a later session rebuilds the row from that record without
+/// starting the vendor again.
+#[test]
+fn a_registry_install_surveys_probes_and_stores_the_record() -> Result<(), Failed> {
+    use crucible_external_harnesses::fake_peer::scripts::acp;
+    use crucible_external_harnesses::fake_peer::{self, Script};
+    use crucible_external_harnesses::store::Probe;
+
+    let bench = Bench::new("registry-install-probed")?;
+    let built = bench.home.path().join("built");
+    let initialized = acp::offering("goose-acp", "1.0.0", &json!([]));
+    let program = fake_peer::install(
+        &built,
+        "goose",
+        &Script::once(
+            crucible_external_harnesses::fake_peer::Reply::new()
+                .hear(1)
+                .say(&initialized),
+        ),
+    )?;
+    let program_name = program
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .expect("a program name")
+        .to_owned();
+    let script = fs::read(built.join("script"))?;
+    let archive = fake_peer::archive(&[(&program_name, &fs::read(&program)?), ("script", &script)]);
+    let digest = digest(&archive);
+    bench
+        .server
+        .serve(&format!("/catalog/{digest}"), Reply::Body(archive.clone()));
+    let mut index = registry_json("1.0.0");
+    let target = index
+        .pointer_mut(&format!("/agents/0/distribution/binary/{}", platform()))
+        .expect("the goose target");
+    target["archive"] = json!("https://downloads.example.com/goose-1.0.0.zip");
+    target["cmd"] = json!(format!("./{program_name}"));
+    target["sha256"] = json!(digest);
+    bench
+        .server
+        .serve("/registry.json", Reply::Body(serde_json::to_vec(&index)?));
+
+    let shelf = Shelf {
+        catalog: bench.server.source(),
+        registry: Some(RegistrySource {
+            url: bench.server.at("/registry.json"),
+            hosts: &[],
+            proxy: ProxyEnv::default(),
+        }),
+        home: &bench.home,
+        smoke: None,
+        steps: None,
+    };
+    let mut front = Recording {
+        choice: Some("Install"),
+        facts: Vec::new(),
+    };
+    let outcome = on_runtime(run(
+        &ask(Command::InstallAgent {
+            agent: name("goose")?,
+            version: name("1.0.0")?,
+        }),
+        &shelf,
+        &mut front,
+        Watching {
+            progress: &mut |_| {},
+            cancel: &Cancel::new(),
+            link: &|_| {},
+            sign_in: None,
+            terminal: None,
+        },
+    ))?;
+    let Ok(Outcome::Moved {
+        downloaded: true,
+        probe: Some(probe),
+        ..
+    }) = outcome
+    else {
+        panic!("no probed install: {outcome:?}");
+    };
+    assert_eq!(&*probe.admits.name, "goose-acp");
+    assert_eq!(&*probe.admits.version, "1.0.0");
+    assert_eq!(&*probe.target, platform());
+
+    // The question named the download and the probe.
+    let said = front.facts.first().expect("a question fact");
+    assert!(said.contains("download"), "{said}");
+    assert!(said.contains("survey"), "{said}");
+    assert!(said.contains("probe"), "{said}");
+
+    // The receipt stores what the probe answered, under the platform it was
+    // taken for.
+    let store = Store::new(bench.home.path().join("programs"));
+    let version = Version::new("1.0.0", None)?;
+    let receipt = store
+        .receipt(&AgentKey::new("goose")?, &version)?
+        .expect("a receipt");
+    let Probe {
+        target: recorded,
+        admits,
+        ..
+    } = receipt.probe.as_deref().expect("a probe record");
+    assert_eq!(&**recorded, platform());
+    assert_eq!(&*admits.name, "goose-acp");
+
+    // A later session rebuilds the row from the cached index and the receipt,
+    // starting the vendor's program not at all.
+    let root = store.directory(&AgentKey::new("goose")?, &version);
+    let played = fake_peer::played(&root);
+    let installed = root.join(&program_name);
+    configure(&bench.home, &installed)?;
+    let configured = instance(&bench.home, "work")?;
+    let agent = Agent::believing(
+        &configured,
+        &REGISTRY,
+        &catalog_fetch::state_in(bench.home.path()),
+        |name| (name == "PATH").then(|| std::ffi::OsString::from("/bin")),
+    )
+    .map_err(|why| why.to_string())?;
+    assert_eq!(
+        fake_peer::played(&root),
+        played,
+        "a later session re-probed"
+    );
+    let AgentRow::Catalog(row) = agent.row() else {
+        panic!("not a catalog row");
+    };
+    assert!(row.warned().is_ok());
     Ok(())
 }

@@ -443,9 +443,34 @@ impl Published {
         Self::serving_beside(more, Vec::new())
     }
 
+    /// Starts the host with the ACP Registry index `index` served at
+    /// `/catalog/registry.json`, and `archive` kept under its digest for the
+    /// registry target that pins it.
+    pub(crate) fn registry(index: &serde_json::Value, archive: Vec<u8>) -> Self {
+        let served = Self::serving_routes(
+            Vec::new(),
+            vec![archive],
+            vec![(
+                "/catalog/registry.json".to_owned(),
+                serde_json::to_vec(&index).expect("a registry index"),
+            )],
+        );
+        served.release();
+        served
+    }
+
     /// [`Published::serving`], with each of `beside` kept on the host too, a
     /// file of a release that no entry is led by.
     fn serving_beside(more: Vec<(serde_json::Value, Vec<u8>)>, beside: Vec<Vec<u8>>) -> Self {
+        Self::serving_routes(more, beside, Vec::new())
+    }
+
+    /// [`Published::serving_beside`], with `extra` routes served as they are.
+    fn serving_routes(
+        more: Vec<(serde_json::Value, Vec<u8>)>,
+        beside: Vec<Vec<u8>>,
+        extra: Vec<(String, Vec<u8>)>,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("a port on this machine");
         let port = listener.local_addr().expect("its address").port();
         let program = released(b"agy-acp-server, as reviewed\n");
@@ -477,6 +502,7 @@ impl Published {
                 ("/catalog/index.json.minisig".to_owned(), signed.signature),
             ]
             .into_iter()
+            .chain(extra)
             .chain(
                 offers
                     .into_iter()
@@ -605,7 +631,7 @@ fn released(seed: &[u8]) -> Vec<u8> {
 }
 
 /// `bytes`' SHA-256, in lower case hexadecimal.
-fn digest(bytes: &[u8]) -> String {
+pub(crate) fn digest(bytes: &[u8]) -> String {
     use sha2::Digest as _;
     use std::fmt::Write as _;
     sha2::Sha256::digest(bytes)
@@ -617,7 +643,7 @@ fn digest(bytes: &[u8]) -> String {
 }
 
 /// How this machine's platform is spelled in a catalog.
-fn platform() -> String {
+pub(crate) fn platform() -> String {
     let os = match std::env::consts::OS {
         "macos" => "darwin",
         other => other,
