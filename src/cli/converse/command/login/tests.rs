@@ -1989,3 +1989,99 @@ fn only_a_terminal_lends_a_sign_in_command_a_panel() {
     let mut redirected = Renderer::new(Recording::redirected(80, 24));
     assert!(!overseeing(&mut redirected).carries_lines());
 }
+
+/// The drawing thread must stop polling the terminal the moment a child is
+/// handed it: a key it read there would be read by a background process group,
+/// which the kernel stops with `SIGTTIN`, and the door's bound would be
+/// stopped with it.
+///
+/// The terminal used here is handed over by its first frame, as the door hands
+/// one over while the panel stands. The poll count is what proves nothing was
+/// read after that, and the acknowledgement is what lets the door write the
+/// leave sequences without racing this thread.
+#[test]
+fn a_handed_terminal_is_not_polled_for_a_key() {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    #[derive(Debug)]
+    struct Polls(Arc<AtomicUsize>);
+
+    impl crucible_tui::Recall for Polls {
+        fn waiting(&self) -> bool {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            true
+        }
+
+        fn recalled(&self) -> bool {
+            false
+        }
+
+        fn waited(&self) {}
+    }
+
+    #[derive(Debug)]
+    struct HandsOver {
+        inner: Recording,
+        handed: Arc<AtomicBool>,
+    }
+
+    impl Terminal for HandsOver {
+        fn size(&self) -> Result<crucible_tui::Size, crucible_tui::TerminalError> {
+            self.inner.size()
+        }
+
+        fn write(&mut self, text: &str) -> Result<(), crucible_tui::TerminalError> {
+            self.inner.write(text)
+        }
+
+        fn flush(&mut self) -> Result<(), crucible_tui::TerminalError> {
+            let flushed = self.inner.flush();
+            self.handed.store(true, Ordering::SeqCst);
+            flushed
+        }
+
+        fn is_terminal(&self) -> bool {
+            self.inner.is_terminal()
+        }
+    }
+
+    let told = Mutex::new(Watched::default());
+    let cancel = Cancel::new();
+    let over = AtomicBool::new(false);
+    let mut carrying = Carrying::for_test(&told, &cancel, &over);
+    let handed = carrying.handed_for_test();
+    let polls = Arc::new(AtomicUsize::new(0));
+    let mut renderer = Renderer::new(HandsOver {
+        inner: Recording::new(80, 24),
+        handed: Arc::clone(&handed),
+    });
+    renderer.recalled_by(Arc::new(Polls(Arc::clone(&polls))));
+
+    watched(
+        &mut renderer,
+        Style::plain(),
+        TITLE,
+        "signing in",
+        &mut carrying,
+    )
+    .expect("the panel stands and leaves when the child takes the terminal");
+    watched(
+        &mut renderer,
+        Style::plain(),
+        TITLE,
+        "signing in",
+        &mut carrying,
+    )
+    .expect("the panel waits while the child has the terminal");
+
+    assert_eq!(
+        polls.load(Ordering::SeqCst),
+        0,
+        "the drawing thread polled the terminal the child owns"
+    );
+    assert!(
+        carrying.acknowledged_for_test(),
+        "the door was not told the drawing thread left the read loop"
+    );
+}

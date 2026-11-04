@@ -1033,3 +1033,35 @@ fn a_refusal_beside_a_run_is_busy_and_no_other_refusal_is() {
     );
     assert_eq!(super::coded(&AgentsError::TooLarge), ErrorCode::Failed);
 }
+
+/// The leave sequences are not written until the drawing thread says it has
+/// left the loop that reads the terminal: a handover that ran first could race
+/// a read or a frame, which is what the drawing thread is being kept out of.
+#[test]
+fn a_handover_waits_for_the_drawing_thread_to_leave() {
+    use crucible_app::client::agents::SignInTerminal as _;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    let handover = Arc::new(super::Handover::new(None));
+    let returned = Arc::new(AtomicBool::new(false));
+    let worker = {
+        let handover = Arc::clone(&handover);
+        let returned = Arc::clone(&returned);
+        std::thread::spawn(move || {
+            let result = handover.handed(7);
+            returned.store(true, Ordering::SeqCst);
+            result
+        })
+    };
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(
+        !returned.load(Ordering::SeqCst),
+        "the handover ran before the drawing thread had left the read loop"
+    );
+    handover.left();
+    assert!(
+        worker.join().expect("the handover thread").is_ok(),
+        "a handover the drawing thread left for was refused"
+    );
+}

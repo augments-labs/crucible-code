@@ -504,9 +504,10 @@ put in a process group of its own, which becomes the terminal's foreground
 group, so Ctrl+C reaches it alone; when its ten minutes pass the whole group is
 killed and waited for. The terminal is handed back and every row painted again
 afterwards, and the agent's own status read afterwards is what decides whether
-the sign-in took. The command's environment is the catalog's record alone,
-starting from a cleared environment, and it is run from the version installed,
-which stays read-only for the agent's other runs.
+the sign-in took. The command's environment is the catalog's record merged with
+the shell's allowlist of passed variables, starting from a cleared
+environment, and it is run from the version installed, which stays read-only
+for the agent's other runs.
 
 ## Environment and credentials
 

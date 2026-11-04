@@ -3,6 +3,9 @@
 //! own word differs from its signed entry, carried both ways where neither, and
 //! believed only as the agent reads afterwards.
 
+use std::time::Instant;
+
+use crucible_app::client::agents::HandoverFailed;
 use crucible_sandbox::SandboxDomainPattern;
 
 use super::*;
@@ -49,6 +52,10 @@ fn a_method_that_needs_a_real_terminal_is_refused_however_much_is_lent() -> Resu
 struct Handed {
     offered: Mutex<Vec<u32>>,
     resumed: std::sync::atomic::AtomicUsize,
+    /// Whether each child was stopped when the handover was asked for.
+    stopped: Mutex<Vec<bool>>,
+    /// Whether to refuse the handover, as a terminal that cannot be given.
+    refuse: std::sync::atomic::AtomicBool,
 }
 
 impl Handed {
@@ -58,14 +65,46 @@ impl Handed {
             .map(|offered| offered.clone())
             .unwrap_or_default()
     }
+
+    fn stopped(&self) -> Vec<bool> {
+        self.stopped
+            .lock()
+            .map(|stopped| stopped.clone())
+            .unwrap_or_default()
+    }
+}
+
+/// Whether `pid` is stopped now, as a handover must find the child before it
+/// gives it the terminal.
+#[cfg(target_os = "linux")]
+fn stopped(pid: u32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .and_then(|stat| {
+            stat.rsplit_once(')')
+                .and_then(|(_, rest)| rest.trim_start().chars().next())
+        })
+        == Some('T')
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn stopped(_: u32) -> bool {
+    true
 }
 
 #[cfg(unix)]
 impl SignInTerminal for Handed {
-    fn handed(&self, pid: u32) {
+    fn handed(&self, pid: u32) -> Result<(), HandoverFailed> {
         if let Ok(mut offered) = self.offered.lock() {
             offered.push(pid);
         }
+        if let Ok(mut stopped_now) = self.stopped.lock() {
+            stopped_now.push(stopped(pid));
+        }
+        if self.refuse.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(HandoverFailed::new("this terminal cannot be given"));
+        }
+        Ok(())
     }
 
     fn resumed(&self) {
@@ -419,8 +458,9 @@ fn a_real_terminal_sign_in_is_refused_while_the_sandbox_is_required() -> Result<
 }
 
 /// A sign-in at a real terminal runs the catalog's command with the terminal
-/// handed to it, takes the terminal back, and is believed only as the agent is
-/// read afterwards.
+/// handed to it, holds the child stopped until the handover has succeeded and
+/// the instance's control across it, takes the terminal back, and is believed
+/// only as the agent is read afterwards.
 #[test]
 #[cfg(unix)]
 fn a_real_terminal_sign_in_runs_with_a_handover_and_is_read_as_signed_in() -> Result<(), Failed> {
@@ -430,7 +470,9 @@ fn a_real_terminal_sign_in_runs_with_a_handover_and_is_read_as_signed_in() -> Re
         &bench,
         &Peer::of([
             signed_in_after(),
-            Played::new().say("the terminal says hello"),
+            Played::new()
+                .pause(Duration::from_millis(50))
+                .say("the terminal says hello"),
             signed_in_after(),
         ]),
     )?;
@@ -458,11 +500,146 @@ fn a_real_terminal_sign_in_runs_with_a_handover_and_is_read_as_signed_in() -> Re
     assert_eq!(handed.offered().len(), 1, "the child was not handed over");
     assert!(handed.offered().first().is_some_and(|pid| *pid > 0));
     assert_eq!(
+        handed.stopped(),
+        [true],
+        "the child was not held stopped until the terminal was its own"
+    );
+    assert_eq!(
         handed.resumed.load(std::sync::atomic::Ordering::Relaxed),
         1,
         "the terminal was not taken back once"
     );
     assert_eq!(fake_peer::played(&root), 3);
+    Ok(())
+}
+
+/// A real-terminal sign-in starts its recorded command with the release's
+/// updater-off variable, as the piped route does: the agent's updater cannot
+/// run during the unconfined sign-in.
+#[test]
+#[cfg(unix)]
+fn a_real_terminal_sign_in_turns_the_agents_updater_off() -> Result<(), Failed> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-terminal-updater")?;
+    let method = json!({
+        "type": "terminal",
+        "id": "terminal",
+        "name": "Sign in at a terminal",
+        "command": "login.sh",
+        "args": ["login"],
+        "env": {"SIGNING": "in"},
+        "route": "terminal",
+    });
+    let status = || {
+        Played::new()
+            .hear(1)
+            .say(offered(&method))
+            .hear(1)
+            .say(acp::opened(1))
+    };
+    let mut release = signing_in_by(&bench, &Peer::of([status(), status()]))?;
+    set(&mut release, "/auth_methods/0/command", json!("login.sh"));
+    set(&mut release, "/auth_methods/0/route", json!("terminal"));
+    if let Some(object) = release.as_object_mut() {
+        object.insert(
+            "updater_off".into(),
+            json!({"name": "GOOSE_NO_UPDATE", "value": "1"}),
+        );
+    }
+    let root = bench.with_installed(&release)?;
+    let script = root.join("login.sh");
+    fs::write(
+        &script,
+        "#!/bin/sh\nprintf %s \"$GOOSE_NO_UPDATE\" > ../updater\n",
+    )?;
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755))?;
+
+    let signed = bench.ask_piped_terminal(
+        &mut answering(&bench.server, Some("Run it")),
+        (local_of(&runtime), false, true),
+        &Handed::default(),
+        &runtime,
+    )?;
+
+    assert!(
+        matches!(
+            &signed,
+            Ok(Outcome::SignedIn {
+                by: Signed::Command,
+                ..
+            })
+        ),
+        "{signed:?}",
+    );
+    assert_eq!(
+        fs::read_to_string(bench.programs().join("updater"))?,
+        "1",
+        "the sign-in ran with the agent's updater left on"
+    );
+    Ok(())
+}
+
+/// A handover that cannot give the terminal refuses the sign-in and kills the
+/// child's whole group: nothing is left running with this process's group in
+/// the foreground.
+#[test]
+#[cfg(unix)]
+fn a_handover_that_fails_refuses_and_kills_the_group() -> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-terminal-unhanded")?;
+    let release = signing_in_at_terminal(
+        &bench,
+        &Peer::of([
+            signed_in_after(),
+            Played::new()
+                .pause(Duration::from_secs(30))
+                .say("the terminal was never given"),
+            signed_in_after(),
+        ]),
+    )?;
+    let root = bench.with_installed(&release)?;
+    let handed = Handed::default();
+    handed
+        .refuse
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let refused = bench.ask_piped_terminal(
+        &mut answering(&bench.server, Some("Run it")),
+        (local_of(&runtime), false, true),
+        &handed,
+        &runtime,
+    )?;
+
+    assert!(
+        matches!(&refused, Err(AgentsError::Piped(Unpiped::Unhanded(_)))),
+        "{}",
+        shape(&refused)
+    );
+    assert_eq!(handed.offered().len(), 1, "no child was handed over");
+    assert_eq!(
+        handed.resumed.load(std::sync::atomic::Ordering::Relaxed),
+        1,
+        "the terminal was not taken back once"
+    );
+    let pid = handed.offered().first().copied().ok_or("no child's pid")?;
+    let pid = i32::try_from(pid)
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+        .ok_or("a pid this process can name")?;
+    let until = Instant::now() + Duration::from_secs(5);
+    while rustix::process::test_kill_process_group(pid).is_ok() {
+        if Instant::now() >= until {
+            return Err("the child's group outlived a failed handover".into());
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        fake_peer::played(&root),
+        1,
+        "the command played past the handover that refused it"
+    );
     Ok(())
 }
 

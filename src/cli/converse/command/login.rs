@@ -771,8 +771,11 @@ fn watched<T: Terminal>(
     if carrying.handed() {
         // The child owns the screen, the keys and the foreground process
         // group. This thread must neither draw over it nor read from the
-        // terminal the child is typing to, so it sleeps instead of waiting on
-        // a key, and looks again when the child may have handed it back.
+        // terminal the child is typing to, so it says it has left the read
+        // loop (the door waits for that before writing anything), sleeps
+        // instead of waiting on a key, and looks again when the child may
+        // have handed it back.
+        carrying.left();
         std::thread::sleep(BEAT);
         return Ok(());
     }
@@ -792,6 +795,12 @@ fn watched<T: Terminal>(
         |pressed, working: &mut Working| working.pressed(&pressed),
         BEAT,
         |working: &mut Working| {
+            // Asked before the loop reads a key: the terminal may be the
+            // child's now, and a read there would stop this whole process
+            // with SIGTTIN and leave the bound unrun.
+            if carrying.handed() {
+                return Moved::Took;
+            }
             if !carrying.working() || carrying.listening() {
                 return Moved::Took;
             }

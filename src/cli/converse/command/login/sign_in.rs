@@ -115,6 +115,13 @@ pub(super) fn stood<T: Terminal>(
     doing: &str,
     carrying: &mut Carrying<'_>,
 ) -> Result<(), Fatal> {
+    if carrying.handed() {
+        // The terminal is a child's: say this thread has left the read loop,
+        // then wait rather than draw over it or read the keys it is typing.
+        carrying.left();
+        std::thread::sleep(BEAT);
+        return Ok(());
+    }
     if !carrying.working() {
         return Ok(());
     }
@@ -134,6 +141,12 @@ pub(super) fn stood<T: Terminal>(
         |pressed, panel: &mut SigningIn| panel.pressed(pressed),
         BEAT,
         |panel: &mut SigningIn| {
+            // Asked before the loop reads a key, as the panel over a door
+            // that may hand its terminal to a child asks: a read there would
+            // be a read by a background process group.
+            if carrying.handed() {
+                return Moved::Took;
+            }
             if !carrying.working() {
                 return Moved::Took;
             }

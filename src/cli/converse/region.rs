@@ -268,15 +268,18 @@ fn standing<T: Terminal, S>(
         let read = match watching.as_mut() {
             None => renderer.pressed()?,
             Some((beat, watch)) => {
+                // Asked before the terminal is polled, not after: a component
+                // whose terminal has been handed to a child says so here, and
+                // the loop leaves without reading a key the child is owed.
+                match watch(state) {
+                    Moved::Redraw => changed = true,
+                    Moved::Still => changed = false,
+                    Moved::Took => return over(renderer, Ended::Took),
+                    Moved::Left => return over(renderer, Ended::Left),
+                }
                 if renderer.waiting(*beat)? {
                     renderer.took(crucible_tui::pressed()?)?
                 } else {
-                    match watch(state) {
-                        Moved::Redraw => changed = true,
-                        Moved::Still => changed = false,
-                        Moved::Took => return over(renderer, Ended::Took),
-                        Moved::Left => return over(renderer, Ended::Left),
-                    }
                     continue;
                 }
             }

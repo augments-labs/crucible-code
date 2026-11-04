@@ -85,7 +85,9 @@ output redirected, choosing the method says a terminal is needed, and nothing is
 asked or started. A method the catalog records as needing a real terminal is
 offered too, on Unix: choosing it asks first, for that run, whether the agent's
 own command may run outside the sandbox on this terminal, and starting it is
-refused while a project requires the sandbox. The panel does not stand over
+refused while a project requires the sandbox. On a platform without a
+real-terminal handover, as Windows, the method is refused before anything is
+asked or started. The panel does not stand over
 that command, because the command has the terminal itself; Ctrl+C reaches the
 command alone, and after ten minutes the command and everything it started are
 stopped. When it ends the terminal is taken back, the panel is drawn again, and

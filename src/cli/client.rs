@@ -43,15 +43,17 @@
 use std::collections::VecDeque;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::task::Poll;
+use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot};
 
 use crucible_app::Conversation;
 use crucible_app::catalog_fetch::Source;
 use crucible_app::client::agents::{
-    self as door, AgentsError, SaidLine, Shelf, SignInChannel, SignInTerminal, Typing, Watching,
+    self as door, AgentsError, HandoverFailed, SaidLine, Shelf, SignInChannel, SignInTerminal,
+    Typing, Watching,
 };
 use crucible_app::client::{
     Answered, Confirmation, Desk, Front, Performed, Shown, account, asked, asking, interrupt, keep,
@@ -81,7 +83,11 @@ impl Suspend {
         Self
     }
 
-    pub(crate) fn handed(&self, _: u32) {}
+    pub(crate) fn handed(&self, _: u32) -> Result<(), HandoverFailed> {
+        Err(HandoverFailed::new(
+            "this platform has no terminal to hand over",
+        ))
+    }
 
     pub(crate) fn resumed(&self) {}
 }
@@ -524,8 +530,8 @@ impl SignInChannel for Lent {
 }
 
 impl SignInTerminal for Lent {
-    fn handed(&self, pid: u32) {
-        self.handover.handed(pid);
+    fn handed(&self, pid: u32) -> Result<(), HandoverFailed> {
+        self.handover.handed(pid)
     }
 
     fn resumed(&self) {
@@ -533,35 +539,74 @@ impl SignInTerminal for Lent {
     }
 }
 
+/// How long the door waits for the drawing thread to say it has left its read
+/// loop before it takes the terminal as one that cannot be given.
+///
+/// The drawing thread looks at a watching panel once a beat, so this is many
+/// beats: a wait that long means it is not coming back to the loop at all, and
+/// a child handed a terminal nobody will stop reading is worse than a refusal.
+const LEFT_BOUND: Duration = Duration::from_secs(2);
+
 /// The terminal a sign-in at a real one is lent, and the flags the drawing
 /// thread reads while it is out on loan.
 ///
 /// The door's thread calls this; only the terminal sequences themselves leave
 /// here, and the drawing thread is what puts a frame on the screen again when
-/// [`SignInTerminal::resumed`] says it is back.
+/// [`SignInTerminal::resumed`] says it is back. A handover is not made until
+/// the drawing thread has acknowledged that it left the loop that reads the
+/// terminal, so the leave sequences cannot race a read or a frame.
 struct Handover {
     /// The terminal modes, where this session has a terminal to give.
     suspend: Mutex<Option<Suspend>>,
     /// Whether a child has the terminal, so the panel waits rather than draws
     /// over it.
-    handed: AtomicBool,
+    handed: Arc<AtomicBool>,
     /// Whether the terminal has come back and the next frame must paint every
     /// row.
     repaint: AtomicBool,
+    /// Whether the drawing thread has said it left its read loop for the
+    /// handover being made now.
+    left: Mutex<bool>,
+    /// Ring when it does.
+    left_changed: Condvar,
 }
 
 impl Handover {
     fn new(suspend: Option<Suspend>) -> Self {
         Self {
             suspend: Mutex::new(suspend),
-            handed: AtomicBool::new(false),
+            handed: Arc::new(AtomicBool::new(false)),
             repaint: AtomicBool::new(false),
+            left: Mutex::new(false),
+            left_changed: Condvar::new(),
         }
     }
 
-    /// Whether the child holds the terminal right now.
+    /// Whether the child holds the terminal right now, or is waiting for it.
     fn suspended(&self) -> bool {
         self.handed.load(Ordering::Acquire)
+    }
+
+    /// Says the drawing thread has left its read loop: the door may write the
+    /// leave sequences and give the child the terminal.
+    fn left(&self) {
+        *self.left.lock().unwrap_or_else(PoisonError::into_inner) = true;
+        self.left_changed.notify_all();
+    }
+
+    /// Waits, bounded, until the drawing thread has left its read loop.
+    fn wait_left(&self) -> Result<(), HandoverFailed> {
+        let left = self.left.lock().unwrap_or_else(PoisonError::into_inner);
+        let (left, waited) = self
+            .left_changed
+            .wait_timeout_while(left, LEFT_BOUND, |left| !*left)
+            .unwrap_or_else(PoisonError::into_inner);
+        if waited.timed_out() && !*left {
+            return Err(HandoverFailed::new(
+                "the drawing thread did not leave the terminal in time",
+            ));
+        }
+        Ok(())
     }
 
     /// Takes the request to repaint every row, if the terminal has come back
@@ -572,17 +617,20 @@ impl Handover {
 }
 
 impl SignInTerminal for Handover {
-    fn handed(&self, pid: u32) {
+    fn handed(&self, pid: u32) -> Result<(), HandoverFailed> {
         // Set first: the drawing thread must not start a frame between this
-        // and the child taking the screen.
+        // and the child taking the screen, and it must leave the loop that
+        // reads the terminal before the leave sequences are written.
+        *self.left.lock().unwrap_or_else(PoisonError::into_inner) = false;
         self.handed.store(true, Ordering::Release);
+        self.wait_left()?;
         let suspend = self.suspend.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(suspend) = suspend.as_ref() {
-            // A mode that would not leave was already put back by `Suspend`;
-            // there is nobody at this point to tell, and the child still gets
-            // the terminal it was promised.
-            let _ = suspend.handed(pid);
+            suspend
+                .handed(pid)
+                .map_err(|why| HandoverFailed::new(why.to_string()))?;
         }
+        Ok(())
     }
 
     fn resumed(&self) {
@@ -592,6 +640,7 @@ impl SignInTerminal for Handover {
         }
         self.handed.store(false, Ordering::Release);
         self.repaint.store(true, Ordering::Release);
+        *self.left.lock().unwrap_or_else(PoisonError::into_inner) = false;
     }
 }
 
@@ -661,6 +710,12 @@ impl Carrying<'_> {
         self.handover.take_repaint()
     }
 
+    /// Says the drawing thread has left the loop that reads the terminal, so
+    /// the door may write the leave sequences and give the child the screen.
+    pub(crate) fn left(&self) {
+        self.handover.left();
+    }
+
     /// What a sign-in command has said.
     pub(crate) fn heard(&self) -> Arc<Mutex<Heard>> {
         Arc::clone(&self.heard)
@@ -669,6 +724,45 @@ impl Carrying<'_> {
     /// Where what is typed for a sign-in command goes.
     pub(crate) fn typing(&self) -> mpsc::Sender<Typing> {
         self.typing.clone()
+    }
+}
+
+#[cfg(test)]
+impl<'a> Carrying<'a> {
+    /// A move with nothing said and no question out, for a case that stands a
+    /// panel over it and decides for itself when a child is handed the
+    /// terminal.
+    pub(crate) fn for_test(
+        told: &'a Mutex<Watched>,
+        cancel: &'a Cancel,
+        over: &'a AtomicBool,
+    ) -> Self {
+        let (typing, _typed) = mpsc::channel(TYPED_LINES);
+        Self {
+            from: mpsc::channel(1).1,
+            held: None,
+            told,
+            cancel,
+            over,
+            heard: Arc::new(Mutex::new(Heard::default())),
+            typing,
+            listening: Arc::new(AtomicBool::new(false)),
+            handover: Arc::new(Handover::new(None)),
+        }
+    }
+
+    /// The flag a case sets to say a child has been handed the terminal.
+    pub(crate) fn handed_for_test(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.handover.handed)
+    }
+
+    /// Whether the drawing thread has said it left its read loop.
+    pub(crate) fn acknowledged_for_test(&self) -> bool {
+        *self
+            .handover
+            .left
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 

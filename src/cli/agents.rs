@@ -50,8 +50,8 @@ use std::time::Duration;
 
 use crucible_app::catalog_fetch::trust_in;
 use crucible_app::client::agents::{
-    self as door, AgentsError, How, Listed, Outcome, SaidLine, Shelf, SignInChannel,
-    SignInTerminal, Typed, Typing,
+    self as door, AgentsError, HandoverFailed, How, Listed, Outcome, SaidLine, Shelf,
+    SignInChannel, SignInTerminal, Typed, Typing,
 };
 use crucible_app::client::{Confirmation, Front, Shown};
 use crucible_app::installing;
@@ -753,7 +753,7 @@ impl Front for Asked<'_> {
         Box::pin(async move {
             let answer = self.answer?;
             let confirmation = match shown {
-                Shown::Install(confirmation) => confirmation,
+                Shown::Account(confirmation) | Shown::Install(confirmation) => confirmation,
                 Shown::Warning(warned) => {
                     (self.said)(&visible(&format!(
                         "{}\n  {}\n  {}\n  {}\nSign in anyway? [y/N] ",
@@ -773,7 +773,8 @@ impl Front for Asked<'_> {
                 }
                 _ => return None,
             };
-            let Pending::Install { choices, .. } = pending else {
+            let (Pending::Account { choices, .. } | Pending::Install { choices, .. }) = pending
+            else {
                 return None;
             };
             (self.said)(&visible(&question(confirmation)));
@@ -861,16 +862,22 @@ impl SignInChannel for Console<'_> {
 }
 
 impl SignInTerminal for Console<'_> {
-    fn handed(&self, pid: u32) {
-        if let Ok(suspend) = self.terminal.lock() {
-            let _ = suspend.handed(pid);
-        }
+    fn handed(&self, pid: u32) -> Result<(), HandoverFailed> {
+        let suspend = self
+            .terminal
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        suspend
+            .handed(pid)
+            .map_err(|why| HandoverFailed::new(why.to_string()))
     }
 
     fn resumed(&self) {
-        if let Ok(suspend) = self.terminal.lock() {
-            let _ = suspend.resumed();
-        }
+        let suspend = self
+            .terminal
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _ = suspend.resumed();
     }
 }
 

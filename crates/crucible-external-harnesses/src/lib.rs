@@ -19,8 +19,8 @@ pub mod store;
 
 pub use antigravity::Ended;
 pub use host::{
-    Account, Act, CANCEL_GRACE, Control, Dialect, Host, PIPED_LINE_BYTES, PREPARING, Piped,
-    RAN_BYTES, Ran, Reading, SILENCE, STOP_GRACE, Shape, SignInChannel, Told, Typed, Typing,
+    Account, Act, CANCEL_GRACE, Control, Dialect, Holding, Host, PIPED_LINE_BYTES, PREPARING,
+    Piped, RAN_BYTES, Ran, Reading, SILENCE, STOP_GRACE, Shape, SignInChannel, Told, Typed, Typing,
     Undecided, Unstopped, WAITING, WITHHELD_BYTES, stripped,
 };
 pub use journal::{

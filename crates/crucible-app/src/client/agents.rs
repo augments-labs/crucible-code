@@ -211,7 +211,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
-pub use crate::launching::SignInTerminal;
+pub use crate::launching::{HandoverFailed, SignInTerminal};
 use crucible_auth::Store as Credentials;
 use crucible_client_api::bounds::ITEMS;
 use crucible_client_api::{
