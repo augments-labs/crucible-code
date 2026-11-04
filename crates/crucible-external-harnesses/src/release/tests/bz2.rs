@@ -5,6 +5,25 @@
 
 use super::*;
 
+/// A tar of [`fixture_files`], compressed once by the reference `bzip2` 1.0.8
+/// implementation rather than by this crate's encoder, so the decoder is
+/// held to a stream it did not write.
+const COMMITTED_BZ2: &[u8] = include_bytes!("bz2/agent.tar.bz2");
+
+/// The same tar [`COMMITTED_BZ2`] holds, compressed once by the reference
+/// `gzip` implementation as its sibling.
+const COMMITTED_GZ: &[u8] = include_bytes!("bz2/agent.tar.gz");
+
+/// The four members both committed fixtures hold.
+fn fixture_files() -> Vec<File> {
+    vec![
+        listed("agent", EXECUTABLE, true),
+        listed_dir("lib"),
+        listed("lib/harness", COMPANION, false),
+        listed_link("lib/current", "harness"),
+    ]
+}
+
 /// `bytes` as one bzip2 stream.
 // A test that cannot build its archive has nothing to report.
 #[allow(clippy::expect_used)]
@@ -14,57 +33,47 @@ fn bzipped(bytes: &[u8]) -> Vec<u8> {
     encoder.finish().expect("a bzip2 stream")
 }
 
-/// A bzip2-compressed tar of `members`, in that order.
+/// A bzip2-compressed tar of `members`, in that order, for the hostile cases
+/// that mutate its bytes.
 fn tar_bz2(members: &[Tarred<'_>]) -> Vec<u8> {
     bzipped(&tarred(members))
 }
 
-/// A `.tar.bz2` unpacks and surveys to the same files as its `.tar.gz`
-/// sibling, through the streamed survey as well as from memory.
+/// The committed `.tar.bz2` unpacks and surveys to the same files as its
+/// committed `.tar.gz` sibling, through the streamed survey as well as from
+/// memory.
 #[test]
-fn a_tar_bz2_unpacks_and_surveys_as_its_tar_gz_sibling() {
-    let owned = Owned::new("catalog-bz2");
-    let members = [
-        Tarred::File("agent", EXECUTABLE, 0o755),
-        Tarred::Dir("lib/"),
-        Tarred::File("lib/harness", COMPANION, 0o644),
-        Tarred::Symlink("lib/current", "harness"),
-    ];
-    let files = vec![
-        listed("agent", EXECUTABLE, true),
-        listed_dir("lib"),
-        listed("lib/harness", COMPANION, false),
-        listed_link("lib/current", "harness"),
-    ];
-    let gzip = tar_gz(&members);
-    let bzip = tar_bz2(&members);
-    let gzip_artifact = pinned_as(&gzip, Format::TarGz, files.clone());
-    let bzip_artifact = pinned_as(&bzip, Format::TarBz2, files.clone());
+fn a_committed_tar_bz2_unpacks_and_surveys_as_its_tar_gz_sibling() {
+    let owned = Owned::new("catalog-bz2-committed");
+    let files = fixture_files();
+    let bzip_artifact = pinned_as(COMMITTED_BZ2, Format::TarBz2, files.clone());
+    let gzip_artifact = pinned_as(COMMITTED_GZ, Format::TarGz, files.clone());
 
-    let gzip_at = staging(&owned, "gzip");
     let bzip_at = staging(&owned, "bzip");
-    let gzipped_staged =
-        Unpacker::unpack(&gzip, &gzip_artifact, &gzip_at).expect("the gzip sibling");
-    let bzipped_staged =
-        Unpacker::unpack(&bzip, &bzip_artifact, &bzip_at).expect("the bzip2 archive");
+    let gzip_at = staging(&owned, "gzip");
+    let bzip_staged = Unpacker::unpack(COMMITTED_BZ2, &bzip_artifact, &bzip_at)
+        .expect("the committed bzip2 fixture");
+    let gzip_staged = Unpacker::unpack(COMMITTED_GZ, &gzip_artifact, &gzip_at)
+        .expect("the committed gzip sibling");
 
-    assert_eq!(bzipped_staged.files(), gzipped_staged.files());
-    assert_eq!(bzipped_staged.files(), files.as_slice());
-    assert_eq!(bzipped_staged.unpacked(), gzipped_staged.unpacked());
-    assert_eq!(bzipped_staged.decompressed(), gzipped_staged.decompressed());
+    assert_eq!(bzip_staged.files(), gzip_staged.files());
+    assert_eq!(bzip_staged.files(), files.as_slice());
+    assert_eq!(bzip_staged.unpacked(), gzip_staged.unpacked());
+    assert_eq!(bzip_staged.decompressed(), gzip_staged.decompressed());
     assert_eq!(tree(&bzip_at), tree(&gzip_at));
 
-    let path = owned.0.join("agent.tar.bz2");
-    fs::write(&path, &bzip).expect("the archive");
+    let path = owned.0.join("committed.tar.bz2");
+    fs::write(&path, COMMITTED_BZ2).expect("the fixture");
     let streamed_at = staging(&owned, "streamed");
     let streamed = Unpacker::survey_from(
-        &mut fs::File::open(&path).expect("the archive"),
+        &mut fs::File::open(&path).expect("the fixture"),
         &bzip_artifact,
         &streamed_at,
     )
     .expect("surveyed from its file");
     let memory_at = staging(&owned, "memory");
-    let memory = Unpacker::survey(&bzip, &bzip_artifact, &memory_at).expect("surveyed in memory");
+    let memory =
+        Unpacker::survey(COMMITTED_BZ2, &bzip_artifact, &memory_at).expect("surveyed in memory");
 
     assert_eq!(streamed.files(), memory.files());
     assert_eq!(streamed.unpacked(), memory.unpacked());
@@ -72,8 +81,8 @@ fn a_tar_bz2_unpacks_and_surveys_as_its_tar_gz_sibling() {
     assert_eq!(tree(&streamed_at), tree(&memory_at));
 }
 
-/// A bzip2 stream that ends before its archive does is refused, and nothing of
-/// it is written.
+/// A bzip2 stream that ends at its header is refused, and nothing of it is
+/// written.
 #[test]
 fn a_truncated_tar_bz2_is_refused_and_writes_nothing() {
     let owned = Owned::new("catalog-bz2-truncated");
@@ -89,6 +98,32 @@ fn a_truncated_tar_bz2_is_refused_and_writes_nothing() {
         "{refused:?}"
     );
     assert!(tree(&at).is_empty(), "{:?}", tree(&at));
+}
+
+/// A bzip2 stream cut after the tar's last member and its end blocks, before
+/// the stream's own footer, is refused: the decoder has already produced the
+/// archive when it meets the cut.
+#[test]
+fn a_tar_bz2_cut_after_its_members_is_refused() {
+    let owned = Owned::new("catalog-bz2-cut-after-members");
+    let cut = COMMITTED_BZ2
+        .get(..COMMITTED_BZ2.len() - 4)
+        .expect("all but the stream footer");
+    let artifact = pinned_as(cut, Format::TarBz2, fixture_files());
+    let at = staging(&owned, "staging");
+
+    let refused = Unpacker::survey(cut, &artifact, &at);
+
+    assert!(
+        matches!(refused, Err(UnpackError::Corrupt(_))),
+        "{refused:?}"
+    );
+    assert_eq!(
+        tree(&at),
+        ["agent", "lib/", "lib/harness"],
+        "{:?}",
+        tree(&at)
+    );
 }
 
 /// A member whose name climbs out of the staging directory is refused before
@@ -144,6 +179,32 @@ fn a_tar_bz2_stream_past_its_unpacked_or_decompressed_ceiling_is_refused() {
     assert!(tree(&at).is_empty(), "{:?}", tree(&at));
 }
 
+/// A stream whose members all declare sizes within the ceiling still refuses
+/// when its decompressed bytes pass that ceiling: the streamed budget stops
+/// the read, not a member's own pre-check.
+#[test]
+fn a_tar_bz2_bomb_past_its_decompressed_ceiling_is_refused_by_the_stream_budget() {
+    let owned = Owned::new("catalog-bz2-bomb");
+    let artifact = Artifact {
+        unpacked: 1 << 20,
+        decompressed: 4096,
+        ..pinned_as(COMMITTED_BZ2, Format::TarBz2, fixture_files())
+    };
+    let at = staging(&owned, "staging");
+
+    let refused = Unpacker::survey(COMMITTED_BZ2, &artifact, &at);
+
+    assert!(
+        matches!(refused, Err(UnpackError::Decompressed { ceiling }) if ceiling == 4096),
+        "{refused:?}"
+    );
+    assert!(
+        tree(&at).iter().any(|name| name == "agent"),
+        "the member within the ceiling was written before the stream was stopped: {:?}",
+        tree(&at)
+    );
+}
+
 /// A bzip2 archive larger than the 512 MiB compressed cap is refused before
 /// its file is read, as the download path refuses one.
 #[test]
@@ -172,8 +233,8 @@ fn a_streamed_survey_refuses_a_tar_bz2_archive_past_the_compressed_cap() {
     );
 }
 
-/// Bytes after the one bzip2 stream are refused, as they are after a gzip
-/// stream.
+/// Bytes after the one bzip2 stream are refused, and the refusal names the
+/// bzip2 stream as the gzip one does.
 #[test]
 fn a_tar_bz2_with_something_after_its_stream_is_refused() {
     let owned = Owned::new("catalog-bz2-trailing");
@@ -186,11 +247,14 @@ fn a_tar_bz2_with_something_after_its_stream_is_refused() {
     );
     let at = staging(&owned, "staging");
 
-    let refused = Unpacker::survey(&archive, &artifact, &at);
+    let refused = Unpacker::survey(&archive, &artifact, &at).expect_err("bytes after the stream");
 
+    let UnpackError::Corrupt(error) = refused else {
+        panic!("not a corrupt stream: {refused:?}");
+    };
     assert!(
-        matches!(refused, Err(UnpackError::Corrupt(_))),
-        "{refused:?}"
+        error.to_string().contains("past its bzip2 stream"),
+        "{error}"
     );
 }
 
