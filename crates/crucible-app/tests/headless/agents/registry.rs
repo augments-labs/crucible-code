@@ -828,10 +828,30 @@ fn the_registry_sign_in_row_reads_its_route_and_refuses_a_terminal_method() -> R
             method: name("login")?,
         },
     )?;
-    let Err(AgentsError::Unlent(method)) = outcome else {
-        panic!("the terminal method was not refused: {outcome:?}");
-    };
-    assert_eq!(&*method, "login");
+    // A terminal route is refused before the front end on every platform: the
+    // channel that would carry it on Unix, and the platform's own sentence
+    // where it has no real terminal.
+    #[cfg(unix)]
+    match outcome {
+        Err(AgentsError::Unlent(method)) => assert_eq!(&*method, "login"),
+        other => panic!("the terminal method was not refused: {other:?}"),
+    }
+    #[cfg(windows)]
+    match outcome {
+        Err(AgentsError::Unsupported(why)) => assert!(
+            why.contains("a sign-in at a real terminal"),
+            "the platform's terminal refusal: {why}"
+        ),
+        other => panic!("the terminal method was not refused: {other:?}"),
+    }
+    #[cfg(not(any(unix, windows)))]
+    match outcome {
+        Err(AgentsError::Unlent(method)) => assert_eq!(&*method, "login"),
+        Err(AgentsError::Unsupported(why)) => {
+            assert!(why.contains("a real terminal"), "{why}");
+        }
+        other => panic!("the terminal method was not refused: {other:?}"),
+    }
 
     // The typed path: the probe's env-var method names the target's one
     // variable, and a kept key is read back without starting the vendor's
