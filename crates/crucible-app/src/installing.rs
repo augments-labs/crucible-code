@@ -442,24 +442,28 @@ pub(crate) fn record(answered: &str, target: &str) -> Result<Probe, Unprobed> {
 /// keeps, and no more arguments or variables of one than it keeps.
 fn fits(record: &Probe) -> bool {
     let text = |text: &str| text.len() <= PROBED_TEXT_BYTES;
-    record.target.len() <= PROBED_PLATFORM_BYTES
-        && text(&record.admits.name)
-        && text(&record.admits.version)
+    // The names the reader requires with `kept_text`: not empty, and within
+    // the receipt's one-text bound.
+    let kept = |text: &str| !text.is_empty() && text.len() <= PROBED_TEXT_BYTES;
+    !record.target.is_empty()
+        && record.target.len() <= PROBED_PLATFORM_BYTES
+        && kept(&record.admits.name)
+        && kept(&record.admits.version)
         && record.auth_methods.len() <= PROBED_METHODS
         && record.auth_methods.iter().all(|method| {
-            text(&method.id)
-                && text(&method.name)
+            kept(&method.id)
+                && kept(&method.name)
                 && match &method.kind {
                     ProbedKind::Terminal {
                         command, args, env, ..
                     } => {
-                        text(command)
+                        kept(command)
                             && args.len() <= PROBED_METHODS
                             && args.iter().all(|arg| text(arg))
                             && env.len() <= PROBED_METHODS
                             && env
                                 .iter()
-                                .all(|variable| text(&variable.name) && text(&variable.value))
+                                .all(|variable| kept(&variable.name) && text(&variable.value))
                     }
                     ProbedKind::Agent | ProbedKind::EnvVar | ProbedKind::Other => true,
                 }

@@ -775,8 +775,15 @@ fn a_probe_text_past_the_receipts_bound_is_refused() {
             value: "1".into(),
         }],
     );
+    let empty = terminal(
+        Vec::new(),
+        vec![Variable {
+            name: "".into(),
+            value: "1".into(),
+        }],
+    );
 
-    for auth_methods in [arguments, value, name] {
+    for auth_methods in [arguments, value, name, empty] {
         let mut probed = probe("linux-x86_64");
         probed.auth_methods = auth_methods;
         let mut receipt = receipt.clone();

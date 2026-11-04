@@ -569,8 +569,17 @@ fn a_probe_answer_past_the_receipts_limits_is_refused() {
             .collect::<Vec<_>>()
     })
     .to_string();
+    let nameless = serde_json::json!({
+        "sandbox": "closed",
+        "agentInfo": {"name": "goose", "version": "1"},
+        "authMethods": [{
+            "id": "login", "name": "Log in", "kind": "terminal",
+            "command": "goose", "args": [], "env": {"": "1"}, "tty": true
+        }]
+    })
+    .to_string();
 
-    for answer in [long, many] {
+    for answer in [long, many, nameless] {
         assert!(
             matches!(
                 record(&answer, "linux-x86_64"),
