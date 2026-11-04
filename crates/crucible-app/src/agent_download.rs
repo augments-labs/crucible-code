@@ -30,7 +30,10 @@
 //! the whole download and one on a silence in it. It is written into a file
 //! its caller lends, hashed as it is, and never held in memory whole; a body
 //! that ends short or runs long, or hashes to anything but the pin, is
-//! refused whole, and the file is begun again for the next place asked.
+//! refused whole, and the file is begun again for the next place asked. A
+//! registry archive has no exact size: [`capped`] holds its body to
+//! [`ARCHIVE_BYTES`] instead, accepts one shorter than that, hashes it as it
+//! arrives and records the size that did.
 //! Progress is told after every piece that arrives. What the receipt records
 //! is the address the artifact is pinned at, and every host the download came
 //! through, never an address a redirect gave.
@@ -68,7 +71,9 @@ use std::task::Poll;
 use std::time::{Duration, Instant};
 
 use crucible_external_harnesses::catalog::{Artifact, numbered};
-use crucible_external_harnesses::release::{NpmError, NpmTarball, NpmTree, RELEASE_BYTES};
+use crucible_external_harnesses::release::{
+    ARCHIVE_BYTES, NpmError, NpmTarball, NpmTree, RELEASE_BYTES,
+};
 use crucible_external_harnesses::store::Fetched;
 use crucible_http::{BodyError, Chunk, Chunks, Hold, Http, HttpError, Origin, Tls};
 use crucible_runtime::Cancel;
@@ -117,6 +122,12 @@ pub enum DownloadError {
     /// The pin is larger than a release may be.
     #[error("the artifact is pinned at {0} bytes, more than a release may be")]
     TooLarge(u64),
+    /// The body is larger than the most a registry archive may be.
+    #[error("the download is larger than the {ceiling} bytes a registry archive may be")]
+    OverCap {
+        /// The most an archive may be.
+        ceiling: u64,
+    },
     /// A secure connection could not be set up.
     #[error("a secure connection could not be set up")]
     Tls,
@@ -223,26 +234,26 @@ pub async fn artifact(
     let receipted = |pin: Pinned<'_>, hosts| Fetched {
         url: pin.address.into(),
         hosts,
-        size: pin.size,
+        size: pin.length.most(),
         sha256: pin.digest.hex().into(),
     };
     if let Some(asset) = &artifact.replaced_by {
         let address = format!("{}/{}", source.base.trim_end_matches('/'), asset.sha256);
         let pin = Pinned {
             address: &address,
-            size: asset.size,
+            length: Length::Exact(asset.size),
             digest: Digest::Sha256(&asset.sha256),
         };
-        let hosts = fetch(source, &listed, pin, &mut landing, cancel).await?;
+        let (hosts, _) = fetch(source, &listed, pin, &mut landing, cancel, Bounds::SHIPPED).await?;
         return Ok(receipted(pin, hosts));
     }
     let pin = Pinned {
         address: &artifact.url,
-        size: artifact.size,
+        length: Length::Exact(artifact.size),
         digest: Digest::Sha256(&artifact.sha256),
     };
-    match fetch(source, &listed, pin, &mut landing, cancel).await {
-        Ok(hosts) => Ok(receipted(pin, hosts)),
+    match fetch(source, &listed, pin, &mut landing, cancel, Bounds::SHIPPED).await {
+        Ok((hosts, _)) => Ok(receipted(pin, hosts)),
         Err(failed) if failed.mismatched() || matches!(failed, DownloadError::Cancelled) => {
             Err(failed)
         }
@@ -252,12 +263,80 @@ pub async fn artifact(
                     address: mirror,
                     ..pin
                 };
-                let hosts = fetch(source, &listed, pin, &mut landing, cancel).await?;
+                let (hosts, _) =
+                    fetch(source, &listed, pin, &mut landing, cancel, Bounds::SHIPPED).await?;
                 Ok(receipted(pin, hosts))
             }
             None => Err(failed),
         },
     }
+}
+
+/// A registry archive at `address`, held to `sha256` and to no exact size: it
+/// is downloaded into `landing`'s file within [`ARCHIVE_BYTES`], within the
+/// shipped lifetime and stall bound, hashed as it arrives, and given up as
+/// soon as `cancel` is requested. A body shorter than the cap is accepted, and
+/// what it gives records the size that actually arrived.
+///
+/// It follows a redirect only to a place [`capped_places`] names, and asks no
+/// mirror: a registry entry has none.
+///
+/// # Errors
+///
+/// [`DownloadError`] naming why the address gave nothing: one past the cap, a
+/// stall, a lifetime outlived, or bytes that are not the registry's.
+// Each is an input of its own to the download, and a value gathering them
+// would be built at each caller and taken apart here.
+#[allow(clippy::too_many_arguments)]
+pub async fn capped(
+    source: &Source,
+    hosts: &[Box<str>],
+    address: &str,
+    sha256: &str,
+    mut landing: Landing<'_>,
+    cancel: &Cancel,
+) -> Result<Fetched, DownloadError> {
+    let places = capped_places(source, hosts, address)?;
+    let listed: Vec<&str> = places.iter().map(String::as_str).collect();
+    let pin = Pinned {
+        address,
+        length: Length::Capped(ARCHIVE_BYTES),
+        digest: Digest::Sha256(sha256),
+    };
+    let (through, size) =
+        fetch(source, &listed, pin, &mut landing, cancel, Bounds::SHIPPED).await?;
+    Ok(Fetched {
+        url: address.into(),
+        hosts: through,
+        size,
+        sha256: sha256.into(),
+    })
+}
+
+/// Every place a registry archive at `address` may be downloaded from or
+/// redirected through: the hosts `hosts` lists and those the catalog is
+/// published through; refused where a listed host is not a name, or the
+/// address is on none of them.
+///
+/// # Errors
+///
+/// [`DownloadError::Host`] for a listed host that is not a name,
+/// [`DownloadError::Address`] for an address that cannot be read and
+/// [`DownloadError::Unlisted`] for one on no listed place.
+pub fn capped_places(
+    source: &Source,
+    hosts: &[Box<str>],
+    address: &str,
+) -> Result<Vec<String>, DownloadError> {
+    named(hosts)?;
+    let mut places: Vec<String> = hosts.iter().map(ToString::to_string).collect();
+    for host in source.hosts {
+        if !places.iter().any(|place| place == host) {
+            places.push((*host).to_owned());
+        }
+    }
+    listed_on(&places, address)?;
+    Ok(places)
 }
 
 /// Every place a download of `tree`'s tarballs may contact, each a host, or a
@@ -437,14 +516,16 @@ async fn one(
     let fixture = fixture(source, &tarball.url);
     let pin = Pinned {
         address: fixture.as_deref().unwrap_or(&tarball.url),
-        size: tarball.size,
+        length: Length::Exact(tarball.size),
         digest: Digest::Sha512(&tarball.sha512),
     };
     let landing = &mut Landing {
         file: &mut file,
         progress: &mut tell,
     };
-    fetch(source, listed, pin, landing, cancel).await.map(drop)
+    fetch(source, listed, pin, landing, cancel, Bounds::SHIPPED)
+        .await
+        .map(drop)
 }
 
 /// Where a test build fetches the registry's `url` from: the `registry/` of
@@ -546,8 +627,49 @@ pub fn named(hosts: &[Box<str>]) -> Result<(), DownloadError> {
 #[derive(Debug, Clone, Copy)]
 struct Pinned<'a> {
     address: &'a str,
-    size: u64,
+    length: Length,
     digest: Digest<'a>,
+}
+
+/// How long a body may be.
+#[derive(Debug, Clone, Copy)]
+enum Length {
+    /// Exactly this many bytes, as a catalog pins one.
+    Exact(u64),
+    /// At most this many, as a registry archive is held to a cap.
+    Capped(u64),
+}
+
+impl Length {
+    /// The most bytes the body may be.
+    const fn most(self) -> u64 {
+        match self {
+            Self::Exact(size) | Self::Capped(size) => size,
+        }
+    }
+
+    /// Why a body past this length is refused.
+    fn past(self) -> DownloadError {
+        match self {
+            Self::Exact(pinned) => DownloadError::Size { pinned },
+            Self::Capped(ceiling) => DownloadError::OverCap { ceiling },
+        }
+    }
+}
+
+/// The bounds one download is given: the whole of it, and a silence in it.
+#[derive(Debug, Clone, Copy)]
+struct Bounds {
+    lifetime: Duration,
+    stall: Duration,
+}
+
+impl Bounds {
+    /// The bounds the shipped downloads use.
+    const SHIPPED: Self = Self {
+        lifetime: LIFETIME,
+        stall: STALL,
+    };
 }
 
 /// The digest a download is pinned by, in lowercase hexadecimal.
@@ -597,24 +719,31 @@ impl Hashing {
 }
 
 /// The body at `address`, from the places `listed` names alone, held to `pin`;
-/// gives every host the download came through.
+/// gives every host the download came through and the bytes that arrived.
+// Each is an input of its own to the download, and a value gathering them
+// would be built here and taken apart again.
+#[allow(clippy::too_many_arguments)]
 async fn fetch(
     source: &Source,
     listed: &[&str],
     pin: Pinned<'_>,
     landing: &mut Landing<'_>,
     cancel: &Cancel,
-) -> Result<Vec<Box<str>>, DownloadError> {
-    if pin.size > RELEASE_BYTES {
-        return Err(DownloadError::TooLarge(pin.size));
+    bounds: Bounds,
+) -> Result<(Vec<Box<str>>, u64), DownloadError> {
+    if pin.length.most() > RELEASE_BYTES {
+        return Err(DownloadError::TooLarge(pin.length.most()));
     }
     let origin =
         Origin::of(pin.address).ok_or_else(|| DownloadError::Address(quoted(pin.address)))?;
     let client = client(source, &origin, listed)?;
     let fetching = async {
-        timeout(LIFETIME, followed(&client, &origin, listed, pin, landing))
-            .await
-            .map_err(|_| DownloadError::Late)?
+        timeout(
+            bounds.lifetime,
+            followed(&client, &origin, listed, pin, landing, bounds),
+        )
+        .await
+        .map_err(|_| DownloadError::Late)?
     };
     cancel
         .race(fetching)
@@ -662,14 +791,19 @@ impl Hold for Places {
 }
 
 /// The body at `address`, after at most [`HOPS`] redirects to the places
-/// `listed` names, held to `pin`; gives every host it came through.
+/// `listed` names, held to `pin` within `bounds`; gives every host it came
+/// through and the bytes that arrived.
+// Each is an input of its own to the walk, and a value gathering them would be
+// built here and taken apart again.
+#[allow(clippy::too_many_arguments)]
 async fn followed(
     client: &Http,
     origin: &Origin,
     listed: &[&str],
     pin: Pinned<'_>,
     landing: &mut Landing<'_>,
-) -> Result<Vec<Box<str>>, DownloadError> {
+    bounds: Bounds,
+) -> Result<(Vec<Box<str>>, u64), DownloadError> {
     // What an earlier place left is not this place's.
     landing.file.set_len(0).map_err(DownloadError::Write)?;
     landing
@@ -687,8 +821,8 @@ async fn followed(
         let response = client.get(&address).await?;
         match response.status().as_u16() {
             200 => {
-                body(Chunks::new(response.into_body()), pin, landing).await?;
-                return Ok(through);
+                let size = body(Chunks::new(response.into_body()), pin, landing, bounds).await?;
+                return Ok((through, size));
             }
             301 | 302 | 303 | 307 | 308 => {
                 address = response
@@ -705,13 +839,15 @@ async fn followed(
 }
 
 /// What `chunks` hold, written into `landing`'s file as it arrives and
-/// hashed as it is, refused where that is not exactly `pin`'s bytes.
+/// hashed as it is, refused where that is not exactly `pin`'s bytes or is
+/// past the cap it is held to; gives the bytes that arrived.
 async fn body(
     mut chunks: Chunks,
     pin: Pinned<'_>,
     landing: &mut Landing<'_>,
-) -> Result<(), DownloadError> {
-    let mismatched = DownloadError::Size { pinned: pin.size };
+    bounds: Bounds,
+) -> Result<u64, DownloadError> {
+    let most = pin.length.most();
     let mut held: u64 = 0;
     let mut digest = Hashing::new(pin.digest);
     let mut heard = Instant::now();
@@ -721,9 +857,9 @@ async fn body(
                 let total = u64::try_from(bytes.len())
                     .ok()
                     .and_then(|arrived| held.checked_add(arrived))
-                    .ok_or(DownloadError::Size { pinned: pin.size })?;
-                if total > pin.size {
-                    return Err(mismatched);
+                    .ok_or_else(|| pin.length.past())?;
+                if total > most {
+                    return Err(pin.length.past());
                 }
                 digest.update(&bytes);
                 landing
@@ -732,19 +868,22 @@ async fn body(
                     .map_err(DownloadError::Write)?;
                 held = total;
                 heard = Instant::now();
-                (landing.progress)(total, pin.size);
+                (landing.progress)(total, most);
             }
-            Chunk::Quiet if heard.elapsed() >= STALL => return Err(DownloadError::Stalled),
+            Chunk::Quiet if heard.elapsed() >= bounds.stall => return Err(DownloadError::Stalled),
             Chunk::Quiet => {}
         }
     }
-    if held != pin.size {
-        return Err(mismatched);
+    if let Length::Exact(size) = pin.length
+        && held != size
+    {
+        return Err(DownloadError::Size { pinned: size });
     }
     if digest.finish() != pin.digest.hex() {
         return Err(DownloadError::Digest);
     }
-    landing.file.flush().map_err(DownloadError::Write)
+    landing.file.flush().map_err(DownloadError::Write)?;
+    Ok(held)
 }
 
 /// `bytes` as lower case hexadecimal.

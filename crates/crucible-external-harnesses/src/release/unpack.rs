@@ -62,6 +62,11 @@
 //!   and the pin fixes its bytes, so what a survey recorded is what an unpack
 //!   reads.
 //!
+//! A survey reads the archive either from the bytes a caller holds, once they
+//! are the pin's, or from the file it was downloaded into, so no archive is
+//! held whole: [`Unpacker::survey_from`] hashes and counts as it reads, and
+//! then reads the same file again as the archive.
+//!
 //! A wheel is a zip, and its reader walks it with this one, through
 //! [`Walk::placing`]: each of its members is held to every rule above, under
 //! the name it is installed as.
@@ -83,7 +88,7 @@ use tar::EntryType;
 use zip::ZipArchive;
 use zip::result::ZipError;
 
-use super::{NAMED, hex};
+use super::{ARCHIVE_BYTES, NAMED, hex};
 use crate::catalog::{Artifact, File, FileKind, Files, Format};
 
 /// The most links a link's target is followed through, itself included.
@@ -153,6 +158,13 @@ pub enum UnpackError {
     /// Its SHA-256 is not its pin's.
     #[error("the download is not the artifact the catalog pinned")]
     Digest,
+    /// The archive is larger than the most a registry archive may be,
+    /// compressed.
+    #[error("the archive is larger than the {ceiling} bytes a registry archive may be")]
+    Archive {
+        /// The most it may be.
+        ceiling: u64,
+    },
     /// It is a wheel, which has a reader of its own.
     #[error("a wheel is not unpacked by the reader for archives and programs")]
     Wheel,
@@ -415,6 +427,34 @@ impl Unpacker {
     ) -> Result<Staged, UnpackError> {
         pinned(bytes, artifact)?;
         Walk::new(artifact, staging, None).run(Cursor::new(bytes))
+    }
+
+    /// Unpacks the download `artifact` pins, read from `file` rather than
+    /// held in memory, into `staging`, by every rule [`Unpacker::survey`]
+    /// holds an archive to: the file is read through once for its size and
+    /// SHA-256 before anything else is done with it, and then read again as
+    /// the archive.
+    ///
+    /// # Errors
+    ///
+    /// As [`Unpacker::survey`], and [`UnpackError::Corrupt`] where the file
+    /// could not be read.
+    pub fn survey_from(
+        file: &mut fs::File,
+        artifact: &Artifact,
+        staging: &Path,
+    ) -> Result<Staged, UnpackError> {
+        let size = artifact
+            .replaced_by
+            .as_ref()
+            .map_or(artifact.size, |asset| asset.size);
+        if size > ARCHIVE_BYTES {
+            return Err(UnpackError::Archive {
+                ceiling: ARCHIVE_BYTES,
+            });
+        }
+        pinned_file(file, artifact)?;
+        Walk::new(artifact, staging, None).run(io::BufReader::new(file))
     }
 }
 

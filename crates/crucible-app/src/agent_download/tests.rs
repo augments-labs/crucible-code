@@ -520,3 +520,316 @@ fn an_asset_built_at_review_comes_from_the_catalog_by_its_digest() {
     assert_eq!(landed, built);
     assert_eq!(server.asked(), [format!("/catalog/{}", digest(built))]);
 }
+
+/// `body` downloaded under `server`'s catalog through the capped path, held
+/// to the digest of `pinned` and told of progress through `progress`, and what
+/// landed.
+// Each is an input of its own to the case, and a value gathering them would be
+// built at each caller and taken apart here.
+#[allow(clippy::too_many_arguments)]
+fn capped_from(
+    server: &Server,
+    hosts: &[Box<str>],
+    address: &str,
+    pinned: &[u8],
+    progress: &mut (dyn FnMut(u64, u64) + Send),
+    cancel: &Cancel,
+) -> (Result<Fetched, DownloadError>, Vec<u8>) {
+    let source = server.source();
+    let landed = Landed::new();
+    let mut file = landed.file();
+    let fetched = run(super::capped(
+        &source,
+        hosts,
+        address,
+        &digest(pinned),
+        Landing {
+            file: &mut file,
+            progress,
+        },
+        cancel,
+    ));
+    drop(file);
+    (fetched, landed.bytes())
+}
+
+/// A capped download whose body is shorter than the cap is accepted, and the
+/// size it records is what arrived rather than a pin.
+#[test]
+fn a_capped_download_accepts_a_shorter_body_and_records_the_size_that_arrived() {
+    let server = Server::start();
+    let shorter = PROGRAM.get(..10).expect("ten bytes");
+    server.serve("/registry/agent.tar.gz", Reply::Body(shorter.to_vec()));
+    let address = server.at("/registry/agent.tar.gz");
+    let mut told = Vec::new();
+
+    let (fetched, landed) = capped_from(
+        &server,
+        &hosts(),
+        &address,
+        shorter,
+        &mut |done, total| told.push((done, total)),
+        &Cancel::new(),
+    );
+
+    let fetched = fetched.expect("the shorter body");
+    assert_eq!(landed, shorter);
+    assert_eq!(&*fetched.url, address);
+    assert_eq!(&*fetched.sha256, &*digest(shorter));
+    assert_eq!(fetched.size, u64::try_from(shorter.len()).expect("a size"));
+    assert_eq!(
+        told.last(),
+        Some(&(
+            u64::try_from(shorter.len()).expect("a size"),
+            super::ARCHIVE_BYTES
+        ))
+    );
+    assert_eq!(server.asked(), ["/registry/agent.tar.gz"]);
+}
+
+/// A body past the cap is refused, however much of it arrived and whatever it
+/// hashes to.
+#[test]
+fn a_capped_download_over_its_ceiling_is_refused() {
+    let server = Server::start();
+    let body = PROGRAM.to_vec();
+    server.serve("/registry/agent.tar.gz", Reply::Body(body.clone()));
+    let source = server.source();
+    let places = super::capped_places(&source, &hosts(), &server.at("/registry/agent.tar.gz"))
+        .expect("a listed place");
+    let listed: Vec<&str> = places.iter().map(String::as_str).collect();
+    let address = server.at("/registry/agent.tar.gz");
+    let sha256 = digest(&body);
+    let landed = Landed::new();
+    let mut file = landed.file();
+    let pin = super::Pinned {
+        address: &address,
+        length: super::Length::Capped(10),
+        digest: super::Digest::Sha256(&sha256),
+    };
+    let mut told = Vec::new();
+
+    let refused = run(super::fetch(
+        &source,
+        &listed,
+        pin,
+        &mut Landing {
+            file: &mut file,
+            progress: &mut |done, total| told.push((done, total)),
+        },
+        &Cancel::new(),
+        super::Bounds {
+            lifetime: Duration::from_secs(5),
+            stall: Duration::from_secs(1),
+        },
+    ));
+
+    assert!(
+        matches!(refused, Err(DownloadError::OverCap { ceiling: 10 })),
+        "{refused:?}"
+    );
+}
+
+/// A registry download uses the shipped lifetime and stall bound, not a bound
+/// of its own.
+#[test]
+fn a_registry_download_uses_the_shipped_lifetime_and_stall() {
+    assert_eq!(super::Bounds::SHIPPED.lifetime, Duration::from_mins(45));
+    assert_eq!(super::Bounds::SHIPPED.stall, Duration::from_mins(1));
+}
+
+/// A registry archive is downloaded through the capped path and surveyed from
+/// the file it landed in, with the registry's bounds rather than a pin's.
+#[cfg(feature = "proof")]
+#[test]
+fn a_registry_archive_is_downloaded_within_its_cap_and_surveyed_from_its_file() {
+    use crucible_external_harnesses::release::{UNPACKED_BYTES, Unpacker, proof};
+
+    let server = Server::start();
+    let (archive, _) = proof::catalog_release();
+    server.serve("/registry/agent.tar.gz", Reply::Body(archive.clone()));
+    let source = server.source();
+    let address = server.at("/registry/agent.tar.gz");
+    let landed = Landed::new();
+    let mut file = landed.file();
+    let fetched = run(super::capped(
+        &source,
+        &hosts(),
+        &address,
+        &digest(&archive),
+        Landing {
+            file: &mut file,
+            progress: &mut |_, _| {},
+        },
+        &Cancel::new(),
+    ))
+    .expect("a registry archive");
+    drop(file);
+    let artifact = crate::installing::registry_artifact(
+        &address,
+        &fetched.sha256,
+        fetched.size,
+        Format::TarGz,
+    );
+    let staging = std::env::temp_dir().join(format!(
+        "crucible-registry-survey-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_nanos())
+    ));
+    std::fs::create_dir(&staging).expect("a staging directory");
+
+    let surveyed = Unpacker::survey_from(
+        &mut std::fs::File::open(landed.0.join("download")).expect("the download"),
+        &artifact,
+        &staging,
+    )
+    .expect("surveyed from its file");
+
+    let _ = std::fs::remove_dir_all(&staging);
+    assert_eq!(fetched.size, u64::try_from(archive.len()).expect("a size"));
+    assert_eq!(artifact.size, fetched.size);
+    assert_eq!(artifact.unpacked, UNPACKED_BYTES);
+    assert_eq!(
+        surveyed.unpacked(),
+        u64::try_from(proof::EXECUTABLE.len() + proof::LICENSE.len() + proof::COMPANION.len())
+            .expect("a size")
+    );
+    assert_eq!(surveyed.files().len(), 5);
+}
+
+/// A body exactly at the cap is accepted: the cap is the most it may be, not
+/// one less.
+#[test]
+fn a_capped_download_at_its_ceiling_is_accepted() {
+    let server = Server::start();
+    let body = PROGRAM.to_vec();
+    server.serve("/registry/agent.tar.gz", Reply::Body(body.clone()));
+    let source = server.source();
+    let address = server.at("/registry/agent.tar.gz");
+    let places = super::capped_places(&source, &hosts(), &address).expect("a listed place");
+    let listed: Vec<&str> = places.iter().map(String::as_str).collect();
+    let sha256 = digest(&body);
+    let ceiling = u64::try_from(body.len()).expect("a size");
+    let landed = Landed::new();
+    let mut file = landed.file();
+    let pin = super::Pinned {
+        address: &address,
+        length: super::Length::Capped(ceiling),
+        digest: super::Digest::Sha256(&sha256),
+    };
+
+    let fetched = run(super::fetch(
+        &source,
+        &listed,
+        pin,
+        &mut Landing {
+            file: &mut file,
+            progress: &mut |_, _| {},
+        },
+        &Cancel::new(),
+        super::Bounds::SHIPPED,
+    ));
+
+    let (_, arrived) = fetched.expect("a body at the cap");
+    assert_eq!(arrived, ceiling);
+}
+
+/// A capped download that goes quiet past the stall bound is refused.
+#[test]
+fn a_capped_download_that_stalls_is_refused() {
+    let server = Server::start();
+    server.serve("/registry/agent.tar.gz", Reply::Half(PROGRAM.to_vec()));
+    let source = server.source();
+    let places = super::capped_places(&source, &hosts(), &server.at("/registry/agent.tar.gz"))
+        .expect("a listed place");
+    let listed: Vec<&str> = places.iter().map(String::as_str).collect();
+    let address = server.at("/registry/agent.tar.gz");
+    let sha256 = digest(PROGRAM);
+    let landed = Landed::new();
+    let mut file = landed.file();
+    let pin = super::Pinned {
+        address: &address,
+        length: super::Length::Capped(super::ARCHIVE_BYTES),
+        digest: super::Digest::Sha256(&sha256),
+    };
+
+    let refused = run(super::fetch(
+        &source,
+        &listed,
+        pin,
+        &mut Landing {
+            file: &mut file,
+            progress: &mut |_, _| {},
+        },
+        &Cancel::new(),
+        super::Bounds {
+            lifetime: Duration::from_secs(5),
+            stall: Duration::from_millis(300),
+        },
+    ));
+
+    assert!(
+        matches!(refused, Err(DownloadError::Stalled)),
+        "{refused:?}"
+    );
+}
+
+/// A capped download that outlives its bound is refused.
+#[test]
+fn a_capped_download_past_its_lifetime_is_refused() {
+    let server = Server::start();
+    server.serve("/registry/agent.tar.gz", Reply::Half(PROGRAM.to_vec()));
+    let source = server.source();
+    let places = super::capped_places(&source, &hosts(), &server.at("/registry/agent.tar.gz"))
+        .expect("a listed place");
+    let listed: Vec<&str> = places.iter().map(String::as_str).collect();
+    let address = server.at("/registry/agent.tar.gz");
+    let sha256 = digest(PROGRAM);
+    let landed = Landed::new();
+    let mut file = landed.file();
+    let pin = super::Pinned {
+        address: &address,
+        length: super::Length::Capped(super::ARCHIVE_BYTES),
+        digest: super::Digest::Sha256(&sha256),
+    };
+
+    let refused = run(super::fetch(
+        &source,
+        &listed,
+        pin,
+        &mut Landing {
+            file: &mut file,
+            progress: &mut |_, _| {},
+        },
+        &Cancel::new(),
+        super::Bounds {
+            lifetime: Duration::from_millis(50),
+            stall: Duration::from_secs(5),
+        },
+    ));
+
+    assert!(matches!(refused, Err(DownloadError::Late)), "{refused:?}");
+}
+
+/// A capped download is refused before a request where its address is on no
+/// host the target lists, or the download may reach.
+#[test]
+fn a_capped_download_off_its_listed_hosts_is_refused_before_a_request() {
+    let server = Server::start();
+    server.serve("/registry/agent.tar.gz", Reply::Body(PROGRAM.to_vec()));
+    let source = server.source();
+
+    let refused = super::capped_places(
+        &source,
+        &["downloads.example.com".into()],
+        &format!("http://localhost:{}/registry/agent.tar.gz", server.port),
+    );
+
+    assert!(
+        matches!(refused, Err(DownloadError::Unlisted(_))),
+        "{refused:?}"
+    );
+    assert!(server.asked().is_empty(), "{:?}", server.asked());
+}

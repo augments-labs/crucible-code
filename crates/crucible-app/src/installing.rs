@@ -24,6 +24,13 @@
 //! writes the `executable` of every instance it moves into the user's
 //! configuration file, which its shelf's home names.
 //!
+//! A release the ACP Registry offers has no exact size and no catalog entry:
+//! its archive is downloaded within the registry's cap, surveyed from its
+//! file by [`Unpacker::survey_from`] as [`registry_artifact`] describes it,
+//! and its program started once in the closed sandbox by [`probed`], which
+//! records what it answered `initialize` with for the platform it runs on, so
+//! the receipt keeps the facts a later session rebuilds the row from.
+//!
 //! [`unpack_check`] is the catalog intake's way to the same unpacker an
 //! install of a catalog agent goes through: it reads an artifact as the
 //! catalog spells one and a download from disk, each within its bound,
@@ -37,20 +44,28 @@ use std::io::{self, Read as _, Write as _};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crucible_external_harnesses::Discovery;
 use crucible_external_harnesses::catalog::{
-    ASSET_BYTES, Artifact, CatalogError, Format, INDEX_BYTES, Trust, Unusable,
+    ASSET_BYTES, Admits, Artifact, CatalogError, Entry, Files, Format, INDEX_BYTES, Trust,
+    Unusable, Variable,
 };
 use crucible_external_harnesses::release::{
-    NpmError, NpmTree, OwnedPin, Pin, UnpackError, Unpacked, Unpacker, Wheels, unpack,
+    ARCHIVE_BYTES, NpmError, NpmTree, OwnedPin, Pin, RELEASE_BYTES, UNPACKED_BYTES, UnpackError,
+    Unpacked, Unpacker, Wheels, unpack,
+};
+use crucible_external_harnesses::store::{
+    PROBED_METHODS, PROBED_PLATFORM_BYTES, PROBED_TEXT_BYTES, Probe, ProbedKind, ProbedMethod,
 };
 use crucible_http::{Chunk, Chunks, Http, Lookups, Poison};
+use serde_json::Value;
 use tokio::runtime::Handle;
 use tokio::time::timeout;
 
 use crate::backends::Row;
+use crate::probing::Unprobed;
 use crate::runtime::Unstarted;
 use crate::services::{Unfinished, serving};
 
@@ -307,6 +322,263 @@ impl Download {
 impl Drop for Download {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// The artifact a registry archive is surveyed as, once `size` bytes of it
+/// arrived: pinned by `sha256`, with no list, its unpacked ceiling
+/// [`UNPACKED_BYTES`] and its decompressed ceiling [`RELEASE_BYTES`], as the
+/// registry's bounds say.
+#[must_use]
+pub fn registry_artifact(url: &str, sha256: &str, size: u64, format: Format) -> Artifact {
+    Artifact {
+        url: url.into(),
+        mirror: None,
+        sha256: sha256.into(),
+        size,
+        format,
+        unpacked: UNPACKED_BYTES,
+        decompressed: RELEASE_BYTES,
+        files: Files::Listed(Vec::new()),
+        kept: Vec::new(),
+        replaced_by: None,
+    }
+}
+
+/// The artifact a registry archive is reserved as before it is downloaded:
+/// pinned by `sha256`, its size the [`ARCHIVE_BYTES`] cap, so the store
+/// reserves the most an install can need before a byte arrives.
+/// [`registry_artifact`] then describes it with the size that did arrive.
+#[must_use]
+pub fn registry_reservation(url: &str, sha256: &str, format: Format) -> Artifact {
+    registry_artifact(url, sha256, ARCHIVE_BYTES, format)
+}
+
+/// Starts the program `root` holds, as the provisional `entry` describes it,
+/// in the closed sandbox, and gives what it answered as the record a receipt
+/// keeps: the platform the entry installs for this machine, its `agentInfo`,
+/// and the sign-in methods it offered.
+///
+/// The entry is read through `Entry::unsigned` before anything is started, as
+/// `probing::probe` reads it, and its target for this machine is the record's
+/// target, so neither an entry the catalog would refuse nor one published for
+/// another platform starts anything or is recorded under a platform it is not
+/// installed for.
+///
+/// # Errors
+///
+/// [`Unprobed`] saying why there is nothing to record: the entry is not one or
+/// has no target for this machine, the program could not be started or did not
+/// answer, or its answer had to be cut and so is not one a row can be rebuilt
+/// from.
+pub fn probed(root: &Path, entry: &[u8], within: Duration) -> Result<Probe, Unprobed> {
+    let draft = Draft::new(entry)?;
+    let described = Entry::unsigned(entry).map_err(|source| Unprobed::Entry {
+        path: draft.0.clone(),
+        source,
+    })?;
+    let target = described
+        .here()
+        .map(|target| target.platform.clone())
+        .ok_or_else(|| Unprobed::Unanswered("the entry has no target for this platform".into()))?;
+    let answered = crate::probing::probe(
+        root,
+        &draft.0,
+        crate::probing::Mode::CONFINED,
+        &crate::probing::local,
+        within,
+    )?;
+    record(&answered, &target)
+}
+
+/// The record the probe's `answered` JSON holds, taken for `target`.
+pub(crate) fn record(answered: &str, target: &str) -> Result<Probe, Unprobed> {
+    let refused = |why: &str| Unprobed::Unanswered(why.into());
+    let answered: Value = serde_json::from_str(answered)
+        .map_err(|_| refused("the probe's answer could not be read"))?;
+    if answered.get("incomplete") == Some(&Value::Bool(true)) {
+        return Err(refused("the agent answered more than the probe keeps"));
+    }
+    if answered.get("sandbox").and_then(Value::as_str) != Some("closed") {
+        return Err(refused(
+            "the probe did not run in a sandbox that closed its network",
+        ));
+    }
+    let info = answered.get("agentInfo");
+    let name = said(info.and_then(|info| info.get("name")))
+        .ok_or_else(|| refused("the agent did not say what it is"))?;
+    let version = said(info.and_then(|info| info.get("version")))
+        .ok_or_else(|| refused("the agent did not say what version it is"))?;
+    let methods = answered
+        .get("authMethods")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if methods.len() > PROBED_METHODS {
+        return Err(refused("the agent answered more than a receipt keeps"));
+    }
+    let auth_methods = methods
+        .iter()
+        .map(method_of)
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| refused("the agent offered a sign-in method that cannot be recorded"))?;
+    let record = Probe {
+        target: target.into(),
+        admits: Admits {
+            name: name.into(),
+            version: version.into(),
+        },
+        auth_methods,
+    };
+    if fits(&record) {
+        Ok(record)
+    } else {
+        Err(refused("the agent answered more than a receipt keeps"))
+    }
+}
+
+/// Whether `record` is one the store's receipt reader accepts: its platform
+/// and every text within the receipt's ceilings, no more methods than it
+/// keeps, and no more arguments or variables of one than it keeps.
+fn fits(record: &Probe) -> bool {
+    let text = |text: &str| text.len() <= PROBED_TEXT_BYTES;
+    // The names the reader requires with `kept_text`: not empty, and within
+    // the receipt's one-text bound.
+    let kept = |text: &str| !text.is_empty() && text.len() <= PROBED_TEXT_BYTES;
+    !record.target.is_empty()
+        && record.target.len() <= PROBED_PLATFORM_BYTES
+        && kept(&record.admits.name)
+        && kept(&record.admits.version)
+        && record.auth_methods.len() <= PROBED_METHODS
+        && record.auth_methods.iter().all(|method| {
+            kept(&method.id)
+                && kept(&method.name)
+                && match &method.kind {
+                    ProbedKind::Terminal {
+                        command, args, env, ..
+                    } => {
+                        kept(command)
+                            && args.len() <= PROBED_METHODS
+                            && args.iter().all(|arg| text(arg))
+                            && env.len() <= PROBED_METHODS
+                            && env
+                                .iter()
+                                .all(|variable| kept(&variable.name) && text(&variable.value))
+                    }
+                    ProbedKind::Agent | ProbedKind::EnvVar | ProbedKind::Other => true,
+                }
+        })
+}
+
+/// `value` as the text the probe keeps, where it is text and not empty.
+fn said(value: Option<&Value>) -> Option<&str> {
+    value
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty())
+}
+
+/// One sign-in method as the probe recorded it.
+fn method_of(method: &Value) -> Option<ProbedMethod> {
+    let text = |name: &str| said(method.get(name));
+    let id = text("id")?;
+    let name = text("name")?;
+    let kind = match method.get("kind").and_then(Value::as_str) {
+        Some("agent") => ProbedKind::Agent,
+        Some("env_var") => ProbedKind::EnvVar,
+        Some("terminal") => {
+            let command = text("command")?;
+            let args = method
+                .get("args")?
+                .as_array()?
+                .iter()
+                .map(|arg| Some(arg.as_str()?.into()))
+                .collect::<Option<Vec<_>>>()?;
+            let env = method
+                .get("env")?
+                .as_object()?
+                .iter()
+                .map(|(name, value)| {
+                    Some(Variable {
+                        name: name.as_str().into(),
+                        value: value.as_str()?.into(),
+                    })
+                })
+                .collect::<Option<Vec<_>>>()?;
+            let tty = match method.get("tty") {
+                Some(Value::Bool(needs)) => Some(*needs),
+                _ => None,
+            };
+            ProbedKind::Terminal {
+                command: command.into(),
+                args,
+                env,
+                tty,
+            }
+        }
+        _ => ProbedKind::Other,
+    };
+    Some(ProbedMethod {
+        id: id.into(),
+        name: name.into(),
+        kind,
+    })
+}
+
+/// A file holding the provisional entry while the probe reads it, removed
+/// with the value.
+struct Draft(PathBuf);
+
+impl Draft {
+    /// `entry` written to a file of this probe's own, owner-only, within the
+    /// bound a catalog index is read at.
+    fn new(entry: &[u8]) -> Result<Self, Unprobed> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let ceiling = u64::try_from(INDEX_BYTES).unwrap_or(u64::MAX);
+        if u64::try_from(entry.len()).unwrap_or(u64::MAX) > ceiling {
+            return Err(Unprobed::Read(Unchecked::TooLarge {
+                path: std::env::temp_dir().join("the provisional entry"),
+                ceiling,
+            }));
+        }
+        let mut last = io::Error::from(io::ErrorKind::AlreadyExists);
+        for _ in 0..16_u32 {
+            let path = std::env::temp_dir().join(format!(
+                "crucible-probe-{}-{}.json",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            let unread = |source| {
+                Unprobed::Read(Unchecked::Read {
+                    path: path.clone(),
+                    source,
+                })
+            };
+            let mut file = match crucible_privacy::create_write(&path) {
+                Ok(file) => file,
+                Err(error) => {
+                    let error = error.into_io();
+                    if error.kind() == io::ErrorKind::AlreadyExists {
+                        last = error;
+                        continue;
+                    }
+                    return Err(unread(error));
+                }
+            };
+            file.write_all(entry)
+                .and_then(|()| file.sync_all())
+                .map_err(unread)?;
+            return Ok(Self(path));
+        }
+        Err(Unprobed::Read(Unchecked::Read {
+            path: std::env::temp_dir().join("the provisional entry"),
+            source: last,
+        }))
+    }
+}
+
+impl Drop for Draft {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
     }
 }
 

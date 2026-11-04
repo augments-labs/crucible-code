@@ -272,6 +272,19 @@ changed meanwhile and were left as they are, whether the agent was smoke-tested
 and the older versions kept; the list stands again as the store now stands,
 with what you had typed still in the search.
 
+For a release read from the ACP Registry, your yes also covers running the
+vendor's program once in the closed sandbox after the download, as the probe
+whose answer the receipt records; a probe that fails installs nothing. The
+receipt written when a version is installed records where it came from: the
+review that admitted it, or for a release read from the ACP Registry the
+registry document it was read from, with when the release was fetched. It also
+records what the install found, rather than what the catalog predicted: the
+bytes its files take up and the bytes its artifacts decompressed to, and for a
+registry release the platform its program was probed on and what it answered
+`initialize` with, so a later session can list and start it without starting the
+vendor's program again. A registry release whose receipt has no such record for
+this machine is not started: `crucible agents probe` takes one.
+
 An agent the catalog ships as a Python package comes with the Python it is
 run by, pinned in the same release, so no Python on your machine is looked for
 or used. Its install unpacks that interpreter, puts each of the agent's wheels

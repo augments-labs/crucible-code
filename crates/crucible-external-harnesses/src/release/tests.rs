@@ -1743,6 +1743,8 @@ fn the_release_a_test_publishes_for_the_intake_surveys_to_its_list() {
     assert_eq!(surveyed.decompressed(), 10 * 512);
 }
 
+mod streamed;
+
 #[test]
 fn a_tree_archived_from_its_own_directory_unpacks_as_its_relative_names() {
     let owned = Owned::new("catalog-dot");

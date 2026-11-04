@@ -9,6 +9,7 @@ use std::path::Path;
 use crucible_config::Driver;
 use crucible_external_harnesses::catalog::Trust;
 use crucible_external_harnesses::release::proof::{self, EXECUTABLE, released};
+use crucible_external_harnesses::store::ProbedKind;
 use crucible_http::{PlainLookups, ProxyEnv, Tls};
 
 use super::*;
@@ -370,6 +371,265 @@ fn an_agent_is_kept_under_its_driver_in_crucible_home() {
         root(home, &ANTIGRAVITY),
         Path::new("/home/me/.crucible/programs/antigravity")
     );
+}
+
+/// A provisional entry that is not one is refused before the program it names
+/// is started.
+#[test]
+fn a_provisional_entry_that_is_not_one_is_refused_before_the_program_starts() {
+    let sample = Sample::new("installing-probe-entry");
+    let root = sample.root();
+    let marker = root.join("ran");
+    let program = root.join("agent");
+    std::fs::write(&program, format!("#!/bin/sh\ntouch {}\n", marker.display()))
+        .expect("a program");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755))
+            .expect("a runnable program");
+    }
+
+    let refused = probed(&root, b"not an entry", Duration::from_secs(5));
+
+    assert!(
+        matches!(refused, Err(crate::probing::Unprobed::Entry { .. })),
+        "{refused:?}"
+    );
+    assert!(!marker.exists(), "the program was started anyway");
+}
+
+/// A provisional entry that publishes another platform's target is refused
+/// before the program it names is started: the record's target is the entry's
+/// own platform for this machine, not whatever a caller says.
+#[test]
+fn a_provisional_entry_for_another_platform_is_refused_before_the_program_starts() {
+    let sample = Sample::new("installing-probe-platform");
+    let root = sample.root();
+    let marker = root.join("ran");
+    let program = root.join("goose");
+    std::fs::write(&program, format!("#!/bin/sh\ntouch {}\n", marker.display()))
+        .expect("a program");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755))
+            .expect("a runnable program");
+    }
+    let entry = serde_json::json!({
+        "key": "goose",
+        "registry_id": "goose-acp",
+        "version": "1.0.0",
+        "kind": "binary",
+        "license": "MIT",
+        "review": "https://example.invalid/registry.json",
+        "admits": {"name": "goose", "version": "1.0.0"},
+        "targets": [{
+            "platform": "freebsd-x86_64",
+            "cmd": "goose",
+            "args": [],
+            "env": {},
+            "hosts": ["github.com"],
+            "artifacts": [{
+                "url": "https://example.invalid/goose",
+                "sha256": "a".repeat(64),
+                "size": 1,
+                "format": "bare",
+                "unpacked": 1,
+                "decompressed": 1,
+                "files": [{"path": "goose", "size": 1, "sha256": "a".repeat(64), "exec": true}]
+            }]
+        }]
+    })
+    .to_string();
+
+    let refused = probed(&root, entry.as_bytes(), Duration::from_secs(5));
+
+    assert!(
+        matches!(refused, Err(crate::probing::Unprobed::Unanswered(_))),
+        "{refused:?}"
+    );
+    assert!(!marker.exists(), "the program was started anyway");
+}
+
+/// The probe's record is what the agent answered, for the platform it was
+/// probed on, with each sign-in method as it recorded it.
+#[test]
+fn the_probe_record_is_the_agents_answer_for_the_target_it_was_taken_for() {
+    let answer = serde_json::json!({
+        "sandbox": "closed",
+        "agentInfo": {"name": "goose", "version": "1.4.1"},
+        "authMethods": [
+            {"id": "browser", "name": "Sign in", "kind": "agent"},
+            {"id": "key", "name": "API key", "kind": "env_var"},
+            {
+                "id": "login", "name": "Log in", "kind": "terminal",
+                "command": "goose", "args": ["login"],
+                "env": {"GOOSE_LOGIN": "1"}, "tty": true
+            },
+            {"id": "odd", "name": "Other", "kind": "other"}
+        ],
+        "conformance": "not run"
+    })
+    .to_string();
+
+    let record = record(&answer, "linux-x86_64").expect("recorded");
+
+    assert_eq!(&*record.target, "linux-x86_64");
+    assert_eq!(&*record.admits.name, "goose");
+    assert_eq!(&*record.admits.version, "1.4.1");
+    assert_eq!(record.auth_methods.len(), 4);
+    assert_eq!(
+        record.auth_methods.first().map(|method| &*method.id),
+        Some("browser")
+    );
+    assert_eq!(
+        record.auth_methods.get(1).map(|method| &method.kind),
+        Some(&ProbedKind::EnvVar)
+    );
+    assert!(matches!(
+        record.auth_methods.get(2).map(|method| &method.kind),
+        Some(ProbedKind::Terminal {
+            command,
+            args,
+            env,
+            tty,
+        }) if &**command == "goose"
+            && args.first().is_some_and(|arg| &**arg == "login")
+            && env.first().is_some_and(|variable| &*variable.name == "GOOSE_LOGIN")
+            && *tty == Some(true)
+    ));
+    assert_eq!(
+        record.auth_methods.get(3).map(|method| &method.kind),
+        Some(&ProbedKind::Other)
+    );
+}
+
+/// A registry archive is reserved at the compressed cap before it is
+/// downloaded, so the store reserves the most the install can need.
+#[test]
+fn a_registry_archive_is_reserved_at_the_compressed_cap() {
+    let reservation = registry_reservation(
+        "https://example.invalid/agent.tar.gz",
+        &"a".repeat(64),
+        Format::TarGz,
+    );
+
+    assert_eq!(reservation.size, ARCHIVE_BYTES);
+    assert_eq!(reservation.unpacked, UNPACKED_BYTES);
+    assert_eq!(reservation.decompressed, RELEASE_BYTES);
+}
+
+/// An answer the probe took where its sandbox could not close the network is
+/// refused, rather than recorded as if the vendor's program ran confined.
+#[test]
+fn a_probe_answer_that_did_not_close_its_network_is_refused() {
+    let open = serde_json::json!({
+        "sandbox": "unavailable: no user namespaces",
+        "agentInfo": {"name": "goose", "version": "1"},
+        "authMethods": []
+    })
+    .to_string();
+    let absent = serde_json::json!({
+        "agentInfo": {"name": "goose", "version": "1"},
+        "authMethods": []
+    })
+    .to_string();
+
+    for answer in [open, absent] {
+        assert!(
+            matches!(
+                record(&answer, "linux-x86_64"),
+                Err(crate::probing::Unprobed::Unanswered(_))
+            ),
+            "{answer}"
+        );
+    }
+}
+
+/// An answer past the receipt's own bounds is refused, so the install never
+/// commits a record the store's reader would call corrupt: a text longer than
+/// the receipt keeps, and more methods than it keeps.
+#[test]
+fn a_probe_answer_past_the_receipts_limits_is_refused() {
+    let long = serde_json::json!({
+        "sandbox": "closed",
+        "agentInfo": {
+            "name": "n".repeat(crucible_external_harnesses::store::PROBED_TEXT_BYTES + 1),
+            "version": "1"
+        },
+        "authMethods": []
+    })
+    .to_string();
+    let many = serde_json::json!({
+        "sandbox": "closed",
+        "agentInfo": {"name": "goose", "version": "1"},
+        "authMethods": (0..=crucible_external_harnesses::store::PROBED_METHODS)
+            .map(|n| serde_json::json!({"id": format!("m{n}"), "name": "Method", "kind": "agent"}))
+            .collect::<Vec<_>>()
+    })
+    .to_string();
+    let nameless = serde_json::json!({
+        "sandbox": "closed",
+        "agentInfo": {"name": "goose", "version": "1"},
+        "authMethods": [{
+            "id": "login", "name": "Log in", "kind": "terminal",
+            "command": "goose", "args": [], "env": {"": "1"}, "tty": true
+        }]
+    })
+    .to_string();
+
+    for answer in [long, many, nameless] {
+        assert!(
+            matches!(
+                record(&answer, "linux-x86_64"),
+                Err(crate::probing::Unprobed::Unanswered(_))
+            ),
+            "{answer}"
+        );
+    }
+}
+
+/// A registry archive is surveyed with the registry's ceilings and no list,
+/// recording the size that arrived rather than a pin.
+#[test]
+fn a_registry_artifact_is_surveyed_with_the_registrys_bounds() {
+    let artifact = registry_artifact(
+        "https://example.invalid/agent.tar.gz",
+        &"a".repeat(64),
+        10,
+        Format::TarGz,
+    );
+
+    assert_eq!(artifact.size, 10);
+    assert_eq!(artifact.unpacked, UNPACKED_BYTES);
+    assert_eq!(artifact.decompressed, RELEASE_BYTES);
+    assert_eq!(artifact.files, Files::Listed(Vec::new()));
+    assert_eq!(artifact.mirror, None);
+    assert_eq!(artifact.replaced_by, None);
+}
+
+/// An answer the probe had to cut, or one that does not say what the agent is,
+/// is refused rather than recorded in part.
+#[test]
+fn a_cut_or_anonymous_probe_answer_is_refused_rather_than_recorded_in_part() {
+    let cut = serde_json::json!({
+        "sandbox": "closed",
+        "agentInfo": {"name": "goose", "version": "1.4.1"},
+        "authMethods": [],
+        "incomplete": true
+    })
+    .to_string();
+    let anonymous = serde_json::json!({"sandbox": "closed", "authMethods": []}).to_string();
+
+    assert!(matches!(
+        record(&cut, "linux-x86_64"),
+        Err(crate::probing::Unprobed::Unanswered(_))
+    ));
+    assert!(matches!(
+        record(&anonymous, "linux-x86_64"),
+        Err(crate::probing::Unprobed::Unanswered(_))
+    ));
 }
 
 /// A wheel is surveyed by the wheel's reader, so the list the intake records
