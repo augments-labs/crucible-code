@@ -31,7 +31,7 @@
 //! allows an asset, and is believed only when its size and its SHA-256 are the
 //! listed ones.
 //!
-//! Who asked is a [`Trigger`]. Opening `/agents`, `/login`'s agent choice or
+//! Who asked is a [`Trigger`]. Opening `/catalog`, `/login`'s agent choice or
 //! running a `crucible agents` command is a request, and fetches whatever
 //! `updates.check` says. The fetch beside the release check is [`Background`]:
 //! it is armed only where that check is, after the first frame is on the
@@ -123,7 +123,7 @@ const LOOKING: Duration = Duration::from_millis(10);
 /// Who asked for the catalog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Trigger {
-    /// A person: `/agents` opening, `/login`'s agent choice opening, or a
+    /// A person: `/catalog` opening, `/login`'s agent choice opening, or a
     /// `crucible agents` command. It asks whatever `updates.check` says.
     Opening,
     /// The fetch beside the release check, armed only where that is. It asks

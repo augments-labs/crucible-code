@@ -2315,7 +2315,7 @@ fn unrun(scripts: &[Script]) -> Vec<String> {
 /// Why a release with an install script run at install is refused where no
 /// conversation lent a launcher to run it through.
 const UNLENT: &str = "a release whose install script runs in a conversation's sandbox, from a \
-                      command line (install it from /agents in a conversation)";
+                      command line (install it from /catalog in a conversation)";
 
 /// One install script of a release run at install, as its review found it.
 struct Local<'a> {

@@ -574,7 +574,7 @@ is installed, and the name GitHub gave is not printed.
 ## Coding agents the catalog offers
 
 These commands read and change the coding agents the agent catalog offers,
-the way [`/agents`](../providers/agents.md#agents) and `/login`'s agent screen
+the way [`/catalog`](../providers/agents.md#catalog) and `/login`'s agent screen
 do, before any conversation exists, and start none. `AGENT` is the agent as
 the catalog names it, such as `goose` or `antigravity`; a name the catalog does
 not offer for your platform is refused, and so is `claude`: Claude Code
@@ -623,7 +623,7 @@ its name, the versions offered for your platform, newest first, and the
 versions installed, such as `goose: offers 2.0.0, 1.0.0; installed 1.0.0` or
 `codex: offers 0.1.0; not installed`. `TEXT` keeps only the agents whose name
 holds it, ignoring case. Antigravity, which `/login` sets up, is left out, as
-it is from `/agents`. Where the catalog could not be fetched, standard error
+it is from `/catalog`. Where the catalog could not be fetched, standard error
 says so once, with why. It asks nothing, changes nothing and ends 0.
 
 ### `agents install AGENT [VERSION]`
@@ -638,11 +638,11 @@ in place, with `Installed goose 1.0.0 at …/programs/goose/1.0.0/goose. /login
 offers it under Use an installed coding agent.` or `goose 1.0.0 is already
 installed at …`, and 1 when nothing was put in place. A release with an install
 script to run at install is refused here before anything is fetched, saying to
-install it from `/agents` in a conversation, where the
+install it from `/catalog` in a conversation, where the
 [sandbox it runs in](../security/sandboxing.md#installed-agents-releases) is
 lent. Such a script runs on Linux alone, so elsewhere the release is refused from
-`/agents` too. A script built at review runs nothing, so a release with one is
-installed here as from `/agents`, on every platform.
+`/catalog` too. A script built at review runs nothing, so a release with one is
+installed here as from `/catalog`, on every platform.
 
 ### `agents add AGENT [VERSION]`
 
@@ -735,7 +735,7 @@ it may keep running. The command ending well does not count: the instance is
 signed in only once the agent, read afterwards, says so. A method that needs a
 real terminal is not listed, and naming it is refused. `/login` runs the same
 method under the same checks in
-[a panel of its own](../providers/agents.md#agents), where Tab hides the next line you
+[a panel of its own](../providers/agents.md#catalog), where Tab hides the next line you
 type.
 
 A method the agent carries out itself, such as signing in through a browser,

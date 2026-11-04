@@ -103,7 +103,7 @@ fn an_agent_added_from_the_catalog_answers_a_turn_on_the_registry_that_ships() {
 /// Adds goose from the catalog and walks `/login` to the screen of the instance
 /// that wrote.
 fn added_and_chosen(window: &mut Watched) {
-    window.types_until("/agents\r", "1 of 1 offered");
+    window.types_until("/catalog\r", "1 of 1 offered");
     window.types_until("goose", "Search  goose");
     window.types_until("\r", "esc to go back");
     takes(window, "Add");
@@ -208,7 +208,7 @@ fn signing_in(
     let vendor = Vendor::answering("Not asked.");
     let mut window =
         Watched::capturing_agents_published(case, ((80, 40), native), &vendor, None, &published);
-    window.types_until("/agents\r", "1 of 1 offered");
+    window.types_until("/catalog\r", "1 of 1 offered");
     window.types_until(AGENT, "Search  goose");
     window.types_until("\r", "esc to go back");
     takes(&mut window, "Add");

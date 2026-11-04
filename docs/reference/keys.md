@@ -377,7 +377,7 @@ an installed agent is listed, with the common keys and the footer
 `Remove integration settings`, with the same keys; each then asks its own
 question, where <kbd>Esc</kbd> changes nothing.
 
-### `/agents`
+### `/catalog`
 
 | Key | What it does |
 | --- | --- |
@@ -392,7 +392,7 @@ The agent's screen takes the common keys, and <kbd>Esc</kbd>,
 <kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd> go back to the list with nothing
 changed; its footer reads `esc to go back`. *Add* asks first, where
 <kbd>Esc</kbd> changes nothing, and <kbd>Esc</kbd> during the download cancels
-it. [`/agents`](../providers/agents.md#agents) says what each choice does.
+it. [`/catalog`](../providers/agents.md#catalog) says what each choice does.
 
 ### `/help`, and a command refused mid-turn
 

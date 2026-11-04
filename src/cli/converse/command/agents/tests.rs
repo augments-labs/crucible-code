@@ -1,4 +1,4 @@
-//! What `/agents` draws of what the door listed, which entries a query keeps,
+//! What `/catalog` draws of what the door listed, which entries a query keeps,
 //! and what an add and a check against the receipts say.
 
 use crucible_external_harnesses::store::{Differs, Mismatch};

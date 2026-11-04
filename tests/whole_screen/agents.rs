@@ -1408,12 +1408,12 @@ fn a_yes_on_an_agent_panel_lets_the_agent_go_on() {
     }
 }
 
-/// The catalog agent the `/agents` cases browse and add, under a key that is
+/// The catalog agent the `/catalog` cases browse and add, under a key that is
 /// no built-in driver word.
 const OFFERED: &str = "goose";
 
 /// Takes a window on a host whose catalog offers [`OFFERED`] at every size in
-/// both screen modes, `reaching` walking each from `/agents` opened to the
+/// both screen modes, `reaching` walking each from `/catalog` opened to the
 /// screen captured, which is named `name`.
 fn browsed(name: &str, reaching: impl Fn(&mut Watched)) {
     for native in [false, true] {
@@ -1429,7 +1429,7 @@ fn browsed(name: &str, reaching: impl Fn(&mut Watched)) {
                 None,
                 &published,
             );
-            window.types_until("/agents\r", "1 of 1 offered");
+            window.types_until("/catalog\r", "1 of 1 offered");
             reaching(&mut window);
             let picture = scrubbed(&timeless(&window.picture()), &case);
             insta::assert_snapshot!(format!("agents_{name}_{}_{mode}", size.0), picture);
@@ -1520,7 +1520,7 @@ fn an_agent_added_after_a_yes_downloads_and_names_the_instance_written() {
                 None,
                 &published,
             );
-            window.types_until("/agents\r", "1 of 1 offered");
+            window.types_until("/catalog\r", "1 of 1 offered");
             opened(&mut window);
             takes(&mut window, "Add");
             window.types_until("", "bytes to download");
@@ -1578,7 +1578,7 @@ fn a_second_add_of_the_same_agent_writes_the_next_free_instance() {
             None,
             &published,
         );
-        window.types_until("/agents\r", "1 of 1 offered");
+        window.types_until("/catalog\r", "1 of 1 offered");
         opened(&mut window);
         takes(&mut window, "Add");
         window.types_until("", "bytes to download");
@@ -1648,7 +1648,7 @@ fn an_add_left_at_its_question_writes_nothing_and_places_nothing() {
             None,
             &published,
         );
-        window.types_until("/agents\r", "1 of 1 offered");
+        window.types_until("/catalog\r", "1 of 1 offered");
         opened(&mut window);
         takes(&mut window, "Add");
         window.types_until("", "bytes to download");

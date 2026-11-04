@@ -50,7 +50,7 @@ fn goose_row_after(
     ))
 }
 
-/// An instance `/agents` added while the client ran is in the user file and
+/// An instance `/catalog` added while the client ran is in the user file and
 /// not in the settings read at the start: `/login`'s row of its agent finds it
 /// there, without a restart, and no line says there is none.
 #[test]
