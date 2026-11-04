@@ -344,12 +344,18 @@ impl Published {
         target["artifacts"] =
             serde_json::json!([artifact(&command, &bytes), artifact("script", &script)]);
         if stating {
-            entry["content_use"] = serde_json::json!({
-                "text": "The vendor may use what you send to improve goose.",
-                "source": "https://vendor.example/terms/data",
-                "date": "24 Oct 2026",
-                "origins": ["https://api.vendor.example"],
-            });
+            entry
+                .as_object_mut()
+                .expect("an offer is an object")
+                .insert(
+                    "content_use".to_owned(),
+                    serde_json::json!({
+                        "text": "The vendor may use what you send to improve goose.",
+                        "source": "https://vendor.example/terms/data",
+                        "date": "24 Oct 2026",
+                        "origins": ["https://api.vendor.example"],
+                    }),
+                );
         }
         let published = Self::serving(vec![(entry, bytes), (serde_json::Value::Null, script)]);
         published.release();

@@ -1457,6 +1457,9 @@ pub enum Unresumable {
 ///
 /// [`Unresumable`] where no entry is that agent, or the one that is cannot be
 /// started.
+// Each is a place or an input of its own that the reopening reads, and a value
+// gathering them would be built at each caller and taken apart here.
+#[allow(clippy::too_many_arguments)]
 pub fn reopening(
     entries: &[ExternalAgent],
     registry: &Registry,
