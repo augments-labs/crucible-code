@@ -7,8 +7,16 @@ use crucible_sandbox::SandboxDomainPattern;
 
 use super::*;
 
-/// A method that needs a real terminal stays refused as this door not running
-/// it, and with a channel lent it is no different.
+/// What a front end lends the door for a sign-in: a channel for a command over
+/// pipes, a terminal for one that needs a real one, or neither.
+type Lent<'a> = (
+    Option<&'a dyn SignInChannel>,
+    Option<&'a dyn SignInTerminal>,
+);
+
+/// A method that needs a real terminal is refused where no front end lent a
+/// handover, before anything is asked or started, and a channel lent for the
+/// piped route is no handover.
 #[test]
 fn a_method_that_needs_a_real_terminal_is_refused_however_much_is_lent() -> Result<(), Failed> {
     let runtime = runtime()?;
@@ -26,12 +34,41 @@ fn a_method_that_needs_a_real_terminal_is_refused_however_much_is_lent() -> Resu
     )?;
 
     assert!(
-        matches!(&refused, Err(AgentsError::Unsupported(_))),
+        matches!(&refused, Err(AgentsError::Unlent(_))),
         "{}",
         shape(&refused)
     );
     assert_eq!(fake_peer::played(&root), 0);
     Ok(())
+}
+
+/// A front end lent a terminal, keeping what the door asked of it.
+#[derive(Default)]
+struct Handed {
+    offered: Mutex<Vec<u32>>,
+    resumed: std::sync::atomic::AtomicUsize,
+}
+
+impl Handed {
+    fn offered(&self) -> Vec<u32> {
+        self.offered
+            .lock()
+            .map(|offered| offered.clone())
+            .unwrap_or_default()
+    }
+}
+
+impl SignInTerminal for Handed {
+    fn handed(&self, pid: u32) {
+        if let Ok(mut offered) = self.offered.lock() {
+            offered.push(pid);
+        }
+    }
+
+    fn resumed(&self) {
+        self.resumed
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 /// A value a person types that nothing kept may carry.
@@ -127,12 +164,20 @@ fn signed_in_after() -> Played {
 }
 
 /// A release of goose that is the fake peer playing `script`, whose entry
-/// records `terminal_method` as a method run with no real terminal.
+/// records a method run as a command over pipes.
 fn signing_in_by(bench: &Bench, script: &Peer) -> Result<Value, Failed> {
     signing_in_with(
         bench.server.peer_release("1.0.0", &peer(script)?),
         &command(),
     )
+}
+
+/// The same, with the method's route the real terminal, which the door runs
+/// unconfined and hands this process's terminal to.
+fn signing_in_at_terminal(bench: &Bench, script: &Peer) -> Result<Value, Failed> {
+    let mut release = signing_in_by(bench, script)?;
+    set(&mut release, "/auth_methods/0/route", json!("terminal"));
+    Ok(release)
 }
 
 /// `release` with the one method `terminal`, which runs `by` through the door.
@@ -189,8 +234,36 @@ impl Bench {
         channel: Option<&dyn SignInChannel>,
         runtime: &tokio::runtime::Runtime,
     ) -> Result<Result<Outcome, AgentsError>, Failed> {
-        let steps = self.piped_steps((Arc::clone(&sandbox), confined, yes), &REGISTRY, runtime)?;
-        self.ask_piped_beside(front, (sandbox, confined, yes), (channel, &steps), runtime)
+        self.ask_piped_lent(front, (sandbox, confined, yes), (channel, None), runtime)
+    }
+
+    /// The door asked as [`Bench::ask_piped`] asks it, with `terminal` lent.
+    fn ask_piped_terminal(
+        &self,
+        front: &mut Answering<'_>,
+        (sandbox, confined, yes): (Arc<dyn SandboxService>, bool, bool),
+        terminal: &dyn SignInTerminal,
+        runtime: &tokio::runtime::Runtime,
+    ) -> Result<Result<Outcome, AgentsError>, Failed> {
+        self.ask_piped_lent(
+            front,
+            (sandbox, confined, yes),
+            (None, Some(terminal)),
+            runtime,
+        )
+    }
+
+    /// The door asked with each of `channel` and `terminal` lent, where there
+    /// is one of each.
+    fn ask_piped_lent(
+        &self,
+        front: &mut Answering<'_>,
+        sandbox: (Arc<dyn SandboxService>, bool, bool),
+        lent: (Option<&dyn SignInChannel>, Option<&dyn SignInTerminal>),
+        runtime: &tokio::runtime::Runtime,
+    ) -> Result<Result<Outcome, AgentsError>, Failed> {
+        let steps = self.piped_steps(sandbox.clone(), &REGISTRY, runtime)?;
+        self.ask_piped_beside(front, sandbox, (lent, &steps), runtime)
     }
 
     /// The steps of a conversation on `sandbox` that confines its commands
@@ -236,13 +309,13 @@ impl Bench {
         &self,
         front: &mut Answering<'_>,
         (sandbox, confined, yes): (Arc<dyn SandboxService>, bool, bool),
-        (channel, steps): (Option<&dyn SignInChannel>, &Steps),
+        (lent, steps): (Lent<'_>, &Steps),
         runtime: &tokio::runtime::Runtime,
     ) -> Result<Result<Outcome, AgentsError>, Failed> {
         self.ask_piped_on(
             (front, request(sign_in("work", "terminal")?)),
             (&piped_consent(yes)?, sandbox, confined),
-            (channel, steps),
+            (lent, steps),
             runtime,
         )
     }
@@ -253,12 +326,12 @@ impl Bench {
         &self,
         (front, request): (&mut dyn Front, Request),
         (consent, sandbox, confined): (&Consent, Arc<dyn SandboxService>, bool),
-        (channel, steps): (Option<&dyn SignInChannel>, &Steps),
+        (lent, steps): (Lent<'_>, &Steps),
         runtime: &tokio::runtime::Runtime,
     ) -> Result<Result<Outcome, AgentsError>, Failed> {
         let policy = SandboxPolicy::standard(&self.tree.workspace()?)?.with_enabled(confined);
         let state = catalog_fetch::state_in(self.home.path());
-        let lent = Launcher::new(
+        let lent_launcher = Launcher::new(
             sandbox,
             runtime.handle().clone(),
             &policy,
@@ -269,10 +342,11 @@ impl Bench {
         let lending = Shelf {
             catalog: self.server.source(),
             home: &self.home,
-            smoke: Some(&lent),
+            smoke: Some(&lent_launcher),
             steps: Some(steps),
         };
         let cancel = Cancel::new();
+        let (channel, terminal) = lent;
         Ok(runtime.block_on(run(
             &request,
             &lending,
@@ -282,13 +356,112 @@ impl Bench {
                 cancel: &cancel,
                 link: &|_| {},
                 sign_in: channel,
+                terminal,
             },
         )))
     }
 }
 
-/// The yeses of a conversation, on the consent the build shares, the route of
-/// `goose` given where `yes`.
+/// The steps of a conversation whose sandbox is required by its project file,
+/// whatever its user chose.
+fn required_steps(bench: &Bench, runtime: &tokio::runtime::Runtime) -> Result<Steps, Failed> {
+    let policy = SandboxPolicy::standard(&bench.tree.workspace()?)?.with_enabled(true);
+    let state = catalog_fetch::state_in(bench.home.path());
+    Ok(Steps::new(
+        Launcher::new(
+            local_of(runtime),
+            runtime.handle().clone(),
+            &policy,
+            &piped_consent(true)?,
+            &state,
+            bench.home.sessions(),
+        ),
+        Arc::new(SandboxEnablement::new(false, true)),
+        &REGISTRY,
+        None,
+    ))
+}
+
+/// A sign-in at a real terminal is refused while the sandbox is required,
+/// before anything is asked or started, and the terminal is never lent.
+#[test]
+fn a_real_terminal_sign_in_is_refused_while_the_sandbox_is_required() -> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-terminal-required")?;
+    let release = signing_in_at_terminal(&bench, &Peer::of([signed_in_after()]))?;
+    let root = bench.with_installed(&release)?;
+    let steps = required_steps(&bench, &runtime)?;
+    let handed = Handed::default();
+    let mut front = answering(&bench.server, None);
+
+    let refused = bench.ask_piped_on(
+        (front_ref(&mut front), request(sign_in("work", "terminal")?)),
+        (&piped_consent(true)?, local_of(&runtime), true),
+        ((None, Some(&handed)), &steps),
+        &runtime,
+    )?;
+
+    assert!(
+        matches!(&refused, Err(AgentsError::Unconfined(_))),
+        "{}",
+        shape(&refused)
+    );
+    assert!(handed.offered().is_empty(), "the terminal was handed over");
+    assert_eq!(fake_peer::played(&root), 0, "something started");
+    Ok(())
+}
+
+/// A sign-in at a real terminal runs the catalog's command with the terminal
+/// handed to it, takes the terminal back, and is believed only as the agent is
+/// read afterwards.
+#[test]
+fn a_real_terminal_sign_in_runs_with_a_handover_and_is_read_as_signed_in() -> Result<(), Failed> {
+    let runtime = runtime()?;
+    let bench = Bench::new("agents-door-terminal-ran")?;
+    let release = signing_in_at_terminal(
+        &bench,
+        &Peer::of([
+            signed_in_after(),
+            Played::new().say("the terminal says hello"),
+            signed_in_after(),
+        ]),
+    )?;
+    let root = bench.with_installed(&release)?;
+    let handed = Handed::default();
+
+    let signed = bench.ask_piped_terminal(
+        &mut answering(&bench.server, Some("Run it")),
+        (local_of(&runtime), false, true),
+        &handed,
+        &runtime,
+    )?;
+
+    assert!(
+        matches!(
+            &signed,
+            Ok(Outcome::SignedIn {
+                by: Signed::Command,
+                ..
+            })
+        ),
+        "{}",
+        shape(&signed)
+    );
+    assert_eq!(handed.offered().len(), 1, "the child was not handed over");
+    assert!(handed.offered().first().is_some_and(|pid| *pid > 0));
+    assert_eq!(
+        handed.resumed.load(std::sync::atomic::Ordering::Relaxed),
+        1,
+        "the terminal was not taken back once"
+    );
+    assert_eq!(fake_peer::played(&root), 3);
+    Ok(())
+}
+
+/// `front` as the shared reference [`Bench::ask_piped_on`] takes.
+fn front_ref<'a>(front: &'a mut Answering<'_>) -> &'a mut dyn Front {
+    front
+}
 fn piped_consent(yes: bool) -> Result<Consent, Failed> {
     let consent = super::shipped_hold::shipped()?;
     if yes {
@@ -370,7 +543,7 @@ fn a_command_beside_a_live_run_is_refused_before_anything_is_asked_or_started() 
     let refused = bench.ask_piped_beside(
         &mut front,
         (local, false, false),
-        (Some(&person), &steps),
+        ((Some(&person as &dyn SignInChannel), None), &steps),
         &runtime,
     )?;
 
@@ -1195,7 +1368,7 @@ fn a_catalog_agents_sign_in_asks_its_route_and_runs_only_after_the_yes() -> Resu
     let declined = bench.ask_piped_on(
         (&mut no, asking()?),
         (&consent, Arc::clone(&local), false),
-        (Some(&person), &steps),
+        ((Some(&person as &dyn SignInChannel), None), &steps),
         &runtime,
     )?;
     assert!(
@@ -1213,7 +1386,7 @@ fn a_catalog_agents_sign_in_asks_its_route_and_runs_only_after_the_yes() -> Resu
     let signed = bench.ask_piped_on(
         (&mut yes, asking()?),
         (&consent, local, false),
-        (Some(&person), &steps),
+        ((Some(&person as &dyn SignInChannel), None), &steps),
         &runtime,
     )?;
     assert!(

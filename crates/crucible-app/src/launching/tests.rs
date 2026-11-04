@@ -4943,3 +4943,58 @@ fn a_sign_in_reaches_its_entrys_hosts_alone() {
     let kept = signing_from(&unconfined, &["accounts.vendor.example"]).unwrap();
     assert!(!kept.enabled());
 }
+
+#[cfg(all(unix, feature = "proof"))]
+#[test]
+fn a_real_terminal_sign_in_is_killed_with_its_group_when_the_bound_passes() {
+    use std::os::unix::fs::PermissionsExt as _;
+    #[derive(Default)]
+    struct Lent(Mutex<(Vec<u32>, usize)>);
+    impl SignInTerminal for Lent {
+        fn handed(&self, pid: u32) {
+            self.0.lock().unwrap().0.push(pid);
+        }
+        fn resumed(&self) {
+            self.0.lock().unwrap().1 += 1;
+        }
+    }
+
+    let sample = Sample::new("terminal-sign-in-bound");
+    let root = sample.root();
+    let script = root.join("login");
+    fs::write(
+        &script,
+        "#!/bin/sh\nsleep 30 &\necho $! > grandchild\nwait\n",
+    )
+    .unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    let Discovery::Found(program) = Discovery::of(Some(&script)) else {
+        panic!("the command is a program");
+    };
+    let lent = Lent::default();
+    let ended = ran_at_terminal(
+        &program,
+        &root,
+        &Request::showing(Vec::new(), Vec::new()),
+        Duration::from_millis(100),
+        &lent,
+    )
+    .expect("the command was started");
+
+    assert_eq!(ended, TerminalRun::Overran);
+    assert_eq!(lent.0.lock().unwrap().1, 1, "the terminal came back once");
+    let grandchild: i32 = fs::read_to_string(root.join("grandchild"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let pid = rustix::process::Pid::from_raw(grandchild).unwrap();
+    let until = std::time::Instant::now() + Duration::from_secs(5);
+    while rustix::process::test_kill_process_group(pid).is_ok() {
+        assert!(
+            std::time::Instant::now() < until,
+            "the group outlived the kill"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}

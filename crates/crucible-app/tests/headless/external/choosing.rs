@@ -738,6 +738,7 @@ fn a_catalog_method_s_name_is_escaped_in_the_question() -> Result<(), Failed> {
             "Sign in\\u{1b}[2J here",
             "API key",
             "Sign in at a terminal",
+            "Sign in at the console",
             "Go back"
         ]
     );

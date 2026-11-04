@@ -63,6 +63,42 @@ const NOT_READING: &str = "the command is not reading yet: press enter again";
 /// What the panel says of a line the door cut.
 const CUT: &str = "the command wrote more of this line than crucible keeps";
 
+/// This session's terminal, where it has one to lend a sign-in the agent runs
+/// at a real one.
+///
+/// All three streams have to be terminals: a sign-in at a real terminal is the
+/// route for a person at one, and a child whose input or either output is a
+/// pipe has no terminal to be handed. The modes are the ones the session's
+/// guards hold, taken from the same decision that took the screen and the
+/// pointer, so nothing is left that this process is still holding.
+pub(super) fn handover<T: Terminal>(renderer: &Renderer<T>) -> Option<crate::cli::client::Suspend> {
+    use std::io::IsTerminal as _;
+
+    handover_if(
+        renderer,
+        [
+            std::io::stdin().is_terminal(),
+            std::io::stdout().is_terminal(),
+            std::io::stderr().is_terminal(),
+        ],
+    )
+}
+
+/// [`handover`] against the three stream answers it read, so every combination
+/// can be asked without a terminal to ask.
+fn handover_if<T: Terminal>(
+    renderer: &Renderer<T>,
+    streams: [bool; 3],
+) -> Option<crate::cli::client::Suspend> {
+    if !renderer.is_terminal() || !streams.into_iter().all(|terminal| terminal) {
+        return None;
+    }
+    Some(crate::cli::client::Suspend::holding(
+        crate::cli::converse::holds(renderer.screen()).held(),
+        || {},
+    ))
+}
+
 /// Stands the panel under `title` over the sign-in `doing` says is under way
 /// until the door stops to ask something or is done.
 ///

@@ -515,6 +515,8 @@ fn signing_in() -> (serde_json::Value, &'static [u8]) {
                 {"id": "browser", "kind": "agent", "name": "Sign in with a browser"},
                 {"id": "terminal", "kind": "terminal", "name": "Sign in at a terminal",
                  "command": "goose", "args": ["login"], "env": {}, "route": "piped"},
+                {"id": "terminal-real", "kind": "terminal", "name": "Sign in at a real terminal",
+                 "command": "goose", "args": ["login"], "env": {}, "route": "terminal"},
             ]),
         );
         object.insert(
@@ -1446,6 +1448,31 @@ fn unconfined_is_allowed_only_where_the_runner_says_it_is_disposable() {
 
 /// Where this process has no terminal to run it on, a sign-in the agent runs as
 /// a command is refused saying one is needed, and no key is asked for.
+/// A method that needs a real terminal is a way the agent signs in, listed
+/// with the others rather than left out of the door's answer.
+#[test]
+fn a_real_terminal_method_is_listed_as_a_way_to_sign_in() {
+    let bench = Bench::new("sign-in-real-terminal-method");
+    bench.host.publish(1, &[signing_in()]);
+    bench.configure(&serde_json::json!({
+        "work": {
+            "driver": "catalog",
+            "agent": "goose",
+            "executable": bench.program("1.0.0").to_string_lossy(),
+        },
+    }));
+
+    let methods = {
+        let _ = bench.carried(&action(&["search"]), None, &mut unasked);
+        door::sign_in_methods(&bench.home, "work").expect("the agent's methods")
+    };
+
+    assert!(
+        methods.iter().any(|method| &**method == "terminal-real"),
+        "{methods:?}"
+    );
+}
+
 #[test]
 fn a_sign_in_run_as_a_command_is_refused_away_from_a_terminal() {
     let bench = Bench::new("sign-in-unlent");

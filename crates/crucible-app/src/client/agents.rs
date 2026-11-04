@@ -174,12 +174,15 @@
 //! stopped is. The runs are known only to the conversation that made
 //! them, through the steps it lent, so a launcher lent with none is refused as
 //! no conversation. A sign-in link the agent prints is told to
-//! [`Watching::link`] as the agent's wire passed it. A method that needs a
-//! real terminal is refused here and named by no list of methods. A method the
-//! agent runs as a command with no real terminal is started only where the
-//! front end lent [`Watching::sign_in`], since someone must read what it says
-//! and answer it: with nothing lent it is refused saying a terminal is needed,
-//! before the route is asked or anything started. Once the route has its yes,
+//! [`Watching::link`] as the agent's wire passed it. A method the agent runs
+//! as a command with no real terminal is started only where the front end lent
+//! [`Watching::sign_in`], since someone must read what it says and answer it:
+//! with nothing lent it is refused saying a terminal is needed, before the
+//! route is asked or anything started. A method that needs a real terminal is
+//! started only where the front end lent [`Watching::terminal`], and it is
+//! asked about on every run because it runs unconfined; it is refused where a
+//! project requires the sandbox or the platform has no terminal, before
+//! anything is asked or started. Once the route has its yes,
 //! and beside no run as above, a command that is no program of the version
 //! installed is refused ([`Unpiped::Outside`]) before anything starts; the agent
 //! is then read over its own wire, and what it says of the method now must be what its signed entry records
@@ -208,6 +211,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
+pub use crate::launching::SignInTerminal;
 use crucible_auth::Store as Credentials;
 use crucible_client_api::bounds::ITEMS;
 use crucible_client_api::{
@@ -290,6 +294,10 @@ pub struct Watching<'a> {
     /// end has someone to carry it to; a method of that kind is refused without
     /// one.
     pub sign_in: Option<&'a dyn SignInChannel>,
+    /// This front end's terminal, where it can lend one to a sign-in the agent
+    /// runs as a command that needs a real one. A method of that kind is
+    /// refused without one.
+    pub terminal: Option<&'a dyn SignInTerminal>,
 }
 
 impl std::fmt::Debug for Watching<'_> {
@@ -471,6 +479,13 @@ pub enum AgentsError {
          sign-in` from one"
     )]
     Unlent(Box<str>),
+    /// A sign-in method that needs a real terminal runs the agent's command
+    /// outside the sandbox, and a sandbox is required here.
+    #[error(
+        "the sign-in method {0} needs a real terminal, and a sign-in at one runs the agent's \
+         command outside the sandbox; a sandbox is required here"
+    )]
+    Unconfined(Box<str>),
     /// A sign-in run as a command was not run, or did not end signed in.
     #[error(transparent)]
     Piped(#[from] Unpiped),
@@ -1641,7 +1656,7 @@ impl Door<'_> {
                 by,
             })
         };
-        let (launcher, by, billed, channel) = match &found.method {
+        let (launcher, by, billed, channel, handover) = match &found.method {
             Method::EnvVar { .. } => {
                 let rows = Rows::production();
                 let name = rows.signing_in(&agent, &found.id)?;
@@ -1663,16 +1678,36 @@ impl Door<'_> {
                         method: found.id.clone(),
                     });
                 };
-                (launcher, Signed::Kept, None, None)
+                (launcher, Signed::Kept, None, None, None)
             }
             Method::Terminal {
                 route: Route::Terminal,
                 ..
             } => {
-                return Err(AgentsError::Unsupported(
-                    "a sign-in run at a real terminal, which this build does not run through \
-                     the agents door",
-                ));
+                // A terminal is Unix: the controlling terminal, the foreground
+                // process group and the signal Ctrl+C sends are the platform's
+                // own. Elsewhere the route is refused before anything starts.
+                if cfg!(unix) {
+                    let terminal = watching
+                        .terminal
+                        .ok_or_else(|| AgentsError::Unlent(quoted(&found.id).into()))?;
+                    let steps = self
+                        .shelf
+                        .steps
+                        .ok_or_else(|| AgentsError::Conversation(quoted(&found.id).into()))?;
+                    if steps.sandbox_required() {
+                        return Err(AgentsError::Unconfined(quoted(&found.id).into()));
+                    }
+                    let launcher = self
+                        .shelf
+                        .smoke
+                        .ok_or_else(|| AgentsError::Conversation(quoted(&found.id).into()))?;
+                    (launcher, Signed::Command, None, None, Some(terminal))
+                } else {
+                    return Err(AgentsError::Unsupported(
+                        "a sign-in at a real terminal, which this platform does not have",
+                    ));
+                }
             }
             Method::Terminal {
                 route: Route::Piped,
@@ -1687,7 +1722,7 @@ impl Door<'_> {
                     .shelf
                     .smoke
                     .ok_or_else(|| AgentsError::Conversation(quoted(&found.id).into()))?;
-                (launcher, Signed::Command, None, Some(channel))
+                (launcher, Signed::Command, None, Some(channel), None)
             }
             Method::Agent => {
                 let billed = match &row {
@@ -1703,7 +1738,7 @@ impl Door<'_> {
                     .shelf
                     .smoke
                     .ok_or_else(|| AgentsError::Conversation(quoted(&found.id).into()))?;
-                (launcher, Signed::Agent, billed, None)
+                (launcher, Signed::Agent, billed, None, None)
             }
         };
         // The agent's program is started beside any run of an instance on its
@@ -1756,7 +1791,7 @@ impl Door<'_> {
             .map_err(AgentsError::Unverified)?;
         drop(trust);
         // A command is not asked for over the wire, so the wire has no say.
-        if channel.is_none() && !dialect.signing_in_with(&found.id) {
+        if channel.is_none() && handover.is_none() && !dialect.signing_in_with(&found.id) {
             return Err(AgentsError::Unsupported(
                 "an agent whose wire signs in by no method named",
             ));
@@ -1764,6 +1799,13 @@ impl Door<'_> {
         // The route was asked, and a run may have begun, or failed to stop,
         // while it was.
         beside(steps, &sharing)?;
+        // A sign-in at a real terminal is unconfined, so it is asked about on
+        // every run, in the words that say so, rather than once for the route.
+        if handover.is_some()
+            && !agreed_to_run_unconfined(self.request, front, instance, &found).await
+        {
+            return Ok(Outcome::Undecided);
+        }
         // The agent's program is started on the instance's own control, so a
         // run of the instance is refused beside it, and it beside one, and a
         // stop that cannot be confirmed leaves the instance, and so every
@@ -1773,8 +1815,8 @@ impl Door<'_> {
         })?;
         // The start is given every key kept for the agent, so a kept key's
         // method is asked for with its key already in the agent's environment.
-        let reading = match channel {
-            Some(channel) => {
+        let reading = match (channel, handover) {
+            (Some(channel), _) => {
                 launcher
                     .piped(
                         &started,
@@ -1787,7 +1829,19 @@ impl Door<'_> {
                     )
                     .await?
             }
-            None => {
+            #[cfg(unix)]
+            (None, Some(terminal)) => {
+                launcher
+                    .terminal(&started, &control, &found, dialect.as_mut(), terminal, link)
+                    .await?
+            }
+            #[cfg(not(unix))]
+            (None, Some(_)) => {
+                return Err(AgentsError::Unsupported(
+                    "a sign-in at a real terminal, which this platform does not have",
+                ));
+            }
+            (None, None) => {
                 launcher
                     .account(&started, &control, dialect.as_mut(), Account::SignIn, link)
                     .await?
@@ -1910,21 +1964,13 @@ pub fn sign_in_methods(home: &Home, instance: &str) -> Result<Vec<Box<str>>, Age
     Ok(row
         .methods()
         .into_iter()
-        .filter(|offered| {
-            !matches!(
-                offered.method,
-                Method::Terminal {
-                    route: Route::Terminal,
-                    ..
-                }
-            )
-        })
         .map(|offered| offered.id)
         .collect())
 }
 
 /// Whether the method the configured `instance` offers as `method` is one run
-/// as a command with no real terminal, which a front end lends a channel for.
+/// as a command at this terminal, piped or on the real one, which a front end
+/// lends a channel or a terminal handover for.
 ///
 /// # Errors
 ///
@@ -1942,7 +1988,7 @@ pub fn runs_a_command(home: &Home, instance: &str, method: &str) -> Result<bool,
     Ok(matches!(
         found.method,
         Method::Terminal {
-            route: Route::Piped,
+            route: Route::Piped | Route::Terminal,
             ..
         }
     ))
@@ -3040,6 +3086,39 @@ fn dedup(names: &mut Vec<String>) {
 /// nobody picked one: it declined, answered nothing, or was turned away
 /// [`TRIES`](super::TRIES) times.
 ///
+/// Whether `front` agrees to run the sign-in `method` of `instance` at a real
+/// terminal, unconfined, in a question made for that run alone.
+async fn agreed_to_run_unconfined(
+    request: &Request,
+    front: &mut dyn Front,
+    instance: &str,
+    method: &AuthMethod,
+) -> bool {
+    let run = Confirmation {
+        asks: format!(
+            "Run {} as {instance} at this terminal, outside the sandbox?",
+            quoted(&method.id)
+        ),
+        facts: vec![
+            "The agent's own command is started as you, with this terminal's input and output."
+                .to_owned(),
+            "It is not held by the sandbox: nothing about what it reads or writes is checked."
+                .to_owned(),
+            "Ctrl+C reaches only the command, and it is stopped with everything it started after \
+             ten minutes."
+                .to_owned(),
+        ],
+        choices: vec![
+            (
+                "Run it".to_owned(),
+                "Hand this terminal to the command until it ends.".to_owned(),
+            ),
+            ("Cancel".to_owned(), "Start nothing.".to_owned()),
+        ],
+    };
+    confirmed(request, front, &run).await == Some(0)
+}
+
 /// Put whole or not at all: a sentence about what would be fetched, cut short,
 /// is not what the person agreed to.
 async fn confirmed(

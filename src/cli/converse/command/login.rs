@@ -80,7 +80,11 @@
 //! which Escape gives up; or a sign-in by the method chosen, with the link
 //! the agent prints shown while it waits. A method the agent runs as a command
 //! stands [`sign_in`]'s panel once the command runs, and where the output is
-//! redirected the door refuses it, there being nowhere to carry it to. A method
+//! redirected the door refuses it, there being nowhere to carry it to. A
+//! method the catalog records as needing a real terminal is asked about on
+//! every run, saying it runs outside the sandbox; the child then has this
+//! terminal, including the foreground process group, and the panel waits
+//! without drawing until it is handed back. A method
 //! that takes a key the agent has none kept for asks for it in the key box,
 //! crucible keeps it, and the sign-in is asked for once more. What came of it
 //! is said in a line, a refusal with every instance name it gives quoted, and
@@ -726,6 +730,15 @@ impl<T: Terminal> Overseer for Overseeing<'_, T> {
     fn carries_lines(&self) -> bool {
         self.renderer.is_terminal()
     }
+
+    /// The terminal this session holds, for a sign-in that needs a real one.
+    fn suspend(&self) -> Option<crate::cli::client::Suspend> {
+        sign_in::handover(self.renderer)
+    }
+
+    fn repaint(&mut self) -> Result<(), Fatal> {
+        self.renderer.repaint().map_err(Fatal::from)
+    }
 }
 
 /// What the panel over `action` says is under way, its names shown as the
@@ -755,6 +768,17 @@ fn watched<T: Terminal>(
     doing: &str,
     carrying: &mut Carrying<'_>,
 ) -> Result<(), Fatal> {
+    if carrying.handed() {
+        // The child owns the screen, the keys and the foreground process
+        // group. This thread must neither draw over it nor read from the
+        // terminal the child is typing to, so it sleeps instead of waiting on
+        // a key, and looks again when the child may have handed it back.
+        std::thread::sleep(BEAT);
+        return Ok(());
+    }
+    if carrying.take_repaint() {
+        renderer.repaint()?;
+    }
     if !carrying.working() {
         return Ok(());
     }
@@ -1049,6 +1073,7 @@ pub(super) fn refused(refusal: &AgentsError) -> String {
         | AgentsError::Unprofiled(_)
         | AgentsError::Unlaunched(_)
         | AgentsError::Unlent(_)
+        | AgentsError::Unconfined(_)
         | AgentsError::Piped(_)
         | AgentsError::Unverified(_) => format!("! {}", sentence(refusal)),
     }
@@ -1142,6 +1167,7 @@ pub(super) fn sentence(refusal: &AgentsError) -> String {
         | AgentsError::Unprofiled(_)
         | AgentsError::Unlaunched(_)
         | AgentsError::Unlent(_)
+        | AgentsError::Unconfined(_)
         | AgentsError::Piped(_)
         | AgentsError::Unverified(_) => refusal.to_string(),
     };

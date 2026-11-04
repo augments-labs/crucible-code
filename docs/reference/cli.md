@@ -732,17 +732,29 @@ command that writes more than crucible keeps is stopped and the sign-in refused.
 Interrupting crucible closes the command's input, and ends the command only
 where the sandbox ties it to crucible, on Linux with the sandbox on; elsewhere
 it may keep running. The command ending well does not count: the instance is
-signed in only once the agent, read afterwards, says so. A method that needs a
-real terminal is not listed, and naming it is refused. `/login` runs the same
+signed in only once the agent, read afterwards, says so. `/login` runs the same
 method under the same checks in
 [a panel of its own](../providers/agents.md#catalog), where Tab hides the next line you
 type.
 
+A method the catalog records as needing a real terminal is run on this
+process's terminal, on Unix alone, after a confirmation made for that run that
+says the command runs outside the sandbox. Standard input, output and error must
+all be terminals; anywhere else the method is refused before anything is asked
+or started. It is refused too while a project requires the sandbox, since no
+sandbox backend can give a child a terminal. The command is the catalog's
+recorded one, run from the version installed with the environment the entry
+gives it, and it has ten minutes. Ctrl+C reaches the command alone, because the
+child is the terminal's foreground process group; when the bound passes the
+whole group is killed, so nothing the command started outlives it. The terminal
+is handed back and every row painted again whatever the command's outcome, and,
+as for the piped route, the agent read afterwards decides whether it is signed
+in.
+
 A method the agent carries out itself, such as signing in through a browser,
 starts the agent, which needs a conversation to start it in: sign in by it from
-`/login`'s agent screen instead. A method that needs a real terminal is not run
-through this command either. Each is refused with why, nothing is started, and
-a refusal ends 1.
+`/login`'s agent screen instead. Each refused method says why, nothing is
+started, and a refusal ends 1.
 
 ### `agents unpack-check ENTRY ARTIFACT OUT`
 

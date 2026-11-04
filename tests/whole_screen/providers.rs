@@ -201,9 +201,35 @@ fn signing_in(
     recorded: &serde_json::Value,
     replies: Vec<Reply>,
 ) -> (Watched, Published, PathBuf) {
+    signing_in_on(case, native, recorded, replies, false)
+}
+
+/// The same, its method recorded as needing a real terminal.
+fn signing_in_at_terminal(
+    case: &str,
+    native: bool,
+    recorded: &serde_json::Value,
+    replies: Vec<Reply>,
+) -> (Watched, Published, PathBuf) {
+    signing_in_on(case, native, recorded, replies, true)
+}
+
+/// [`signing_in`], its method recorded as `terminal` where `terminal`, and the
+/// run confirmation answered where it is.
+fn signing_in_on(
+    case: &str,
+    native: bool,
+    recorded: &serde_json::Value,
+    replies: Vec<Reply>,
+    terminal: bool,
+) -> (Watched, Published, PathBuf) {
     let built = watched::agents(&format!("{case}-built"));
     std::fs::create_dir_all(&built).expect("a directory to build the release in");
-    let published = Published::signing_in_by(AGENT, &Script::of(replies), recorded, &built);
+    let published = if terminal {
+        Published::signing_in_at_terminal_by(AGENT, &Script::of(replies), recorded, &built)
+    } else {
+        Published::signing_in_by(AGENT, &Script::of(replies), recorded, &built)
+    };
     let _ = std::fs::remove_dir_all(&built);
     let vendor = Vendor::answering("Not asked.");
     let mut window =
@@ -394,6 +420,32 @@ fn escape_stops_a_sign_in_command_and_says_what_the_door_answered() {
             "{case}: {picture}"
         );
     }
+}
+
+/// Fails where a method the catalog records as needing a real terminal is not
+/// offered, or is run without the per-run confirmation that says it is
+/// unconfined.
+#[test]
+fn a_real_terminal_sign_in_asks_to_run_unconfined_and_starts_nothing_on_cancel() {
+    let case = "sign-in-real-terminal";
+    let (mut window, _published, root) = signing_in_at_terminal(
+        case,
+        false,
+        &terminal_method(),
+        vec![
+            read_first(),
+            Reply::new().say("hello from the real terminal").exit(0),
+            read_signed_in(),
+        ],
+    );
+    window.types_until("", "outside the sandbox");
+    takes(&mut window, "Cancel");
+    let picture = window.picture();
+    assert!(
+        !picture.contains("hello from the real terminal"),
+        "{case}: the command ran after a cancel: {picture}"
+    );
+    assert_eq!(fake_peer::played(&root), 0, "{case}: the command started");
 }
 
 /// Fails where a command that ended well is taken for a signed-in agent: only

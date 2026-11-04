@@ -1863,6 +1863,46 @@ fn a_key_method_with_none_kept_asks_for_the_key_once_keeps_it_and_signs_in_again
 }
 
 #[test]
+fn a_sign_in_that_would_run_outside_the_sandbox_says_so_when_one_is_required() {
+    let sample = Sample::new("login-terminal-confined");
+    signing(&sample);
+    let action = signing_in("oauth-personal");
+    let mut door = Scripted::new(
+        &sample,
+        vec![Err(AgentsError::Unconfined("\"oauth-personal\"".into()))],
+        None,
+    );
+
+    let (closed, written) = driven(&sample, &action, &mut door);
+
+    assert_eq!(closed, None);
+    assert!(
+        written.contains("outside the sandbox") && written.contains("sandbox is required"),
+        "{written}"
+    );
+}
+
+#[test]
+fn a_sign_in_that_needs_a_terminal_says_where_to_run_it() {
+    let sample = Sample::new("login-terminal-unlent");
+    signing(&sample);
+    let action = signing_in("oauth-personal");
+    let mut door = Scripted::new(
+        &sample,
+        vec![Err(AgentsError::Unlent("\"oauth-personal\"".into()))],
+        None,
+    );
+
+    let (closed, written) = driven(&sample, &action, &mut door);
+
+    assert_eq!(closed, None);
+    assert!(
+        written.contains("needs a terminal") && written.contains("crucible agents sign-in"),
+        "{written}"
+    );
+}
+
+#[test]
 fn a_second_refusal_for_want_of_a_key_is_said_and_not_asked_about_again() {
     let sample = Sample::new("login-keyed-twice");
     signing(&sample);

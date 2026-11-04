@@ -34,8 +34,11 @@
 //! of it. A front end that can draw a sign-in run as a command is lent a channel
 //! too: what the command says goes into [`Heard`], which keeps its own ceiling
 //! of lines, and what is typed goes back over a short queue, the door's thread
-//! only ever reporting. Where the output is redirected nothing is lent, and the
-//! door refuses that method before it runs it.
+//! only ever reporting. A sign-in that needs a real terminal is lent this
+//! process's terminal instead, through [`Handover`]: the drawing thread stops
+//! while the child has it and paints every row again once it is back. Where
+//! output is redirected nothing is lent, and the door refuses that method
+//! before it runs it.
 
 use std::collections::VecDeque;
 use std::future::Future;
@@ -48,7 +51,7 @@ use tokio::sync::{mpsc, oneshot};
 use crucible_app::Conversation;
 use crucible_app::catalog_fetch::Source;
 use crucible_app::client::agents::{
-    self as door, AgentsError, SaidLine, Shelf, SignInChannel, Typing, Watching,
+    self as door, AgentsError, SaidLine, Shelf, SignInChannel, SignInTerminal, Typing, Watching,
 };
 use crucible_app::client::{
     Answered, Confirmation, Desk, Front, Performed, Shown, account, asked, asking, interrupt, keep,
@@ -62,6 +65,26 @@ use crucible_client_api::{
     Outcome, Pending, Refusal, Request, Said, Theme,
 };
 use crucible_runtime::{BoxFuture, Cancel};
+#[cfg(unix)]
+pub(crate) use crucible_tui::Suspend;
+
+/// A stand-in for the terminal handover where there is no `Suspend` to make
+/// one from: no platform without a controlling terminal and process groups
+/// runs a sign-in at a real one, so nothing is ever handed over.
+#[cfg(not(unix))]
+#[derive(Debug)]
+pub(crate) struct Suspend;
+
+#[cfg(not(unix))]
+impl Suspend {
+    pub(crate) fn holding(_: crucible_tui::Held, _: impl Fn() + Send + Sync + 'static) -> Self {
+        Self
+    }
+
+    pub(crate) fn handed(&self, _: u32) {}
+
+    pub(crate) fn resumed(&self) {}
+}
 
 use super::converse::Terms;
 
@@ -478,6 +501,7 @@ struct Lent {
     heard: Arc<Mutex<Heard>>,
     typed: tokio::sync::Mutex<mpsc::Receiver<Typing>>,
     listening: Arc<AtomicBool>,
+    handover: Arc<Handover>,
 }
 
 impl SignInChannel for Lent {
@@ -496,6 +520,78 @@ impl SignInChannel for Lent {
             self.listening.store(true, Ordering::Release);
             self.typed.lock().await.recv().await
         })
+    }
+}
+
+impl SignInTerminal for Lent {
+    fn handed(&self, pid: u32) {
+        self.handover.handed(pid);
+    }
+
+    fn resumed(&self) {
+        self.handover.resumed();
+    }
+}
+
+/// The terminal a sign-in at a real one is lent, and the flags the drawing
+/// thread reads while it is out on loan.
+///
+/// The door's thread calls this; only the terminal sequences themselves leave
+/// here, and the drawing thread is what puts a frame on the screen again when
+/// [`SignInTerminal::resumed`] says it is back.
+struct Handover {
+    /// The terminal modes, where this session has a terminal to give.
+    suspend: Mutex<Option<Suspend>>,
+    /// Whether a child has the terminal, so the panel waits rather than draws
+    /// over it.
+    handed: AtomicBool,
+    /// Whether the terminal has come back and the next frame must paint every
+    /// row.
+    repaint: AtomicBool,
+}
+
+impl Handover {
+    fn new(suspend: Option<Suspend>) -> Self {
+        Self {
+            suspend: Mutex::new(suspend),
+            handed: AtomicBool::new(false),
+            repaint: AtomicBool::new(false),
+        }
+    }
+
+    /// Whether the child holds the terminal right now.
+    fn suspended(&self) -> bool {
+        self.handed.load(Ordering::Acquire)
+    }
+
+    /// Takes the request to repaint every row, if the terminal has come back
+    /// since it was last taken.
+    fn take_repaint(&self) -> bool {
+        self.repaint.swap(false, Ordering::AcqRel)
+    }
+}
+
+impl SignInTerminal for Handover {
+    fn handed(&self, pid: u32) {
+        // Set first: the drawing thread must not start a frame between this
+        // and the child taking the screen.
+        self.handed.store(true, Ordering::Release);
+        let suspend = self.suspend.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(suspend) = suspend.as_ref() {
+            // A mode that would not leave was already put back by `Suspend`;
+            // there is nobody at this point to tell, and the child still gets
+            // the terminal it was promised.
+            let _ = suspend.handed(pid);
+        }
+    }
+
+    fn resumed(&self) {
+        let suspend = self.suspend.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(suspend) = suspend.as_ref() {
+            let _ = suspend.resumed();
+        }
+        self.handed.store(false, Ordering::Release);
+        self.repaint.store(true, Ordering::Release);
     }
 }
 
@@ -520,6 +616,8 @@ pub(crate) struct Carrying<'a> {
     /// Raised once the door asks for a line, which it does with the command
     /// running.
     listening: Arc<AtomicBool>,
+    /// The terminal, where this session has one to lend a sign-in.
+    handover: Arc<Handover>,
 }
 
 impl Carrying<'_> {
@@ -549,6 +647,18 @@ impl Carrying<'_> {
     /// Whether a sign-in command is running, wanting what is typed for it.
     pub(crate) fn listening(&self) -> bool {
         self.listening.load(Ordering::Acquire)
+    }
+
+    /// Whether a sign-in at a real terminal has this terminal right now, so a
+    /// panel must wait rather than draw over the child.
+    pub(crate) fn handed(&self) -> bool {
+        self.handover.suspended()
+    }
+
+    /// Whether the terminal has come back since the last frame, which is what
+    /// asks for every row to be painted again.
+    pub(crate) fn take_repaint(&self) -> bool {
+        self.handover.take_repaint()
     }
 
     /// What a sign-in command has said.
@@ -656,10 +766,14 @@ fn overseen<O: Overseer, R: Send>(
     let heard = Arc::new(Mutex::new(Heard::default()));
     let listening = Arc::new(AtomicBool::new(false));
     let (typing, typed) = mpsc::channel(TYPED_LINES);
+    let suspended = overseer.suspend();
+    let lends_terminal = suspended.is_some();
+    let handover = Arc::new(Handover::new(suspended));
     let lent = Lent {
         heard: Arc::clone(&heard),
         typed: tokio::sync::Mutex::new(typed),
         listening: Arc::clone(&listening),
+        handover: Arc::clone(&handover),
     };
     let lends = overseer.carries_lines();
     let lent_ = &lent;
@@ -682,6 +796,7 @@ fn overseen<O: Overseer, R: Send>(
                     told_.lock().unwrap_or_else(PoisonError::into_inner).link = Some(link);
                 },
                 sign_in: lends.then_some(lent_ as &dyn SignInChannel),
+                terminal: lends_terminal.then_some(lent_ as &dyn SignInTerminal),
             };
             door(&mut front, watching)
         });
@@ -694,8 +809,10 @@ fn overseen<O: Overseer, R: Send>(
             heard,
             typing,
             listening,
+            handover,
         };
         let stood = stood(overseer, &mut carrying);
+        let repaint = stood.is_ok() && carrying.take_repaint();
         if stood.is_err() {
             cancel_.request();
         }
@@ -705,6 +822,9 @@ fn overseen<O: Overseer, R: Send>(
         let carried = worker
             .join()
             .unwrap_or_else(|panicked| std::panic::resume_unwind(panicked));
+        if repaint {
+            overseer.repaint()?;
+        }
         stood.map(|()| carried)
     })
 }
@@ -737,6 +857,22 @@ pub(crate) trait Overseer {
     /// the door is lent no channel and refuses that method before running it.
     fn carries_lines(&self) -> bool {
         false
+    }
+
+    /// This session's terminal modes, where it has a terminal to give a sign-in
+    /// command that needs a real one. Where it does not, the door is lent no
+    /// handover and refuses that method before running it.
+    fn suspend(&self) -> Option<Suspend> {
+        None
+    }
+
+    /// Paints every row again after a child had the terminal.
+    ///
+    /// # Errors
+    ///
+    /// Whatever drawing the frame failed with.
+    fn repaint(&mut self) -> Result<(), Self::Error> {
+        Ok(())
     }
 }
 
@@ -806,6 +942,7 @@ pub(crate) const fn coded(refused: &AgentsError) -> ErrorCode {
         | AgentsError::Unlaunched(_)
         | AgentsError::HoldUnkept(_)
         | AgentsError::Piped(_)
+        | AgentsError::Unconfined(_)
         | AgentsError::Unverified(_) => ErrorCode::Failed,
     }
 }

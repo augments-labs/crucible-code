@@ -30,8 +30,8 @@ use crucible_app::agent_download::DownloadError;
 use crucible_app::backends::{AgentRow, CatalogRow, REGISTRY, Registry};
 use crucible_app::catalog_fetch::{self, Source};
 use crucible_app::client::agents::{
-    AgentsError, How, Outcome, SaidLine, Shelf, SignInChannel, Signed, Typed, Typing, Watching,
-    keep_key, run, sign_in_methods,
+    AgentsError, How, Outcome, SaidLine, Shelf, SignInChannel, SignInTerminal, Signed, Typed,
+    Typing, Watching, keep_key, run, sign_in_methods,
 };
 use crucible_app::client::{Front, Shown};
 use crucible_app::content_use::{CATALOGED, Consent, Routes};
@@ -495,6 +495,7 @@ impl Bench {
                     cancel: &cancel,
                     link: &|_| {},
                     sign_in: None,
+                    terminal: None,
                 },
             ))?
         };
@@ -566,6 +567,7 @@ const fn shape(outcome: &Result<Outcome, AgentsError>) -> &'static str {
         Err(AgentsError::HoldUnkept(_)) => "Err(HoldUnkept)",
         Err(AgentsError::Unverified(_)) => "Err(Unverified)",
         Err(AgentsError::Unlent(_)) => "Err(Unlent)",
+        Err(AgentsError::Unconfined(_)) => "Err(Unconfined)",
         Err(AgentsError::Piped(_)) => "Err(Piped)",
         Err(AgentsError::Unstopped(_)) => "Err(Unstopped)",
         Err(AgentsError::Running(_)) => "Err(Running)",
@@ -1226,6 +1228,7 @@ fn a_client_that_did_not_claim_install_is_refused_before_anything_is_fetched() -
                 cancel: &cancel,
                 link: &|_| {},
                 sign_in: None,
+                terminal: None,
             },
         ))?;
 
@@ -2092,6 +2095,7 @@ impl Bench {
                 cancel: &cancel,
                 link: &|_| {},
                 sign_in: None,
+                terminal: None,
             },
         )))
     }
@@ -3520,7 +3524,10 @@ fn the_methods_an_instance_signs_in_by_are_named_in_the_order_its_agent_offers_t
             "agent-platform",
         ]
     );
-    assert_eq!(named("work")?, ["terminal", "api-key", "browser"]);
+    assert_eq!(
+        named("work")?,
+        ["terminal", "api-key", "browser", "console"]
+    );
     let unnamed = named("else");
     assert!(
         matches!(unnamed, Err(AgentsError::NoInstance(_))),
@@ -3833,6 +3840,7 @@ impl Bench {
                 cancel: &cancel,
                 link: &|_| {},
                 sign_in: None,
+                terminal: None,
             },
         )))
     }
