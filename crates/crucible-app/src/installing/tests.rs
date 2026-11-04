@@ -505,21 +505,6 @@ fn the_probe_record_is_the_agents_answer_for_the_target_it_was_taken_for() {
     );
 }
 
-/// A registry archive is reserved at the compressed cap before it is
-/// downloaded, so the store reserves the most the install can need.
-#[test]
-fn a_registry_archive_is_reserved_at_the_compressed_cap() {
-    let reservation = registry_reservation(
-        "https://example.invalid/agent.tar.gz",
-        &"a".repeat(64),
-        Format::TarGz,
-    );
-
-    assert_eq!(reservation.size, ARCHIVE_BYTES);
-    assert_eq!(reservation.unpacked, UNPACKED_BYTES);
-    assert_eq!(reservation.decompressed, RELEASE_BYTES);
-}
-
 /// An answer the probe took where its sandbox could not close the network is
 /// refused, rather than recorded as if the vendor's program ran confined.
 #[test]

@@ -111,7 +111,8 @@ fn added_and_chosen(window: &mut Watched) {
     takes(window, "Add");
     window.types_until("", "Apache-2.0 · installed");
     window.types_until("\x1b", "an agent, or a licence");
-    window.types_until("\x1b", "Added goose 1.0.0");
+    window.types_until("\x03", "Added goose 1.0.0");
+    window.types_until("", "Recent sessions");
 
     window.types_until("/login\r", "Use an installed coding agent");
     takes(window, "Use an installed coding agent");
@@ -243,7 +244,8 @@ fn signing_in_on(
     takes(&mut window, "Add");
     window.types_until("", "installed");
     window.types_until("\x1b", "an agent, or a licence");
-    window.types_until("\x1b", "Added goose 1.0.0");
+    window.types_until("\x03", "Added goose 1.0.0");
+    window.types_until("", "Recent sessions");
     let root = window.home().join("programs").join(AGENT).join("1.0.0");
     window.types_until("/login\r", "Use an installed coding agent");
     takes(&mut window, "Use an installed coding agent");
@@ -495,4 +497,202 @@ fn what_a_command_writes_cannot_draw_outside_the_panel() {
     let picture = window.picture();
     assert!(picture.contains("Recent sessions"), "{case}: {picture}");
     window.types_until("\x1b", "the sign-in was stopped");
+}
+
+/// The fake registry host offering `goose` at `version`, with one recorded
+/// environment-variable sign-in method and one archive under its digest.
+fn registry_host(case: &str, version: &str) -> (Published, serde_json::Value) {
+    let built = watched::scratch(case).join(format!("released-{version}"));
+    let methods = serde_json::json!([{
+        "type": "env_var",
+        "id": "key",
+        "name": "API key",
+    }]);
+    let initialized = acp::offering("goose-acp", version, &methods);
+    let program = fake_peer::install(
+        &built,
+        "goose",
+        &Script::once(Reply::new().hear(1).say(&initialized)),
+    )
+    .expect("the fake peer installs");
+    let program_name = program
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .expect("a program name")
+        .to_owned();
+    let script = std::fs::read(built.join("script")).expect("the peer's script");
+    let archive = fake_peer::archive(&[
+        (
+            &program_name,
+            &std::fs::read(&program).expect("the peer's program"),
+        ),
+        ("script", &script),
+    ]);
+    let sha256 = watched::digest(&archive);
+    let index = serde_json::json!({
+        "version": "1.0.0",
+        "agents": [{
+            "id": "goose",
+            "name": "Goose",
+            "version": version,
+            "license": "Apache-2.0",
+            "license_url": "https://example.com/goose/terms",
+            "distribution": {"binary": {watched::platform(): {
+                "archive": format!("https://downloads.example.com/goose-{version}.zip"),
+                "cmd": format!("./{program_name}"),
+                "sha256": sha256,
+                "args": [],
+                "env": {"GOOSE_HOME": "/tmp/goose"},
+            }}},
+        }],
+    });
+    (Published::registry(&index, archive), index)
+}
+
+/// A registry agent is listed with its source and read date, installed under
+/// the question that names its archive and probe, launched under the
+/// conversation's policy after a restart without probing the vendor again,
+/// and then updated, rolled back and signed in to through the registry source.
+#[test]
+fn a_registry_agent_is_listed_installed_probed_and_answers_a_turn() {
+    let case = "registry-conversation";
+    let (published, _index) = registry_host(case, "1.0.0");
+    let initialized = acp::offering(
+        "goose-acp",
+        "1.0.0",
+        &serde_json::json!([{"type": "env_var", "id": "key", "name": "API key"}]),
+    );
+
+    let mut window = Watched::shipped(case, (80, 40), (NOTHING_CHOSEN, &[]), &published);
+    window.types_until("/catalog\r", "1 of 1 offered");
+    let listing = window.picture();
+    assert!(listing.contains("Source: ACP Registry, read "), "{listing}");
+    assert!(listing.contains("not reviewed by Crucible"), "{listing}");
+    window.types_until("goose", "Search  goose");
+    window.types_until("\r", "esc to go back");
+    takes(&mut window, "Add");
+    let asked = published.asked();
+    window.types_until("", "for a probe after your yes");
+    let question = window.picture();
+    assert!(
+        question.contains("download the vendor's archive"),
+        "{question}"
+    );
+    assert!(question.contains("survey"), "{question}");
+    assert!(
+        question.contains("https://downloads.example.com/goose-1.0.0.zip"),
+        "{question}"
+    );
+    assert!(
+        question.contains("536870912 bytes, the registry's cap"),
+        "{question}"
+    );
+    assert!(
+        question.contains("network reach is not recorded"),
+        "{question}"
+    );
+    assert!(
+        question.contains("This agent's vendor has not stated"),
+        "{question}"
+    );
+    assert!(question.contains("not reviewed by Crucible"), "{question}");
+    assert_eq!(
+        published.asked(),
+        asked,
+        "the archive was downloaded or the probe run before the yes"
+    );
+    takes(&mut window, "Add");
+    window.types_until("", "Apache-2.0 · installed");
+    assert!(
+        window.picture().contains("Probed: goose-acp 1.0.0"),
+        "the probe's facts were not shown: {}",
+        window.picture()
+    );
+    let root = window.home().join("programs").join("goose").join("1.0.0");
+    assert!(
+        root.join("script").exists(),
+        "the survey did not write the script"
+    );
+
+    // A restart launches it from the cached index and the receipt's probe
+    // record, with no archive fetched and no probe taken again. The peer's
+    // stateless probe reply is replaced with the offering and one turn, so a
+    // second probe would take the turn's place and the launch would fail.
+    let script = Script::of([
+        Reply::new()
+            .hear(1)
+            .say(&initialized)
+            .hear(1)
+            .say(acp::opened(1)),
+        acp::opening(&initialized)
+            .say(acp::said("Answered by the registry agent."))
+            .say(acp::stopped(2, "end_turn")),
+    ]);
+    std::fs::write(root.join("script"), script.encoded()).expect("the launch script");
+    let document = said(&window);
+    window.ends_on("TERM");
+    let mut restarted = Watched::shipped(case, (80, 40), (&document, &["--continue"]), &published);
+    restarted.types_until("/login\r", "Use an installed coding agent");
+    takes(&mut restarted, "Use an installed coding agent");
+    takes(&mut restarted, "goose");
+    restarted.types_until("", "Connect");
+    takes(&mut restarted, "Connect");
+    restarted.types_until("", "This agent's vendor has not stated");
+    let warning = restarted.picture();
+    assert!(
+        warning.contains("network reach is not recorded"),
+        "{warning}"
+    );
+    takes(&mut restarted, "Continue");
+    restarted.types_until("Say something.\r", "Answered by the registry agent.");
+
+    // The restart lists it from the cached index and the receipt's probe
+    // record, with no archive fetched and no probe taken again.
+    restarted.types_until("/catalog\r", "1 of 1 offered");
+    let picture = restarted.picture();
+    assert!(picture.contains("goose 1.0.0"), "{picture}");
+    assert!(picture.contains("Probed: goose-acp 1.0.0"), "{picture}");
+    assert!(picture.contains("not reviewed by Crucible"), "{picture}");
+
+    // The next start reads the newer index and updates, rolls back and signs
+    // in through the same registry source.
+    let cached = restarted
+        .home()
+        .join("caches")
+        .join("acp-registry")
+        .join("registry.json");
+    let (published2, index2) = registry_host(case, "2.0.0");
+    let document = said(&restarted);
+    restarted.ends_on("TERM");
+    let mut moved = Watched::shipped(case, (80, 40), (&document, &["--continue"]), &published2);
+    // `/login` reads the cache, so put the newer index there before it opens.
+    std::fs::write(
+        &cached,
+        serde_json::to_vec(&index2).expect("a registry index"),
+    )
+    .expect("the cached registry index");
+
+    moved.types_until("/login\r", "Use an installed coding agent");
+    takes(&mut moved, "Use an installed coding agent");
+    takes(&mut moved, "goose");
+    moved.types_until("", "Connect");
+    moved.types_until("\x1b[A\x1b[A\x1b[A", "› Update");
+    moved.types_until("\r", "Update goose to 2.0.0?");
+    takes(&mut moved, "Update");
+    moved.types_until("", "goose updated to 2.0.0");
+    moved.types_until("", "Manage goose");
+    takes(&mut moved, "goose");
+    moved.types_until("", "Connect");
+    moved.types_until("\x1b[A\x1b[A\x1b[A", "› Roll back");
+    moved.types_until("\r", "Roll goose back to 1.0.0?");
+    takes(&mut moved, "Roll back");
+    moved.types_until("", "goose rolled back to 1.0.0");
+    moved.types_until("", "Manage goose");
+    takes(&mut moved, "goose");
+    moved.types_until("", "Connect");
+    takes(&mut moved, "API key");
+    moved.types_until("", "paste or type your API key");
+    moved.types_until("sk-registry-key\r", "Manage goose");
+    let held = std::fs::read_to_string(moved.home().join("auth.json")).unwrap_or_default();
+    assert!(held.contains("sk-registry-key"), "{held}");
 }

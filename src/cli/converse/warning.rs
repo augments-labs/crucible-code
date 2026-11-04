@@ -140,14 +140,18 @@ pub(super) fn ask_while<T: Terminal>(
             says: "Nothing starts",
         },
     ];
-    let launched = [content_use::LAUNCHING];
+    let launched: &[&str] = if warned.unrecorded() {
+        &[content_use::LAUNCHING, content_use::UNRECORDED]
+    } else {
+        &[content_use::LAUNCHING]
+    };
     let (shown, told): (&[Offered<'_>], &[&str]) = match put {
         // A message on an installed agent's route that starts the agent says
         // what starting it runs, as a launch does.
-        Put::Send if content_use::launches(&warned.route) => (&SENDING, &launched),
+        Put::Send if content_use::launches(&warned.route) => (&SENDING, launched),
         Put::Send => (&SENDING, &[]),
         Put::Choice => (&CHOOSING, &[]),
-        Put::Launch => (&launching, &launched),
+        Put::Launch => (&launching, launched),
     };
     let cited = warned.warning.cited();
     let footer = format!("enter to choose {} esc to go back", style.glyphs().dot());

@@ -95,6 +95,11 @@ impl Warning {
     }
 }
 
+/// What a registry agent's screen says of its network reach: the registry
+/// records no hosts, so the conversation's policy is the agent's network.
+pub const UNRECORDED: &str = "Its network reach is not recorded; it runs under the network \
+                               policy of the conversation that starts it.";
+
 /// One warned route.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Warned {
@@ -110,6 +115,16 @@ pub struct Warned {
     /// model: its host serves its provider's other models too, so it is asked
     /// about at the send rather than held at the host.
     pub origins: &'static [&'static str],
+}
+
+impl Warned {
+    /// Whether its agent's network reach is not recorded, as a registry row's
+    /// is not: the registry publishes no hosts, and the conversation's policy
+    /// is the agent's network.
+    #[must_use]
+    pub fn unrecorded(&self) -> bool {
+        &*self.warning.source == "the ACP Registry entry"
+    }
 }
 
 const OPENAI_PLANS: Warning = Warning {
@@ -300,7 +315,9 @@ pub const LAUNCHING: &str = "Starting it runs the hooks, helper commands, MCP se
 /// refusal and a run with no terminal say the same words.
 #[must_use]
 pub fn full_sentence(warned: &Warned) -> String {
-    if launches(&warned.route) {
+    if launches(&warned.route) && warned.unrecorded() {
+        format!("{} {LAUNCHING} {UNRECORDED}", warned.warning.sentence)
+    } else if launches(&warned.route) {
         format!("{} {LAUNCHING}", warned.warning.sentence)
     } else {
         warned.warning.sentence.to_string()

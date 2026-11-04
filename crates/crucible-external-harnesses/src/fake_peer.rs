@@ -405,7 +405,7 @@ impl Script {
     }
 
     /// This script as its file holds it.
-    pub(crate) fn encoded(&self) -> Vec<u8> {
+    pub fn encoded(&self) -> Vec<u8> {
         json!({
             "format": FORMAT,
             "stateless": self.stateless,
@@ -467,6 +467,34 @@ pub enum Unbuilt {
 /// where it could not be put in place.
 pub fn install(directory: &Path, program: &str, script: &Script) -> Result<PathBuf, Unbuilt> {
     installed(&built()?, directory, program, script)
+}
+
+/// A zip archive of `members`, each a path and its bytes, for a test host to
+/// serve as a registry archive: stored, not deflated, and each member
+/// executable, since a registry target's program is the archive's own.
+///
+/// Nothing that ships carries this: it is the test build's way to put the
+/// peer and its script into one archive, as the ACP Registry publishes them.
+///
+/// # Panics
+///
+/// When the archive cannot be written in memory, which leaves the test that
+/// asked for it nothing to report.
+#[must_use]
+#[allow(clippy::expect_used)]
+pub fn archive(members: &[(&str, &[u8])]) -> Vec<u8> {
+    use zip::write::SimpleFileOptions;
+
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for (path, bytes) in members {
+        let options = SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored)
+            .system(zip::System::Unix)
+            .unix_permissions(0o755);
+        writer.start_file(*path, options).expect("a member name");
+        writer.write_all(bytes).expect("a member");
+    }
+    writer.finish().expect("a zip stream").into_inner()
 }
 
 /// Where Cargo puts a workspace binary for the test running now: beside the
@@ -853,4 +881,27 @@ fn linger(directory: &Path) -> ExitCode {
         std::thread::sleep(BEAT);
     }
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    /// The fake archive's members carry the Unix mode a survey reads, even
+    /// where the writer would otherwise stamp a DOS system and lose the
+    /// executable bit.
+    #[test]
+    fn the_fake_archive_marks_each_member_executable() {
+        let archive = super::archive(&[("goose.exe", b"the program"), ("script", b"{}")]);
+        let mut zip = zip::ZipArchive::new(Cursor::new(archive)).expect("a zip archive");
+
+        for name in ["goose.exe", "script"] {
+            let member = zip.by_name(name).expect("a named member");
+            assert_eq!(
+                member.unix_mode().map(|mode| mode & 0o777),
+                Some(0o755),
+                "{name}"
+            );
+        }
+    }
 }

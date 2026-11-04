@@ -1670,6 +1670,7 @@ fn a_move_whose_smoke_test_or_pruning_did_not_happen_says_why_with_no_mark_mid_l
         left: Vec::new(),
         downloaded: true,
         standing: false,
+        probe: None,
         unsmoked: Some("its program\u{202e} did not start".into()),
         unpruned: Some(Box::new(AgentsError::TooLarge)),
     })
