@@ -6,7 +6,7 @@ expression: picture
 |CRUCIBLE                                |
 |/…/workspace                            |
 |                                        |
-|› /agents                               |
+|› /catalog                              |
 |⎿ Added goose 1.0.0 as the instance     |
 |  "goose". It was not smoke-tested: the |
 |  sandbox is off, and a smoke test runs |

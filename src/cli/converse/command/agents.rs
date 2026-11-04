@@ -1,4 +1,4 @@
-//! `/agents`: the coding agents the agent catalog offers, searched by name or
+//! `/catalog`: the coding agents the agent catalog offers, searched by name or
 //! licence, each with where it comes from, and one added after a yes.
 //!
 //! Opening it asks the agents door for the catalog through
@@ -96,17 +96,17 @@ const ASTRAY: &str = "! the agents door answered with something other than what 
 
 /// What the agent's screen says where it has no room to stand.
 const CRAMPED: &str =
-    "the window has no room for the agent's screen; make it taller and try /agents again";
+    "the window has no room for the agent's screen; make it taller and try /catalog again";
 
 /// What an add whose question had no room to stand says.
 const CRAMPED_ADD: &str =
-    "! adding needs an answer first; make the window taller and try /agents again";
+    "! adding needs an answer first; make the window taller and try /catalog again";
 
 /// The most versions, or files that differ, a line names one by one before
 /// saying how many more there are.
 const NAMED_AT_MOST: usize = 8;
 
-/// What runs `/agents`: the catalog stood as a list where a key can be read,
+/// What runs `/catalog`: the catalog stood as a list where a key can be read,
 /// else printed, and each agent taken opened on its own screen.
 ///
 /// # Errors
@@ -220,7 +220,7 @@ fn printed<T: Terminal>(renderer: &mut Renderer<T>, listing: &Listing) -> Result
     Ok(())
 }
 
-/// The list `/agents` stands: every agent the catalog offered, as its entry
+/// The list `/catalog` stands: every agent the catalog offered, as its entry
 /// draws it, what the search line holds, and where the mark is.
 ///
 /// Narrowed on every frame rather than once a key is pressed, because the
@@ -525,7 +525,7 @@ enum Screened {
     Back,
     /// An instance was added, so the list is asked for again.
     Added,
-    /// `/agents` is over.
+    /// `/catalog` is over.
     Over,
 }
 
@@ -720,7 +720,7 @@ fn quoted_counted(paths: &[Box<str>]) -> String {
 }
 
 /// Adds an instance of `listed` at its newest version: whether one was added,
-/// or nothing where `/agents` is over.
+/// or nothing where `/catalog` is over.
 fn add_one<T: Terminal>(
     listed: &door::Listed,
     renderer: &mut Renderer<T>,

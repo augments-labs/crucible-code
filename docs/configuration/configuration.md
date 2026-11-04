@@ -857,7 +857,7 @@ saying the earlier output is in the session log. A list or panel standing over
 the box, as `/model`, `/settings`, the `/` list, the queue and the Ctrl+O view
 do, takes at most half the window, or the least it can be drawn in where that is
 more. A question asked before something changes, such as the install, sign-in,
-sign-out and add questions `/login`, `/logout` and `/agents` ask, takes the
+sign-out and add questions `/login`, `/logout` and `/catalog` ask, takes the
 whole window where it needs it, so you read every fact before you answer. The
 transcript rows a panel or a question pushes off the top stay in the terminal's
 scrollback, and when it closes the box stays at the foot of the window, and the
@@ -868,7 +868,7 @@ rows it stood in are left blank between the transcript and the box.
 | **A finished row does not change once it is sealed out of the live region**, the part at the foot still being drawn, often while it is still visible on screen. It changes only when a resize writes the conversation again. | Use **Ctrl+O** to see the full text of a tool result the window cut short, in a panel where you can step through it or close it. |
 | **The screen cannot be emptied.** `/clear` and `/resume` write below what is there, after a `new session` or `session resumed` divider. A `/clear` before anything has been said writes no divider, only `nothing had been said`, since no session ended there. | Scroll up past the divider to read the earlier transcript. It stays in your terminal's scrollback until you resize the window; after that, `/resume` the earlier session to read it. |
 | **A click or a resting pointer in the transcript opens and lights nothing.** crucible does not ask for the mouse in native mode, so the wheel, a drag and a click are your terminal's. | Press **Ctrl+O** for cut results: **↑**/**↓** move a row, **PgUp**/**PgDn** a page, **←**/**→** step from result to result, and **Esc** closes. Press **Ctrl+B** for the list of commands left running; while a turn runs, it first leaves a running command in the background where there is one. |
-| **Rows a panel pushes off the top do not come back until the window is resized.** A panel standing over the box (`/settings`, `/model`, `/theme`, Ctrl+O, the `/` list) takes at most half the window, or the least it can be drawn in where that is more. A question asked before something changes, such as `/login`'s and `/agents`' install, sign-in and add questions or `/logout`'s sign-out question, takes the whole window where it needs it, so every fact is read before the answer. Transcript rows a panel or a question pushes off the top of the window go into your terminal's scrollback, and when it closes the box stays at the foot of the window, and the rows the panel stood in are left blank between the transcript and the box. | Scroll up in your terminal to read those rows. A panel with more than its room scrolls inside. |
+| **Rows a panel pushes off the top do not come back until the window is resized.** A panel standing over the box (`/settings`, `/model`, `/theme`, Ctrl+O, the `/` list) takes at most half the window, or the least it can be drawn in where that is more. A question asked before something changes, such as `/login`'s and `/catalog`' install, sign-in and add questions or `/logout`'s sign-out question, takes the whole window where it needs it, so every fact is read before the answer. Transcript rows a panel or a question pushes off the top of the window go into your terminal's scrollback, and when it closes the box stays at the foot of the window, and the rows the panel stood in are left blank between the transcript and the box. | Scroll up in your terminal to read those rows. A panel with more than its room scrolls inside. |
 | **A resize replaces your terminal's scrollback.** Once the window stops changing size, crucible clears the screen and the scrollback and writes the conversation again at the new width, so whatever your shell printed before crucible started goes too, and so does the transcript from before a `/clear` or `/resume`. A change of height alone, such as zooming a tmux pane or opening a pane above or below crucible, is a resize too, on purpose: on a terminal that rewraps its lines, a window made shorter would otherwise leave a second copy of the rows at its foot in the scrollback. A terminal that ignores the request to clear its scrollback keeps the old rows above the new ones. | Copy what you need from your shell's earlier output before resizing, or run crucible in a tab of its own. An earlier session is still there to `/resume`. |
 
 ### `updates`
@@ -902,7 +902,7 @@ in a schema crucible does not read changes nothing. The request is a plain GET
 and sends nothing of your session, your directory or your configuration. It is
 made no sooner than a day after the last time crucible made it, whether or not
 that attempt got a catalog crucible believes, so one that could not be fetched
-is not asked for again at the next start. Opening `/agents` or `/login`'s agent
+is not asked for again at the next start. Opening `/catalog` or `/login`'s agent
 choice, or running any `crucible agents` command, asks for the catalog
 whatever this is set to, since you asked; only the asking crucible does on its
 own obeys it.

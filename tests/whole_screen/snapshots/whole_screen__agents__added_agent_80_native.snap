@@ -18,7 +18,7 @@ expression: picture
 |│                                  │ · ctrl+c     clears the line typed so far │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
-|› /agents                                                                       |
+|› /catalog                                                                      |
 |⎿ Added goose 1.0.0 as the instance "goose". It was not smoke-tested: the       |
 |  sandbox is off, and a smoke test runs only inside it.                         |
 |                                                                                |

@@ -97,7 +97,7 @@ offer only *Go back*.
 
 Where an instance runs a version in crucible's store, the same screen offers
 *Connect*, which moves the conversation onto the agent in a new session. An
-agent you added with [`/agents`](#agents) is connected to and spoken with this
+agent you added with [`/catalog`](#catalog) is connected to and spoken with this
 way. Its route is put to you first, with the vendor's statement of content use
 the catalog carries, and nothing of the agent's starts before your yes. It
 reaches no provider of crucible's, so no provider's `access` is written, and
@@ -227,9 +227,9 @@ held before and after, such as `the agent made room · 150k → 30k carried`, an
 the reading drops to what was left. `/context` gives the same figure in its
 `held by the agent` row.
 
-## `/agents`
+## `/catalog`
 
-`/agents` lists the coding agents the agent catalog offers, asking for the
+`/catalog` lists the coding agents the agent catalog offers, asking for the
 catalog whatever [`updates`](../configuration/configuration.md#updates) says,
 since you asked. Each agent stands on two rows: its key and newest version,
 over its licence and whether any version of it is installed, such as
@@ -324,7 +324,7 @@ in place; a host that answers 404 or 410 is said to be
 likely permanent, since the version can likely no longer be installed. An entry
 that gives Node arguments of its own is refused before anything is fetched or
 asked. An install script built at review runs nothing on your machine, so it
-works on every platform, with the sandbox on or off, from `/agents` and from
+works on every platform, with the sandbox on or off, from `/catalog` and from
 `crucible agents install`: its build comes from the catalog's own host, held to
 the size and SHA-256 the catalog pins, and its package's directory is replaced
 by it, ending exactly as the review listed it, with `crucible agents verify`
@@ -339,7 +339,7 @@ its package exactly as the review listed it, or the version is refused and
 nothing of it is kept, and `crucible agents verify` covers the files it leaves.
 It needs the sandbox and runs on Linux alone: with the sandbox off, on macOS,
 on Windows or on FreeBSD, or from `crucible agents install`, which has no
-conversation to lend one and says to install it from `/agents` in a
+conversation to lend one and says to install it from `/catalog` in a
 conversation, it is refused before anything is fetched, and so is a release with
 more than sixteen such scripts and builds together, more than the question can
 show. A version
@@ -357,7 +357,7 @@ Installing another version, updating, rolling back, removing and signing in
 stay on `/login`'s agent screen, described above.
 [`crucible agents`](../reference/cli.md#coding-agents-the-catalog-offers)
 lists, adds, checks, installs, updates, rolls back, removes and signs in from
-the command line too, with no conversation. `/agents` cannot be opened
+the command line too, with no conversation. `/catalog` cannot be opened
 while a turn runs, since it installs an agent and writes your configuration.
 
 ## Claude Code

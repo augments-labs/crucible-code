@@ -303,7 +303,7 @@ impl Command {
             Self::Fast => "/fast",
             Self::Login => "/login",
             Self::Logout => "/logout",
-            Self::Agents => "/agents",
+            Self::Agents => "/catalog",
             Self::Mode => "/mode",
             Self::Sandbox => "/sandbox",
             Self::Theme => "/theme",

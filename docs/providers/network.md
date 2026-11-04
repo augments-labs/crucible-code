@@ -31,7 +31,7 @@ crucible makes requests of its own for five things, and nothing else:
   ordinary port. A catalog is believed only if its signature verifies under a
   key built into crucible. `{ "updates": { "check": "never" } }` turns off the
   asking crucible does on its own
-  ([`updates`](../configuration/configuration.md#updates)); opening `/agents`
+  ([`updates`](../configuration/configuration.md#updates)); opening `/catalog`
   or `/login`'s agent choice, or running a `crucible agents` command, asks for
   the catalog whatever it says.
 - **`api.github.com`, `github.com` and `githubusercontent.com`**, when you run
