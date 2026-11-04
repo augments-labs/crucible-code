@@ -1930,3 +1930,22 @@ fn a_method_that_takes_no_key_is_never_asked_for_one() {
         "{written}"
     );
 }
+
+/// The door refuses a command with nobody to carry it to, before anything is
+/// asked or started, so a redirected run reaches that refusal by lending none.
+#[test]
+fn only_a_terminal_lends_a_sign_in_command_a_panel() {
+    use crate::cli::client::Overseer as _;
+
+    let overseeing = |renderer| Overseeing {
+        renderer,
+        style: Style::plain(),
+        title: TITLE,
+        doing: String::new(),
+        cramped: false,
+    };
+    let mut terminal = Renderer::new(Recording::new(80, 24));
+    assert!(overseeing(&mut terminal).carries_lines());
+    let mut redirected = Renderer::new(Recording::redirected(80, 24));
+    assert!(!overseeing(&mut redirected).carries_lines());
+}

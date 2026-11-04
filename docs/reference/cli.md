@@ -733,7 +733,10 @@ Interrupting crucible closes the command's input, and ends the command only
 where the sandbox ties it to crucible, on Linux with the sandbox on; elsewhere
 it may keep running. The command ending well does not count: the instance is
 signed in only once the agent, read afterwards, says so. A method that needs a
-real terminal is not listed, and naming it is refused.
+real terminal is not listed, and naming it is refused. `/login` runs the same
+method under the same checks in
+[a panel of its own](../providers/agents.md#agents), where Tab hides the next line you
+type.
 
 A method the agent carries out itself, such as signing in through a browser,
 starts the agent, which needs a conversation to start it in: sign in by it from

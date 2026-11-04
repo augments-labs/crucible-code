@@ -400,6 +400,7 @@ fi
 # width and a room, and its tests sweep it under a comment naming the panel's
 # own fit sweep.
 own='src/cli/converse/command/login.rs Working
+src/cli/converse/command/login/sign_in.rs SigningIn
 src/cli/converse/command/agents.rs Listing'
 while IFS=' ' read -r file panel; do
     tests="${file%.rs}/tests.rs"
@@ -1387,6 +1388,7 @@ removable=(
     # and the whole-screen cases over them with the screens of an agent
     # installed from a test catalog.
     src/cli/converse/command/{agents,login,logout}.rs src/cli/client.rs
+    src/cli/converse/command/login/sign_in.rs src/cli/converse/command/login/sign_in/tests.rs
     tests/whole_screen/{agents,main,providers,watched}.rs scripts/screen-baseline.json
     tests/whole_screen/snapshots/whole_screen__agents__install_{downloading,done}_{40,80}_{fullscreen,native}.snap
     Cargo.toml Cargo.lock scripts/sh/repo-checks.sh

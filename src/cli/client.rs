@@ -31,8 +31,13 @@
 //! far it has got. The door says that, and the link a sign-in waits on, into
 //! a place that keeps only the latest of each, and puts its questions on the
 //! same channel an account operation does; only the drawing thread draws any
-//! of it.
+//! of it. A front end that can draw a sign-in run as a command is lent a channel
+//! too: what the command says goes into [`Heard`], which keeps its own ceiling
+//! of lines, and what is typed goes back over a short queue, the door's thread
+//! only ever reporting. Where the output is redirected nothing is lent, and the
+//! door refuses that method before it runs it.
 
+use std::collections::VecDeque;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -42,7 +47,9 @@ use tokio::sync::{mpsc, oneshot};
 
 use crucible_app::Conversation;
 use crucible_app::catalog_fetch::Source;
-use crucible_app::client::agents::{self as door, AgentsError, Shelf, Watching};
+use crucible_app::client::agents::{
+    self as door, AgentsError, SaidLine, Shelf, SignInChannel, Typing, Watching,
+};
 use crucible_app::client::{
     Answered, Confirmation, Desk, Front, Performed, Shown, account, asked, asking, interrupt, keep,
     perform,
@@ -421,6 +428,77 @@ pub(crate) struct Watched {
     pub(crate) link: Option<(String, bool)>,
 }
 
+/// How many lines of what a sign-in command says are kept: more than a window
+/// shows, and a ceiling of the panel's own beside the door's on what it carries.
+pub(crate) const HEARD_LIMIT: usize = 256;
+
+/// How many typed lines wait for the door: a person cannot get far ahead of a
+/// command that reads, and one that does not read is told to them at the panel.
+const TYPED_LINES: usize = 16;
+
+/// What a sign-in command has said, as the door carried it: its latest
+/// [`HEARD_LIMIT`] lines, the oldest going first, and how many went. It is the
+/// only place they are kept: the drawing thread reads them from here to draw.
+#[derive(Debug, Default)]
+pub(crate) struct Heard {
+    lines: VecDeque<SaidLine>,
+    told: u64,
+}
+
+impl Heard {
+    /// Takes one more line, letting the oldest go where that makes too many.
+    pub(crate) fn take(&mut self, line: SaidLine) {
+        if self.lines.len() >= HEARD_LIMIT {
+            self.lines.pop_front();
+        }
+        self.lines.push_back(line);
+        self.told = self.told.saturating_add(1);
+    }
+
+    /// The lines kept, oldest first.
+    pub(crate) fn lines(&self) -> impl Iterator<Item = &SaidLine> {
+        self.lines.iter()
+    }
+
+    /// How many lines have been said in all, which changes whenever one is.
+    pub(crate) const fn told(&self) -> u64 {
+        self.told
+    }
+
+    /// How many of them are no longer kept.
+    pub(crate) fn dropped(&self) -> u64 {
+        self.told
+            .saturating_sub(u64::try_from(self.lines.len()).unwrap_or(u64::MAX))
+    }
+}
+
+/// The channel a sign-in run as a command is lent. It only reports: the door's
+/// thread calls it, and only the drawing thread draws.
+struct Lent {
+    heard: Arc<Mutex<Heard>>,
+    typed: tokio::sync::Mutex<mpsc::Receiver<Typing>>,
+    listening: Arc<AtomicBool>,
+}
+
+impl SignInChannel for Lent {
+    fn said(&self, line: SaidLine) {
+        self.heard
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take(line);
+    }
+
+    /// Being asked for a line is what says the command is running. Dropped
+    /// before it answers, it loses no line: taking the lock and receiving both
+    /// give nothing up when they are dropped.
+    fn line(&self) -> BoxFuture<'_, Option<Typing>> {
+        Box::pin(async move {
+            self.listening.store(true, Ordering::Release);
+            self.typed.lock().await.recv().await
+        })
+    }
+}
+
 /// A move being carried out at the agents door, as the drawing thread stands
 /// over it between the questions it puts.
 pub(crate) struct Carrying<'a> {
@@ -435,6 +513,13 @@ pub(crate) struct Carrying<'a> {
     cancel: &'a Cancel,
     /// Raised once the door has answered, however it did.
     over: &'a AtomicBool,
+    /// What a sign-in command has said.
+    heard: Arc<Mutex<Heard>>,
+    /// Where what is typed for it goes; dropped, its input closes.
+    typing: mpsc::Sender<Typing>,
+    /// Raised once the door asks for a line, which it does with the command
+    /// running.
+    listening: Arc<AtomicBool>,
 }
 
 impl Carrying<'_> {
@@ -455,9 +540,25 @@ impl Carrying<'_> {
             .clone()
     }
 
-    /// What gives the download up, which then commits nothing.
+    /// What gives the download up, which then commits nothing, or stops a
+    /// sign-in command.
     pub(crate) const fn cancel(&self) -> &Cancel {
         self.cancel
+    }
+
+    /// Whether a sign-in command is running, wanting what is typed for it.
+    pub(crate) fn listening(&self) -> bool {
+        self.listening.load(Ordering::Acquire)
+    }
+
+    /// What a sign-in command has said.
+    pub(crate) fn heard(&self) -> Arc<Mutex<Heard>> {
+        Arc::clone(&self.heard)
+    }
+
+    /// Where what is typed for a sign-in command goes.
+    pub(crate) fn typing(&self) -> mpsc::Sender<Typing> {
+        self.typing.clone()
     }
 }
 
@@ -552,6 +653,16 @@ fn overseen<O: Overseer, R: Send>(
         to,
         client: client.clone(),
     };
+    let heard = Arc::new(Mutex::new(Heard::default()));
+    let listening = Arc::new(AtomicBool::new(false));
+    let (typing, typed) = mpsc::channel(TYPED_LINES);
+    let lent = Lent {
+        heard: Arc::clone(&heard),
+        typed: tokio::sync::Mutex::new(typed),
+        listening: Arc::clone(&listening),
+    };
+    let lends = overseer.carries_lines();
+    let lent_ = &lent;
     let (told_, cancel_, over_) = (&told, &cancel, &over);
     std::thread::scope(|scope| {
         let worker = scope.spawn(move || {
@@ -570,9 +681,7 @@ fn overseen<O: Overseer, R: Send>(
                     let link = (link.as_str().to_owned(), link.incomplete());
                     told_.lock().unwrap_or_else(PoisonError::into_inner).link = Some(link);
                 },
-                // A conversation has no one to carry a sign-in's lines to: its
-                // drawing thread is what the terminal belongs to.
-                sign_in: None,
+                sign_in: lends.then_some(lent_ as &dyn SignInChannel),
             };
             door(&mut front, watching)
         });
@@ -582,6 +691,9 @@ fn overseen<O: Overseer, R: Send>(
             told: told_,
             cancel: cancel_,
             over: over_,
+            heard,
+            typing,
+            listening,
         };
         let stood = stood(overseer, &mut carrying);
         if stood.is_err() {
@@ -619,6 +731,13 @@ pub(crate) trait Overseer {
     ///
     /// Whatever drawing the panel or reading a key failed with.
     fn stand(&mut self, carrying: &mut Carrying<'_>) -> Result<(), Self::Error>;
+
+    /// Whether it can stand a panel over a sign-in run as a command, showing
+    /// what the command says and taking what is typed for it. Where it cannot,
+    /// the door is lent no channel and refuses that method before running it.
+    fn carries_lines(&self) -> bool {
+        false
+    }
 }
 
 /// Stands `overseer` over the door `carrying` watches until it is over, and
