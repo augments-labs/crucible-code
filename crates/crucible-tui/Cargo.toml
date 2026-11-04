@@ -18,6 +18,17 @@ two-face.workspace = true
 thiserror.workspace = true
 unicode-width.workspace = true
 
+# The foreground process group a sign-in child is given, and the terminal modes
+# put back around it. `std` can put a child in a process group but has no
+# `tcsetpgrp` and no `tcgetpgrp`, and neither does crossterm; `rustix` is
+# already in the tree, so this turns on two safe wrappers rather than adding a
+# crate. `libc` is the one call that ignores `SIGTTOU` while the parent, in the
+# background, takes the terminal back; it is the workspace's libc and is read
+# for its constants and one guarded `signal` call.
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+rustix = { workspace = true, features = ["process", "termios"] }
+
 [lints]
 workspace = true
 
@@ -25,3 +36,9 @@ workspace = true
 # in the root manifest for when a test may reach for this and when it may not.
 [dev-dependencies]
 insta.workspace = true
+
+# The pty the foreground-group case runs a child on: `std` can spawn the
+# process and hand it descriptors but cannot open the pty pair or set its
+# window size.
+[target.'cfg(unix)'.dev-dependencies]
+rustix = { workspace = true, features = ["pty", "termios"] }

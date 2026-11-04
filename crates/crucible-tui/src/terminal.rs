@@ -17,7 +17,8 @@
 //! [`keys`] for what arrives once the mode is raw. Beside them sit the modes
 //! that are asked for in plain ANSI and so name nothing — [`mouse`] for the
 //! pointer, [`keyboard`] for how a modified key is spelled — and [`ground`],
-//! which is the one question this process asks a terminal. Everything the
+//! which is the one question this process asks a terminal. [`suspend`] is the
+//! one way every one of those is handed to a child and put back. Everything the
 //! renderer writes is plain ANSI, so what a swap would cost is the first
 //! three.
 
@@ -27,9 +28,34 @@ pub(crate) mod keys;
 pub(crate) mod mouse;
 pub(crate) mod raw;
 pub(crate) mod screen;
+#[cfg(unix)]
+pub(crate) mod suspend;
 pub(crate) mod system;
 
 use std::io;
+
+/// Which modes a session holds, as the guards that hold them know.
+///
+/// `screen` and `mouse` are the decision the session already made for its
+/// drawing mode; `raw`, `keyboard` and `paste` are the ones a session with a
+/// terminal holds for its whole length. `crucible-tui`'s `Suspend` (Unix only)
+/// takes one of these to know what to give a child and put back.
+// Each bool is a mode some other guard already holds; a state machine would
+// have to name every combination, and most of them mean the same thing.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Held {
+    /// The alternate screen.
+    pub screen: bool,
+    /// The line discipline.
+    pub raw: bool,
+    /// The distinct spelling of modified keys.
+    pub keyboard: bool,
+    /// Bracketed paste.
+    pub paste: bool,
+    /// Reports of the pointer.
+    pub mouse: bool,
+}
 
 /// What can go wrong while talking to a terminal.
 #[derive(Debug, thiserror::Error)]

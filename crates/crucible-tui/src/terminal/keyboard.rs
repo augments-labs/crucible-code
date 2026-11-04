@@ -84,11 +84,9 @@ impl Spelling {
             return Ok(None);
         }
 
-        write(DISTINCT)?;
+        push()?;
 
-        Ok(Some(Self {
-            restore: || write(AS_FOUND),
-        }))
+        Ok(Some(Self { restore: pop }))
     }
 }
 
@@ -134,12 +132,31 @@ impl Pasting {
             return Ok(None);
         }
 
-        write(BRACKETED)?;
+        bracket()?;
 
-        Ok(Some(Self {
-            restore: || write(UNBRACKETED),
-        }))
+        Ok(Some(Self { restore: unbracket }))
     }
+}
+
+/// Asks for the distinct spelling, for [`super::suspend`], which puts back a
+/// mode the guard still holds rather than taking one of its own.
+pub(super) fn push() -> io::Result<()> {
+    write(DISTINCT)
+}
+
+/// Pops the distinct spelling, for the same reason [`push`] exists.
+pub(super) fn pop() -> io::Result<()> {
+    write(AS_FOUND)
+}
+
+/// Asks for bracketed pastes, for the same reason [`push`] exists.
+pub(super) fn bracket() -> io::Result<()> {
+    write(BRACKETED)
+}
+
+/// Stops the bracketing, for the same reason [`push`] exists.
+pub(super) fn unbracket() -> io::Result<()> {
+    write(UNBRACKETED)
 }
 
 impl Drop for Pasting {

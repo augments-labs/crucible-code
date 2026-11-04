@@ -108,15 +108,25 @@ impl Reporting {
             held.set(held.get() + 1);
             held.get() == 1
         });
-        if first && let Err(trouble) = write(REPORTING) {
+        if first && let Err(trouble) = report() {
             HELD.with(|held| held.set(held.get() - 1));
             return Err(trouble.into());
         }
 
-        Ok(Some(Self {
-            quiet: || write(QUIET),
-        }))
+        Ok(Some(Self { quiet: silence }))
     }
+}
+
+/// Asks for button, motion and wide-coordinate reports, for
+/// [`super::suspend`], which puts back a mode the guard still holds rather
+/// than taking one of its own.
+pub(super) fn report() -> io::Result<()> {
+    write(REPORTING)
+}
+
+/// Stops the reports, for the same reason [`report`] exists.
+pub(super) fn silence() -> io::Result<()> {
+    write(QUIET)
 }
 
 impl Drop for Reporting {
