@@ -1347,13 +1347,20 @@ section "the external route is removable"
 # Running a conversation on an installed agent is one route a release can drop
 # by deleting what it adds, so every tracked file that names it is one this list
 # marks removable, whole or in the route's part. The names are the harness crate
-# and its fake peer, the configuration's `externalAgent` access with its
-# `ExternalAgent` type and `externalAgents` block, and the `agent:` content-use
-# routes. A driver's bare name is not one, since native code names the vendor's
-# models. A listed `.rs` file brings its `tests.rs` and `tests/` along, and an
-# entry no tracked file matches fails, so the list stays the one a removal reads.
+# and its fake peer, the ACP Registry, the configuration's `externalAgent`
+# access with its `ExternalAgent` type and `externalAgents` block, and the
+# `agent:` content-use routes. A driver's bare name is not one, since native
+# code names the vendor's models. A listed `.rs` file brings its `tests.rs` and
+# `tests/` along, and an entry no tracked file matches fails, so the list stays
+# the one a removal reads. `CHANGELOG.md` is the one exception: a release's
+# history names the route and is not removed with it.
 removable=(
     crates/crucible-external-harnesses
+    # The ACP Registry source, the streamed survey, the receipt's probe record
+    # and the bzip2 reader are the crate's, named here so a removal reads them.
+    crates/crucible-external-harnesses/src/catalog/registry.rs
+    crates/crucible-external-harnesses/src/release/unpack.rs
+    crates/crucible-external-harnesses/src/store/mod.rs
     # The application's route: the backends, the launch, the turn and its
     # translation, the accounts, the test build's registry, the `agent:` rows,
     # the writes, the start-up arm, the switch, and the refusals they raise.
@@ -1388,15 +1395,17 @@ removable=(
     # the client part that carries out the agent move /login is handed back,
     # and the whole-screen cases over them with the screens of an agent
     # installed from a test catalog.
-    src/cli/converse/command/{agents,login,logout}.rs src/cli/client.rs
+    src/cli/converse/command/{agents,login,logout}.rs src/cli/converse/command.rs
+    src/cli/client.rs
     src/cli/converse/command/login/sign_in.rs src/cli/converse/command/login/sign_in/tests.rs
     tests/whole_screen/{agents,main,providers,watched}.rs scripts/screen-baseline.json
-    tests/whole_screen/snapshots/whole_screen__agents__install_{downloading,done}_{40,80}_{fullscreen,native}.snap
+    tests/whole_screen/snapshots/whole_screen__agents__*.snap
+    tests/whole_screen/snapshots/whole_screen__a_slash_{opens_the_command_list_above_the_box,typed_mid_turn_opens_the_command_list}.snap
     Cargo.toml Cargo.lock scripts/sh/repo-checks.sh
-    docs/providers/{agents,index,providers,content-use}.md
+    docs/providers/{agents,index,providers,content-use,network}.md
     docs/configuration/configuration.md docs/reference/cli.md
-    docs/security/index.md docs/sessions/sessions.md
-    docs/getting-started/{troubleshooting,how-crucible-works}.md
+    docs/security/{index,sandboxing}.md docs/sessions/sessions.md
+    docs/getting-started/{troubleshooting,how-crucible-works,first-session}.md
     README.md CONTRIBUTING.md
 )
 pathspecs=()
@@ -1413,8 +1422,10 @@ done
 naming=$({
     git grep -l -F -e crucible-external-harnesses -e crucible_external_harnesses \
         -e crucible-fake-peer -e externalAgent -e ExternalAgent
+    git grep -l -F -e 'ACP Registry' -e cdn.agentclientprotocol.com \
+        -e catalog::registry
     git grep -l -E '(^|[^A-Za-z_-])agent:[a-z]'
-} | LC_ALL=C sort -u)
+} | grep -v -F -x CHANGELOG.md | LC_ALL=C sort -u)
 if [[ -z "$naming" ]]; then
     printf '    FAIL no tracked file names the external route; this check measured nothing\n'
     failed=1

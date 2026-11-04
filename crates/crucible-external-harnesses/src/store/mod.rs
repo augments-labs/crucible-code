@@ -535,13 +535,14 @@ pub enum Adoption {
 /// One way a version differs from what it is said to hold.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mismatch {
-    /// The path, relative to the version's directory.
+    /// The path, relative to the version's directory, or the name of the
+    /// receipt record that differs.
     pub path: Box<str>,
     /// How it differs.
     pub what: Differs,
 }
 
-/// How a file differs from what it is said to be.
+/// How a file or a receipt record differs from what it is said to be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Differs {
     /// It is not there, or not reached through directories alone.
@@ -560,6 +561,9 @@ pub enum Differs {
     Unlisted,
     /// It could not be read to tell.
     Unreadable,
+    /// It records another source or probe value than the one installed, or
+    /// none.
+    Record,
 }
 
 /// What a prune did.

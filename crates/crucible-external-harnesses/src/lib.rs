@@ -1,5 +1,4 @@
-//! Another vendor's coding agent, run as a supervised process behind the
-//! execution contract.
+//! Supervises another vendor's agent and keeps the releases it runs from.
 
 pub mod acp;
 pub mod antigravity;

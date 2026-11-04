@@ -28,7 +28,7 @@ use serde_json::{Map, Value, json};
 
 use super::{CatalogError, Entry, Format, LISTED_FILES, Offer};
 use crate::release::{ARCHIVE_BYTES, OwnedPin, RELEASE_BYTES, UNPACKED_BYTES};
-use crate::store::{Probe, ProbedKind, ProbedMethod, Receipt};
+use crate::store::{Differs, Mismatch, Probe, ProbedKind, ProbedMethod, Receipt, Source};
 
 /// Where the official registry is published.
 pub const URL: &str = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
@@ -152,6 +152,34 @@ impl RegistryIndex {
 #[must_use]
 pub fn platform() -> String {
     super::trust::here()
+}
+
+/// Every way `receipt` differs from what this build recorded of the release it
+/// describes: a release from the ACP Registry carries the registry source with
+/// no catalog serial, and a probe record taken for `target`.
+///
+/// A receipt whose source and review address disagree, or whose registry
+/// serial is not zero, is named `source`; a missing or other-platform probe
+/// record is named `probe`. A receipt from the signed catalog whose review is
+/// its pull request is named nothing.
+#[must_use]
+pub fn receipt_mismatches(receipt: &Receipt, target: &str) -> Vec<Mismatch> {
+    let registry = receipt.source == Source::Registry;
+    let reviewed = &*receipt.listing.review == URL;
+    let mut found = Vec::new();
+    if registry != reviewed || (registry && receipt.listing.serial != 0) {
+        found.push(Mismatch {
+            path: "source".into(),
+            what: Differs::Record,
+        });
+    }
+    if receipt.unprobed(target).is_some() {
+        found.push(Mismatch {
+            path: "probe".into(),
+            what: Differs::Record,
+        });
+    }
+    found
 }
 
 /// One agent the registry lists.

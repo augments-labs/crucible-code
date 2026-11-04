@@ -646,6 +646,32 @@ fn each_program_the_tree_declares_is_given_a_stub_in_bin_that_the_receipt_names(
         "{}",
         shape(&kept)
     );
+
+    // The stub is a file the receipt names like any other, so a changed byte
+    // in it is named by verify.
+    let verify = || -> Result<Command, Failed> {
+        Ok(Command::VerifyAgent {
+            agent: name("goose")?,
+        })
+    };
+    let mut quiet = answering(&bench.server, None);
+    let (whole, _) = bench.ask(verify()?, &mut quiet, false)?;
+    assert!(
+        matches!(&whole, Ok(Outcome::Verified { versions, .. })
+            if versions.iter().all(|(_, differs)| differs.is_empty())),
+        "{}",
+        shape(&whole)
+    );
+    fs::write(root.join(stub.path()), b"changed")?;
+    let (differs, _) = bench.ask(verify()?, &mut quiet, false)?;
+    assert!(
+        matches!(&differs, Ok(Outcome::Verified { versions, .. })
+            if versions.iter().any(|(_, differs)| differs
+                .iter()
+                .any(|one| &*one.path == stub.path()))),
+        "{}",
+        shape(&differs)
+    );
     Ok(())
 }
 

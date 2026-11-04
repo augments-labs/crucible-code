@@ -371,7 +371,7 @@ fn a_move_that_is_not_an_add_is_not_said_as_one() {
 }
 
 #[test]
-fn a_check_names_the_files_that_differ_and_counts_the_rest() {
+fn a_check_names_the_files_and_records_that_differ_and_counts_the_rest() {
     let mismatch = |path: String| Mismatch {
         path: path.into(),
         what: Differs::Bytes,
@@ -392,13 +392,16 @@ fn a_check_names_the_files_that_differ_and_counts_the_rest() {
     let [whole, one, many] = found.as_slice() else {
         panic!("a line a version: {found:?}");
     };
-    assert_eq!(whole, "1.0.0: every file is as recorded at install.");
+    assert_eq!(
+        whole,
+        "1.0.0: every file and record is as recorded at install."
+    );
     assert_eq!(
         one,
-        "0.9.0: 1 file differs from what was recorded at install: \"bin/goose\\u{1b}\"."
+        "0.9.0: 1 difference from what was recorded at install: \"bin/goose\\u{1b}\"."
     );
     assert!(
-        many.starts_with("0.8.0: 10 files differ from what was recorded at install: \"lib/0\", "),
+        many.starts_with("0.8.0: 10 differences from what was recorded at install: \"lib/0\", "),
         "{many}"
     );
     assert!(many.ends_with("\"lib/7\" and 2 more."), "{many}");
@@ -408,12 +411,12 @@ fn a_check_names_the_files_that_differ_and_counts_the_rest() {
 #[test]
 fn a_check_is_told_on_the_screen_after_what_the_store_holds() {
     let agent = listed("goose", &["1.0.0"], "MIT", &["1.0.0"]);
-    let found = vec!["1.0.0: every file is as recorded at install.".to_owned()];
+    let found = vec!["1.0.0: every file and record is as recorded at install.".to_owned()];
 
     let told = provenance(&agent, Some(&found));
     assert_eq!(
         told.last().map(String::as_str),
-        Some("1.0.0: every file is as recorded at install.")
+        Some("1.0.0: every file and record is as recorded at install.")
     );
 }
 
