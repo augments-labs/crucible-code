@@ -22,7 +22,10 @@
 //! the page and the day, owned, built for the route of its key and learned by
 //! the [`Consent`] of the run beside [`WARNED`], which keeps the built-in
 //! agents, when a row of the verified catalog is built for a launch, a sign-in
-//! or a question about one. A shipped build's registry lists none, so it builds
+//! or a question about one. An agent the ACP Registry lists carries no
+//! statement, so its row is held under [`generic`] instead: the registry was
+//! read, its vendor said nothing, and installing and starting it sends what it
+//! is given to that vendor. A shipped build's registry lists none, so it builds
 //! such a row for each of those, the agents door and a conversation alike.
 //! Learning gives no yes. A route the consent cannot
 //! hold, past [`CATALOGED`] or restating one it warns about, is never launched,
@@ -636,6 +639,31 @@ pub fn stated(entry: &Entry) -> Result<Warned, Unstated> {
         },
         origins: &[],
     })
+}
+
+/// The warning an agent the ACP Registry lists is held under when its entry
+/// gives no statement, which the registry never does. Nothing of it is the
+/// vendor's words: it says that none are recorded, that installing and
+/// starting the agent sends what it is given to the vendor, and that the
+/// registry was read on `read`.
+#[must_use]
+pub fn generic(key: &str, read: &str) -> Warned {
+    Warned {
+        route: Cow::Owned(agent_route(key)),
+        shown: Cow::Owned(key.to_owned()),
+        warning: Warning {
+            sentence: Cow::Borrowed(
+                "This agent's vendor has not stated what it does with what you send. Installing \
+                 and starting it sends your prompts, files and commands to the vendor.",
+            ),
+            condition: None,
+            source: Cow::Borrowed("the ACP Registry entry"),
+            link: Cow::Borrowed(crucible_external_harnesses::catalog::registry::URL),
+            read: Cow::Owned(read.to_owned()),
+            caution: Cow::Borrowed("no content statement"),
+        },
+        origins: &[],
+    }
 }
 
 /// What crucible says after the vendor's words where its statement names

@@ -1057,6 +1057,8 @@ pub(super) fn refused(refusal: &AgentsError) -> String {
         | AgentsError::Unadded { .. }
         | AgentsError::HoldUnkept(_)
         | AgentsError::Unoffered { .. }
+        | AgentsError::Unregistered { .. }
+        | AgentsError::Unreadable { .. }
         | AgentsError::Unlisted(_)
         | AgentsError::NotInstalled(_)
         | AgentsError::NoPrevious(_)
@@ -1151,6 +1153,8 @@ pub(super) fn sentence(refusal: &AgentsError) -> String {
             remembered(why)
         ),
         AgentsError::Unoffered { .. }
+        | AgentsError::Unregistered { .. }
+        | AgentsError::Unreadable { .. }
         | AgentsError::Unlisted(_)
         | AgentsError::NotInstalled(_)
         | AgentsError::NoPrevious(_)

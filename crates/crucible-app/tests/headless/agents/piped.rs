@@ -388,6 +388,7 @@ impl Bench {
         );
         let lending = Shelf {
             catalog: self.server.source(),
+            registry: None,
             home: &self.home,
             smoke: Some(&lent_launcher),
             steps: Some(steps),
