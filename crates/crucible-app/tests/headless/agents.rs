@@ -537,6 +537,8 @@ const fn shape(outcome: &Result<Outcome, AgentsError>) -> &'static str {
         Err(AgentsError::Config(_)) => "Err(Config)",
         Err(AgentsError::Unoffered { .. }) => "Err(Unoffered)",
         Err(AgentsError::Unlisted(_)) => "Err(Unlisted)",
+        Err(AgentsError::UnreadInstall { .. }) => "Err(UnreadInstall)",
+        Err(AgentsError::UnreadUpdate { .. }) => "Err(UnreadUpdate)",
         Err(AgentsError::Unregistered { .. }) => "Err(Unregistered)",
         Err(AgentsError::Unreadable { .. }) => "Err(Unreadable)",
         Err(AgentsError::NotInstalled(_)) => "Err(NotInstalled)",

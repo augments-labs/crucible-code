@@ -66,7 +66,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crucible_external_harnesses::catalog::registry::{
-    HOSTS as REGISTRY_HOSTS, RegistryError, RegistryIndex, URL,
+    HOSTS as REGISTRY_HOSTS, RegistryError, RegistryIndex,
 };
 use crucible_external_harnesses::catalog::{
     ASSET_BYTES, AssetRef, Catalog, CatalogError, Held, INDEX_BYTES, KEYS, Keys, SIGNATURE_BYTES,
@@ -205,24 +205,31 @@ pub struct RegistrySource {
 impl RegistrySource {
     /// The official registry, through the proxy settings `from` names.
     ///
-    /// A test build whose catalog is served by a test reads the registry from
-    /// that same host, at `registry.json` under the catalog's base, rather
-    /// than from the network; a test that serves none fetches nothing that
-    /// answers and is left with the catalog it believed before.
+    /// A test build never reaches the live registry: it reads the catalog a
+    /// test serves, at `registry.json` under that catalog's base, or, where it
+    /// serves none, an address on this machine nothing answers, so a missing
+    /// fixture refuses rather than fetching the network.
     #[must_use]
     pub fn published(from: &dyn Fn(&str) -> Option<String>) -> Self {
         #[cfg(feature = "proof")]
-        if let Some(served) = crate::proof::catalog(from) {
-            return Self {
-                url: format!("{}/registry.json", served.base.trim_end_matches('/')),
+        {
+            let url = crate::proof::catalog(from).map_or_else(
+                || "http://127.0.0.1:1/registry.json".to_owned(),
+                |served| format!("{}/registry.json", served.base.trim_end_matches('/')),
+            );
+            Self {
+                url,
                 hosts: &[],
                 proxy: ProxyEnv::read(from),
-            };
+            }
         }
-        Self {
-            url: URL.to_owned(),
-            hosts: REGISTRY_HOSTS,
-            proxy: ProxyEnv::read(from),
+        #[cfg(not(feature = "proof"))]
+        {
+            Self {
+                url: crucible_external_harnesses::catalog::registry::URL.to_owned(),
+                hosts: REGISTRY_HOSTS,
+                proxy: ProxyEnv::read(from),
+            }
         }
     }
 }

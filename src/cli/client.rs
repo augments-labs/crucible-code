@@ -1017,6 +1017,8 @@ pub(crate) const fn coded(refused: &AgentsError) -> ErrorCode {
         | AgentsError::Unlent(_)
         | AgentsError::Typed => ErrorCode::InvalidArgument,
         AgentsError::Config(_)
+        | AgentsError::UnreadInstall { .. }
+        | AgentsError::UnreadUpdate { .. }
         | AgentsError::Unreadable { .. }
         | AgentsError::NotInstalled(_)
         | AgentsError::NoPrevious(_)

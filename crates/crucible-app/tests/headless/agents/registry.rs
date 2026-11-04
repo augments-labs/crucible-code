@@ -10,7 +10,8 @@ use std::time::{Duration, SystemTime};
 use crucible_app::backends::{AgentRow, CatalogRow, REGISTRY, Unbelieved, believed_registry};
 use crucible_app::catalog_fetch::{self, RegistrySource, Source};
 use crucible_app::client::agents::{
-    AgentsError, How, Outcome, Shelf, Watching, run, runs_a_command, sign_in_methods,
+    AgentsError, How, Outcome, Shelf, Typed, Watching, keep_key, run, runs_a_command,
+    sign_in_methods,
 };
 use crucible_app::client::{Front, Shown};
 use crucible_app::content_use::{Consent, Routes};
@@ -743,6 +744,27 @@ fn a_signed_offer_is_not_shadowed_by_the_registry() -> Result<(), Failed> {
         matches!(&outcome, Ok(Outcome::Current { version, .. }) if &**version == "1.0.0"),
         "{outcome:?}"
     );
+
+    // A signed install with a registry index read says nothing of the
+    // registry's source.
+    let mut asked = Recording {
+        choice: None,
+        facts: Vec::new(),
+    };
+    let outcome = door(
+        &bench,
+        &mut asked,
+        Command::InstallAgent {
+            agent: name("goose")?,
+            version: name("1.0.0")?,
+        },
+    )?;
+    assert_eq!(asked.facts.len(), 1, "no install question: {outcome:?}");
+    let said = asked.facts.first().expect("a question fact");
+    assert!(said.contains("already installed"), "{said}");
+    assert!(!said.contains("Source: ACP Registry"), "{said}");
+    assert!(!said.contains("not reviewed by Crucible"), "{said}");
+    assert!(matches!(outcome, Ok(Outcome::Undecided)), "{outcome:?}");
     Ok(())
 }
 
@@ -810,5 +832,104 @@ fn the_registry_sign_in_row_reads_its_route_and_refuses_a_terminal_method() -> R
         panic!("the terminal method was not refused: {outcome:?}");
     };
     assert_eq!(&*method, "login");
+
+    // The typed path: the probe's env-var method names the target's one
+    // variable, and a kept key is read back without starting the vendor's
+    // program.
+    keep_key(
+        &bench.home,
+        "work",
+        "key",
+        Typed::new("sk-goose-0123456789".to_owned()),
+    )?;
+    let outcome = door(
+        &bench,
+        &mut front,
+        Command::SignInAgent {
+            instance: name("work")?,
+            method: name("key")?,
+        },
+    )?;
+    assert!(matches!(outcome, Ok(Outcome::Kept { .. })), "{outcome:?}");
+    Ok(())
+}
+
+#[test]
+fn a_registry_install_from_a_provisional_offer_is_refused_before_a_download() -> Result<(), Failed>
+{
+    let bench = Bench::new("registry-provisional-install")?;
+    cache(&bench.home, &registry_json("2.0.0"));
+    let current = installed(&bench.home, "1.0.0", b"goose 1.0.0")?;
+    configure(&bench.home, &current)?;
+    let mut front = Answering {
+        choice: Some("Install"),
+        server: &bench.server,
+        put: Vec::new(),
+        meanwhile: None,
+    };
+
+    let outcome = door(
+        &bench,
+        &mut front,
+        Command::InstallAgent {
+            agent: name("goose")?,
+            version: name("2.0.0")?,
+        },
+    )?;
+
+    let Err(AgentsError::Program(program)) = outcome else {
+        panic!("the provisional install was not refused: {outcome:?}");
+    };
+    assert_eq!(&*program, "goose");
+    assert!(!front.put.is_empty(), "the question was not put");
+    assert_eq!(
+        Path::new(&bench.executable()?),
+        current,
+        "an instance moved onto an unlaunchable version"
+    );
+    assert!(
+        !bench.stored().iter().any(|name| name == "2.0.0"),
+        "a provisional version was committed"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_registry_install_with_no_index_names_the_unread_line() -> Result<(), Failed> {
+    let bench = Bench::new("registry-no-cache")?;
+    let url = bench.server.at("/registry.json");
+    let mut front = Answering {
+        choice: None,
+        server: &bench.server,
+        put: Vec::new(),
+        meanwhile: None,
+    };
+
+    let outcome = door_at(
+        &bench,
+        &mut front,
+        Command::InstallAgent {
+            agent: name("goose")?,
+            version: name("1.0.0")?,
+        },
+        &url,
+    )?;
+    let Err(AgentsError::UnreadInstall { why, .. }) = outcome else {
+        panic!("the install did not name the unread line: {outcome:?}");
+    };
+    assert!(why.contains("404"), "{why}");
+
+    let outcome = door_at(
+        &bench,
+        &mut front,
+        Command::UpdateAgent {
+            agent: name("goose")?,
+        },
+        &url,
+    )?;
+    let Err(AgentsError::UnreadUpdate { why, .. }) = outcome else {
+        panic!("the update did not name the unread line: {outcome:?}");
+    };
+    assert!(why.contains("404"), "{why}");
     Ok(())
 }

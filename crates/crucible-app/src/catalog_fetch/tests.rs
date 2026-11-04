@@ -1467,6 +1467,16 @@ fn a_test_build_reads_the_registry_from_the_catalog_it_serves() {
     );
 
     let published = RegistrySource::published(&|_| None);
-    assert_eq!(published.url, URL);
-    assert_eq!(published.hosts, REGISTRY_HOSTS);
+    assert_eq!(
+        published.url, "http://127.0.0.1:1/registry.json",
+        "a test build never builds the live registry address"
+    );
+    assert!(
+        published.hosts.is_empty(),
+        "a test build reaches no redirect host"
+    );
+    assert_ne!(
+        published.url,
+        crucible_external_harnesses::catalog::registry::URL
+    );
 }

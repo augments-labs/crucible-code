@@ -477,6 +477,26 @@ pub enum AgentsError {
     /// The catalog offers no release of the agent for this platform.
     #[error("the catalog offers no release of {0} for this platform")]
     Unlisted(AgentKey),
+    /// No signed catalog offers it, and the ACP Registry was not read or was
+    /// not verified: the line says which.
+    #[error("no agent catalog offers {agent} {version}; {why}")]
+    UnreadInstall {
+        /// The agent.
+        agent: AgentKey,
+        /// The version asked for.
+        version: Box<str>,
+        /// The registry's line.
+        why: Box<str>,
+    },
+    /// No signed catalog offers a release of it, and the ACP Registry was not
+    /// read or was not verified: the line says which.
+    #[error("no agent catalog offers a release of {agent}; {why}")]
+    UnreadUpdate {
+        /// The agent.
+        agent: AgentKey,
+        /// The registry's line.
+        why: Box<str>,
+    },
     /// The ACP Registry lists the agent but offers no target this build can
     /// install.
     #[error("the ACP Registry does not offer {agent}: {why}")]
@@ -788,11 +808,20 @@ pub async fn run(
             let offer = door
                 .offers(&agent)?
                 .into_iter()
-                .find(|offer| *offer.pin.version == *version.as_str())
-                .ok_or_else(|| AgentsError::Unoffered {
-                    agent: agent.clone(),
-                    version: version.as_str().into(),
-                })?;
+                .find(|offer| *offer.pin.version == *version.as_str());
+            let Some(offer) = offer else {
+                return Err(match door.registry_notice.clone() {
+                    Some(why) => AgentsError::UnreadInstall {
+                        agent,
+                        version: version.as_str().into(),
+                        why,
+                    },
+                    None => AgentsError::Unoffered {
+                        agent,
+                        version: version.as_str().into(),
+                    },
+                });
+            };
             let how = if matches!(command, Command::AddAgent { .. }) {
                 How::Added
             } else {
@@ -806,7 +835,10 @@ pub async fn run(
         Command::UpdateAgent { .. } => {
             let mut offers = door.offers(&agent)?;
             if offers.is_empty() {
-                return Err(AgentsError::Unlisted(agent));
+                return Err(match door.registry_notice.clone() {
+                    Some(why) => AgentsError::UnreadUpdate { agent, why },
+                    None => AgentsError::Unlisted(agent),
+                });
             }
             let moving = door.moving(&agent);
             if moving.is_empty() {
@@ -1373,6 +1405,21 @@ impl Door<'_> {
                 return Ok(Outcome::Undecided);
             }
         }
+        // A registry offer's file list is the survey T55's install selector
+        // supplies. Before that, an offer with no listed program is refused
+        // here, after the question and before anything is downloaded, so a
+        // provisional offer can never commit an unprobed release or move an
+        // instance it cannot launch. A registry install also needs the probe
+        // record the receipt keeps.
+        if source == Released::Registry {
+            runnable(&listed, &target.cmd)?;
+            if probe.is_none() {
+                return Err(AgentsError::Unsupported(
+                    "a registry install with no probe record, which this build does not take \
+                     before an install",
+                ));
+            }
+        }
         // An install script reaches what its agent's route answers for, so
         // none is run before that route has its yes; a version kept runs none.
         let scripting = if kept || locals.is_empty() {
@@ -1544,7 +1591,7 @@ impl Door<'_> {
                     .to_owned(),
             );
         }
-        if let Some(fact) = registry {
+        if let Some(fact) = registry.filter(|_| source == Released::Registry) {
             facts.push(match fact.unverified {
                 Some(why) => format!(
                     "Source: ACP Registry, read {}; not verified: {}; not reviewed by Crucible.",
@@ -3704,6 +3751,25 @@ mod tests {
             "{said}"
         );
         assert!(said.contains("the host answered 500"), "{said}");
+    }
+
+    #[test]
+    fn a_catalog_install_question_with_a_registry_index_read_does_not_claim_the_registry() {
+        let offer = offered();
+        let fact = registry_fact();
+
+        let question = Door::installing(
+            &offer,
+            How::Updated,
+            &plan(),
+            &[],
+            Released::Catalog,
+            Some(&fact),
+        );
+
+        let said = question.facts.join(" ");
+        assert!(!said.contains("Source: ACP Registry"), "{said}");
+        assert!(!said.contains("not reviewed by Crucible"), "{said}");
     }
 
     #[test]
