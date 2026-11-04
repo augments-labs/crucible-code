@@ -1,6 +1,6 @@
 //! The agents door: listing, installing, adding, updating, rolling back,
-//! removing and verifying the agents the reviewed catalog offers, with no
-//! conversation.
+//! removing and verifying the agents the signed catalog and the ACP Registry
+//! offer, with no conversation.
 //!
 //! A front end with a conversation and one with none come through the same
 //! door, lent a [`Shelf`]: where the catalog is published and the keys it is
@@ -73,7 +73,8 @@
 //! cap, surveyed from the file it landed in, and the probe is taken before
 //! anything is committed. Its receipt records the source and the probe record
 //! `Door::switch` took, with the platform the probe was for, what the program
-//! answered and the sizes the survey found.
+//! answered and the sizes the survey found; `verify` hashes its files and names
+//! a `source` or `probe` record that no longer matches.
 //!
 //! After a yes, the release the question named is the one installed: each
 //! artifact is downloaded within its pin by [`crate::agent_download`] into a
@@ -233,7 +234,7 @@ use crucible_config::{AgentUpdate, Cloud, ConfigError, Driver, ExternalAgent, Ho
 /// A line a sign-in command said, as a channel is given it.
 pub use crucible_execution::Text as SaidLine;
 use crucible_execution::{Authentication, Failure};
-use crucible_external_harnesses::catalog::registry::Unoffered;
+use crucible_external_harnesses::catalog::registry::{self, Unoffered};
 use crucible_external_harnesses::catalog::{
     Artifact, AssetRef, AuthMethod, CatalogError, Disposition, Entry, File, FileKind, Files,
     Format, Launch, Method, Offer, Route, Script, Target, Trust, Unprofiled, built_list, file_list,
@@ -450,7 +451,8 @@ pub enum Outcome {
         /// The method, by its id.
         method: Box<str>,
     },
-    /// The installed versions, each hashed against its receipt.
+    /// The installed versions, each hashed against its receipt, with a
+    /// registry receipt's source and probe record checked too.
     Verified {
         /// The agent.
         agent: AgentKey,
@@ -2422,7 +2424,9 @@ impl Door<'_> {
         }
     }
 
-    /// Hashes every installed version of `agent` against its receipt.
+    /// Hashes every installed version of `agent` against its receipt, and
+    /// names a registry receipt's source and probe record when they no longer
+    /// match what the install recorded.
     fn verify(&self, agent: AgentKey) -> Result<Outcome, AgentsError> {
         let installed = self.store.installed(&agent)?;
         if installed.is_empty() {
@@ -2431,7 +2435,12 @@ impl Door<'_> {
         let mut versions = Vec::new();
         for receipt in installed {
             let version = Version::new(&receipt.version, receipt.lock_revision)?;
-            versions.push((receipt.version, self.store.verify(&agent, &version)?));
+            let mut mismatches = self.store.verify(&agent, &version)?;
+            mismatches.extend(registry::receipt_mismatches(
+                &receipt,
+                &registry::platform(),
+            ));
+            versions.push((receipt.version, mismatches));
         }
         Ok(Outcome::Verified { agent, versions })
     }

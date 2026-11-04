@@ -34,7 +34,9 @@ use crucible_runtime::{BoxFuture, Cancel};
 use crucible_types::AgentKey;
 use serde_json::{Value, json};
 
-use super::{Answering, Bench, Failed, ONE, Reply, digest, entry, name, on_runtime, platform};
+use super::{
+    Answering, Bench, Failed, ONE, Reply, digest, entry, name, on_runtime, platform, set, shape,
+};
 
 /// The archive the registry lists `goose` at, on a host of its own.
 const ARCHIVE: &str = "https://downloads.example.com/goose-1.0.0.tar.gz";
@@ -1343,6 +1345,108 @@ fn a_registry_release_with_no_probe_record_is_refused_naming_the_probe_command()
     .expect_err("a release with no probe record was believed");
     let said = refused.to_string();
     assert!(said.contains("crucible agents probe"), "{said}");
+    Ok(())
+}
+
+/// `verify` names a registry receipt's changed file, its source when the
+/// receipt no longer records the registry document, and its probe record when
+/// it is missing or was taken for another machine.
+#[test]
+fn verify_names_a_registry_receipts_changed_file_source_and_probe() -> Result<(), Failed> {
+    let bench = Bench::new("registry-verify-record")?;
+    let program = installed(&bench.home, "1.0.0", b"goose 1.0.0")?;
+    let root = program.parent().ok_or("a version directory")?.to_owned();
+    let receipt = root.join(".receipt");
+    let verify = || -> Result<Command, Failed> {
+        Ok(Command::VerifyAgent {
+            agent: name("goose")?,
+        })
+    };
+    let mut quiet = Answering {
+        choice: None,
+        server: &bench.server,
+        put: Vec::new(),
+        meanwhile: None,
+    };
+    let named = |outcome: &Result<Outcome, AgentsError>| -> Vec<String> {
+        let Ok(Outcome::Verified { versions, .. }) = outcome else {
+            return Vec::new();
+        };
+        versions
+            .iter()
+            .flat_map(|(_, differs)| differs.iter().map(|one| one.path.to_string()))
+            .collect()
+    };
+
+    let (whole, _) = bench.ask(verify()?, &mut quiet, false)?;
+    assert_eq!(named(&whole), Vec::<String>::new(), "{}", shape(&whole));
+
+    fs::write(&program, b"goose 1.0.1")?;
+    let (changed, _) = bench.ask(verify()?, &mut quiet, false)?;
+    assert_eq!(named(&changed), ["goose"], "{}", shape(&changed));
+    fs::write(&program, b"goose 1.0.0")?;
+
+    // A stub in `.bin` is a file the receipt names, so one changed byte in it
+    // is named too.
+    let stub = root
+        .join(crucible_external_harnesses::release::BIN)
+        .join("peer");
+    fs::create_dir_all(stub.parent().ok_or("a stub directory")?)?;
+    let stub_bytes = b"#!/bin/sh\nexec node peer.js\n";
+    fs::write(&stub, stub_bytes)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&stub, fs::Permissions::from_mode(0o755))?;
+    }
+    let mut document: Value = serde_json::from_slice(&fs::read(&receipt)?)?;
+    document
+        .pointer_mut("/files")
+        .and_then(Value::as_array_mut)
+        .ok_or("the receipt's files")?
+        .push(json!({
+            "path": ".bin/peer",
+            "kind": "file",
+            "size": stub_bytes.len(),
+            "sha256": digest(stub_bytes),
+            "exec": true,
+        }));
+    fs::write(&receipt, serde_json::to_vec(&document)?)?;
+    let (stubbed, _) = bench.ask(verify()?, &mut quiet, false)?;
+    assert_eq!(named(&stubbed), Vec::<String>::new(), "{}", shape(&stubbed));
+    fs::write(&stub, b"#!/bin/sh\nexec node stolen.js\n")?;
+    let (stub_changed, _) = bench.ask(verify()?, &mut quiet, false)?;
+    assert_eq!(
+        named(&stub_changed),
+        [".bin/peer"],
+        "{}",
+        shape(&stub_changed)
+    );
+    fs::write(&stub, stub_bytes)?;
+
+    set(&mut document, "/source", json!("catalog"));
+    fs::write(&receipt, serde_json::to_vec(&document)?)?;
+    let (sourced, _) = bench.ask(verify()?, &mut quiet, false)?;
+    assert_eq!(named(&sourced), ["source"], "{}", shape(&sourced));
+
+    set(&mut document, "/source", json!("registry"));
+    set(&mut document, "/probe", Value::Null);
+    fs::write(&receipt, serde_json::to_vec(&document)?)?;
+    let (unprobed, _) = bench.ask(verify()?, &mut quiet, false)?;
+    assert_eq!(named(&unprobed), ["probe"], "{}", shape(&unprobed));
+
+    set(
+        &mut document,
+        "/probe",
+        json!({
+            "target": "plan9-x86_64",
+            "admits": {"name": "goose", "version": "1.0.0"},
+            "auth_methods": [],
+        }),
+    );
+    fs::write(&receipt, serde_json::to_vec(&document)?)?;
+    let (elsewhere, _) = bench.ask(verify()?, &mut quiet, false)?;
+    assert_eq!(named(&elsewhere), ["probe"], "{}", shape(&elsewhere));
     Ok(())
 }
 

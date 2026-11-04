@@ -411,8 +411,11 @@ question says.
 
 *Verify*, offered where a version is installed, hashes every file of each
 installed version against the receipt written when it was installed, and only
-when chosen. It says on the same screen, a line a version, that every file is
-as recorded, or how many differ, naming up to eight of them.
+when chosen. It says on the same screen, a line a version, that every file and
+record is as recorded, or how many differ, naming up to eight of them. For a
+release read from the ACP Registry it also checks that the receipt still records
+the registry as its source and carries a probe record for this machine, naming
+`source` or `probe` where either is missing or does not match.
 
 Installing another version, updating, rolling back, removing and signing in
 stay on `/login`'s agent screen, described above.

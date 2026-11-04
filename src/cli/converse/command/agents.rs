@@ -22,9 +22,9 @@
 //! after names the instance written, and the registry is asked for again so the
 //! entry reads as the store now stands. **Verify**, offered where a version is
 //! installed, hashes every file of each against its receipt, only when chosen,
-//! and says on the same screen which files differ. Installing another version,
-//! updating, rolling back, removing and signing in stay on `/login`'s agent
-//! screen.
+//! and says on the same screen which files or records differ. Installing another
+//! version, updating, rolling back, removing and signing in stay on `/login`'s
+//! agent screen.
 //!
 //! Every string the registry, the catalog, the store or the configuration gave
 //! is hostile: each is drawn with its control and format characters written as
@@ -725,15 +725,15 @@ fn checked(outcome: &door::Outcome) -> Option<Vec<String>> {
             .map(|(version, mismatches)| {
                 let version = shown(version);
                 if mismatches.is_empty() {
-                    return format!("{version}: every file is as recorded at install.");
+                    return format!("{version}: every file and record is as recorded at install.");
                 }
                 let paths: Vec<Box<str>> = mismatches
                     .iter()
                     .map(|mismatch| mismatch.path.clone())
                     .collect();
                 let differ = match paths.len() {
-                    1 => "1 file differs".to_owned(),
-                    many => format!("{many} files differ"),
+                    1 => "1 difference".to_owned(),
+                    many => format!("{many} differences"),
                 };
                 format!(
                     "{version}: {differ} from what was recorded at install: {}.",
