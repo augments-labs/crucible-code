@@ -113,8 +113,9 @@ fn a_streamed_survey_refuses_a_file_cut_short() {
     assert!(tree(&at).is_empty(), "{:?}", tree(&at));
 }
 
-/// A member that declares more than the stream holds is refused before
-/// anything of it is written.
+/// A member that declares more than the stream holds is refused as it is
+/// read, and what it read before the end is left under staging for its owner
+/// to remove, as an unpack's refusal leaves it.
 #[test]
 fn a_streamed_survey_refuses_a_member_that_declares_more_than_the_stream_holds() {
     let owned = Owned::new("catalog-streamed-lie");
@@ -146,6 +147,34 @@ fn a_streamed_survey_refuses_a_member_that_declares_more_than_the_stream_holds()
     // What it read before the stream ended is left under the staging
     // directory, for its owner to remove as an unpack's is.
     assert_eq!(tree(&at), ["agent"], "{:?}", tree(&at));
+}
+
+/// An artifact larger than the 512 MiB compressed cap is refused before its
+/// file is read, as the download path refuses one.
+#[test]
+fn a_streamed_survey_refuses_an_archive_past_the_compressed_cap() {
+    let owned = Owned::new("catalog-streamed-cap");
+    let archive = tar_gz(&[Tarred::File("agent", EXECUTABLE, 0o755)]);
+    let artifact = Artifact {
+        size: crate::release::ARCHIVE_BYTES + 1,
+        ..pinned_as(&archive, Format::TarGz, Vec::new())
+    };
+    let path = owned.0.join("archive");
+    fs::write(&path, &archive).expect("the archive");
+
+    let refused = Unpacker::survey_from(
+        &mut fs::File::open(&path).expect("the archive"),
+        &artifact,
+        &staging(&owned, "streamed"),
+    );
+
+    assert!(
+        matches!(
+            refused,
+            Err(UnpackError::Archive { ceiling }) if ceiling == crate::release::ARCHIVE_BYTES
+        ),
+        "{refused:?}"
+    );
 }
 
 /// An archive whose member would take what it unpacks to past its ceiling is

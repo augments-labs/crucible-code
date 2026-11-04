@@ -13,11 +13,13 @@ use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 
 use super::{
-    Adoption, Differs, Fetched, Listing, Mismatch, Origin, PROGRAMS_BYTES, Pause, Probe,
-    ProbedKind, ProbedMethod, Provenance, RECEIPT_BYTES, Receipt, Source, Store, StoreError,
-    Version,
+    Adoption, Differs, Fetched, Listing, Mismatch, Origin, PROBED_METHODS, PROBED_PLATFORM_BYTES,
+    PROBED_TEXT_BYTES, PROGRAMS_BYTES, Pause, Probe, ProbedKind, ProbedMethod, Provenance,
+    RECEIPT_BYTES, Receipt, Source, Store, StoreError, Version,
 };
-use crate::catalog::{Admits, Artifact, AssetRef, File, FileKind, Files, Format, Launch, Target};
+use crate::catalog::{
+    Admits, Artifact, AssetRef, File, FileKind, Files, Format, Launch, Target, Variable,
+};
 use crate::release::{OwnedPin, Unpacker, proof};
 use crate::tests::Owned;
 
@@ -734,6 +736,129 @@ fn a_registry_receipt_round_trips_its_source_probe_and_actual_sizes() {
     );
     assert_eq!(receipt.unprobed("linux-x86_64"), None);
     assert!(receipt.unprobed("darwin-aarch64").is_some());
+}
+
+/// A terminal argument or variable name or value past the receipt's text
+/// bound is refused, so the reader and the writer agree on what it keeps.
+#[test]
+fn a_probe_text_past_the_receipts_bound_is_refused() {
+    let owned = Owned::new("store-probe-over-bound");
+    let store = Store::new(programs(&owned));
+    let goose = key("goose");
+    let one = version("1.0.0", None);
+    let receipt = install(&store, &goose, &one, 10);
+    let long = "x".repeat(PROBED_TEXT_BYTES + 1);
+    let terminal = |args: Vec<Box<str>>, env: Vec<Variable>| {
+        vec![ProbedMethod {
+            id: "login".into(),
+            name: "Log in".into(),
+            kind: ProbedKind::Terminal {
+                command: "goose".into(),
+                args,
+                env,
+                tty: None,
+            },
+        }]
+    };
+    let arguments = terminal(vec![long.clone().into()], Vec::new());
+    let value = terminal(
+        Vec::new(),
+        vec![Variable {
+            name: "GOOSE_LOGIN".into(),
+            value: long.clone().into(),
+        }],
+    );
+    let name = terminal(
+        Vec::new(),
+        vec![Variable {
+            name: long.clone().into(),
+            value: "1".into(),
+        }],
+    );
+
+    for auth_methods in [arguments, value, name] {
+        let mut probed = probe("linux-x86_64");
+        probed.auth_methods = auth_methods;
+        let mut receipt = receipt.clone();
+        receipt.probe = Some(Box::new(probed));
+        let bytes = receipt.encoded().expect("encoded");
+        assert!(
+            matches!(super::decoded(&bytes), Err(StoreError::Corrupt)),
+            "a text past the bound was read"
+        );
+    }
+}
+
+/// A probe record at every one of the receipt's ceilings round-trips, so the
+/// writer that fills it and the reader that refuses what is past those
+/// ceilings agree at the edge.
+#[test]
+fn a_probe_record_at_the_receipts_limits_round_trips() {
+    let owned = Owned::new("store-probe-limits");
+    let store = Store::new(programs(&owned));
+    let goose = key("goose");
+    let one = version("1.0.0", None);
+    let (archive, artifact) = release();
+    let staging = store.stage(&goose).expect("a staging directory");
+    let staged = Unpacker::unpack(&archive, &artifact, staging.directory()).expect("unpacked");
+    let mut probed = probe("linux-x86_64");
+    probed.target = "p".repeat(PROBED_PLATFORM_BYTES).into();
+    probed.admits.name = "n".repeat(PROBED_TEXT_BYTES).into();
+    probed.admits.version = "v".repeat(PROBED_TEXT_BYTES).into();
+    let env: Vec<Variable> = (0..PROBED_METHODS)
+        .map(|at| Variable {
+            name: format!("A{at:02}").into(),
+            value: "e".repeat(PROBED_TEXT_BYTES).into(),
+        })
+        .collect();
+    let args: Vec<Box<str>> = (0..PROBED_METHODS)
+        .map(|_| "a".repeat(PROBED_TEXT_BYTES).into())
+        .collect();
+    probed.auth_methods = (0..PROBED_METHODS)
+        .map(|at| ProbedMethod {
+            id: format!("m{at:02}").into(),
+            name: "n".repeat(PROBED_TEXT_BYTES).into(),
+            kind: if at == 0 {
+                ProbedKind::Terminal {
+                    command: "c".repeat(PROBED_TEXT_BYTES).into(),
+                    args: args.clone(),
+                    env: env.clone(),
+                    tty: Some(true),
+                }
+            } else {
+                ProbedKind::Agent
+            },
+        })
+        .collect();
+    let provenance = Provenance {
+        listing: Listing {
+            serial: 0,
+            review: "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json".into(),
+            terms: None,
+        },
+        source: Source::Registry,
+        probe: Some(probed.clone()),
+        fetched: at(70),
+        artifacts: vec![Fetched {
+            url: artifact.url.clone(),
+            hosts: vec!["github.com".into()],
+            size: artifact.size,
+            sha256: artifact.sha256.clone(),
+        }],
+        decompressed: staged.decompressed(),
+    };
+
+    store
+        .commit(staging, &one, staged.files(), provenance)
+        .expect("committed");
+
+    let read = store
+        .receipt(&goose, &one)
+        .ok()
+        .flatten()
+        .expect("the receipt reads");
+    assert_eq!(read.probe.as_deref(), Some(&probed));
+    assert_eq!(read.unprobed(&probed.target), None);
 }
 
 #[test]

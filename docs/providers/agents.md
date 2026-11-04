@@ -272,7 +272,10 @@ changed meanwhile and were left as they are, whether the agent was smoke-tested
 and the older versions kept; the list stands again as the store now stands,
 with what you had typed still in the search.
 
-The receipt written when a version is installed records where it came from: the
+For a release read from the ACP Registry, your yes also covers running the
+vendor's program once in the closed sandbox after the download, as the probe
+whose answer the receipt records; a probe that fails installs nothing. The
+receipt written when a version is installed records where it came from: the
 review that admitted it, or for a release read from the ACP Registry the
 registry document it was read from, with when the release was fetched. It also
 records what the install found, rather than what the catalog predicted: the

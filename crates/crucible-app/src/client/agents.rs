@@ -69,7 +69,8 @@
 //! A release the ACP Registry offers is asked about as a registry row, and
 //! its question says that crucible will download the vendor's archive, survey
 //! it and run the vendor's program once for a probe after the yes; a failed
-//! probe installs nothing. Its receipt records the source, the platform the
+//! probe installs nothing. Its receipt records the source and the probe
+//! record the caller supplies through `Door::switch`, with the platform the
 //! probe was taken for, what the program answered and the sizes the survey
 //! found.
 //!
@@ -239,7 +240,8 @@ use crucible_external_harnesses::release::{
     UnpackError, Unpacker, Wheels,
 };
 use crucible_external_harnesses::store::{
-    Fetched, Listing, Mismatch, Provenance, Receipt, Source as Released, Store, StoreError, Version,
+    Fetched, Listing, Mismatch, Probe, Provenance, Receipt, Source as Released, Store, StoreError,
+    Version,
 };
 use crucible_external_harnesses::{Account, Held, Reading, WITHHELD_BYTES, antigravity};
 pub use crucible_external_harnesses::{SignInChannel, Typed, Typing};
@@ -749,7 +751,7 @@ pub async fn run(
             } else {
                 How::Installed
             };
-            door.switch(offer, how, Released::Catalog, front, watching)
+            door.switch(offer, how, Released::Catalog, None, front, watching)
                 .await
         }
         Command::UpdateAgent { .. } => {
@@ -775,8 +777,15 @@ pub async fn run(
                     version: offer.pin.version,
                 });
             }
-            door.switch(offer, How::Updated, Released::Catalog, front, watching)
-                .await
+            door.switch(
+                offer,
+                How::Updated,
+                Released::Catalog,
+                None,
+                front,
+                watching,
+            )
+            .await
         }
         Command::RollbackAgent { .. } => door.rollback(&agent, front).await,
         Command::RemoveAgent { .. } => door.remove(&agent, front).await,
@@ -1060,6 +1069,7 @@ impl Door<'_> {
         mut offer: Offer,
         how: How,
         source: Released,
+        probe: Option<Probe>,
         front: &mut dyn Front,
         watching: Watching<'_>,
     ) -> Result<Outcome, AgentsError> {
@@ -1262,7 +1272,7 @@ impl Door<'_> {
                     terms: offer.entry.terms.clone(),
                 },
                 source,
-                probe: None,
+                probe,
                 fetched: SystemTime::now(),
                 artifacts: fetched,
                 decompressed,
@@ -3245,7 +3255,7 @@ mod tests {
                 "admits": {"name": "goose", "version": "1.4.1"},
                 "auth_methods": [],
                 "targets": [{
-                    "platform": "linux-x86_64",
+                    "platform": "freebsd-x86_64",
                     "cmd": "goose",
                     "args": [],
                     "env": {},
@@ -3265,7 +3275,11 @@ mod tests {
             .as_bytes(),
         )
         .expect("an entry");
-        let target = entry.here().cloned().expect("a target for this platform");
+        let target = entry
+            .targets
+            .first()
+            .cloned()
+            .expect("the entry has a target");
         Offer {
             pin: OwnedPin {
                 key: entry.key.clone(),

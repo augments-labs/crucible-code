@@ -88,7 +88,7 @@ use tar::EntryType;
 use zip::ZipArchive;
 use zip::result::ZipError;
 
-use super::{NAMED, hex};
+use super::{ARCHIVE_BYTES, NAMED, hex};
 use crate::catalog::{Artifact, File, FileKind, Files, Format};
 
 /// The most links a link's target is followed through, itself included.
@@ -158,6 +158,13 @@ pub enum UnpackError {
     /// Its SHA-256 is not its pin's.
     #[error("the download is not the artifact the catalog pinned")]
     Digest,
+    /// The archive is larger than the most a registry archive may be,
+    /// compressed.
+    #[error("the archive is larger than the {ceiling} bytes a registry archive may be")]
+    Archive {
+        /// The most it may be.
+        ceiling: u64,
+    },
     /// It is a wheel, which has a reader of its own.
     #[error("a wheel is not unpacked by the reader for archives and programs")]
     Wheel,
@@ -437,6 +444,15 @@ impl Unpacker {
         artifact: &Artifact,
         staging: &Path,
     ) -> Result<Staged, UnpackError> {
+        let size = artifact
+            .replaced_by
+            .as_ref()
+            .map_or(artifact.size, |asset| asset.size);
+        if size > ARCHIVE_BYTES {
+            return Err(UnpackError::Archive {
+                ceiling: ARCHIVE_BYTES,
+            });
+        }
         pinned_file(file, artifact)?;
         Walk::new(artifact, staging, None).run(io::BufReader::new(file))
     }

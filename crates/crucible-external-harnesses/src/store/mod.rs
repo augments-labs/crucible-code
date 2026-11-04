@@ -143,14 +143,15 @@ pub const FORMAT: u64 = 2;
 pub const UNPROBED: &str = "this release has no probe record for this platform, so run `crucible \
                             agents probe` and install it again";
 
-/// The most sign-in methods a probe record keeps, as the probe keeps.
-const PROBED: usize = 16;
+/// The most sign-in methods a probe record keeps, and the most arguments or
+/// variables of one, as the probe keeps them.
+pub const PROBED_METHODS: usize = 16;
 
-/// The most bytes any one text of a probe record keeps, as the probe keeps.
-const PROBED_BYTES: usize = 256;
+/// The most bytes any one text of a probe record keeps, as the probe keeps it.
+pub const PROBED_TEXT_BYTES: usize = 256;
 
 /// The longest platform a probe record may name, in bytes.
-const PLATFORM_BYTES: usize = 64;
+pub const PROBED_PLATFORM_BYTES: usize = 64;
 
 /// How long a change waits for another process's change to the same agent's
 /// store to finish: a few renames, a receipt or the removal of a version. An
@@ -2251,7 +2252,7 @@ fn read_receipt(fields: &Map<String, Value>, current: bool) -> Option<Receipt> {
 fn read_probe(value: &Value) -> Option<Probe> {
     let fields = value.as_object()?;
     let target = fields.get("target")?.as_str()?;
-    if target.is_empty() || target.len() > PLATFORM_BYTES {
+    if target.is_empty() || target.len() > PROBED_PLATFORM_BYTES {
         return None;
     }
     let admits = fields.get("admits")?.as_object()?;
@@ -2261,7 +2262,7 @@ fn read_probe(value: &Value) -> Option<Probe> {
         return None;
     }
     let methods = fields.get("auth_methods")?.as_array()?;
-    if methods.len() > PROBED {
+    if methods.len() > PROBED_METHODS {
         return None;
     }
     Some(Probe {
@@ -2291,19 +2292,20 @@ fn read_method(value: &Value) -> Option<ProbedMethod> {
                 return None;
             }
             let args = match fields.get("args")? {
-                Value::Array(args) if args.len() <= PROBED => args
+                Value::Array(args) if args.len() <= PROBED_METHODS => args
                     .iter()
-                    .map(|arg| Some(arg.as_str()?.into()))
+                    .map(|arg| arg.as_str().filter(|arg| bounded_text(arg)).map(Into::into))
                     .collect::<Option<Vec<_>>>()?,
                 _ => return None,
             };
             let env = match fields.get("env")? {
-                Value::Object(env) if env.len() <= PROBED => env
+                Value::Object(env) if env.len() <= PROBED_METHODS => env
                     .iter()
                     .map(|(name, value)| {
-                        Some(Variable {
+                        let value = value.as_str()?;
+                        (kept_text(name) && bounded_text(value)).then(|| Variable {
                             name: name.as_str().into(),
-                            value: value.as_str()?.into(),
+                            value: value.into(),
                         })
                     })
                     .collect::<Option<Vec<_>>>()?,
@@ -2332,9 +2334,14 @@ fn read_method(value: &Value) -> Option<ProbedMethod> {
 }
 
 /// Whether `text` is one a probe record keeps: not empty, and no longer than
-/// the probe keeps any one text.
+/// the receipt keeps any one text.
 fn kept_text(text: &str) -> bool {
-    !text.is_empty() && text.len() <= PROBED_BYTES
+    !text.is_empty() && bounded_text(text)
+}
+
+/// Whether `text` is no longer than the receipt keeps any one text.
+fn bounded_text(text: &str) -> bool {
+    text.len() <= PROBED_TEXT_BYTES
 }
 
 /// The artifact `value` records.
