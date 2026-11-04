@@ -132,6 +132,10 @@ fn a_catalog_agent_that_cannot_be_held_is_refused_and_is_not_called_connected() 
     window.types_until("", "goose cannot be connected.");
     let picture = window.picture();
     assert!(picture.contains("gives no statement"), "{picture}");
+    assert!(
+        picture.contains("sent.") && !picture.contains("sent.."),
+        "the fact line names the missing statement and ends with one full stop: {picture}"
+    );
     takes(&mut window, "Go back");
     assert!(
         !window.picture().contains("Connected."),

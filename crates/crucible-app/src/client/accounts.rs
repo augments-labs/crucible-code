@@ -873,10 +873,18 @@ async fn unconnected(
     agent: &ExternalAgent,
     why: &str,
 ) -> Account {
+    // A reason can be a whole sentence already, as a catalog refusal is, or a
+    // clause that needs its full stop, as the sandbox policy's does: one full
+    // stop ends the fact either way.
+    let said = if why.ends_with('.') {
+        why.to_owned()
+    } else {
+        format!("{why}.")
+    };
     let refused = Confirmation {
         asks: format!("{} cannot be connected.", agent.name()),
         facts: vec![
-            format!("{why}."),
+            said,
             format!("Agent: {}, run as {}.", agent.name(), agent.executable()),
         ],
         choices: vec![("Go back".to_owned(), "Change nothing.".to_owned())],
