@@ -1212,23 +1212,23 @@ impl Releases {
             .collect()
     }
 
-    /// Whether `key` is a registry row: no signed offer lists it, and the
-    /// cached index does.
-    fn registry_key(&self, key: &AgentKey) -> bool {
-        self.trust.offers(Some(key)).is_empty()
-            && self
-                .registry
-                .as_ref()
-                .is_some_and(|index| index.entry(key).is_some())
+    /// The registry receipt of the version `version` of `key`, where it is one
+    /// and carries a probe for this platform: the launch's own test, so the
+    /// screen shows nothing the launch would refuse.
+    fn registry_receipt(&self, key: &AgentKey, version: &Version) -> Option<Receipt> {
+        let receipt = self.store.receipt(key, version).ok().flatten()?;
+        (receipt.source == ReleaseSource::Registry
+            && receipt
+                .unprobed(&crucible_external_harnesses::catalog::registry::platform())
+                .is_none())
+        .then_some(receipt)
     }
 
     /// The probe record the version `version` of `key` was installed under,
-    /// where its receipt carries one.
+    /// where its registry receipt carries one for this platform.
     fn probe(&self, key: &AgentKey, version: &Version) -> Option<Probe> {
-        let receipt = self.store.receipt(key, version).ok().flatten()?;
-        (receipt.source == ReleaseSource::Registry)
-            .then_some(receipt.probe)
-            .flatten()
+        self.registry_receipt(key, version)?
+            .probe
             .map(|probe| *probe)
     }
 
@@ -1245,7 +1245,7 @@ impl Releases {
         let Ok(offer) = index.offer(key) else {
             return Vec::new();
         };
-        let Some(receipt) = self.store.receipt(key, version).ok().flatten() else {
+        let Some(receipt) = self.registry_receipt(key, version) else {
             return Vec::new();
         };
         offer
@@ -1546,7 +1546,6 @@ fn moves(
     let shown = quoted(key.as_str());
     let offers = releases.offers(key);
     let first = offers.first().map(|offer| &offer.pin);
-    let registry = releases.registry_key(key);
     let mut offered = Vec::new();
     if let (Ok([]), Some(first)) = (installed.as_deref(), first)
         && let Ok(version) = Name::new(&first.version)
@@ -1576,7 +1575,7 @@ fn moves(
             receipts.iter().any(|receipt| {
                 (&*receipt.version != running.version()
                     || receipt.lock_revision != running.lock_revision())
-                    && (registry
+                    && (receipt.source == ReleaseSource::Registry
                         || !releases
                             .trust
                             .revoked(key, &receipt.version, receipt.lock_revision))
@@ -1598,7 +1597,9 @@ fn moves(
 /// offers it, else from the first offered; for a registry release, from the
 /// cached index and the receipt's probe record, with no re-probe.
 fn methods_of(releases: &Releases, key: &AgentKey, running: Option<&Version>) -> Vec<AuthMethod> {
-    if let Some(version) = running.filter(|_| releases.registry_key(key)) {
+    if let Some(version) =
+        running.filter(|version| releases.registry_receipt(key, version).is_some())
+    {
         return releases.registry_methods(key, version);
     }
     let offers = releases.trust.offers(Some(key));

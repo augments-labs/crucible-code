@@ -53,8 +53,8 @@ use crucible_external_harnesses::catalog::{
     Unusable, Variable,
 };
 use crucible_external_harnesses::release::{
-    ARCHIVE_BYTES, NpmError, NpmTree, OwnedPin, Pin, RELEASE_BYTES, UNPACKED_BYTES, UnpackError,
-    Unpacked, Unpacker, Wheels, unpack,
+    NpmError, NpmTree, OwnedPin, Pin, RELEASE_BYTES, UNPACKED_BYTES, UnpackError, Unpacked,
+    Unpacker, Wheels, unpack,
 };
 use crucible_external_harnesses::store::{
     PROBED_METHODS, PROBED_PLATFORM_BYTES, PROBED_TEXT_BYTES, Probe, ProbedKind, ProbedMethod,
@@ -343,15 +343,6 @@ pub fn registry_artifact(url: &str, sha256: &str, size: u64, format: Format) -> 
         kept: Vec::new(),
         replaced_by: None,
     }
-}
-
-/// The artifact a registry archive is reserved as before it is downloaded:
-/// pinned by `sha256`, its size the [`ARCHIVE_BYTES`] cap, so the store
-/// reserves the most an install can need before a byte arrives.
-/// [`registry_artifact`] then describes it with the size that did arrive.
-#[must_use]
-pub fn registry_reservation(url: &str, sha256: &str, format: Format) -> Artifact {
-    registry_artifact(url, sha256, ARCHIVE_BYTES, format)
 }
 
 /// Starts the program `root` holds, as the provisional `entry` describes it,

@@ -1027,6 +1027,7 @@ pub(crate) const fn coded(refused: &AgentsError) -> ErrorCode {
         | AgentsError::Program(_)
         | AgentsError::Kept { .. }
         | AgentsError::TooLarge
+        | AgentsError::TooManyFiles { .. }
         | AgentsError::Store(_)
         | AgentsError::Download(_)
         | AgentsError::Unpacked(_)

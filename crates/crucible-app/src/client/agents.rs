@@ -580,6 +580,21 @@ pub enum AgentsError {
     /// The release is larger than a release may be.
     #[error("the release is larger than the {RELEASE_BYTES} bytes a release may be")]
     TooLarge,
+    /// A registry archive surveys to more files than a catalog row can carry.
+    #[error(
+        "the registry archive of {agent} {version} lists {files} files, more than the {bound} a \
+         catalog row carries, so nothing was installed"
+    )]
+    TooManyFiles {
+        /// The agent.
+        agent: AgentKey,
+        /// The version.
+        version: Box<str>,
+        /// How many files the survey wrote.
+        files: usize,
+        /// The most a catalog row carries.
+        bound: usize,
+    },
     /// The install store refused.
     #[error(transparent)]
     Store(#[from] StoreError),
@@ -857,7 +872,7 @@ pub async fn run(
             };
             let source = door.released(&agent);
             let fact = door.registry_fact();
-            door.switch(offer, how, source, fact.as_ref(), None, front, watching)
+            door.switch(offer, how, source, fact.as_ref(), front, watching)
                 .await
         }
         Command::UpdateAgent { .. } => {
@@ -888,16 +903,8 @@ pub async fn run(
             }
             let source = door.released(&agent);
             let fact = door.registry_fact();
-            door.switch(
-                offer,
-                How::Updated,
-                source,
-                fact.as_ref(),
-                None,
-                front,
-                watching,
-            )
-            .await
+            door.switch(offer, How::Updated, source, fact.as_ref(), front, watching)
+                .await
         }
         Command::RollbackAgent { .. } => door.rollback(&agent, front).await,
         Command::RemoveAgent { .. } => door.remove(&agent, front).await,
@@ -1122,9 +1129,9 @@ impl Door<'_> {
                 });
             }
         }
-        // A registry the read failed for says why only where it lists an
-        // agent: a catalog with no registry row keeps its screen.
-        let registry = (from_registry || self.registry.is_some())
+        // A failed read is said even where it lists no agent; an index that
+        // read but offered none keeps the signed screen as it was.
+        let registry = (from_registry || self.registry_notice.is_some())
             .then(|| self.registry_line())
             .flatten();
         Outcome::Catalog {
@@ -1165,10 +1172,13 @@ impl Door<'_> {
     fn probed(&self, agent: &AgentKey, version: &str) -> Option<Probe> {
         let version = Version::new(version, None).ok()?;
         let receipt = self.store.receipt(agent, &version).ok().flatten()?;
-        (receipt.source == Released::Registry)
-            .then_some(receipt.probe)
-            .flatten()
-            .map(|probe| *probe)
+        (receipt.source == Released::Registry
+            && receipt
+                .unprobed(&crucible_external_harnesses::catalog::registry::platform())
+                .is_none())
+        .then_some(receipt.probe)
+        .flatten()
+        .map(|probe| *probe)
     }
 
     /// The versions of `agent` the store holds with a receipt, or why its
@@ -1373,7 +1383,6 @@ impl Door<'_> {
         how: How,
         source: Released,
         registry: Option<&RegistryFact<'_>>,
-        probe: Option<Probe>,
         front: &mut dyn Front,
         watching: Watching<'_>,
     ) -> Result<Outcome, AgentsError> {
@@ -1450,8 +1459,24 @@ impl Door<'_> {
         for built in &builts {
             listed.extend(under(built.package, built.files()));
         }
+        // A registry offer's provisional target reserves the archive's cap
+        // rather than the bytes that arrived, so `same` cannot hold it. Its
+        // receipt is what says the version is kept: the registry source, the
+        // archive's SHA-256 pin, and a probe for this platform. Its surveyed
+        // files and probe record are reused, so a second add downloads and
+        // probes nothing.
+        let mut registered: Option<Probe> = None;
         let kept = match self.store.receipt(agent, &version)? {
-            Some(receipt) if same(&receipt, target, &listed, tree.as_ref(), &builts) => true,
+            Some(receipt) if source == Released::Registry && registry_kept(&receipt, target) => {
+                registered = receipt.probe.as_deref().cloned();
+                true
+            }
+            Some(receipt)
+                if source == Released::Catalog
+                    && same(&receipt, target, &listed, tree.as_ref(), &builts) =>
+            {
+                true
+            }
             Some(_) => {
                 return Err(AgentsError::Kept {
                     agent: agent.clone(),
@@ -1513,7 +1538,6 @@ impl Door<'_> {
         // once in the closed sandbox for the receipt's probe record. A failed
         // probe installs nothing, so neither a provisional offer nor an
         // unprobed receipt is ever committed.
-        let mut registered: Option<Probe> = None;
         if !kept && source == Released::Registry {
             let staging = self.store.stage(agent)?;
             let Some(artifact) = target.artifacts.first() else {
@@ -1543,6 +1567,14 @@ impl Door<'_> {
                 Unpacker::survey_from(&mut reading, &artifact, staging.directory())?
             };
             let files = surveyed.files().to_vec();
+            if files.len() > crucible_external_harnesses::catalog::LISTED_FILES {
+                return Err(AgentsError::TooManyFiles {
+                    agent: agent.clone(),
+                    version: offer.pin.version.clone(),
+                    files: files.len(),
+                    bound: crucible_external_harnesses::catalog::LISTED_FILES,
+                });
+            }
             runnable(&files, &target.cmd)?;
             let entry = probe_entry(offer)?;
             // The probe starts its own services and runtime, so it runs on a
@@ -1657,7 +1689,7 @@ impl Door<'_> {
                     terms: offer.entry.terms.clone(),
                 },
                 source,
-                probe: probe.clone(),
+                probe: None,
                 fetched: SystemTime::now(),
                 artifacts: fetched,
                 decompressed,
@@ -1678,7 +1710,7 @@ impl Door<'_> {
             left,
             downloaded: !kept,
             standing,
-            probe: registered.or(probe),
+            probe: registered,
             unsmoked: plan.smoking.as_ref().err().map(|why| why.as_str().into()),
             unpruned: self.prune(agent, &program).err().map(Box::new),
         })
@@ -1726,6 +1758,14 @@ impl Door<'_> {
         };
         let mut facts = vec![if kept {
             format!("{key} {version} is already installed, so nothing is downloaded.")
+        } else if source == Released::Registry {
+            let archive = target.artifacts.first().map_or_else(
+                || "its registry archive".to_owned(),
+                |artifact| quoted(&artifact.url),
+            );
+            format!(
+                "Download {key} {version} from {archive}, up to {total} bytes, the registry's cap."
+            )
         } else {
             format!("{key} {version}, {total} bytes to download.")
         }];
@@ -3676,6 +3716,23 @@ fn same(
     receipt.artifacts.len() == target.artifacts.len()
         && pinned.eq(fetched)
         && by_path(&own) == by_path(listed)
+}
+
+/// Whether `receipt` is the registry release `target` pins: its source is the
+/// registry, its archive's SHA-256 is the target's pin (the surveyed size is
+/// not), and it carries a probe for this platform. The version is the store
+/// key the receipt was read under.
+fn registry_kept(receipt: &Receipt, target: &Target) -> bool {
+    receipt.source == Released::Registry
+        && receipt
+            .unprobed(&crucible_external_harnesses::catalog::registry::platform())
+            .is_none()
+        && target.artifacts.first().is_some_and(|artifact| {
+            receipt
+                .artifacts
+                .first()
+                .is_some_and(|fetched| fetched.sha256 == artifact.sha256)
+        })
 }
 
 /// The sentence saying which instances move onto `version` of `agent`.

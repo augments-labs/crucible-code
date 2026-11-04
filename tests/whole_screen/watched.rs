@@ -503,6 +503,14 @@ impl Published {
             ]
             .into_iter()
             .chain(extra)
+            .chain(std::iter::once((
+                "/catalog/registry.json".to_owned(),
+                serde_json::to_vec(&serde_json::json!({
+                    "version": "1.0.0",
+                    "agents": [],
+                }))
+                .expect("an empty registry index"),
+            )))
             .chain(
                 offers
                     .into_iter()
@@ -604,11 +612,12 @@ fn answer(
         body.len()
     );
     // The catalog is sent whole; only the program is held back, half of it.
-    let (first, rest) = if path.starts_with("/catalog/index.json") {
-        (body.as_slice(), &[][..])
-    } else {
-        body.split_at(body.len() / 2)
-    };
+    let (first, rest) =
+        if path.starts_with("/catalog/index.json") || path == "/catalog/registry.json" {
+            (body.as_slice(), &[][..])
+        } else {
+            body.split_at(body.len() / 2)
+        };
     let _ = stream.write_all(first);
     let _ = stream.flush();
     if !rest.is_empty() {

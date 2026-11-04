@@ -280,8 +280,9 @@ agent under
 the agent's key, or by the key and the next free number, such as `goose-2`,
 where that name is taken. It asks first, as `/login`'s *Install* does, saying
 what it will put in place, fetch and write; a registry agent's question also
-says which archive is downloaded and that the same yes covers the survey and
-the vendor's program run once as a probe. The download then shows how far it
+names the archive's address, says it is downloaded up to the registry's 512 MiB
+cap, and says the same yes covers the survey and the vendor's program run once
+as a probe. The download then shows how far it
 has come, and Escape cancels it, changing nothing. After the yes, a line in the
 transcript names the instance written, such as `Added goose 1.0.0 as the
 instance "goose".`, then the other instances moved onto that version, any that

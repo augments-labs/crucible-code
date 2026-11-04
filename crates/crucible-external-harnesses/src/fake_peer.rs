@@ -487,7 +487,9 @@ pub fn archive(members: &[(&str, &[u8])]) -> Vec<u8> {
 
     let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     for (path, bytes) in members {
-        let options = SimpleFileOptions::default().unix_permissions(0o755);
+        let options = SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored)
+            .unix_permissions(0o755);
         writer.start_file(*path, options).expect("a member name");
         writer.write_all(bytes).expect("a member");
     }

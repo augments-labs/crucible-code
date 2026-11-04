@@ -24,6 +24,7 @@ use crucible_config::{ExternalAgent, Home, Settings};
 use crucible_external_harnesses::catalog::fixture::signed;
 use crucible_external_harnesses::catalog::registry::{self, RegistryIndex};
 use crucible_external_harnesses::catalog::{Admits, KEYS, Keys, Trust};
+use crucible_external_harnesses::fake_peer;
 use crucible_external_harnesses::store::{
     Fetched, Listing, Probe, ProbedKind, ProbedMethod, Provenance, Source as Released, Store,
     Version,
@@ -181,6 +182,59 @@ fn installed_as(
             },
             source,
             probe: Some(probe(&named)),
+            decompressed: bytes,
+            fetched: SystemTime::now(),
+            artifacts: vec![Fetched {
+                url: ARCHIVE.into(),
+                hosts: vec!["downloads.example.com".into()],
+                size: bytes,
+                sha256: digest(program).into(),
+            }],
+        },
+    )?;
+    Ok(store.directory(&key, &version).join("goose"))
+}
+
+/// Installs `goose` as a registry release whose receipt carries `probe`, which
+/// may be absent or taken for another platform.
+fn installed_with_probe(
+    home: &Home,
+    version: &str,
+    program: &[u8],
+    probe: Option<Probe>,
+) -> Result<PathBuf, Failed> {
+    let store = Store::new(home.path().join("programs"));
+    let key = AgentKey::new("goose")?;
+    let staging = store.stage(&key)?;
+    let path = staging.directory().join("goose");
+    fs::write(&path, program)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
+    }
+    let bytes = u64::try_from(program.len()).unwrap_or(u64::MAX);
+    let files = vec![crucible_external_harnesses::catalog::File {
+        path: "goose".into(),
+        kind: crucible_external_harnesses::catalog::FileKind::File {
+            size: bytes,
+            sha256: digest(program).into(),
+            exec: true,
+        },
+    }];
+    let version = Version::new(version, None)?;
+    store.commit(
+        staging,
+        &version,
+        &files,
+        Provenance {
+            listing: Listing {
+                serial: 0,
+                review: registry::URL.into(),
+                terms: None,
+            },
+            source: Released::Registry,
+            probe,
             decompressed: bytes,
             fetched: SystemTime::now(),
             artifacts: vec![Fetched {
@@ -1125,9 +1179,235 @@ fn a_registry_install_surveys_probes_and_stores_the_record() -> Result<(), Faile
         played,
         "a later session re-probed"
     );
+    assert!(
+        agent.row().reaches().is_empty(),
+        "a registry row added runtime hosts"
+    );
     let AgentRow::Catalog(row) = agent.row() else {
         panic!("not a catalog row");
     };
     assert!(row.warned().is_ok());
+
+    // A second add of the installed version is kept: nothing is downloaded,
+    // the installed vendor is not probed again, and the held version is not
+    // committed over. A script that exits at every start proves the probe did
+    // not run.
+    let archive_path = format!("/catalog/{digest}");
+    let asked = bench
+        .server
+        .asked()
+        .iter()
+        .filter(|path| *path == &archive_path)
+        .count();
+    fs::write(
+        root.join("script"),
+        Script::of(Vec::<crucible_external_harnesses::fake_peer::Reply>::new()).encoded(),
+    )?;
+    let mut again = Recording {
+        choice: Some("Add"),
+        facts: Vec::new(),
+    };
+    let outcome = on_runtime(run(
+        &ask(Command::AddAgent {
+            agent: name("goose")?,
+            version: name("1.0.0")?,
+        }),
+        &shelf,
+        &mut again,
+        Watching {
+            progress: &mut |_| {},
+            cancel: &Cancel::new(),
+            link: &|_| {},
+            sign_in: None,
+            terminal: None,
+        },
+    ))?;
+    let Ok(Outcome::Moved {
+        how: How::Added,
+        downloaded: false,
+        probe: Some(kept),
+        ..
+    }) = outcome
+    else {
+        panic!("the second add downloaded, probed or was held: {outcome:?}");
+    };
+    assert_eq!(&*kept.admits.name, "goose-acp");
+    assert_eq!(
+        bench
+            .server
+            .asked()
+            .iter()
+            .filter(|path| *path == &archive_path)
+            .count(),
+        asked,
+        "the second add downloaded the archive"
+    );
+    let said = again.facts.first().expect("a question fact");
+    assert!(said.contains("already installed"), "{said}");
+    Ok(())
+}
+
+/// A registry archive that surveys to more files than a catalog row carries is
+/// refused before anything is committed, rather than installing a release no
+/// later session can rebuild.
+#[test]
+fn a_registry_archive_past_the_catalog_file_list_is_refused_before_a_commit() -> Result<(), Failed>
+{
+    use crucible_external_harnesses::catalog::LISTED_FILES;
+
+    let bench = Bench::new("registry-file-list-bound")?;
+    let names: Vec<String> = (0..=LISTED_FILES)
+        .map(|at| format!("file-{at:03}"))
+        .collect();
+    let bodies: Vec<Vec<u8>> = names.iter().map(|_| Vec::new()).collect();
+    let members: Vec<(&str, &[u8])> = names
+        .iter()
+        .map(String::as_str)
+        .zip(bodies.iter().map(Vec::as_slice))
+        .collect();
+    let archive = fake_peer::archive(&members);
+    let digest = digest(&archive);
+    bench
+        .server
+        .serve(&format!("/catalog/{digest}"), Reply::Body(archive));
+    let mut index = registry_json("1.0.0");
+    let target = index
+        .pointer_mut(&format!("/agents/0/distribution/binary/{}", platform()))
+        .expect("the goose target");
+    target["archive"] = json!("https://downloads.example.com/goose-1.0.0.zip");
+    target["sha256"] = json!(digest);
+    bench
+        .server
+        .serve("/registry.json", Reply::Body(serde_json::to_vec(&index)?));
+
+    let shelf = Shelf {
+        catalog: bench.server.source(),
+        registry: Some(RegistrySource {
+            url: bench.server.at("/registry.json"),
+            hosts: &[],
+            proxy: ProxyEnv::default(),
+        }),
+        home: &bench.home,
+        smoke: None,
+        steps: None,
+    };
+    let mut front = Recording {
+        choice: Some("Install"),
+        facts: Vec::new(),
+    };
+    let outcome = on_runtime(run(
+        &ask(Command::InstallAgent {
+            agent: name("goose")?,
+            version: name("1.0.0")?,
+        }),
+        &shelf,
+        &mut front,
+        Watching {
+            progress: &mut |_| {},
+            cancel: &Cancel::new(),
+            link: &|_| {},
+            sign_in: None,
+            terminal: None,
+        },
+    ))?;
+    let Err(AgentsError::TooManyFiles { files, bound, .. }) = outcome else {
+        panic!("the file list was not refused: {outcome:?}");
+    };
+    assert_eq!(files, LISTED_FILES + 1);
+    assert_eq!(bound, LISTED_FILES);
+    assert!(
+        Store::new(bench.home.path().join("programs"))
+            .installed(&AgentKey::new("goose")?)?
+            .is_empty(),
+        "a refused archive committed a version"
+    );
+    Ok(())
+}
+
+/// A registry receipt with no probe for this platform is refused at launch and
+/// names `crucible agents probe`, rather than starting the vendor unrecorded.
+#[test]
+fn a_registry_release_with_no_probe_record_is_refused_naming_the_probe_command()
+-> Result<(), Failed> {
+    let bench = Bench::new("registry-missing-probe")?;
+    cache(&bench.home, &registry_json("1.0.0"));
+    let current = installed_with_probe(&bench.home, "1.0.0", b"goose 1.0.0", None)?;
+    configure(&bench.home, &current)?;
+    let configured = instance(&bench.home, "work")?;
+    let refused = Agent::believing(
+        &configured,
+        &REGISTRY,
+        &catalog_fetch::state_in(bench.home.path()),
+        |name| (name == "PATH").then(|| std::ffi::OsString::from("/bin")),
+    )
+    .expect_err("a release with no probe record was believed");
+    let said = refused.to_string();
+    assert!(said.contains("crucible agents probe"), "{said}");
+    Ok(())
+}
+
+/// `/catalog` says why the registry could not be read even where it lists no
+/// registry agent, as the field's doc promises.
+#[test]
+fn a_catalog_with_no_registry_index_says_why() -> Result<(), Failed> {
+    let bench = Bench::new("registry-no-index-listing")?;
+    let url = bench.server.at("/registry.json");
+    let mut front = Answering {
+        choice: None,
+        server: &bench.server,
+        put: Vec::new(),
+        meanwhile: None,
+    };
+    let outcome = door_at(&bench, &mut front, Command::AgentCatalog, &url)?;
+    let Ok(Outcome::Catalog {
+        registry: Some(line),
+        ..
+    }) = outcome
+    else {
+        panic!("no unread line: {outcome:?}");
+    };
+    assert!(line.contains("404"), "{line}");
+    Ok(())
+}
+
+/// A probe taken for another platform is not shown as this release's, and the
+/// launch refuses it: the display and the launch read the receipt's own target.
+#[test]
+fn a_probe_for_another_platform_is_not_shown_or_launched() -> Result<(), Failed> {
+    let bench = Bench::new("registry-other-platform")?;
+    cache(&bench.home, &registry_json("1.0.0"));
+    let mut other = probe("1.0.0");
+    other.target = "plan9-x86_64".into();
+    let current = installed_with_probe(&bench.home, "1.0.0", b"goose 1.0.0", Some(other))?;
+    configure(&bench.home, &current)?;
+    let mut front = Answering {
+        choice: None,
+        server: &bench.server,
+        put: Vec::new(),
+        meanwhile: None,
+    };
+    let outcome = door(&bench, &mut front, Command::AgentCatalog)?;
+    let Ok(Outcome::Catalog { agents, .. }) = outcome else {
+        panic!("no listing: {outcome:?}");
+    };
+    let goose = agents
+        .iter()
+        .find(|listed| listed.agent.as_str() == "goose")
+        .expect("goose listed");
+    assert!(
+        goose.probed.is_none(),
+        "another platform's probe was shown: {:?}",
+        goose.probed
+    );
+    let configured = instance(&bench.home, "work")?;
+    let refused = Agent::believing(
+        &configured,
+        &REGISTRY,
+        &catalog_fetch::state_in(bench.home.path()),
+        |name| (name == "PATH").then(|| std::ffi::OsString::from("/bin")),
+    )
+    .expect_err("another platform's probe was believed");
+    let said = refused.to_string();
+    assert!(said.contains("crucible agents probe"), "{said}");
     Ok(())
 }

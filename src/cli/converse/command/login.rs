@@ -1068,6 +1068,7 @@ pub(super) fn refused(refusal: &AgentsError) -> String {
         | AgentsError::Program(_)
         | AgentsError::Kept { .. }
         | AgentsError::TooLarge
+        | AgentsError::TooManyFiles { .. }
         | AgentsError::Store(_)
         | AgentsError::Download(_)
         | AgentsError::Unpacked(_)
@@ -1167,6 +1168,7 @@ pub(super) fn sentence(refusal: &AgentsError) -> String {
         | AgentsError::Program(_)
         | AgentsError::Kept { .. }
         | AgentsError::TooLarge
+        | AgentsError::TooManyFiles { .. }
         | AgentsError::Store(_)
         | AgentsError::Download(_)
         | AgentsError::Unpacked(_)
