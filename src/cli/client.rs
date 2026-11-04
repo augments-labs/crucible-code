@@ -34,21 +34,26 @@
 //! of it. A front end that can draw a sign-in run as a command is lent a channel
 //! too: what the command says goes into [`Heard`], which keeps its own ceiling
 //! of lines, and what is typed goes back over a short queue, the door's thread
-//! only ever reporting. Where the output is redirected nothing is lent, and the
-//! door refuses that method before it runs it.
+//! only ever reporting. A sign-in that needs a real terminal is lent this
+//! process's terminal instead, through [`Handover`]: the drawing thread stops
+//! while the child has it and paints every row again once it is back. Where
+//! output is redirected nothing is lent, and the door refuses that method
+//! before it runs it.
 
 use std::collections::VecDeque;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::task::Poll;
+use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot};
 
 use crucible_app::Conversation;
 use crucible_app::catalog_fetch::Source;
 use crucible_app::client::agents::{
-    self as door, AgentsError, SaidLine, Shelf, SignInChannel, Typing, Watching,
+    self as door, AgentsError, HandoverFailed, SaidLine, Shelf, SignInChannel, SignInTerminal,
+    Typing, Watching,
 };
 use crucible_app::client::{
     Answered, Confirmation, Desk, Front, Performed, Shown, account, asked, asking, interrupt, keep,
@@ -62,6 +67,37 @@ use crucible_client_api::{
     Outcome, Pending, Refusal, Request, Said, Theme,
 };
 use crucible_runtime::{BoxFuture, Cancel};
+#[cfg(unix)]
+pub(crate) use crucible_tui::Suspend;
+
+/// A stand-in for the terminal handover where there is no `Suspend` to make
+/// one from: no platform without a controlling terminal and process groups
+/// runs a sign-in at a real one, so nothing is ever handed over.
+#[cfg(not(unix))]
+#[derive(Debug)]
+pub(crate) struct Suspend;
+
+// The stand-in keeps `Suspend`'s call shape on a platform with no terminal to
+// hand over, so no call site needs a `cfg`, and it holds no state to read. A
+// `resumed` that cannot fail is still written as the `Result` its Unix twin
+// returns, so the caller's `let _ =` is the same on every platform.
+#[allow(clippy::unused_self, clippy::unnecessary_wraps)]
+#[cfg(not(unix))]
+impl Suspend {
+    pub(crate) fn holding(_: crucible_tui::Held, _: impl Fn() + Send + Sync + 'static) -> Self {
+        Self
+    }
+
+    pub(crate) fn handed(&self, _: u32) -> Result<(), HandoverFailed> {
+        Err(HandoverFailed::new(
+            "this platform has no terminal to hand over",
+        ))
+    }
+
+    pub(crate) fn resumed(&self) -> Result<(), HandoverFailed> {
+        Ok(())
+    }
+}
 
 use super::converse::Terms;
 
@@ -478,6 +514,7 @@ struct Lent {
     heard: Arc<Mutex<Heard>>,
     typed: tokio::sync::Mutex<mpsc::Receiver<Typing>>,
     listening: Arc<AtomicBool>,
+    handover: Arc<Handover>,
 }
 
 impl SignInChannel for Lent {
@@ -496,6 +533,121 @@ impl SignInChannel for Lent {
             self.listening.store(true, Ordering::Release);
             self.typed.lock().await.recv().await
         })
+    }
+}
+
+impl SignInTerminal for Lent {
+    fn handed(&self, pid: u32) -> Result<(), HandoverFailed> {
+        self.handover.handed(pid)
+    }
+
+    fn resumed(&self) {
+        self.handover.resumed();
+    }
+}
+
+/// How long the door waits for the drawing thread to say it has left its read
+/// loop before it takes the terminal as one that cannot be given.
+///
+/// The drawing thread looks at a watching panel once a beat, so this is many
+/// beats: a wait that long means it is not coming back to the loop at all, and
+/// a child handed a terminal nobody will stop reading is worse than a refusal.
+const LEFT_BOUND: Duration = Duration::from_secs(2);
+
+/// The terminal a sign-in at a real one is lent, and the flags the drawing
+/// thread reads while it is out on loan.
+///
+/// The door's thread calls this; only the terminal sequences themselves leave
+/// here, and the drawing thread is what puts a frame on the screen again when
+/// [`SignInTerminal::resumed`] says it is back. A handover is not made until
+/// the drawing thread has acknowledged that it left the loop that reads the
+/// terminal, so the leave sequences cannot race a read or a frame.
+struct Handover {
+    /// The terminal modes, where this session has a terminal to give.
+    suspend: Mutex<Option<Suspend>>,
+    /// Whether a child has the terminal, so the panel waits rather than draws
+    /// over it.
+    handed: Arc<AtomicBool>,
+    /// Whether the terminal has come back and the next frame must paint every
+    /// row.
+    repaint: AtomicBool,
+    /// Whether the drawing thread has said it left its read loop for the
+    /// handover being made now.
+    left: Mutex<bool>,
+    /// Ring when it does.
+    left_changed: Condvar,
+}
+
+impl Handover {
+    fn new(suspend: Option<Suspend>) -> Self {
+        Self {
+            suspend: Mutex::new(suspend),
+            handed: Arc::new(AtomicBool::new(false)),
+            repaint: AtomicBool::new(false),
+            left: Mutex::new(false),
+            left_changed: Condvar::new(),
+        }
+    }
+
+    /// Whether the child holds the terminal right now, or is waiting for it.
+    fn suspended(&self) -> bool {
+        self.handed.load(Ordering::Acquire)
+    }
+
+    /// Says the drawing thread has left its read loop: the door may write the
+    /// leave sequences and give the child the terminal.
+    fn left(&self) {
+        *self.left.lock().unwrap_or_else(PoisonError::into_inner) = true;
+        self.left_changed.notify_all();
+    }
+
+    /// Waits, bounded, until the drawing thread has left its read loop.
+    fn wait_left(&self) -> Result<(), HandoverFailed> {
+        let left = self.left.lock().unwrap_or_else(PoisonError::into_inner);
+        let (left, waited) = self
+            .left_changed
+            .wait_timeout_while(left, LEFT_BOUND, |left| !*left)
+            .unwrap_or_else(PoisonError::into_inner);
+        if waited.timed_out() && !*left {
+            return Err(HandoverFailed::new(
+                "the drawing thread did not leave the terminal in time",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Takes the request to repaint every row, if the terminal has come back
+    /// since it was last taken.
+    fn take_repaint(&self) -> bool {
+        self.repaint.swap(false, Ordering::AcqRel)
+    }
+}
+
+impl SignInTerminal for Handover {
+    fn handed(&self, pid: u32) -> Result<(), HandoverFailed> {
+        // Set first: the drawing thread must not start a frame between this
+        // and the child taking the screen, and it must leave the loop that
+        // reads the terminal before the leave sequences are written.
+        *self.left.lock().unwrap_or_else(PoisonError::into_inner) = false;
+        self.handed.store(true, Ordering::Release);
+        self.wait_left()?;
+        let suspend = self.suspend.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(suspend) = suspend.as_ref() {
+            suspend
+                .handed(pid)
+                .map_err(|why| HandoverFailed::new(why.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn resumed(&self) {
+        let suspend = self.suspend.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(suspend) = suspend.as_ref() {
+            let _ = suspend.resumed();
+        }
+        self.handed.store(false, Ordering::Release);
+        self.repaint.store(true, Ordering::Release);
+        *self.left.lock().unwrap_or_else(PoisonError::into_inner) = false;
     }
 }
 
@@ -520,6 +672,8 @@ pub(crate) struct Carrying<'a> {
     /// Raised once the door asks for a line, which it does with the command
     /// running.
     listening: Arc<AtomicBool>,
+    /// The terminal, where this session has one to lend a sign-in.
+    handover: Arc<Handover>,
 }
 
 impl Carrying<'_> {
@@ -551,6 +705,24 @@ impl Carrying<'_> {
         self.listening.load(Ordering::Acquire)
     }
 
+    /// Whether a sign-in at a real terminal has this terminal right now, so a
+    /// panel must wait rather than draw over the child.
+    pub(crate) fn handed(&self) -> bool {
+        self.handover.suspended()
+    }
+
+    /// Whether the terminal has come back since the last frame, which is what
+    /// asks for every row to be painted again.
+    pub(crate) fn take_repaint(&self) -> bool {
+        self.handover.take_repaint()
+    }
+
+    /// Says the drawing thread has left the loop that reads the terminal, so
+    /// the door may write the leave sequences and give the child the screen.
+    pub(crate) fn left(&self) {
+        self.handover.left();
+    }
+
     /// What a sign-in command has said.
     pub(crate) fn heard(&self) -> Arc<Mutex<Heard>> {
         Arc::clone(&self.heard)
@@ -559,6 +731,45 @@ impl Carrying<'_> {
     /// Where what is typed for a sign-in command goes.
     pub(crate) fn typing(&self) -> mpsc::Sender<Typing> {
         self.typing.clone()
+    }
+}
+
+#[cfg(test)]
+impl<'a> Carrying<'a> {
+    /// A move with nothing said and no question out, for a case that stands a
+    /// panel over it and decides for itself when a child is handed the
+    /// terminal.
+    pub(crate) fn for_test(
+        told: &'a Mutex<Watched>,
+        cancel: &'a Cancel,
+        over: &'a AtomicBool,
+    ) -> Self {
+        let (typing, _typed) = mpsc::channel(TYPED_LINES);
+        Self {
+            from: mpsc::channel(1).1,
+            held: None,
+            told,
+            cancel,
+            over,
+            heard: Arc::new(Mutex::new(Heard::default())),
+            typing,
+            listening: Arc::new(AtomicBool::new(false)),
+            handover: Arc::new(Handover::new(None)),
+        }
+    }
+
+    /// The flag a case sets to say a child has been handed the terminal.
+    pub(crate) fn handed_for_test(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.handover.handed)
+    }
+
+    /// Whether the drawing thread has said it left its read loop.
+    pub(crate) fn acknowledged_for_test(&self) -> bool {
+        *self
+            .handover
+            .left
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -656,10 +867,14 @@ fn overseen<O: Overseer, R: Send>(
     let heard = Arc::new(Mutex::new(Heard::default()));
     let listening = Arc::new(AtomicBool::new(false));
     let (typing, typed) = mpsc::channel(TYPED_LINES);
+    let suspended = overseer.suspend();
+    let lends_terminal = suspended.is_some();
+    let handover = Arc::new(Handover::new(suspended));
     let lent = Lent {
         heard: Arc::clone(&heard),
         typed: tokio::sync::Mutex::new(typed),
         listening: Arc::clone(&listening),
+        handover: Arc::clone(&handover),
     };
     let lends = overseer.carries_lines();
     let lent_ = &lent;
@@ -682,6 +897,7 @@ fn overseen<O: Overseer, R: Send>(
                     told_.lock().unwrap_or_else(PoisonError::into_inner).link = Some(link);
                 },
                 sign_in: lends.then_some(lent_ as &dyn SignInChannel),
+                terminal: lends_terminal.then_some(lent_ as &dyn SignInTerminal),
             };
             door(&mut front, watching)
         });
@@ -694,8 +910,10 @@ fn overseen<O: Overseer, R: Send>(
             heard,
             typing,
             listening,
+            handover,
         };
         let stood = stood(overseer, &mut carrying);
+        let repaint = stood.is_ok() && carrying.take_repaint();
         if stood.is_err() {
             cancel_.request();
         }
@@ -705,6 +923,9 @@ fn overseen<O: Overseer, R: Send>(
         let carried = worker
             .join()
             .unwrap_or_else(|panicked| std::panic::resume_unwind(panicked));
+        if repaint {
+            overseer.repaint()?;
+        }
         stood.map(|()| carried)
     })
 }
@@ -737,6 +958,22 @@ pub(crate) trait Overseer {
     /// the door is lent no channel and refuses that method before running it.
     fn carries_lines(&self) -> bool {
         false
+    }
+
+    /// This session's terminal modes, where it has a terminal to give a sign-in
+    /// command that needs a real one. Where it does not, the door is lent no
+    /// handover and refuses that method before running it.
+    fn suspend(&self) -> Option<Suspend> {
+        None
+    }
+
+    /// Paints every row again after a child had the terminal.
+    ///
+    /// # Errors
+    ///
+    /// Whatever drawing the frame failed with.
+    fn repaint(&mut self) -> Result<(), Self::Error> {
+        Ok(())
     }
 }
 
@@ -806,6 +1043,7 @@ pub(crate) const fn coded(refused: &AgentsError) -> ErrorCode {
         | AgentsError::Unlaunched(_)
         | AgentsError::HoldUnkept(_)
         | AgentsError::Piped(_)
+        | AgentsError::Unconfined(_)
         | AgentsError::Unverified(_) => ErrorCode::Failed,
     }
 }

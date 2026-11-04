@@ -82,7 +82,16 @@ kept no longer, and the next line is shown again. A paste holding a line ending
 is refused and nothing is sent. Escape stops the command and the panel stays
 until that is settled, saying so where a stop could not be confirmed. With
 output redirected, choosing the method says a terminal is needed, and nothing is
-asked or started. A method that needs a real terminal is not offered. The
+asked or started. A method the catalog records as needing a real terminal is
+offered too, on Unix: choosing it asks first, for that run, whether the agent's
+own command may run outside the sandbox on this terminal, and starting it is
+refused while a project requires the sandbox. On a platform without a
+real-terminal handover, as Windows, the method is refused before anything is
+asked or started. The panel does not stand over
+that command, because the command has the terminal itself; Ctrl+C reaches the
+command alone, and after ten minutes the command and everything it started are
+stopped. When it ends the terminal is taken back, the panel is drawn again, and
+the agent's own word afterwards says whether the sign-in took. The
 first time you choose a method that takes a key, `/login` asks for the key as
 hidden input; crucible keeps it for that agent and method and asks for it no
 more, and Escape there keeps nothing. A sign-in read as signed in means the

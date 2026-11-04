@@ -2018,3 +2018,30 @@ async fn a_stop_that_cannot_be_confirmed_is_not_a_clean_end() {
 
     assert!(matches!(ended, Err(Unstopped::Unreaped(_))), "{ended:?}");
 }
+
+/// The place a child started outside a host holds on the instance's control:
+/// a second run is refused beside it, the place comes back when it is dropped,
+/// and one whose stop was not confirmed is refused for good.
+#[test]
+fn a_control_can_be_held_for_a_child_started_outside_a_host() {
+    let control = Control::new().expect("a control");
+    assert!(control.hold().is_ok(), "an unheld control was refused");
+    assert!(!control.running(), "the place was not given back");
+
+    let held = control.hold().expect("nothing else holds it");
+    assert!(control.running(), "the place was not taken");
+    assert!(
+        matches!(control.hold(), Err(Refusal::Busy)),
+        "a second place was taken beside the first"
+    );
+    drop(held);
+    assert!(!control.running(), "the place did not come back");
+
+    let held = control.hold().expect("the place came back");
+    held.unstopped();
+    assert!(control.unstopped(), "the stop was reported as confirmed");
+    assert!(
+        matches!(control.hold(), Err(Refusal::Unstopped)),
+        "a control whose run may still be live was handed out again"
+    );
+}

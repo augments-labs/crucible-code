@@ -375,6 +375,28 @@ impl Published {
         method: &serde_json::Value,
         built: &Path,
     ) -> Self {
+        Self::signing_in_on(key, script, method, built, "piped")
+    }
+
+    /// The same, with the method's route the real terminal, which the door
+    /// runs unconfined and hands the process's terminal to.
+    pub(crate) fn signing_in_at_terminal_by(
+        key: &str,
+        script: &Script,
+        method: &serde_json::Value,
+        built: &Path,
+    ) -> Self {
+        Self::signing_in_on(key, script, method, built, "terminal")
+    }
+
+    /// [`Published::signing_in_by`], the method's route recorded as `route`.
+    fn signing_in_on(
+        key: &str,
+        script: &Script,
+        method: &serde_json::Value,
+        built: &Path,
+        route: &str,
+    ) -> Self {
         let installed = fake_peer::install(built, key, script).expect("the fake peer installs");
         let program = fs::read(&installed).expect("the peer's program");
         let played = fs::read(built.join("script")).expect("the peer's script");
@@ -393,7 +415,7 @@ impl Published {
         let fields = recorded.as_object_mut().expect("a method is a JSON object");
         fields.remove("type");
         fields.insert("kind".to_owned(), "terminal".into());
-        fields.insert("route".to_owned(), "piped".into());
+        fields.insert("route".to_owned(), route.into());
         let fields = entry.as_object_mut().expect("an offer is an object");
         fields.insert("auth_methods".to_owned(), serde_json::json!([recorded]));
         fields.insert(

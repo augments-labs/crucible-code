@@ -17,8 +17,12 @@
 //! standard input, standard output and standard error all at one: the door is
 //! lent a launcher, under the sandbox the user's own file says, and a
 //! [`Console`], which writes each line the command says to standard error and
-//! sends the command each line typed. Anywhere else nothing is lent and the
-//! door refuses it, saying a terminal is needed. How far a download has come
+//! sends the command each line typed. A sign-in the catalog records as needing
+//! a real terminal needs the same three streams on a terminal, and is lent the
+//! same [`Console`] as its terminal: the command runs there unconfined, after
+//! a confirmation made for that run, with its own process group in the
+//! foreground. Anywhere else nothing is lent and the door refuses it, saying a
+//! terminal is needed. How far a download has come
 //! goes to standard error, on one line
 //! rewritten in place where standard error is a terminal and as one line where
 //! it is not; the answer goes to standard output and a refusal to standard
@@ -46,7 +50,8 @@ use std::time::Duration;
 
 use crucible_app::catalog_fetch::trust_in;
 use crucible_app::client::agents::{
-    self as door, AgentsError, How, Listed, Outcome, SaidLine, Shelf, SignInChannel, Typed, Typing,
+    self as door, AgentsError, HandoverFailed, How, Listed, Outcome, SaidLine, Shelf,
+    SignInChannel, SignInTerminal, Typed, Typing,
 };
 use crucible_app::client::{Confirmation, Front, Shown};
 use crucible_app::installing;
@@ -59,6 +64,7 @@ use crucible_client_api::{
 use crucible_config::Home;
 use crucible_runtime::{BoxFuture, Cancel};
 use crucible_sandbox::SandboxService;
+use crucible_tui::Held;
 use crucible_types::AgentKey;
 use crucible_types::shown::escaped;
 use tokio::runtime::Handle;
@@ -66,6 +72,7 @@ use tokio::sync::{Mutex, mpsc};
 
 use super::AgentsAction;
 use super::auth::{self, Unstored};
+use super::client::Suspend;
 use super::ending::Told;
 use super::failure::failing;
 use super::visible;
@@ -390,7 +397,7 @@ impl Desk<'_> {
             Correlation::new(1),
             command,
         );
-        self.asked(&request, &self.shelf, None)
+        self.asked(&request, &self.shelf, None, None)
     }
 
     /// `command`, a sign-in the agent runs as a command, carried out with the
@@ -399,6 +406,7 @@ impl Desk<'_> {
     fn at_console(&self, services: &Services, command: Command) -> Result<Outcome, AgentsError> {
         let request = Request::new(
             Capabilities::none()
+                .with(Capability::Account)
                 .with(Capability::Install)
                 .with(Capability::Permissions),
             Correlation::new(1),
@@ -407,16 +415,18 @@ impl Desk<'_> {
         let console = Console::new(self.said);
         door::lending_here(self.home, services, self.runtime, |launcher, steps| {
             let lending = super::client::shelf(self.home, Some(launcher), Some(steps));
-            self.asked(&request, &lending, Some(&console))
+            self.asked(&request, &lending, Some(&console), Some(&console))
         })?
     }
 
-    /// `request` carried out at the agents door lent `lending` and `sign_in`.
+    /// `request` carried out at the agents door lent `lending`, `sign_in` and
+    /// `terminal`.
     fn asked(
         &self,
         request: &Request,
         lending: &Shelf<'_>,
         sign_in: Option<&dyn SignInChannel>,
+        handover: Option<&dyn SignInTerminal>,
     ) -> Result<Outcome, AgentsError> {
         let (said, terminal) = (self.said, self.terminal);
         let mut front = Asked {
@@ -440,6 +450,7 @@ impl Desk<'_> {
                 cancel: &cancel,
                 link: &|link| said(&linked(link.as_str(), link.incomplete())),
                 sign_in,
+                terminal: handover,
             };
             self.runtime
                 .block_on(door::run(request, lending, &mut front, watching))
@@ -742,7 +753,7 @@ impl Front for Asked<'_> {
         Box::pin(async move {
             let answer = self.answer?;
             let confirmation = match shown {
-                Shown::Install(confirmation) => confirmation,
+                Shown::Account(confirmation) | Shown::Install(confirmation) => confirmation,
                 Shown::Warning(warned) => {
                     (self.said)(&visible(&format!(
                         "{}\n  {}\n  {}\n  {}\nSign in anyway? [y/N] ",
@@ -762,7 +773,8 @@ impl Front for Asked<'_> {
                 }
                 _ => return None,
             };
-            let Pending::Install { choices, .. } = pending else {
+            let (Pending::Account { choices, .. } | Pending::Install { choices, .. }) = pending
+            else {
                 return None;
             };
             (self.said)(&visible(&question(confirmation)));
@@ -813,6 +825,14 @@ struct Console<'a> {
     /// The lines typed, from when the first is first asked for, so that what
     /// the door itself asks on this terminal is read before anything else is.
     typed: OnceLock<Mutex<mpsc::Receiver<String>>>,
+    /// This process's terminal, lent to a command that needs a real one.
+    ///
+    /// Nothing else here sets a terminal mode: `crucible agents sign-in` runs
+    /// on the terminal it was started on, so the modes to give back are none.
+    /// What the handover still does is the part that matters here — the
+    /// child's process group is made the foreground one, and the parent takes
+    /// it back — which is what keeps Ctrl+C with the child.
+    terminal: std::sync::Mutex<Suspend>,
 }
 
 impl<'a> Console<'a> {
@@ -821,6 +841,7 @@ impl<'a> Console<'a> {
         Self {
             said,
             typed: OnceLock::new(),
+            terminal: std::sync::Mutex::new(Suspend::holding(Held::default(), || {})),
         }
     }
 }
@@ -837,6 +858,26 @@ impl SignInChannel for Console<'_> {
                 .get_or_init(|| Mutex::new(typed_lines(BufReader::new(io::stdin()))));
             typed.lock().await.recv().await.map(Typing::Line)
         })
+    }
+}
+
+impl SignInTerminal for Console<'_> {
+    fn handed(&self, pid: u32) -> Result<(), HandoverFailed> {
+        let suspend = self
+            .terminal
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        suspend
+            .handed(pid)
+            .map_err(|why| HandoverFailed::new(why.to_string()))
+    }
+
+    fn resumed(&self) {
+        let suspend = self
+            .terminal
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _ = suspend.resumed();
     }
 }
 

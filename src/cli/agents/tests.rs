@@ -515,6 +515,8 @@ fn signing_in() -> (serde_json::Value, &'static [u8]) {
                 {"id": "browser", "kind": "agent", "name": "Sign in with a browser"},
                 {"id": "terminal", "kind": "terminal", "name": "Sign in at a terminal",
                  "command": "goose", "args": ["login"], "env": {}, "route": "piped"},
+                {"id": "terminal-real", "kind": "terminal", "name": "Sign in at a real terminal",
+                 "command": "goose", "args": ["login"], "env": {}, "route": "terminal"},
             ]),
         );
         object.insert(
@@ -1442,6 +1444,101 @@ fn unconfined_is_allowed_only_where_the_runner_says_it_is_disposable() {
         assert!(refused.contains("--unconfined"), "{refused}");
         assert_eq!(refused.lines().count(), 1, "{refused}");
     }
+}
+
+/// A method that needs a real terminal is a way the agent signs in, listed
+/// with the others rather than left out of the door's answer.
+#[test]
+fn a_real_terminal_method_is_listed_as_a_way_to_sign_in() {
+    let bench = Bench::new("sign-in-real-terminal-method");
+    bench.host.publish(1, &[signing_in()]);
+    bench.configure(&serde_json::json!({
+        "work": {
+            "driver": "catalog",
+            "agent": "goose",
+            "executable": bench.program("1.0.0").to_string_lossy(),
+        },
+    }));
+
+    let methods = {
+        let _ = bench.carried(&action(&["search"]), None, &mut unasked);
+        door::sign_in_methods(&bench.home, "work").expect("the agent's methods")
+    };
+
+    assert!(
+        methods.iter().any(|method| &**method == "terminal-real"),
+        "{methods:?}"
+    );
+}
+
+/// The confirmation a sign-in outside the sandbox asks is an account
+/// operation's question: this terminal draws it and reads one of its choices,
+/// so answering "Run it" lets the route run instead of leaving it undecided.
+#[test]
+fn an_account_confirmation_is_drawn_and_answered_at_this_terminal() {
+    use crucible_app::client::Confirmation;
+    use crucible_client_api::{Choice, Decision, Pending, PendingId, Text};
+
+    fn run_it() -> String {
+        "1".to_owned()
+    }
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .expect("a runtime");
+    let confirmation = Confirmation {
+        asks: "Run \"terminal-real\" as \"work\" at this terminal, outside the sandbox?".to_owned(),
+        facts: vec!["It is not held by the sandbox.".to_owned()],
+        choices: vec![
+            ("Run it".to_owned(), "Hand this terminal to it.".to_owned()),
+            ("Cancel".to_owned(), "Start nothing.".to_owned()),
+        ],
+    };
+    let choices: Vec<Choice> = confirmation
+        .choices
+        .iter()
+        .enumerate()
+        .map(|(at, (name, says))| Choice {
+            name: Text::cut(name),
+            says: Text::cut(says),
+            recommended: at == 0,
+        })
+        .collect();
+    let pending = Pending::Account {
+        id: PendingId::new(7),
+        asks: Text::cut(&confirmation.asks),
+        facts: confirmation
+            .facts
+            .first()
+            .map(|fact| Text::cut(fact))
+            .into_iter()
+            .collect(),
+        choices,
+    };
+    let heard = Mutex::new(String::new());
+    let said = |text: &str| {
+        heard
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push_str(text);
+    };
+    let mut asked = Asked {
+        said: &said,
+        answer: Some(run_it),
+    };
+
+    let decision = runtime
+        .block_on(asked.put(&pending, Shown::Account(&confirmation)))
+        .expect("the confirmation was answered");
+
+    assert!(
+        matches!(&decision, Decision::Picked { choice, .. } if choice.as_str() == "Run it"),
+        "{decision:?}"
+    );
+    let heard = heard.lock().unwrap_or_else(PoisonError::into_inner).clone();
+    assert!(heard.contains("Run it"), "{heard}");
 }
 
 /// Where this process has no terminal to run it on, a sign-in the agent runs as

@@ -53,6 +53,29 @@ fn typed(panel: &mut SigningIn, text: &str) {
 }
 
 #[test]
+fn a_terminal_is_lent_only_where_every_stream_is_one() {
+    let terminal = Renderer::new(crucible_tui::Recording::new(80, 24));
+    for stdin in [false, true] {
+        for stdout in [false, true] {
+            for stderr in [false, true] {
+                assert_eq!(
+                    handover_if(&terminal, [stdin, stdout, stderr]).is_some(),
+                    (stdin, stdout, stderr) == (true, true, true),
+                    "stdin {stdin}, stdout {stdout}, stderr {stderr}"
+                );
+            }
+        }
+    }
+    let redirected = Renderer::new(crucible_tui::Recording::redirected(80, 24));
+    assert!(handover_if(&redirected, [true; 3]).is_none());
+    let native = Renderer::drawing(
+        crucible_tui::Recording::new(80, 24),
+        crucible_tui::ScreenMode::Native,
+    );
+    assert!(handover_if(&native, [true; 3]).is_some());
+}
+
+#[test]
 fn every_state_of_the_sign_in_panel_fits_every_window_it_is_given() {
     // The panel's own fit sweep, since it is laid out here and not among the
     // components the crate's sweep walks: with nothing said, a few lines, a

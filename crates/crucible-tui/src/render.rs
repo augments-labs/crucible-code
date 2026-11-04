@@ -1832,6 +1832,27 @@ impl<T: Terminal> Renderer<T> {
         self.draw()
     }
 
+    /// Draws every row of the window again, whether or not it changed.
+    ///
+    /// What the frame after a terminal was lent to a child asks for. The child
+    /// may have written anything on the screen, and this process has no record
+    /// of it: the bytes the last frame left are no longer what is there. The
+    /// screen is not laid out again, unlike [`Renderer::resized`] — the size
+    /// did not change — but every row is painted and written.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    pub fn repaint(&mut self) -> Result<(), TerminalError> {
+        // A native session paints into the terminal's own buffer, where the
+        // renderer holds no picture it could trust: its live region is laid
+        // down afresh on every frame already.
+        if self.native.is_none() {
+            self.painted.forget();
+        }
+        self.draw()
+    }
+
     /// Empties the transcript, leaving the band ready for what replaces it.
     ///
     /// What a session picked up asks for. A resumed session is not the next

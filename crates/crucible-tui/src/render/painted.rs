@@ -13,9 +13,9 @@
 //!
 //! A row nobody has drawn on is not the same as a row drawn blank, so the
 //! answer for each is [`Option`] rather than an empty string. [`Painted::forget`]
-//! is how a frame says it no longer knows — after taking the screen, and after
-//! a window changed size, which are the two things that make every row wrong at
-//! once.
+//! is how a frame says it no longer knows — after taking the screen, after a
+//! window changed size, and after a child was lent the terminal. Those are the
+//! three things that make every row wrong at once.
 //!
 //! What the reader has selected is applied here rather than by whoever built
 //! the row, for two reasons. It is the one place every band's bytes pass

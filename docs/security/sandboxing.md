@@ -493,6 +493,22 @@ With the sandbox off, on macOS, where nothing could prove a descendant that left
 its process group stopped, on Windows or on FreeBSD, none runs, and the install
 is refused before anything is fetched.
 
+A sign-in method the catalog records as needing a real terminal runs the
+agent's own recorded command unconfined, because no sandbox backend can give a
+child a terminal. It is the one command crucible starts outside the sandbox
+without the user having turned confinement off: it is asked about on every
+run, in a confirmation that says so, and it is refused while a project
+requires the sandbox. It is also refused unless standard input, output and
+error are all terminals, or before a process starts on Windows. The command is
+put in a process group of its own, which becomes the terminal's foreground
+group, so Ctrl+C reaches it alone; when its ten minutes pass the whole group is
+killed and waited for. The terminal is handed back and every row painted again
+afterwards, and the agent's own status read afterwards is what decides whether
+the sign-in took. The command's environment is the catalog's record merged with
+the shell's allowlist of passed variables, starting from a cleared
+environment, and it is run from the version installed, which stays read-only
+for the agent's other runs.
+
 ## Environment and credentials
 
 The command environment is an explicit, bounded map rather than a copy of the

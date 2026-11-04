@@ -1529,14 +1529,6 @@ fn sign_ins(
     let mut more = false;
     for method in methods {
         let says = match (&method.method, &method.description) {
-            // The agents door does not run a sign-in at a real terminal.
-            (
-                Method::Terminal {
-                    route: Route::Terminal,
-                    ..
-                },
-                _,
-            ) => continue,
             (
                 Method::Agent
                 | Method::EnvVar { .. }
@@ -1548,11 +1540,28 @@ fn sign_ins(
             ) => quoted(description),
             (
                 Method::Terminal {
+                    route: Route::Terminal,
+                    ..
+                },
+                Some(description),
+            ) => format!(
+                "{} It runs outside the sandbox, on this terminal.",
+                quoted(description)
+            ),
+            (
+                Method::Terminal {
                     route: Route::Piped,
                     ..
                 },
                 None,
             ) => "Sign in by a command the agent runs, typed to at a terminal.".to_owned(),
+            (
+                Method::Terminal {
+                    route: Route::Terminal,
+                    ..
+                },
+                None,
+            ) => "Sign in at the agent's own command, which runs outside the sandbox.".to_owned(),
             (Method::Agent, None) => "Sign in through the agent's own program.".to_owned(),
             (Method::EnvVar { .. }, None) => {
                 "Sign in with a key Crucible keeps for the agent.".to_owned()
@@ -2291,5 +2300,34 @@ mod tests {
         let named: Vec<&str> = offered.iter().map(|(name, ..)| name.as_str()).collect();
         assert_eq!(named, ["API key"]);
         assert!(!more);
+    }
+
+    #[test]
+    fn a_real_terminal_method_is_offered_with_the_word_that_it_runs_unconfined() {
+        let instance =
+            ExternalAgent::unwritten("work", Driver::Antigravity, "antigravity", None, None)
+                .unwrap();
+        let methods = vec![AuthMethod {
+            id: "terminal".into(),
+            name: "Sign in at a terminal".into(),
+            description: None,
+            method: Method::Terminal {
+                command: "login".into(),
+                args: Vec::new(),
+                env: Vec::new(),
+                route: Route::Terminal,
+            },
+        }];
+
+        let (offered, more) = sign_ins(&instance, methods, &[]);
+
+        assert_eq!(offered.len(), 1);
+        assert!(!more);
+        assert!(
+            offered
+                .first()
+                .is_some_and(|(_, says, _)| says.contains("outside the sandbox")),
+            "{offered:?}"
+        );
     }
 }

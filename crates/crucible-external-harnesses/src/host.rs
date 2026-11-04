@@ -363,6 +363,33 @@ pub enum Undecided {
 }
 
 impl Control {
+    /// Holds this control's place for a child started outside a [`Host`],
+    /// refusing where a run holds it already or could not be confirmed
+    /// stopped; the place is released when the returned [`Holding`] is
+    /// dropped, unless the holder says the stop was not confirmed.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::Unstopped`] where a run on this control could not be
+    /// confirmed stopped, and [`Refusal::Busy`] where one is live.
+    pub fn hold(&self) -> Result<Holding<'_>, Refusal> {
+        if self.shared.unstopped.load(Ordering::SeqCst) {
+            return Err(Refusal::Unstopped);
+        }
+        if self
+            .shared
+            .running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err(Refusal::Busy);
+        }
+        Ok(Holding {
+            shared: &self.shared,
+            confirmed: true,
+        })
+    }
+
     /// A handle with nothing open, or nothing once this process has numbered
     /// every instance it can.
     #[must_use]
@@ -455,6 +482,44 @@ impl Control {
             .asked
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// One run's place on a [`Control`], held by an operation that starts a child
+/// outside a [`Host`]: the control is held for as long as this is, so another
+/// run is refused beside it. A place whose child could not be confirmed
+/// stopped is left held for good, as a host's drop leaves one.
+pub struct Holding<'a> {
+    /// What every run of the agent shares.
+    shared: &'a Shared,
+    /// Whether the holder may release the place; false once it says the stop
+    /// was not confirmed.
+    confirmed: bool,
+}
+
+impl fmt::Debug for Holding<'_> {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.debug_struct("Holding")
+            .field("confirmed", &self.confirmed)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Holding<'_> {
+    /// Records that the child could not be confirmed stopped, so the control
+    /// is held for good and every later start on it is refused.
+    pub fn unstopped(mut self) {
+        self.confirmed = false;
+    }
+}
+
+impl Drop for Holding<'_> {
+    fn drop(&mut self) {
+        if self.confirmed {
+            self.shared.running.store(false, Ordering::SeqCst);
+        } else {
+            self.shared.unstopped.store(true, Ordering::SeqCst);
+        }
     }
 }
 

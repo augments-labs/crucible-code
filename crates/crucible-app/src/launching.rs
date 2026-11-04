@@ -89,9 +89,9 @@
 //! step, the smoke test of a release and the intake's probe all take what
 //! leads the arguments from one function, so none starts the interpreter any
 //! other way, and a probe of an unpacked release with no launcher at its top
-//! is refused. A sign-in command run with no real terminal is the one start
-//! that takes no leading arguments, since the signed record's arguments are
-//! what was reviewed. That is safe because the command is refused where it
+//! is refused. A sign-in command, whether piped or at a real terminal, is the
+//! one start that takes no leading arguments, since the signed record's
+//! arguments are what was reviewed. That is safe because the command is refused where it
 //! is, its links followed, the program the release's start leads, which with
 //! nothing leading it would load from the working directory; a script in the
 //! version stays allowed, since its interpreter loads it from its own path, not
@@ -301,6 +301,9 @@ use crate::installing;
 use crate::outside::Relaunch;
 use crate::providers;
 
+#[cfg(unix)]
+mod terminal;
+
 /// Why nothing was started.
 #[derive(Debug, thiserror::Error)]
 pub enum Unlaunched {
@@ -509,6 +512,11 @@ pub enum Unpiped {
     /// What the catalog records lies outside the version installed.
     #[error("the sign-in command {0} is not a program in the version installed")]
     Outside(String),
+    /// The terminal could not be given to the command, so its group was
+    /// killed rather than left running with this process's group in the
+    /// foreground.
+    #[error(transparent)]
+    Unhanded(#[from] HandoverFailed),
     /// The person gave it up.
     #[error("the sign-in was stopped")]
     Stopped,
@@ -2783,6 +2791,43 @@ fn private(profile: &Path) -> std::io::Result<()> {
     builder.create(profile)
 }
 
+/// Why a front end could not give its terminal to a sign-in child.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("the terminal could not be given to the sign-in: {0}")]
+pub struct HandoverFailed(Box<str>);
+
+impl HandoverFailed {
+    /// A failure saying `why`.
+    #[must_use]
+    pub fn new(why: impl Into<Box<str>>) -> Self {
+        Self(why.into())
+    }
+}
+
+/// The front end's terminal, lent to a sign-in the agent runs as a command
+/// that needs a real one.
+///
+/// `crucible-app` owns the process and the bound; the front end owns the
+/// terminal. [`handed`](SignInTerminal::handed) is called with the child's
+/// process id before this waits for it, and [`resumed`](SignInTerminal::resumed)
+/// once it has ended or its bound has passed, whatever the outcome. A handover
+/// that cannot make the child's group the terminal's foreground group returns
+/// [`HandoverFailed`], and the child's group is killed rather than run with
+/// this process's group still in the foreground.
+pub trait SignInTerminal: Send + Sync {
+    /// The terminal is the child's, whose process group is `pid`, until
+    /// [`resumed`](SignInTerminal::resumed).
+    ///
+    /// # Errors
+    ///
+    /// [`HandoverFailed`] where the terminal could not be given to the child;
+    /// nothing is then running with this process's group in the foreground.
+    fn handed(&self, pid: u32) -> Result<(), HandoverFailed>;
+
+    /// The child has the terminal no longer; take it back and repaint.
+    fn resumed(&self);
+}
+
 /// What starts an agent's processes for one conversation.
 pub struct Launcher<'a> {
     /// The sandbox every child is prepared by.
@@ -3010,6 +3055,123 @@ impl<'a> Launcher<'a> {
             Piped::Overran => return Err(Unpiped::Overran),
             Piped::Cancelled => return Err(Unpiped::Stopped),
             Piped::Lost => return Err(Unpiped::Lost),
+        }
+        Ok(self
+            .account(agent, control, dialect, Account::Status, shown)
+            .await?)
+    }
+
+    /// Signs `agent` in by the catalog's record `signing` of a method that
+    /// needs a real terminal, handing this process's terminal to the recorded
+    /// command and carrying the child's group through it.
+    ///
+    /// The command is the one the catalog records, from the directory of the
+    /// version installed, with the environment the entry gives it, including
+    /// the variable that turns its updater off; nothing is confined, since no
+    /// sandbox backend can hold a terminal. Its bound is
+    /// `TERMINAL_SIGNING_IN`, and its whole process group is killed when the
+    /// bound passes, so nothing it started outlives it. The child is in a
+    /// process group of its own, stopped, before `terminal` is told its id; the
+    /// front end makes that group the terminal's foreground one, so Ctrl+C is
+    /// the terminal's own and reaches the child alone, and the child is resumed
+    /// only once the handover has succeeded. A handover that fails kills the
+    /// child's group and refuses.
+    ///
+    /// The route's content-use yes is required here, as it is for a start, and
+    /// the instance's control is held across the child, so no other run of the
+    /// instance starts beside it.
+    ///
+    /// As for the piped route, the agent is asked now whether it says of the
+    /// method what the catalog records, and after the command ends the agent
+    /// is read again: the command ending well is not taken for a sign-in.
+    ///
+    /// # Errors
+    ///
+    /// [`Unpiped`] for why it was not run or was not known to have signed in.
+    #[cfg(unix)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn terminal(
+        &self,
+        agent: &Agent,
+        control: &Control,
+        signing: &AuthMethod,
+        dialect: &mut dyn Dialect,
+        terminal: &dyn SignInTerminal,
+        shown: &(dyn Fn(Text) + Sync),
+    ) -> Result<Reading, Unpiped> {
+        let unagreed = || Unpiped::Disagrees(quoted(&signing.id));
+        let AgentRow::Catalog(catalog) = &agent.row else {
+            return Err(Unpiped::Unstored);
+        };
+        let Method::Terminal {
+            command,
+            args,
+            env,
+            route: catalog::Route::Terminal,
+        } = &signing.method
+        else {
+            return Err(unagreed());
+        };
+        let program = self.signing_program(agent, command)?;
+        // Nothing is started on a route with no yes, as no start is.
+        let _held =
+            content_use::held(self.consent, agent.row.route()).map_err(|unheld| match unheld {
+                Unheld::Asks(warned) => Unlaunched::Asks(warned),
+                Unheld::Unknown => Unlaunched::Unknown(agent.row.route().to_owned()),
+            })?;
+        let mut asked = Smoking(Acp::cataloged(catalog.profile().clone(), Allowing::Nothing));
+        match self
+            .account(agent, control, &mut asked, Account::Status, shown)
+            .await?
+        {
+            Reading::Version(_) => {}
+            Reading::Unreadable(failure) => return Err(Unpiped::Unreadable(failure)),
+            Reading::Signed(_) => {
+                return Err(Unpiped::Unreadable(Failure::new(
+                    "the agent did not say what it signs in by",
+                )));
+            }
+        }
+        if !asked
+            .0
+            .initialized()
+            .is_some_and(|said| said.states(&signing.id, &signing.method))
+        {
+            return Err(unagreed());
+        }
+        let trust = Trust::load(self.state, SystemTime::now());
+        let (_, stored) = agent.release(self.consent, &trust, &programs_beside(self.state))?;
+        let stored = stored.ok_or(Unpiped::Unstored)?;
+        let request = catalog.profile().sign_in_request(
+            args,
+            env,
+            std::env::vars_os(),
+            agent.profile.as_deref(),
+        );
+        let request = updating_off(request, stored.updater_off.as_ref());
+        // Held from before the child until its group is known gone, so a run
+        // or another sign-in of the instance is refused beside it.
+        let holding = control.hold().map_err(Unlaunched::from)?;
+        let exit = terminal::ran_at_terminal(
+            &program,
+            &stored.root,
+            &request,
+            terminal::TERMINAL_SIGNING_IN,
+            terminal,
+        );
+        if exit.stopped {
+            drop(holding);
+        } else {
+            // Nothing more is read through a control whose run may still be
+            // live: it stays held for good, as a host that could not confirm
+            // its stop leaves it.
+            holding.unstopped();
+            return Err(Unpiped::Unstopped(Unstopped::Unfinished));
+        }
+        match exit.run? {
+            terminal::TerminalRun::Ended(true) => {}
+            terminal::TerminalRun::Ended(false) => return Err(Unpiped::Failed),
+            terminal::TerminalRun::Overran => return Err(Unpiped::Overran),
         }
         Ok(self
             .account(agent, control, dialect, Account::Status, shown)
@@ -4552,6 +4714,14 @@ impl Steps {
             control: self.controls.of(instance),
             home: self.home.clone(),
         }
+    }
+
+    /// Whether a project requirement makes the sandbox non-optional right
+    /// now. A sign-in at a real terminal runs the agent's own command
+    /// unconfined, so it is refused where this is true.
+    #[must_use]
+    pub fn sandbox_required(&self) -> bool {
+        self.enablement.required()
     }
 
     /// The names among `entries` of those with a run that could not be
