@@ -172,7 +172,7 @@ jobs:
     env:
       VERSION: ${{ needs.gate.outputs.version }}
     container:
-      image: quay.io/centos/centos:stream9@sha256:086f25bff2b5e44eaa6953c8165cf6c4dcb3af8018b37053b510c7d5d796613c
+      image: quay.io/centos/centos:stream9@sha256:99a7748660352b7d87e5689805ddafa6209d6019d0c5b642b5354656dff02be3
     defaults:
       run:
         shell: bash
