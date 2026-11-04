@@ -474,6 +474,7 @@ impl Desk<'_> {
                 agents,
                 more,
                 unrefreshed,
+                registry: _,
             } => {
                 if let Some(why) = unrefreshed {
                     (self.said)(&failing(&format!(

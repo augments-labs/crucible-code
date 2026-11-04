@@ -1179,6 +1179,7 @@ fn a_listing_fetches_the_catalog_even_where_updates_are_never_checked() -> Resul
         agents,
         more: false,
         unrefreshed: None,
+        registry: None,
     }) = outcome
     else {
         return Err(format!("a listing, not {}", shape(&outcome)).into());

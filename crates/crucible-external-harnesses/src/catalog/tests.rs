@@ -3258,7 +3258,7 @@ fn registry(platform: &str) -> Value {
             }),
             json!({
                 "id": "elsewhere", "name": "elsewhere", "version": "1.0.0", "license": "MIT",
-                "distribution": {"binary": {"windows-x86_64": {
+                "distribution": {"binary": {"plan9-x86_64": {
                     "archive": "https://downloads.example.com/agent.zip",
                     "cmd": "./agent.exe",
                     "sha256": hash('b'),
@@ -3592,4 +3592,26 @@ fn the_registry_adapter_rebuilds_an_installed_release_from_its_receipt_and_probe
         "the registry carries no statement"
     );
     assert_eq!(&*entry.review, super::registry::URL);
+}
+
+#[test]
+fn a_registry_rows_survey_past_the_listed_files_is_refused() {
+    let index = registry_of(&super::trust::here());
+    let offer = index.offer(&agent("hashed")).expect("an offer");
+    let mut receipt = registry_receipt("1.0.0", &hash('e'));
+    receipt.files = (0..=super::LISTED_FILES)
+        .map(|index| File {
+            path: format!("file-{index}").into(),
+            kind: FileKind::File {
+                size: 0,
+                sha256: hash('a').into(),
+                exec: false,
+            },
+        })
+        .collect();
+
+    let refused = offer
+        .installed(&receipt, &registry_probe())
+        .expect_err("a survey past the listed files");
+    assert!(refused.to_string().contains("files"), "{refused}");
 }

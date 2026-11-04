@@ -72,7 +72,11 @@ impl RegistryIndex {
             why: "is not an object",
         })?;
         let version = text(object, "version", "")?;
-        if version.split('.').next() != Some("1") {
+        let major = version
+            .split('.')
+            .next()
+            .and_then(|part| part.parse::<u64>().ok());
+        if major != Some(SCHEMA) {
             return Err(RegistryError::Field {
                 field: "version".into(),
                 why: "is a registry schema this crucible does not know",

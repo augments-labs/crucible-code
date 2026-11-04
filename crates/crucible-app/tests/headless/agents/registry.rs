@@ -5,17 +5,22 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use crucible_app::backends::{AgentRow, CatalogRow, REGISTRY, Unbelieved, believed_registry};
 use crucible_app::catalog_fetch::{self, RegistrySource, Source};
 use crucible_app::client::agents::{
-    AgentsError, How, Outcome, Shelf, Watching, run, sign_in_methods,
+    AgentsError, How, Outcome, Shelf, Watching, run, runs_a_command, sign_in_methods,
 };
+use crucible_app::client::{Front, Shown};
 use crucible_app::content_use::{Consent, Routes};
 use crucible_app::launching::Agent;
-use crucible_client_api::{Capabilities, Capability, Command, Correlation, Request};
+use crucible_client_api::{
+    Capabilities, Capability, Command, Correlation, Decision, Pending, PendingId, Refusal, Request,
+    Said,
+};
 use crucible_config::{ExternalAgent, Home, Settings};
+use crucible_external_harnesses::catalog::fixture::signed;
 use crucible_external_harnesses::catalog::registry::{self, RegistryIndex};
 use crucible_external_harnesses::catalog::{Admits, KEYS, Keys, Trust};
 use crucible_external_harnesses::store::{
@@ -23,11 +28,11 @@ use crucible_external_harnesses::store::{
     Version,
 };
 use crucible_http::ProxyEnv;
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_types::AgentKey;
 use serde_json::{Value, json};
 
-use super::{Answering, Bench, Failed, digest, name, on_runtime, platform};
+use super::{Answering, Bench, Failed, ONE, Reply, digest, entry, name, on_runtime, platform};
 
 /// The archive the registry lists `goose` at, on a host of its own.
 const ARCHIVE: &str = "https://downloads.example.com/goose-1.0.0.tar.gz";
@@ -78,11 +83,21 @@ fn registry_json(version: &str) -> Value {
 }
 
 /// Writes the cached registry index under `home`, fetched now.
-#[allow(clippy::expect_used)] // a fixture that cannot be written is the test's own failure
 fn cache(home: &Home, index: &Value) {
+    cache_at(home, SystemTime::now(), index);
+}
+
+/// Writes the cached registry index under `home`, fetched at `at`.
+#[allow(clippy::expect_used)] // a fixture that cannot be written is the test's own failure
+fn cache_at(home: &Home, at: SystemTime, index: &Value) {
     let path = catalog_fetch::registry_in(home.path()).join("registry.json");
     fs::create_dir_all(path.parent().expect("a directory")).expect("the directory");
     fs::write(&path, serde_json::to_vec(index).expect("JSON")).expect("the cache");
+    fs::File::options()
+        .write(true)
+        .open(&path)
+        .and_then(|file| file.set_modified(at))
+        .expect("the cache time");
 }
 
 /// The probe record an install of `goose` at `version` stored.
@@ -117,6 +132,17 @@ fn probe(version: &str) -> Probe {
 /// Registry lists, with `program` written where its entry starts it, and gives
 /// the executable.
 fn installed(home: &Home, version: &str, program: &[u8]) -> Result<PathBuf, Failed> {
+    installed_as(home, version, program, Released::Registry)
+}
+
+/// Installs `goose` at `version` as `source` describes its release, with
+/// `program` written where its entry starts it, and gives the executable.
+fn installed_as(
+    home: &Home,
+    version: &str,
+    program: &[u8],
+    source: Released,
+) -> Result<PathBuf, Failed> {
     let store = Store::new(home.path().join("programs"));
     let key = AgentKey::new("goose")?;
     let staging = store.stage(&key)?;
@@ -144,11 +170,15 @@ fn installed(home: &Home, version: &str, program: &[u8]) -> Result<PathBuf, Fail
         &files,
         Provenance {
             listing: Listing {
-                serial: 0,
-                review: registry::URL.into(),
+                serial: if source == Released::Registry { 0 } else { 2 },
+                review: if source == Released::Registry {
+                    registry::URL.into()
+                } else {
+                    "https://github.com/augments-labs/crucible-agent-catalog/pull/12".into()
+                },
                 terms: None,
             },
-            source: Released::Registry,
+            source,
             probe: Some(probe(&named)),
             decompressed: bytes,
             fetched: SystemTime::now(),
@@ -165,17 +195,27 @@ fn installed(home: &Home, version: &str, program: &[u8]) -> Result<PathBuf, Fail
 
 /// The configuration naming the instance `work` of `goose` at `executable`.
 fn configure(home: &Home, executable: &Path) -> Result<(), Failed> {
+    configure_with(home, executable, false)
+}
+
+/// The configuration naming the instance `work` of `goose` at `executable`,
+/// with `agents.update` set to `reviewed` where `reviewed` is so.
+fn configure_with(home: &Home, executable: &Path, reviewed: bool) -> Result<(), Failed> {
+    let mut document = json!({
+        "externalAgents": {
+            "work": {
+                "driver": "catalog",
+                "agent": "goose",
+                "executable": executable.to_string_lossy(),
+            }
+        }
+    });
+    if reviewed && let Some(object) = document.as_object_mut() {
+        object.insert("agents".into(), json!({"update": "reviewed"}));
+    }
     fs::write(
         crucible_config::user(home),
-        serde_json::to_vec_pretty(&json!({
-            "externalAgents": {
-                "work": {
-                    "driver": "catalog",
-                    "agent": "goose",
-                    "executable": executable.to_string_lossy(),
-                }
-            }
-        }))?,
+        serde_json::to_vec_pretty(&document)?,
     )?;
     Ok(())
 }
@@ -189,9 +229,9 @@ fn untrusted(home: &Home) -> Result<(), Failed> {
     Ok(())
 }
 
-/// The shelf a door is lent at `home`, with no launcher, pointing its registry
-/// at an address nothing serves: the cache is what is read.
-fn shelf(home: &Home) -> Shelf<'_> {
+/// The shelf a door is lent at `home`, with no launcher, reading the registry
+/// from `registry`.
+fn shelf_at<'a>(home: &'a Home, registry: &str) -> Shelf<'a> {
     Shelf {
         catalog: Source {
             base: "http://127.0.0.1:1/catalog/".into(),
@@ -200,7 +240,7 @@ fn shelf(home: &Home) -> Shelf<'_> {
             proxy: ProxyEnv::default(),
         },
         registry: Some(RegistrySource {
-            url: "http://127.0.0.1:1/registry.json".into(),
+            url: registry.into(),
             hosts: &[],
             proxy: ProxyEnv::default(),
         }),
@@ -218,14 +258,16 @@ fn ask(command: Command) -> Request {
     )
 }
 
-/// Runs `command` at the door over `bench`'s home, with `front` answering.
-fn door(
+/// Runs `command` at the door over `bench`'s home, with `front` answering and
+/// the registry read from `registry`.
+fn door_at(
     bench: &Bench,
-    front: &mut Answering<'_>,
+    front: &mut dyn Front,
     command: Command,
+    registry: &str,
 ) -> Result<Result<Outcome, AgentsError>, Failed> {
     let request = ask(command);
-    let shelf = shelf(&bench.home);
+    let shelf = shelf_at(&bench.home, registry);
     on_runtime(run(
         &request,
         &shelf,
@@ -238,6 +280,46 @@ fn door(
             terminal: None,
         },
     ))
+}
+
+/// Runs `command` at the door over `bench`'s home, with `front` answering.
+fn door(
+    bench: &Bench,
+    front: &mut dyn Front,
+    command: Command,
+) -> Result<Result<Outcome, AgentsError>, Failed> {
+    door_at(bench, front, command, "http://127.0.0.1:1/registry.json")
+}
+
+/// A front that records the facts of every install question it is put and
+/// answers with `choice`, or declines where there is none.
+struct Recording {
+    choice: Option<&'static str>,
+    facts: Vec<String>,
+}
+
+impl Front for Recording {
+    fn put<'a>(
+        &'a mut self,
+        pending: &'a Pending,
+        shown: Shown<'a>,
+    ) -> BoxFuture<'a, Option<Decision>> {
+        Box::pin(async move {
+            if let Shown::Install(confirmation) = shown {
+                self.facts.push(confirmation.facts.join(" "));
+            }
+            let id = pending.id();
+            Some(match self.choice {
+                Some(choice) => Decision::Picked {
+                    id: PendingId::new(id.number()),
+                    choice: Said::new(choice).ok()?,
+                },
+                None => Decision::Declined { id },
+            })
+        })
+    }
+
+    fn refused(&mut self, _refusal: Refusal) {}
 }
 
 /// The configured instance `name` of `home`.
@@ -397,6 +479,40 @@ fn a_reserved_driver_word_and_an_unhashed_target_get_no_registry_row() -> Result
         .expect_err("an unhashed target")
         .to_string();
     assert!(why.contains("SHA-256"), "{why}");
+
+    // A key a built-in driver is spelled with is no registry row at all: an
+    // install or update of it is refused, and the built-in's route is not
+    // shadowed.
+    cache(&bench.home, &registry_json("1.0.0"));
+    let mut front = Answering {
+        choice: None,
+        server: &bench.server,
+        put: Vec::new(),
+        meanwhile: None,
+    };
+    let outcome = door(
+        &bench,
+        &mut front,
+        Command::InstallAgent {
+            agent: name("claude")?,
+            version: name("1.0.0")?,
+        },
+    )?;
+    assert!(
+        matches!(outcome, Err(AgentsError::Unoffered { .. })),
+        "{outcome:?}"
+    );
+    let outcome = door(
+        &bench,
+        &mut front,
+        Command::UpdateAgent {
+            agent: name("claude")?,
+        },
+    )?;
+    assert!(
+        matches!(outcome, Err(AgentsError::Unlisted(_))),
+        "{outcome:?}"
+    );
     Ok(())
 }
 
@@ -448,5 +564,251 @@ fn an_install_of_an_unhashed_registry_target_is_refused_naming_the_hash() -> Res
         panic!("no refusal: {outcome:?}");
     };
     assert!(why.to_string().contains("SHA-256"), "{why}");
+    Ok(())
+}
+
+/// `index` with no agents, as a registry that has withdrawn every one.
+#[allow(clippy::expect_used)] // a fixture that cannot be edited is the test's own failure
+fn empty_registry(mut index: Value) -> Value {
+    let object = index.as_object_mut().expect("an index object");
+    object.insert("agents".into(), json!([]));
+    index
+}
+
+#[test]
+fn a_reviewed_update_of_a_registry_release_is_still_asked() -> Result<(), Failed> {
+    let bench = Bench::new("registry-reviewed-update")?;
+    let now = SystemTime::now();
+    cache_at(
+        &bench.home,
+        now - catalog_fetch::REGISTRY_REUSE - Duration::from_mins(1),
+        &registry_json("2.0.0"),
+    );
+    let current = installed(&bench.home, "1.0.0", b"goose 1.0.0")?;
+    configure_with(&bench.home, &current, true)?;
+    let mut front = Recording {
+        choice: None,
+        facts: Vec::new(),
+    };
+
+    let outcome = door_at(
+        &bench,
+        &mut front,
+        Command::UpdateAgent {
+            agent: name("goose")?,
+        },
+        // Nothing serves the registry: the stale cache is used, not verified.
+        &bench.server.at("/registry.json"),
+    )?;
+
+    assert_eq!(
+        front.facts.len(),
+        1,
+        "the update question was not asked: {outcome:?}"
+    );
+    let said = front.facts.first().expect("a question fact");
+    assert!(
+        said.contains("Moves work from 1.0.0 onto 2.0.0"),
+        "the update question is missing: {said}"
+    );
+    assert!(
+        said.contains("Source: ACP Registry, read "),
+        "the source and its date are missing: {said}"
+    );
+    assert!(
+        said.contains("not verified: "),
+        "the unverified line is missing: {said}"
+    );
+    assert!(said.contains("not reviewed by Crucible"), "{said}");
+    assert!(matches!(outcome, Ok(Outcome::Undecided)), "{outcome:?}");
+    Ok(())
+}
+
+#[test]
+fn a_stale_registry_cache_is_listed_as_not_verified() -> Result<(), Failed> {
+    let bench = Bench::new("registry-unverified-listing")?;
+    cache_at(
+        &bench.home,
+        SystemTime::now() - catalog_fetch::REGISTRY_REUSE - Duration::from_mins(1),
+        &registry_json("1.0.0"),
+    );
+    let mut front = Answering {
+        choice: None,
+        server: &bench.server,
+        put: Vec::new(),
+        meanwhile: None,
+    };
+
+    let outcome = door_at(
+        &bench,
+        &mut front,
+        Command::AgentCatalog,
+        &bench.server.at("/registry.json"),
+    )?;
+
+    let Ok(Outcome::Catalog {
+        agents,
+        registry: Some(line),
+        ..
+    }) = outcome
+    else {
+        panic!("no listing line: {outcome:?}");
+    };
+    assert!(line.contains("not verified"), "{line}");
+    assert!(
+        agents.iter().any(|listed| listed.agent.as_str() == "goose"),
+        "the cached index was not listed"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_registry_index_is_fetched_once_within_its_five_minutes() -> Result<(), Failed> {
+    let bench = Bench::new("registry-fetch-once")?;
+    bench.server.serve(
+        "/registry.json",
+        Reply::Body(serde_json::to_vec(&registry_json("1.0.0"))?),
+    );
+    let url = bench.server.at("/registry.json");
+    let mut front = Answering {
+        choice: None,
+        server: &bench.server,
+        put: Vec::new(),
+        meanwhile: None,
+    };
+
+    let _ = door_at(&bench, &mut front, Command::AgentCatalog, &url)?;
+    let _ = door_at(&bench, &mut front, Command::AgentCatalog, &url)?;
+
+    let asked = bench
+        .server
+        .asked()
+        .iter()
+        .filter(|path| path.as_str() == "/registry.json")
+        .count();
+    assert_eq!(asked, 1, "the five-minute cache was not reused");
+    Ok(())
+}
+
+#[test]
+fn a_signed_offer_is_not_shadowed_by_the_registry() -> Result<(), Failed> {
+    let bench = Bench::new("registry-signed-first")?;
+    let current = installed_as(&bench.home, "1.0.0", ONE, Released::Catalog)?;
+    configure(&bench.home, &current)?;
+    let catalog = json!({
+        "schema": 1,
+        "serial": 2,
+        "entries": [entry("goose", "1.0.0", ONE)],
+        "revoked": [],
+    });
+    let signed = signed(&serde_json::to_vec(&catalog)?);
+    let state = catalog_fetch::state_in(bench.home.path());
+    let now = SystemTime::now();
+    let mut trust = Trust::load(&state, now);
+    trust.take_in(&signed.index, &signed.signature, &signed.keys, now)?;
+    cache(&bench.home, &registry_json("2.0.0"));
+    let mut front = Answering {
+        choice: None,
+        server: &bench.server,
+        put: Vec::new(),
+        meanwhile: None,
+    };
+
+    let outcome = door(&bench, &mut front, Command::AgentCatalog)?;
+    let Ok(Outcome::Catalog { agents, .. }) = outcome else {
+        panic!("no listing: {outcome:?}");
+    };
+    let goose = agents
+        .iter()
+        .find(|listed| listed.agent.as_str() == "goose")
+        .expect("goose listed");
+    assert_eq!(
+        goose
+            .offered
+            .iter()
+            .map(|version| &**version)
+            .collect::<Vec<_>>(),
+        ["1.0.0"],
+        "the registry shadowed the signed offer"
+    );
+
+    let outcome = door(
+        &bench,
+        &mut front,
+        Command::UpdateAgent {
+            agent: name("goose")?,
+        },
+    )?;
+    assert!(
+        matches!(&outcome, Ok(Outcome::Current { version, .. }) if &**version == "1.0.0"),
+        "{outcome:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_rollback_names_the_registrys_actual_reason() -> Result<(), Failed> {
+    let bench = Bench::new("registry-rollback-reason")?;
+    cache(&bench.home, &registry_json("2.0.0"));
+    let previous = installed(&bench.home, "1.0.0", b"goose 1.0.0")?;
+    let current = installed(&bench.home, "2.0.0", b"goose 2.0.0")?;
+    configure(&bench.home, &current)?;
+    // The registry withdraws every agent after the install.
+    cache(&bench.home, &empty_registry(registry_json("2.0.0")));
+    let mut front = Recording {
+        choice: None,
+        facts: Vec::new(),
+    };
+
+    let outcome = door(
+        &bench,
+        &mut front,
+        Command::RollbackAgent {
+            agent: name("goose")?,
+        },
+    )?;
+
+    assert_eq!(front.facts.len(), 1, "no rollback question: {outcome:?}");
+    let said = front.facts.first().expect("a question fact");
+    assert!(
+        said.contains("lists no agent goose"),
+        "the registry reason is missing: {said}"
+    );
+    assert!(
+        !said.contains("no longer lists"),
+        "the old false reason is still said: {said}"
+    );
+    assert!(matches!(outcome, Ok(Outcome::Undecided)), "{outcome:?}");
+    let _ = previous;
+    Ok(())
+}
+
+#[test]
+fn the_registry_sign_in_row_reads_its_route_and_refuses_a_terminal_method() -> Result<(), Failed> {
+    let bench = Bench::new("registry-sign-in-row")?;
+    cache(&bench.home, &registry_json("2.0.0"));
+    let current = installed(&bench.home, "2.0.0", b"goose 2.0.0")?;
+    configure(&bench.home, &current)?;
+
+    assert!(
+        runs_a_command(&bench.home, "work", "login")?,
+        "the registry row's terminal method was not read"
+    );
+    let mut front = Recording {
+        choice: None,
+        facts: Vec::new(),
+    };
+    let outcome = door(
+        &bench,
+        &mut front,
+        Command::SignInAgent {
+            instance: name("work")?,
+            method: name("login")?,
+        },
+    )?;
+    let Err(AgentsError::Unlent(method)) = outcome else {
+        panic!("the terminal method was not refused: {outcome:?}");
+    };
+    assert_eq!(&*method, "login");
     Ok(())
 }

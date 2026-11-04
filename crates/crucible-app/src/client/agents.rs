@@ -372,6 +372,9 @@ pub enum Outcome {
         /// Why the catalog was not refreshed first, where it was not: what is
         /// named is what was believed before.
         unrefreshed: Option<FetchError>,
+        /// Why the ACP Registry index was the cached one, or why none could be
+        /// read: the line a listing shows beside the agents it lists.
+        registry: Option<Box<str>>,
     },
     /// Nobody said yes, so nothing was fetched or changed.
     Undecided,
@@ -740,11 +743,24 @@ pub async fn run(
     let unrefreshed = catalog_fetch::refresh(&state, &shelf.catalog, Trigger::Opening)
         .await
         .err();
-    let registry = match &shelf.registry {
-        Some(source) => catalog_fetch::registry(shelf.home.path(), source, SystemTime::now())
-            .await
-            .ok(),
-        None => None,
+    // Only a command that offers, installs, updates or rolls back an agent
+    // reads the registry; the cache is reused for its five minutes, and a
+    // failure is carried as the line the listing shows.
+    let (registry, registry_notice) = if needs_registry(command) {
+        match &shelf.registry {
+            Some(source) => {
+                match catalog_fetch::registry(shelf.home.path(), source, SystemTime::now()).await {
+                    Ok(view) => {
+                        let notice = view.unverified.clone();
+                        (Some(view), notice)
+                    }
+                    Err(why) => (None, Some(why.to_string().into())),
+                }
+            }
+            None => (None, None),
+        }
+    } else {
+        (None, None)
     };
     let settings = Settings::read_home(shelf.home)?;
     let door = Door {
@@ -753,6 +769,7 @@ pub async fn run(
         trust: Trust::load(&state, SystemTime::now()),
         store: Store::new(shelf.home.path().join("programs")),
         registry,
+        registry_notice,
         user: crucible_config::user(shelf.home),
         instances: settings.external_agents(),
         // The user's own file alone: a checkout cannot ask for this.
@@ -782,7 +799,9 @@ pub async fn run(
                 How::Installed
             };
             let source = door.released(&agent);
-            door.switch(offer, how, source, None, front, watching).await
+            let fact = door.registry_fact();
+            door.switch(offer, how, source, fact.as_ref(), None, front, watching)
+                .await
         }
         Command::UpdateAgent { .. } => {
             let mut offers = door.offers(&agent)?;
@@ -808,14 +827,43 @@ pub async fn run(
                 });
             }
             let source = door.released(&agent);
-            door.switch(offer, How::Updated, source, None, front, watching)
-                .await
+            let fact = door.registry_fact();
+            door.switch(
+                offer,
+                How::Updated,
+                source,
+                fact.as_ref(),
+                None,
+                front,
+                watching,
+            )
+            .await
         }
         Command::RollbackAgent { .. } => door.rollback(&agent, front).await,
         Command::RemoveAgent { .. } => door.remove(&agent, front).await,
         Command::VerifyAgent { .. } => door.verify(agent),
         _ => Ok(Outcome::Refused(ErrorCode::Busy.into())),
     }
+}
+
+/// Whether `command` may offer, install, update or roll back an agent the ACP
+/// Registry lists, so the registry is read before it is carried out.
+const fn needs_registry(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::AgentCatalog
+            | Command::InstallAgent { .. }
+            | Command::AddAgent { .. }
+            | Command::UpdateAgent { .. }
+            | Command::RollbackAgent { .. }
+    )
+}
+
+/// Whether the user's standing yes can stand in for the update question:
+/// only an update of a signed catalog release can, since a registry release
+/// has no review for the policy to stand on.
+const fn reviewed(standing: bool, how: How, source: Released) -> bool {
+    standing && matches!(how, How::Updated) && matches!(source, Released::Catalog)
 }
 
 /// A version spelled as dot-separated decimal numbers, as those numbers, or
@@ -843,6 +891,14 @@ fn compare(left: &[u64], right: &[u64]) -> Ordering {
         .unwrap_or(Ordering::Equal)
 }
 
+/// The source fact a registry question says: the index's read date, and why it
+/// was the cached one where it was not verified.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegistryFact<'a> {
+    read: String,
+    unverified: Option<&'a str>,
+}
+
 /// What one command is carried out with.
 struct Door<'a> {
     request: &'a Request,
@@ -852,6 +908,8 @@ struct Door<'a> {
     /// The ACP Registry index this run read, where its front end lent a
     /// source; none for a front end that lists no registry agent.
     registry: Option<RegistryRead>,
+    /// Why the registry index was the cached one, or why none could be read.
+    registry_notice: Option<Box<str>>,
     user: PathBuf,
     instances: Vec<ExternalAgent>,
     /// Whether the user's own file says `agents.update = "reviewed"`, which
@@ -865,6 +923,11 @@ impl Door<'_> {
     /// lists the agent at all: nothing where it does not, and why where it
     /// lists it but cannot offer it.
     fn registry_offer(&self, agent: &AgentKey) -> Result<Option<Offer>, AgentsError> {
+        // A key a built-in driver or the native runner is spelled with is no
+        // registry row: the built-in owns that route.
+        if kept_word(agent.as_str()) {
+            return Ok(None);
+        }
         let Some(view) = &self.registry else {
             return Ok(None);
         };
@@ -885,21 +948,37 @@ impl Door<'_> {
         Ok(Some(offer))
     }
 
-    /// Every release this build offers for `agent`: the ACP Registry's where it
-    /// lists the agent, else the signed catalog's.
+    /// Every release this build offers for `agent`: the signed catalog's where
+    /// it lists the agent, else the ACP Registry's. A signed or compiled
+    /// entry is never shadowed by an unsigned one.
     fn offers(&self, agent: &AgentKey) -> Result<Vec<Offer>, AgentsError> {
+        let signed = self.trust.offers(Some(agent));
+        if !signed.is_empty() {
+            return Ok(signed);
+        }
         match self.registry_offer(agent)? {
             Some(offer) => Ok(vec![offer]),
-            None => Ok(self.trust.offers(Some(agent))),
+            None => Ok(Vec::new()),
         }
     }
 
     /// Where a release of `agent` read from this door comes from.
     fn released(&self, agent: &AgentKey) -> Released {
+        if !self.trust.offers(Some(agent)).is_empty() {
+            return Released::Catalog;
+        }
         match self.registry_offer(agent) {
             Ok(Some(_)) => Released::Registry,
             _ => Released::Catalog,
         }
+    }
+
+    /// The source fact a registry question says, where this run read an index.
+    fn registry_fact(&self) -> Option<RegistryFact<'_>> {
+        self.registry.as_ref().map(|view| RegistryFact {
+            read: view.index.read_date(),
+            unverified: self.registry_notice.as_deref(),
+        })
     }
 
     /// The agents offered, but those whose key is a word a built-in driver or
@@ -965,6 +1044,7 @@ impl Door<'_> {
             agents,
             more,
             unrefreshed,
+            registry: self.registry_notice.clone(),
         }
     }
 
@@ -1169,6 +1249,7 @@ impl Door<'_> {
         mut offer: Offer,
         how: How,
         source: Released,
+        registry: Option<&RegistryFact<'_>>,
         probe: Option<Probe>,
         front: &mut dyn Front,
         watching: Watching<'_>,
@@ -1216,7 +1297,11 @@ impl Door<'_> {
             )?;
         }
         let mut listed = listed(target);
-        runnable(&listed, &target.cmd)?;
+        // A registry offer's file list is the survey, which has not been read
+        // before the download; the program it starts is checked then.
+        if source == Released::Catalog {
+            runnable(&listed, &target.cmd)?;
+        }
         let (total, fitted) = sized(offer, tree.as_ref(), &builts)?;
         let version = Version::new(&offer.pin.version, offer.pin.lock_revision)?;
         let root = self.store.directory(agent, &version);
@@ -1277,10 +1362,13 @@ impl Door<'_> {
             }),
         };
         // Only an update can stand on the user's file; any other move is asked.
+        // A registry release has no review, so the policy that stands in for
+        // the update question does not apply to it: only a signed catalog
+        // release can be taken without asking.
         let standing =
-            self.standing && how == How::Updated && self.stands_for(agent, offer, &moving);
+            reviewed(self.standing, how, source) && self.stands_for(agent, offer, &moving);
         if !standing {
-            let confirmation = Self::installing(offer, how, &plan, &moving, source);
+            let confirmation = Self::installing(offer, how, &plan, &moving, source, registry);
             if confirmed(self.request, front, &confirmation).await != Some(0) {
                 return Ok(Outcome::Undecided);
             }
@@ -1404,12 +1492,16 @@ impl Door<'_> {
     }
 
     /// The question an install, add or update puts.
+    // The question is one value read from the move it asks about; splitting
+    // its inputs would put the facts it says in more than one place.
+    #[allow(clippy::too_many_arguments)]
     fn installing(
         offer: &Offer,
         how: How,
         plan: &Plan<'_>,
         moving: &[(&ExternalAgent, Version)],
         source: Released,
+        registry: Option<&RegistryFact<'_>>,
     ) -> Confirmation {
         let kept = plan.kept;
         let target = &offer.pin.target;
@@ -1451,6 +1543,19 @@ impl Door<'_> {
                  installs nothing."
                     .to_owned(),
             );
+        }
+        if let Some(fact) = registry {
+            facts.push(match fact.unverified {
+                Some(why) => format!(
+                    "Source: ACP Registry, read {}; not verified: {}; not reviewed by Crucible.",
+                    quoted(&fact.read),
+                    quoted(why)
+                ),
+                None => format!(
+                    "Source: ACP Registry, read {}; not reviewed by Crucible.",
+                    quoted(&fact.read)
+                ),
+            });
         }
         if kept && plan.tree.is_some() {
             facts.push(
@@ -1681,20 +1786,39 @@ impl Door<'_> {
         // cached registry index and its own probe record, never from the
         // signed catalog's trust state.
         let registry = previous.source == Released::Registry;
-        let (listed, row) = if registry {
-            let built = self.registry.as_ref().and_then(|view| {
-                let probe = previous.probe.as_deref()?;
-                let offer =
-                    believed_registry(&view.index, &self.store, agent, &program, probe).ok()?;
-                Some((offer, view.index.read_date()))
-            });
-            match built {
-                Some((offer, read)) => {
-                    let row =
-                        CatalogRow::registry(&offer.entry, &offer.pin.target, read.into()).ok();
-                    (Some(offer), row)
-                }
-                None => (None, None),
+        let (listed, row, why) = if registry {
+            match self.registry.as_ref() {
+                None => (
+                    None,
+                    None,
+                    Some(
+                        self.registry_notice
+                            .as_deref()
+                            .unwrap_or("no ACP Registry index could be read")
+                            .to_owned(),
+                    ),
+                ),
+                Some(view) => match previous.probe.as_deref() {
+                    None => (
+                        None,
+                        None,
+                        Some(crucible_external_harnesses::store::UNPROBED.to_owned()),
+                    ),
+                    Some(probe) => {
+                        match believed_registry(&view.index, &self.store, agent, &program, probe) {
+                            Ok(offer) => {
+                                let row = CatalogRow::registry(
+                                    &offer.entry,
+                                    &offer.pin.target,
+                                    view.index.read_date().into(),
+                                )
+                                .ok();
+                                (Some(offer), row, None)
+                            }
+                            Err(why) => (None, None, Some(why.to_string())),
+                        }
+                    }
+                },
             }
         } else {
             let offer = self.trust.offers(Some(agent)).into_iter().find(|offer| {
@@ -1704,15 +1828,23 @@ impl Door<'_> {
             let row = offer
                 .as_ref()
                 .and_then(|offer| CatalogRow::new(&offer.entry, &offer.pin.target).ok());
-            (offer, row)
+            (offer, row, None)
         };
-        let smoking = match &listed {
-            Some(offer) => self.smoking(offer, row.as_ref()),
-            None => Err(format!(
-                "the {} no longer lists {}, so nothing says what it must answer as",
-                if registry { "ACP Registry" } else { "catalog" },
+        let smoking = if let Some(offer) = &listed {
+            self.smoking(offer, row.as_ref())
+        } else {
+            let why = why.unwrap_or_else(|| {
+                format!("the catalog no longer lists {}", quoted(&previous.version))
+            });
+            let why = match (registry, self.registry_notice.as_deref()) {
+                (true, Some(line)) if !why.contains(line) => format!("{why}; {line}"),
+                _ => why,
+            };
+            Err(format!(
+                "{} {} cannot be smoke-tested: {why}",
+                agent,
                 quoted(&previous.version)
-            )),
+            ))
         };
         facts.push(Self::smoked(&smoking));
         let confirmation = Confirmation {
@@ -1826,10 +1958,16 @@ impl Door<'_> {
         let Some(configured) = self.instances.iter().find(|one| one.name() == instance) else {
             return Ok(Outcome::Refused(ErrorCode::InvalidArgument.into()));
         };
+        // A sign-in needs the registry only for an installed registry row; it
+        // reads the cache and fetches nothing on its own.
+        let registry = self
+            .registry
+            .clone()
+            .or_else(|| catalog_fetch::cached_registry(self.shelf.home.path()).ok());
         let (row, agent, found) = signing(
             &self.trust,
             &self.store,
-            self.registry.as_ref(),
+            registry.as_ref(),
             configured,
             method,
         )?;
@@ -3486,11 +3624,26 @@ mod tests {
         }
     }
 
+    fn registry_fact() -> RegistryFact<'static> {
+        RegistryFact {
+            read: "2026-11-04".to_owned(),
+            unverified: None,
+        }
+    }
+
     #[test]
     fn a_registry_install_question_says_the_probe_runs_the_vendors_program() {
         let offer = offered();
+        let fact = registry_fact();
 
-        let question = Door::installing(&offer, How::Installed, &plan(), &[], Released::Registry);
+        let question = Door::installing(
+            &offer,
+            How::Installed,
+            &plan(),
+            &[],
+            Released::Registry,
+            Some(&fact),
+        );
 
         let said = question.facts.join(" ");
         assert!(said.contains("run the vendor's program"), "{said}");
@@ -3506,13 +3659,69 @@ mod tests {
     }
 
     #[test]
+    fn a_registry_install_question_says_its_source_and_read_date() {
+        let offer = offered();
+        let fact = registry_fact();
+
+        let question = Door::installing(
+            &offer,
+            How::Installed,
+            &plan(),
+            &[],
+            Released::Registry,
+            Some(&fact),
+        );
+
+        let said = question.facts.join(" ");
+        assert!(
+            said.contains("Source: ACP Registry, read 2026-11-04"),
+            "{said}"
+        );
+        assert!(said.contains("not reviewed by Crucible"), "{said}");
+        assert!(!said.contains("not verified"), "{said}");
+    }
+
+    #[test]
+    fn a_registry_install_from_an_unverified_cache_says_so_and_its_date() {
+        let offer = offered();
+        let fact = RegistryFact {
+            read: "2026-11-04".to_owned(),
+            unverified: Some("the ACP Registry was not verified: the host answered 500"),
+        };
+
+        let question = Door::installing(
+            &offer,
+            How::Installed,
+            &plan(),
+            &[],
+            Released::Registry,
+            Some(&fact),
+        );
+
+        let said = question.facts.join(" ");
+        assert!(
+            said.contains("Source: ACP Registry, read 2026-11-04; not verified:"),
+            "{said}"
+        );
+        assert!(said.contains("the host answered 500"), "{said}");
+    }
+
+    #[test]
     fn a_catalog_install_question_does_not_say_a_probe_runs() {
         let offer = offered();
 
-        let question = Door::installing(&offer, How::Installed, &plan(), &[], Released::Catalog);
+        let question = Door::installing(
+            &offer,
+            How::Installed,
+            &plan(),
+            &[],
+            Released::Catalog,
+            None,
+        );
 
         let said = question.facts.join(" ");
         assert!(!said.contains("probe"), "{said}");
+        assert!(!said.contains("Source: ACP Registry"), "{said}");
         assert!(
             !question
                 .choices
@@ -3521,5 +3730,13 @@ mod tests {
             "{:?}",
             question.choices
         );
+    }
+
+    #[test]
+    fn a_reviewed_update_is_asked_for_a_registry_release_and_only_for_a_signed_one() {
+        assert!(!reviewed(true, How::Updated, Released::Registry));
+        assert!(!reviewed(true, How::Installed, Released::Catalog));
+        assert!(!reviewed(false, How::Updated, Released::Catalog));
+        assert!(reviewed(true, How::Updated, Released::Catalog));
     }
 }

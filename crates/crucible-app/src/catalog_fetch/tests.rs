@@ -1452,3 +1452,21 @@ fn a_registry_archive_is_admitted_from_its_own_host_and_no_other() {
         "a host the target does not list is refused"
     );
 }
+
+#[cfg(feature = "proof")]
+#[test]
+fn a_test_build_reads_the_registry_from_the_catalog_it_serves() {
+    let serving = |name: &str| {
+        (name == crate::proof::CATALOG).then(|| "http://127.0.0.1:9/catalog/ key".to_owned())
+    };
+    let local = RegistrySource::published(&serving);
+    assert_eq!(local.url, "http://127.0.0.1:9/catalog/registry.json");
+    assert!(
+        local.hosts.is_empty(),
+        "a test build reaches no redirect host"
+    );
+
+    let published = RegistrySource::published(&|_| None);
+    assert_eq!(published.url, URL);
+    assert_eq!(published.hosts, REGISTRY_HOSTS);
+}
