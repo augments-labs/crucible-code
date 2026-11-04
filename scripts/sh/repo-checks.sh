@@ -1352,7 +1352,8 @@ section "the external route is removable"
 # `agent:` content-use routes. A driver's bare name is not one, since native
 # code names the vendor's models. A listed `.rs` file brings its `tests.rs` and
 # `tests/` along, and an entry no tracked file matches fails, so the list stays
-# the one a removal reads.
+# the one a removal reads. `CHANGELOG.md` is the one exception: a release's
+# history names the route and is not removed with it.
 removable=(
     crates/crucible-external-harnesses
     # The ACP Registry source, the streamed survey, the receipt's probe record
@@ -1422,9 +1423,9 @@ naming=$({
     git grep -l -F -e crucible-external-harnesses -e crucible_external_harnesses \
         -e crucible-fake-peer -e externalAgent -e ExternalAgent
     git grep -l -F -e 'ACP Registry' -e cdn.agentclientprotocol.com \
-        -e catalog::registry -- '*.rs'
+        -e catalog::registry
     git grep -l -E '(^|[^A-Za-z_-])agent:[a-z]'
-} | LC_ALL=C sort -u)
+} | grep -v -F -x CHANGELOG.md | LC_ALL=C sort -u)
 if [[ -z "$naming" ]]; then
     printf '    FAIL no tracked file names the external route; this check measured nothing\n'
     failed=1

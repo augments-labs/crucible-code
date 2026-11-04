@@ -3595,6 +3595,37 @@ fn the_registry_adapter_rebuilds_an_installed_release_from_its_receipt_and_probe
 }
 
 #[test]
+fn a_registry_receipts_probe_verification_agrees_with_its_launch_refusal() {
+    let target = super::registry::platform();
+    let mut receipt = registry_receipt("1.0.0", &hash('e'));
+    let named = |receipt: &crate::store::Receipt| {
+        super::registry::receipt_mismatches(receipt, &target)
+            .iter()
+            .any(|one| &*one.path == "probe")
+    };
+
+    assert_eq!(
+        named(&receipt),
+        receipt.unprobed(&target).is_some(),
+        "a receipt with no probe"
+    );
+    receipt.probe = Some(Box::new(registry_probe()));
+    assert_eq!(
+        named(&receipt),
+        receipt.unprobed(&target).is_some(),
+        "a probe for this machine"
+    );
+    let mut foreign = registry_probe();
+    foreign.target = "plan9-x86_64".into();
+    receipt.probe = Some(Box::new(foreign));
+    assert_eq!(
+        named(&receipt),
+        receipt.unprobed(&target).is_some(),
+        "a probe for another machine"
+    );
+}
+
+#[test]
 fn a_registry_rows_survey_past_the_listed_files_is_refused() {
     let index = registry_of(&super::trust::here());
     let offer = index.offer(&agent("hashed")).expect("an offer");

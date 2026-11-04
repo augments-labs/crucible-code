@@ -542,7 +542,7 @@ pub struct Mismatch {
     pub what: Differs,
 }
 
-/// How a file differs from what it is said to be.
+/// How a file or a receipt record differs from what it is said to be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Differs {
     /// It is not there, or not reached through directories alone.

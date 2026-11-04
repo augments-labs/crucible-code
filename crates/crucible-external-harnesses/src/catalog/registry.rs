@@ -173,18 +173,11 @@ pub fn receipt_mismatches(receipt: &Receipt, target: &str) -> Vec<Mismatch> {
             what: Differs::Record,
         });
     }
-    if registry {
-        match receipt.probe.as_deref() {
-            None => found.push(Mismatch {
-                path: "probe".into(),
-                what: Differs::Record,
-            }),
-            Some(probe) if &*probe.target != target => found.push(Mismatch {
-                path: "probe".into(),
-                what: Differs::Record,
-            }),
-            Some(_) => {}
-        }
+    if receipt.unprobed(target).is_some() {
+        found.push(Mismatch {
+            path: "probe".into(),
+            what: Differs::Record,
+        });
     }
     found
 }

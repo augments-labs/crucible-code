@@ -74,7 +74,8 @@
 //! anything is committed. Its receipt records the source and the probe record
 //! `Door::switch` took, with the platform the probe was for, what the program
 //! answered and the sizes the survey found; `verify` hashes its files and names
-//! a `source` or `probe` record that no longer matches.
+//! a `source` that is not the registry, or a `probe` that is missing or was
+//! taken for another machine.
 //!
 //! After a yes, the release the question named is the one installed: each
 //! artifact is downloaded within its pin by [`crate::agent_download`] into a
@@ -2425,8 +2426,8 @@ impl Door<'_> {
     }
 
     /// Hashes every installed version of `agent` against its receipt, and
-    /// names a registry receipt's source and probe record when they no longer
-    /// match what the install recorded.
+    /// names a registry receipt whose source is not the registry, or whose
+    /// probe record is missing or was taken for another machine.
     fn verify(&self, agent: AgentKey) -> Result<Outcome, AgentsError> {
         let installed = self.store.installed(&agent)?;
         if installed.is_empty() {

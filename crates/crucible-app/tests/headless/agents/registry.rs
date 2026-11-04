@@ -1400,6 +1400,10 @@ fn verify_names_a_registry_receipts_changed_file_source_and_probe() -> Result<()
         fs::set_permissions(&stub, fs::Permissions::from_mode(0o755))?;
     }
     let mut document: Value = serde_json::from_slice(&fs::read(&receipt)?)?;
+    let probed = document
+        .pointer("/probe")
+        .cloned()
+        .ok_or("the receipt's probe")?;
     document
         .pointer_mut("/files")
         .and_then(Value::as_array_mut)
@@ -1447,6 +1451,14 @@ fn verify_names_a_registry_receipts_changed_file_source_and_probe() -> Result<()
     fs::write(&receipt, serde_json::to_vec(&document)?)?;
     let (elsewhere, _) = bench.ask(verify()?, &mut quiet, false)?;
     assert_eq!(named(&elsewhere), ["probe"], "{}", shape(&elsewhere));
+
+    // The registry has no catalog serial, so a receipt carrying one is named
+    // at source even with its probe for this machine back in place.
+    set(&mut document, "/probe", probed);
+    set(&mut document, "/serial", json!(1));
+    fs::write(&receipt, serde_json::to_vec(&document)?)?;
+    let (serialed, _) = bench.ask(verify()?, &mut quiet, false)?;
+    assert_eq!(named(&serialed), ["source"], "{}", shape(&serialed));
     Ok(())
 }
 
