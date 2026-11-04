@@ -1,0 +1,19 @@
+{
+  "entries": [],
+  "expires": 1,
+  "revoked": [
+    {
+      "key": "antigravity",
+      "reason": "1.2.0 was withdrawn by its vendor",
+      "version": "1.2.0"
+    },
+    {
+      "key": "fake",
+      "reason": "0.9.0 sent prompts to a host it did not declare",
+      "version": "0.9.0"
+    }
+  ],
+  "schema": 1,
+  "serial": 7,
+  "signed_at": 0
+}

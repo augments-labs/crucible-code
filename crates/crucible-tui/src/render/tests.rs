@@ -422,6 +422,25 @@ fn a_frame_that_changed_nothing_writes_nothing() {
 }
 
 #[test]
+fn a_repaint_writes_every_row_after_a_child_had_the_terminal() {
+    // A child was handed the screen and may have written anything on it. The
+    // next frame cannot trust the bytes the last one left, so it paints the
+    // window again even though nothing of this session changed.
+    let mut drawn = Drawn::new(40, 10);
+    let (rows, caret) = boxed();
+    drawn.live(&rows, caret, Palette::plain()).unwrap();
+    drawn.take();
+
+    drawn.repaint().unwrap();
+
+    assert!(
+        !drawn.render.terminal.written().is_empty(),
+        "nothing repainted"
+    );
+    assert_eq!(drawn.screen().row(9), "╰────╯");
+}
+
+#[test]
 fn only_the_rows_whose_picture_changed_are_written() {
     // A keystroke on a window this tall may not cost a screen. One row of the
     // box changed, and one row plus the park is what goes down the wire.

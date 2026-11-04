@@ -61,6 +61,13 @@ allow = [
     "BSL-1.0",
     "Zlib",
 
+    # The bzip2 decoder's own licence. `bzip2`'s default, pure-Rust backend is
+    # `libbz2-rs-sys`, which carries the terms of the reference implementation
+    # rather than a common SPDX family; it permits use, modification and binary
+    # redistribution with the notice kept, imposes no copyleft, and leaves this
+    # binary's MIT terms intact.
+    "bzip2-1.0.6",
+
     # The odd one out, and worth knowing why it is here. `webpki-roots` carries
     # Mozilla's root certificate store, which is data rather than code, so it
     # is under the Linux Foundation's licence for datasets instead of a

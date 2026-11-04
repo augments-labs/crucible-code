@@ -115,6 +115,7 @@ fn registry() -> Result<(crucible_runner::Tools, Fixture), String> {
         mode: crucible_tools::Mode::Ask,
         settings: &settings,
         sessions: &sessions,
+        state: &sessions,
         workspace: &workspace,
         ledger: &ledger,
         revealed: &revealed,

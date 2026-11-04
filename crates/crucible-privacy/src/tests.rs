@@ -1,6 +1,7 @@
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::time::Duration;
 
@@ -8,7 +9,7 @@ use std::time::Duration;
 use crate::{append, sync_parent, tighten};
 use crate::{
     create_append, create_write, directory, lock, open_read, open_read_append, open_read_ordinary,
-    replace,
+    replace, replace_in,
 };
 
 struct Scratch(PathBuf);
@@ -413,4 +414,189 @@ fn a_dangling_link_where_a_lock_is_taken_makes_nothing_where_it_leads() {
 
     assert!(lock(&link).is_err());
     assert!(!nowhere.exists());
+}
+
+/// The names in `directory`, sorted.
+fn names(directory: &Path) -> Vec<OsString> {
+    let mut names: Vec<OsString> = fs::read_dir(directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn a_file_replaced_in_its_directory_holds_what_was_written_last_and_no_draft_is_left() {
+    let scratch = Scratch::new("replace-in");
+    let held = scratch.0.join("held");
+    let file = held.join("settings.json");
+
+    replace_in(&held, OsStr::new("settings.json"), b"first").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&held, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    replace_in(&held, OsStr::new("settings.json"), b"second").unwrap();
+
+    assert_eq!(fs::read(&file).unwrap(), b"second");
+    assert_eq!(names(&held), ["settings.json"]);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        assert_eq!(
+            fs::metadata(&held).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+}
+
+#[test]
+fn a_file_replaced_in_its_directory_is_named_by_one_name_in_it() {
+    let scratch = Scratch::new("replace-in-names");
+    let held = scratch.0.join("held");
+    directory(&held).unwrap();
+
+    for name in ["", ".", "..", "inner/settings.json", "../settings.json"] {
+        assert!(replace_in(&held, OsStr::new(name), b"new").is_err());
+    }
+    assert!(names(&held).is_empty());
+    assert_eq!(names(&scratch.0), ["held"]);
+}
+
+/// A rename that cannot land, over a directory with something in it, is a
+/// failure after the draft was written.
+#[test]
+fn a_file_that_cannot_be_replaced_in_its_directory_leaves_no_draft() {
+    let scratch = Scratch::new("replace-in-refused");
+    let held = scratch.0.join("held");
+    let occupied = held.join("settings.json");
+    fs::create_dir_all(occupied.join("inside")).unwrap();
+
+    assert!(replace_in(&held, OsStr::new("settings.json"), b"new").is_err());
+    assert_eq!(names(&held), ["settings.json"]);
+    assert_eq!(names(&occupied), ["inside"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_where_the_directory_is_named_refuses_the_replace_and_writes_nothing_where_it_leads() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let scratch = Scratch::new("replace-in-directory-link");
+    fs::create_dir_all(&scratch.0).unwrap();
+    let outside = scratch.0.join("outside");
+    fs::create_dir(&outside).unwrap();
+    fs::set_permissions(&outside, fs::Permissions::from_mode(0o755)).unwrap();
+    let link = scratch.0.join("held");
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+
+    let refused = replace_in(&link, OsStr::new("settings.json"), b"new").unwrap_err();
+    assert!(
+        refused.kind() == std::io::ErrorKind::InvalidInput
+            && refused.to_string() == "private state cannot be a symbolic link",
+        "the refusal does not say a link stands where the directory is named"
+    );
+    assert!(names(&outside).is_empty());
+    assert_eq!(
+        fs::metadata(&outside).unwrap().permissions().mode() & 0o777,
+        0o755
+    );
+    assert!(fs::symlink_metadata(&link).unwrap().is_symlink());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_where_the_file_is_named_refuses_the_replace_and_changes_nothing_where_it_leads() {
+    let scratch = Scratch::new("replace-in-file-link");
+    let held = scratch.0.join("held");
+    directory(&held).unwrap();
+    let outside = scratch.0.join("outside");
+    fs::write(&outside, "kept").unwrap();
+    let link = held.join("settings.json");
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+
+    assert!(replace_in(&held, OsStr::new("settings.json"), b"new").is_err());
+    assert_eq!(fs::read_to_string(&outside).unwrap(), "kept");
+    assert!(fs::symlink_metadata(&link).unwrap().is_symlink());
+    assert_eq!(names(&held), ["settings.json"]);
+}
+
+/// A process in the directory's parent exchanging the directory for a link to
+/// another one, as fast as it can, while the file is replaced: every write
+/// lands in the directory that was opened, and none where the link leads.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_directory_exchanged_for_a_link_while_its_file_is_replaced_keeps_every_write() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::thread::JoinHandle;
+
+    use rustix::fs::{CWD, RenameFlags};
+
+    /// Stops and joins the exchanging thread however the test ends.
+    struct Exchanging {
+        stop: Arc<AtomicBool>,
+        thread: Option<JoinHandle<()>>,
+    }
+
+    impl Drop for Exchanging {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Relaxed);
+            if let Some(thread) = self.thread.take() {
+                let _ = thread.join();
+            }
+        }
+    }
+
+    let scratch = Scratch::new("replace-in-exchanged");
+    let held = scratch.0.join("profile").join("held");
+    directory(&held).unwrap();
+    let outside = scratch.0.join("outside");
+    fs::create_dir(&outside).unwrap();
+    let link = scratch.0.join("profile").join("link");
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let exchanged = Arc::new(AtomicUsize::new(0));
+    let exchanging = Exchanging {
+        stop: Arc::clone(&stop),
+        thread: Some(std::thread::spawn({
+            let (held, link, exchanged) = (held.clone(), link.clone(), Arc::clone(&exchanged));
+            move || {
+                while !stop.load(Ordering::Relaxed) {
+                    if rustix::fs::renameat_with(
+                        CWD,
+                        held.as_path(),
+                        CWD,
+                        link.as_path(),
+                        RenameFlags::EXCHANGE,
+                    )
+                    .is_ok()
+                    {
+                        exchanged.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }
+        })),
+    };
+    for _ in 0..2_000 {
+        let _ = replace_in(&held, OsStr::new("settings.json"), b"new");
+    }
+    drop(exchanging);
+
+    assert!(
+        exchanged.load(Ordering::Relaxed) > 0,
+        "the directory was never exchanged"
+    );
+    assert!(
+        names(&outside).is_empty(),
+        "a write reached the directory the link leads to"
+    );
 }

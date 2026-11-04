@@ -2,7 +2,7 @@
 source: tests/whole_screen/agents.rs
 expression: picture
 ---
-80x40 cursor 35,0 scrollback 0
+80x40 cursor 37,0 scrollback 0
 |╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
 |│                                  │ Recent sessions                           │|
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
@@ -23,6 +23,8 @@ expression: picture
 |                                                                                |
 |Log in                                                                          |
 |                                                                                |
+|Claude Code cannot be started.                                                  |
+|                                                                                |
 |Found                                                                           |
 |/scratch------------------------------------------------------------------------|
 |--------------------------------------------------------------------------------|
@@ -39,7 +41,5 @@ expression: picture
 |  Choose another agent.                                                         |
 |                                                                                |
 |esc to go back                                                                  |
-|                                                                                |
-|                                                                                |
 |                                                                                |
 |                                                                                |

@@ -8,7 +8,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crucible_execution::{Authentication, Text};
+use crucible_external_harnesses::acp::SignIn;
 use crucible_external_harnesses::antigravity::{Antigravity, Ended, Manifest};
+use crucible_external_harnesses::catalog::SNAPSHOT;
 use crucible_external_harnesses::conformance::{self, CASES};
 use crucible_external_harnesses::fake_peer::scripts::acp;
 use crucible_external_harnesses::fake_peer::{self, Reply, Script};
@@ -57,16 +59,21 @@ fn local() -> Arc<dyn SandboxService> {
     Arc::new(LocalSandbox::new().watching_on(Handle::current()))
 }
 
+/// The name and version the snapshot built into the binary says the reviewed
+/// release answers initializing with.
+fn shipped() -> (&'static str, &'static str) {
+    SNAPSHOT.entries().first().map_or(("", ""), |entry| {
+        (&*entry.admits.name, &*entry.admits.version)
+    })
+}
+
 /// The reviewed release's answer to initializing.
 fn reviewed() -> String {
+    let (name, version) = shipped();
     acp::initialized(
-        Manifest::REVIEWED.name,
-        Manifest::REVIEWED
-            .versions
-            .first()
-            .copied()
-            .unwrap_or_default(),
-        Manifest::REVIEWED.sign_in,
+        name,
+        version,
+        Manifest::REVIEWED.sign_in.first().map_or("", SignIn::id),
     )
 }
 
@@ -158,7 +165,8 @@ async fn every_conformance_case_ends_as_it_must_over_the_protocol() {
 }
 
 /// The link is shown while the agent waits for the browser, and the sign-in
-/// is told as done only once a status step after it reads signed in.
+/// reads signed in only once a session opens on its own start after the agent
+/// says it took, as the status step after it reads it.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_sign_in_a_status_confirms_shows_its_link_and_says_signed_in() {
     let at = Owned::new("signed-in");
@@ -170,7 +178,9 @@ async fn a_sign_in_a_status_confirms_shows_its_link_and_says_signed_in() {
         .say(format!(
             "Open the following link to authenticate the ACP server: {SIGN_IN}"
         ))
-        .say(acp::response(1, &serde_json::json!({})));
+        .say(acp::response(1, &serde_json::json!({})))
+        .hear(1)
+        .say(acp::opened(2));
     let script = Script::of([sign_in, answering(acp::opened(1))]);
 
     let (read, shown) = spoken(
@@ -194,7 +204,9 @@ async fn a_sign_in_the_status_after_it_refuses_says_could_not_verify_sign_in() {
     let at = Owned::new("unverified");
     let profile = at.0.join("profile");
     let script = Script::of([
-        answering(acp::response(1, &serde_json::json!({}))),
+        answering(acp::response(1, &serde_json::json!({})))
+            .hear(1)
+            .say(acp::sign_in_required(2)),
         answering(acp::sign_in_required(1)),
     ]);
 
@@ -302,7 +314,11 @@ async fn a_logout_nothing_confirms_says_external_sign_out_unverified() {
 async fn a_release_outside_the_manifest_is_sent_nothing_more() {
     let at = Owned::new("unreviewed");
     let profile = at.0.join("profile");
-    let newer = acp::initialized(Manifest::REVIEWED.name, "9.9.9", Manifest::REVIEWED.sign_in);
+    let newer = acp::initialized(
+        shipped().0,
+        "9.9.9",
+        Manifest::REVIEWED.sign_in.first().map_or("", SignIn::id),
+    );
     let script = Script::of([Reply::new().hear(1).say(newer).hear_out()]);
 
     let (read, _) = spoken(&at.0, &profile, &script, &[Account::Status]).await;

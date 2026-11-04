@@ -64,8 +64,8 @@ use crucible_runner::{Event, TurnError, Turned};
 use crucible_runtime::Cancel;
 use crucible_session::Session;
 use crucible_tui::{
-    Editor, Pasting, Raw, Renderer, Reporting, Screen, ScreenMode, Sending, Spelling, Terminal,
-    TerminalError,
+    Editor, Held as TerminalModes, Pasting, Raw, Renderer, Reporting, Screen, ScreenMode, Sending,
+    Spelling, Terminal, TerminalError,
 };
 use crucible_types::{Attachment, Compacting, SessionId, Spend};
 
@@ -469,6 +469,25 @@ fn holds(mode: ScreenMode) -> Holds {
             screen: false,
             pointer: false,
         },
+    }
+}
+
+impl Holds {
+    /// The same decision as the terminal crate holds it, for a sign-in that
+    /// hands the terminal over: the modes this session's guards hold and would
+    /// have to give up for the child.
+    ///
+    /// Raw mode, the distinct keyboard spelling and bracketed paste are held
+    /// by every session that reached here with a terminal, so they are part of
+    /// this decision rather than a second one taken beside it.
+    pub(super) const fn held(self) -> TerminalModes {
+        TerminalModes {
+            screen: self.screen,
+            raw: true,
+            keyboard: true,
+            paste: true,
+            mouse: self.pointer,
+        }
     }
 }
 

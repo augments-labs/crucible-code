@@ -1,6 +1,7 @@
 //! A supervised agent, started as the fake peer over a real sandbox and spoken
 //! to in a line protocol of this file's own.
 
+use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -15,10 +16,11 @@ use crucible_external_harnesses::fake_peer::{
     self, EXHAUSTED, Plain, Reply, Script, Stream, UNWRITABLE,
 };
 use crucible_external_harnesses::{
-    Account, Act, Control, Dialect, Discovery, Held, Host, Launch, PREPARING, Ran, Reading,
-    Refusal, Request, STOP_GRACE, Shape, Told, Unstopped,
+    Account, Act, Control, Dialect, Discovery, Held, Host, Launch, PIPED_LINE_BYTES, PREPARING,
+    Piped, RAN_BYTES, Ran, Reading, Refusal, Request, STOP_GRACE, Shape, SignInChannel, Told,
+    Typed, Typing, Unstopped,
 };
-use crucible_runtime::BoxFuture;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_sandbox::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
     SandboxCapability, SandboxCleanup, SandboxCommand, SandboxError, SandboxFeature,
@@ -592,7 +594,7 @@ fn an_unstopped_run_whose_stop_never_finished_says_so_and_names_no_error() {
 struct Speaking(Plain);
 
 impl Dialect for Speaking {
-    fn program(&self) -> &'static str {
+    fn program(&self) -> &str {
         self.0.program()
     }
 
@@ -1593,4 +1595,453 @@ async fn a_launch_dropped_while_a_pipeless_process_is_stopped_leaves_a_relaunch_
     .await;
 
     assert!(matches!(next, Err(Refusal::Unstopped)), "{next:?}");
+}
+
+/// A person lent to a sign-in run as a command: keeps every line told to it,
+/// and sends each of its lines once what it waits for has been said.
+#[derive(Default)]
+struct Lent {
+    /// The lines told, in order.
+    told: Mutex<Vec<Text>>,
+    /// What is left to send, each with what it waits to see first.
+    typing: Mutex<VecDeque<(&'static str, Typing)>>,
+    /// Whether it says it will send no more once those are gone, rather than
+    /// sitting there.
+    closes: bool,
+}
+
+impl Lent {
+    fn typing(typing: impl IntoIterator<Item = (&'static str, Typing)>) -> Self {
+        Self {
+            typing: Mutex::new(typing.into_iter().collect()),
+            ..Self::default()
+        }
+    }
+
+    fn closing(mut self) -> Self {
+        self.closes = true;
+        self
+    }
+
+    fn told(&self) -> Vec<Text> {
+        self.told
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Whether any line told is exactly `line`.
+    fn told_line(&self, line: &str) -> bool {
+        self.told().iter().any(|told| told.as_str() == line)
+    }
+
+    /// Whether any line told holds `value`. A bool, so that a failure repeats
+    /// nothing of it.
+    fn told_of(&self, value: &str) -> bool {
+        self.told().iter().any(|told| told.as_str().contains(value))
+    }
+
+    /// The next line, once what it waits for has been said, or nothing where
+    /// it waits still.
+    fn next(&self) -> Option<Typing> {
+        let mut typing = self.typing.lock().unwrap_or_else(PoisonError::into_inner);
+        let (waited, _) = typing.front()?;
+        if !waited.is_empty() && !self.told_of(waited) {
+            return None;
+        }
+        typing.pop_front().map(|(_, line)| line)
+    }
+
+    /// Whether all it was to send has gone and it closes the command's input.
+    fn closed(&self) -> bool {
+        self.closes
+            && self
+                .typing
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_empty()
+    }
+}
+
+impl SignInChannel for Lent {
+    fn said(&self, line: Text) {
+        self.told
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(line);
+    }
+
+    fn line(&self) -> BoxFuture<'_, Option<Typing>> {
+        Box::pin(async move {
+            loop {
+                if let Some(next) = self.next() {
+                    return Some(next);
+                }
+                if self.closed() {
+                    return None;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+    }
+}
+
+/// What ending a sign-in command under `sandbox` comes to, carried to `lent`
+/// with `script`'s one start of it, for at most `within`.
+#[allow(clippy::expect_used)]
+async fn piped_under(
+    sandbox: Arc<dyn SandboxService>,
+    at: &Owned,
+    reply: Reply,
+    (lent, cancel, within): (&Lent, &Cancel, Duration),
+) -> Result<Piped, Unstopped> {
+    let program = found(&at.0, "plain", &Script::of([reply]));
+    let control = Control::new().expect("a control");
+    Host::launch(
+        sandbox,
+        Handle::current(),
+        &control,
+        launch(program, &at.0, Request::default()),
+    )
+    .await
+    .expect("started")
+    .piped(lent, cancel, within)
+    .await
+}
+
+/// [`piped_under`] the local sandbox, given as long as any test waits.
+#[allow(clippy::expect_used)]
+async fn piped(at: &Owned, reply: Reply, lent: &Lent) -> Piped {
+    piped_under(
+        local(),
+        at,
+        reply,
+        (lent, &Cancel::new(), Duration::from_mins(1)),
+    )
+    .await
+    .expect("stopped")
+}
+
+/// What a command writes reaches the channel a line at a time, standard error
+/// beside standard output, and how it ended decides nothing but its own end.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_commands_lines_reach_the_channel_as_it_writes_them() {
+    let at = Owned::new("piped-lines");
+    let lent = Lent::default();
+
+    let ended = piped(
+        &at,
+        Reply::new().say("first").mutter("beside").say("second"),
+        &lent,
+    )
+    .await;
+
+    assert_eq!(ended, Piped::Succeeded);
+    assert!(lent.told_line("first"), "{:?}", lent.told());
+    assert!(lent.told_line("second"), "{:?}", lent.told());
+    assert!(lent.told_line("beside"), "{:?}", lent.told());
+    assert!(lent.told().iter().all(|told| !told.incomplete()));
+}
+
+/// One that ends in failure is not told apart from one that signed in by
+/// anything it said.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_command_that_ends_in_failure_says_so() {
+    let at = Owned::new("piped-failed");
+    let lent = Lent::default();
+
+    let ended = piped(&at, Reply::new().say("signed in").exit(1), &lent).await;
+
+    assert_eq!(ended, Piped::Failed);
+}
+
+/// A line past the bound of one is carried no further than that and says so,
+/// and the lines after it are carried whole.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_line_past_its_bound_is_cut_and_says_so() {
+    let at = Owned::new("piped-line-bound");
+    let lent = Lent::default();
+
+    let ended = piped(
+        &at,
+        Reply::new()
+            .flood(Stream::Out, (PIPED_LINE_BYTES * 3) as u64)
+            .say("")
+            .say("after"),
+        &lent,
+    )
+    .await;
+
+    assert_eq!(ended, Piped::Succeeded);
+    let told = lent.told();
+    let cut: Vec<&Text> = told.iter().filter(|line| line.incomplete()).collect();
+    assert_eq!(cut.len(), 1, "one line was cut");
+    assert!(
+        cut.iter()
+            .all(|line| line.as_str().len() <= PIPED_LINE_BYTES)
+    );
+    assert!(lent.told_line("after"), "the next line is carried");
+}
+
+/// A command that says more than is carried in all is stopped, and the last
+/// thing told says the rest was cut.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_command_past_the_total_is_stopped_and_the_cut_is_reported() {
+    let at = Owned::new("piped-total");
+    let lent = Lent::default();
+    let line = "x".repeat(1023);
+    let mut reply = Reply::new();
+    for _ in 0..(RAN_BYTES / 1024 + 8) {
+        reply = reply.say(line.clone());
+    }
+    let reply = reply.say("never carried").hear_out();
+
+    let ended = piped(&at, reply, &lent).await;
+
+    assert_eq!(ended, Piped::Cut);
+    let told = lent.told();
+    let bytes: usize = told.iter().map(|line| line.as_str().len()).sum();
+    assert!(bytes <= RAN_BYTES, "{bytes} bytes were carried");
+    assert!(told.last().is_some_and(Text::incomplete), "no cut reported");
+    assert!(!lent.told_line("never carried"));
+}
+
+/// Standard error's own bound is reported as a cut too.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cut_of_standard_error_is_reported() {
+    let at = Owned::new("piped-error-bound");
+    let lent = Lent::default();
+    let line = "y".repeat(1023);
+    let mut reply = Reply::new();
+    for _ in 0..12 {
+        reply = reply.mutter(line.clone());
+    }
+
+    let ended = piped(&at, reply.pause(Duration::from_millis(600)), &lent).await;
+
+    assert!(matches!(ended, Piped::Succeeded | Piped::Cut), "{ended:?}");
+    assert!(lent.told().iter().any(Text::incomplete), "no cut reported");
+}
+
+/// A prompt, which ends no line, is carried once the command has gone quiet
+/// waiting for its answer, and the line typed reaches its input.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_prompt_is_carried_and_the_line_typed_reaches_the_command() {
+    let at = Owned::new("piped-typed");
+    let lent = Lent::typing([("code: ", Typing::Line("the-code".to_owned()))]);
+
+    let ended = piped(
+        &at,
+        Reply::new().prompt("code: ").hear(1).say("thanks"),
+        &lent,
+    )
+    .await;
+
+    assert_eq!(ended, Piped::Succeeded);
+    assert!(lent.told_line("code: "), "{:?}", lent.told());
+    assert!(lent.told_line("thanks"), "{:?}", lent.told());
+    assert_eq!(fake_peer::heard(&at.0), ["the-code"]);
+}
+
+/// A channel with no more to send closes the command's input, and a command
+/// reading to the end of it finishes.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_channel_with_no_more_to_send_closes_the_commands_input() {
+    let at = Owned::new("piped-closed");
+    let lent = Lent::typing([("", Typing::Line("only".to_owned()))]).closing();
+
+    let ended = piped(&at, Reply::new().hear_out(), &lent).await;
+
+    assert_eq!(ended, Piped::Succeeded);
+    assert_eq!(fake_peer::heard(&at.0), ["only"]);
+}
+
+/// A line marked a secret reaches the command and is never carried back, even
+/// though the command echoes it, whole or in the middle of a line, and it is
+/// not repeated by what its value's type prints.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_secret_line_reaches_the_command_and_is_not_carried_back() {
+    let at = Owned::new("piped-secret");
+    let lent = Lent::typing([("key: ", Typing::Secret(Typed::new(SENTINEL.to_owned())))]);
+
+    let ended = piped(
+        &at,
+        Reply::new()
+            .prompt("key: ")
+            .echo(1)
+            .say(format!("you typed {SENTINEL}, thanks"))
+            .mutter(SENTINEL),
+        &lent,
+    )
+    .await;
+
+    assert_eq!(ended, Piped::Succeeded);
+    assert!(
+        fake_peer::heard(&at.0).iter().any(|line| line == SENTINEL),
+        "the command was not given the line"
+    );
+    assert!(lent.told_line("key: "));
+    assert!(lent.told_of("thanks"), "the line around it is carried");
+    assert!(!lent.told_of(SENTINEL), "the secret was carried back");
+    assert!(
+        !lent.told_of(&SENTINEL[..SENTINEL.len() / 2]),
+        "part of it was"
+    );
+    assert!(!format!("{:?}", Typed::new(SENTINEL.to_owned())).contains(SENTINEL));
+}
+
+/// A secret holding a line ending would reach the command as lines that are
+/// each not the value withheld, so it is refused and none of it is written.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_secret_holding_a_line_ending_is_refused_before_it_is_written() {
+    for (name, secret) in [
+        ("piped-secret-inner", format!("{SENTINEL}\nsecond")),
+        ("piped-secret-trailing", format!("{SENTINEL}\n")),
+        ("piped-secret-return", format!("{SENTINEL}\rsecond")),
+        ("piped-secret-both", format!("{SENTINEL}\r\nsecond")),
+    ] {
+        let at = Owned::new(name);
+        let lent = Lent::typing([("key: ", Typing::Secret(Typed::new(secret)))]);
+
+        let ended = piped(&at, Reply::new().prompt("key: ").echo(1), &lent).await;
+
+        assert_eq!(ended, Piped::Lost, "{name}");
+        assert!(
+            !fake_peer::heard(&at.0)
+                .iter()
+                .any(|line| line.contains(SENTINEL) || line.contains("second")),
+            "{name}: the command was given some of it"
+        );
+        assert!(!lent.told_of(SENTINEL), "{name}: it was carried back");
+    }
+}
+
+/// An echo of a secret in pieces is not given away by the part it had got to
+/// when it paused: what could begin it is held back until the rest settles it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pause_in_an_echoed_secret_does_not_carry_its_beginning() {
+    let at = Owned::new("piped-secret-paused");
+    let lent = Lent::typing([("key: ", Typing::Secret(Typed::new(SENTINEL.to_owned())))]);
+    let (beginning, end) = SENTINEL.split_at(SENTINEL.len() / 2);
+
+    let ended = piped(
+        &at,
+        Reply::new()
+            .prompt("key: ")
+            .hear(1)
+            .prompt(beginning)
+            .pause(Duration::from_millis(800))
+            .say(end),
+        &lent,
+    )
+    .await;
+
+    assert_eq!(ended, Piped::Succeeded);
+    assert!(
+        !lent.told_of(beginning),
+        "the secret's beginning was carried"
+    );
+}
+
+/// The person giving it up stops the command and what it started.
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::expect_used)]
+async fn cancelling_stops_the_command_and_what_it_started() {
+    let at = Owned::new("piped-cancelled");
+    let lent = Lent::default();
+    let cancel = Cancel::new();
+    let giving_up = cancel.clone();
+    let watched = at.0.clone();
+    tokio::spawn(async move {
+        while fake_peer::lingering(&watched).is_none() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        giving_up.request();
+    });
+
+    let ended = piped_under(
+        local(),
+        &at,
+        Reply::new().linger().hear_out(),
+        (&lent, &cancel, Duration::from_mins(1)),
+    )
+    .await
+    .expect("stopped");
+
+    assert_eq!(ended, Piped::Cancelled);
+    assert_eq!(
+        fake_peer::ceased(&at.0).await,
+        Ok(()),
+        "the grandchild still beats"
+    );
+}
+
+/// A command still going when its time passes is stopped with what it started.
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::expect_used)]
+async fn a_command_past_its_time_is_stopped_with_what_it_started() {
+    let at = Owned::new("piped-overran");
+    let lent = Lent::default();
+
+    let ended = piped_under(
+        local(),
+        &at,
+        Reply::new().linger().hear_out(),
+        (&lent, &Cancel::new(), Duration::from_secs(2)),
+    )
+    .await
+    .expect("stopped");
+
+    assert_eq!(ended, Piped::Overran);
+    assert!(fake_peer::lingering(&at.0).is_some(), "it never started");
+    assert_eq!(
+        fake_peer::ceased(&at.0).await,
+        Ok(()),
+        "the grandchild still beats"
+    );
+}
+
+/// A command that ended well but whose stop could not be confirmed is not
+/// reported as having ended well.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_that_cannot_be_confirmed_is_not_a_clean_end() {
+    let at = Owned::new("piped-unconfirmed");
+    let lent = Lent::default();
+
+    let ended = piped_under(
+        Arc::new(Stubborn(local(), Mode::Stuck)),
+        &at,
+        Reply::new().say("signed in"),
+        (&lent, &Cancel::new(), Duration::from_mins(1)),
+    )
+    .await;
+
+    assert!(matches!(ended, Err(Unstopped::Unreaped(_))), "{ended:?}");
+}
+
+/// The place a child started outside a host holds on the instance's control:
+/// a second run is refused beside it, the place comes back when it is dropped,
+/// and one whose stop was not confirmed is refused for good.
+#[test]
+fn a_control_can_be_held_for_a_child_started_outside_a_host() {
+    let control = Control::new().expect("a control");
+    assert!(control.hold().is_ok(), "an unheld control was refused");
+    assert!(!control.running(), "the place was not given back");
+
+    let held = control.hold().expect("nothing else holds it");
+    assert!(control.running(), "the place was not taken");
+    assert!(
+        matches!(control.hold(), Err(Refusal::Busy)),
+        "a second place was taken beside the first"
+    );
+    drop(held);
+    assert!(!control.running(), "the place did not come back");
+
+    let held = control.hold().expect("the place came back");
+    held.unstopped();
+    assert!(control.unstopped(), "the stop was reported as confirmed");
+    assert!(
+        matches!(control.hold(), Err(Refusal::Unstopped)),
+        "a control whose run may still be live was handed out again"
+    );
 }

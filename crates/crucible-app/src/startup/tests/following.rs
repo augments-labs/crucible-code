@@ -106,6 +106,7 @@ impl Run {
             services: &services,
             settings: &settings,
             sessions: &logs,
+            state: &sample.state(),
             workspace: &workspace,
             ledger: &Ledger::new(),
             revealed: &revealed,

@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
-version = "0.48.2"
+version = "0.49.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT"
@@ -28,7 +28,7 @@ publish = false
 # Wayland's clipboard is a separate protocol rather than an X11 compatibility
 # path, so its backend is named outright instead of leaving Linux support to
 # whichever display server happens to be in use.
-arboard = { version = "=3.6.1", features = ["wayland-data-control"] }
+arboard = { version = "=3.7.0", features = ["wayland-data-control"] }
 # Encodes the clipboard's RGBA pixels as the PNG every provider accepts. The
 # same release is already in arboard's image-data graph, so this names the API
 # without compiling a second encoder.
@@ -79,7 +79,7 @@ crucible-workspace = { path = "crates/crucible-workspace" }
 # Features are named per crate rather than here, so a crate that needs the
 # executor does not compile the process, network and file integrations that
 # belong to the boundaries owning them; `full` is not used anywhere.
-tokio = { version = "=1.53.3", default-features = false }
+tokio = { version = "=1.54.1", default-features = false }
 
 # Argument parsing. `derive` keeps the CLI surface declared next to the type it
 # produces rather than in a builder chain that drifts from it.
@@ -181,7 +181,7 @@ http = "=1.5.0"
 # HTTP/1.1 framing, the response head's size limits and the close of a
 # connection whose request was dropped; `http1` alone, so no HTTP/2 is compiled.
 # `std` has sockets and no HTTP.
-hyper = { version = "=1.11.1", default-features = false, features = ["client", "http1"] }
+hyper = { version = "=1.12.0", default-features = false, features = ["client", "http1"] }
 # The pooled client over `hyper`, and the connector that takes a custom
 # resolver: the seam where `crucible-http` applies a lookup's deadline and
 # bound. `client-legacy` is that client and connector, and the `CONNECT`
@@ -227,7 +227,7 @@ getrandom = "=0.4.3"
 # one process. The version and variant bit layout, the monotonic tie-break
 # counter, and the timestamp recovery are format machinery this crate owns;
 # `std` cannot mint one and hand-rolling it would be a second partial codec.
-uuid = { version = "=1.28.0", features = ["v7"] }
+uuid = { version = "=1.29.0", features = ["v7"] }
 
 # SHA-256, wherever a one-way digest is needed. Browser OAuth uses RFC 7636
 # S256. Prompt-cache scope identity needs a digest of credential-owned material
@@ -237,6 +237,23 @@ uuid = { version = "=1.28.0", features = ["v7"] }
 # takes. One audited implementation avoids partial handwritten digests, and the
 # crate has no runtime or platform dependencies.
 sha2 = { version = "=0.11.1", default-features = false }
+
+# The detached minisign signature the agent catalog is published with, checked
+# against the public keys compiled into the binary before a byte of the catalog
+# is read. `std` has neither Ed25519 nor the BLAKE2b digest a minisign
+# signature is made over, and a verifier written here would be cryptography
+# this repository owns. This one is written by minisign's own author and has no
+# dependencies of its own.
+minisign-verify = "=0.3.0"
+
+# Signing a catalog for a test, which only the harness crate's `proof` feature
+# compiles, and only `[dev-dependencies]` turn that on, so nothing that ships
+# carries a signer. `ring` is the Ed25519 signer and its random source, already
+# in the tree under rustls at this version, so it adds no crate; `blake2` is the
+# BLAKE2b-512 digest a minisign signature signs, over the `digest` line `sha2`
+# already brings.
+ring = { version = "=0.17.14", default-features = false }
+blake2 = { version = "=0.11.0", default-features = false }
 
 # A release archive is a gzip-compressed tar, and `std` reads neither format. A
 # hand-written reader of either is the unsafe archive parser the update design
@@ -248,12 +265,20 @@ sha2 = { version = "=0.11.1", default-features = false }
 flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
 tar = { version = "=0.4.46", default-features = false }
 
+# A catalog agent's release may also be a bzip2-compressed tar. `std`
+# decompresses neither bzip2 nor tar, and a hand-written bzip2 decoder is an
+# archive parser this tree does not own. The crate's default backend is
+# `libbz2-rs-sys`, a pure-Rust implementation, so the build needs no C
+# toolchain and the C `bzip2-sys` backend stays off; its bzip2 licence is
+# permissive and is named in `deny.toml`.
+bzip2 = "=0.6.1"
+
 # An agent's release that crucible downloads for the user is a zip archive,
 # which `std` does not read, and a hand-written reader of one is an archive
 # parser. Only its reader is used, over stored and deflated members, which
 # `flate2` above inflates in pure Rust; nothing is extracted by the crate's own
 # extraction, so each member is checked before a byte of it is written.
-zip = { version = "=9.0.4", default-features = false, features = ["deflate-flate2"] }
+zip = { version = "=9.0.5", default-features = false, features = ["deflate-flate2"] }
 
 # Search, and the directory walk that feeds it. These are ripgrep's own crates.
 # The budget is "grep within 1.25x of the rg binary", and the way to hold it is
@@ -264,8 +289,8 @@ zip = { version = "=9.0.4", default-features = false, features = ["deflate-flate
 # exactly the large files where the budget is decided, and `grep-regex` is the
 # matcher it runs with — the half that turns a pattern into something applied to
 # a buffer rather than to a string.
-ignore = "=0.4.33"
-globset = "=0.4.20"
+ignore = "=0.4.34"
+globset = "=0.4.21"
 grep-searcher = "=0.1.17"
 grep-regex = "=0.1.14"
 
@@ -290,7 +315,7 @@ serde_core = "=1.0.229"
 # and a combining mark takes none, so counting `char`s puts the cursor somewhere
 # the renderer did not predict and the next frame erases the wrong lines. This
 # is the Unicode Annex #11 table as data, with no dependencies of its own.
-unicode-width = "=0.2.2"
+unicode-width = "=0.2.3"
 
 # `openat`, and the flags that decide what one component of a path may be. A
 # path is proven inside the workspace and then opened, and between those two
@@ -328,7 +353,7 @@ seccompiler = { version = "=0.5.0", default-features = false }
 # system, which `std` has no way to reach. The same libc is already compiled for
 # tokio, mio and the other crates that reach the platform through it, so these
 # uses add no build.
-libc = "=0.2.190"
+libc = "=0.2.191"
 
 # Being told something from outside. A closed window or a `kill` arrives as a
 # signal, and `std` has no way to hear one: without a handler the process ends

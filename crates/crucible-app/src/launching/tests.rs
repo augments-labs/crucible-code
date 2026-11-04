@@ -4,11 +4,16 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use crucible_config::Driver;
+use crucible_config::{Driver, Serves};
 use crucible_execution::{
     Authentication, Decision, Event, Failure, Outcome, SessionRef, Sink, Text, TurnRequest,
 };
+use crucible_external_harnesses::catalog::{
+    Catalog, File, FileKind, Held, Trust, Variable, fixture,
+};
+use crucible_external_harnesses::fake_peer::scripts::acp;
 use crucible_external_harnesses::fake_peer::{self, Plain, Reply, Script};
+use crucible_external_harnesses::store::{Staging, Store};
 use crucible_external_harnesses::{
     Account, Act, Control, Dialect, Discovery, Ran, Reading, Refusal, Request, Shape, Told,
 };
@@ -25,20 +30,22 @@ use tokio::runtime::Handle;
 
 use super::*;
 use crate::access::Route;
-use crate::backends::{Registry, Row};
-use crate::content_use::{Consent, Routes};
+use crate::backends::tests::{release_of, snapshot_version, trust_of, trusting};
+use crate::backends::{ANTIGRAVITY, CatalogRow, Registry, Row};
+use crate::content_use::{Consent, Routes, Unstated};
 use crate::sample::Sample;
 
 /// The plain protocol, held under Claude Code's route and shipped.
 static SHIPPED: [Row; 1] = [Row {
     driver: Driver::Claude,
-    dialect: |_| Ok(Box::new(Plain)),
+    dialect: |_, _, _| Ok(Box::new(Plain)),
     profile_key: "configDir",
     route: "agent:claude",
     docs_section: "claude-code",
     reaches: &[],
     sign_in: |_| None,
-    pinned: || None,
+    pinned: |_| None,
+    catalogued: false,
     shipping: true,
 }];
 
@@ -85,13 +92,14 @@ fn conversation(sample: &Sample) -> SandboxPolicy {
 /// An `externalAgents` entry for Claude Code, its program at `executable`.
 fn route(executable: &Path, profile: Option<&Path>) -> Route {
     Route::External {
-        provider: "anthropic",
+        serves: Serves::Provider("anthropic"),
         instance: "work".into(),
         driver: Driver::Claude,
         executable: executable.to_string_lossy().into(),
         profile: profile.map(|profile| profile.to_string_lossy().into()),
         model: None,
         effort: None,
+        location: None,
         enabled: true,
     }
 }
@@ -162,7 +170,16 @@ async fn a_clean_turn_through_a_launch_is_complete_and_speaks_the_dialects_argum
     );
     let consent = granted();
     let policy = conversation(&sample);
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent);
+    let state = sample.state();
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let registry = Registry::new(&SHIPPED);
     let control = Control::new().expect("a control");
 
@@ -215,7 +232,16 @@ async fn answered_after(sample: &Sample, policy: &SandboxPolicy, waited: Duratio
         &Script::of([Reply::new().hear(1).say("say hello").say("end")]),
     );
     let consent = granted();
-    let launcher = Launcher::new(local(), Handle::current(), policy, &consent);
+    let state = sample.state();
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let registry = Registry::new(&SHIPPED);
     let control = Control::new().expect("a control");
     let mut host = launcher
@@ -290,7 +316,16 @@ async fn an_account_step_is_still_held_to_the_time_one_command_is_allowed() {
             ..SandboxResourceLimits::default()
         },
     );
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent);
+    let state = sample.state();
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let registry = Registry::new(&SHIPPED);
     let control = Control::new().expect("a control");
     let began = std::time::Instant::now();
@@ -338,6 +373,7 @@ fn a_lasting_run_drops_only_the_ceilings_of_one_command() {
         &conversation,
         None,
         &[],
+        &[],
         Life::Conversation { resume: None }.limits(conversation.limits()),
     )
     .expect("a policy");
@@ -355,6 +391,7 @@ fn a_lasting_run_drops_only_the_ceilings_of_one_command() {
         policy(
             &conversation,
             None,
+            &[],
             &[],
             Life::Step.limits(conversation.limits())
         )
@@ -380,6 +417,7 @@ fn the_childs_policy_opens_its_profile_and_keeps_protected_metadata() {
     let child = policy(
         &conversation,
         Some(&profile),
+        &[],
         &["api.anthropic.com"],
         conversation.limits(),
     )
@@ -414,6 +452,7 @@ fn an_unconfined_conversation_grants_its_child_no_hosts_it_would_be_refused_for(
     let child = policy(
         &conversation,
         None,
+        &[],
         &["api.anthropic.com"],
         conversation.limits(),
     )
@@ -439,8 +478,14 @@ fn the_metadata_inside_a_profile_stays_protected() {
     let profile = fs::canonicalize(profile).expect("resolved");
     let conversation = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
 
-    let child =
-        policy(&conversation, Some(&profile), &[], conversation.limits()).expect("a policy");
+    let child = policy(
+        &conversation,
+        Some(&profile),
+        &[],
+        &[],
+        conversation.limits(),
+    )
+    .expect("a policy");
 
     assert!(child.permits_path(
         &profile.join("auth.json"),
@@ -466,7 +511,13 @@ fn a_profile_inside_protected_metadata_is_not_opened() {
     let conversation = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
     let inside = sample.root().join(".git").join("profile");
 
-    let child = policy(&conversation, Some(&inside), &[], conversation.limits());
+    let child = policy(
+        &conversation,
+        Some(&inside),
+        &[],
+        &[],
+        conversation.limits(),
+    );
 
     assert!(
         child.map_or(true, |child| !child.permits_path(
@@ -492,7 +543,7 @@ fn a_profile_that_is_a_dangling_link_is_not_opened() {
         .join("profile");
     std::os::unix::fs::symlink(&target, &named).expect("a link");
 
-    let child = policy(&conversation, Some(&named), &[], conversation.limits());
+    let child = policy(&conversation, Some(&named), &[], &[], conversation.limits());
 
     for path in [&named, &target] {
         assert!(
@@ -520,7 +571,7 @@ fn a_profile_reached_through_a_link_into_protected_metadata_is_not_opened() {
         .expect("resolved")
         .join("profile");
 
-    let child = policy(&conversation, Some(&named), &[], conversation.limits());
+    let child = policy(&conversation, Some(&named), &[], &[], conversation.limits());
 
     for path in [&named, &real] {
         assert!(
@@ -532,13 +583,337 @@ fn a_profile_reached_through_a_link_into_protected_metadata_is_not_opened() {
     }
 }
 
+/// The row a signed catalog entry gives the agent keyed `peer`: it must answer
+/// initializing as `fake-peer` at 1.0.0, signs in itself with `login`, is
+/// started with `acp --stdio`, and reaches `api.example.com`.
+pub(crate) fn cataloged() -> CatalogRow {
+    cataloged_with(Some(statement()))
+}
+
+/// The statement of content use [`cataloged`]'s entry carries.
+fn statement() -> serde_json::Value {
+    serde_json::json!({
+        "text": "The peer keeps nothing it is sent.",
+        "source": "https://example.com/peer/data",
+        "date": "24 Oct 2026",
+        "origins": [],
+    })
+}
+
+/// The entry [`cataloged`] is made from, naming `profile_env` as the variable
+/// it reads its home from where one is, and `paths` as where under the user's
+/// home it keeps its sign-in.
+fn keeping(profile_env: Option<&str>, paths: &[&str]) -> Entry {
+    entry_keeping(Some(statement()), profile_env, paths)
+}
+
+/// [`cataloged`], its entry carrying `statement` as its statement of content
+/// use where one is given.
+fn cataloged_with(statement: Option<serde_json::Value>) -> CatalogRow {
+    row_of(&entry_keeping(statement, None, &[]))
+}
+
+/// The row the entry `entry` gives, from its first target.
+fn row_of(entry: &Entry) -> CatalogRow {
+    CatalogRow::new(entry, entry.targets.first().expect("a target")).expect("a row")
+}
+
+/// The entry [`cataloged`] is made from, carrying `statement` as its statement
+/// of content use where one is given, naming `profile_env` as the variable it
+/// reads its home from where one is, and `paths` as where under the user's
+/// home it keeps its sign-in.
+fn entry_keeping(
+    statement: Option<serde_json::Value>,
+    profile_env: Option<&str>,
+    paths: &[&str],
+) -> Entry {
+    let file =
+        serde_json::json!({"path": "peer", "size": 1, "sha256": "b".repeat(64), "exec": true});
+    let mut entry = serde_json::json!({
+        "key": "peer",
+        "registry_id": "fake-peer",
+        "version": "1.0.0",
+        "kind": "binary",
+        "license": "MIT",
+        "review": "https://example.com/review/1",
+        "admits": {"name": "fake-peer", "version": "1.0.0"},
+        "reach": ["api.example.com"],
+        "auth_methods": [{"id": "login", "name": "Log in", "kind": "agent"}],
+        "targets": [{
+            "platform": "any",
+            "cmd": "peer",
+            "args": ["acp", "--stdio"],
+            "artifacts": [{
+                "url": "https://example.com/peer.zip",
+                "sha256": "a".repeat(64),
+                "size": 1,
+                "format": "zip",
+                "unpacked": 1,
+                "decompressed": 1,
+                "files": [file],
+            }],
+        }],
+    });
+    let fields = entry.as_object_mut().expect("an entry is an object");
+    if let Some(statement) = statement {
+        fields.insert("content_use".into(), statement);
+    }
+    if let Some(variable) = profile_env {
+        fields.insert("profile_env".into(), variable.into());
+    }
+    if !paths.is_empty() {
+        fields.insert("state_paths".into(), paths.into());
+    }
+    let catalog = serde_json::json!({
+        "schema": 1,
+        "serial": 1,
+        "revoked": [],
+        "entries": [entry],
+    });
+    let signed = fixture::signed(catalog.to_string().as_bytes());
+    let catalog = Catalog::verify(
+        &signed.index,
+        &signed.signature,
+        &signed.keys,
+        Held(0),
+        std::time::SystemTime::now(),
+    )
+    .expect("the catalog is believed");
+    catalog.entries().first().expect("an entry").clone()
+}
+
+/// A consent that has said yes to the catalog agent keyed `peer`, whose route
+/// it has learned from the hold its entry's statement gives.
+fn peer_granted() -> Consent {
+    let consent = Consent::new(Routes::production());
+    assert!(consent.learn(cataloged().warned().expect("a statement")));
+    consent.give("agent:peer");
+    consent
+}
+
+/// The launcher starts a catalog agent's row as its entry reviewed it: with
+/// its target's arguments, under its own route's yes, and reads it signed in
+/// only where it answers initializing as the agent its entry names.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_catalog_row_is_launched_as_its_entry_reviewed_it() {
+    let key = AgentKey::new("peer").expect("a key");
+    let registry = Registry::new(&[]).cataloging(Box::leak(Box::new([cataloged()])));
+    for (calls_itself, signed_in) in [("fake-peer", true), ("another-agent", false)] {
+        let sample = Sample::new(&format!("launch-catalog-{calls_itself}"));
+        let peer = installed(
+            &sample,
+            &Script::of([Reply::new()
+                .hear(1)
+                .say(acp::initialized(calls_itself, "1.0.0", "login"))
+                .hear(1)
+                .say(acp::opened(1))]),
+        );
+        let instance = ExternalAgent::unwritten(
+            "work",
+            Driver::Catalog,
+            &peer.to_string_lossy(),
+            None,
+            Some(&key),
+        )
+        .expect("a catalog instance");
+        let agent = Agent::configured(&instance, &registry, |_| None).expect("its catalog row");
+        let consent = peer_granted();
+        let policy = conversation(&sample);
+        let state = sample.state();
+        let sessions = sample.sessions();
+        let launcher = Launcher::new(
+            local(),
+            Handle::current(),
+            &policy,
+            &consent,
+            &state,
+            &sessions,
+        );
+        let mut dialect = agent.row().dialect(Mode::Ask, None, None).expect("asking");
+        let control = Control::new().expect("a control");
+
+        let read = launcher
+            .account(&agent, &control, dialect.as_mut(), Account::Status, &|_| {})
+            .await
+            .expect("started");
+
+        assert_eq!(
+            matches!(read, Reading::Signed(Authentication::SignedIn)),
+            signed_in,
+            "{calls_itself}"
+        );
+        assert_eq!(
+            fake_peer::argued(peer.parent().expect("a directory")),
+            vec![vec!["acp".to_owned(), "--stdio".to_owned()]],
+            "{calls_itself}"
+        );
+    }
+}
+
+/// What the instance `work`, run as the catalog agent keyed `peer` by the
+/// program at `executable`, is, over a registry listing `row`.
+fn peer_agent(row: CatalogRow, executable: &Path) -> Agent {
+    peer_agent_in(row, executable, None)
+}
+
+/// [`peer_agent`], its instance setting `profile` as its profile directory
+/// where one is given.
+fn peer_agent_in(row: CatalogRow, executable: &Path, profile: Option<&Path>) -> Agent {
+    let key = AgentKey::new("peer").expect("a key");
+    let registry: &'static Registry = Box::leak(Box::new(
+        Registry::new(&[]).cataloging(Box::leak(Box::new([row]))),
+    ));
+    let instance = ExternalAgent::unwritten(
+        "work",
+        Driver::Catalog,
+        &executable.to_string_lossy(),
+        profile.map(|profile| profile.to_string_lossy()).as_deref(),
+        Some(&key),
+    )
+    .expect("a catalog instance");
+    Agent::configured(&instance, registry, |_| None).expect("its catalog row")
+}
+
+/// An entry without a statement of content use is listed and never launched,
+/// whatever yes its route has been given: the launch is refused with the
+/// reason, for a turn and for an account step alike, and nothing is started.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_catalog_agent_without_a_statement_is_never_launched() {
+    let sample = Sample::new("launch-catalog-unstated");
+    let peer = installed(&sample, &Script::of([Reply::lines(["1.0.0"])]));
+    let agent = peer_agent(cataloged_with(None), &peer);
+    let consent = Consent::new(Routes::production());
+    consent.give("agent:peer");
+    let policy = conversation(&sample);
+    let state = sample.root();
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
+    let control = Control::new().expect("a control");
+    let mut dialect = agent.row().dialect(Mode::Ask, None, None).expect("asking");
+
+    let turn = launcher
+        .launch(&agent, &control, dialect.as_mut(), None)
+        .await;
+    let status = launcher
+        .account(&agent, &control, dialect.as_mut(), Account::Status, &|_| {})
+        .await;
+
+    for refused in [turn.err(), status.err()] {
+        assert!(
+            matches!(
+                &refused,
+                Some(Unlaunched::Unstated {
+                    why: Unstated::Missing,
+                    ..
+                })
+            ),
+            "{refused:?}"
+        );
+        assert_eq!(
+            refused.map(|why| why.to_string()),
+            Some(
+                "peer cannot be launched: its catalog entry gives no statement of how its \
+                 vendor uses what is sent."
+                    .to_owned()
+            )
+        );
+    }
+    assert_eq!(fake_peer::played(peer.parent().expect("a directory")), 0);
+}
+
+/// An entry with a statement asks its own route before anything is started,
+/// and another catalog agent's yes does not answer it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_catalog_agent_with_a_statement_asks_its_own_hold_before_anything_is_started() {
+    let sample = Sample::new("launch-catalog-stated");
+    let peer = installed(&sample, &Script::of([Reply::lines(["1.0.0"])]));
+    let row = cataloged();
+    let agent = peer_agent(row, &peer);
+    let consent = Consent::new(Routes::production());
+    consent.give("agent:another");
+    let policy = conversation(&sample);
+    let state = sample.root();
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
+    let control = Control::new().expect("a control");
+    let mut dialect = agent.row().dialect(Mode::Ask, None, None).expect("asking");
+
+    let turn = launcher
+        .launch(&agent, &control, dialect.as_mut(), None)
+        .await;
+    let status = launcher
+        .account(&agent, &control, dialect.as_mut(), Account::Status, &|_| {})
+        .await;
+
+    for refused in [turn.err(), status.err()] {
+        assert!(
+            matches!(
+                &refused,
+                Some(Unlaunched::Asks(asked))
+                    if asked.route == "agent:peer"
+                        && asked.warning.sentence.starts_with("The peer keeps nothing it is sent.")
+            ),
+            "{refused:?}"
+        );
+    }
+    assert_eq!(fake_peer::played(peer.parent().expect("a directory")), 0);
+}
+
+/// A catalog row reaches the hosts its entry's profile grants, and the child
+/// of a conversation that confines its commands may reach those and no other.
+#[test]
+fn a_catalog_row_reaches_the_hosts_its_entry_grants() {
+    let sample = Sample::new("launch-catalog-reach");
+    let row = AgentRow::Catalog(cataloged());
+    let conversation = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
+
+    let child = policy(
+        &conversation,
+        None,
+        &[],
+        &row.reaches(),
+        conversation.limits(),
+    )
+    .expect("a policy");
+
+    assert_eq!(row.reaches(), ["api.example.com"]);
+    let SandboxNetworkPolicy::Domains(domains) = child.network() else {
+        panic!("{:?}", child.network());
+    };
+    assert!(domains.permits_host("api.example.com"));
+    assert!(!domains.permits_host("elsewhere.example.com"));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_turn_or_a_probe_without_a_yes_starts_nothing() {
     let sample = Sample::new("launch-unheld");
     let peer = installed(&sample, &Script::of([Reply::lines(["1.0.0"])]));
     let consent = Consent::new(Routes::production());
     let policy = conversation(&sample);
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent);
+    let state = sample.state();
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let registry = Registry::new(&SHIPPED);
     let agent = agent(&registry, &peer);
     let control = Control::new().expect("a control");
@@ -563,7 +938,16 @@ async fn a_probe_with_a_yes_reads_the_version() {
     let peer = installed(&sample, &Script::of([Reply::lines(["1.2.3"])]));
     let consent = granted();
     let policy = conversation(&sample);
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent);
+    let state = sample.state();
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let registry = Registry::new(&SHIPPED);
     let control = Control::new().expect("a control");
 
@@ -591,7 +975,16 @@ async fn a_row_held_back_is_refused_with_its_documentation_and_nothing_internal(
     let peer = installed(&sample, &Script::of([Reply::lines(["1.0.0"])]));
     let consent = granted();
     let policy = conversation(&sample);
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent);
+    let state = sample.state();
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let registry = Registry::new(&HELD_BACK);
     let control = Control::new().expect("a control");
 
@@ -624,7 +1017,16 @@ async fn a_program_that_is_not_there_is_refused_with_how_to_install_it() {
     let peer = installed(&sample, &Script::of([Reply::lines(["1.0.0"])]));
     let consent = granted();
     let policy = conversation(&sample);
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent);
+    let state = sample.state();
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let registry = Registry::new(&SHIPPED);
     let control = Control::new().expect("a control");
     // Looked for by name on a `PATH` with nothing on it.
@@ -653,7 +1055,7 @@ async fn a_program_that_is_not_there_is_refused_with_how_to_install_it() {
 struct Speaking(Plain);
 
 impl Dialect for Speaking {
-    fn program(&self) -> &'static str {
+    fn program(&self) -> &str {
         self.0.program()
     }
 
@@ -710,7 +1112,16 @@ async fn a_spoken_sign_in_hands_its_link_on_and_reads_its_end() {
     );
     let consent = granted();
     let policy = conversation(&sample);
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent);
+    let state = sample.state();
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let registry = Registry::new(&SHIPPED);
     let control = Control::new().expect("a control");
     let shown = Mutex::new(Vec::new());
@@ -759,7 +1170,16 @@ async fn a_profile_is_made_private_to_the_user_before_the_agent_starts() {
     );
     let consent = granted();
     let policy = conversation(&sample);
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent);
+    let state = sample.state();
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let registry = Registry::new(&SHIPPED);
     let control = Control::new().expect("a control");
     let beside = Sample::new("launch-private-profile-beside");
@@ -787,7 +1207,16 @@ async fn a_profile_the_conversation_protects_is_refused_before_it_is_made() {
     let peer = installed(&sample, &Script::of([Reply::lines(["1.0.0"])]));
     let consent = granted();
     let policy = conversation(&sample);
-    let launcher = Launcher::new(local(), Handle::current(), &policy, &consent);
+    let state = sample.state();
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
     let registry = Registry::new(&SHIPPED);
     let control = Control::new().expect("a control");
     let inside = sample.root().join(".git").join("profile");
@@ -852,6 +1281,58 @@ fn an_agent_is_started_with_the_model_its_route_names() {
     }
 }
 
+/// A session a catalog agent ran is bound to its key as well as its driver,
+/// and the route read back from the binding is the driver it was bound with;
+/// a built-in driver's binding is its word alone, as it always was.
+#[test]
+fn a_catalog_agent_s_session_is_bound_to_its_key() {
+    let goose = AgentKey::new("goose").expect("an agent key");
+    assert_eq!(bound(Driver::Catalog, Some(&goose)), "catalog:goose");
+    assert_eq!(bound(Driver::Claude, None), "claude");
+    assert_eq!(bound(Driver::Antigravity, None), "antigravity");
+    for driver in Driver::ALL {
+        let agent = (driver == Driver::Catalog).then_some(&goose);
+        assert_eq!(
+            bound_driver(&bound(driver, agent)),
+            Some(driver),
+            "{driver:?}"
+        );
+    }
+    for unbound in [
+        "catalog:",
+        "catalog:Goose",
+        "claude:goose",
+        "native",
+        "plain",
+    ] {
+        assert_eq!(bound_driver(unbound), None, "{unbound}");
+    }
+}
+
+/// A catalog agent chooses its own model, so a route of one starts it on
+/// none, whatever its entry names, and it is the catalog agent the route
+/// serves rather than a provider.
+#[test]
+fn a_catalog_agent_is_started_on_no_model() {
+    let goose = AgentKey::new("goose").expect("an agent key");
+    let catalog = Serves::Agent(goose);
+    assert_eq!(
+        started(Driver::Catalog, &catalog, Some("opus"), Some(Effort::High)),
+        (None, None)
+    );
+    assert_eq!(
+        started(
+            Driver::Claude,
+            &Serves::Provider("anthropic"),
+            Some("opus"),
+            None
+        )
+        .0
+        .as_deref(),
+        Some("opus")
+    );
+}
+
 /// An agent taken from its configuration entry, as a reopened session's is,
 /// is started with the model the entry names.
 #[test]
@@ -882,9 +1363,21 @@ fn entry(sample: &Sample, executable: &Path) -> ExternalAgent {
 }
 
 /// The steps of the agents [`STEPPED`] holds, each started under `sandbox`.
-fn steps(sandbox: Arc<dyn SandboxService>, policy: &SandboxPolicy, consent: &Consent) -> Steps {
+fn steps(
+    sandbox: Arc<dyn SandboxService>,
+    policy: &SandboxPolicy,
+    consent: &Consent,
+    sample: &Sample,
+) -> Steps {
     Steps::new(
-        Launcher::new(sandbox, Handle::current(), policy, consent),
+        Launcher::new(
+            sandbox,
+            Handle::current(),
+            policy,
+            consent,
+            &sample.state(),
+            &sample.sessions(),
+        ),
         Arc::new(SandboxEnablement::new(false, false)),
         &STEPPED,
         None,
@@ -921,7 +1414,7 @@ async fn no_account_step_starts_beside_a_run_not_confirmed_stopped() {
     );
     let consent = granted();
     let policy = conversation(&sample);
-    let steps = steps(Arc::new(Stubborn(local())), &policy, &consent);
+    let steps = steps(Arc::new(Stubborn(local())), &policy, &consent, &sample);
     let entry = entry(&sample, &peer);
     let (agent, _) = steps.onto(&entry, Mode::Ask).expect("startable");
     let runs = steps.runs(agent, entry.name());
@@ -961,7 +1454,7 @@ async fn an_account_step_runs_beside_a_live_run_of_its_entry() {
     );
     let consent = granted();
     let policy = conversation(&sample);
-    let steps = steps(local(), &policy, &consent);
+    let steps = steps(local(), &policy, &consent, &sample);
     let entry = entry(&sample, &peer);
     let (agent, _) = steps.onto(&entry, Mode::Ask).expect("startable");
     let run = steps
@@ -992,7 +1485,14 @@ async fn a_route_starts_no_run_beside_one_it_still_holds() {
     let policy = conversation(&sample);
     let registry = Registry::new(&SHIPPED);
     let runs = Runs::new(
-        Launcher::new(local(), Handle::current(), &policy, &consent),
+        Launcher::new(
+            local(),
+            Handle::current(),
+            &policy,
+            &consent,
+            &sample.state(),
+            &sample.sessions(),
+        ),
         Arc::new(SandboxEnablement::new(false, false)),
         agent(&registry, &peer),
         "work",
@@ -1039,6 +1539,8 @@ async fn the_route_opened_at_startup_holds_against_a_later_run_of_its_instance()
                 Handle::current(),
                 &policy,
                 &consent,
+                &sample.state(),
+                &sample.sessions(),
             ),
             agent(&registry, &peer),
             entry.name(),
@@ -1049,6 +1551,8 @@ async fn the_route_opened_at_startup_holds_against_a_later_run_of_its_instance()
                 Handle::current(),
                 &policy,
                 &consent,
+                &sample.state(),
+                &sample.sessions(),
             ),
             &STEPPED,
             None,
@@ -1190,4 +1694,3252 @@ impl SandboxProcess for StubbornProcess {
     fn violation(&self) -> Option<SandboxViolation> {
         self.0.violation()
     }
+}
+
+/// A sandbox whose processes run as the local one's do, with `stopping` run
+/// first whenever one of them is stopped, told the policy it was started under.
+struct Stopping {
+    local: Arc<dyn SandboxService>,
+    stopping: Arc<AsStopped>,
+}
+
+/// What [`Stopping`] does as a process started under a policy is stopped.
+type AsStopped = dyn Fn(&SandboxPolicy) -> std::io::Result<()> + Send + Sync;
+
+impl SandboxService for Stopping {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        self.local.probe()
+    }
+
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            let (policy, stopping) = (request.policy().clone(), self.stopping.clone());
+            let session: Box<dyn SandboxSession> = Box::new(StoppingSession(
+                self.local.prepare(request).await?,
+                Arc::new(move || stopping(&policy)),
+            ));
+            Ok(session)
+        })
+    }
+}
+
+/// Its session.
+struct StoppingSession(
+    Box<dyn SandboxSession>,
+    Arc<dyn Fn() -> std::io::Result<()> + Send + Sync>,
+);
+
+impl SandboxSession for StoppingSession {
+    fn inspection(&self) -> &SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn materialize(&mut self) -> BoxFuture<'_, Result<(), SandboxError>> {
+        self.0.materialize()
+    }
+
+    fn stage<'a>(
+        self: Box<Self>,
+        command: SandboxCommand,
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxLaunch>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let launch: Box<dyn SandboxLaunch> =
+                Box::new(StoppingLaunch(self.0.stage(command).await?, self.1));
+            Ok(launch)
+        })
+    }
+}
+
+/// Its staged launch.
+struct StoppingLaunch(
+    Box<dyn SandboxLaunch>,
+    Arc<dyn Fn() -> std::io::Result<()> + Send + Sync>,
+);
+
+impl SandboxLaunch for StoppingLaunch {
+    fn inspection(&self) -> &SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn release<'a>(self: Box<Self>) -> BoxFuture<'a, Result<Box<dyn SandboxProcess>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            let process: Box<dyn SandboxProcess> =
+                Box::new(StoppingProcess(self.0.release().await?, self.1));
+            Ok(process)
+        })
+    }
+}
+
+/// Its process.
+struct StoppingProcess(
+    Box<dyn SandboxProcess>,
+    Arc<dyn Fn() -> std::io::Result<()> + Send + Sync>,
+);
+
+impl SandboxProcess for StoppingProcess {
+    fn take_stdin(&mut self) -> Option<Box<dyn std::io::Write + Send>> {
+        self.0.take_stdin()
+    }
+
+    fn take_async_stdin(&mut self) -> Option<Box<dyn SandboxInput>> {
+        self.0.take_async_stdin()
+    }
+
+    fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.0.take_stdout()
+    }
+
+    fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.0.take_stderr()
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        self.0.try_wait()
+    }
+
+    fn stop(&mut self) -> BoxFuture<'_, std::io::Result<()>> {
+        Box::pin(async move {
+            (self.1)()?;
+            self.0.stop().await
+        })
+    }
+
+    fn inspection(&self) -> &SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn usage(&self) -> SandboxUsage {
+        self.0.usage()
+    }
+
+    fn violation(&self) -> Option<SandboxViolation> {
+        self.0.violation()
+    }
+}
+
+/// One install script to run in [`scripted_stopping`].
+#[derive(Clone, Copy)]
+struct ToRun<'a> {
+    /// What `sh -c` is given.
+    command: &'a str,
+    /// What its package holds before it runs.
+    holding: &'a [(&'a str, &'a [u8])],
+    /// What its package must hold once it ends.
+    result: &'a [File],
+}
+
+/// A script with nothing to do, in a package that holds nothing.
+const NOTHING: ToRun<'static> = ToRun {
+    command: ":",
+    holding: &[],
+    result: &[],
+};
+
+/// `script` run in a version staged in a store in `sample`, under a sandbox
+/// that does `stopping` as it is stopped, told the store and the policy, and
+/// the staging, still held; `None` where this machine's sandbox does not
+/// enforce its rules.
+async fn scripted_stopping(
+    sample: &Sample,
+    script: ToRun<'_>,
+    stopping: impl Fn(&Store, &SandboxPolicy) -> std::io::Result<()> + Send + Sync + 'static,
+) -> Option<(Result<(), Unscripted>, Staging)> {
+    let agent = AgentKey::new("claude").expect("a key");
+    let store = Store::new(sample.root().join("programs"));
+    let staged = store.stage(&agent).expect("staged");
+    let package = staged.directory().join("node_modules").join("peer");
+    fs::create_dir_all(&package).expect("a package");
+    for (path, bytes) in script.holding {
+        fs::write(package.join(path), bytes).expect("written");
+    }
+    let sandbox = Stopping {
+        local: local(),
+        stopping: Arc::new(move |policy| stopping(&store, policy)),
+    };
+    let consent = granted();
+    let policy = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
+    let (state, sessions) = (sample.state(), sample.sessions());
+    let launcher = Launcher::new(
+        Arc::new(sandbox),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
+    let held = crate::content_use::held(&consent, "agent:claude").expect("the route's yes");
+    let ran = launcher
+        .script(
+            &held,
+            Scripted {
+                agent: &agent,
+                staging: staged.directory(),
+                package: "node_modules/peer",
+                named: ("peer", "1.0.0"),
+                event: "postinstall",
+                command: script.command,
+                hosts: &[],
+                node: staged.directory(),
+                result: script.result,
+            },
+        )
+        .await;
+    if matches!(ran, Err(Unscripted::Unconfined)) {
+        eprintln!("skipped, as this machine's sandbox does not enforce its rules");
+        return None;
+    }
+    Some((ran, staged))
+}
+
+/// The private home and temporary directory `policy` names, by their names'
+/// ends, wherever they were made.
+fn privately(policy: &SandboxPolicy) -> Vec<PathBuf> {
+    policy
+        .filesystem()
+        .iter()
+        .map(|rule| rule.path().to_path_buf())
+        .filter(|path| {
+            let path = path.to_string_lossy();
+            path.ends_with("home") || path.ends_with("tmp")
+        })
+        .collect()
+}
+
+/// What is compared is what the stop left, so whatever writes until it is
+/// stopped is seen.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_install_script_is_compared_only_after_it_is_stopped() {
+    let sample = Sample::new("script-compared-after-stop");
+    let package = sample
+        .root()
+        .join("programs")
+        .join("claude")
+        .join(".staging");
+    let Some((ran, _staged)) = scripted_stopping(&sample, NOTHING, move |_, _| {
+        for entry in fs::read_dir(&package)?.flatten() {
+            let inside = entry.path().join("node_modules").join("peer");
+            if inside.is_dir() {
+                fs::write(inside.join("late"), b"late")?;
+            }
+        }
+        Ok(())
+    })
+    .await
+    else {
+        return;
+    };
+    assert!(
+        matches!(&ran, Err(Unscripted::Differs { path, .. }) if path.contains("late")),
+        "{ran:?}"
+    );
+}
+
+/// A stop nobody could confirm may have left something writing, so nothing
+/// is compared at all, and nothing of the run is left.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_install_script_not_confirmed_stopped_is_refused() {
+    let sample = Sample::new("script-unstopped");
+    let private = Arc::new(Mutex::new(Vec::new()));
+    let recorded = private.clone();
+    let Some((ran, staged)) = scripted_stopping(&sample, NOTHING, move |_, policy| {
+        *recorded.lock().unwrap_or_else(PoisonError::into_inner) = privately(policy);
+        Err(std::io::Error::other("the scope did not answer"))
+    })
+    .await
+    else {
+        return;
+    };
+    assert!(matches!(&ran, Err(Unscripted::Unstopped(_))), "{ran:?}");
+    let private = private.lock().unwrap_or_else(PoisonError::into_inner);
+    assert_eq!(private.len(), 2, "{private:?}");
+    assert!(private.iter().all(|place| !place.exists()), "{private:?}");
+    let directory = staged.directory().to_path_buf();
+    drop(staged);
+    assert!(!directory.exists(), "the refused staging is removed");
+}
+
+/// Another stage of the same agent clears what a dead process left in the
+/// staging area, and a run's private directories are not that.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_stage_during_an_install_script_leaves_its_private_directories() {
+    let sample = Sample::new("script-second-stage");
+    let found = Arc::new(Mutex::new(Vec::new()));
+    let recorded = found.clone();
+    let Some((ran, _staged)) = scripted_stopping(&sample, NOTHING, move |store, policy| {
+        let agent = AgentKey::new("claude").expect("a key");
+        let _second = store.stage(&agent).expect("a second stage");
+        *recorded.lock().unwrap_or_else(PoisonError::into_inner) = privately(policy)
+            .into_iter()
+            .map(|place| (place.exists(), place))
+            .collect();
+        Ok(())
+    })
+    .await
+    else {
+        return;
+    };
+    assert!(ran.is_ok(), "{ran:?}");
+    let found = found.lock().unwrap_or_else(PoisonError::into_inner);
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(found.iter().all(|(there, _)| *there), "{found:?}");
+    // Nothing of them reaches what the store would commit.
+    assert!(found.iter().all(|(_, place)| !place.exists()), "{found:?}");
+}
+
+/// What the script's private directories hold cannot reach the version: where
+/// they cannot be removed, nothing is installed. Run as root, which any mode
+/// lets through, there is nothing to prove.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn private_directories_that_cannot_be_removed_refuse_the_install_script() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let sample = Sample::new("script-unremovable");
+    let stuck = Arc::new(Mutex::new(None));
+    let recorded = stuck.clone();
+    let Some((ran, _staged)) = scripted_stopping(&sample, NOTHING, move |_, policy| {
+        let staging = privately(policy)
+            .first()
+            .and_then(|place| place.parent().map(Path::to_path_buf))
+            .ok_or_else(|| std::io::Error::other("no private directory"))?;
+        fs::set_permissions(&staging, fs::Permissions::from_mode(0o500))?;
+        let enforced = fs::write(staging.join("probe"), b"").is_err();
+        *recorded.lock().unwrap_or_else(PoisonError::into_inner) = Some((staging, enforced));
+        Ok(())
+    })
+    .await
+    else {
+        return;
+    };
+    let (staging, enforced) = stuck
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take()
+        .expect("the stop ran");
+    fs::set_permissions(&staging, fs::Permissions::from_mode(0o700)).ok();
+    if !enforced {
+        eprintln!("skipped, as a mode does not hold this user back");
+        return;
+    }
+    assert!(matches!(&ran, Err(Unscripted::Private(_))), "{ran:?}");
+}
+
+/// Runs `script`, whose stop leaves mode-000 directories nested in its package
+/// and in its private temporary directory and a link out of its package, and
+/// ends as `stopped` says; then checks that nothing of the run is left once
+/// the refusal is dropped and that the link was not followed. `None` where
+/// the sandbox does not enforce, or a mode does not hold this user back.
+#[cfg(unix)]
+async fn left_closed(
+    name: &str,
+    script: ToRun<'_>,
+    stopped: fn() -> std::io::Result<()>,
+) -> Option<Result<(), Unscripted>> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let closed = || fs::Permissions::from_mode(0o000);
+    let sample = Sample::new(name);
+    let outside = sample.root().join("outside");
+    fs::create_dir(&outside).expect("made");
+    fs::set_permissions(&outside, fs::Permissions::from_mode(0o500)).expect("set");
+    let private = Arc::new(Mutex::new((Vec::new(), true)));
+    let (recorded, linked) = (private.clone(), outside.clone());
+    let (ran, staged) = scripted_stopping(&sample, script, move |_, policy| {
+        let places = privately(policy);
+        let tmp = places
+            .iter()
+            .find(|place| place.to_string_lossy().ends_with("tmp"))
+            .ok_or_else(|| std::io::Error::other("no private temporary directory"))?;
+        let staging = tmp
+            .parent()
+            .ok_or_else(|| std::io::Error::other("no staging"))?;
+        let package = staging.join("node_modules").join("peer");
+        std::os::unix::fs::symlink(&linked, package.join("link"))?;
+        let mut enforced = true;
+        for top in [package.join("left"), tmp.join("left")] {
+            let inner = top.join("inner");
+            fs::create_dir_all(&inner)?;
+            fs::set_permissions(&inner, closed())?;
+            fs::set_permissions(&top, closed())?;
+            enforced &= fs::read_dir(&top).is_err();
+        }
+        *recorded.lock().unwrap_or_else(PoisonError::into_inner) = (places, enforced);
+        stopped()
+    })
+    .await?;
+    let (places, enforced) =
+        std::mem::take(&mut *private.lock().unwrap_or_else(PoisonError::into_inner));
+    if !enforced {
+        eprintln!("skipped, as a mode does not hold this user back");
+        return None;
+    }
+    assert_eq!(places.len(), 2, "{places:?}");
+    assert!(places.iter().all(|place| !place.exists()), "{places:?}");
+    let directory = staged.directory().to_path_buf();
+    drop(staged);
+    assert!(!directory.exists(), "the refused staging is removed");
+    let mode = fs::metadata(&outside)
+        .expect("still there")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o500, "a link is not followed");
+    Some(ran)
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn closed_directories_do_not_keep_a_refused_difference_from_being_removed() {
+    let ran = left_closed("script-closed-differs", NOTHING, || Ok(())).await;
+    if let Some(ran) = ran {
+        assert!(matches!(&ran, Err(Unscripted::Differs { .. })), "{ran:?}");
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn closed_directories_do_not_keep_a_failed_script_from_being_removed() {
+    let script = ToRun {
+        command: "exit 3",
+        ..NOTHING
+    };
+    let ran = left_closed("script-closed-failed", script, || Ok(())).await;
+    if let Some(ran) = ran {
+        assert!(matches!(&ran, Err(Unscripted::Failed(_))), "{ran:?}");
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn closed_directories_do_not_keep_an_unconfirmed_stop_from_being_removed() {
+    let ran = left_closed("script-closed-unstopped", NOTHING, || {
+        Err(std::io::Error::other("the scope did not answer"))
+    })
+    .await;
+    if let Some(ran) = ran {
+        assert!(matches!(&ran, Err(Unscripted::Unstopped(_))), "{ran:?}");
+    }
+}
+
+/// Only Linux can prove a script's every process stopped.
+#[test]
+fn install_scripts_run_on_linux_alone() {
+    assert!(scripts_run_on("linux"));
+    for other in ["macos", "windows", "freebsd", "netbsd"] {
+        assert!(!scripts_run_on(other), "{other}");
+    }
+}
+
+/// The package's manifest is named to the script where its package has one,
+/// and the private directories are never taken for part of the package.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_install_script_is_told_its_package_json_and_only_its_package_is_compared() {
+    let sample = Sample::new("script-manifest");
+    let result = [
+        listed("package.json", b"{}", false),
+        listed("seen", b"yes", false),
+    ];
+    let script = ToRun {
+        command: "[ \"$npm_package_json\" = \"$PWD/package.json\" ] && printf yes > seen",
+        holding: &[("package.json", b"{}")],
+        result: &result,
+    };
+    let Some((ran, _staged)) = scripted_stopping(&sample, script, |_, _| Ok(())).await else {
+        return;
+    };
+    assert!(ran.is_ok(), "{ran:?}");
+}
+
+/// A listing's entry for a regular file holding `bytes`.
+fn listed(path: &str, bytes: &[u8], exec: bool) -> File {
+    use sha2::Digest as _;
+    use std::fmt::Write as _;
+    let mut sha256 = String::new();
+    for byte in sha2::Sha256::digest(bytes) {
+        write!(sha256, "{byte:02x}").expect("a string takes it");
+    }
+    File {
+        path: path.into(),
+        kind: FileKind::File {
+            size: bytes.len() as u64,
+            sha256: sha256.into(),
+            exec,
+        },
+    }
+}
+
+/// A package in `sample`, holding `a` and `sub/b` as the listing returned says.
+fn listed_package(sample: &Sample) -> (PathBuf, Vec<File>) {
+    let package = sample.root().join("package");
+    fs::create_dir_all(package.join("sub")).expect("a package");
+    fs::write(package.join("a"), b"aaa").expect("written");
+    fs::write(package.join("sub").join("b"), b"bbb").expect("written");
+    (
+        package,
+        vec![listed("a", b"aaa", false), listed("sub/b", b"bbb", false)],
+    )
+}
+
+/// The path `differs` names and that it names one.
+fn differing(package: &Path, listing: &[File]) -> String {
+    differs(package, listing).expect("a difference").0
+}
+
+#[test]
+fn a_package_as_its_listing_says_does_not_differ() {
+    let sample = Sample::new("differs-same");
+    let (package, listing) = listed_package(&sample);
+    assert_eq!(differs(&package, &listing), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_where_a_file_is_listed_differs() {
+    let sample = Sample::new("differs-link");
+    let (package, listing) = listed_package(&sample);
+    fs::remove_file(package.join("a")).expect("removed");
+    std::os::unix::fs::symlink("sub/b", package.join("a")).expect("linked");
+    assert_eq!(differing(&package, &listing), "a");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_fifo_where_a_file_is_listed_differs_without_being_opened() {
+    let sample = Sample::new("differs-fifo");
+    let (package, listing) = listed_package(&sample);
+    fs::remove_file(package.join("a")).expect("removed");
+    let made = std::process::Command::new("mkfifo")
+        .arg(package.join("a"))
+        .status()
+        .expect("mkfifo runs");
+    assert!(made.success());
+    assert_eq!(differing(&package, &listing), "a");
+}
+
+#[test]
+fn a_directory_where_a_file_is_listed_differs() {
+    let sample = Sample::new("differs-directory");
+    let (package, listing) = listed_package(&sample);
+    fs::remove_file(package.join("a")).expect("removed");
+    fs::create_dir(package.join("a")).expect("made");
+    assert_eq!(differing(&package, &listing), "a");
+}
+
+#[test]
+fn an_empty_directory_nobody_listed_differs() {
+    let sample = Sample::new("differs-empty");
+    let (package, listing) = listed_package(&sample);
+    fs::create_dir(package.join("extra")).expect("made");
+    assert_eq!(differing(&package, &listing), "extra");
+}
+
+#[test]
+fn other_bytes_of_the_same_size_differ() {
+    let sample = Sample::new("differs-bytes");
+    let (package, listing) = listed_package(&sample);
+    fs::write(package.join("sub").join("b"), b"ccc").expect("written");
+    let (path, why) = differs(&package, &listing).expect("a difference");
+    assert_eq!(path, "sub/b");
+    assert!(why.contains("other bytes"), "{why}");
+}
+
+#[test]
+fn a_listed_file_missing_differs() {
+    let sample = Sample::new("differs-missing");
+    let (package, listing) = listed_package(&sample);
+    fs::remove_file(package.join("sub").join("b")).expect("removed");
+    assert_eq!(differing(&package, &listing), "sub/b");
+}
+
+/// A directory above a listed file swapped for a link to a copy of what was
+/// listed is not followed to that copy.
+#[cfg(unix)]
+#[test]
+fn a_planted_link_is_not_followed() {
+    let sample = Sample::new("differs-planted");
+    let (package, listing) = listed_package(&sample);
+    let elsewhere = sample.root().join("elsewhere");
+    fs::create_dir(&elsewhere).expect("made");
+    fs::write(elsewhere.join("b"), b"bbb").expect("written");
+    fs::remove_dir_all(package.join("sub")).expect("removed");
+    std::os::unix::fs::symlink(&elsewhere, package.join("sub")).expect("linked");
+    assert_eq!(differing(&package, &listing), "sub");
+}
+
+/// A file with a second name elsewhere can be changed after the check through
+/// that name, so it is not the file that was checked.
+#[cfg(unix)]
+#[test]
+fn a_listed_file_with_another_hard_link_differs() {
+    let sample = Sample::new("differs-hard-link");
+    let (package, listing) = listed_package(&sample);
+    fs::hard_link(package.join("a"), sample.root().join("outside")).expect("linked");
+    let (path, why) = differs(&package, &listing).expect("a difference");
+    assert_eq!(path, "a");
+    assert!(why.contains("link"), "{why}");
+}
+
+/// The built-in Antigravity row alone.
+static ANTIGRAVITY_ONLY: [Row; 1] = [ANTIGRAVITY];
+
+/// The registry holding it.
+static ANTIGRAVITY_REGISTRY: Registry = Registry::new(&ANTIGRAVITY_ONLY);
+
+/// The catalog's entry for `version` of Antigravity.
+fn antigravity_release(version: &str) -> serde_json::Value {
+    release_of(
+        "antigravity",
+        version,
+        (
+            &format!("https://dl.google.com/agy-extensions/releases/linux/agy-{version}.zip"),
+            &"a".repeat(64),
+            1000,
+        ),
+        [("agy_acp_server.par", 700), ("localharness_external", 300)],
+        &[],
+    )
+}
+
+/// What the fake peer says to Antigravity's status check once it is
+/// initialized as `version`: it initializes, then opens a session.
+fn antigravity_answering(version: &str) -> Reply {
+    Reply::new()
+        .hear(1)
+        .say(acp::initialized(
+            "antigravity-acp",
+            version,
+            "oauth-personal",
+        ))
+        .hear(1)
+        .say(acp::opened(1))
+}
+
+/// The status of the Antigravity the peer playing `script` is, as the steps of
+/// the registry holding its row read it, with the trust state `sample` holds.
+async fn antigravity_status(sample: &Sample, script: &Script) -> (Reading, usize) {
+    let here = sample.root().join("peer");
+    let program = fake_peer::install(&here, "antigravity", script).expect("the fake peer");
+    let consent = Consent::new(Routes::production());
+    consent.give("agent:antigravity");
+    let policy = conversation(sample);
+    let state = sample.state();
+    let sessions = sample.sessions();
+    let steps = Steps::new(
+        Launcher::new(
+            local(),
+            Handle::current(),
+            &policy,
+            &consent,
+            &state,
+            &sessions,
+        ),
+        Arc::new(SandboxEnablement::new(false, false)),
+        &ANTIGRAVITY_REGISTRY,
+        None,
+    );
+    let entry = ExternalAgent::unwritten(
+        "space",
+        Driver::Antigravity,
+        &program.to_string_lossy(),
+        None,
+        None,
+    )
+    .expect("an instance of a built-in driver");
+
+    let read = steps.account(&entry, Account::Status).await;
+
+    (read, fake_peer::played(&here))
+}
+
+/// The version the agent answers as is admitted when the trust state lists
+/// it, and is sent nothing more when it does not: a release the catalog
+/// reviewed since this build was made is run without a release of crucible.
+#[tokio::test(flavor = "multi_thread")]
+async fn antigravity_is_admitted_as_a_version_the_catalog_lists_and_no_other() {
+    let unlisted = Sample::new("launch-antigravity-unlisted");
+    let (refused, heard) = antigravity_status(
+        &unlisted,
+        &Script::of([antigravity_answering("1.4.1").hear_out()]),
+    )
+    .await;
+    let listed = Sample::new("launch-antigravity-listed");
+    trusting(&listed, 2, &[antigravity_release("1.4.1")]);
+    let (admitted, _) =
+        antigravity_status(&listed, &Script::of([antigravity_answering("1.4.1")])).await;
+    let snapshot = Sample::new("launch-antigravity-snapshot");
+    let (older, _) = antigravity_status(
+        &snapshot,
+        &Script::of([antigravity_answering(snapshot_version().unwrap_or("1.3.0"))]),
+    )
+    .await;
+
+    let Reading::Unreadable(failure) = refused else {
+        panic!("{refused:?}");
+    };
+    assert!(failure.reason().as_str().contains("1.4.1"), "{failure:?}");
+    assert_eq!(heard, 1, "nothing more was sent");
+    assert!(matches!(admitted, Reading::Signed(_)), "{admitted:?}");
+    if snapshot_version().is_some() {
+        assert!(matches!(older, Reading::Signed(_)), "{older:?}");
+    }
+}
+
+/// What a missing Antigravity is told to do is what the trust state offers:
+/// the command that installs the release, and where the state cannot be used,
+/// that it is to be repaired.
+#[test]
+fn a_missing_antigravity_is_told_what_the_trust_state_offers() {
+    let sample = Sample::new("launch-antigravity-missing");
+    let consent = Consent::new(Routes::production());
+    let route = Route::External {
+        serves: Serves::Provider("google"),
+        instance: "space".into(),
+        driver: Driver::Antigravity,
+        executable: "no-such-antigravity-program".into(),
+        profile: None,
+        model: None,
+        effort: None,
+        location: None,
+        enabled: true,
+    };
+    let registry = &ANTIGRAVITY_REGISTRY;
+    let missing = Agent::routed(&route, registry, |_| {
+        Some(OsString::from(sample.root().join("empty")))
+    })
+    .expect("a row");
+    let said = |trust: &Trust| match missing.program(&consent, trust) {
+        Err(Unlaunched::NotInstalled([_, next])) => next,
+        other => panic!("{other:?}"),
+    };
+
+    let offered = said(&trusting(&sample, 2, &[antigravity_release("1.4.1")]));
+    let file = trust_of(&sample).file();
+    std::fs::create_dir_all(file.parent().expect("a directory")).expect("a directory");
+    std::fs::write(&file, "not a trust state").expect("the file");
+    let unusable = said(&trust_of(&sample));
+
+    assert!(
+        offered.contains("crucible agents install antigravity"),
+        "{offered}"
+    );
+    assert!(
+        unusable.contains(&file.display().to_string()) && unusable.contains("Repair or remove"),
+        "{unusable}"
+    );
+}
+
+/// A run is admitted as the releases on offer when it is launched, not when
+/// its agent was selected: a catalog taken in since is the one it is held to.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_is_admitted_as_the_releases_on_offer_when_it_is_launched() {
+    let sample = Sample::new("launch-antigravity-fresh");
+    let consent = Consent::new(Routes::production());
+    let route = Route::External {
+        serves: Serves::Provider("google"),
+        instance: "space".into(),
+        driver: Driver::Antigravity,
+        executable: "antigravity".into(),
+        profile: None,
+        model: None,
+        effort: None,
+        location: None,
+        enabled: true,
+    };
+    let agent = Agent::routed(&route, &ANTIGRAVITY_REGISTRY, |_| None).expect("a row");
+    let policy = conversation(&sample);
+    let state = sample.state();
+    let sessions = sample.sessions();
+    let runs = Runs::new(
+        Launcher::new(
+            local(),
+            Handle::current(),
+            &policy,
+            &consent,
+            &state,
+            &sessions,
+        ),
+        Arc::new(SandboxEnablement::new(false, false)),
+        agent,
+        "space",
+        &Controls::default(),
+    );
+    let answers = |version: &str| {
+        let mut dialect = runs.dialect(Mode::Ask).expect("asking");
+        let _ = dialect.request(Shape {
+            workspace: Some(Path::new("/work")),
+            ..Shape::default()
+        });
+        let _ = dialect
+            .open(&TurnRequest::new(TurnId::FIRST, "hello"))
+            .expect("a first request");
+        let frame = acp::initialized("antigravity-acp", version, "oauth-personal");
+        dialect.heard(&frame).expect("an answer")
+    };
+
+    let before = answers("1.4.1");
+    trusting(&sample, 2, &[antigravity_release("1.4.1")]);
+    let after = answers("1.4.1");
+
+    assert!(matches!(before.as_slice(), [Act::Fail(_)]), "{before:?}");
+    assert!(matches!(after.as_slice(), [Act::Send(_)]), "{after:?}");
+}
+
+/// A start of an Antigravity whose trust state cannot be used says so, naming
+/// the file to repair or remove, rather than that no release is offered.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_found_antigravity_with_an_unusable_trust_state_is_refused_naming_the_file() {
+    let sample = Sample::new("launch-antigravity-untrusted");
+    let file = trust_of(&sample).file();
+    std::fs::create_dir_all(file.parent().expect("a directory")).expect("a directory");
+    std::fs::write(&file, "not a trust state").expect("the file");
+
+    let (read, heard) =
+        antigravity_status(&sample, &Script::of([antigravity_answering("1.3.0")])).await;
+
+    let Reading::Unreadable(failure) = read else {
+        panic!("{read:?}");
+    };
+    let said = failure.reason().as_str();
+    assert!(said.contains(&file.display().to_string()), "{said}");
+    assert!(said.contains("Repair or remove"), "{said}");
+    assert_eq!(heard, 0, "nothing was started");
+}
+
+/// The wire a run is made with follows the release its program is: the
+/// version directory it is kept in, not the newest one on offer.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_is_started_with_the_arguments_of_the_release_its_program_is() {
+    let sample = Sample::new("launch-antigravity-directory");
+    let release = |version: &str, args: &[&str]| {
+        release_of(
+            "antigravity",
+            version,
+            (
+                &format!("https://dl.google.com/agy-extensions/releases/linux/agy-{version}.zip"),
+                &"a".repeat(64),
+                1000,
+            ),
+            [("agy_acp_server.par", 700), ("localharness_external", 300)],
+            args,
+        )
+    };
+    trusting(
+        &sample,
+        2,
+        &[release("1.4.1", &["--new"]), release("1.3.0", &["--old"])],
+    );
+    let consent = Consent::new(Routes::production());
+    let policy = conversation(&sample);
+    let state = sample.state();
+    let sessions = sample.sessions();
+    let arguments = |version: &str| {
+        let program = sample
+            .root()
+            .join("programs/antigravity")
+            .join(version)
+            .join("agy_acp_server.par");
+        std::fs::create_dir_all(program.parent().expect("a directory")).expect("a directory");
+        std::fs::write(&program, "#!/bin/sh\n").expect("the program");
+        #[cfg(unix)]
+        std::fs::set_permissions(
+            &program,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .expect("executable");
+        let route = Route::External {
+            serves: Serves::Provider("google"),
+            instance: "space".into(),
+            driver: Driver::Antigravity,
+            executable: program.to_string_lossy().into(),
+            profile: None,
+            model: None,
+            effort: None,
+            location: None,
+            enabled: true,
+        };
+        let agent = Agent::routed(&route, &ANTIGRAVITY_REGISTRY, |_| None).expect("a row");
+        let runs = Runs::new(
+            Launcher::new(
+                local(),
+                Handle::current(),
+                &policy,
+                &consent,
+                &state,
+                &sessions,
+            ),
+            Arc::new(SandboxEnablement::new(false, false)),
+            agent,
+            "space",
+            &Controls::default(),
+        );
+        runs.dialect(Mode::Ask)
+            .expect("asking")
+            .request(Shape::default())
+            .arguments
+    };
+
+    assert_eq!(arguments("1.4.1"), ["--new"]);
+    assert_eq!(arguments("1.3.0"), ["--old"]);
+}
+
+/// A sandbox that keeps the network each start asked of it, and starts none.
+struct Recording {
+    local: Arc<dyn SandboxService>,
+    asked: Arc<Mutex<Vec<SandboxNetworkPolicy>>>,
+}
+
+impl SandboxService for Recording {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        self.local.probe()
+    }
+
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            self.asked
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(request.policy().network().clone());
+            Err(SandboxError::BackendUnavailable {
+                reason: "this sandbox only records what it is asked".into(),
+            })
+        })
+    }
+}
+
+/// The Google Cloud location an Antigravity route carries is reached by the
+/// conversation's run that route starts, and no other location is.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_routed_antigravity_run_reaches_the_host_of_the_location_its_route_carries() {
+    let sample = Sample::new("launch-antigravity-located");
+    let program = fake_peer::install(
+        &sample.root().join("peer"),
+        "antigravity",
+        &Script::of([Reply::new()]),
+    )
+    .expect("the fake peer");
+    let route = Route::External {
+        serves: Serves::Provider("google"),
+        instance: "space".into(),
+        driver: Driver::Antigravity,
+        executable: program.to_string_lossy().into(),
+        profile: None,
+        model: None,
+        effort: None,
+        location: Some("us-central1".into()),
+        enabled: true,
+    };
+    let agent = Agent::routed(&route, &ANTIGRAVITY_REGISTRY, |_| None).expect("a row");
+    let consent = Consent::new(Routes::production());
+    consent.give("agent:antigravity");
+    // Confined, as only a policy that is enforced is given the agent's hosts.
+    let policy = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
+    let state = sample.state();
+    let sessions = sample.sessions();
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let recording = Recording {
+        local: local(),
+        asked: Arc::clone(&asked),
+    };
+    let launcher = Launcher::new(
+        Arc::new(recording),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
+    let control = Control::new().expect("a control");
+    let mut dialect = agent.row().dialect(Mode::Ask, None, None).expect("asking");
+
+    let started = launcher
+        .launch(&agent, &control, dialect.as_mut(), None)
+        .await;
+
+    assert!(started.is_err(), "the recording sandbox started a run");
+    let asked = asked.lock().unwrap_or_else(PoisonError::into_inner).clone();
+    let [SandboxNetworkPolicy::Domains(domains)] = asked.as_slice() else {
+        panic!("the start asked the sandbox for {asked:?}");
+    };
+    assert!(
+        domains.permits_host("us-central1-businessaicode.googleapis.com"),
+        "the location the route carries is not reached"
+    );
+    assert!(
+        !domains.permits_host("europe-west1-businessaicode.googleapis.com"),
+        "a location the route does not carry is reached"
+    );
+}
+
+/// The variable an entry turns its agent's updater off with is set, in place
+/// of any value of the same name the request already carried.
+#[test]
+fn the_updater_off_variable_replaces_any_value_of_its_name() {
+    let request = Request {
+        arguments: Vec::new(),
+        environment: vec![
+            ("GOOSE_NO_UPDATE".to_owned(), "0".to_owned()),
+            ("PATH".to_owned(), "/usr/bin".to_owned()),
+        ],
+        shown: Vec::new(),
+    };
+    let off = Variable {
+        name: "GOOSE_NO_UPDATE".into(),
+        value: "1".into(),
+    };
+
+    let started = updating_off(request, Some(&off));
+
+    assert_eq!(
+        started.environment,
+        [
+            ("PATH".to_owned(), "/usr/bin".to_owned()),
+            ("GOOSE_NO_UPDATE".to_owned(), "1".to_owned()),
+        ]
+    );
+}
+
+/// A version root inside a writable root is read-only at and beneath it, and
+/// a rule that would let something beneath it be written is gone.
+#[test]
+fn a_version_root_is_read_only_inside_a_writable_root() {
+    let sample = Sample::new("launch-read-only-root");
+    let conversation = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
+    let root = sample
+        .workspace()
+        .root()
+        .join("programs")
+        .join("goose")
+        .join("1.0.0");
+    let profile = root.join("profile");
+    let child = policy(
+        &conversation,
+        Some(&profile),
+        &[],
+        &[],
+        conversation.limits(),
+    )
+    .expect("a policy");
+
+    let narrowed = read_only(&child, &root).expect("a policy");
+
+    assert!(child.permits_path(&root.join("goose"), SandboxFilesystemAccess::ReadWrite));
+    assert!(narrowed.permits_path(&root.join("goose"), SandboxFilesystemAccess::ReadOnly));
+    assert!(!narrowed.permits_path(&root.join("goose"), SandboxFilesystemAccess::ReadWrite));
+    assert!(!narrowed.permits_path(&profile, SandboxFilesystemAccess::ReadWrite));
+    assert!(narrowed.permits_path(
+        &sample.workspace().root().join("src"),
+        SandboxFilesystemAccess::ReadWrite
+    ));
+}
+
+/// A Google Cloud location names its business host as its shape says: a
+/// region one of its own, `us` and `eu` one under their own name, and any
+/// other none; and one whose host no policy can name is refused.
+#[test]
+fn a_location_names_the_business_host_its_shape_gives() {
+    let host = |location: &str| {
+        located(location)
+            .expect("a host a policy can name")
+            .map(|endpoint| endpoint.host().to_owned())
+    };
+    assert_eq!(
+        host("us-central1").as_deref(),
+        Some("us-central1-businessaicode.googleapis.com")
+    );
+    assert_eq!(
+        host("europe-west4").as_deref(),
+        Some("europe-west4-businessaicode.googleapis.com")
+    );
+    assert_eq!(
+        host("us").as_deref(),
+        Some("businessaicode.us.rep.googleapis.com")
+    );
+    assert_eq!(
+        host("eu").as_deref(),
+        Some("businessaicode.eu.rep.googleapis.com")
+    );
+    for location in ["global", "asia", "usa", "e"] {
+        assert_eq!(host(location), None, "{location}");
+    }
+    let longest = format!("a-{}", "b".repeat(46));
+    assert!(host(&longest).is_some());
+    let over = format!("a-{}", "b".repeat(47));
+    assert!(located(&over).is_err());
+}
+
+/// A catalog instance of the agent keyed `peer`, naming `profile` as its
+/// profile directory when it is given and `profile_env` as the variable its
+/// entry reads its home from when that is, over the program at `executable`.
+fn profiled(executable: &Path, profile: Option<&Path>, profile_env: Option<&str>) -> Agent {
+    let entry = keeping(profile_env, &[]);
+    peer_agent_in(row_of(&entry), executable, profile)
+}
+
+/// An entry that names neither the variable its agent reads its home from nor
+/// a place it keeps its sign-in in keeps none under the sandbox, and one that
+/// names either does.
+#[test]
+fn an_entry_with_neither_a_home_variable_nor_a_place_keeps_no_sign_in() {
+    let cases: [(Option<&str>, &[&str], bool); 4] = [
+        (None, &[], true),
+        (Some("GOOSE_HOME"), &[], false),
+        (None, &[".config/goose"], false),
+        (Some("GOOSE_HOME"), &[".config/goose"], false),
+    ];
+    for (variable, paths, none) in cases {
+        let entry = keeping(variable, paths);
+        assert_eq!(
+            keeps_no_sign_in(&entry),
+            none,
+            "variable {variable:?}, places {paths:?}"
+        );
+    }
+}
+
+/// Where the child's home is: the variable its request holds, where it is
+/// there and absolute, and nowhere the catalog picked it.
+#[test]
+fn the_childs_home_is_the_absolute_home_its_request_holds() {
+    let absolute = std::env::temp_dir().join("a-childs-home");
+    let held = |value: Option<&str>| Request {
+        arguments: Vec::new(),
+        environment: [("PATH", "/usr/bin")]
+            .into_iter()
+            .chain(value.map(|value| (HOME, value)))
+            .map(|(name, value)| (name.to_owned(), value.to_owned()))
+            .collect(),
+        shown: Vec::new(),
+    };
+
+    assert_eq!(
+        child_home(&held(absolute.to_str()), false),
+        Some(absolute.clone())
+    );
+    assert_eq!(child_home(&held(None), false), None, "unset");
+    assert_eq!(child_home(&held(Some("")), false), None, "empty");
+    assert_eq!(child_home(&held(Some("a/relative/home")), false), None);
+    assert_eq!(
+        child_home(&held(absolute.to_str()), true),
+        None,
+        "a home the catalog picked is not the user's"
+    );
+}
+
+/// A home the launcher is given replaces the shell's in the child's request,
+/// and only the one of that name.
+#[test]
+fn a_home_the_launcher_is_given_replaces_the_shells() {
+    let given = std::env::temp_dir().join("a-given-home");
+    let request = Request {
+        arguments: Vec::new(),
+        environment: vec![
+            (HOME.to_owned(), "/the/shells/home".to_owned()),
+            ("PATH".to_owned(), "/usr/bin".to_owned()),
+        ],
+        shown: Vec::new(),
+    };
+
+    let homed = with_home(request, &given);
+
+    assert_eq!(
+        homed.environment,
+        [
+            ("PATH".to_owned(), "/usr/bin".to_owned()),
+            (HOME.to_owned(), given.to_string_lossy().into_owned()),
+        ]
+    );
+}
+
+/// A directory of its own to stand for the child's home: made, and resolved
+/// so that what is compared is the rule and not the temporary directory's
+/// links.
+fn homed_in(sample: &Sample) -> PathBuf {
+    let home = sample.root().with_file_name("user");
+    fs::create_dir_all(&home).expect("a home");
+    fs::canonicalize(home).expect("resolved")
+}
+
+/// The roots the agent of an entry keeping its sign-in in `paths` is given,
+/// over a child home `home`, crucible's own home at `crucible` and the session
+/// logs of `sample`'s home.
+fn rooted(
+    sample: &Sample,
+    paths: &[&str],
+    home: &Path,
+    crucible: &Path,
+) -> Result<Vec<PathBuf>, Unlaunched> {
+    rooted_beside(sample, paths, home, crucible, &sample.sessions())
+}
+
+/// [`rooted`], the session logs kept in `sessions`.
+fn rooted_beside(
+    sample: &Sample,
+    paths: &[&str],
+    home: &Path,
+    crucible: &Path,
+    sessions: &Path,
+) -> Result<Vec<PathBuf>, Unlaunched> {
+    let entry = keeping(None, paths);
+    peer_agent(row_of(&entry), &sample.root().join("peer")).state_roots(home, crucible, sessions)
+}
+
+/// The places a catalog agent's sign-in is kept become the roots its child
+/// may write, each where its links lead and none of the places beside them.
+#[test]
+fn the_places_an_agent_keeps_its_sign_in_become_roots_where_they_lead() {
+    let sample = Sample::new("launch-state-roots");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+
+    let roots = rooted(
+        &sample,
+        &[".config/goose", ".local/share/goose", ".goose"],
+        &home,
+        &crucible,
+    )
+    .expect("allowed places");
+
+    assert_eq!(
+        roots,
+        [
+            home.join(".config/goose"),
+            home.join(".local/share/goose"),
+            home.join(".goose"),
+        ]
+    );
+}
+
+/// The places the list names with everything beneath them, as they are
+/// written for a user's home.
+const LISTED: &[&str] = &[
+    ".bashrc",
+    ".bash_profile",
+    ".bash_login",
+    ".bash_logout",
+    ".bash_aliases",
+    ".profile",
+    ".zshrc",
+    ".zprofile",
+    ".zshenv",
+    ".zlogin",
+    ".zlogout",
+    ".config/fish",
+    ".xprofile",
+    ".xinitrc",
+    ".xsession",
+    ".xsessionrc",
+    ".pam_environment",
+    ".ssh",
+    ".gnupg",
+    ".aws",
+    ".gitconfig",
+    ".config/git",
+    ".config/environment.d",
+    ".local/bin",
+    "bin",
+    ".cargo/bin",
+    ".cargo/config.toml",
+    ".npmrc",
+    ".docker",
+    ".config/autostart",
+    ".config/systemd",
+    ".local/share/systemd",
+    ".local/share/applications",
+    "Library/LaunchAgents",
+    "Library/LaunchDaemons",
+    "AppData/Roaming/Microsoft/Windows/Start Menu",
+    ".cargo/config",
+    ".cargo/env",
+    ".cargo/credentials.toml",
+    ".cargo/credentials",
+    ".rustup",
+    ".local/lib",
+    ".local/share/dbus-1",
+    ".bash_completion",
+    ".bash_completion.d",
+    ".config/user-dirs.dirs",
+    ".vimrc",
+    ".vim",
+    ".config/nvim",
+    ".emacs",
+    ".emacs.d",
+    ".tmux.conf",
+    ".inputrc",
+    ".kube",
+    ".netrc",
+    ".git-credentials",
+    ".pypirc",
+    ".config/gh",
+    ".config/gcloud",
+    ".azure",
+    ".password-store",
+    ".mozilla",
+    ".config/google-chrome",
+    ".config/chromium",
+    ".thunderbird",
+    "Library/Keychains",
+    "Documents/WindowsPowerShell",
+    "Documents/PowerShell",
+    "AppData/Local/Microsoft/WindowsApps",
+];
+
+/// The directories the list names as themselves only, since the agents' own
+/// directories lie in them.
+const BARE: &[&str] = &[
+    ".config",
+    ".local",
+    ".local/share",
+    ".local/state",
+    ".cache",
+    "Library",
+    "Library/Application Support",
+    "AppData",
+    "AppData/Roaming",
+    "AppData/Local",
+];
+
+/// Each place the list names is refused as it is, and anything within it,
+/// whichever way the entry spells the way there; the bare directories that
+/// hold every program's data only as themselves, since the agents' own
+/// directories lie in them.
+#[test]
+fn a_place_that_is_or_lies_within_a_listed_place_is_refused() {
+    let sample = Sample::new("launch-state-listed");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+    for place in LISTED.iter().chain(BARE) {
+        let refused = rooted(&sample, &[place], &home, &crucible).expect_err(place);
+        assert!(
+            matches!(
+                &refused,
+                Unlaunched::StatePath {
+                    overlap: Overlap::Is,
+                    ..
+                }
+            ),
+            "{place}: {refused}"
+        );
+        let said = refused.to_string();
+        assert!(said.contains("externalAgents.work"), "{place}: {said}");
+        assert!(said.contains(place), "{place}: {said}");
+        if !BARE.contains(place) {
+            let within = format!("{place}/inner/file");
+            let refused = rooted(&sample, &[&within], &home, &crucible).expect_err(&within);
+            assert!(
+                matches!(
+                    &refused,
+                    Unlaunched::StatePath {
+                        overlap: Overlap::Within,
+                        ..
+                    }
+                ),
+                "{within}: {refused}"
+            );
+        }
+    }
+}
+
+/// A place that contains a listed one is refused too, since writing it writes
+/// what lies beneath.
+#[test]
+fn a_place_that_contains_a_listed_place_is_refused() {
+    let sample = Sample::new("launch-state-contains");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+
+    for place in [
+        ".cargo",
+        "AppData/Roaming/Microsoft",
+        "AppData/Roaming/Microsoft/Windows",
+    ] {
+        let refused = rooted(&sample, &[place], &home, &crucible).expect_err(place);
+        assert!(
+            matches!(
+                &refused,
+                Unlaunched::StatePath {
+                    overlap: Overlap::Contains,
+                    ..
+                }
+            ),
+            "{place}: {refused}"
+        );
+    }
+}
+
+/// Places are compared by their components and not by how their text begins:
+/// a name that only starts as a listed one does, and a place beside one, is
+/// allowed.
+#[test]
+fn a_place_is_compared_by_components_not_by_prefix() {
+    let sample = Sample::new("launch-state-components");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+    let beside = [
+        ".sshfoo",
+        ".ssh-keys",
+        ".profile.d",
+        ".bashrc2",
+        ".config/fishy",
+        ".config/systemdx",
+        ".local/binary",
+        ".local/share/bin",
+        "Library/LaunchAgentsX",
+        ".zlogins",
+        ".bash_aliases.d",
+        ".gitconfig.d",
+        ".config/gitx",
+        ".local/share/systemdx",
+        ".cargo/registry",
+        ".cargo/configs",
+        ".npmrcs",
+        ".docker-old",
+        ".vimrcs",
+        ".kubes",
+        ".mozillax",
+        ".local/libs",
+        ".cache/goose",
+        ".local/state/goose",
+        "Library/Application Support/Goose",
+        "AppData/Roaming/Goose",
+        "AppData/Local/Goose",
+    ];
+
+    for place in beside {
+        let roots = rooted(&sample, &[place], &home, &crucible);
+        assert_eq!(
+            roots.as_deref().ok(),
+            Some([home.join(place)].as_slice()),
+            "{place}: {roots:?}"
+        );
+    }
+}
+
+/// The list is a floor and not every place that runs as the user, so a place
+/// is refused that does not begin with a hidden name, `Library` or `AppData`,
+/// whether or not the list names it: the files the user keeps are never a
+/// place an agent keeps its sign-in in.
+#[test]
+fn a_place_among_the_files_the_user_keeps_is_refused_by_its_first_name() {
+    let sample = Sample::new("launch-state-unhidden");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+
+    for place in [
+        "src",
+        "go/bin",
+        "goose",
+        "bin2",
+        "Libraries",
+        "Documents/notes",
+        "Desktop/.goose",
+        "work/.config/goose",
+    ] {
+        let refused = rooted(&sample, &[place], &home, &crucible).expect_err(place);
+        assert!(
+            matches!(&refused, Unlaunched::StateName { .. }),
+            "{place}: {refused}"
+        );
+        let said = refused.to_string();
+        assert!(said.contains("externalAgents.work"), "{place}: {said}");
+        assert!(said.contains(place), "{place}: {said}");
+        assert!(said.contains("files you keep yourself"), "{place}: {said}");
+    }
+    // A directory that holds a listed place is refused for the place.
+    let documents = rooted(&sample, &["Documents"], &home, &crucible);
+    assert!(
+        matches!(
+            &documents,
+            Err(Unlaunched::StatePath {
+                overlap: Overlap::Contains,
+                ..
+            })
+        ),
+        "{documents:?}"
+    );
+    for place in [
+        ".goose",
+        ".config/goose",
+        "Library/Application Support/goose",
+        "AppData/Roaming/goose",
+    ] {
+        let roots = rooted(&sample, &[place], &home, &crucible);
+        assert_eq!(
+            roots.as_deref().ok(),
+            Some([home.join(place)].as_slice()),
+            "{place}: {roots:?}"
+        );
+    }
+}
+
+/// A hidden name that is a link into the files the user keeps is judged by
+/// where it leads, as that is what the sandbox is given, and one that leads to
+/// another hidden place is allowed.
+#[cfg(unix)]
+#[test]
+fn a_link_from_a_hidden_name_into_the_files_the_user_keeps_is_refused() {
+    use std::os::unix::fs::symlink;
+
+    let sample = Sample::new("launch-state-unhidden-link");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+    for place in ["Documents/goose", ".local/share/goose", "Library/goose"] {
+        fs::create_dir_all(home.join(place)).expect("a directory");
+    }
+    symlink(home.join("Documents/goose"), home.join(".goose")).expect("a link");
+    symlink(home.join(".local/share/goose"), home.join(".agent")).expect("a link");
+    symlink(home.join("Library/goose"), home.join(".library")).expect("a link");
+
+    let kept = rooted(&sample, &[".goose"], &home, &crucible);
+    let hidden = rooted(&sample, &[".agent"], &home, &crucible);
+    let library = rooted(&sample, &[".library"], &home, &crucible);
+
+    assert!(
+        matches!(&kept, Err(Unlaunched::StateName { .. })),
+        "{kept:?}"
+    );
+    assert_eq!(hidden.ok(), Some(vec![home.join(".local/share/goose")]));
+    assert_eq!(library.ok(), Some(vec![home.join("Library/goose")]));
+}
+
+/// A listed place is refused whatever the case an entry spells it in, on every
+/// platform, since a file system that does not tell the two apart would take
+/// the spelling for the place, and one that does is refused for nothing.
+#[test]
+fn a_listed_place_is_refused_whatever_its_case() {
+    let sample = Sample::new("launch-state-case");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+
+    for place in [
+        ".SSH",
+        ".Config/Systemd",
+        "library/launchagents",
+        ".Cargo/BIN",
+        ".KUBE",
+        "APPDATA/ROAMING/MICROSOFT/WINDOWS/START MENU/Programs",
+    ] {
+        let refused = rooted(&sample, &[place], &home, &crucible);
+        assert!(
+            matches!(refused, Err(Unlaunched::StatePath { .. })),
+            "{place}: {refused:?}"
+        );
+    }
+    // The home crucible keeps its own state in and the session logs are
+    // places too.
+    let own = home.join(".local/share/Vault/crucible");
+    let refused = rooted(&sample, &[".local/share/vault/CRUCIBLE"], &home, &own);
+    assert!(
+        matches!(refused, Err(Unlaunched::StatePath { .. })),
+        "{refused:?}"
+    );
+}
+
+/// Case is ignored in judging a place against the list on every platform, and
+/// in telling where a place lies only as the file system does: a home that
+/// differs by case is another home on a file system that tells the two apart.
+#[test]
+fn case_is_ignored_in_the_list_everywhere_and_in_containment_where_the_file_system_does() {
+    let (home, other) = (Path::new("/home/bob"), Path::new("/home/Bob/.ssh"));
+
+    assert!(is_beneath_as(other, home, true));
+    assert!(!is_beneath_as(other, home, false));
+    assert_eq!(
+        is_beneath(other, home),
+        cfg!(any(windows, target_os = "macos"))
+    );
+    assert!(matches!(
+        overlap(other, &home.join(".ssh"), Reach::Beneath),
+        Some(Overlap::Is)
+    ));
+}
+
+/// A place with a part outside ASCII is refused, whether or not the part
+/// would fold to a listed name, as a file system that folds more than ASCII
+/// takes `.\u{212A}ube`, with the Kelvin sign, for `.kube`, and none is
+/// compared: the refusal names the entry and the place.
+#[test]
+fn a_place_with_a_part_outside_ascii_is_refused() {
+    let sample = Sample::new("launch-state-ascii");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+
+    for place in [
+        ".\u{17F}sh",
+        ".\u{212A}ube",
+        ".doc\u{212A}er",
+        ".caf\u{e9}",
+        ".config/goos\u{e9}",
+        "Library/Application Support/\u{212A}ube",
+    ] {
+        let refused = rooted(&sample, &[place], &home, &crucible).expect_err(place);
+        assert!(
+            matches!(&refused, Unlaunched::StateName { .. }),
+            "{place}: {refused}"
+        );
+        let said = refused.to_string();
+        assert!(said.contains("externalAgents.work"), "{place}: {said}");
+        assert!(said.contains(place), "{place}: {said}");
+        assert!(said.contains("not ASCII"), "{place}: {said}");
+    }
+}
+
+/// A name that is ASCII but leads, by a link, to a part outside ASCII is
+/// judged by where it leads, as that is the name the file system keeps.
+#[cfg(unix)]
+#[test]
+fn a_link_to_a_part_outside_ascii_is_refused() {
+    use std::os::unix::fs::symlink;
+
+    let sample = Sample::new("launch-state-ascii-link");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+    fs::create_dir_all(home.join(".\u{17F}sh")).expect("a directory");
+    symlink(home.join(".\u{17F}sh"), home.join(".goose")).expect("a link");
+
+    let refused = rooted(&sample, &[".goose"], &home, &crucible);
+
+    // A file system that folds case beyond ASCII, as macOS's does by default,
+    // keeps `.\u{17F}sh` as the directory `.ssh` names, so it may be refused as
+    // that place before its name is looked at.
+    if cfg!(target_os = "macos") {
+        assert!(
+            matches!(
+                &refused,
+                Err(Unlaunched::StateName { .. } | Unlaunched::StatePath { .. })
+            ),
+            "{refused:?}"
+        );
+    } else {
+        assert!(
+            matches!(&refused, Err(Unlaunched::StateName { .. })),
+            "{refused:?}"
+        );
+    }
+}
+
+/// A file system that drops the dots and spaces that end a name does not tell
+/// a name from one with them added, and one that does not, does.
+#[test]
+fn a_name_is_compared_as_the_file_system_compares_it() {
+    let alike = |a: &str, b: &str, folds, trims| {
+        super::alike(
+            std::ffi::OsStr::new(a),
+            std::ffi::OsStr::new(b),
+            folds,
+            trims,
+        )
+    };
+
+    assert!(alike(".ssh.", ".ssh", true, true));
+    assert!(alike(".ssh ", ".ssh", true, true));
+    assert!(alike(".SSH. .", ".ssh", true, true));
+    assert!(alike(".ssh.", ".ssh.", false, false));
+    assert!(!alike(".ssh.", ".ssh", false, false));
+    assert!(!alike(".ssh ", ".ssh", true, false));
+    assert!(!alike(".SSH", ".ssh", false, true));
+    assert!(!alike(".ssh.x", ".ssh", true, true));
+    assert!(!alike(" .ssh", ".ssh", true, true));
+}
+
+/// A listed place is refused with the dots and spaces Windows drops from the
+/// end of a name, as the file system does not tell it from the place.
+#[cfg(windows)]
+#[test]
+fn a_listed_place_is_refused_with_dots_or_spaces_at_the_end_on_windows() {
+    let sample = Sample::new("launch-state-trailing");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+
+    for place in [".ssh.", ".ssh ", ".Config./Systemd. ", ".bashrc..."] {
+        let refused = rooted(&sample, &[place], &home, &crucible);
+        assert!(
+            matches!(refused, Err(Unlaunched::StatePath { .. })),
+            "{place}: {refused:?}"
+        );
+    }
+}
+
+/// The user documentation names each place the list names, so that what a
+/// user reads is what is refused.
+#[test]
+fn the_documentation_names_every_place_the_list_refuses() {
+    const DOCUMENTED: &str = include_str!("../../../../docs/configuration/configuration.md");
+
+    for place in NEVER_WRITABLE {
+        let named = if place.path.ends_with("Start Menu") {
+            "the Windows Start Menu".to_owned()
+        } else {
+            format!("`{}`", place.path)
+        };
+        assert!(
+            DOCUMENTED.contains(&named),
+            "{} is not documented",
+            place.path
+        );
+    }
+    for place in LISTED.iter().chain(BARE) {
+        assert!(
+            NEVER_WRITABLE.iter().any(|listed| listed.path == *place),
+            "{place} is tested but not listed"
+        );
+    }
+    assert_eq!(
+        NEVER_WRITABLE.len(),
+        LISTED.len() + BARE.len(),
+        "a listed place is not tested"
+    );
+}
+
+/// Crucible's own home, which holds the keys the user typed, is never a root,
+/// nor within one, nor a place that contains it.
+#[test]
+fn the_home_crucible_keeps_its_state_in_is_never_made_writable() {
+    let sample = Sample::new("launch-state-crucible");
+    let home = homed_in(&sample);
+    let crucible = home.join(".local/share/vault/crucible");
+
+    for (place, overlap) in [
+        (".local/share/vault/crucible", Overlap::Is),
+        (".local/share/vault/crucible/auth", Overlap::Within),
+        (".local/share/vault", Overlap::Contains),
+    ] {
+        let refused = rooted(&sample, &[place], &home, &crucible);
+        assert!(
+            matches!(&refused, Err(Unlaunched::StatePath { overlap: found, .. }) if *found == overlap),
+            "{place}: {refused:?}"
+        );
+    }
+    assert!(rooted(&sample, &[".local/share/goose"], &home, &crucible).is_ok());
+}
+
+/// The directory session logs are kept in, which holds what was said in every
+/// conversation, is never a root, nor within one, nor a place that contains it,
+/// wherever the home keeps it, and a link to it is no way in.
+#[test]
+fn the_directory_session_logs_are_kept_in_is_never_made_writable() {
+    let sample = Sample::new("launch-state-sessions");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+    let sessions = home.join(".local/share/crucible/sessions");
+
+    for (place, overlap) in [
+        (".local/share/crucible/sessions", Overlap::Is),
+        (".local/share/crucible/sessions/2026", Overlap::Within),
+        (".local/share/crucible", Overlap::Contains),
+    ] {
+        let refused = rooted_beside(&sample, &[place], &home, &crucible, &sessions);
+        assert!(
+            matches!(&refused, Err(Unlaunched::StatePath { overlap: found, .. }) if *found == overlap),
+            "{place}: {refused:?}"
+        );
+    }
+    let said = rooted_beside(
+        &sample,
+        &[".local/share/crucible/sessions"],
+        &home,
+        &crucible,
+        &sessions,
+    )
+    .expect_err("refused")
+    .to_string();
+    assert!(said.contains("session logs"), "{said}");
+    assert!(
+        rooted_beside(
+            &sample,
+            &[".local/share/goose"],
+            &home,
+            &crucible,
+            &sessions
+        )
+        .is_ok()
+    );
+}
+
+/// A name that is allowed but is a link to the session logs is refused, as it
+/// is where it leads that the sandbox is given.
+#[cfg(unix)]
+#[test]
+fn a_link_to_the_session_logs_is_refused() {
+    use std::os::unix::fs::symlink;
+
+    let sample = Sample::new("launch-state-sessions-link");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+    let sessions = home.join("logs/sessions");
+    fs::create_dir_all(&sessions).expect("the logs");
+    symlink(&sessions, home.join(".goose")).expect("a link");
+
+    let refused = rooted_beside(&sample, &[".goose"], &home, &crucible, &sessions);
+
+    assert!(
+        matches!(
+            &refused,
+            Err(Unlaunched::StatePath {
+                overlap: Overlap::Is,
+                ..
+            })
+        ),
+        "{refused:?}"
+    );
+}
+
+/// A policy lets a child write a root only by a rule for that place: a rule
+/// for a place that contains it, for the place with less access, or for
+/// another place, is not what was judged.
+#[test]
+fn a_root_is_granted_only_by_a_rule_for_exactly_that_place() {
+    let sample = Sample::new("launch-state-granted");
+    let home = homed_in(&sample);
+    let root = home.join(".config/goose");
+    fs::create_dir_all(&root).expect("a root");
+    let rule = |at: &Path, access| {
+        SandboxFilesystemRule::new(at, access, SandboxFilesystemProvenance::Runtime)
+            .expect("a rule")
+    };
+    let policy = |mut rules: Vec<SandboxFilesystemRule>| {
+        rules.push(rule(&sample.root(), SandboxFilesystemAccess::ReadWrite));
+        SandboxPolicy::new(
+            true,
+            rules,
+            sample.root(),
+            SandboxNetworkPolicy::Closed,
+            SandboxResourceLimits::confining(),
+        )
+        .expect("a policy")
+    };
+
+    let exact = policy(vec![rule(&root, SandboxFilesystemAccess::ReadWrite)]);
+    let protected = policy(vec![
+        rule(&root, SandboxFilesystemAccess::ReadWrite),
+        rule(&root.join(".git"), SandboxFilesystemAccess::Protected),
+    ]);
+    let wider = policy(vec![rule(&home, SandboxFilesystemAccess::ReadWrite)]);
+    let lesser = policy(vec![rule(&root, SandboxFilesystemAccess::ReadOnly)]);
+    let another = policy(vec![rule(
+        &home.join(".config"),
+        SandboxFilesystemAccess::ReadWrite,
+    )]);
+
+    assert_eq!(grants(&exact, &root), Grant::Given);
+    assert!(wider.permits_path(&root, SandboxFilesystemAccess::ReadWrite));
+    assert_eq!(grants(&wider, &root), Grant::Missing, "the home grants it");
+    assert_eq!(
+        grants(&lesser, &root),
+        Grant::Missing,
+        "read-only grants it"
+    );
+    assert_eq!(
+        grants(&another, &root),
+        Grant::Missing,
+        "its parent grants it"
+    );
+    assert_eq!(
+        grants(&protected, &root),
+        Grant::Protected,
+        "a root with a protected directory within it is given"
+    );
+}
+
+/// An entry's place that does not stay inside the home it is joined to is
+/// refused, as the catalog's reader already refuses it, so a value that never
+/// went through the reader cannot reach elsewhere.
+#[test]
+fn a_place_that_leaves_the_home_is_refused() {
+    let sample = Sample::new("launch-state-outside");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+
+    for place in ["../elsewhere", "/etc/cron.d", "a/../../b", "./inside"] {
+        let mut entry = keeping(None, &[]);
+        entry.state_paths = vec![place.into()];
+        let agent = peer_agent(row_of(&entry), &sample.root().join("peer"));
+
+        let refused = agent.state_roots(&home, &crucible, &sample.sessions());
+
+        assert!(
+            matches!(
+                &refused,
+                Err(Unlaunched::StatePath {
+                    overlap: Overlap::Outside,
+                    ..
+                })
+            ),
+            "{place}: {refused:?}"
+        );
+    }
+}
+
+/// What an entry says is shown quoted, so a path with a control character in
+/// it draws no line of its own in what refuses it.
+#[test]
+fn a_refused_place_is_quoted_in_what_refuses_it() {
+    let sample = Sample::new("launch-state-quoted");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+
+    let refused = rooted(&sample, &[".ssh/\u{1b}[31mred\nline"], &home, &crucible)
+        .expect_err("a place within .ssh");
+
+    let said = refused.to_string();
+    assert!(!said.contains('\u{1b}') && !said.contains('\n'), "{said:?}");
+}
+
+/// A name that is allowed but leads, by a link, into a listed place is judged
+/// by where it leads, and so is a link along the way.
+#[cfg(unix)]
+#[test]
+fn a_link_from_an_allowed_name_into_a_listed_place_is_refused() {
+    use std::os::unix::fs::symlink;
+
+    let sample = Sample::new("launch-state-links");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+    for place in [".ssh", ".config/systemd", ".config/autostart"] {
+        fs::create_dir_all(home.join(place)).expect("a listed place");
+    }
+    symlink(home.join(".ssh"), home.join("keys")).expect("a link");
+    symlink(home.join(".config/systemd"), home.join("services")).expect("a link");
+    symlink(home.join(".config/autostart"), home.join("shared")).expect("a link");
+    symlink(&home, home.join("everything")).expect("a link");
+
+    for (place, overlap) in [
+        ("keys", Overlap::Is),
+        ("services", Overlap::Is),
+        ("shared/inner", Overlap::Within),
+        ("everything", Overlap::Contains),
+    ] {
+        let refused = rooted(&sample, &[place], &home, &crucible);
+        assert!(
+            matches!(&refused, Err(Unlaunched::StatePath { overlap: found, .. }) if *found == overlap),
+            "{place}: {refused:?}"
+        );
+    }
+}
+
+/// A listed place that is itself a link elsewhere is still the listed place.
+#[cfg(unix)]
+#[test]
+fn a_listed_name_is_refused_though_it_is_a_link_elsewhere() {
+    use std::os::unix::fs::symlink;
+
+    let sample = Sample::new("launch-state-listed-link");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+    let elsewhere = home.with_file_name("elsewhere");
+    fs::create_dir_all(&elsewhere).expect("a directory");
+    symlink(&elsewhere, home.join(".ssh")).expect("a link");
+
+    let named = rooted(&sample, &[".ssh"], &home, &crucible);
+
+    assert!(
+        matches!(named, Err(Unlaunched::StatePath { .. })),
+        "{named:?}"
+    );
+}
+
+/// The child's home reached through a link is the place its roots are
+/// named at, where the link leads.
+#[cfg(unix)]
+#[test]
+fn a_home_reached_through_a_link_has_its_roots_where_the_link_leads() {
+    use std::os::unix::fs::symlink;
+
+    let sample = Sample::new("launch-state-home-link");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+    let reached = home.with_file_name("reached");
+    symlink(&home, &reached).expect("a link");
+
+    let roots = rooted(&sample, &[".config/goose"], &reached, &crucible).expect("allowed");
+    let refused = rooted(&sample, &[".ssh"], &reached, &crucible);
+
+    assert_eq!(roots, [home.join(".config/goose")]);
+    assert!(
+        matches!(refused, Err(Unlaunched::StatePath { .. })),
+        "{refused:?}"
+    );
+}
+
+/// A name that is allowed but whose link leads out of the home is refused,
+/// since where it leads is what the sandbox is given, and so is a link along
+/// a nested path that leads out, though its parent stays inside.
+#[cfg(unix)]
+#[test]
+fn a_link_that_leads_out_of_the_home_is_refused() {
+    use std::os::unix::fs::symlink;
+
+    let sample = Sample::new("launch-state-link-out");
+    let home = homed_in(&sample);
+    let crucible = sample.home();
+    let elsewhere = home.with_file_name("elsewhere-bin");
+    fs::create_dir_all(&elsewhere).expect("a directory");
+    symlink(&elsewhere, home.join(".goose")).expect("a link");
+    fs::create_dir_all(home.join(".a")).expect("a directory");
+    symlink(&elsewhere, home.join(".a/b")).expect("a link");
+
+    let inside = rooted(&sample, &[".a"], &home, &crucible);
+    let out = rooted(&sample, &[".goose"], &home, &crucible);
+    let nested = rooted(&sample, &[".a", ".a/b"], &home, &crucible);
+
+    assert_eq!(inside.as_deref().ok(), Some([home.join(".a")].as_slice()));
+    for (place, refused) in [(".goose", out), (".a/b", nested)] {
+        let Err(
+            refused @ Unlaunched::StatePath {
+                overlap: Overlap::Outside,
+                ..
+            },
+        ) = refused
+        else {
+            panic!("{place}: {refused:?}")
+        };
+        let said = refused.to_string();
+        assert!(said.contains("externalAgents.work"), "{place}: {said}");
+        assert!(said.contains(place), "{place}: {said}");
+        assert!(said.contains("your home"), "{place}: {said}");
+    }
+}
+
+/// An agent whose entry keeps its sign-in in no place, to make roots for.
+fn without_places(sample: &Sample) -> Agent {
+    peer_agent(row_of(&keeping(None, &[])), &sample.root().join("peer"))
+}
+
+/// Only what is missing of a place is made, each directory private to the user
+/// as it comes to be, and a directory that is there is not touched, whatever
+/// its access.
+#[cfg(unix)]
+#[test]
+fn only_what_is_missing_of_a_place_is_made_and_made_private() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sample = Sample::new("launch-state-created");
+    let home = homed_in(&sample);
+    let mode = |place: &str| {
+        fs::metadata(home.join(place))
+            .expect("there")
+            .permissions()
+            .mode()
+            & 0o777
+    };
+    fs::create_dir_all(home.join(".config")).expect("a directory");
+    fs::set_permissions(home.join(".config"), fs::Permissions::from_mode(0o755)).expect("opened");
+
+    created(&home.join(".config/goose/inner")).expect("made");
+
+    assert_eq!(mode(".config"), 0o755);
+    assert_eq!(mode(".config/goose"), 0o700);
+    assert_eq!(mode(".config/goose/inner"), 0o700);
+    fs::set_permissions(
+        home.join(".config/goose"),
+        fs::Permissions::from_mode(0o750),
+    )
+    .expect("opened");
+    created(&home.join(".config/goose/inner")).expect("there");
+    assert_eq!(mode(".config/goose"), 0o750);
+}
+
+/// A root whose parent became a link after it was judged is not made through
+/// the link, and the launch is refused.
+#[cfg(unix)]
+#[test]
+fn a_root_whose_parent_became_a_link_is_not_made_through_it() {
+    use std::os::unix::fs::symlink;
+
+    let sample = Sample::new("launch-state-moved-before");
+    let home = homed_in(&sample);
+    let elsewhere = home.with_file_name("elsewhere");
+    fs::create_dir_all(&elsewhere).expect("a directory");
+    let judged = home.join("cache/goose");
+    symlink(&elsewhere, home.join("cache")).expect("a link");
+
+    let made = without_places(&sample).made(std::slice::from_ref(&judged), created);
+
+    assert!(
+        matches!(made, Err(Unlaunched::StateMoved { .. })),
+        "{made:?}"
+    );
+    assert!(!elsewhere.join("goose").exists(), "made through the link");
+}
+
+/// A root that became a link while it was being made is refused, as the place
+/// the sandbox would be given is not the one that was judged.
+#[cfg(unix)]
+#[test]
+fn a_root_that_became_a_link_as_it_was_made_is_refused() {
+    use std::os::unix::fs::symlink;
+
+    let sample = Sample::new("launch-state-moved-after");
+    let home = homed_in(&sample);
+    let elsewhere = home.with_file_name("elsewhere");
+    fs::create_dir_all(&elsewhere).expect("a directory");
+    let judged = home.join(".goose");
+
+    let made = without_places(&sample).made(std::slice::from_ref(&judged), |root| {
+        created(root)?;
+        fs::remove_dir(root)?;
+        symlink(&elsewhere, root)
+    });
+
+    assert!(
+        matches!(made, Err(Unlaunched::StateMoved { .. })),
+        "{made:?}"
+    );
+    let said = made.expect_err("refused").to_string();
+    assert!(said.contains("externalAgents.work"), "{said}");
+}
+
+/// Roots that stay where they were judged are made, and one that was there
+/// is not an error.
+#[test]
+fn roots_that_stay_where_they_were_judged_are_made() {
+    let sample = Sample::new("launch-state-made");
+    let home = homed_in(&sample);
+    fs::create_dir_all(home.join(".goose")).expect("a place");
+    let roots = [home.join(".config/goose"), home.join(".goose")];
+
+    without_places(&sample).made(&roots, created).expect("made");
+
+    assert!(roots.iter().all(|root| root.is_dir()));
+}
+
+/// A program for an agent to be found at, which no sandbox here starts.
+fn standing(sample: &Sample) -> PathBuf {
+    installed(sample, &Script::of([Reply::lines(["1.0.0"])]))
+}
+
+/// A sandbox that keeps the policy each start asked of it, and starts none.
+struct Policies {
+    local: Arc<dyn SandboxService>,
+    asked: Arc<Mutex<Vec<SandboxPolicy>>>,
+}
+
+impl SandboxService for Policies {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        self.local.probe()
+    }
+
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            self.asked
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(request.policy().clone());
+            Err(SandboxError::BackendUnavailable {
+                reason: "this sandbox only records what it is asked".into(),
+            })
+        })
+    }
+}
+
+/// The policy a launch of `agent` asks its sandbox for, under a conversation
+/// confined or not, with the launcher's child home `home`; none where the
+/// launch was refused before the sandbox was asked.
+async fn asked_for(
+    sample: &Sample,
+    agent: &Agent,
+    confined: bool,
+    home: Option<&Path>,
+    consent: &Consent,
+) -> Option<SandboxPolicy> {
+    asked_for_beside(sample, agent, confined, home, consent, &sample.sessions()).await
+}
+
+/// [`asked_for`], the launcher told that the session logs are kept in
+/// `sessions`.
+// The launch is described by the four things the tests vary and the two they
+// hold fixed, and a value gathering them would be built at its callers and
+// taken apart here.
+#[allow(clippy::too_many_arguments)]
+async fn asked_for_beside(
+    sample: &Sample,
+    agent: &Agent,
+    confined: bool,
+    home: Option<&Path>,
+    consent: &Consent,
+    sessions: &Path,
+) -> Option<SandboxPolicy> {
+    launched_beside(sample, agent, confined, home, consent, sessions)
+        .await
+        .0
+}
+
+/// [`asked_for_beside`], and why the launch did not start.
+// As for `asked_for_beside`, whose arguments these are.
+#[allow(clippy::too_many_arguments)]
+async fn launched_beside(
+    sample: &Sample,
+    agent: &Agent,
+    confined: bool,
+    home: Option<&Path>,
+    consent: &Consent,
+    sessions: &Path,
+) -> (Option<SandboxPolicy>, Unlaunched) {
+    let policy = SandboxPolicy::standard(&sample.workspace())
+        .expect("a policy")
+        .with_enabled(confined);
+    let state = sample.state();
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let sandbox = Policies {
+        local: local(),
+        asked: Arc::clone(&asked),
+    };
+    let mut launcher = Launcher::new(
+        Arc::new(sandbox),
+        Handle::current(),
+        &policy,
+        consent,
+        &state,
+        sessions,
+    );
+    if let Some(home) = home {
+        launcher = launcher.homed(home);
+    }
+    let control = Control::new().expect("a control");
+    let mut dialect = agent.row().dialect(Mode::Ask, None, None).expect("asking");
+
+    let started = launcher
+        .launch(agent, &control, dialect.as_mut(), None)
+        .await;
+
+    let Err(refused) = started else {
+        panic!("the recording sandbox started a run")
+    };
+    let asked = asked.lock().unwrap_or_else(PoisonError::into_inner).clone();
+    (asked.into_iter().next(), refused)
+}
+
+/// Under the sandbox a catalog agent's turn may write where its entry says it
+/// keeps its sign-in, made private to the user where it was missing, and
+/// nowhere else of the user's home.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sandboxed_catalog_launch_may_write_where_its_entry_keeps_the_sign_in() {
+    let sample = Sample::new("launch-state-sandboxed");
+    let home = homed_in(&sample);
+    let peer = standing(&sample);
+    let entry = keeping(None, &[".config/goose", ".goose"]);
+    let agent = peer_agent(row_of(&entry), &peer);
+    fs::create_dir_all(home.join(".goose")).expect("a place that exists");
+
+    let asked = asked_for(&sample, &agent, true, Some(&home), &peer_granted())
+        .await
+        .expect("the sandbox was asked");
+
+    for root in [home.join(".config/goose"), home.join(".goose")] {
+        assert!(
+            asked.permits_path(&root.join("auth.json"), SandboxFilesystemAccess::ReadWrite),
+            "{} is not writable",
+            root.display()
+        );
+        assert!(root.is_dir(), "{} was not made", root.display());
+    }
+    for beside in [".bashrc", ".config/other", ".ssh/id"] {
+        assert!(
+            !asked.permits_path(&home.join(beside), SandboxFilesystemAccess::ReadWrite),
+            "{beside} is writable"
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |place: &str| {
+            fs::metadata(home.join(place))
+                .expect("made")
+                .permissions()
+                .mode()
+                & 0o777
+        };
+        assert_eq!(mode(".config/goose"), 0o700);
+    }
+}
+
+/// A place the entry keeps its sign-in in that already holds a directory the
+/// conversation protects, such as a `.git`, cannot be written by the child, and
+/// the launch says so by name before the sandbox is asked for anything and
+/// before anything is made, and is not told as a path that failed to
+/// normalize, nor as a place that moved.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_launch_is_refused_where_the_place_for_the_sign_in_holds_a_protected_directory() {
+    let sample = Sample::new("launch-state-protected-launch");
+    let home = homed_in(&sample);
+    let peer = standing(&sample);
+    let agent = peer_agent(row_of(&keeping(None, &[".config/goose", ".goose"])), &peer);
+    fs::create_dir_all(home.join(".config/goose/.git")).expect("a directory to protect");
+
+    let (asked, refused) = launched_beside(
+        &sample,
+        &agent,
+        true,
+        Some(&home),
+        &peer_granted(),
+        &sample.sessions(),
+    )
+    .await;
+
+    assert!(
+        matches!(&refused, Unlaunched::StateProtected { .. }),
+        "{refused:?}"
+    );
+    let said = refused.to_string();
+    assert!(said.contains("externalAgents.work"), "{said}");
+    assert!(
+        said.contains(&home.join(".config/goose").display().to_string()),
+        "{said}"
+    );
+    assert!(said.contains(".git"), "{said}");
+    assert!(!said.contains("normaliz"), "{said}");
+    assert!(
+        asked.is_none(),
+        "the sandbox was asked for a place that cannot be written"
+    );
+    assert!(
+        !home.join(".goose").exists(),
+        "a place was made before the launch was refused"
+    );
+}
+
+/// The smoke test of a release signs nothing in, so it is given no place its
+/// entry keeps a sign-in in, and nothing of the user's home is among the rules
+/// the sandbox is asked for, though the launcher has a home to join them to.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_smoke_test_of_a_release_is_given_no_place_under_the_home() {
+    let sample = Sample::new("launch-state-smoke");
+    let home = homed_in(&sample);
+    let peer = standing(&sample);
+    let unpacked = sample.root().join("unpacked");
+    fs::create_dir_all(&unpacked).expect("a release");
+    let entry = keeping(None, &[".config/goose", ".goose"]);
+    let consent = peer_granted();
+    let policy = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
+    let state = sample.state();
+    let sessions = sample.sessions();
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let sandbox = Policies {
+        local: local(),
+        asked: Arc::clone(&asked),
+    };
+    let launcher = Launcher::new(
+        Arc::new(sandbox),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    )
+    .homed(&home);
+
+    let smoked = launcher
+        .smoke(
+            &entry,
+            entry.targets.first().expect("a target"),
+            &unpacked,
+            &peer,
+        )
+        .await;
+
+    assert!(smoked.is_err(), "the recording sandbox started a run");
+    let asked = asked.lock().unwrap_or_else(PoisonError::into_inner).clone();
+    let [asked] = asked.as_slice() else {
+        panic!("the sandbox was asked {} times", asked.len())
+    };
+    let beneath: Vec<&Path> = asked
+        .filesystem()
+        .iter()
+        .map(SandboxFilesystemRule::path)
+        .filter(|rule| rule.starts_with(&home))
+        .collect();
+    assert!(beneath.is_empty(), "rules under the home: {beneath:?}");
+    assert!(
+        !home.join(".config/goose").exists() && !home.join(".goose").exists(),
+        "a place the entry keeps its sign-in in was made"
+    );
+}
+
+/// A launcher told where the session logs are kept starts no agent whose entry
+/// says it keeps its sign-in there, before the sandbox is asked for anything,
+/// and starts one whose entry names another place.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_launch_is_refused_where_the_entry_keeps_its_sign_in_in_the_session_logs() {
+    let sample = Sample::new("launch-state-sessions-launch");
+    let home = homed_in(&sample);
+    let peer = standing(&sample);
+    let sessions = home.join(".local/share/crucible/sessions");
+    let agent = peer_agent(
+        row_of(&keeping(None, &[".local/share/crucible/sessions"])),
+        &peer,
+    );
+    let elsewhere = peer_agent(row_of(&keeping(None, &[".local/share/goose"])), &peer);
+
+    let refused = asked_for_beside(
+        &sample,
+        &agent,
+        true,
+        Some(&home),
+        &peer_granted(),
+        &sessions,
+    )
+    .await;
+    let allowed = asked_for_beside(
+        &sample,
+        &elsewhere,
+        true,
+        Some(&home),
+        &peer_granted(),
+        &sessions,
+    )
+    .await;
+
+    assert!(
+        refused.is_none(),
+        "the sandbox was asked for the session logs"
+    );
+    assert!(
+        allowed.is_some_and(|asked| asked.permits_path(
+            &home.join(".local/share/goose"),
+            SandboxFilesystemAccess::ReadWrite
+        )),
+        "the control launch was not given its place"
+    );
+    assert!(!sessions.exists(), "the session logs were made");
+}
+
+/// An instance with a profile directory of its own is given that directory
+/// and none of the places its entry keeps the default sign-in in, which
+/// another instance of the agent signs in by; an instance of the same entry
+/// without one is given them.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_instance_with_its_own_profile_directory_is_given_none_of_the_default_places() {
+    let sample = Sample::new("launch-state-profiled");
+    let home = homed_in(&sample);
+    let peer = standing(&sample);
+    let profile = sample.root().join("profile");
+    fs::create_dir_all(&profile).expect("a profile");
+    let profile = fs::canonicalize(profile).expect("resolved");
+    let entry = keeping(Some("GOOSE_HOME"), &[".config/goose", ".goose"]);
+    let own = peer_agent_in(row_of(&entry), &peer, Some(&profile));
+    let plain = peer_agent_in(row_of(&entry), &peer, None);
+
+    let separate = asked_for(&sample, &own, true, Some(&home), &peer_granted())
+        .await
+        .expect("the sandbox was asked");
+    let made = [".config/goose", ".goose"].map(|place| home.join(place).exists());
+    let shared = asked_for(&sample, &plain, true, Some(&home), &peer_granted())
+        .await
+        .expect("the sandbox was asked");
+
+    let write = SandboxFilesystemAccess::ReadWrite;
+    assert!(separate.permits_path(&profile.join("auth.json"), write));
+    for place in [".config/goose", ".goose"] {
+        let inside = home.join(place).join("auth.json");
+        assert!(
+            !separate.permits_path(&inside, write),
+            "{place} is writable"
+        );
+        assert!(shared.permits_path(&inside, write), "{place} is not");
+    }
+    assert_eq!(made, [false, false], "a default place was created");
+}
+
+/// A place that was there is left as the user has it: its access is not
+/// changed, only a missing one is made private.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_place_that_exists_is_left_as_the_user_has_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sample = Sample::new("launch-state-existing");
+    let home = homed_in(&sample);
+    let peer = standing(&sample);
+    let agent = peer_agent(row_of(&keeping(None, &[".goose"])), &peer);
+    fs::create_dir_all(home.join(".goose")).expect("a place");
+    fs::set_permissions(home.join(".goose"), fs::Permissions::from_mode(0o755)).expect("opened");
+
+    asked_for(&sample, &agent, true, Some(&home), &peer_granted())
+        .await
+        .expect("the sandbox was asked");
+
+    let mode = fs::metadata(home.join(".goose"))
+        .expect("there")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o755);
+}
+
+/// Where the conversation's sandbox is off the roots change nothing: no rule
+/// is added and nothing is created.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unconfined_catalog_launch_gets_no_roots_and_creates_nothing() {
+    let sample = Sample::new("launch-state-unconfined");
+    let home = homed_in(&sample);
+    let peer = standing(&sample);
+    let agent = peer_agent(row_of(&keeping(None, &[".config/goose"])), &peer);
+
+    let asked = asked_for(&sample, &agent, false, Some(&home), &peer_granted())
+        .await
+        .expect("the sandbox was asked");
+
+    assert!(!home.join(".config").exists(), "a place was created");
+    assert!(!asked.enabled());
+    assert!(
+        asked
+            .filesystem()
+            .iter()
+            .all(|rule| !rule.path().starts_with(&home)),
+        "a rule was added under the home"
+    );
+}
+
+/// A built-in route has no catalog entry and so no places: the launch is the
+/// conversation's policy and nothing under the home.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_built_in_route_gets_no_roots() {
+    let sample = Sample::new("launch-state-built-in");
+    let home = homed_in(&sample);
+    let peer = standing(&sample);
+    let registry = Registry::new(&SHIPPED);
+    let agent = agent(&registry, &peer);
+
+    let asked = asked_for(&sample, &agent, true, Some(&home), &granted())
+        .await
+        .expect("the sandbox was asked");
+
+    assert!(
+        asked
+            .filesystem()
+            .iter()
+            .all(|rule| !rule.path().starts_with(&home)),
+        "a rule was added under the home"
+    );
+}
+
+/// Where the child's home is unusable no place becomes a root.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_home_that_is_relative_gives_no_roots() {
+    let sample = Sample::new("launch-state-relative-home");
+    let peer = standing(&sample);
+    let agent = peer_agent(row_of(&keeping(None, &[".config/goose"])), &peer);
+
+    let asked = asked_for(
+        &sample,
+        &agent,
+        true,
+        Some(Path::new("a/relative/home")),
+        &peer_granted(),
+    )
+    .await
+    .expect("the sandbox was asked");
+
+    assert_eq!(
+        asked.filesystem().len(),
+        SandboxPolicy::standard(&sample.workspace())
+            .expect("a policy")
+            .filesystem()
+            .len()
+    );
+    assert!(!Path::new("a/relative/home").exists());
+}
+
+/// A place the list refuses stops the launch before the sandbox is asked and
+/// before anything is made.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_launch_naming_a_listed_place_is_refused_before_the_sandbox_is_asked() {
+    let sample = Sample::new("launch-state-refused");
+    let home = homed_in(&sample);
+    let peer = standing(&sample);
+    let agent = peer_agent(row_of(&keeping(None, &[".config/goose", ".ssh"])), &peer);
+    let policy = SandboxPolicy::standard(&sample.workspace()).expect("a policy");
+    let consent = peer_granted();
+    let state = sample.state();
+    let sessions = sample.sessions();
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let sandbox = Policies {
+        local: local(),
+        asked: Arc::clone(&asked),
+    };
+    let launcher = Launcher::new(
+        Arc::new(sandbox),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    )
+    .homed(&home);
+    let control = Control::new().expect("a control");
+    let mut dialect = agent.row().dialect(Mode::Ask, None, None).expect("asking");
+
+    let turn = launcher
+        .launch(&agent, &control, dialect.as_mut(), None)
+        .await;
+    let step = launcher
+        .account(&agent, &control, dialect.as_mut(), Account::Status, &|_| {})
+        .await;
+
+    for refused in [turn.err(), step.err()] {
+        assert!(
+            matches!(refused, Some(Unlaunched::StatePath { .. })),
+            "{refused:?}"
+        );
+    }
+    assert!(
+        asked
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_empty()
+    );
+    assert!(!home.join(".config").exists(), "a place was created");
+}
+
+/// An instance that sets a profile directory on an agent whose entry names no
+/// variable it reads its home from is refused with a sentence that names the
+/// instance and says what to remove, before its program is looked for.
+#[test]
+fn a_profile_directory_without_a_home_variable_is_refused_naming_the_instance() {
+    let sample = Sample::new("launch-profile-refused");
+    let profile = sample.root().join("profile");
+    let agent = profiled(&sample.root().join("missing"), Some(&profile), None);
+    let consent = peer_granted();
+
+    let refused = agent
+        .program(
+            &consent,
+            &Trust::load(&sample.state(), std::time::SystemTime::now()),
+        )
+        .expect_err("a profile directory that cannot be given");
+
+    assert!(
+        matches!(&refused, Unlaunched::NoSeparateProfile { .. }),
+        "{refused:?}"
+    );
+    assert_eq!(
+        refused.to_string(),
+        "externalAgents.work sets profileDir, but peer offers no separate profile; remove \
+         profileDir from externalAgents.work."
+    );
+}
+
+/// Only an instance that sets a profile directory on an agent that offers none
+/// is refused: one on an agent that reads its home from a variable, and one
+/// that sets none, go on to look for the program.
+#[test]
+fn only_a_profile_directory_the_agent_cannot_take_is_refused() {
+    let sample = Sample::new("launch-profile-accepted");
+    let profile = sample.root().join("profile");
+    let missing = sample.root().join("missing");
+    let consent = peer_granted();
+    let trust = Trust::load(&sample.state(), std::time::SystemTime::now());
+
+    for (directory, variable) in [
+        (Some(&*profile), Some("GOOSE_HOME")),
+        (None, Some("GOOSE_HOME")),
+        (None, None),
+    ] {
+        let agent = profiled(&missing, directory, variable);
+
+        let refused = agent
+            .program(&consent, &trust)
+            .expect_err("the program is missing");
+
+        assert!(
+            matches!(&refused, Unlaunched::NotInstalled(_)),
+            "{directory:?}, {variable:?}: {refused:?}"
+        );
+    }
+}
+
+/// An entry that gives no statement of content use is refused for that, which
+/// nothing installed could change, before the profile directory it cannot take.
+#[test]
+fn a_missing_statement_is_refused_before_a_profile_directory() {
+    let sample = Sample::new("launch-profile-unstated");
+    let profile = sample.root().join("profile");
+    let unstated = entry_keeping(None, None, &[]);
+    let agent = peer_agent_in(
+        row_of(&unstated),
+        &sample.root().join("missing"),
+        Some(&profile),
+    );
+    let consent = Consent::new(Routes::production());
+
+    let refused = agent
+        .program(
+            &consent,
+            &Trust::load(&sample.state(), std::time::SystemTime::now()),
+        )
+        .expect_err("no statement");
+
+    assert!(
+        matches!(&refused, Unlaunched::Unstated { .. }),
+        "{refused:?}"
+    );
+}
+
+/// A launch with a profile directory its agent cannot take starts nothing, for
+/// a turn and for an account step alike.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_launch_with_a_profile_directory_the_agent_cannot_take_starts_nothing() {
+    let sample = Sample::new("launch-profile-nothing-started");
+    let peer = installed(&sample, &Script::of([Reply::lines(["1.0.0"])]));
+    let profile = sample.root().join("profile");
+    let agent = profiled(&peer, Some(&profile), None);
+    let consent = peer_granted();
+    let policy = conversation(&sample);
+    let state = sample.root();
+    let sessions = sample.sessions();
+    let launcher = Launcher::new(
+        local(),
+        Handle::current(),
+        &policy,
+        &consent,
+        &state,
+        &sessions,
+    );
+    let control = Control::new().expect("a control");
+    let mut dialect = agent.row().dialect(Mode::Ask, None, None).expect("asking");
+
+    let turn = launcher
+        .launch(&agent, &control, dialect.as_mut(), None)
+        .await;
+    let step = launcher
+        .account(&agent, &control, dialect.as_mut(), Account::Status, &|_| {})
+        .await;
+
+    for refused in [turn.err(), step.err()] {
+        assert!(
+            matches!(refused, Some(Unlaunched::NoSeparateProfile { .. })),
+            "{refused:?}"
+        );
+    }
+    assert_eq!(fake_peer::played(peer.parent().expect("a directory")), 0);
+    assert!(!profile.exists(), "the profile directory was made");
+}
+
+/// `peer`'s first target, as a pinned interpreter at `python/bin/python3`
+/// starts it through its launcher with `-I`.
+fn interpreted() -> Target {
+    let mut target = entry_keeping(None, None, &[])
+        .targets
+        .first()
+        .expect("a target")
+        .clone();
+    target.cmd = "python/bin/python3".into();
+    target.launch = catalog::Launch::Uvx {
+        interpreter_args: vec!["-I".into()],
+        entry_point: "peer.cli:main".into(),
+    };
+    target
+}
+
+#[test]
+fn a_pinned_interpreter_is_given_its_arguments_then_its_launcher_and_nothing_else_is() {
+    let sample = Sample::new("launch-interpreted");
+    let version = fs::canonicalize(sample.root())
+        .expect("a root")
+        .join("1.0.0");
+    fs::create_dir_all(version.join("python/bin")).expect("a directory");
+    let program = version.join("python/bin/python3");
+    fs::write(&program, b"").expect("an interpreter");
+    let target = interpreted();
+
+    let missing = interpreting(&target, &program, &version);
+    fs::write(version.join(LAUNCHER), b"").expect("a launcher");
+    let given = interpreting(&target, &program, &version);
+    let elsewhere = interpreting(&target, &version.join("bin/python3"), &version);
+    let deeper = interpreting(&target, &version.join("x/python/bin/python3"), &version);
+    let ran = entry_keeping(None, None, &[]);
+    let binary = interpreting(ran.targets.first().expect("a target"), &program, &version);
+
+    assert_eq!(missing, Err(Unlaunchable::Missing));
+    assert_eq!(
+        given,
+        Ok(vec![
+            "-I".to_owned(),
+            version.join(LAUNCHER).to_string_lossy().into_owned(),
+        ])
+    );
+    assert_eq!(elsewhere, Err(Unlaunchable::Missing));
+    assert_eq!(deeper, Err(Unlaunchable::Missing));
+    assert_eq!(binary, Ok(Vec::new()));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_launcher_that_leads_out_of_its_version_is_not_given() {
+    let sample = Sample::new("launch-interpreted-out");
+    let root = fs::canonicalize(sample.root()).expect("a root");
+    let version = root.join("1.0.0");
+    fs::create_dir_all(version.join("python/bin")).expect("a directory");
+    let program = version.join("python/bin/python3");
+    fs::write(&program, b"").expect("an interpreter");
+    fs::write(root.join("elsewhere.py"), b"").expect("a script");
+    std::os::unix::fs::symlink(root.join("elsewhere.py"), version.join(LAUNCHER)).expect("a link");
+
+    assert_eq!(
+        interpreting(&interpreted(), &program, &version),
+        Err(Unlaunchable::Missing)
+    );
+}
+
+/// A `cmd` that does not name the program from the top of its version finds
+/// no launcher, even where the directory as many levels above the program as
+/// `cmd` has parts holds the version's own: one that climbs, one that starts
+/// at the root, and one the program's path does not end in.
+#[test]
+fn a_cmd_that_does_not_name_the_program_from_its_version_finds_no_launcher() {
+    let sample = Sample::new("launch-interpreted-cmd");
+    let version = fs::canonicalize(sample.root())
+        .expect("a root")
+        .join("1.0.0");
+    fs::create_dir_all(version.join("python/bin")).expect("a directory");
+    fs::write(version.join(LAUNCHER), b"").expect("a launcher");
+    let cases = [
+        ("../x", version.join("python").join("x")),
+        ("/bin/python3", version.join("python/bin/python3")),
+        ("python/bin/python3", version.join("other/bin/python3")),
+    ];
+
+    let found: Vec<_> = cases
+        .iter()
+        .map(|(cmd, program)| {
+            let mut target = interpreted();
+            target.cmd = (*cmd).into();
+            interpreting(&target, program, &version)
+        })
+        .collect();
+
+    assert_eq!(found, vec![Err(Unlaunchable::Missing); cases.len()]);
+}
+
+/// A pinned interpreter whose catalog entry does not give it exactly `-I` is
+/// not given its launcher, though one is in place, so no start runs it other
+/// than isolated or runs anything ahead of the launcher: code, a module, or a
+/// file of the workspace's, with `-I` after it taken for that program's own.
+#[test]
+fn a_pinned_interpreter_given_anything_but_exactly_dash_i_is_not_given_its_launcher() {
+    let sample = Sample::new("launch-interpreted-unisolated");
+    let version = fs::canonicalize(sample.root())
+        .expect("a root")
+        .join("1.0.0");
+    fs::create_dir_all(version.join("python/bin")).expect("a directory");
+    let program = version.join("python/bin/python3");
+    fs::write(&program, b"").expect("an interpreter");
+    fs::write(version.join(LAUNCHER), b"").expect("a launcher");
+    let given: [&[&str]; 6] = [
+        &[],
+        &["-E", "-s"],
+        &["-B", "-I"],
+        &["acp", "-I"],
+        &["-c", "x", "-I"],
+        &["-I"],
+    ];
+
+    let found: Vec<_> = given
+        .iter()
+        .map(|arguments| {
+            let mut target = interpreted();
+            target.launch = catalog::Launch::Uvx {
+                interpreter_args: arguments
+                    .iter()
+                    .map(|argument| (*argument).into())
+                    .collect(),
+                entry_point: "peer.cli:main".into(),
+            };
+            interpreting(&target, &program, &version)
+        })
+        .collect();
+
+    let launcher = version.join(LAUNCHER).to_string_lossy().into_owned();
+    assert_eq!(
+        found,
+        vec![
+            Err(Unlaunchable::Unisolated),
+            Err(Unlaunchable::Unisolated),
+            Err(Unlaunchable::Unisolated),
+            Err(Unlaunchable::Unisolated),
+            Err(Unlaunchable::Unisolated),
+            Ok(vec!["-I".to_owned(), launcher]),
+        ]
+    );
+    assert!(
+        Unlaunchable::Unisolated
+            .to_string()
+            .contains("interpreter_args"),
+        "the refusal does not name the field"
+    );
+}
+
+/// `peer`'s first target, as a pinned Node at `node/bin/node` starts it with
+/// its script at `node_modules/peer/cli.js`.
+fn noded() -> Target {
+    let mut target = interpreted();
+    target.cmd = "node/bin/node".into();
+    target.launch = catalog::Launch::Npm {
+        node_args: Vec::new(),
+        bin: "node_modules/peer/cli.js".into(),
+        lock: catalog::Lock {
+            asset: catalog::AssetRef {
+                sha256: "0".repeat(64).into(),
+                size: 1,
+            },
+            unpack_rules: 1,
+        },
+        scripts: Vec::new(),
+    };
+    target
+}
+
+/// A version laid out as a pinned Node's is, under `sample`: its Node, its
+/// preload and its agent's script, each an empty file. Its canonical path and
+/// its Node's.
+fn node_version(sample: &Sample) -> (PathBuf, PathBuf) {
+    let version = fs::canonicalize(sample.root())
+        .expect("a root")
+        .join("1.0.0");
+    fs::create_dir_all(version.join("node/bin")).expect("a directory");
+    fs::create_dir_all(version.join("node_modules/peer")).expect("a directory");
+    let node = version.join("node/bin/node");
+    fs::write(&node, b"").expect("a Node");
+    fs::write(version.join(PRELOAD), b"").expect("a preload");
+    fs::write(version.join("node_modules/peer/cli.js"), b"").expect("a script");
+    (version, node)
+}
+
+#[test]
+fn a_pinned_node_is_given_its_preload_then_its_script_and_nothing_else() {
+    let sample = Sample::new("launch-noded");
+    let (version, node) = node_version(&sample);
+
+    let given = interpreting(&noded(), &node, &version);
+
+    assert_eq!(
+        given,
+        Ok(vec![
+            "--require".to_owned(),
+            version.join(PRELOAD).to_string_lossy().into_owned(),
+            version
+                .join("node_modules/peer/cli.js")
+                .to_string_lossy()
+                .into_owned(),
+        ])
+    );
+}
+
+/// Any Node option at all is refused, though everything is in place, and the
+/// refusal names the field and not what the catalog put in it.
+#[test]
+fn a_pinned_node_given_any_option_is_not_started() {
+    let sample = Sample::new("launch-noded-options");
+    let (version, node) = node_version(&sample);
+    let given: [&[&str]; 4] = [
+        &["--require", "/elsewhere.js"],
+        &["--import", "/elsewhere.mjs"],
+        &["--inspect"],
+        &["--no-warnings"],
+    ];
+
+    let found: Vec<_> = given
+        .iter()
+        .map(|arguments| {
+            let mut target = noded();
+            if let catalog::Launch::Npm { node_args, .. } = &mut target.launch {
+                *node_args = arguments
+                    .iter()
+                    .map(|argument| (*argument).into())
+                    .collect();
+            }
+            interpreting(&target, &node, &version)
+        })
+        .collect();
+
+    assert_eq!(found, vec![Err(Unlaunchable::NodeArgs); given.len()]);
+    let said = Unlaunchable::NodeArgs.to_string();
+    assert!(
+        said.contains("node_args") && !said.contains("elsewhere"),
+        "{said}"
+    );
+}
+
+/// The preload must be the file at the top of the version and the script a
+/// file inside it, each once links are followed; a Node that is not where
+/// `cmd` puts it in the version finds neither.
+#[test]
+fn a_pinned_node_whose_preload_or_script_is_missing_or_outside_its_version_is_not_started() {
+    let sample = Sample::new("launch-noded-missing");
+    let (version, node) = node_version(&sample);
+    let with_bin = |bin: &str| {
+        let mut target = noded();
+        if let catalog::Launch::Npm { bin: given, .. } = &mut target.launch {
+            *given = bin.into();
+        }
+        target
+    };
+    fs::write(sample.root().join("elsewhere.js"), b"").expect("a script outside");
+
+    let climbing = interpreting(&with_bin("../elsewhere.js"), &node, &version);
+    let directory = interpreting(&with_bin("node_modules/peer"), &node, &version);
+    let absent = interpreting(&with_bin("node_modules/peer/gone.js"), &node, &version);
+    let misplaced = interpreting(&noded(), &version.join("bin/node"), &version);
+    fs::remove_file(version.join(PRELOAD)).expect("removed");
+    let unpreloaded = interpreting(&noded(), &node, &version);
+    fs::create_dir(version.join(PRELOAD)).expect("a directory");
+    let preload_directory = interpreting(&noded(), &node, &version);
+
+    for (case, found) in [
+        ("climbing", climbing),
+        ("directory", directory),
+        ("absent", absent),
+        ("misplaced", misplaced),
+        ("unpreloaded", unpreloaded),
+        ("preload directory", preload_directory),
+    ] {
+        assert_eq!(found, Err(Unlaunchable::Missing), "{case}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_preload_or_script_that_leads_out_of_its_version_is_not_given() {
+    let sample = Sample::new("launch-noded-out");
+    let (version, node) = node_version(&sample);
+    let root = fs::canonicalize(sample.root()).expect("a root");
+    fs::write(root.join("elsewhere.js"), b"").expect("a script outside");
+    let script = version.join("node_modules/peer/cli.js");
+
+    fs::remove_file(&script).expect("removed");
+    std::os::unix::fs::symlink(root.join("elsewhere.js"), &script).expect("a link");
+    let scripted = interpreting(&noded(), &node, &version);
+    fs::remove_file(&script).expect("removed");
+    fs::write(&script, b"").expect("a script");
+    fs::remove_file(version.join(PRELOAD)).expect("removed");
+    std::os::unix::fs::symlink(root.join("elsewhere.js"), version.join(PRELOAD)).expect("a link");
+    let preloaded = interpreting(&noded(), &node, &version);
+
+    assert_eq!(scripted, Err(Unlaunchable::Missing));
+    assert_eq!(preloaded, Err(Unlaunchable::Missing));
+}
+
+/// A pinned Node's agent finds its dependencies' programs in the version's
+/// `.bin`, after everything the shell's `PATH` gave, never ahead of it; an
+/// agent started any other way is given no `.bin`.
+#[test]
+fn a_pinned_nodes_bin_goes_last_on_path_and_only_for_it() {
+    let sample = Sample::new("launch-noded-bin");
+    let (version, _) = node_version(&sample);
+    let bin = version.join(BIN).to_string_lossy().into_owned();
+    let separator = if cfg!(windows) { ';' } else { ':' };
+    let request = |environment: &[(&str, &str)]| Request {
+        arguments: vec!["acp".to_owned()],
+        environment: environment
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect(),
+        shown: Vec::new(),
+    };
+    let ran = entry_keeping(None, None, &[]);
+
+    let noded_bin = binning(&noded(), &version);
+    let others = [
+        binning(&interpreted(), &version),
+        binning(ran.targets.first().expect("a target"), &version),
+    ];
+    let onto = binned(request(&[("HOME", "/h"), ("PATH", "/usr/bin")]), Some(&bin));
+    let fresh = binned(request(&[("HOME", "/h")]), Some(&bin));
+    let untouched = binned(request(&[("PATH", "/usr/bin")]), None);
+
+    assert_eq!(noded_bin, Ok(Some(bin.clone())));
+    assert_eq!(others, [Ok(None), Ok(None)]);
+    assert_eq!(
+        onto.environment,
+        vec![
+            ("HOME".to_owned(), "/h".to_owned()),
+            ("PATH".to_owned(), format!("/usr/bin{separator}{bin}")),
+        ]
+    );
+    assert_eq!(onto.arguments, vec!["acp".to_owned()]);
+    assert_eq!(
+        fresh.environment,
+        vec![
+            ("HOME".to_owned(), "/h".to_owned()),
+            ("PATH".to_owned(), bin.clone()),
+        ]
+    );
+    assert!(fresh.shown.contains(&"PATH"), "{:?}", fresh.shown);
+    assert_eq!(
+        untouched.environment,
+        vec![("PATH".to_owned(), "/usr/bin".to_owned())]
+    );
+}
+
+/// A `.bin` whose path holds the separator a `PATH` splits on would put a
+/// directory of its own choosing on it, so it is refused as not text a
+/// `PATH` can hold.
+#[test]
+fn a_bin_whose_path_holds_the_path_separator_is_refused() {
+    let sample = Sample::new("launch-noded-separator");
+    let separator = if cfg!(windows) { ";" } else { ":" };
+    let version = fs::canonicalize(sample.root())
+        .expect("a root")
+        .join(format!("1{separator}0"));
+    fs::create_dir_all(&version).expect("a directory");
+
+    assert_eq!(binning(&noded(), &version), Err(Unlaunchable::Untext));
+}
+
+/// Each refusal a launch gives reads as one line of single-spaced text, and
+/// names the fixed files it is about, never a value the catalog gave.
+#[test]
+fn a_launch_refusal_reads_as_one_line_of_single_spaced_text() {
+    assert_eq!(
+        [
+            Unlaunchable::Missing.to_string(),
+            Unlaunchable::Untext.to_string(),
+            Unlaunchable::Unlisted.to_string(),
+        ],
+        [
+            "its launcher, launch.py, or its preload, preload.cjs, and script are not files \
+             in the version its program lies in",
+            "the path of its launcher, launch.py, or of its preload, preload.cjs, script or \
+             .bin, is not text it can be given",
+            "its version holds launch.py or preload.cjs, and the catalog no longer says how \
+             that version is started",
+        ]
+    );
+}
+
+/// A version laid out as `node_version` lays one out, beside `version`, whose
+/// name extends that version's as `1.0.0x` does `1.0.0`; with a launcher
+/// too. Its path.
+fn extended_sibling(version: &Path) -> PathBuf {
+    let sibling = version.with_file_name("1.0.0x");
+    fs::create_dir_all(sibling.join("node/bin")).expect("a directory");
+    fs::create_dir_all(sibling.join("python/bin")).expect("a directory");
+    fs::create_dir_all(sibling.join("node_modules/peer")).expect("a directory");
+    fs::write(sibling.join("node/bin/node"), b"").expect("a Node");
+    fs::write(sibling.join("python/bin/python3"), b"").expect("an interpreter");
+    fs::write(sibling.join(PRELOAD), b"").expect("a preload");
+    fs::write(sibling.join(LAUNCHER), b"").expect("a launcher");
+    fs::write(sibling.join("node_modules/peer/cli.js"), b"").expect("a script");
+    sibling
+}
+
+/// A version whose name extends another's, as `1.0.0x` and `1.0.0` sit side
+/// by side in the store, is not inside it: a program found in it gives that
+/// version neither its preload nor its launcher, though its path begins with
+/// the version's.
+#[test]
+fn a_program_in_a_version_whose_name_extends_its_own_is_not_given_that_versions_files() {
+    let sample = Sample::new("launch-noded-sibling");
+    let (version, _) = node_version(&sample);
+    fs::write(version.join(LAUNCHER), b"").expect("a launcher");
+    let sibling = extended_sibling(&version);
+
+    let noded = interpreting(&noded(), &sibling.join("node/bin/node"), &version);
+    let interpreted = interpreting(
+        &interpreted(),
+        &sibling.join("python/bin/python3"),
+        &version,
+    );
+
+    assert_eq!(noded, Err(Unlaunchable::Missing));
+    assert_eq!(interpreted, Err(Unlaunchable::Missing));
+}
+
+/// A link in the version that leads into a version whose name extends its
+/// own leads out of it: such a preload, launcher or script is not given.
+#[cfg(unix)]
+#[test]
+fn a_link_into_a_version_whose_name_extends_its_own_is_not_given() {
+    let sample = Sample::new("launch-noded-sibling-link");
+    let (version, node) = node_version(&sample);
+    let sibling = extended_sibling(&version);
+    let python = version.join("python/bin/python3");
+    fs::create_dir_all(version.join("python/bin")).expect("a directory");
+    fs::write(&python, b"").expect("an interpreter");
+    let relink = |at: &Path, to: &Path| {
+        fs::remove_file(at).ok();
+        std::os::unix::fs::symlink(to, at).expect("a link");
+    };
+    let script = version.join("node_modules/peer/cli.js");
+
+    relink(&script, &sibling.join("node_modules/peer/cli.js"));
+    let scripted = interpreting(&noded(), &node, &version);
+    fs::remove_file(&script).expect("removed");
+    fs::write(&script, b"").expect("a script");
+    relink(&version.join(PRELOAD), &sibling.join(PRELOAD));
+    let preloaded = interpreting(&noded(), &node, &version);
+    relink(&version.join(LAUNCHER), &sibling.join(LAUNCHER));
+    let launched = interpreting(&interpreted(), &python, &version);
+
+    assert_eq!(scripted, Err(Unlaunchable::Missing));
+    assert_eq!(preloaded, Err(Unlaunchable::Missing));
+    assert_eq!(launched, Err(Unlaunchable::Missing));
+}
+
+/// A policy a sign-in is confined by reaches its entry's hosts and no others,
+/// whatever the conversation's is, and none the conversation denies; with no
+/// hosts it reaches nothing; and an unconfined conversation gets no grant it
+/// could not hold to.
+#[test]
+fn a_sign_in_reaches_its_entrys_hosts_alone() {
+    let at = std::env::temp_dir();
+    let at = fs::canonicalize(&at).unwrap();
+    let denied = SandboxDomainPattern::new("denied.vendor.example").unwrap();
+    let conversation = SandboxPolicy::new(
+        true,
+        [SandboxFilesystemRule::new(
+            &at,
+            SandboxFilesystemAccess::ReadWrite,
+            SandboxFilesystemProvenance::Workspace,
+        )
+        .unwrap()],
+        &at,
+        SandboxNetworkPolicy::Domains(
+            SandboxDomainPolicy::new(
+                [SandboxDomainPattern::new("widely.example").unwrap()],
+                [denied.clone()],
+                false,
+                [],
+                SandboxNetworkProvenance::User,
+            )
+            .unwrap(),
+        ),
+        SandboxResourceLimits::confining(),
+    )
+    .unwrap();
+
+    let signing = signing_from(&conversation, &["accounts.vendor.example"]).unwrap();
+    let SandboxNetworkPolicy::Domains(reach) = signing.network() else {
+        panic!("a sign-in with hosts reaches them");
+    };
+    let allowed: Vec<&str> = reach
+        .allowed()
+        .iter()
+        .map(SandboxDomainPattern::as_str)
+        .collect();
+    assert_eq!(allowed, ["accounts.vendor.example"]);
+    assert_eq!(reach.denied(), [denied]);
+
+    let closed = signing_from(&conversation, &[]).unwrap();
+    assert!(matches!(closed.network(), SandboxNetworkPolicy::Closed));
+
+    let unconfined = conversation.clone().with_enabled(false);
+    let kept = signing_from(&unconfined, &["accounts.vendor.example"]).unwrap();
+    assert!(!kept.enabled());
 }

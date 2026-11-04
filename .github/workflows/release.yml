@@ -111,7 +111,7 @@ jobs:
       # this commit reached main. check.sh runs the suites through
       # cargo-nextest, the prebuilt one rust-ci.yml installs. Nothing here
       # restores a cache: a release is built from nothing another ref wrote.
-      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: cargo-nextest@0.9.146
       - uses: ./.github/actions/enforcing-sandbox
@@ -172,7 +172,7 @@ jobs:
     env:
       VERSION: ${{ needs.gate.outputs.version }}
     container:
-      image: quay.io/centos/centos:stream9@sha256:086f25bff2b5e44eaa6953c8165cf6c4dcb3af8018b37053b510c7d5d796613c
+      image: quay.io/centos/centos:stream9@sha256:99a7748660352b7d87e5689805ddafa6209d6019d0c5b642b5354656dff02be3
     defaults:
       run:
         shell: bash

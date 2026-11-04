@@ -74,6 +74,9 @@ serde_core.workspace = true
 # A hosted tool's schema is a JSON document, read once for the sentence it
 # describes itself with; this is the parser the configuration crate compiles.
 serde_json.workspace = true
+# The digest a catalog asset is held to, taken of what was fetched before any
+# of it is believed.
+sha2.workspace = true
 # `AppError`, which the command line turns into the sentence a user reads.
 thiserror.workspace = true
 # The one runtime the application owns and lends a handle to. `rt-multi-thread`
@@ -85,6 +88,14 @@ thiserror.workspace = true
 # one-shot channel a native turn's permission question waits on its decision
 # through.
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "sync", "time"] }
+
+# A sign-in the agent runs at a real terminal is started in a process group of
+# its own, so Ctrl+C reaches it alone, and that whole group is killed when the
+# sign-in's bound passes. `std` can put a child in a group but has no call that
+# signals one; `rustix` is already in the tree and is Unix only, as the group
+# and the terminal are.
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["process"] }
 
 [dev-dependencies]
 # The guardrail a headless turn is refused by.

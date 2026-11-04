@@ -34,9 +34,11 @@
 //! agents that build's binary can start.
 
 pub mod access;
+pub mod agent_download;
 pub mod auth;
 pub mod backends;
 pub mod branching;
+pub mod catalog_fetch;
 pub mod client;
 pub mod content_use;
 mod conversation;
@@ -51,6 +53,7 @@ pub mod mcp;
 mod models;
 pub mod native;
 pub mod outside;
+pub mod probing;
 #[cfg(feature = "proof")]
 pub mod proof;
 pub mod providers;

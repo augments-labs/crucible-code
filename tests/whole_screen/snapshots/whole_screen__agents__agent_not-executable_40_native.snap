@@ -2,7 +2,7 @@
 source: tests/whole_screen/agents.rs
 expression: picture
 ---
-40x40 cursor 26,0 scrollback 0
+40x40 cursor 30,0 scrollback 0
 |CRUCIBLE                                |
 |/…/workspace                            |
 |                                        |
@@ -10,6 +10,8 @@ expression: picture
 |────────────────────────────────────────|
 |                                        |
 |Log in                                  |
+|                                        |
+|Claude Code cannot be started.          |
 |                                        |
 |Found                                   |
 |/scratch--------------------------------|
@@ -27,13 +29,11 @@ expression: picture
 |                                        |
 |› Check again                           |
 |  Look for the agent's program again.   |
-|  · 1 more                              |
+|                                        |
+|  Go back                               |
+|  Choose another agent.                 |
 |                                        |
 |esc to go back                          |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
 |                                        |
 |                                        |
 |                                        |

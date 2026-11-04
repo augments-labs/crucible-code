@@ -42,6 +42,7 @@ mod update;
 use std::cell::{Cell, RefCell};
 use std::ffi::OsString;
 use std::io::{self, Write as _};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
@@ -56,7 +57,7 @@ use crucible_app::startup::{self, Startup, assemble, served};
 use crucible_app::subscription::Subscriptions;
 use crucible_auth::Store;
 use crucible_builtins::{Background, Ledger, Plan};
-use crucible_config::{Driver, Home, Settings};
+use crucible_config::{Home, Settings};
 use crucible_models::Effort;
 use crucible_runtime::Cancel;
 use crucible_tools::Revealed;
@@ -188,11 +189,12 @@ completion SHELL writes a completion script for bash, zsh, fish, powershell \
 or elvish, made from this command line as it is, and stops. It reads no \
 configuration and opens no terminal.
 
-agents install DRIVER downloads the release of an installed coding agent \
-this build pins, antigravity's agent server, checks its size and SHA-256 \
-against the pin, unpacks it under crucible's home and stops; a release \
-already there is kept. /login then runs that release for an agent it sets \
-up.
+agents search lists the coding agents the agent catalog offers and stops. \
+agents install, add, update, rollback and remove each ask on this terminal \
+before anything is downloaded or changed, and stop; with no terminal to ask \
+on, nothing changes. agents verify checks an installed agent's files against \
+what was installed, and agents sign-in signs a configured instance in. /login \
+then runs an installed release for an agent it sets up.
 
 update says whether a release later than this one is out and, where \
 install.sh installed crucible, downloads it, checks it against the release's \
@@ -307,8 +309,8 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Install a coding agent crucible can run, where this build downloads
-    /// its release for you, and stop.
+    /// Search, install, update, remove or sign in the coding agents the agent
+    /// catalog offers, and stop.
     Agents {
         #[command(subcommand)]
         action: AgentsAction,
@@ -322,12 +324,89 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum AgentsAction {
-    /// Download the release of an agent this build pins, check it is that
+    /// List the agents the agent catalog offers, with the versions it offers
+    /// and those installed, and stop.
+    Search {
+        /// Keep only the agents whose name holds this, ignoring case.
+        text: Option<String>,
+    },
+    /// Download the release of an agent the agent catalog offers, check it is that
     /// release and put it where crucible runs it from, and stop.
     Install {
-        /// The agent, as externalAgents names its driver.
-        #[arg(value_parser = agents::driver)]
-        driver: Driver,
+        /// The agent, as the agent catalog names it.
+        agent: String,
+        /// The release, where not the newest the catalog offers this platform.
+        version: Option<String>,
+    },
+    /// Install an agent's release as `install` does, write one more instance of
+    /// it into your configuration, and stop.
+    Add {
+        /// The agent, as the agent catalog names it.
+        agent: String,
+        /// The release, where not the newest the catalog offers this platform.
+        version: Option<String>,
+    },
+    /// Move an installed agent to the release the agent catalog now offers for
+    /// it, and stop.
+    Update {
+        /// The agent, as the agent catalog names it.
+        agent: String,
+    },
+    /// Move an installed agent back to the release it was on before, and stop.
+    Rollback {
+        /// The agent, as the agent catalog names it.
+        agent: String,
+    },
+    /// Remove an installed agent's program from this host, and stop.
+    Remove {
+        /// The agent, as the agent catalog names it.
+        agent: String,
+    },
+    /// Check an installed agent's files against what was recorded when it was
+    /// installed, and stop.
+    Verify {
+        /// The agent, as the agent catalog names it.
+        agent: String,
+    },
+    /// Sign a configured instance of an agent in, and stop.
+    SignIn {
+        /// The instance, as externalAgents names it.
+        instance: String,
+        /// The sign-in method, where its agent offers more than one.
+        #[arg(long)]
+        method: Option<String>,
+    },
+    /// Unpack a download the agent catalog describes, or a package tree its
+    /// lock describes, by the rules an install holds it to, write the file
+    /// list it unpacked to as JSON, and stop.
+    ///
+    /// The catalog's intake runs it, so `--help` leaves it out.
+    #[command(hide = true)]
+    UnpackCheck {
+        /// One artifact as the catalog spells it, with no file list; or a
+        /// package tree's lock, where the download is a directory.
+        entry: PathBuf,
+        /// The download; or, for a lock, the directory holding each of its
+        /// tarballs under the SHA-512 it is pinned by.
+        artifact: PathBuf,
+        /// The directory to unpack into, which must not exist.
+        out: PathBuf,
+    },
+    /// Start an agent the agent catalog describes from where its release was
+    /// unpacked, in a sandbox with no network, ask it to initialize, write
+    /// what it said as JSON, and stop.
+    ///
+    /// The catalog's intake runs it, so `--help` leaves it out.
+    #[command(hide = true)]
+    Probe {
+        /// The directory the release was unpacked into.
+        root: PathBuf,
+        /// One entry as the catalog spells it.
+        entry: PathBuf,
+        /// Start the agent without the sandbox where this machine's cannot close
+        /// the network, and say so in the output; for a disposable machine only.
+        #[arg(long)]
+        unconfined: bool,
     },
 }
 
@@ -570,13 +649,7 @@ pub(crate) fn start() -> ExitCode {
         (Some(Command::Update { check, dry_run }), _, _) => {
             return update::updated(*check, *dry_run);
         }
-        (
-            Some(Command::Agents {
-                action: AgentsAction::Install { driver },
-            }),
-            _,
-            _,
-        ) => return agents::install(*driver),
+        (Some(Command::Agents { action }), _, _) => return agents::acted(action),
         (Some(Command::Mcp { action }), _, _) => declared(action),
         (
             Some(Command::Sessions {
@@ -1284,20 +1357,13 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     //
     // Built here and armed there, because this is the last point at which the
     // services can be reached: they move into the run below, and what the
-    // conversation is handed is the closure rather than the owner. The owner it
-    // holds is the same one the shutdown joins the check through, because a
-    // clone shares the one task slot, the one client and the one cancellation.
-    let arming: Option<Box<dyn FnOnce()>> = if asking {
-        let runtime = services.runtime().handle().map_err(AppError::from)?;
-        let release = services.release().clone();
-        let home = home.path().to_owned();
-        Some(Box::new(move || {
-            release.runs_on(runtime);
-            release.refresh(&home);
-        }))
-    } else {
-        None
-    };
+    // conversation is handed is the closure rather than the owner.
+    let arming = arm(
+        asking,
+        services,
+        home.path(),
+        crucible_app::catalog_fetch::Source::published(&from),
+    )?;
 
     // The generation the launch above read its provider out of, taken once so
     // the arm that was resolved and the model record its limits come from are
@@ -1316,6 +1382,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         mode,
         settings: &settings,
         sessions: home.sessions(),
+        state: &crucible_app::catalog_fetch::state_in(home.path()),
         workspace: &workspace,
         ledger: &ledger,
         revealed: &revealed,
@@ -1348,6 +1415,41 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     draw::parting(&mut renderer, &outcome?, terms.style())?;
 
     Ok(())
+}
+
+/// What is asked again once the first frame is on the screen, or nothing where
+/// nothing is asking.
+///
+/// The release check and the catalog fetch beside it are armed together, so
+/// neither is armed where the other is not: a setting that stops one stops the
+/// other, and a closure that is never returned is a socket never opened. The
+/// owners the closure holds are the ones the shutdown joins them through,
+/// because a clone shares the one task slot, the one client and the one
+/// cancellation.
+///
+/// # Errors
+///
+/// [`AppError`] where the runtime they would run on could not be started.
+fn arm(
+    asking: bool,
+    services: &Services,
+    home: &Path,
+    catalog: crucible_app::catalog_fetch::Source,
+) -> Result<Option<Box<dyn FnOnce()>>, AppError> {
+    if !asking {
+        return Ok(None);
+    }
+    let runtime = services.runtime().handle().map_err(AppError::from)?;
+    let release = services.release().clone();
+    let release_home = home.to_owned();
+    let fetching = services.catalog().clone();
+    let state = crucible_app::catalog_fetch::state_in(home);
+    Ok(Some(Box::new(move || {
+        release.runs_on(runtime.clone());
+        release.refresh(&release_home);
+        fetching.runs_on(runtime);
+        fetching.refresh(&state, catalog);
+    })))
 }
 
 /// What the launch resolved, before anything was drawn.

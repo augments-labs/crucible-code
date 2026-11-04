@@ -126,7 +126,8 @@ impl Document {
     /// [`ConfigError::Variant`], [`ConfigError::Unrooted`] or
     /// [`ConfigError::Relative`] when a provider's access or an agent instance
     /// writes a key its variant does not read, or names its program or profile
-    /// by a path that is not rooted.
+    /// by a path that is not rooted, and [`ConfigError::Variant`] when two
+    /// agent instances write one profile directory two ways.
     ///
     /// [`ConfigError::Needed`] for a block written without a key it cannot mean
     /// anything without.

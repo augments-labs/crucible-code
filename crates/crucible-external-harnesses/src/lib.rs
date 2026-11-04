@@ -1,8 +1,8 @@
-//! Another vendor's coding agent, run as a supervised process behind the
-//! execution contract.
+//! Supervises another vendor's agent and keeps the releases it runs from.
 
 pub mod acp;
 pub mod antigravity;
+pub mod catalog;
 pub mod claude;
 #[cfg(feature = "proof")]
 pub mod conformance;
@@ -14,11 +14,13 @@ mod launch;
 mod lifecycle;
 mod pending;
 pub mod release;
+pub mod store;
 
 pub use antigravity::Ended;
 pub use host::{
-    Account, Act, CANCEL_GRACE, Control, Dialect, Host, PREPARING, RAN_BYTES, Ran, Reading,
-    SILENCE, STOP_GRACE, Shape, Told, Undecided, Unstopped, WAITING, WITHHELD_BYTES, stripped,
+    Account, Act, CANCEL_GRACE, Control, Dialect, Holding, Host, PIPED_LINE_BYTES, PREPARING,
+    Piped, RAN_BYTES, Ran, Reading, SILENCE, STOP_GRACE, Shape, SignInChannel, Told, Typed, Typing,
+    Undecided, Unstopped, WAITING, WITHHELD_BYTES, stripped,
 };
 pub use journal::{
     Entries, HISTORY, JOURNAL_BYTES, Journal, JournalError, REFERENCE_BYTES, Record, Stage, Work,

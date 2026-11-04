@@ -1,0 +1,17 @@
+{
+  "most_scripts_shown": 16,
+  "cases": [
+    {"name": "a build alone", "scripts": [["node_modules/peer", "built"]], "refused": false},
+    {"name": "a build beside a script nothing runs", "scripts": [["node_modules/peer", "built"], ["node_modules/peer", "inert"]], "refused": false},
+    {"name": "two scripts run at install on one package", "scripts": [["node_modules/peer", "local"], ["node_modules/peer", "local"]], "refused": false},
+    {"name": "two scripts run at install on nested packages", "scripts": [["node_modules/peer", "local"], ["node_modules/peer/node_modules/inner", "local"]], "refused": false},
+    {"name": "builds of sibling packages", "scripts": [["node_modules/peer", "built"], ["node_modules/other", "built"]], "refused": false},
+    {"name": "builds of packages one name a prefix of the other", "scripts": [["node_modules/peer", "built"], ["node_modules/peer-two", "built"]], "refused": false},
+    {"name": "two builds of one package", "scripts": [["node_modules/peer", "built"], ["node_modules/peer", "built"]], "refused": true},
+    {"name": "a build then a script run at install on one package", "scripts": [["node_modules/peer", "built"], ["node_modules/peer", "local"]], "refused": true},
+    {"name": "a script run at install then a build on one package", "scripts": [["node_modules/peer", "local"], ["node_modules/peer", "built"]], "refused": true},
+    {"name": "builds of nested packages", "scripts": [["node_modules/peer", "built"], ["node_modules/peer/node_modules/inner", "built"]], "refused": true},
+    {"name": "a build above a script run at install", "scripts": [["node_modules/peer", "built"], ["node_modules/peer/node_modules/inner", "local"]], "refused": true},
+    {"name": "a build below a script run at install", "scripts": [["node_modules/peer", "local"], ["node_modules/peer/node_modules/inner", "built"]], "refused": true}
+  ]
+}

@@ -141,7 +141,7 @@ back from it:
 | --- | --- |
 | `subscription` | The account `/login` signed in. A key exported in the shell is not read. |
 | `apiKey` | The key in the provider's variable, then the one `/login` stored. A signed-in account is not used. |
-| `externalAgent` | The installed agent `instance` names under [`externalAgents`](#externalagents), whose driver must reach this provider. |
+| `externalAgent` | The installed agent `instance` names under [`externalAgents`](#externalagents), whose driver must reach this provider. A `catalog` agent reaches none, so it is refused here. |
 
 What the chosen way is missing stops the start with a sentence naming the
 setting, and never suggests the other way: `subscription` with no account says
@@ -221,20 +221,138 @@ choosing that `providers.<name>.access.instance` uses. At most 32.
 
 | Key | Means |
 | --- | --- |
-| `driver` | Which agent it is: `claude`, which reaches `anthropic`, or `antigravity`, which reaches `google`. Required. |
+| `driver` | Which agent it is: `claude`, which reaches `anthropic`; `antigravity`, which reaches `google`; or `catalog`, an agent from the catalog or the ACP Registry, which `agent` names and which reaches no provider. Required. |
+| `agent` | For `catalog`, and required for it: the key the catalog or the ACP Registry offers the agent under, 1 to 32 lowercase letters, digits and hyphens. A driver's word, `native`, and a name Windows keeps for a device (`con`, `prn`, `aux`, `nul`, `com0` to `com9`, `lpt0` to `lpt9`) are never a key. Refused for any other driver. |
 | `executable` | Its program: an absolute path, or a bare name found on `PATH`. Required. |
 | `enabled` | `false` keeps the entry and sends it no new work; a provider whose `access` still names it is refused at start. Defaults to `true`. |
 | `authentication` | How it signs in: `account`, its own login, the only value. |
 | `configDir` | For `claude`: the absolute directory it keeps its sign-in under. |
-| `profileDir` | For `antigravity`: the same, and required, since its usual one is the Antigravity IDE's. |
+| `profileDir` | For `antigravity`: the same, and required, since its usual one is the Antigravity IDE's. For `catalog`: the same, but only for an agent whose catalog entry names the variable it reads its home from, which crucible sets to this directory; an entry that sets it keeps its sign-in there and, under the sandbox, may write that directory and none of the places the entry keeps the default sign-in in. For any other catalog agent it is refused when the agent is started, naming the entry and saying that agent offers no separate profile. |
 | `model` | For `claude`: the model it is started on, such as `claude-opus-5-5`. Defaults to Anthropic's default model. |
 | `effort` | For `claude`: the rung it is started at, `low`, `medium`, `high`, `xhigh` or `max`. Defaults to the model's default rung. |
+| `cloudProject` | For `antigravity`: the Google Cloud project its business sign-in (`oauth-business`) is billed to, by its project ID: 6 to 30 lowercase letters, digits and hyphens, starting with a letter and not ending with a hyphen. |
+| `cloudLocation` | For `antigravity`: the Google Cloud location of that project's service, such as `us-central1`, `us`, `eu` or `global`: 1 to 63 lowercase letters, digits and hyphens, not starting or ending with a hyphen. |
 
-A profile key belongs to its driver, and the other driver's is refused by name.
+`cloudProject` and `cloudLocation` are given together or not at all, and an
+entry for another driver that names either is refused, saying `antigravity`
+reads them. They are written into the agent's own settings at its next
+business sign-in, which is refused, naming both, for an entry that gives
+neither; see [Antigravity](../providers/agents.md#antigravity).
+
+A profile key belongs to the drivers that read it, `configDir` to `claude` and
+`profileDir` to `antigravity` and `catalog`, and any other is refused by name.
+Entries share a profile where they write its directory alike, so two that write
+one directory differently, with and without a trailing `/` or, where both
+directories exist, through a link, are refused, naming both; spell it the same
+way in each.
+A `catalog` agent started without a `profileDir` is not given the home your shell
+has in that variable, so it does not sign in to your own.
+Under the sandbox, a `catalog` agent without a `profileDir` may also write the
+places its catalog entry says it keeps its sign-in in, joined to your home
+(`HOME`, or `USERPROFILE` on Windows), so that a sign-in made there is still
+there at the next start; one with a `profileDir` keeps its sign-in there and is
+given none of those places, so it cannot change the account another instance of
+the agent is signed in to. A place that is missing is created for you alone,
+and one that is there is left as it is, whatever its access. If a place leads
+somewhere else by the time it is made than where it was checked, the agent is
+not started, and neither is it where a place already holds a `.git`, `.agents`,
+`.codex` or `.crucible` directory, which the conversation protects, so that the
+agent could not write it; the refusal names the entry and the place. A place
+whose links lead out of your home, as a dotfile manager's link can, is refused.
+Names are compared by their parts, ignoring case as the
+most forgiving file system would, and, on Windows, the dots and spaces that end
+a name; a place with a part outside ASCII is refused, since two spellings of one
+name cannot be told apart.
+These are never made writable, since what is written there runs as you or holds
+what signs in as you:
+
+- the shell startup and logout files (`.bashrc`, `.bash_profile`,
+  `.bash_login`, `.bash_logout`, `.bash_aliases`, `.profile`, `.zshrc`,
+  `.zprofile`, `.zshenv`, `.zlogin`, `.zlogout`) and `.config/fish`;
+- the files a session reads as it begins (`.xprofile`, `.xinitrc`,
+  `.xsession`, `.xsessionrc`, `.pam_environment`, `.config/user-dirs.dirs`);
+- what a shell, an editor or a terminal reads as one starts (`.cargo/env`,
+  `.bash_completion`, `.bash_completion.d`, `.vimrc`, `.vim`, `.config/nvim`,
+  `.emacs`, `.emacs.d`, `.tmux.conf`, `.inputrc`, `Documents/WindowsPowerShell`
+  and `Documents/PowerShell`);
+- `.ssh`, `.gnupg` and `.aws`;
+- the stores of what signs in as you (`.cargo/credentials.toml`,
+  `.cargo/credentials`, `.netrc`, `.git-credentials`, `.pypirc`, `.config/gh`,
+  `.config/gcloud`, `.azure`, `.password-store`), the profiles of browsers and
+  mail (`.mozilla`, `.config/google-chrome`, `.config/chromium`,
+  `.thunderbird`) and `Library/Keychains`;
+- the configuration of programs that run what it names (`.gitconfig`,
+  `.config/git`, `.cargo/config.toml`, `.cargo/config`, `.npmrc`, `.docker`,
+  `.kube`) and `.config/environment.d`;
+- what interpreters and the message bus run (`.local/lib`,
+  `.local/share/dbus-1`);
+- the directories programs are found in (`bin`, `.local/bin`, `.cargo/bin`,
+  `AppData/Local/Microsoft/WindowsApps`) and `.rustup`, whose toolchains the
+  programs in `.cargo/bin` run;
+- the places that start programs when you sign in (`.config/autostart`,
+  `.config/systemd`, `.local/share/systemd`, `.local/share/applications`,
+  `Library/LaunchAgents`, `Library/LaunchDaemons` and the Windows Start Menu);
+- crucible's own home, and the directory it keeps your session logs in, wherever
+  it is kept.
+
+This list is a floor beneath what a catalog signature vouches for, and it
+holds whole for an ACP Registry entry, which nothing has reviewed. It is not
+every place that runs as you or holds what signs in as you. A place must also
+begin with a name that is hidden by its leading dot, `Library` or `AppData`, so
+that none of your own files, such as `Documents`, `src` or `go/bin`, can be one
+an agent keeps its sign-in in, while
+`.goose`, `Library/Application Support/goose` and `AppData/Roaming/goose` can.
+An agent whose entry names one of them, a place within one, a place that
+contains one, or a place that does not begin so, is refused when it is started,
+naming the entry and the path. The directories that hold every program's data
+(`.config`, `.local`, `.local/share`, `.local/state`, `.cache`, `Library`,
+`Library/Application Support`, `AppData`, `AppData/Roaming` and `AppData/Local`)
+are refused as themselves, and as a place that contains one of the above, but a
+directory within one for the agent alone, such as `.config/goose`, is not. An
+agent whose entry names neither a variable nor a place keeps no sign-in under
+the sandbox, and one started where your home is not set to an absolute path is
+given no place to write.
+A `catalog` agent chooses its own model, so `model` and `effort` are refused
+for it. A session one ran is bound to its key, so once the entry names
+another `agent` that session is not resumed on it.
 An entry names a program crucible would start, so the block is read only from
 the configuration file in your home directory, and `/settings` shows none of
 it. A provider whose access names an entry has its conversations run by that
 agent; see [installed coding agents](../providers/agents.md).
+
+### `agents`
+
+| Key | Means |
+| --- | --- |
+| `update` | `ask`, the default, puts every update of an installed catalog agent to you; `reviewed` takes an update to a version the reviewed catalog lists, and has not revoked, without asking. A release read from the ACP Registry is always asked. |
+
+```json
+{ "agents": { "update": "reviewed" } }
+```
+
+`reviewed` skips one question only: the one before an update. A first install, a
+rollback and a removal are still asked, and so is a version the catalog does not
+list. A release with an install script to run at install is always asked,
+showing the script's command and the hosts it can reach. Every other check an
+update makes still runs and still refuses: the catalog's signature, the
+download's pin and hosts, revocation, and the smoke test where your sandbox
+allows one. A registry release has no signature, review, revocation list or
+serial: its receipt's archive hash and probe record are what hold it, and
+`reviewed` never takes an update to it. Your yes to the vendor receiving what you send is a
+separate question that `reviewed` never answers. An update taken this way is
+reported as taken under `agents.update = "reviewed"`.
+
+Only an update to a version strictly newer than the one in place, from a catalog
+no older than the one it was installed from, is taken unasked; anything else is
+put to you as it is under `ask`. Under `reviewed` the catalog's signature is the
+only gate an update passes without you, so a compromised signing key would
+install unattended on every machine that sets it; leave it at `ask` if you do
+not accept that. An update taken unasked says whether it was smoke-tested, and
+why not where it was not.
+
+The key puts a new program in place without a question, so it is read only from
+the configuration file in your home directory. In a project file it is refused,
+naming the file. `/settings` shows no row for it.
 
 ### `systemPrompt`
 
@@ -742,16 +860,19 @@ that crucible has stopped keeping its oldest lines, the redraw opens with a line
 saying the earlier output is in the session log. A list or panel standing over
 the box, as `/model`, `/settings`, the `/` list, the queue and the Ctrl+O view
 do, takes at most half the window, or the least it can be drawn in where that is
-more; the transcript rows it takes within that stay in the terminal's
+more. A question asked before something changes, such as the install, sign-in,
+sign-out and add questions `/login`, `/logout` and `/catalog` ask, takes the
+whole window where it needs it, so you read every fact before you answer. The
+transcript rows a panel or a question pushes off the top stay in the terminal's
 scrollback, and when it closes the box stays at the foot of the window, and the
-rows the panel stood in are left blank between the transcript and the box.
+rows it stood in are left blank between the transcript and the box.
 
 | Limitation | What you do instead |
 | --- | --- |
 | **A finished row does not change once it is sealed out of the live region**, the part at the foot still being drawn, often while it is still visible on screen. It changes only when a resize writes the conversation again. | Use **Ctrl+O** to see the full text of a tool result the window cut short, in a panel where you can step through it or close it. |
 | **The screen cannot be emptied.** `/clear` and `/resume` write below what is there, after a `new session` or `session resumed` divider. A `/clear` before anything has been said writes no divider, only `nothing had been said`, since no session ended there. | Scroll up past the divider to read the earlier transcript. It stays in your terminal's scrollback until you resize the window; after that, `/resume` the earlier session to read it. |
 | **A click or a resting pointer in the transcript opens and lights nothing.** crucible does not ask for the mouse in native mode, so the wheel, a drag and a click are your terminal's. | Press **Ctrl+O** for cut results: **↑**/**↓** move a row, **PgUp**/**PgDn** a page, **←**/**→** step from result to result, and **Esc** closes. Press **Ctrl+B** for the list of commands left running; while a turn runs, it first leaves a running command in the background where there is one. |
-| **Rows a panel pushes off the top do not come back until the window is resized.** A panel standing over the box (`/settings`, `/model`, `/theme`, Ctrl+O, the `/` list) takes at most half the window, or the least it can be drawn in where that is more. Transcript rows it pushes off the top of the window go into your terminal's scrollback, and when it closes the box stays at the foot of the window, and the rows the panel stood in are left blank between the transcript and the box. | Scroll up in your terminal to read those rows. A panel with more than its room scrolls inside. |
+| **Rows a panel pushes off the top do not come back until the window is resized.** A panel standing over the box (`/settings`, `/model`, `/theme`, Ctrl+O, the `/` list) takes at most half the window, or the least it can be drawn in where that is more. A question asked before something changes, such as `/login`'s and `/catalog`' install, sign-in and add questions or `/logout`'s sign-out question, takes the whole window where it needs it, so every fact is read before the answer. Transcript rows a panel or a question pushes off the top of the window go into your terminal's scrollback, and when it closes the box stays at the foot of the window, and the rows the panel stood in are left blank between the transcript and the box. | Scroll up in your terminal to read those rows. A panel with more than its room scrolls inside. |
 | **A resize replaces your terminal's scrollback.** Once the window stops changing size, crucible clears the screen and the scrollback and writes the conversation again at the new width, so whatever your shell printed before crucible started goes too, and so does the transcript from before a `/clear` or `/resume`. A change of height alone, such as zooming a tmux pane or opening a pane above or below crucible, is a resize too, on purpose: on a terminal that rewraps its lines, a window made shorter would otherwise leave a second copy of the rows at its foot in the scrollback. A terminal that ignores the request to clear its scrollback keeps the old rows above the new ones. | Copy what you need from your shell's earlier output before resizing, or run crucible in a tab of its own. An earlier session is still there to `/resume`. |
 
 ### `updates`
@@ -773,8 +894,39 @@ your directory or your configuration is sent. The request is a plain GET for
 the repository's latest release, carrying a user agent that names crucible and
 its version.
 
-`never` stops the asking. crucible then never contacts GitHub on its own, and
-never says anything about releases. Running
+Beside it, on the same schedule, crucible asks GitHub for the catalog of
+agents that its own review admitted: the index and its signature, two files
+under the catalog repository's published release. GitHub may answer with a
+redirect to its own asset storage; crucible follows a redirect only to GitHub's
+own hosts. The files are read within a megabyte and thirty seconds, and the
+catalog is believed only if its signature verifies under a key built into
+crucible. It is kept under `state` in crucible's home directory, and a catalog
+that is signed wrongly, has a lower serial than the one kept, has expired or is
+in a schema crucible does not read changes nothing. The request is a plain GET
+and sends nothing of your session, your directory or your configuration. It is
+made no sooner than a day after the last time crucible made it, whether or not
+that attempt got a catalog crucible believes, so one that could not be fetched
+is not asked for again at the next start. Opening `/catalog` or `/login`'s agent
+choice, or running any `crucible agents` command, asks for the catalog
+whatever this is set to, since you asked; only the asking crucible does on its
+own obeys it.
+
+The ACP Registry is not fetched on that schedule. Its index is fetched when
+`/catalog` opens, when `crucible agents search` runs, or when an install, add,
+update or rollback starts, within one megabyte and thirty seconds. `remove` and
+`verify` never fetch it, and `sign-in` reads only the cached copy, as `/login`'s
+agent choice does. The cached copy is reused for five minutes. It is unsigned
+and not reviewed by Crucible: there is no signature, serial, expiry, revocation
+list or
+anti-rollback. A fresh install accepts a same-version archive the registry
+replaces; an installed version keeps the hash its receipt recorded and refuses
+a different same-version archive until it is removed. A cached index that could
+not be refreshed is used with a line saying it was not verified; with no cached
+copy the read is refused with the line that stopped it. `updates.check` does
+not govern it.
+
+`never` stops the asking. crucible then never contacts GitHub on its own, for a
+release or for the catalog, and never says anything about releases. Running
 [`crucible update`](../reference/cli.md#update---check----dry-run) is still
 asking, so it reaches GitHub whatever this is set to.
 
@@ -876,7 +1028,7 @@ is still not a way to ship somebody's key.
 The same refusal covers every key that could loosen what crucible does unasked:
 `permissions.mode`, `permissions.allow`, `permissions.extraDirectories`,
 `systemPrompt.custom`, `providers.<name>.apiKeyEnv`, `providers.<name>.baseUrl`,
-`providers.<name>.access`, `providers.<name>.fast`, `provider`, `externalAgents`, `promptCaching.namespace`,
+`providers.<name>.access`, `providers.<name>.fast`, `provider`, `externalAgents`, `agents.update`, `promptCaching.namespace`,
 `contentUse.accepted`, and `sandbox.enabled` set to `false`. Everything after
 the three `permissions` keys is not a permission, and is here for the same
 reason: these replace the instructions that say to ask, choose which credential

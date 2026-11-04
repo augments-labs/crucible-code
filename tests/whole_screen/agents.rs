@@ -14,7 +14,7 @@ use crucible_external_harnesses::fake_peer::scripts::claude;
 use crucible_external_harnesses::fake_peer::{self, Reply, Script};
 
 use crate::vendor::Vendor;
-use crate::watched::{self, Watched};
+use crate::watched::{self, Published, Watched};
 use crate::{scrubbed, takes, timeless};
 
 /// The widths every screen is captured at, each with rows enough for the
@@ -151,6 +151,20 @@ fn moved_onto(window: &Watched) {
     assert!(!picture.contains("no credential"), "{picture}");
 }
 
+/// Fails where the door's question on `picture` gives up its headline, as the
+/// door words it, or either of its choices, each read off a row of its own
+/// with the mark taken off.
+fn asks(case: &str, picture: &str, headline: &str, choices: [&str; 2]) {
+    assert!(picture.contains(headline), "{case}: {headline}\n{picture}");
+    for choice in choices {
+        let offered = picture.lines().any(|row| {
+            let row = row.trim_matches('|').trim();
+            row.strip_prefix('›').unwrap_or(row).trim_start() == choice
+        });
+        assert!(offered, "{case}: no choice {choice}\n{picture}");
+    }
+}
+
 #[test]
 fn the_first_login_panel_offers_an_installed_agent() {
     captured(
@@ -187,8 +201,122 @@ fn an_agent_whose_program_is_not_installed_says_so() {
             agents(window);
             takes(window, "Antigravity");
             window.types_until("", "Not installed");
+            // `/login` carries an install out, so it is offered, first.
+            assert!(
+                window.picture().contains("› Install"),
+                "{}",
+                window.picture()
+            );
         },
     );
+}
+
+#[test]
+fn an_agent_installed_after_a_yes_shows_its_download_then_the_agents_again() {
+    for native in [false, true] {
+        for size in SIZES {
+            let mode = if native { "native" } else { "fullscreen" };
+            let case = format!("agent-installing-{}-{mode}", size.0);
+            let published = Published::start();
+            let vendor = Vendor::answering("Not asked.");
+            let script = Script::of(Vec::new());
+            let mut window = Watched::capturing_agents_published(
+                &case,
+                (size, native),
+                &vendor,
+                Some(&script),
+                &published,
+            );
+            agents(&mut window);
+            takes(&mut window, "Antigravity");
+            window.types_until("", "Not installed");
+            takes(&mut window, "Install");
+            window.types_until("", "Read the terms first");
+            // The window holds the whole question in either mode, so every
+            // fact is read before the answer: one part of each that sits on
+            // one row at either width and leaves out the host's port, which
+            // changes from run to run.
+            let asked = window.picture();
+            asks(
+                &case,
+                &asked,
+                "Install antigravity 1.3.0?",
+                ["Install", "Cancel"],
+            );
+            for fact in [
+                "bytes to",
+                "hosts it may reach",
+                "Licence Proprietary; terms at",
+                "https://example.com/terms.",
+                "Caution: Read the terms first.",
+                "Started as: agy_acp_server.par",
+                "Started with no environment of its own.",
+                "Moves no configured instance",
+                "Not smoke-tested",
+            ] {
+                assert!(asked.contains(fact), "{case}: {fact}\n{asked}");
+            }
+            takes(&mut window, "Install");
+            // The host sends half the program and holds the rest back, so
+            // the download stands where it is until this has seen it.
+            window.types_until("", "50%");
+            let picture = scrubbed(&timeless(&window.picture()), &case);
+            insta::assert_snapshot!(format!("install_downloading_{}_{mode}", size.0), picture);
+
+            published.release();
+            window.types_until("", "installed");
+            window.types_until("", "Which installed agent");
+            let picture = scrubbed(&timeless(&window.picture()), &case);
+            insta::assert_snapshot!(format!("install_done_{}_{mode}", size.0), picture);
+        }
+    }
+}
+
+#[test]
+fn escape_while_an_install_downloads_cancels_it_and_the_agents_stand_again() {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let case = format!("agent-install-cancelled-{mode}");
+        let published = Published::start();
+        let vendor = Vendor::answering("Not asked.");
+        let script = Script::of(Vec::new());
+        let mut window = Watched::capturing_agents_published(
+            &case,
+            (SIZES[0], native),
+            &vendor,
+            Some(&script),
+            &published,
+        );
+        agents(&mut window);
+        takes(&mut window, "Antigravity");
+        window.types_until("", "Not installed");
+        takes(&mut window, "Install");
+        window.types_until("", "Read the terms first");
+        takes(&mut window, "Install");
+        // The host holds the second half back and is never told to send it,
+        // so the download is still running when Escape is pressed.
+        window.types_until("", "50%");
+        window.types_until("\x1b", "download cancelled; nothing was changed");
+        // The whole row: the user asked for the cancel, so it is said as the
+        // command's answer, after the gutter native mode draws an answer under,
+        // and not as a refusal, which opens with "! ".
+        let answered = if native {
+            "⎿ download cancelled; nothing was changed"
+        } else {
+            "download cancelled; nothing was changed"
+        };
+        let picture = window.picture();
+        assert!(
+            picture
+                .lines()
+                .any(|row| row.trim_matches('|').trim_end() == answered),
+            "the cancel is not said as the command's answer\n{picture}"
+        );
+        window.types_until("", "Which installed agent");
+        // Nothing was put in place: the agent's row reads as it did before.
+        takes(&mut window, "Antigravity");
+        window.types_until("", "Not installed");
+    }
 }
 
 #[test]
@@ -810,20 +938,18 @@ fn space(case: &str) -> String {
 /// What the fake peer says to an Antigravity status check of a signed-in
 /// profile: it initializes, then opens a session.
 fn antigravity_signed_in() -> Reply {
+    use crucible_external_harnesses::acp::SignIn;
     use crucible_external_harnesses::antigravity::Manifest;
+    use crucible_external_harnesses::catalog::SNAPSHOT;
     use crucible_external_harnesses::fake_peer::scripts::acp;
 
-    let version = Manifest::REVIEWED
-        .versions
-        .first()
-        .copied()
-        .unwrap_or_default();
+    let shipped = SNAPSHOT.entries().first().expect("the snapshot's entry");
     Reply::new()
         .hear(1)
         .say(acp::initialized(
-            Manifest::REVIEWED.name,
-            version,
-            Manifest::REVIEWED.sign_in,
+            &shipped.admits.name,
+            &shipped.admits.version,
+            Manifest::REVIEWED.sign_in.first().map_or("", SignIn::id),
         ))
         .hear(1)
         .say(acp::opened(1))
@@ -1279,5 +1405,294 @@ fn a_yes_on_an_agent_panel_lets_the_agent_go_on() {
         );
         assert!(asked.contains("Bash command"), "{case}: {asked}");
         assert!(asked.contains("3. No "), "{case}: {asked}");
+    }
+}
+
+/// The catalog agent the `/catalog` cases browse and add, under a key that is
+/// no built-in driver word.
+const OFFERED: &str = "goose";
+
+/// Takes a window on a host whose catalog offers [`OFFERED`] at every size in
+/// both screen modes, `reaching` walking each from `/catalog` opened to the
+/// screen captured, which is named `name`.
+fn browsed(name: &str, reaching: impl Fn(&mut Watched)) {
+    for native in [false, true] {
+        for size in SIZES {
+            let mode = if native { "native" } else { "fullscreen" };
+            let case = format!("agents-{name}-{}-{mode}", size.0);
+            let published = Published::offering(OFFERED);
+            let vendor = Vendor::answering("Not asked.");
+            let mut window = Watched::capturing_agents_published(
+                &case,
+                (size, native),
+                &vendor,
+                None,
+                &published,
+            );
+            window.types_until("/catalog\r", "1 of 1 offered");
+            reaching(&mut window);
+            let picture = scrubbed(&timeless(&window.picture()), &case);
+            insta::assert_snapshot!(format!("agents_{name}_{}_{mode}", size.0), picture);
+        }
+    }
+}
+
+/// The agent's own screen, reached by its name typed into the search line,
+/// never by how far down the list it stands.
+fn opened(window: &mut Watched) {
+    window.types_until(OFFERED, "Search  goose");
+    window.types_until("\r", "esc to go back");
+}
+
+/// What the user file holds of the instance `name`, with the case named.
+/// Leaves the list an add stood back up: the first escape clears the search
+/// the add was made from, the second closes the panel, and the line the add
+/// left in the transcript is then on the screen.
+fn left(window: &mut Watched, told: &str) {
+    window.types_until("\x1b", "an agent, or a licence");
+    window.types_until("\x1b", told);
+}
+
+fn instance(window: &Watched, name: &str, case: &str) -> serde_json::Value {
+    let file =
+        std::fs::read_to_string(window.home().join("config.json")).expect("the configuration file");
+    let written: serde_json::Value =
+        serde_json::from_str(&file).expect("a configuration in its format");
+    written
+        .pointer(&format!("/externalAgents/{name}"))
+        .cloned()
+        .unwrap_or_else(|| panic!("{case}: no instance {name} in {written}"))
+}
+
+#[test]
+fn the_agents_the_catalog_offers_are_listed() {
+    browsed("listed", |window| {
+        let picture = window.picture();
+        // The panel names where its agents come from, the ACP Registry, so a
+        // reader knows the source before reading a row.
+        assert!(
+            picture.contains("ACP Registry · 1 of 1 offered"),
+            "{picture}"
+        );
+        assert!(picture.contains("goose 1.0.0"), "{picture}");
+        assert!(picture.contains("Apache-2.0"), "{picture}");
+    });
+}
+
+#[test]
+fn typing_narrows_the_agents_to_those_whose_name_or_licence_holds_it() {
+    browsed("narrowed", |window| {
+        window.types_until("apache", "1 of 1 offered");
+        let picture = window.picture();
+        assert!(picture.contains("goose 1.0.0"), "{picture}");
+        window.types_until("\x1b", "an agent, or a licence");
+        window.types_until("mit", "0 of 1 offered");
+        let picture = window.picture();
+        assert!(picture.contains("no agent matches \"mit\""), "{picture}");
+        assert!(!picture.contains("goose 1.0.0"), "{picture}");
+    });
+}
+
+#[test]
+fn an_agent_taken_from_the_list_shows_where_it_comes_from() {
+    browsed("provenance", |window| {
+        opened(window);
+        let picture = window.picture();
+        for told in [
+            "Offered: 1.0.0.",
+            "Terms: https://example.com/goose/terms",
+            "Caution: Read the goose terms first.",
+            "Not installed.",
+        ] {
+            assert!(picture.contains(told), "{told}: {picture}");
+        }
+        assert!(picture.contains("› Add"), "{picture}");
+        assert!(!picture.contains("Verify"), "{picture}");
+    });
+}
+
+#[test]
+fn an_agent_added_after_a_yes_downloads_and_names_the_instance_written() {
+    for native in [false, true] {
+        for size in SIZES {
+            let mode = if native { "native" } else { "fullscreen" };
+            let case = format!("agents-adding-{}-{mode}", size.0);
+            let published = Published::offering(OFFERED);
+            let vendor = Vendor::answering("Not asked.");
+            let mut window = Watched::capturing_agents_published(
+                &case,
+                (size, native),
+                &vendor,
+                None,
+                &published,
+            );
+            window.types_until("/catalog\r", "1 of 1 offered");
+            opened(&mut window);
+            takes(&mut window, "Add");
+            window.types_until("", "bytes to download");
+            // The question and the download stand under this panel's title,
+            // never under the one `/login` gives them.
+            let asked = window.picture();
+            assert!(!asked.contains("Log in"), "{case}: {asked}");
+            takes(&mut window, "Add");
+            // The host sends half the program and holds the rest back, so
+            // the download stands where it is until this has seen it.
+            window.types_until("", "50%");
+            let downloading = window.picture();
+            assert!(
+                downloading.contains("ACP Registry · downloading goose"),
+                "{case}: {downloading}"
+            );
+            assert!(!downloading.contains("Log in"), "{case}: {downloading}");
+            let picture = scrubbed(&timeless(&window.picture()), &case);
+            insta::assert_snapshot!(format!("adding_agent_{}_{mode}", size.0), picture);
+
+            published.release();
+            window.types_until("", "Apache-2.0 · installed");
+            let picture = scrubbed(&timeless(&window.picture()), &case);
+            insta::assert_snapshot!(format!("added_agent_{}_{mode}", size.0), picture);
+            left(&mut window, "Added goose 1.0.0");
+
+            let written = instance(&window, "goose", &case);
+            let mut fields: Vec<&str> = written
+                .as_object()
+                .map(|fields| fields.keys().map(String::as_str).collect())
+                .unwrap_or_default();
+            fields.sort_unstable();
+            assert_eq!(
+                fields,
+                ["agent", "driver", "executable"],
+                "{case}: {written}"
+            );
+            assert_eq!(written.pointer("/agent"), Some(&serde_json::json!("goose")));
+        }
+    }
+}
+
+#[test]
+fn a_second_add_of_the_same_agent_writes_the_next_free_instance() {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let case = format!("agents-added-twice-{mode}");
+        let published = Published::offering(OFFERED);
+        published.release();
+        let vendor = Vendor::answering("Not asked.");
+        let mut window = Watched::capturing_agents_published(
+            &case,
+            (SIZES[0], native),
+            &vendor,
+            None,
+            &published,
+        );
+        window.types_until("/catalog\r", "1 of 1 offered");
+        opened(&mut window);
+        takes(&mut window, "Add");
+        window.types_until("", "bytes to download");
+        takes(&mut window, "Add");
+        window.types_until("", "Apache-2.0 · installed");
+
+        window.types_until("\r", "esc to go back");
+        let screen = window.picture();
+        assert!(
+            screen.contains("Installed, each with a receipt: 1.0.0."),
+            "{case}: {screen}"
+        );
+        assert!(screen.contains("› Add"), "{case}: {screen}");
+        assert!(screen.contains("Verify"), "{case}: {screen}");
+        takes(&mut window, "Add");
+        window.types_until("", "Adds the instance goose-2 to your configuration");
+        let asked = window.picture();
+        assert!(
+            asked.contains("already installed, so nothing is downloaded"),
+            "{case}: {asked}"
+        );
+        asks(
+            &case,
+            &asked,
+            "Add goose 1.0.0 as the instance goose-2?",
+            ["Add", "Cancel"],
+        );
+        takes(&mut window, "Add");
+        window.types_until("", "Apache-2.0 · installed");
+        left(&mut window, "as the instance \"goose-2\".");
+
+        let first = instance(&window, "goose", &case);
+        let second = instance(&window, "goose-2", &case);
+        assert_eq!(
+            first.pointer("/executable"),
+            second.pointer("/executable"),
+            "{case}"
+        );
+        assert_eq!(second.pointer("/agent"), Some(&serde_json::json!("goose")));
+    }
+}
+
+/// A window tall enough for the add question to stand whole in either mode:
+/// its question, every fact and both of its choices.
+const ASKED_WHOLE: (u16, u16) = (80, 50);
+
+/// The configuration file as it stands, with the case named.
+fn configuration(window: &Watched, case: &str) -> String {
+    std::fs::read_to_string(window.home().join("config.json"))
+        .unwrap_or_else(|why| panic!("{case}: the configuration file: {why}"))
+}
+
+#[test]
+fn an_add_left_at_its_question_writes_nothing_and_places_nothing() {
+    for native in [false, true] {
+        let mode = if native { "native" } else { "fullscreen" };
+        let case = format!("agents-add-left-{mode}");
+        let published = Published::offering(OFFERED);
+        // Nothing holds the program back, so an add taken here would finish
+        // and write before the screen after it stands.
+        published.release();
+        let vendor = Vendor::answering("Not asked.");
+        let mut window = Watched::capturing_agents_published(
+            &case,
+            (ASKED_WHOLE, native),
+            &vendor,
+            None,
+            &published,
+        );
+        window.types_until("/catalog\r", "1 of 1 offered");
+        opened(&mut window);
+        takes(&mut window, "Add");
+        window.types_until("", "bytes to download");
+        let asked = window.picture();
+        assert!(
+            asked.contains("Add goose 1.0.0 as the instance goose?"),
+            "{case}: {asked}"
+        );
+        assert!(
+            asked.contains("Leave everything as it is"),
+            "{case}: {asked}"
+        );
+        let before = configuration(&window, &case);
+
+        // Whichever way the question was taken, the panel stands again once
+        // it is over: the agent's screen where it was left, the list an add
+        // stands back up where it was taken as a yes.
+        window.types_and_catches_where("\x1b", "the question over", |picture| {
+            picture.contains("Offered: 1.0.0.") || picture.contains("1 of 1 offered")
+        });
+
+        let after = configuration(&window, &case);
+        let written: serde_json::Value =
+            serde_json::from_str(&after).expect("a configuration in its format");
+        assert_eq!(
+            written.pointer("/externalAgents/goose"),
+            None,
+            "{case}: {written}"
+        );
+        assert_eq!(after, before, "{case}");
+        // An add's lock, its staging and every version it keeps are under
+        // the agent's own directory in the store.
+        let kept = window.home().join("programs").join(OFFERED);
+        assert!(!kept.exists(), "{case}: the store holds {}", kept.display());
+
+        let screen = window.picture();
+        assert!(screen.contains("ACP Registry · goose"), "{case}: {screen}");
+        assert!(screen.contains("Not installed."), "{case}: {screen}");
+        assert!(screen.contains("› Add"), "{case}: {screen}");
     }
 }

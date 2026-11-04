@@ -2,7 +2,7 @@
 source: tests/whole_screen/agents.rs
 expression: picture
 ---
-40x40 cursor 28,0 scrollback 0
+40x40 cursor 35,0 scrollback 0
 |CRUCIBLE                                |
 |/…/workspace                            |
 |                                        |
@@ -10,6 +10,8 @@ expression: picture
 |────────────────────────────────────────|
 |                                        |
 |Log in                                  |
+|                                        |
+|Antigravity cannot be started.          |
 |                                        |
 |Not installed: no antigravity command on|
 |PATH and none at the configured         |
@@ -27,18 +29,16 @@ expression: picture
 |/home/programs/antigravity/1.3.0/agy_acp|
 |_server.par.                            |
 |                                        |
-|› Check again                           |
+|› Install                               |
+|  Install Antigravity 1.3.0.            |
+|                                        |
+|  Check again                           |
 |  Look for the agent's program again.   |
-|  · 1 more                              |
+|                                        |
+|  Go back                               |
+|  Choose another agent.                 |
 |                                        |
 |esc to go back                          |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
 |                                        |
 |                                        |
 |                                        |

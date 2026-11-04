@@ -9,8 +9,9 @@
 #[cfg(test)]
 mod tests;
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 use crucible_types::shown::{Escaping, escaped};
 use serde_core::Serialize as _;
@@ -20,6 +21,7 @@ use serde_json::ser::Serializer;
 use crate::env;
 use crate::error::{Accepted, At, ConfigError};
 use crate::settings;
+use crate::settings::access::Driver;
 use crate::shape::{Shape, whole};
 
 use super::Origin;
@@ -56,6 +58,17 @@ impl Spot<'_> {
         path: "",
         at: At::Ambiguous,
     };
+}
+
+/// The profile directory one agent instance wrote, as it wrote it.
+#[derive(Clone, Copy)]
+struct Profile<'a> {
+    /// The `externalAgents` entry that wrote it.
+    instance: &'a str,
+    /// The key it was written under, which its driver chose.
+    key: &'static str,
+    /// The directory, exactly as the file spells it.
+    directory: &'a str,
 }
 
 /// One document being checked: the text it came from, what to call it, and
@@ -530,8 +543,10 @@ impl Reader<'_> {
     }
 
     /// Refuses a provider's access, or an agent instance, that writes a key
-    /// its variant does not read; and an instance whose program or profile is
-    /// named by a path that is not rooted.
+    /// its variant does not read; an instance whose program or profile is
+    /// named by a path that is not rooted; a catalog instance whose `agent` is
+    /// missing or could not be a catalog agent's key; and two instances that
+    /// write one profile directory two ways.
     ///
     /// Not a shape rule: the shape has one declaration per block, and which of
     /// its keys apply is decided by another key in it. Here rather than in the
@@ -574,32 +589,41 @@ impl Reader<'_> {
         }
 
         let instances = value.get("externalAgents").and_then(Value::as_object);
+        let mut profiles = Vec::new();
         for (name, record) in instances.into_iter().flatten() {
             let at = At::of(name, self.text);
             let written = record.get("driver").and_then(Value::as_str);
-            let Some(driver) = settings::access::Driver::ALL
+            let Some(driver) = Driver::ALL
                 .into_iter()
                 .find(|driver| Some(driver.name()) == written)
             else {
                 continue;
             };
-            for other in settings::access::Driver::ALL {
-                let foreign = other.profile_key();
-                if other != driver && record.get(foreign).is_some() {
+            // Keys and not drivers: two drivers whose agents keep their
+            // sign-in alike read the same key.
+            let own = driver.profile_key();
+            for foreign in Driver::ALL.into_iter().filter_map(Driver::profile_key) {
+                if Some(foreign) != own && record.get(foreign).is_some() {
+                    let readers: Vec<&str> = Driver::ALL
+                        .into_iter()
+                        .filter(|other| other.profile_key() == Some(foreign))
+                        .map(Driver::name)
+                        .collect();
                     return Err(ConfigError::Variant {
                         file: self.file.into(),
                         path: format!("externalAgents.{name}.{foreign}").into(),
                         at: At::of(foreign, self.text),
                         problem: format!(
                             "{foreign} is read only for {}, and this instance's driver is {}, whose profile is {}",
-                            other.name(),
+                            readers.join(" and "),
                             driver.name(),
-                            driver.profile_key()
+                            own.unwrap_or("not named by any key")
                         )
                         .into(),
                     });
                 }
             }
+            self.agent(name, record, driver, at)?;
 
             if let Some(found) = record.get("executable").and_then(Value::as_str) {
                 let program = Path::new(found);
@@ -620,7 +644,7 @@ impl Reader<'_> {
                         path: format!("externalAgents.{name}.{key}").into(),
                         at: At::of(key, self.text),
                         problem: format!(
-                            "an {} agent chooses its own model, so {key} is not read for it",
+                            "an agent of the {} driver chooses its own model, so {key} is not read for it",
                             driver.name()
                         )
                         .into(),
@@ -637,8 +661,11 @@ impl Reader<'_> {
                     problem: settings::access::MODEL_NAMED.into(),
                 });
             }
+            self.cloud(name, record, driver, at)?;
 
-            let key = driver.profile_key();
+            let Some(key) = own else {
+                continue;
+            };
             if driver.profile_needed() && record.get(key).is_none() {
                 return Err(ConfigError::Needed {
                     file: self.file.into(),
@@ -652,18 +679,178 @@ impl Reader<'_> {
                     at,
                 });
             }
-            if let Some(found) = record.get(key).and_then(Value::as_str)
-                && !Path::new(found).is_absolute()
-            {
-                return Err(ConfigError::Relative {
-                    file: self.file.into(),
-                    path: format!("externalAgents.{name}.{key}").into(),
-                    found: found.into(),
-                    at,
+            if let Some(found) = record.get(key).and_then(Value::as_str) {
+                if !Path::new(found).is_absolute() {
+                    return Err(ConfigError::Relative {
+                        file: self.file.into(),
+                        path: format!("externalAgents.{name}.{key}").into(),
+                        found: found.into(),
+                        at,
+                    });
+                }
+                profiles.push(Profile {
+                    instance: name,
+                    key,
+                    directory: found,
                 });
             }
         }
+        self.one_spelling(&profiles)
+    }
+
+    /// Refuses two instances that write one profile directory two ways.
+    ///
+    /// The credential scope an instance signs in under is the agent it is
+    /// bound to together with its profile directory as written, which is
+    /// `scope` in the app's client accounts, and the journal of an account
+    /// operation on it is named by that same pair. This check keeps that pair
+    /// whole: a directory written two ways would be two scopes over one set of
+    /// credentials, each blind to the other's sign-in, sign-out and journal.
+    /// The refusal does not depend on the instances' drivers, since there is
+    /// no reason to spell one directory two ways. The file is refused rather
+    /// than the value rewritten, because a changed spelling would orphan the
+    /// journal an earlier version left behind. Instances written alike share
+    /// their profile, as intended, and an instance is never refused for the
+    /// way it spells its own.
+    ///
+    /// Two values that differ as written name one directory when they are
+    /// equal component by component, which a trailing or repeated separator
+    /// or a `.` component does not change, or when both exist and resolve on
+    /// disk to the same one, as through a link. Called after every entry has
+    /// passed its own checks, so each value is a rooted path.
+    ///
+    /// This is the one check in the walk that reads the disk: it resolves a
+    /// directory only to compare it with one written differently, once for
+    /// each distinct value, and creates nothing. A directory that is absent
+    /// or cannot be resolved is not known to be one directory, and is not
+    /// refused.
+    fn one_spelling(&self, profiles: &[Profile<'_>]) -> Result<(), ConfigError> {
+        let mut resolved = BTreeMap::new();
+        for (index, first) in profiles.iter().enumerate() {
+            for second in profiles.iter().skip(index + 1) {
+                if first.directory == second.directory {
+                    continue;
+                }
+                let one = Path::new(first.directory) == Path::new(second.directory)
+                    || resolve(first.directory, &mut resolved)
+                        .is_some_and(|real| resolve(second.directory, &mut resolved) == Some(real));
+                if one {
+                    return Err(ConfigError::Variant {
+                        file: self.file.into(),
+                        path: format!("externalAgents.{}.{}", second.instance, second.key).into(),
+                        at: At::of(second.instance, self.text),
+                        problem: format!(
+                            "this is the directory externalAgents.{}.{} names, spelled another way; spell the directory the same way in each, since instances share a profile only where they write it alike",
+                            first.instance, first.key
+                        )
+                        .into(),
+                    });
+                }
+            }
+        }
         Ok(())
+    }
+
+    /// Refuses an instance `name`, written as `record` for `driver`, whose
+    /// Google Cloud project and location are not as a business sign-in needs
+    /// them: written only for the driver that reads them, both or neither,
+    /// and each spelled as its pattern says, since the location names a host
+    /// the agent reaches.
+    fn cloud(&self, name: &str, record: &Value, driver: Driver, at: At) -> Result<(), ConfigError> {
+        const KEYS: [&str; 2] = ["cloudProject", "cloudLocation"];
+        let variant = |key: &str, problem: String| ConfigError::Variant {
+            file: self.file.into(),
+            path: format!("externalAgents.{name}.{key}").into(),
+            at: At::of(key, self.text),
+            problem: problem.into(),
+        };
+        if !driver.takes_cloud() {
+            let Some(key) = KEYS.into_iter().find(|key| record.get(*key).is_some()) else {
+                return Ok(());
+            };
+            let readers: Vec<&str> = Driver::ALL
+                .into_iter()
+                .filter(|other| other.takes_cloud())
+                .map(Driver::name)
+                .collect();
+            return Err(variant(
+                key,
+                format!(
+                    "{key} is read only for {}, whose business sign-in is billed to a Google Cloud project, and this instance's driver is {}",
+                    readers.join(" and "),
+                    driver.name()
+                ),
+            ));
+        }
+        let project = record.get("cloudProject").and_then(Value::as_str);
+        let location = record.get("cloudLocation").and_then(Value::as_str);
+        match (project, location) {
+            (None, None) => Ok(()),
+            (Some(_), None) | (None, Some(_)) => {
+                let (given, missing) = if project.is_some() {
+                    ("cloudProject", "cloudLocation")
+                } else {
+                    ("cloudLocation", "cloudProject")
+                };
+                Err(ConfigError::Needed {
+                    file: self.file.into(),
+                    path: format!("externalAgents.{name}").into(),
+                    name: missing.into(),
+                    said: format!(
+                        "{given} is written, and a business sign-in is billed to a project in a location, so the two are written together or not at all"
+                    )
+                    .into(),
+                    at,
+                })
+            }
+            (Some(project), Some(location)) => {
+                if !settings::access::cloud_project(project) {
+                    return Err(variant(
+                        "cloudProject",
+                        settings::access::CLOUD_PROJECT_NAMED.into(),
+                    ));
+                }
+                if !settings::access::cloud_location(location) {
+                    return Err(variant(
+                        "cloudLocation",
+                        settings::access::CLOUD_LOCATION_NAMED.into(),
+                    ));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Refuses an instance `name`, written as `record` for `driver`, whose
+    /// `agent` is not as its driver needs: a catalog instance names the
+    /// agent it runs by a key that could be one, and no other instance
+    /// names an agent.
+    fn agent(&self, name: &str, record: &Value, driver: Driver, at: At) -> Result<(), ConfigError> {
+        let variant = |problem: String| ConfigError::Variant {
+            file: self.file.into(),
+            path: format!("externalAgents.{name}.agent").into(),
+            at: At::of("agent", self.text),
+            problem: problem.into(),
+        };
+        match (driver, record.get("agent")) {
+            (Driver::Catalog, None) => Err(ConfigError::Needed {
+                file: self.file.into(),
+                path: format!("externalAgents.{name}").into(),
+                name: "agent".into(),
+                said: "a catalog instance runs the agent the catalog reviewed under that key"
+                    .into(),
+                at,
+            }),
+            (Driver::Catalog, Some(found)) => {
+                settings::access::unkeyed(found.as_str().unwrap_or_default())
+                    .map_or(Ok(()), |problem| Err(variant(problem)))
+            }
+            (Driver::Claude | Driver::Antigravity, Some(_)) => Err(variant(format!(
+                "agent names the agent a catalog instance runs, and this instance's driver is {}",
+                driver.name()
+            ))),
+            (Driver::Claude | Driver::Antigravity, None) => Ok(()),
+        }
     }
 
     /// The same refusal from three places, built once.
@@ -702,6 +889,21 @@ impl Reader<'_> {
             at: spot.at,
         }
     }
+}
+
+/// Where `directory` is on disk, with every link followed, or `None` where it
+/// cannot be said because nothing is there or it cannot be read.
+///
+/// Remembered in `resolved`, so a directory several instances write is asked of
+/// the disk once.
+fn resolve<'a>(
+    directory: &'a str,
+    resolved: &mut BTreeMap<&'a str, Option<PathBuf>>,
+) -> Option<PathBuf> {
+    resolved
+        .entry(directory)
+        .or_insert_with(|| std::fs::canonicalize(directory).ok())
+        .clone()
 }
 
 /// Keys reserved by JSON Schema itself, which a document may carry anywhere and
@@ -1053,7 +1255,9 @@ fn written(document: &Value) -> String {
 /// valid is a startup that would not stop on its files. Nothing is written,
 /// launched or dialled on the way: the files are opened for reading, the home
 /// directory is found from the environment without touching the disk, and what
-/// comes back is sentences.
+/// comes back is sentences. The one thing read beside the files is where a
+/// profile directory is, and only for two agent instances that write it
+/// differently, to tell whether they name one.
 #[must_use]
 pub fn check(home: &crate::home::Home, workspace: &Path) -> CheckReport {
     let mut files = Vec::with_capacity(3);

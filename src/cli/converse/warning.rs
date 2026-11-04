@@ -128,7 +128,7 @@ pub(super) fn ask_while<T: Terminal>(
     put: Put,
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<Answer, Fatal> {
-    let agent = warned.shown;
+    let agent = &*warned.shown;
     let starts = format!("Starts {agent} to check the account; this route is not asked again");
     let launching = [
         Offered {
@@ -140,14 +140,18 @@ pub(super) fn ask_while<T: Terminal>(
             says: "Nothing starts",
         },
     ];
-    let launched = [content_use::LAUNCHING];
+    let launched: &[&str] = if warned.unrecorded() {
+        &[content_use::LAUNCHING, content_use::UNRECORDED]
+    } else {
+        &[content_use::LAUNCHING]
+    };
     let (shown, told): (&[Offered<'_>], &[&str]) = match put {
         // A message on an installed agent's route that starts the agent says
         // what starting it runs, as a launch does.
-        Put::Send if content_use::launches(warned.route) => (&SENDING, &launched),
+        Put::Send if content_use::launches(&warned.route) => (&SENDING, launched),
         Put::Send => (&SENDING, &[]),
         Put::Choice => (&CHOOSING, &[]),
-        Put::Launch => (&launching, &launched),
+        Put::Launch => (&launching, launched),
     };
     let cited = warned.warning.cited();
     let footer = format!("enter to choose {} esc to go back", style.glyphs().dot());
@@ -160,8 +164,8 @@ pub(super) fn ask_while<T: Terminal>(
         &mut at,
         |marked, columns, _| {
             let panel = Panel {
-                title: warned.shown,
-                said: Some(warned.warning.sentence),
+                title: &warned.shown,
+                said: Some(&warned.warning.sentence),
                 source: Some(&cited),
                 told,
                 shown,
@@ -273,7 +277,7 @@ fn unsent(conversation: &Conversation, terms: &Terms, work: &Work) -> Option<War
             .consent
             .unanswered(provider, conversation.settled().model()),
         None => match work {
-            Work::Turn(..) => terms.consent.asks(&conversation.launching()?).copied(),
+            Work::Turn(..) => terms.consent.asks(&conversation.launching()?),
             Work::Room(_) => None,
         },
     }
@@ -338,7 +342,7 @@ pub(super) fn stored<T: Terminal>(
     terms: &Terms,
     route: &str,
 ) -> Result<(), Fatal> {
-    let Some(warned) = terms.consent.routes().warned(route).copied() else {
+    let Some(warned) = terms.consent.routes().warned(route).cloned() else {
         return Ok(());
     };
     if !terms.consent.given(route) {

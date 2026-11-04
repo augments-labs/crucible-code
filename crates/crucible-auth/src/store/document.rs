@@ -39,12 +39,18 @@ impl Document {
     }
 
     /// Takes out every credential of `name`'s provider this build writes, but
-    /// the one about to be written under `name` in `kind`'s map.
+    /// the one about to be written under `name` in `kind`'s map; of a
+    /// provider the store was not told, only what `name` holds in the other
+    /// map, since what another release wrote under its other names is not
+    /// this build's to take.
     pub(super) fn clear(&mut self, names: &Names, name: &str, kind: Kind) -> Vec<Held> {
         let mut taken = Vec::new();
-        for other in names.of(provider_of(name)) {
-            if other != name {
-                taken.extend(self.take(other, None));
+        let provider = provider_of(name);
+        if names.tells(provider) {
+            for other in names.of(provider) {
+                if other != name {
+                    taken.extend(self.take(other, None));
+                }
             }
         }
         taken.extend(self.take(name, Some(kind)));

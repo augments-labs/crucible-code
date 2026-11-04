@@ -256,9 +256,9 @@ fn the_shared_client_sends_a_warned_route_nothing_until_its_yes() {
             .into_boxed_str(),
     );
     let warned = Warned {
-        route: "key:recorded",
-        shown: "Recorded",
-        warning: WARNED[3].warning,
+        route: "key:recorded".into(),
+        shown: "Recorded".into(),
+        warning: WARNED[3].warning.clone(),
         origins: Box::leak(Box::new([origin])),
     };
     let services = super::Services::over(Routes::new(vec![warned]));

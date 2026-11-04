@@ -1,0 +1,37 @@
+{
+  "agentInfo": {
+    "name": "fake-agent",
+    "version": "1.0.0"
+  },
+  "authMethods": [
+    {
+      "id": "browser",
+      "kind": "agent",
+      "name": "Sign in with a browser"
+    },
+    {
+      "args": [
+        "login"
+      ],
+      "command": "agent",
+      "env": {
+        "LOGIN_MODE": "1"
+      },
+      "id": "terminal",
+      "kind": "terminal",
+      "name": "Sign in at a terminal",
+      "tty": "unknown"
+    }
+  ],
+  "capabilities": {
+    "auth": {
+      "logout": {}
+    },
+    "loadSession": true,
+    "sessionCapabilities": {
+      "resume": {}
+    }
+  },
+  "conformance": "not run",
+  "sandbox": "unavailable: sandbox backend unavailable: no network sandbox on this machine"
+}

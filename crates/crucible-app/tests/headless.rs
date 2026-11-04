@@ -44,6 +44,8 @@ use crucible_types::{
 };
 use crucible_workspace::Workspace;
 
+#[path = "headless/agents.rs"]
+mod agents;
 #[path = "headless/client.rs"]
 mod client;
 #[path = "headless/crossing.rs"]

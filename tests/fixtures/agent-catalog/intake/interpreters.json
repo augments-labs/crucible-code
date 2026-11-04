@@ -1,0 +1,22 @@
+{
+  "linux-x86_64": {
+    "url": "https://python.example/cpython-3.12.7-x86_64-unknown-linux-gnu-install_only.tar.gz",
+    "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "python": "3.12"
+  },
+  "linux-aarch64": {
+    "url": "https://python.example/cpython-3.12.7-aarch64-unknown-linux-gnu-install_only.tar.gz",
+    "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "python": "3.12"
+  },
+  "darwin-aarch64": {
+    "url": "https://python.example/cpython-3.12.7-aarch64-apple-darwin-install_only.tar.gz",
+    "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "python": "3.12"
+  },
+  "windows-x86_64": {
+    "url": "https://python.example/cpython-3.12.7-x86_64-pc-windows-msvc-install_only.tar.gz",
+    "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "python": "3.12"
+  }
+}

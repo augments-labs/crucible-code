@@ -43,11 +43,18 @@ pub enum ErrorCode {
     /// again. Nothing was lost, and a prompt after the reset continues; the
     /// sentence beside the code names the window and the reset where known.
     PlanLimit,
+    /// The command is served only to a client that claimed the capability to
+    /// take part in it, and this request did not claim it. Nothing was done.
+    NeedsCapability,
+    /// The command is one a conversation does not serve: the agents door does,
+    /// which no conversation is part of. Nothing was done, and asking that door
+    /// is what changes the answer.
+    AgentsDoor,
 }
 
 impl ErrorCode {
     /// Every code, in the order they are declared.
-    pub const EVERY: [Self; 13] = [
+    pub const EVERY: [Self; 15] = [
         Self::Malformed,
         Self::TooLarge,
         Self::UnsupportedVersion,
@@ -61,6 +68,8 @@ impl ErrorCode {
         Self::Abandoned,
         Self::Failed,
         Self::PlanLimit,
+        Self::NeedsCapability,
+        Self::AgentsDoor,
     ];
 
     /// The word this code crosses as.
@@ -80,6 +89,8 @@ impl ErrorCode {
             Self::Abandoned => "abandoned",
             Self::Failed => "failed",
             Self::PlanLimit => "plan_limit",
+            Self::NeedsCapability => "needs_capability",
+            Self::AgentsDoor => "agents_door",
         }
     }
 
@@ -105,6 +116,8 @@ impl ErrorCode {
             Self::Abandoned => "the action was answered too often with nothing that fits it",
             Self::Failed => "the application could not do what was asked",
             Self::PlanLimit => "the plan's usage limit is reached until one of its windows resets",
+            Self::NeedsCapability => "the command needs a capability the request did not claim",
+            Self::AgentsDoor => "the command is served by the agents door, not by a conversation",
         }
     }
 }

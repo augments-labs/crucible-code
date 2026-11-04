@@ -87,12 +87,27 @@ impl Raw {
             return Ok(None);
         }
 
-        crossterm::terminal::enable_raw_mode()?;
+        enable()?;
 
-        Ok(Some(Self {
-            leave: crossterm::terminal::disable_raw_mode,
-        }))
+        Ok(Some(Self { leave: disable }))
     }
+}
+
+/// Turns raw mode on for a session that has already decided it holds a
+/// terminal.
+///
+/// The guard is the only way in for a session; this is for [`super::suspend`],
+/// which puts back a mode the guard still holds rather than taking one of its
+/// own.
+pub(super) fn enable() -> io::Result<()> {
+    crossterm::terminal::enable_raw_mode()?;
+    Ok(())
+}
+
+/// Hands raw mode back, for the same reason [`enable`] exists.
+pub(super) fn disable() -> io::Result<()> {
+    crossterm::terminal::disable_raw_mode()?;
+    Ok(())
 }
 
 impl Drop for Raw {

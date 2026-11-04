@@ -106,8 +106,10 @@ pub use terminal::keys::{Characters, Pressed, characters, pressed, waiting};
 pub use terminal::mouse::Reporting;
 pub use terminal::raw::{Raw, RawError};
 pub use terminal::screen::{Screen, ScreenError};
+#[cfg(unix)]
+pub use terminal::suspend::Suspend;
 pub use terminal::system::{ResizeFlag, SystemTerminal};
-pub use terminal::{Picture, Recording, Size, Terminal, TerminalError};
+pub use terminal::{Held, Picture, Recording, Size, Terminal, TerminalError};
 pub use timeline::{Brief, Timeline, Told};
 pub use title::{TITLE, Title, TitleError};
 pub use welcome::fit::shorten;

@@ -1,0 +1,16 @@
+---
+source: src/cli/agents/tests.rs
+expression: bench.shown(&bench.heard())
+---
+Install goose 1.0.0?
+  goose 1.0.0, 24 bytes to download.
+  Fetched from <host>, the only hosts it may reach.
+  Licence Apache-2.0; terms at https://example.com/terms.
+  Caution: Read the terms first.
+  Started as: goose acp
+  Started with the environment GOOSE_NO_UPDATE=1.
+  Moves no configured instance: none runs goose from crucible's install store.
+  Not smoke-tested: no conversation lent a launcher to start it with.
+  1. Install: Put 1.0.0 in place and move the instances named onto it
+  2. Cancel: Leave everything as it is
+Which one? [1-2, Enter for none] Downloading goose (0 MB)…

@@ -204,18 +204,24 @@ fn nothing_shipped_glob_imports_what_a_turn_could_wait_through() {
 
 /// Every line mentioning `block_on` a shipped file may hold, trimmed, with how
 /// many times that file may hold it, and none of them is reached by a turn: the
-/// runtime owner's documentation of why it is built multi-thread, the five
-/// waits made from outside every turn — startup writing what a session picked
-/// up owes before any turn exists, the drawing thread answering a command,
-/// taking back what a plan answered, asking the backend the sandbox panel
-/// shows, and joining a turn that has ended — the two waits of `crucible
-/// update`, a command that runs before any conversation exists and starts
-/// none, the one of `crucible agents install`, which is such a command too, the runner's test helper that drives a turn to its end on a runtime
-/// of the test's own, the two performance probes waiting, on their own main
-/// thread, for each call they time on a runtime of the probe's own, and the
-/// lines inside the `#[cfg(test)] mod tests` of the sandbox's redaction and of
-/// the worker-task check, which only a test build compiles. The count makes the
-/// same line written once more in that file, wherever, one too many.
+/// runtime owner's documentation of why it is built multi-thread; the seven
+/// waits made from outside every turn, which are startup writing what a session
+/// picked up owes before any turn exists, the drawing thread answering a
+/// command, polling an account operation between the questions it stops on,
+/// taking back what a plan answered, asking the backend the sandbox panel shows
+/// and joining a turn that has ended, and the agents door `/login` carries a
+/// move out at, waited for on a thread the drawing thread spawns and joins; the
+/// two waits of `crucible update`, a command that runs before any conversation
+/// exists and starts none; the one of the `crucible agents` subcommands that
+/// ask the agents door, the one in `installing`'s download, which no command
+/// reaches now, and the one of `crucible agents probe`, which are such commands
+/// too; the runner's test
+/// helper that drives a turn to its end on a runtime of the test's own; the two
+/// performance probes waiting, on their own main thread, for each call they
+/// time on a runtime of the probe's own; and the lines inside the `#[cfg(test)]
+/// mod tests` of the sandbox's redaction and of the worker-task check, which
+/// only a test build compiles. The count makes the same line written once more
+/// in that file, wherever, one too many.
 const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
     (
         "crates/crucible-app/src/runtime.rs",
@@ -251,9 +257,11 @@ const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
     // The drawing thread, answering a command, taking back what a plan asked
     // between turns answered (waited for only where no key is read; a reader
     // of keys takes it once it has come, or gives it up at a key), asking the
-    // backend the sandbox panel shows, and joining a turn that ended; and an
+    // backend the sandbox panel shows, and joining a turn that ended; an
     // account operation, polled between the questions it stops on, each
-    // drawn and answered here while it waits.
+    // drawn and answered here while it waits; and the agents door `/login`
+    // carries a move out at, run on a thread the drawing thread spawns and
+    // joins while it stands the panel over the door.
     (
         "src/cli/client.rs",
         "let performed = self.runtime.block_on(perform(conversation, request, &desk));",
@@ -267,6 +275,11 @@ const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
     (
         "src/cli/client.rs",
         "let performed = match self.runtime.block_on(&mut out.answer) {",
+        1,
+    ),
+    (
+        "src/cli/client.rs",
+        "runtime.block_on(door::run(request, &lent, front, watching))",
         1,
     ),
     (
@@ -292,11 +305,27 @@ const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
         "runtime.block_on(download(http, source, url, into, ceiling))?;",
         1,
     ),
-    // `crucible agents install`, which a command line reaches before any
-    // conversation exists and which starts none: downloading the release.
+    // The `crucible agents` subcommands that ask the agents door, which a
+    // command line reaches before any conversation exists and which start
+    // none: carrying the one command out.
+    (
+        "src/cli/agents.rs",
+        ".block_on(door::run(request, lending, &mut front, watching))",
+        1,
+    ),
+    // `installing`'s download of a release, which `crucible agents install`
+    // reached before it asked the agents door, and which no command reaches
+    // now.
     (
         "crates/crucible-app/src/installing.rs",
         ".block_on(async { timeout(DOWNLOAD_LIFETIME, fetched(http, pin, file, progress)).await });",
+        1,
+    ),
+    // `crucible agents probe`, a command of the same kind: it starts an agent's
+    // program once and waits for its answer to `initialize`.
+    (
+        "crates/crucible-app/src/probing.rs",
+        "runtime.block_on(initialized(",
         1,
     ),
     ("crates/crucible-runner/src/fake.rs", ".block_on(self)", 1),

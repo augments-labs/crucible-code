@@ -91,7 +91,7 @@ use crate::content_use::{Warned, full_sentence};
 static MINTED: AtomicU64 = AtomicU64::new(0);
 
 /// The next identity: one more than however many were given out before it.
-fn mint() -> PendingId {
+pub(crate) fn mint() -> PendingId {
     PendingId::new(MINTED.fetch_add(1, Ordering::Relaxed).saturating_add(1))
 }
 
@@ -118,6 +118,9 @@ pub enum Shown<'a> {
     External(Leave<'a>),
     /// Which way an account operation on an installed agent goes on.
     Account(&'a Confirmation),
+    /// Which way an install, update, rollback or removal of a catalog agent
+    /// goes on, put by the agents door.
+    Install(&'a Confirmation),
 }
 
 /// What an installed agent asked leave to do, as the host holds it, whole,
@@ -249,6 +252,10 @@ pub(crate) enum Settled {
 }
 
 /// Holds `decision` against `pending`, the one action it may settle.
+///
+/// An install confirmation is put by the agents door and never by a
+/// conversation, so no decision held here fits one: each is refused as
+/// [`ErrorCode::WrongDecision`], once it names the action at all.
 pub(crate) fn settle(pending: &Pending, decision: Decision) -> Result<Settled, Refusal> {
     if decision.id() != pending.id() {
         return Err(ErrorCode::StaleDecision.into());
@@ -301,6 +308,16 @@ pub(crate) fn settle(pending: &Pending, decision: Decision) -> Result<Settled, R
         | (
             Pending::Account { .. },
             Decision::Ruled { .. } | Decision::Answered { .. } | Decision::Accepted { .. },
+        )
+        // A conversation never puts an install confirmation: the agents door
+        // does, and settles its own. So no decision fits one held here.
+        | (
+            Pending::Install { .. },
+            Decision::Ruled { .. }
+            | Decision::Answered { .. }
+            | Decision::Declined { .. }
+            | Decision::Accepted { .. }
+            | Decision::Picked { .. },
         ) => Err(ErrorCode::WrongDecision.into()),
     }
 }
@@ -314,7 +331,7 @@ pub(crate) fn settle(pending: &Pending, decision: Decision) -> Result<Settled, R
 pub const TRIES: usize = 3;
 
 /// Tells `front` its decision was refused, and whether that was one too many.
-fn turned_away(front: &mut dyn Front, refusal: Refusal, tries: &mut usize) -> bool {
+pub(crate) fn turned_away(front: &mut dyn Front, refusal: Refusal, tries: &mut usize) -> bool {
     front.refused(refusal);
     *tries = tries.saturating_add(1);
     if *tries < TRIES {
@@ -595,8 +612,8 @@ pub async fn warned(capabilities: Capabilities, front: &mut dyn Front, warned: &
     // told what starting it runs, in the words the terminal shows.
     let sentence = full_sentence(warned);
     let words = [
-        Text::cut(warned.route),
-        Text::cut(warned.shown),
+        Text::cut(&warned.route),
+        Text::cut(&warned.shown),
         Text::cut(&sentence),
         Text::cut(&warned.warning.cited()),
     ];

@@ -606,6 +606,507 @@ fn a_model_or_effort_for_an_agent_that_chooses_its_own_is_refused() {
     }
 }
 
+/// An Antigravity instance with its profile, `beside` written after it.
+fn antigravity(beside: &str) -> String {
+    let profile = serde_json::Value::from(crate::sample::rooted("home/me/agy"));
+    format!(
+        r#"{{"externalAgents": {{"mine": {{"driver": "antigravity", "executable": "agy", "profileDir": {profile}{beside}}}}}}}"#
+    )
+}
+
+/// The project and location a business sign-in is billed to.
+const BILLED: &str = r#", "cloudProject": "my-project-id", "cloudLocation": "us-central1""#;
+
+/// A Google Cloud project and location are what Antigravity's business
+/// sign-in is billed to, and written for any other agent they would be keys
+/// nothing reads, so they are refused, naming the driver that reads them.
+#[test]
+fn a_cloud_project_or_location_for_another_agent_is_refused() {
+    let agy = serde_json::Value::from(crate::sample::rooted("home/me/agy"));
+    for record in [
+        r#""driver": "claude", "executable": "claude""#.to_owned(),
+        format!(
+            r#""driver": "catalog", "executable": "goose", "agent": "goose", "profileDir": {agy}"#
+        ),
+    ] {
+        for (beside, key) in [
+            (r#", "cloudProject": "my-project-id""#, "cloudProject"),
+            (r#", "cloudLocation": "us-central1""#, "cloudLocation"),
+            (BILLED, "cloudProject"),
+        ] {
+            let err = mine(&format!(
+                r#"{{"externalAgents": {{"mine": {{{record}{beside}}}}}}}"#
+            ))
+            .unwrap_err();
+            let said = err.to_string();
+            assert!(matches!(err, ConfigError::Variant { .. }), "got {err:?}");
+            assert!(
+                said.contains(&format!("externalAgents.mine.{key}")),
+                "got {said}"
+            );
+            assert!(said.contains("antigravity"), "got {said}");
+            assert!(said.contains("~/.crucible/config.json"), "got {said}");
+        }
+    }
+    mine(&antigravity(BILLED)).unwrap();
+}
+
+/// A project is billed in a location, so a business sign-in given one
+/// without the other would be one the agent cannot make: each is refused
+/// naming the key it is missing.
+#[test]
+fn a_cloud_project_without_its_location_or_a_location_without_its_project_is_refused() {
+    for (beside, given, missing) in [
+        (
+            r#", "cloudProject": "my-project-id""#,
+            "cloudProject",
+            "cloudLocation",
+        ),
+        (
+            r#", "cloudLocation": "us-central1""#,
+            "cloudLocation",
+            "cloudProject",
+        ),
+    ] {
+        let err = mine(&antigravity(beside)).unwrap_err();
+        let said = err.to_string();
+        assert!(matches!(err, ConfigError::Needed { .. }), "got {err:?}");
+        assert!(
+            said.contains(&format!("externalAgents.mine needs {missing}")),
+            "got {said}"
+        );
+        assert!(said.contains(given), "got {said}");
+        assert!(said.contains("~/.crucible/config.json"), "got {said}");
+    }
+    mine(&antigravity("")).unwrap();
+}
+
+/// The project is held to Google's spelling of a project ID, and the
+/// location to one DNS label, since the location names a host the agent's
+/// sandbox opens; a key misspelt is no key crucible has.
+#[test]
+fn a_cloud_project_or_location_misspelt_is_refused() {
+    let long_project = "a".repeat(31);
+    for project in [
+        "",
+        "short",
+        "1starts-with-a-digit",
+        "Upper-case-id",
+        "ends-with-a-hyphen-",
+        "has_an_underscore",
+        "has.a.dot",
+        "has a space",
+        "my-project-\u{ef}d",
+        long_project.as_str(),
+    ] {
+        let beside = format!(r#", "cloudProject": {project:?}, "cloudLocation": "us-central1""#);
+        let err = mine(&antigravity(&beside)).unwrap_err();
+        let said = err.to_string();
+        assert!(
+            matches!(err, ConfigError::Variant { .. }),
+            "{project:?}: got {err:?}"
+        );
+        assert!(
+            said.contains("externalAgents.mine.cloudProject"),
+            "{project:?}: got {said}"
+        );
+        assert!(said.contains("~/.crucible/config.json"), "got {said}");
+    }
+    let longest_project = format!("a{}", "b".repeat(29));
+    for project in [
+        "my-project-id",
+        "abcdef",
+        "a-1-2-3",
+        longest_project.as_str(),
+    ] {
+        let beside = format!(r#", "cloudProject": {project:?}, "cloudLocation": "us-central1""#);
+        assert!(mine(&antigravity(&beside)).is_ok(), "{project}");
+    }
+
+    let long_location = "a".repeat(64);
+    for location in [
+        "",
+        "-us",
+        "us-",
+        "US",
+        "us_central1",
+        "us.central1",
+        "us central1",
+        "europe-w\u{e9}st4",
+        long_location.as_str(),
+    ] {
+        let beside = format!(r#", "cloudProject": "my-project-id", "cloudLocation": {location:?}"#);
+        let err = mine(&antigravity(&beside)).unwrap_err();
+        let said = err.to_string();
+        assert!(
+            matches!(err, ConfigError::Variant { .. }),
+            "{location:?}: got {err:?}"
+        );
+        assert!(
+            said.contains("externalAgents.mine.cloudLocation"),
+            "{location:?}: got {said}"
+        );
+        assert!(said.contains("~/.crucible/config.json"), "got {said}");
+    }
+    let longest_location = "a".repeat(63);
+    for location in [
+        "us-central1",
+        "us",
+        "eu",
+        "global",
+        "europe-west4",
+        "a",
+        "9",
+        longest_location.as_str(),
+    ] {
+        let beside = format!(r#", "cloudProject": "my-project-id", "cloudLocation": {location:?}"#);
+        assert!(mine(&antigravity(&beside)).is_ok(), "{location}");
+    }
+
+    for misspelt in ["cloudProjectId", "cloud_project", "gcpLocation"] {
+        let beside = format!(r#", "{misspelt}": "my-project-id""#);
+        let err = mine(&antigravity(&beside)).unwrap_err();
+        assert!(
+            matches!(err, ConfigError::UnknownKey { .. }),
+            "{misspelt}: got {err:?}"
+        );
+        assert!(
+            err.to_string()
+                .contains(&format!("externalAgents.mine.{misspelt}")),
+            "{err}"
+        );
+    }
+}
+
+/// What a business sign-in is billed to is chosen where every other key of
+/// an installed agent is: in the user's own file, never in a checkout's.
+#[test]
+fn neither_workspace_file_can_choose_what_a_business_sign_in_is_billed_to() {
+    for read in [shared as fn(&str) -> Result<Document, ConfigError>, local] {
+        let err = read(&antigravity(BILLED)).unwrap_err();
+        let said = err.to_string();
+        assert!(matches!(err, ConfigError::Widening { .. }), "got {err:?}");
+        assert!(said.contains("externalAgents"), "got {said}");
+        assert!(!said.contains("my-project-id"), "got {said}");
+    }
+}
+
+/// A catalog instance with `agent` set to `agent`, `beside` written after it.
+fn catalog(agent: &serde_json::Value, beside: &str) -> String {
+    format!(
+        r#"{{"externalAgents": {{"mine": {{"driver": "catalog", "executable": "goose", "agent": {agent}{beside}}}}}}}"#
+    )
+}
+
+/// A catalog instance is the agent its key names, so one that names none is
+/// no agent at all.
+#[test]
+fn a_catalog_instance_needs_the_agent_it_runs() {
+    let err = mine(r#"{"externalAgents": {"mine": {"driver": "catalog", "executable": "goose"}}}"#)
+        .unwrap_err();
+    let said = err.to_string();
+    assert!(matches!(err, ConfigError::Needed { .. }), "got {err:?}");
+    assert!(
+        said.contains("externalAgents.mine needs agent"),
+        "got {said}"
+    );
+    assert!(
+        mine(&catalog(&"goose".into(), "")).is_ok(),
+        "a catalog instance naming its agent"
+    );
+}
+
+/// Only a catalog instance runs an agent its key names; on any other the key
+/// would be one nothing reads.
+#[test]
+fn only_a_catalog_instance_names_an_agent() {
+    let agy = serde_json::Value::from(crate::sample::rooted("home/me/agy"));
+    for (driver, beside) in [
+        ("claude", String::new()),
+        ("antigravity", format!(r#", "profileDir": {agy}"#)),
+    ] {
+        let err = mine(&format!(
+            r#"{{"externalAgents": {{"mine": {{"driver": "{driver}", "executable": "agent", "agent": "goose"{beside}}}}}}}"#
+        ))
+        .unwrap_err();
+        let said = err.to_string();
+        assert!(
+            matches!(err, ConfigError::Variant { .. }),
+            "{driver}: got {err:?}"
+        );
+        assert!(said.contains("externalAgents.mine.agent"), "got {said}");
+        assert!(
+            said.contains("catalog") && said.contains(driver),
+            "got {said}"
+        );
+    }
+}
+
+/// An agent's key is spelled as the catalog spells keys, so a key that could
+/// never be one is refused where it is written, saying why.
+#[test]
+fn an_agent_key_is_lowercase_letters_digits_and_hyphens() {
+    for (written, says) in [
+        ("Goose", "'G'"),
+        ("fast_agent", "'_'"),
+        ("an agent", "' '"),
+        ("", "not 0"),
+        (&"a".repeat(33), "not 33"),
+    ] {
+        let err = mine(&catalog(&written.into(), "")).unwrap_err();
+        let said = err.to_string();
+        assert!(
+            matches!(err, ConfigError::Variant { .. }),
+            "{written:?}: got {err:?}"
+        );
+        assert!(said.contains("externalAgents.mine.agent"), "got {said}");
+        assert!(said.contains(says), "{written:?}: got {said}");
+    }
+    for written in ["fast-agent", "a", "claude-acp", &"a".repeat(32)] {
+        assert!(mine(&catalog(&written.into(), "")).is_ok(), "{written}");
+    }
+}
+
+/// A key never takes a word a built-in driver or the native runner is spelled
+/// with, which a route, a session and a credential are already named by, nor
+/// a name Windows keeps for a device, since the key names a directory.
+#[test]
+fn an_agent_key_is_never_a_reserved_word() {
+    let mut words: Vec<&str> = settings::access::Driver::ALL
+        .iter()
+        .map(|driver| driver.name())
+        .collect();
+    words.extend([
+        "native", "con", "prn", "aux", "nul", "com0", "com1", "com5", "com9", "lpt0", "lpt1",
+        "lpt5", "lpt9",
+    ]);
+    for word in words {
+        let err = mine(&catalog(&word.into(), "")).unwrap_err();
+        let said = err.to_string();
+        assert!(
+            matches!(err, ConfigError::Variant { .. }),
+            "{word}: got {err:?}"
+        );
+        assert!(said.contains("externalAgents.mine.agent"), "got {said}");
+        assert!(said.contains(&format!("{word:?}")), "{word}: got {said}");
+    }
+    for near in ["claudes", "com10", "lpt", "lpt10", "nativ", "console"] {
+        assert!(mine(&catalog(&near.into(), "")).is_ok(), "{near}");
+    }
+}
+
+/// A catalog agent keeps its sign-in under `profileDir`, the key an
+/// antigravity agent's is under too, so the two are read alike; Claude Code's
+/// key is still refused for it.
+#[test]
+fn an_antigravity_and_a_catalog_instance_both_take_profile_dir() {
+    let (agy, goose) = (
+        crate::sample::rooted("home/me/agy"),
+        crate::sample::rooted("home/me/goose"),
+    );
+    let both = serde_json::json!({"externalAgents": {
+        "space": {"driver": "antigravity", "executable": "agy", "profileDir": agy},
+        "mine": {"driver": "catalog", "executable": "goose", "agent": "goose", "profileDir": goose}
+    }})
+    .to_string();
+    assert!(mine(&both).is_ok(), "{:?}", mine(&both).err());
+
+    let elsewhere = serde_json::Value::from(crate::sample::rooted("home/me/p"));
+    let err = mine(&catalog(
+        &"goose".into(),
+        &format!(r#", "configDir": {elsewhere}"#),
+    ))
+    .unwrap_err();
+    let said = err.to_string();
+    assert!(matches!(err, ConfigError::Variant { .. }), "got {err:?}");
+    assert!(said.contains("externalAgents.mine.configDir"), "got {said}");
+    assert!(said.contains("catalog"), "got {said}");
+}
+
+/// A home file naming `instances`, each an Antigravity agent on the profile
+/// directory written beside its name.
+fn on_profiles(instances: &[(&str, &str)]) -> Result<Document, ConfigError> {
+    let block: serde_json::Map<String, serde_json::Value> = instances
+        .iter()
+        .map(|(name, profile)| {
+            (
+                (*name).to_owned(),
+                serde_json::json!({"driver": "antigravity", "executable": "agy", "profileDir": profile}),
+            )
+        })
+        .collect();
+    mine(&serde_json::json!({"externalAgents": block}).to_string())
+}
+
+/// Instances share a credential scope exactly where their profile directories
+/// are written alike, so one directory written two ways would be two scopes
+/// over one set of credentials, and is refused naming both instances. A
+/// trailing separator, a repeated one and a `.` component are the same
+/// directory to the path type, and are what a person typing them would write.
+#[test]
+fn one_profile_directory_written_two_ways_is_refused_naming_both_instances() {
+    let tree = crate::sample::Scratch::new("profile-spelling-components");
+    let plain = tree.text("agy");
+    let separator = std::path::MAIN_SEPARATOR;
+    let root = tree.text("");
+    for spelled in [
+        format!("{plain}{separator}"),
+        format!("{root}{separator}{separator}agy"),
+        tree.root().join(".").join("agy").display().to_string(),
+    ] {
+        let err = on_profiles(&[("spare", &plain), ("work", &spelled)]).unwrap_err();
+        let said = err.to_string();
+        assert!(matches!(err, ConfigError::Variant { .. }), "got {err:?}");
+        assert!(
+            said.contains("externalAgents.spare.profileDir"),
+            "got {said}"
+        );
+        assert!(
+            said.contains("externalAgents.work.profileDir"),
+            "got {said}"
+        );
+        assert!(said.contains("same way"), "got {said}");
+        assert!(said.contains("~/.crucible/config.json"), "got {said}");
+    }
+}
+
+/// Which agent an instance runs is no reason to spell its directory another
+/// way: a Claude Code instance and an Antigravity one on one directory are
+/// refused as two Antigravity ones are.
+#[test]
+fn one_directory_written_two_ways_is_refused_whatever_the_agents() {
+    let tree = crate::sample::Scratch::new("profile-spelling-drivers");
+    let plain = tree.text("shared");
+    let trailing = format!("{plain}{}", std::path::MAIN_SEPARATOR);
+    let err = mine(
+        &serde_json::json!({"externalAgents": {
+            "chat": {"driver": "claude", "executable": "claude", "configDir": plain},
+            "space": {"driver": "antigravity", "executable": "agy", "profileDir": trailing}
+        }})
+        .to_string(),
+    )
+    .unwrap_err();
+    let said = err.to_string();
+    assert!(matches!(err, ConfigError::Variant { .. }), "got {err:?}");
+    assert!(said.contains("externalAgents.chat.configDir"), "got {said}");
+    assert!(
+        said.contains("externalAgents.space.profileDir"),
+        "got {said}"
+    );
+}
+
+/// Every pair of instances is compared, not each with the one after it: the
+/// two spellings of one directory are split by an instance on a different one,
+/// and the file is still refused, the path naming the later of the two and the
+/// problem the earlier.
+#[test]
+fn one_directory_written_two_ways_is_refused_with_another_instance_between() {
+    let tree = crate::sample::Scratch::new("profile-spelling-apart");
+    let plain = tree.text("agy");
+    let trailing = format!("{plain}{}", std::path::MAIN_SEPARATOR);
+    let between = tree.text("between");
+
+    let err = on_profiles(&[("a", &plain), ("b", &between), ("c", &trailing)]).unwrap_err();
+    let ConfigError::Variant { path, problem, .. } = err else {
+        panic!("the refusal is a variant error");
+    };
+    assert_eq!(&*path, "externalAgents.c.profileDir");
+    assert!(
+        problem.contains("externalAgents.a.profileDir"),
+        "got {problem}"
+    );
+    assert!(
+        !problem.contains("externalAgents.b.profileDir"),
+        "got {problem}"
+    );
+}
+
+/// Two directories that exist and are one on the disk, as through a link, are
+/// one directory however they are written.
+#[cfg(unix)]
+#[test]
+fn a_profile_directory_and_a_link_to_it_are_refused_naming_both_instances() {
+    let tree = crate::sample::Scratch::new("profile-spelling-link");
+    let real = tree.make("real");
+    let link = tree.at("link");
+    std::os::unix::fs::symlink(&real, &link).expect("a link in the temporary directory");
+
+    let err = on_profiles(&[
+        ("spare", &real.display().to_string()),
+        ("work", &link.display().to_string()),
+    ])
+    .unwrap_err();
+    let said = err.to_string();
+    assert!(matches!(err, ConfigError::Variant { .. }), "got {err:?}");
+    assert!(
+        said.contains("externalAgents.spare.profileDir"),
+        "got {said}"
+    );
+    assert!(
+        said.contains("externalAgents.work.profileDir"),
+        "got {said}"
+    );
+    assert!(said.contains("same way"), "got {said}");
+}
+
+/// Writing one directory alike is how instances share a profile, a single
+/// instance is never refused for how it spells its own, and directories that
+/// are not known to be one are two: different ones, ones that are absent, and
+/// an absent one beside an existing one.
+#[test]
+fn profile_directories_not_known_to_be_one_load() {
+    let tree = crate::sample::Scratch::new("profile-spelling-loads");
+    let plain = tree.text("agy");
+    let trailing = format!("{plain}{}", std::path::MAIN_SEPARATOR);
+    let present = tree.make("present");
+    let other = tree.make("other");
+    let present = present.display().to_string();
+    let other = other.display().to_string();
+    let absent = tree.text("absent");
+    let elsewhere = tree.text("elsewhere");
+
+    for instances in [
+        vec![("spare", &plain), ("work", &plain)],
+        vec![("work", &trailing)],
+        vec![("spare", &present), ("work", &other)],
+        vec![("spare", &absent), ("work", &elsewhere)],
+        vec![("spare", &present), ("work", &absent)],
+        // The same spelling twice and a third beside them: only a different
+        // spelling of the same directory is refused.
+        vec![("one", &plain), ("two", &plain), ("three", &elsewhere)],
+    ] {
+        let instances: Vec<(&str, &str)> = instances
+            .into_iter()
+            .map(|(name, profile)| (name, profile.as_str()))
+            .collect();
+        assert!(
+            on_profiles(&instances).is_ok(),
+            "{instances:?}: {:?}",
+            on_profiles(&instances).err()
+        );
+    }
+}
+
+/// A catalog agent chooses its own model, so neither a model nor an effort
+/// is read for it.
+#[test]
+fn a_catalog_agent_takes_no_model_or_effort() {
+    for (key, value) in [("model", "opus"), ("effort", "high")] {
+        let err = mine(&catalog(
+            &"goose".into(),
+            &format!(r#", "{key}": "{value}""#),
+        ))
+        .unwrap_err();
+        let said = err.to_string();
+        assert!(matches!(err, ConfigError::Variant { .. }), "got {err:?}");
+        assert!(
+            said.contains(&format!("externalAgents.mine.{key}")),
+            "got {said}"
+        );
+        assert!(said.contains("catalog"), "got {said}");
+    }
+}
+
 #[test]
 fn a_driver_crucible_does_not_know_is_refused() {
     let err = mine(r#"{"externalAgents": {"mine": {"driver": "codex", "executable": "codex"}}}"#)

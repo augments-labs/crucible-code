@@ -19,6 +19,14 @@
 //! standard error, which is what a launch failure carries and a test asserts
 //! on.
 //!
+//! A script made by [`Script::once`] plays its one reply at every start and
+//! keeps no place, so a peer in a directory nothing may write to still plays;
+//! a reply can try to reach an address and say one line or another by whether
+//! it could, which is how a test sees what a sandbox's network allowed.
+//!
+//! A reply can say a line with no ending, as a prompt is, and say back what it
+//! heard, as a command that echoes its input does.
+//!
 //! What it hears is kept, bounded, in a file named `heard`, and the arguments
 //! of each start in one named `argued`, so a test can say what reached it; a
 //! reply can also start a grandchild that beats into a file named `lingering`
@@ -33,6 +41,7 @@
 use std::fmt;
 use std::fs;
 use std::io::{self, BufRead, Read, Write};
+use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::Duration;
@@ -98,6 +107,9 @@ const HELD: Duration = Duration::from_millis(150);
 /// beaten twenty times by then.
 const SETTLE: Duration = Duration::from_secs(1);
 
+/// How long a reply waits to connect before it takes the address for refused.
+const REACH: Duration = Duration::from_secs(2);
+
 /// The script format this peer reads.
 const FORMAT: u64 = 1;
 
@@ -159,12 +171,20 @@ enum Step {
     Say(String),
     /// Reads this many lines, or every line until its input closes.
     Hear(Option<u32>),
+    /// Reads this many lines, writing each back to standard output as it is
+    /// read, as a command that echoes what is typed to it does.
+    Echo(u32),
+    /// Writes this to standard output and ends no line, as a prompt does.
+    Prompt(String),
     /// Writes this line to standard error.
     Mutter(String),
     /// Writes this many bytes, none of them a newline.
     Flood(Stream, u64),
     /// Waits this long.
     Pause(Duration),
+    /// Tries to connect to this address, and writes the first line to
+    /// standard output where it could not and the second where it could.
+    Reach(SocketAddr, String, String),
     /// Starts a grandchild that beats until it is stopped.
     Linger,
     /// Exits with this status.
@@ -214,6 +234,21 @@ impl Reply {
         self
     }
 
+    /// Then reads `count` lines and writes each back to standard output; input
+    /// that closes first ends the reply.
+    #[must_use]
+    pub fn echo(mut self, count: u32) -> Self {
+        self.steps.push(Step::Echo(count));
+        self
+    }
+
+    /// Then writes `text` to standard output, ending no line, as a prompt does.
+    #[must_use]
+    pub fn prompt(mut self, text: impl Into<String>) -> Self {
+        self.steps.push(Step::Prompt(text.into()));
+        self
+    }
+
     /// Then writes `line` to standard error.
     #[must_use]
     pub fn mutter(mut self, line: impl Into<String>) -> Self {
@@ -232,6 +267,20 @@ impl Reply {
     #[must_use]
     pub fn pause(mut self, pause: Duration) -> Self {
         self.steps.push(Step::Pause(pause));
+        self
+    }
+
+    /// Then tries to connect to `to`, and writes `refused` to standard output
+    /// where it could not and `reached` where it could.
+    #[must_use]
+    pub fn reach(
+        mut self,
+        to: SocketAddr,
+        refused: impl Into<String>,
+        reached: impl Into<String>,
+    ) -> Self {
+        self.steps
+            .push(Step::Reach(to, refused.into(), reached.into()));
         self
     }
 
@@ -271,6 +320,15 @@ impl Reply {
                     Step::Pause(pause) => {
                         json!({ "pause": u64::try_from(pause.as_millis()).unwrap_or(u64::MAX) })
                     }
+                    Step::Reach(to, refused, reached) => json!({
+                        "reach": {
+                            "to": to.to_string(),
+                            "refused": refused,
+                            "reached": reached,
+                        }
+                    }),
+                    Step::Echo(count) => json!({ "echo": count }),
+                    Step::Prompt(text) => json!({ "prompt": text }),
                     Step::Linger => json!({ "linger": null }),
                     Step::Exit(status) => json!({ "exit": status }),
                 })
@@ -290,6 +348,8 @@ impl Reply {
                     "say" => Step::Say(value.as_str()?.to_owned()),
                     "hear" if value.is_null() => Step::Hear(None),
                     "hear" => Step::Hear(Some(u32::try_from(value.as_u64()?).ok()?)),
+                    "echo" => Step::Echo(u32::try_from(value.as_u64()?).ok()?),
+                    "prompt" => Step::Prompt(value.as_str()?.to_owned()),
                     "mutter" => Step::Mutter(value.as_str()?.to_owned()),
                     "flood" => {
                         let stream = match value.get("to")?.as_str()? {
@@ -300,6 +360,11 @@ impl Reply {
                         Step::Flood(stream, value.get("bytes")?.as_u64()?)
                     }
                     "pause" => Step::Pause(Duration::from_millis(value.as_u64()?)),
+                    "reach" => Step::Reach(
+                        value.get("to")?.as_str()?.parse().ok()?,
+                        value.get("refused")?.as_str()?.to_owned(),
+                        value.get("reached")?.as_str()?.to_owned(),
+                    ),
                     "linger" => Step::Linger,
                     "exit" => Step::Exit(u8::try_from(value.as_u64()?).ok()?),
                     _ => return None,
@@ -315,6 +380,8 @@ impl Reply {
 pub struct Script {
     /// The replies, in the order the starts consume them.
     replies: Vec<Reply>,
+    /// Whether the one reply is played at every start, with no place kept.
+    stateless: bool,
 }
 
 impl Script {
@@ -323,13 +390,25 @@ impl Script {
     pub fn of(replies: impl IntoIterator<Item = Reply>) -> Self {
         Self {
             replies: replies.into_iter().collect(),
+            stateless: false,
+        }
+    }
+
+    /// The script that gives `reply` at every start and keeps no place, for a
+    /// peer installed where nothing may write.
+    #[must_use]
+    pub fn once(reply: Reply) -> Self {
+        Self {
+            replies: vec![reply],
+            stateless: true,
         }
     }
 
     /// This script as its file holds it.
-    pub(crate) fn encoded(&self) -> Vec<u8> {
+    pub fn encoded(&self) -> Vec<u8> {
         json!({
             "format": FORMAT,
+            "stateless": self.stateless,
             "replies": self.replies.iter().map(Reply::encoded).collect::<Vec<_>>(),
         })
         .to_string()
@@ -348,7 +427,11 @@ impl Script {
             .iter()
             .map(Reply::decoded)
             .collect::<Option<Vec<_>>>()?;
-        Some(Self { replies })
+        let stateless = value
+            .get("stateless")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        Some(Self { replies, stateless })
     }
 }
 
@@ -384,6 +467,34 @@ pub enum Unbuilt {
 /// where it could not be put in place.
 pub fn install(directory: &Path, program: &str, script: &Script) -> Result<PathBuf, Unbuilt> {
     installed(&built()?, directory, program, script)
+}
+
+/// A zip archive of `members`, each a path and its bytes, for a test host to
+/// serve as a registry archive: stored, not deflated, and each member
+/// executable, since a registry target's program is the archive's own.
+///
+/// Nothing that ships carries this: it is the test build's way to put the
+/// peer and its script into one archive, as the ACP Registry publishes them.
+///
+/// # Panics
+///
+/// When the archive cannot be written in memory, which leaves the test that
+/// asked for it nothing to report.
+#[must_use]
+#[allow(clippy::expect_used)]
+pub fn archive(members: &[(&str, &[u8])]) -> Vec<u8> {
+    use zip::write::SimpleFileOptions;
+
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for (path, bytes) in members {
+        let options = SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored)
+            .system(zip::System::Unix)
+            .unix_permissions(0o755);
+        writer.start_file(*path, options).expect("a member name");
+        writer.write_all(bytes).expect("a member");
+    }
+    writer.finish().expect("a zip stream").into_inner()
 }
 
 /// Where Cargo puts a workspace binary for the test running now: beside the
@@ -610,7 +721,11 @@ fn play() -> ExitCode {
     else {
         return refuse("fake peer: script unreadable", UNREADABLE);
     };
-    let Ok(played) = counter(&directory) else {
+    let Ok(played) = (if script.stateless {
+        Ok(0)
+    } else {
+        counter(&directory)
+    }) else {
         return refuse("fake peer: counter unwritable", UNWRITABLE);
     };
     let Some(reply) = script.replies.get(played) else {
@@ -618,7 +733,7 @@ fn play() -> ExitCode {
     };
     // Kept before the reply is played, so a start that crashes is not played
     // again by the next one.
-    if keep(&directory, played.saturating_add(1)).is_err() {
+    if !script.stateless && keep(&directory, played.saturating_add(1)).is_err() {
         return refuse("fake peer: counter unwritable", UNWRITABLE);
     }
     let arguments: Vec<String> = std::env::args_os()
@@ -661,6 +776,26 @@ fn perform(directory: &Path, reply: &Reply) -> io::Result<ExitCode> {
                     left = left.map(|left| left.saturating_sub(1));
                 }
             }
+            Step::Echo(count) => {
+                for _ in 0..*count {
+                    let mut line = Vec::new();
+                    let read = (&mut input)
+                        .take(crucible_transport::FRAME_BYTES as u64 + 1)
+                        .read_until(b'\n', &mut line)?;
+                    if read == 0 {
+                        return Ok(ExitCode::SUCCESS);
+                    }
+                    remember(directory, HEARD, &line);
+                    let mut out = io::stdout().lock();
+                    out.write_all(&line)?;
+                    out.flush()?;
+                }
+            }
+            Step::Prompt(text) => {
+                let mut out = io::stdout().lock();
+                out.write_all(text.as_bytes())?;
+                out.flush()?;
+            }
             Step::Mutter(line) => {
                 let mut err = io::stderr().lock();
                 writeln!(err, "{line}")?;
@@ -684,6 +819,15 @@ fn perform(directory: &Path, reply: &Reply) -> io::Result<ExitCode> {
                 }
             }
             Step::Pause(pause) => std::thread::sleep(*pause),
+            Step::Reach(to, refused, reached) => {
+                let line = match TcpStream::connect_timeout(to, REACH) {
+                    Ok(_) => reached,
+                    Err(_) => refused,
+                };
+                let mut out = io::stdout().lock();
+                writeln!(out, "{line}")?;
+                out.flush()?;
+            }
             Step::Linger => {
                 Command::new(std::env::current_exe()?)
                     .arg("--linger")
@@ -737,4 +881,27 @@ fn linger(directory: &Path) -> ExitCode {
         std::thread::sleep(BEAT);
     }
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    /// The fake archive's members carry the Unix mode a survey reads, even
+    /// where the writer would otherwise stamp a DOS system and lose the
+    /// executable bit.
+    #[test]
+    fn the_fake_archive_marks_each_member_executable() {
+        let archive = super::archive(&[("goose.exe", b"the program"), ("script", b"{}")]);
+        let mut zip = zip::ZipArchive::new(Cursor::new(archive)).expect("a zip archive");
+
+        for name in ["goose.exe", "script"] {
+            let member = zip.by_name(name).expect("a named member");
+            assert_eq!(
+                member.unix_mode().map(|mode| mode & 0o777),
+                Some(0o755),
+                "{name}"
+            );
+        }
+    }
 }

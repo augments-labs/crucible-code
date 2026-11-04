@@ -120,6 +120,7 @@ fn an_assembled_conversation_s_search_waits_for_room_on_the_run_s_tool_worker() 
         services: &services,
         settings: &settings,
         sessions: &logs,
+        state: &sample.state(),
         workspace: &workspace,
         ledger: &Ledger::new(),
         revealed: &Revealed::new(),

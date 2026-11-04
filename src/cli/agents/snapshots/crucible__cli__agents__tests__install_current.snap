@@ -1,0 +1,5 @@
+---
+source: src/cli/agents/tests.rs
+expression: bench.shown(&again)
+---
+goose 1.0.0 is already installed at <home>/programs/goose/1.0.0/goose.

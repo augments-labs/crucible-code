@@ -112,8 +112,8 @@ advertised as a hard CPU ceiling.
 
 The generated Seatbelt profile is closed by default. It reads only fixed
 system-runtime directories plus the declared filesystem roots,
-writes only declared read-write roots, carves protected and unreadable paths
-back out, and denies networking. Declared grants and exact carve-outs are
+writes only declared read-write roots, carves protected, unreadable and
+read-only paths back out of them, and denies networking. Declared grants and exact carve-outs are
 supplied as Seatbelt parameters. Case-insensitive protected-name and unreadable
 pattern predicates are escaped and anchored to validated roots in the generated
 profile so an APFS spelling alias cannot reopen them. On a case-insensitive,
@@ -434,6 +434,99 @@ or network reach and must not be described as a sandbox. Its process-isolation
 capability is explicitly unsupported; unlike the enforcing PID-namespace
 backend, it cannot promise containment of a hostile process that deliberately
 escapes the owned process group.
+
+## Installed agents' releases
+
+An installed coding agent whose program lies in a version crucible installed
+for it, under `programs/<agent>/<version>/` in crucible's home, is started
+with that version's directory read-only, whatever writable root it lies in. It
+can read and run the files it was installed with and change none of them, so a
+rollback goes back to the bytes it ran before and verifying an installed agent
+checks the bytes that run. A profile directory configured inside that
+directory is refused rather than made writable. The agent is also started with
+the variable its catalog entry names to turn its own updater off. Where the
+catalog no longer lists that version, because a newer one superseded it or it
+was gone back to, the variable comes from the release the catalog offers the
+agent now.
+
+A version the agent catalog has revoked is not started: the refusal names the
+version and the catalog's reason, and says to roll back to the version
+installed before it or update to the one offered now. Where the catalog's
+trust state cannot be read, a version in `programs` is not started either,
+because whether it was revoked cannot be known; the refusal names the file to
+repair or remove. A program configured outside `programs` is the user's own,
+and neither rule applies to it.
+
+A release read from the ACP Registry has no review, revocation list or
+anti-rollback. There is no catalog signature or trust state for it: the
+registry's SHA-256, recorded in its receipt, and the probe record taken at its
+install are what hold it. A fresh install accepts a same-version archive the
+registry replaces; an installed version keeps the hash its receipt recorded and
+refuses a different same-version archive until it is removed. A receipt without
+that probe record for this machine is not started; `crucible agents probe`
+takes one. The revocation and trust-state rule above is a signed catalog
+release's.
+
+Its consent and its network are the registry's relaxations. Its install is
+asked about under the generic warning that its vendor has not stated what it
+does with what is sent, and the same yes covers the probe; its first start is
+held by that warning too. Its network reach is not recorded: Crucible adds no
+vendor hosts, and the agent runs under the network policy of the conversation
+that starts it, so with that network closed it cannot reach its model. The
+install and launch screens say the reach is unrecorded.
+
+A switch to another version is smoke-tested before any instance is moved onto
+it only where the sandbox is on, the network is closed for commands and the
+agent's route already has its yes about content use; the yes to the switch
+does not count as that yes. The new version is started once in the sandbox,
+with the network closed, no host to reach, its version's directory read-only
+and nothing else of the user's readable, and is sent `initialize` and nothing
+more. Unless it answers as its entry says, nothing is moved onto it. Where any
+of those conditions does not hold, the confirmation says the switch is not
+smoke-tested, and why.
+
+A release's install script that its catalog review marks to run at install runs
+once, after the yes to the install and under the yes about content use for the
+agent's route, as `sh -c` with the command the catalog gives, never one read
+from what was downloaded. Its policy is built for it alone and takes nothing
+from the conversation's: the package directory being staged and a private
+temporary directory are the only places it can write, the staged version is
+readable, and it can reach only the hosts the review named, or none. Its
+environment is `PATH`, with the pinned Node's directory first and then a fixed
+system path; the private `HOME` and `TMPDIR` the backend gives every command;
+and npm's `npm_lifecycle_event` and `npm_package_*` for that package. Nothing else is
+inherited. When its first process exits, everything it started is stopped, a
+child still running included, and only once that stop is confirmed is the
+package compared with the review's listing: every path, its kind, whether it
+runs, empty directories and its SHA-256, and a listed file with a second hard
+link is a difference. A stop nobody could confirm, a failure, a
+difference or a private directory that cannot be removed refuses the version
+and removes what was staged, whatever modes the script left on its directories.
+A child is stopped, not waited for, so what it had not finished writing is a difference. A
+script runs for at most ten minutes. A release with more scripts to run than
+the question shows, sixteen, is refused, and a host a script may reach is a name
+of two labels or more, or `*.` over one, never an address. Scripts run on Linux
+alone, where a PID namespace lets the stop reach everything a script started.
+With the sandbox off, on macOS, where nothing could prove a descendant that left
+its process group stopped, on Windows or on FreeBSD, none runs, and the install
+is refused before anything is fetched.
+
+A sign-in method the catalog records as needing a real terminal runs the
+agent's own recorded command unconfined, because no sandbox backend can give a
+child a terminal. It is the one command crucible starts outside the sandbox
+without the user having turned confinement off: it is asked about on every
+run, in a confirmation that says so, and it is refused while a project
+requires the sandbox. It is also refused unless standard input, output and
+error are all terminals, or before a process starts on Windows. The command is
+put in a process group of its own, which becomes the terminal's foreground
+group, so Ctrl+C reaches it alone; when its ten minutes pass the whole group is
+killed and waited for. The terminal is handed back and every row painted again
+afterwards, and the agent's own status read afterwards is what decides whether
+the sign-in took. The command's environment is the entry's record, or a
+registry release's probe record, merged with the shell's allowlist of passed
+variables, starting from a cleared
+environment, and it is run from the version installed, which stays read-only
+for the agent's other runs.
 
 ## Environment and credentials
 

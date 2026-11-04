@@ -140,6 +140,17 @@ impl Profile {
                         ),
                     )?;
                 }
+                // Seatbelt takes the last rule that matches, and a writable
+                // root's allow, earlier in path order, would otherwise let
+                // this one be written.
+                SandboxFilesystemAccess::ReadOnly if beneath_writable(policy, rule.path()) => {
+                    push_deny_path(
+                        &mut text,
+                        &mut definitions,
+                        rule.path(),
+                        ("DENY_WRITE", &mut denied_writes, "file-write* file-link"),
+                    )?;
+                }
                 SandboxFilesystemAccess::ReadOnly => {}
             }
         }
@@ -219,7 +230,11 @@ impl Profile {
         for protected in policy
             .filesystem()
             .iter()
-            .filter(|rule| rule.access() == SandboxFilesystemAccess::Protected)
+            .filter(|rule| {
+                rule.access() == SandboxFilesystemAccess::Protected
+                    || (rule.access() == SandboxFilesystemAccess::ReadOnly
+                        && beneath_writable(policy, rule.path()))
+            })
             .map(crucible_sandbox::SandboxFilesystemRule::path)
             .chain(discovered_protected.iter().map(PathBuf::as_path))
         {
@@ -509,6 +524,23 @@ fn materialization(problem: &'static str, source: Option<std::io::Error>) -> San
         problem: problem.into(),
         source,
     }
+}
+
+/// Whether `path` lies beneath a writable root of `policy` other than itself,
+/// in any spelling Seatbelt matches either by: `/var` and `/private/var` are
+/// one directory on macOS, and a rule may name it either way.
+fn beneath_writable(policy: &SandboxPolicy, path: &Path) -> bool {
+    let spellings = paths_with_system_alias(path);
+    policy
+        .filesystem()
+        .iter()
+        .filter(|rule| rule.access() == SandboxFilesystemAccess::ReadWrite)
+        .flat_map(|rule| paths_with_system_alias(rule.path()))
+        .any(|root| {
+            spellings
+                .iter()
+                .any(|spelled| *spelled != root && spelled.starts_with(&root))
+        })
 }
 
 fn push_deny_path(
@@ -1104,6 +1136,155 @@ mod tests {
                     "(deny file-write-unlink file-write-create (regex #\"{regex}\"))"
                 )),
                 "protected-name moves are not explicitly denied for {root:?}"
+            );
+        }
+    }
+
+    /// A read-only rule beneath a writable root is denied every write after
+    /// that root's allow, so Seatbelt's last matching rule keeps it read-only,
+    /// and the directories between it and the root cannot be renamed away
+    /// with it.
+    #[test]
+    fn a_read_only_rule_beneath_a_writable_root_denies_writes_after_the_allow() {
+        let sample = Sample::new("macos-seatbelt-read-only-beneath");
+        let standard = SandboxPolicy::standard(&sample.workspace()).expect("standard policy");
+        // The workspace's root as its policy names it, resolved: on macOS the
+        // temporary directory is reached through `/var`, which leads to
+        // `/private/var`, and a launch names a version root resolved too.
+        let writable = standard
+            .filesystem()
+            .iter()
+            .find(|rule| rule.access() == SandboxFilesystemAccess::ReadWrite)
+            .expect("a writable root")
+            .path()
+            .to_path_buf();
+        let root = writable.join("programs").join("goose").join("1.0.0");
+        let read_only = SandboxFilesystemRule::new(
+            &root,
+            SandboxFilesystemAccess::ReadOnly,
+            SandboxFilesystemProvenance::Runtime,
+        )
+        .expect("read-only rule");
+        let policy = SandboxPolicy::new(
+            standard.enabled(),
+            standard.filesystem().iter().cloned().chain([read_only]),
+            standard.working_directory(),
+            SandboxNetworkPolicy::Closed,
+            SandboxResourceLimits::confining(),
+        )
+        .expect("effective policy");
+
+        let profile = Profile::build(&policy, &[], &[], &[]).expect("Seatbelt profile");
+
+        let key = |path: &Path, prefix: &str| {
+            let mut wanted = OsString::from("=");
+            wanted.push(path);
+            profile
+                .definitions
+                .iter()
+                .find_map(|definition| {
+                    let text = definition.to_string_lossy();
+                    let (key, _) = text.split_once('=')?;
+                    (key.starts_with(prefix) && text.ends_with(&*wanted.to_string_lossy()))
+                        .then(|| key.to_owned())
+                })
+                .unwrap_or_else(|| panic!("a {prefix} definition for {}", path.display()))
+        };
+        let written = key(&writable, "WRITE_");
+        let denied = key(&root, "DENY_WRITE_");
+        let allow = profile
+            .policy
+            .find(&format!(
+                "(allow file-write* (require-all (require-any (literal (param \"{written}\"))"
+            ))
+            .expect("the root's allow");
+        let deny = profile
+            .policy
+            .find(&format!(
+                "(deny file-write* file-link (require-any (literal (param \"{denied}\")) (subpath (param \"{denied}\"))))"
+            ))
+            .expect("the read-only rule's deny");
+        assert!(allow < deny, "the deny comes after the allow it narrows");
+        for between in [
+            root.parent().expect("goose"),
+            root.parent().and_then(Path::parent).expect("programs"),
+        ] {
+            let ancestor = key(between, "PROTECTED_ANCESTOR_");
+            assert!(profile.policy.contains(&format!(
+                "(deny file-write-unlink file-write-create (require-all (vnode-type DIRECTORY) (literal (param \"{ancestor}\"))))"
+            )));
+        }
+    }
+
+    /// A read-only rule beneath no writable root needs nothing denied: the
+    /// profile writes nothing there anyway.
+    #[test]
+    fn a_read_only_rule_beneath_no_writable_root_adds_no_deny() {
+        let sample = Sample::new("macos-seatbelt-read-only-alone");
+        let root = sample.root().join("programs");
+        let read_only = SandboxFilesystemRule::new(
+            &root,
+            SandboxFilesystemAccess::ReadOnly,
+            SandboxFilesystemProvenance::Runtime,
+        )
+        .expect("read-only rule");
+        let policy = SandboxPolicy::new(
+            true,
+            [read_only],
+            &root,
+            SandboxNetworkPolicy::Closed,
+            SandboxResourceLimits::confining(),
+        )
+        .expect("effective policy");
+
+        let profile = Profile::build(&policy, &[], &[], &[]).expect("Seatbelt profile");
+
+        assert!(
+            !profile.policy.contains("DENY_WRITE_"),
+            "{}",
+            profile.policy
+        );
+        assert!(!profile.policy.contains("(allow file-write* (require-all"));
+    }
+
+    /// A read-only rule spelled through `/var` beneath a writable root
+    /// spelled through `/private/var`, the one directory macOS reaches by both,
+    /// is still denied every write in both spellings.
+    #[test]
+    fn a_read_only_rule_beneath_a_writable_root_spelled_through_the_other_alias_is_denied() {
+        let writable = SandboxFilesystemRule::new(
+            "/private/var/work",
+            SandboxFilesystemAccess::ReadWrite,
+            SandboxFilesystemProvenance::Workspace,
+        )
+        .expect("writable rule");
+        let read_only = SandboxFilesystemRule::new(
+            "/var/work/programs/goose/1.0.0",
+            SandboxFilesystemAccess::ReadOnly,
+            SandboxFilesystemProvenance::Runtime,
+        )
+        .expect("read-only rule");
+        let policy = SandboxPolicy::new(
+            true,
+            [writable, read_only],
+            "/private/var/work",
+            SandboxNetworkPolicy::Closed,
+            SandboxResourceLimits::confining(),
+        )
+        .expect("effective policy");
+
+        let profile = Profile::build(&policy, &[], &[], &[]).expect("Seatbelt profile");
+
+        for spelled in [
+            "/var/work/programs/goose/1.0.0",
+            "/private/var/work/programs/goose/1.0.0",
+        ] {
+            assert!(
+                profile.definitions.iter().any(|definition| {
+                    let text = definition.to_string_lossy();
+                    text.starts_with("DENY_WRITE_") && text.ends_with(&format!("={spelled}"))
+                }),
+                "no write is denied at {spelled}"
             );
         }
     }

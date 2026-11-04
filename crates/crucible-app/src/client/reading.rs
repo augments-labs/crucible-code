@@ -74,7 +74,7 @@ pub fn reaching(conversation: &Conversation) -> Option<&'static str> {
     conversation
         .agent_driver()
         .filter(|driver| driver.takes_model())
-        .map(crucible_config::Driver::provider)
+        .and_then(|_| conversation.agent_reaches())
 }
 
 /// Who runs `conversation`'s turns: this program, or an installed agent.

@@ -1,0 +1,4 @@
+Apache License, Version 2.0, with the LLVM exception
+
+A test fixture stands in for the full text here: the gate copies whatever
+text it is given for the licence, and checks only that one is given.

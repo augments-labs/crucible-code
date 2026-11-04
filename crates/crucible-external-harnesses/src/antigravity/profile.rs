@@ -2,7 +2,8 @@
 //!
 //! A launch's environment starts from nothing and holds only what is named
 //! here: the few variables a program needs to run at all, taken from the
-//! shell, and the profile's own. The agent reads its account, project and home
+//! shell as they are for every agent the catalog reviewed, and the profile's
+//! own. The agent reads its account, project and home
 //! from variables a shell may hold for another use, and none of those is
 //! named, so the agent signs in, keeps its files and unpacks itself inside the
 //! profile alone: its home for sign-in is the profile's directory, and its
@@ -11,30 +12,23 @@
 //! configuration refuses an instance without a profile, since its usual home
 //! is the one the Antigravity IDE signs in under; a launch given none keeps its
 //! files there, its token still in a file.
+//!
+//! A business sign-in is billed to a Google Cloud project in a location,
+//! which the agent reads from its own settings file in the profile and from
+//! no variable. [`business`] writes that file before the agent is started for
+//! the sign-in, holding the method, project and location and nothing else. It
+//! opens the settings directory once, as itself, and writes the file within
+//! what that open holds, so a link at either name refuses the sign-in and a
+//! name changed while it writes cannot take the file out of the profile.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
+use std::io;
 use std::path::Path;
 
-/// The variables taken from the shell, which say where programs and the
-/// user's own files are and how text is written, and nothing about any
-/// account, so their values may be shown where what the agent says is kept.
-pub(crate) const PASSED: [&str; 15] = [
-    "PATH",
-    "HOME",
-    "USERPROFILE",
-    "LANG",
-    "LC_ALL",
-    "LC_CTYPE",
-    "TZ",
-    "USER",
-    "LOGNAME",
-    "SYSTEMROOT",
-    "WINDIR",
-    "COMSPEC",
-    "PATHEXT",
-    "SYSTEMDRIVE",
-    "NUMBER_OF_PROCESSORS",
-];
+use serde_json::Value;
+
+use super::OAUTH_BUSINESS;
+use crate::catalog::passed;
 
 /// The variables naming a directory for temporary files, which the agent
 /// unpacks itself into: the profile's, so what a stopped agent leaves behind
@@ -51,22 +45,11 @@ const NO_BROWSER: &str = "true";
 /// The environment for a launch in `profile`, where there is one, from the
 /// `ambient` one. None of its variables says anything about an account, so
 /// each value may be shown.
-///
-/// On Windows a variable is matched whatever its case, as Windows matches it;
-/// one whose name or value is not text is left out, since none of those named
-/// is.
 pub(crate) fn environment(
     ambient: impl IntoIterator<Item = (OsString, OsString)>,
     profile: Option<&Path>,
 ) -> Vec<(&'static str, String)> {
-    let mut environment: Vec<(&'static str, String)> = ambient
-        .into_iter()
-        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
-        .filter_map(|(name, value)| {
-            let passed = PASSED.iter().find(|passed| named(&name, passed))?;
-            Some((*passed, value))
-        })
-        .collect();
+    let mut environment = passed(ambient);
     environment.extend(
         [
             ("AGY_ACP_FORCE_FILE_STORAGE", "1"),
@@ -88,11 +71,46 @@ pub(crate) fn environment(
     environment
 }
 
-/// Whether `name` is the variable `wanted`, as the platform compares names.
-fn named(name: &str, wanted: &str) -> bool {
-    if cfg!(windows) {
-        name.eq_ignore_ascii_case(wanted)
-    } else {
-        name == wanted
-    }
+/// The directory in the profile the agent keeps its settings in.
+const SETTINGS_DIRECTORY: &str = "antigravity-acp";
+
+/// The agent's settings file in [`SETTINGS_DIRECTORY`].
+const SETTINGS: &str = "settings.json";
+
+/// Writes the settings a business sign-in in `profile` is made with: the
+/// method, and the Google Cloud `project` and `location` it is billed to,
+/// which the agent reads from this file alone. The file holds that and
+/// nothing else, replacing whatever the agent kept there, and none of it is a
+/// credential.
+///
+/// The write follows no link and leaves the profile at neither name: a link
+/// at the settings directory or at the file refuses it before anything is
+/// written. The directory is opened once, as itself, and the file is written
+/// and renamed within what that open holds, so a name changed meanwhile
+/// cannot send the write to another directory, and a link made at the file's
+/// name since is replaced rather than written through. On Windows the draft
+/// is created by name first and shown to be in that directory before a byte
+/// is written, so a settings directory still empty that is turned into a
+/// junction meanwhile gets an empty draft where the junction leads, removed
+/// with nothing written and the sign-in refused.
+///
+/// # Errors
+///
+/// [`io::Error`] where either name is a link, the settings directory cannot
+/// be made one, or the file cannot be replaced.
+pub fn business(profile: &Path, project: &str, location: &str) -> io::Result<()> {
+    // Each value spelled by the JSON writer, and the keys in the order the
+    // agent's own settings name them.
+    let settings = format!(
+        r#"{{"auth":{{"type":{}}},"gcp":{{"project":{},"location":{}}}}}"#,
+        Value::from(OAUTH_BUSINESS),
+        Value::from(project),
+        Value::from(location),
+    );
+    crucible_privacy::replace_in(
+        &profile.join(SETTINGS_DIRECTORY),
+        OsStr::new(SETTINGS),
+        settings.as_bytes(),
+    )
+    .map_err(crucible_privacy::PrivacyError::into_io)
 }

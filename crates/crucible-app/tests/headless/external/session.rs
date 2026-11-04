@@ -14,7 +14,7 @@ use crucible_app::backends::{REGISTRY, Registry, Row};
 use crucible_app::content_use::{Consent, Routes};
 use crucible_app::launching::Agent;
 use crucible_app::outside::{Installed, Relaunch};
-use crucible_config::Driver;
+use crucible_config::{Driver, Serves};
 use crucible_external_harnesses::fake_peer::{self, Reply, Script as Peer};
 use crucible_runner::{TurnError, Turned};
 use crucible_sandbox::{SandboxPolicy, SandboxService};
@@ -29,7 +29,7 @@ use crate::{Failed, Script, Tree};
 /// Antigravity's own row, reaching no host, as [`row`] is Claude Code's.
 fn antigravity_row() -> Result<&'static Row, Failed> {
     let shipped = REGISTRY
-        .row(Driver::Antigravity)
+        .built(Driver::Antigravity)
         .ok_or("Antigravity has no row")?;
     Ok(Box::leak(Box::new(Row {
         reaches: &[],
@@ -50,13 +50,14 @@ fn on_antigravity(tree: &Tree, script: &Peer) -> Result<Outside, Failed> {
     let sandbox: Arc<dyn SandboxService> =
         Arc::new(LocalSandbox::new().watching_on(runtime.clone()));
     let route = Route::External {
-        provider: "google",
+        serves: Serves::Provider("google"),
         instance: "space".into(),
         driver: Driver::Antigravity,
         executable: program.to_string_lossy().into(),
         profile: None,
         model: None,
         effort: None,
+        location: None,
         enabled: true,
     };
     let registry = Registry::new(std::slice::from_ref(row));
@@ -66,6 +67,8 @@ fn on_antigravity(tree: &Tree, script: &Peer) -> Result<Outside, Failed> {
         runtime: runtime.clone(),
         policy: SandboxPolicy::standard(&tree.workspace()?)?.with_enabled(false),
         consent,
+        state: tree.0.join("state"),
+        sessions: tree.sessions(),
         agent,
         row,
         launched: Arc::default(),
@@ -107,17 +110,16 @@ fn on_antigravity(tree: &Tree, script: &Peer) -> Result<Outside, Failed> {
 /// the first turn of the session picked back up opens a new one.
 #[test]
 fn a_session_the_agent_says_is_gone_is_opened_anew_by_the_next_turn() -> Result<(), Failed> {
+    use crucible_external_harnesses::acp::SignIn;
     use crucible_external_harnesses::antigravity::Manifest;
+    use crucible_external_harnesses::catalog::SNAPSHOT;
     use crucible_external_harnesses::fake_peer::scripts::acp;
 
+    let shipped = SNAPSHOT.entries().first().ok_or("the snapshot's entry")?;
     let reviewed = acp::initialized(
-        Manifest::REVIEWED.name,
-        Manifest::REVIEWED
-            .versions
-            .first()
-            .copied()
-            .unwrap_or_default(),
-        Manifest::REVIEWED.sign_in,
+        &shipped.admits.name,
+        &shipped.admits.version,
+        Manifest::REVIEWED.sign_in.first().map_or("", SignIn::id),
     );
     let answering = |text: &str| {
         acp::opening(&reviewed)
@@ -215,17 +217,16 @@ fn a_session_the_agent_says_is_gone_is_opened_anew_by_the_next_turn() -> Result<
 /// again.
 #[test]
 fn a_session_refused_for_another_reason_is_resumed_by_the_next_turn() -> Result<(), Failed> {
+    use crucible_external_harnesses::acp::SignIn;
     use crucible_external_harnesses::antigravity::Manifest;
+    use crucible_external_harnesses::catalog::SNAPSHOT;
     use crucible_external_harnesses::fake_peer::scripts::acp;
 
+    let shipped = SNAPSHOT.entries().first().ok_or("the snapshot's entry")?;
     let reviewed = acp::initialized(
-        Manifest::REVIEWED.name,
-        Manifest::REVIEWED
-            .versions
-            .first()
-            .copied()
-            .unwrap_or_default(),
-        Manifest::REVIEWED.sign_in,
+        &shipped.admits.name,
+        &shipped.admits.version,
+        Manifest::REVIEWED.sign_in.first().map_or("", SignIn::id),
     );
     let answering = |text: &str| {
         acp::opening(&reviewed)
@@ -289,7 +290,12 @@ fn a_model_of_the_agent_s_own_provider_is_refused_where_it_chooses_its_own() -> 
         &tree,
         &mut outside,
         Command::SelectModel {
-            provider: Name::new(Driver::Antigravity.provider())?,
+            provider: Name::new(
+                &Driver::Antigravity
+                    .serves(None)
+                    .map(|serves| serves.to_string())
+                    .ok_or("Antigravity serves a provider")?,
+            )?,
             model: Name::new("gemini-3.8-flash")?,
             effort: None,
         },

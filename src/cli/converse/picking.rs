@@ -31,7 +31,7 @@ use crucible_tui::{
 use crate::cli::Fatal;
 use crate::cli::style::Style;
 
-use super::region::{self, Ended, Moved, step};
+use super::region::{self, Ended, Moved, Room, step};
 
 /// What came back off a panel.
 ///
@@ -154,6 +154,41 @@ pub(super) fn pick_under<T: Terminal>(
         },
         |arrived, at| moving(arrived, at, count),
         while_waiting,
+    )?;
+
+    Ok(Picked::ended(ended, at))
+}
+
+/// [`pick`], for a question asked before something changes: laid out in the
+/// whole window in either mode rather than in the share, so every fact it
+/// states is on screen while it is answered. One the window cannot hold gives
+/// up rows as [`Panel::within`] does anywhere else.
+///
+/// # Errors
+///
+/// [`Fatal::Terminal`] if the terminal could not be drawn on or read from.
+pub(super) fn ask<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    style: Style,
+    mut panel: Panel<'_>,
+) -> Result<Picked, Fatal> {
+    let count = panel.shown.len();
+    if count == 0 {
+        return Ok(Picked::Cramped);
+    }
+
+    let mut at = panel.chosen.min(count - 1);
+
+    let ended = region::stand_in(
+        renderer,
+        Room::Window,
+        |_| style,
+        &mut at,
+        |marked, columns, rows| {
+            panel.chosen = *marked;
+            (panel.within(columns, rows, style.glyphs()), None)
+        },
+        |arrived, at| moving(arrived, at, count),
     )?;
 
     Ok(Picked::ended(ended, at))

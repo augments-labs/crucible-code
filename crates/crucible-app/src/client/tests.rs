@@ -10,13 +10,13 @@ use std::collections::VecDeque;
 use crucible_client_api::bounds::{ITEMS, TEXT_BYTES};
 use crucible_client_api::pending::Operation;
 use crucible_client_api::{
-    Capabilities, Capability, Decision, ErrorCode, Lasting, Pending, PendingId, Picked, Progress,
-    Refusal, Ruling, Said, SummaryKind,
+    Capabilities, Capability, Choice, Decision, ErrorCode, Lasting, Pending, PendingId, Picked,
+    Progress, Refusal, Ruling, Said, SummaryKind, Text,
 };
 use crucible_tools::{Argument, Ask, Remember, Sensitivity, Summary, Target, Verdict};
 use crucible_types::{Answer, Question, ToolArgs, ToolCall, ToolId};
 
-use super::deciding::{Confirmation, Deciding, Front, Shown, confirmed, questions, warned};
+use super::deciding::{Confirmation, Deciding, Front, Shown, confirmed, questions, settle, warned};
 use super::reading::progress;
 use crate::content_use::WARNED;
 
@@ -1071,4 +1071,169 @@ fn an_agent_action_is_put_naming_who_runs_it_in_the_sandbox_s_own_word() {
     // Nothing said is nothing claimed, never the weakest word.
     let acting = super::Acting::new("work", &Capabilities::unknown());
     assert_eq!(acting.confinement, None);
+}
+
+#[test]
+fn nothing_a_client_says_settles_an_install_confirmation_a_conversation_never_raised() {
+    let install = Pending::Install {
+        id: PendingId::new(5),
+        asks: Text::cut("Install it?"),
+        facts: vec![Text::cut("1.2.3")],
+        choices: vec![
+            Choice {
+                name: Text::cut("Install"),
+                says: Text::cut(""),
+                recommended: true,
+            },
+            Choice {
+                name: Text::cut("Leave it"),
+                says: Text::cut(""),
+                recommended: false,
+            },
+        ],
+    };
+    let id = install.id();
+    let said = |word| Said::new(word).expect("a short word");
+
+    // Every kind of decision there is, each naming the action it is held
+    // against and one of them naming a choice it offers: none settles it.
+    for decision in [
+        Decision::Ruled {
+            id,
+            ruling: Ruling::Allow,
+            lasting: Lasting::Session,
+        },
+        Decision::Answered {
+            id,
+            answers: vec![Picked {
+                chosen: vec![said("Install")],
+                note: said(""),
+            }],
+        },
+        Decision::Declined { id },
+        Decision::Accepted { id },
+        Decision::Picked {
+            id,
+            choice: said("Install"),
+        },
+        Decision::Picked {
+            id,
+            choice: said("Leave it"),
+        },
+    ] {
+        assert_eq!(
+            settle(&install, decision.clone()).map_err(Refusal::code),
+            Err(ErrorCode::WrongDecision),
+            "{decision:?}"
+        );
+    }
+
+    // Naming some other action is still answered as it is everywhere.
+    assert_eq!(
+        settle(
+            &install,
+            Decision::Picked {
+                id: PendingId::new(6),
+                choice: said("Install"),
+            }
+        )
+        .map_err(Refusal::code),
+        Err(ErrorCode::StaleDecision)
+    );
+}
+
+/// The door and the catalog intake refuse one set of scripts: both are held to
+/// this table, so neither publishes what the other refuses.
+#[test]
+fn a_build_beside_another_script_on_its_directory_is_the_table_the_intake_holds_too() {
+    use crucible_external_harnesses::catalog::{AssetRef, Disposition, Script};
+
+    use serde_json::Value;
+
+    let table = include_str!("../../../../tests/fixtures/agent-catalog/overlapping-scripts.json");
+    let table: Value = serde_json::from_str(table).expect("the table reads");
+    let asset = || AssetRef {
+        sha256: "0".repeat(64).into(),
+        size: 2,
+    };
+    let rows = |value: Option<&Value>| value.and_then(Value::as_array).cloned().unwrap_or_default();
+    let cases = rows(table.get("cases"));
+    assert!(!cases.is_empty());
+    for case in &cases {
+        let scripts: Vec<Script> = rows(case.get("scripts"))
+            .iter()
+            .map(|row| {
+                let word = |at: usize| row.get(at).and_then(Value::as_str).expect("a word");
+                Script {
+                    package: word(0).into(),
+                    event: "postinstall".into(),
+                    disposition: match word(1) {
+                        "built" => Disposition::Built {
+                            asset: asset(),
+                            files: asset(),
+                            unpacked: 2,
+                            decompressed: 2,
+                        },
+                        "local" => Disposition::Local {
+                            command: "node setup.js".into(),
+                            hosts: Vec::new(),
+                            result: asset(),
+                        },
+                        _ => Disposition::Inert,
+                    },
+                }
+            })
+            .collect();
+        assert_eq!(
+            super::agents::overlapping_build(&scripts),
+            case.get("refused")
+                .and_then(Value::as_bool)
+                .expect("a verdict"),
+            "{:?}",
+            case.get("name")
+        );
+    }
+}
+
+/// The door counts what the catalog intake counts, up to the number both are
+/// held to: scripts run at install and built at review, and no other.
+#[test]
+fn a_question_shows_the_number_of_scripts_the_intake_holds_too() {
+    use crucible_external_harnesses::catalog::{AssetRef, Disposition, Script};
+    use serde_json::Value;
+
+    use super::agents::{SCRIPTS, more_scripts_than_shown};
+
+    let table = include_str!("../../../../tests/fixtures/agent-catalog/overlapping-scripts.json");
+    let table: Value = serde_json::from_str(table).expect("the table reads");
+    let most = table.get("most_scripts_shown").and_then(Value::as_u64);
+    assert_eq!(most, u64::try_from(SCRIPTS).ok());
+    let asset = || AssetRef {
+        sha256: "0".repeat(64).into(),
+        size: 2,
+    };
+    let script = |disposition| Script {
+        package: "node_modules/peer".into(),
+        event: "postinstall".into(),
+        disposition,
+    };
+    let local = || Disposition::Local {
+        command: "node setup.js".into(),
+        hosts: Vec::new(),
+        result: asset(),
+    };
+    let mut scripts: Vec<Script> = (0..SCRIPTS).map(|_| script(local())).collect();
+    assert!(!more_scripts_than_shown(&scripts));
+    for decided in [Disposition::Inert, Disposition::Replaced, Disposition::Lost] {
+        scripts.push(script(decided));
+        assert!(!more_scripts_than_shown(&scripts));
+        scripts.pop();
+    }
+    scripts.push(script(Disposition::Built {
+        asset: asset(),
+        files: asset(),
+        unpacked: 2,
+        decompressed: 2,
+    }));
+    assert!(more_scripts_than_shown(&scripts));
 }

@@ -32,14 +32,17 @@ use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read as _, Write as _};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
+use crucible_external_harnesses::catalog::fixture::signed;
+use crucible_external_harnesses::catalog::{Keys, SNAPSHOT};
 use crucible_external_harnesses::fake_peer::{self, Script};
 use rustix::pty::{self, OpenptFlags};
 use rustix::termios::{self, OptionalActions, Winsize};
@@ -264,6 +267,494 @@ pub(crate) fn piped_agents(
     child.wait_with_output().expect("crucible ends")
 }
 
+/// The release a published catalog offers of each agent, Antigravity's in
+/// place of the one this build's own catalog names: a program of this many
+/// bytes, served half at first.
+const RELEASE: usize = 1000;
+
+/// The version a published catalog offers an agent at that this build's own
+/// catalog does not name.
+const OFFERED: &str = "1.0.0";
+
+/// A host on this machine standing where the agent catalog is published, as
+/// crucible's test build is pointed at it.
+///
+/// It serves one catalog, signed with this process's test key, offering
+/// Antigravity at the version this build's own catalog offers, and from
+/// [`Published::offering`] one agent more, each as a program the catalog
+/// keeps on this host and names by its digest. A program is sent half at
+/// first and the rest only once [`Published::release`] is called, so the
+/// download stands on the screen until a case has seen it.
+#[derive(Debug)]
+pub(crate) struct Published {
+    port: u16,
+    /// The key line the catalog verifies under, a public key.
+    key: String,
+    /// Whether the rest of the program may be sent.
+    released: Arc<AtomicBool>,
+    /// Whether the case is over, which ends every answer and the listener.
+    done: Arc<AtomicBool>,
+    /// How many requests it has been sent, whatever they asked for.
+    asked: Arc<AtomicUsize>,
+}
+
+impl Published {
+    /// Starts the host, listening on a port of this machine's choosing.
+    pub(crate) fn start() -> Self {
+        Self::serving(Vec::new())
+    }
+
+    /// Starts the host, its catalog offering the agent `key` too, a catalog
+    /// agent under a key that is no built-in driver word, at [`OFFERED`].
+    pub(crate) fn offering(key: &str) -> Self {
+        let program = released(format!("{key}, as reviewed\n").as_bytes());
+        Self::serving(vec![(offered(key, OFFERED, &program), program)])
+    }
+
+    /// Starts the host, its catalog offering goose at [`OFFERED`] as the
+    /// fake peer installed at `program`: that program and the `script` beside
+    /// it, each kept on this host, and the vendor's statement of content use
+    /// where `stating`.
+    pub(crate) fn peer(program: &Path, stating: bool) -> Self {
+        let bytes = fs::read(program).expect("the fake peer's program");
+        let script = fs::read(program.with_file_name("script")).expect("the fake peer's script");
+        let command = format!("goose{}", std::env::consts::EXE_SUFFIX);
+        let mut entry = offered("goose", OFFERED, &bytes);
+        let artifact = |path: &str, bytes: &[u8]| {
+            serde_json::json!({
+                "url": format!("https://downloads.example.com/{path}"),
+                "sha256": "a".repeat(64),
+                "size": bytes.len(),
+                "format": "bare",
+                "unpacked": bytes.len(),
+                "decompressed": bytes.len(),
+                "files": [{
+                    "path": path,
+                    "size": bytes.len(),
+                    "sha256": digest(bytes),
+                    "exec": true
+                }],
+                "replaced_by": {"sha256": digest(bytes), "size": bytes.len()}
+            })
+        };
+        let target = entry
+            .pointer_mut("/targets/0")
+            .expect("an offer has a target");
+        target["cmd"] = serde_json::json!(command);
+        target["artifacts"] =
+            serde_json::json!([artifact(&command, &bytes), artifact("script", &script)]);
+        if stating {
+            entry
+                .as_object_mut()
+                .expect("an offer is an object")
+                .insert(
+                    "content_use".to_owned(),
+                    serde_json::json!({
+                        "text": "The vendor may use what you send to improve goose.",
+                        "source": "https://vendor.example/terms/data",
+                        "date": "24 Oct 2026",
+                        "origins": ["https://api.vendor.example"],
+                    }),
+                );
+        }
+        let published = Self::serving(vec![(entry, bytes), (serde_json::Value::Null, script)]);
+        published.release();
+        published
+    }
+
+    /// Starts the host, its catalog offering the agent `key` too, whose
+    /// release is the fake peer playing `script` and whose one sign-in method,
+    /// `method`, the catalog records as a command it runs piped. The entry
+    /// names no host and no reach of its own, so a sandbox that can only close
+    /// the network runs it too. Nothing of the program is held back.
+    ///
+    /// `built` is a scratch directory the peer is built into to read it back.
+    pub(crate) fn signing_in_by(
+        key: &str,
+        script: &Script,
+        method: &serde_json::Value,
+        built: &Path,
+    ) -> Self {
+        Self::signing_in_on(key, script, method, built, "piped")
+    }
+
+    /// The same, with the method's route the real terminal, which the door
+    /// runs unconfined and hands the process's terminal to.
+    pub(crate) fn signing_in_at_terminal_by(
+        key: &str,
+        script: &Script,
+        method: &serde_json::Value,
+        built: &Path,
+    ) -> Self {
+        Self::signing_in_on(key, script, method, built, "terminal")
+    }
+
+    /// [`Published::signing_in_by`], the method's route recorded as `route`.
+    fn signing_in_on(
+        key: &str,
+        script: &Script,
+        method: &serde_json::Value,
+        built: &Path,
+        route: &str,
+    ) -> Self {
+        let installed = fake_peer::install(built, key, script).expect("the fake peer installs");
+        let program = fs::read(&installed).expect("the peer's program");
+        let played = fs::read(built.join("script")).expect("the peer's script");
+        let mut entry = offered(key, OFFERED, &program);
+        let name = installed
+            .file_name()
+            .and_then(OsStr::to_str)
+            .expect("a program name in UTF-8");
+        let target = entry
+            .pointer_mut("/targets/0")
+            .expect("an offer has a target");
+        target["cmd"] = name.into();
+        target["hosts"] = serde_json::json!([]);
+        target["artifacts"] = serde_json::json!([piece(name, &program), piece("script", &played),]);
+        let mut recorded = method.clone();
+        let fields = recorded.as_object_mut().expect("a method is a JSON object");
+        fields.remove("type");
+        fields.insert("kind".to_owned(), "terminal".into());
+        fields.insert("route".to_owned(), route.into());
+        let fields = entry.as_object_mut().expect("an offer is an object");
+        fields.insert("auth_methods".to_owned(), serde_json::json!([recorded]));
+        fields.insert(
+            "content_use".to_owned(),
+            serde_json::json!({
+                "text": "The vendor may use what you send to improve goose.",
+                "source": "https://vendor.example/terms/data",
+                "date": "24 Oct 2026",
+                "origins": ["https://api.vendor.example"],
+            }),
+        );
+        let published = Self::serving_beside(vec![(entry, program)], vec![played]);
+        published.release();
+        published
+    }
+
+    /// How many requests the host has been sent.
+    pub(crate) fn asked(&self) -> usize {
+        self.asked.load(Ordering::Acquire)
+    }
+
+    /// Starts the host, its catalog offering Antigravity and then each of
+    /// `more`, an entry beside the program it names.
+    fn serving(more: Vec<(serde_json::Value, Vec<u8>)>) -> Self {
+        Self::serving_beside(more, Vec::new())
+    }
+
+    /// Starts the host with the ACP Registry index `index` served at
+    /// `/catalog/registry.json`, and `archive` kept under its digest for the
+    /// registry target that pins it.
+    pub(crate) fn registry(index: &serde_json::Value, archive: Vec<u8>) -> Self {
+        let served = Self::serving_routes(
+            Vec::new(),
+            vec![archive],
+            vec![(
+                "/catalog/registry.json".to_owned(),
+                serde_json::to_vec(&index).expect("a registry index"),
+            )],
+        );
+        served.release();
+        served
+    }
+
+    /// [`Published::serving`], with each of `beside` kept on the host too, a
+    /// file of a release that no entry is led by.
+    fn serving_beside(more: Vec<(serde_json::Value, Vec<u8>)>, beside: Vec<Vec<u8>>) -> Self {
+        Self::serving_routes(more, beside, Vec::new())
+    }
+
+    /// [`Published::serving_beside`], with `extra` routes served as they are.
+    fn serving_routes(
+        more: Vec<(serde_json::Value, Vec<u8>)>,
+        beside: Vec<Vec<u8>>,
+        extra: Vec<(String, Vec<u8>)>,
+    ) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a port on this machine");
+        let port = listener.local_addr().expect("its address").port();
+        let program = released(b"agy-acp-server, as reviewed\n");
+        let version = SNAPSHOT
+            .entries()
+            .iter()
+            .find(|entry| entry.key.as_str() == "antigravity")
+            .map(|entry| entry.version.to_string())
+            .expect("this build's catalog offers Antigravity");
+        let offers: Vec<(serde_json::Value, Vec<u8>)> =
+            std::iter::once((antigravity(&version, &program), program))
+                .chain(more)
+                .collect();
+        let catalog = serde_json::json!({
+            "schema": 1,
+            "serial": SNAPSHOT.serial() + 1,
+            "entries": offers
+                .iter()
+                .map(|(entry, _)| entry)
+                .filter(|entry| !entry.is_null())
+                .collect::<Vec<_>>(),
+            "revoked": [],
+        });
+        let signed = signed(&serde_json::to_vec(&catalog).expect("a catalog in JSON"));
+        let key = key_line(signed.keys);
+        let routes: Arc<Vec<(String, Vec<u8>)>> = Arc::new(
+            [
+                ("/catalog/index.json".to_owned(), signed.index),
+                ("/catalog/index.json.minisig".to_owned(), signed.signature),
+            ]
+            .into_iter()
+            .chain(extra)
+            .chain(std::iter::once((
+                "/catalog/registry.json".to_owned(),
+                serde_json::to_vec(&serde_json::json!({
+                    "version": "1.0.0",
+                    "agents": [],
+                }))
+                .expect("an empty registry index"),
+            )))
+            .chain(
+                offers
+                    .into_iter()
+                    .map(|(_, program)| program)
+                    .chain(beside)
+                    .map(|program| (format!("/catalog/{}", digest(&program)), program)),
+            )
+            .collect(),
+        );
+        let released = Arc::new(AtomicBool::new(false));
+        let done = Arc::new(AtomicBool::new(false));
+        let asked = Arc::new(AtomicUsize::new(0));
+        let (releasing, finishing, counting) =
+            (Arc::clone(&released), Arc::clone(&done), Arc::clone(&asked));
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                if finishing.load(Ordering::Acquire) {
+                    break;
+                }
+                counting.fetch_add(1, Ordering::AcqRel);
+                let (routes, released, done) = (
+                    Arc::clone(&routes),
+                    Arc::clone(&releasing),
+                    Arc::clone(&finishing),
+                );
+                std::thread::spawn(move || answer(stream, &routes, &released, &done));
+            }
+        });
+        Self {
+            port,
+            key,
+            released,
+            done,
+            asked,
+        }
+    }
+
+    /// Sends the rest of the program, to a download waiting for it and to
+    /// every one after.
+    pub(crate) fn release(&self) {
+        self.released.store(true, Ordering::Release);
+    }
+
+    /// The value of the variable that points a test build at this host.
+    fn named(&self) -> String {
+        format!("http://127.0.0.1:{}/catalog/ {}", self.port, self.key)
+    }
+}
+
+impl Drop for Published {
+    fn drop(&mut self) {
+        self.done.store(true, Ordering::Release);
+        let _ = TcpStream::connect(("127.0.0.1", self.port));
+    }
+}
+
+/// The one key line `keys` holds, read from how it prints, which is the only
+/// way the fixture shows it. A public key, never a secret.
+fn key_line(keys: Keys) -> String {
+    format!("{keys:?}")
+        .strip_prefix("Keys([\"")
+        .and_then(|rest| rest.strip_suffix("\"])"))
+        .filter(|key| !key.is_empty() && !key.contains('"'))
+        .map(str::to_owned)
+        .expect("a test catalog's keys print as one key line")
+}
+
+/// Answers one request on `stream` with what `routes` holds at its path, the
+/// program's second half held back until `released` or the case is `done`.
+fn answer(
+    mut stream: TcpStream,
+    routes: &[(String, Vec<u8>)],
+    released: &AtomicBool,
+    done: &AtomicBool,
+) {
+    let _ = stream.set_read_timeout(Some(CEILING));
+    let mut head = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    while !head.windows(4).any(|end| end == b"\r\n\r\n") {
+        match stream.read(&mut buffer) {
+            Ok(0) | Err(_) => return,
+            Ok(read) => head.extend_from_slice(buffer.get(..read).unwrap_or_default()),
+        }
+    }
+    let text = String::from_utf8_lossy(&head).into_owned();
+    let path = text
+        .lines()
+        .next()
+        .and_then(|line| line.split(' ').nth(1))
+        .unwrap_or_default();
+    let Some((_, body)) = routes.iter().find(|(served, _)| served == path) else {
+        let _ = stream
+            .write_all(b"HTTP/1.1 404 Not Found\r\nconnection: close\r\ncontent-length: 0\r\n\r\n");
+        return;
+    };
+    let _ = write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nconnection: close\r\ncontent-length: {}\r\n\r\n",
+        body.len()
+    );
+    // The catalog is sent whole; only the program is held back, half of it.
+    let (first, rest) =
+        if path.starts_with("/catalog/index.json") || path == "/catalog/registry.json" {
+            (body.as_slice(), &[][..])
+        } else {
+            body.split_at(body.len() / 2)
+        };
+    let _ = stream.write_all(first);
+    let _ = stream.flush();
+    if !rest.is_empty() {
+        let began = Instant::now();
+        while !released.load(Ordering::Acquire) {
+            if done.load(Ordering::Acquire) || began.elapsed() > CEILING * 3 {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let _ = stream.write_all(rest);
+        let _ = stream.flush();
+    }
+    let _ = stream.shutdown(Shutdown::Write);
+}
+
+/// A release's program: `seed` repeated to [`RELEASE`] bytes.
+fn released(seed: &[u8]) -> Vec<u8> {
+    seed.iter().cycle().take(RELEASE).copied().collect()
+}
+
+/// `bytes`' SHA-256, in lower case hexadecimal.
+pub(crate) fn digest(bytes: &[u8]) -> String {
+    use sha2::Digest as _;
+    use std::fmt::Write as _;
+    sha2::Sha256::digest(bytes)
+        .iter()
+        .fold(String::new(), |mut text, byte| {
+            let _ = write!(text, "{byte:02x}");
+            text
+        })
+}
+
+/// How this machine's platform is spelled in a catalog.
+pub(crate) fn platform() -> String {
+    let os = match std::env::consts::OS {
+        "macos" => "darwin",
+        other => other,
+    };
+    format!("{os}-{}", std::env::consts::ARCH)
+}
+
+/// Antigravity at `version`, as a catalog entry whose program, `program`, is
+/// kept on the catalog's own host and fetched from there by its digest.
+fn antigravity(version: &str, program: &[u8]) -> serde_json::Value {
+    let command = "agy_acp_server.par";
+    serde_json::json!({
+        "key": "antigravity",
+        "registry_id": "antigravity-acp",
+        "version": version,
+        "kind": "binary",
+        "license": "Proprietary",
+        "terms": "https://example.com/terms",
+        "caution": "Read the terms first.",
+        "review": "https://example.com/review",
+        "admits": {"name": "antigravity-acp", "version": version},
+        "targets": [{
+            "platform": platform(),
+            "cmd": command,
+            "args": [],
+            "env": {},
+            "hosts": ["downloads.example.com"],
+            "artifacts": [{
+                "url": "https://downloads.example.com/antigravity",
+                "sha256": "a".repeat(64),
+                "size": program.len(),
+                "format": "bare",
+                "unpacked": program.len(),
+                "decompressed": program.len(),
+                "files": [{
+                    "path": command,
+                    "size": program.len(),
+                    "sha256": digest(program),
+                    "exec": true
+                }],
+                "replaced_by": {"sha256": digest(program), "size": program.len()}
+            }]
+        }]
+    })
+}
+
+/// The agent `key` at `version`, in [`antigravity`]'s shape with a licence,
+/// terms and caution of its own, its program, `program`, kept on the
+/// catalog's own host and fetched from there by its digest.
+fn offered(key: &str, version: &str, program: &[u8]) -> serde_json::Value {
+    let registry = format!("{key}-acp");
+    serde_json::json!({
+        "key": key,
+        "registry_id": registry,
+        "version": version,
+        "kind": "binary",
+        "license": "Apache-2.0",
+        "terms": format!("https://example.com/{key}/terms"),
+        "caution": format!("Read the {key} terms first."),
+        "review": "https://example.com/review",
+        "admits": {"name": registry, "version": version},
+        "targets": [{
+            "platform": platform(),
+            "cmd": key,
+            "args": [],
+            "env": {},
+            "hosts": ["downloads.example.com"],
+            "artifacts": [{
+                "url": format!("https://downloads.example.com/{key}"),
+                "sha256": "a".repeat(64),
+                "size": program.len(),
+                "format": "bare",
+                "unpacked": program.len(),
+                "decompressed": program.len(),
+                "files": [{
+                    "path": key,
+                    "size": program.len(),
+                    "sha256": digest(program),
+                    "exec": true
+                }],
+                "replaced_by": {"sha256": digest(program), "size": program.len()}
+            }]
+        }]
+    })
+}
+
+/// One file of a release as a catalog entry lists it: named `path`, holding
+/// `bytes`, kept on the catalog's own host and fetched from there by its
+/// digest.
+fn piece(path: &str, bytes: &[u8]) -> serde_json::Value {
+    serde_json::json!({
+        "url": format!("https://downloads.example.com/{path}"),
+        "sha256": "a".repeat(64),
+        "size": bytes.len(),
+        "format": "bare",
+        "unpacked": bytes.len(),
+        "decompressed": bytes.len(),
+        "files": [{"path": path, "size": bytes.len(), "sha256": digest(bytes), "exec": true}],
+        "replaced_by": {"sha256": digest(bytes), "size": bytes.len()}
+    })
+}
+
 /// What a case starts crucible with beyond what every case is given.
 #[derive(Debug, Default)]
 pub(crate) struct Launch<'a> {
@@ -305,6 +796,9 @@ struct TerminalFixture<'a> {
     /// Whether the far side starts in the mode a new terminal opens in,
     /// echoing and reading whole lines, rather than raw.
     cooked: bool,
+    /// Whether the agents this build can start are the ones it ships, with no
+    /// list of a test's in their place.
+    shipped: bool,
 }
 
 impl TerminalFixture<'_> {
@@ -350,6 +844,7 @@ impl Watched {
                 native: false,
                 profile: Profile::default(),
                 cooked: false,
+                shipped: false,
             },
             None,
         )
@@ -414,6 +909,7 @@ impl Watched {
                 native: false,
                 profile: Profile::default(),
                 cooked: false,
+                shipped: false,
             },
             Some(&Launch {
                 env: &offered,
@@ -456,6 +952,25 @@ impl Watched {
         Self::capturing_agents_beside(case, (size, native), vendor, installed, &[])
     }
 
+    /// [`Watched::capturing_agents`], with the agent catalog fetched from
+    /// `published` rather than from where it is published.
+    pub(crate) fn capturing_agents_published(
+        case: &str,
+        (size, native): ((u16, u16), bool),
+        vendor: &Vendor,
+        script: Option<&Script>,
+        published: &Published,
+    ) -> Self {
+        let named = published.named();
+        Self::capturing_agents_beside(
+            case,
+            (size, native),
+            Some(vendor),
+            (script, ""),
+            &[("CRUCIBLE_CODE_PROOF_CATALOG", &named)],
+        )
+    }
+
     /// [`Watched::capturing_agents`], with `env` set too, such as a key for
     /// another provider the agent does not reach.
     pub(crate) fn capturing_agents_keyed(
@@ -492,6 +1007,7 @@ impl Watched {
                 native,
                 profile: Profile::default(),
                 cooked: false,
+                shipped: false,
             },
             Some(&Launch {
                 env: &[
@@ -524,6 +1040,7 @@ impl Watched {
                 native: false,
                 profile,
                 cooked: false,
+                shipped: false,
             },
             None,
         )
@@ -570,6 +1087,7 @@ impl Watched {
                 native: true,
                 profile,
                 cooked: false,
+                shipped: false,
             },
             None,
         )
@@ -687,6 +1205,7 @@ impl Watched {
                 native: screen == "native",
                 profile: Profile::default(),
                 cooked: false,
+                shipped: false,
             },
             None,
         )
@@ -787,6 +1306,7 @@ impl Watched {
                 native: false,
                 profile: Profile::default(),
                 cooked: true,
+                shipped: false,
             },
             None,
         )
@@ -816,8 +1336,40 @@ impl Watched {
                 native: false,
                 profile: Profile::default(),
                 cooked: false,
+                shipped: false,
             },
             None,
+        )
+    }
+
+    /// Starts crucible with `document` and `args` on the registry that ships,
+    /// its catalog of agents the one `published` serves.
+    pub(crate) fn shipped(
+        case: &str,
+        (columns, rows): (u16, u16),
+        (document, args): (&str, &[&str]),
+        published: &Published,
+    ) -> Self {
+        let named = published.named();
+        Self::configured_with_terminal(
+            case,
+            document,
+            false,
+            &TerminalFixture {
+                columns,
+                rows,
+                reply: None,
+                native: false,
+                profile: Profile::default(),
+                cooked: false,
+                shipped: true,
+            },
+            Some(&Launch {
+                document,
+                env: &[("CRUCIBLE_CODE_PROOF_CATALOG", &named)],
+                args,
+                home: None,
+            }),
         )
     }
 
@@ -834,6 +1386,7 @@ impl Watched {
                 native: false,
                 profile: Profile::default(),
                 cooked: false,
+                shipped: false,
             },
             Some(launch),
         )
@@ -1795,7 +2348,7 @@ fn start(
         // No installed agent is offered unless the case asks for one, so a
         // screen drawn before agents shipped is drawn the same whatever this
         // release ships.
-        .env("CRUCIBLE_CODE_PROOF_REGISTRY", "empty")
+        .envs((!terminal.shipped).then_some(("CRUCIBLE_CODE_PROOF_REGISTRY", "empty")))
         .envs(keyed.then_some(("ANTHROPIC_API_KEY", "not-a-key-and-nothing-reads-it")))
         .envs(launch.map(|launch| launch.env).unwrap_or_default().iter().copied())
         .args(launch.map(|launch| launch.args).unwrap_or_default())

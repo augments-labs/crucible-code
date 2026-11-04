@@ -17,8 +17,9 @@ use std::sync::{Arc, Mutex, mpsc};
 use crucible_app::Conversation;
 use crucible_app::client::{self, Front, Shown, snapshot};
 use crucible_client_api::{
-    Capabilities, Command, Correlation, Decision, ErrorCode, Lasting, Outcome, Pending, PendingId,
-    Prompt, Refusal, Request, Response, ResumeOutcome, Ruling, Snapshot, Stop, TurnOutcome,
+    Capabilities, Capability, Command, Correlation, Decision, ErrorCode, Lasting, Name, Outcome,
+    Pending, PendingId, Prompt, Refusal, Request, Response, ResumeOutcome, Ruling, Snapshot, Stop,
+    TurnOutcome,
 };
 use crucible_models::Delta;
 use crucible_runner::{EventEnvelope, Tools};
@@ -235,6 +236,52 @@ impl Journal {
 
     pub(crate) fn noted(&self) -> Vec<Noted> {
         self.0.lock().expect("the journal").clone()
+    }
+}
+
+/// The capabilities each request a client was answered for claimed, beside
+/// its command, in the order they were answered.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Claims(Arc<Mutex<Vec<(Command, Capabilities)>>>);
+
+impl Claims {
+    fn claimed(&self, request: &Request) {
+        self.0
+            .lock()
+            .expect("the claims")
+            .push((request.command().clone(), request.capabilities()));
+    }
+
+    pub(crate) fn taken(&self) -> Vec<(Command, Capabilities)> {
+        self.0.lock().expect("the claims").clone()
+    }
+}
+
+impl Witness for Claims {
+    fn answered(&self, request: &Request, _: &Conversation, _: Outcome) {
+        self.claimed(request);
+    }
+
+    fn apart(&self, request: &Request, _: Outcome) {
+        self.claimed(request);
+    }
+
+    fn put(&self, _: &Pending) {}
+
+    fn decided(&self, _: &Decision) {}
+}
+
+impl Client {
+    /// A client whose requests' claims are noted, beside where they are
+    /// noted.
+    pub(crate) fn noting_claims() -> (Self, Claims) {
+        let claims = Claims::default();
+        let client = Self {
+            witness: Some(Arc::new(claims.clone())),
+            ..Self::default()
+        };
+
+        (client, claims)
     }
 }
 
@@ -522,6 +569,17 @@ fn renumbered(noted: Vec<Noted>) -> Vec<Noted> {
                 facts,
                 choices,
             }),
+            Noted::Put(Pending::Install {
+                id,
+                asks,
+                facts,
+                choices,
+            }) => Noted::Put(Pending::Install {
+                id: ordinal(id),
+                asks,
+                facts,
+                choices,
+            }),
             Noted::Put(Pending::Warning {
                 id,
                 route,
@@ -751,4 +809,259 @@ fn every_prompt_the_box_holds_is_one_the_contract_carries() {
     // Two ceilings with two owners. A line the box took and the contract then
     // refused would be a prompt lost after it was typed.
     const { assert!(crucible_client_api::bounds::PROMPT_BYTES >= Editor::MAX_BYTES) };
+}
+
+#[test]
+fn a_connect_claims_every_capability_but_install_whichever_way_it_names_its_agent() {
+    // A client that claims install can be offered a move on an agent in place
+    // of the connect, and only `/login`'s agent connect carries one out: it
+    // claims install itself, beside the carrying out. A connect asked for any
+    // other way, as `/logout`'s is, withholds it whichever way it names its
+    // agent.
+    let client = Client::new();
+    let named = Name::new("space").expect("a name the contract takes");
+
+    for command in [
+        Command::Connect { instance: None },
+        Command::Connect {
+            instance: Some(named),
+        },
+    ] {
+        let claimed = client.asking(command.clone()).capabilities();
+
+        assert!(
+            !claimed.has(Capability::Install),
+            "{command:?}: {claimed:?}"
+        );
+        assert_eq!(
+            claimed,
+            Capabilities::every().without(Capability::Install),
+            "{command:?} claims every other capability"
+        );
+    }
+}
+
+#[test]
+fn a_request_that_is_not_a_connect_claims_every_capability() {
+    let client = Client::new();
+    let named = || Name::new("space").expect("a name the contract takes");
+
+    for command in [
+        Command::Cancel,
+        Command::Usage,
+        Command::Logout { provider: named() },
+        Command::Disconnect { instance: named() },
+        Command::SignOut { instance: named() },
+        Command::RemoveIntegration { instance: named() },
+    ] {
+        assert_eq!(
+            client.asking(command.clone()).capabilities(),
+            Capabilities::every(),
+            "{command:?}"
+        );
+    }
+}
+
+#[test]
+fn a_connect_claiming_install_claims_it_and_nothing_else_moves() {
+    let client = Client::new();
+
+    let claimed = client
+        .claiming(Command::Connect { instance: None }, Capabilities::every())
+        .capabilities();
+    let asked = client
+        .asking(Command::Connect { instance: None })
+        .capabilities();
+
+    assert_eq!(claimed, Capabilities::every());
+    assert_eq!(asked, Capabilities::every().without(Capability::Install));
+}
+
+#[test]
+fn an_install_is_put_to_the_terminal_as_its_question_and_answered_with_the_choice_taken() {
+    use crucible_app::client::Confirmation;
+    use crucible_client_api::{Choice, Said, Text};
+
+    let runtime = crate::cli::fake::runtime();
+    let (to, mut from) = tokio::sync::mpsc::channel(1);
+    let mut front = super::Answering {
+        to,
+        client: Client::new(),
+    };
+    let confirmation = Confirmation {
+        asks: "Install antigravity 1.3.0?".to_owned(),
+        facts: vec!["It is 9 bytes.".to_owned()],
+        choices: vec![
+            ("Install".to_owned(), "Fetch it and use it".to_owned()),
+            ("Leave it".to_owned(), "Change nothing".to_owned()),
+        ],
+    };
+    let choice = |name: &str, recommended| Choice {
+        name: Text::cut(name),
+        says: Text::cut(""),
+        recommended,
+    };
+    let pending = Pending::Install {
+        id: PendingId::new(7),
+        asks: Text::cut(&confirmation.asks),
+        facts: Vec::new(),
+        choices: vec![choice("Install", true), choice("Leave it", false)],
+    };
+
+    let decided = std::thread::scope(|scope| {
+        let front = &mut front;
+        let (pending, shown) = (&pending, Shown::Install(&confirmation));
+        let answering = scope.spawn(move || runtime.block_on(front.put(pending, shown)));
+        let put = from
+            .blocking_recv()
+            .expect("the install was put to the terminal");
+        let super::Question::Account(asked) = &put.question else {
+            panic!("the install was put as another question");
+        };
+        assert_eq!(asked.asks, confirmation.asks);
+        assert_eq!(asked.choices, confirmation.choices);
+        put.reply
+            .send(Some(super::Reply::Took(0)))
+            .expect("the front waits for its answer");
+        answering.join().expect("the front answered")
+    });
+
+    assert_eq!(
+        decided,
+        Some(Decision::Picked {
+            id: PendingId::new(7),
+            choice: Said::new("Install").expect("a choice the contract takes"),
+        })
+    );
+}
+
+/// An overseer whose panel cannot be drawn: it fails the first time it is to
+/// stand one, having kept hold of the cancel the move would be given up by.
+struct Undrawn {
+    cancel: Option<Cancel>,
+}
+
+impl super::Overseer for Undrawn {
+    type Error = &'static str;
+
+    fn answer(&mut self, _: &super::Question) -> Result<Option<super::Reply>, Self::Error> {
+        Ok(None)
+    }
+
+    fn stand(&mut self, carrying: &mut super::Carrying<'_>) -> Result<(), Self::Error> {
+        self.cancel = Some(carrying.cancel().clone());
+        Err("the panel could not be drawn")
+    }
+}
+
+#[test]
+fn a_move_whose_overseer_fails_is_cancelled_and_waited_for_before_the_failure_is_answered() {
+    // The door stands in for a download that goes on until it is given up,
+    // bounded so that a cancel which never reaches it fails this rather
+    // than hanging it.
+    let mut overseer = Undrawn { cancel: None };
+    let answered = super::overseen(&Client::new(), &mut overseer, |_, watching| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !watching.cancel.requested() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        watching.cancel.requested()
+    });
+
+    assert_eq!(answered, Err("the panel could not be drawn"));
+    let cancel = overseer
+        .cancel
+        .expect("the panel was to stand over the move");
+    assert!(cancel.requested(), "the move was not given up");
+}
+
+/// An overseer that stands no panel, saying only whether it has one to carry a
+/// sign-in's lines to.
+struct Carrier {
+    lends: bool,
+}
+
+impl super::Overseer for Carrier {
+    type Error = &'static str;
+
+    fn answer(&mut self, _: &super::Question) -> Result<Option<super::Reply>, Self::Error> {
+        Ok(None)
+    }
+
+    fn stand(&mut self, _: &mut super::Carrying<'_>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn carries_lines(&self) -> bool {
+        self.lends
+    }
+}
+
+#[test]
+fn a_sign_in_channel_is_lent_only_by_an_overseer_with_somewhere_to_carry_it() {
+    for lends in [true, false] {
+        let mut overseer = Carrier { lends };
+        let lent = super::overseen(&Client::new(), &mut overseer, |_, watching| {
+            watching.sign_in.is_some()
+        });
+        assert_eq!(lent, Ok(lends));
+    }
+}
+
+#[test]
+fn a_refusal_beside_a_run_is_busy_and_no_other_refusal_is() {
+    use crucible_app::client::agents::AgentsError;
+
+    let run = || vec![Box::<str>::from("space")];
+    assert_eq!(super::coded(&AgentsError::Running(run())), ErrorCode::Busy);
+    assert_eq!(
+        super::coded(&AgentsError::Unstopped(run())),
+        ErrorCode::Busy
+    );
+    for other in [
+        AgentsError::NoInstance("space".into()),
+        AgentsError::Typed,
+        AgentsError::TooLarge,
+        AgentsError::Conversation("agent".into()),
+        AgentsError::Unlocated("space".into()),
+    ] {
+        assert_ne!(super::coded(&other), ErrorCode::Busy, "{other:?}");
+    }
+    assert_eq!(
+        super::coded(&AgentsError::Typed),
+        ErrorCode::InvalidArgument
+    );
+    assert_eq!(super::coded(&AgentsError::TooLarge), ErrorCode::Failed);
+}
+
+/// The leave sequences are not written until the drawing thread says it has
+/// left the loop that reads the terminal: a handover that ran first could race
+/// a read or a frame, which is what the drawing thread is being kept out of.
+#[test]
+fn a_handover_waits_for_the_drawing_thread_to_leave() {
+    use crucible_app::client::agents::SignInTerminal as _;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    let handover = Arc::new(super::Handover::new(None));
+    let returned = Arc::new(AtomicBool::new(false));
+    let worker = {
+        let handover = Arc::clone(&handover);
+        let returned = Arc::clone(&returned);
+        std::thread::spawn(move || {
+            let result = handover.handed(7);
+            returned.store(true, Ordering::SeqCst);
+            result
+        })
+    };
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(
+        !returned.load(Ordering::SeqCst),
+        "the handover ran before the drawing thread had left the read loop"
+    );
+    handover.left();
+    assert!(
+        worker.join().expect("the handover thread").is_ok(),
+        "a handover the drawing thread left for was refused"
+    );
 }

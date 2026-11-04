@@ -56,9 +56,107 @@ is asked: the agent's own provider is reached through it, made the `provider`
 asked, and the conversation moves onto it. Where the agent's sign-in could not be
 read, *Could not verify sign-in* gives one reason, the agent's own where it
 said one: how it exited and the first line it printed, cut to 160 characters,
-with its control characters taken out. *Check again* reads it again. Escape
-changes nothing and goes back; apart from that one yes, nothing is written
+with its control characters taken out. *Check again* reads it again.
+
+The same screen offers what the agent catalog lets crucible do for the agent:
+*Install* where its program is not there, *Update* and *Roll back* where one
+installed from the catalog or the registry can move, and a sign-in by each
+method the agent offers, named as the agent names it. `/login` carries the one
+you choose out itself and then shows the agent screen again, so the agent's row
+reads as it
+now stands. An install, update or rollback asks first, saying what it will put
+in place and fetch; a download then shows how far it has come, as a share where
+its size is known and in bytes where it is not, and Escape cancels the
+download while it runs, changing nothing; once all of it has arrived, the panel
+waits for the install to finish. A long file list the catalog keeps apart from
+the release is fetched from the catalog's own host before the question, and the
+hosts the release is downloaded from are reached only after the yes. For an
+agent read from the ACP Registry the question instead names the archive's
+address and its 512 MiB cap, and the archive's host and the registry's redirect
+hosts are reached only after the yes. While a sign-in waits for you, the link
+the agent prints is shown for you to open. A method the agent runs as a command
+is offered too, and runs in a panel in
+`/login`, with the checks
+[its reference](../reference/cli.md#agents-sign-in-instance---method-name) sets
+out. The panel shows what the command writes, with what crucible withholds taken
+out, and says when older lines have gone; Enter sends the line you typed. Each
+line is shown as you type it, since crucible cannot tell a password from a
+question, so press Tab first for one you do not want shown: it is masked, sent,
+kept no longer, and the next line is shown again. A paste holding a line ending
+is refused and nothing is sent. Escape stops the command and the panel stays
+until that is settled, saying so where a stop could not be confirmed. With
+output redirected, choosing the method says a terminal is needed, and nothing is
+asked or started. A method the catalog records as needing a real terminal is
+offered too, on Unix: choosing it asks first, for that run, whether the agent's
+own command may run outside the sandbox on this terminal, and starting it is
+refused while a project requires the sandbox. On a platform without a
+real-terminal handover, as Windows, the method is refused before anything is
+asked or started. The panel does not stand over
+that command, because the command has the terminal itself; Ctrl+C reaches the
+command alone, and after ten minutes the command and everything it started are
+stopped. When it ends the terminal is taken back, the panel is drawn again, and
+the agent's own word afterwards says whether the sign-in took. The
+first time you choose a method that takes a key, `/login` asks for the key as
+hidden input; crucible keeps it for that agent and method and asks for it no
+more, and Escape there keeps nothing. A sign-in read as signed in means the
+agent then opened a session. Escape on a question changes nothing and goes
+back; apart from that one yes and what you choose here, nothing is written
 until the agent reads signed in.
+
+A catalog agent's row reads its instances from your user configuration file
+each time it is shown, so an instance added while crucible runs is found without
+a restart. Where that file cannot be read, the row and its screen say so and
+offer only *Go back*.
+
+Where an instance runs a version in crucible's store, the same screen offers
+*Connect*, which moves the conversation onto the agent in a new session. An
+agent you added with [`/catalog`](#catalog) is connected to and spoken with this
+way. Its route is put to you first, with the vendor's statement of content use
+the catalog carries, or, for an agent read from the ACP Registry, the generic
+warning that its vendor has not stated one, and nothing of the agent's starts
+before your yes. It reaches no provider of crucible's, so no provider's
+`access` is written, and a session on it is resumed by `--continue` and
+`/resume` under the same question if the route has no yes.
+
+What crucible runs is the release the catalog crucible most lately believed
+offers at the version the instance's `executable` names. It is read from the
+store and the trust state on this machine each time, so starting crucible, or
+resuming a session on the agent, fetches nothing and never holds up the prompt.
+Where it cannot be run the agent is refused before anything starts, with what to
+do:
+
+- A version the catalog has revoked says so, with the catalog's reason where it
+  gives one: run `crucible agents update <key>`.
+- A version the catalog no longer offers says so: run
+  `crucible agents update <key>`.
+- A catalog that was never fetched, has expired or offers no such agent says so:
+  run `crucible agents search`, which fetches it.
+- A trust state that cannot be read says which file and why: repair or remove
+  that file.
+- A program that is not in crucible's store, or is not the one the entry names at
+  that version: run `crucible agents install <key>`.
+- A version in the store with no record of being installed: run
+  `crucible agents remove <key>`, then `crucible agents install <key>`.
+- An entry crucible cannot read the launch of says why: run
+  `crucible agents update <key>`.
+- A key spelling a built-in driver's word, or `native`, is kept for what is built
+  in, so no catalog agent runs under it: run `crucible agents remove <key>` and
+  choose another agent.
+- A signed catalog entry with no statement of content use says so, since there
+  is nothing to ask you, and an installed update cannot change it until the
+  catalog does.
+- An agent past the number of catalog routes a run can hold is refused as a route
+  this build does not know.
+
+A release read from the ACP Registry has no review, revocation list or
+anti-rollback. What holds it is the registry's SHA-256, recorded in its receipt,
+and the probe record taken at its install; there is no catalog signature or
+trust state to read. A fresh install accepts a same-version archive the
+registry replaces; an installed version keeps the hash its receipt recorded and
+refuses a different same-version archive until it is removed. A registry release
+whose receipt has no probe record for this machine is not started, and
+`crucible agents probe` takes one.
+The revocation and trust-state lines above are a signed catalog release's.
 
 `/logout` lists each agent named under `externalAgents` after the stored
 credentials, as an external agent instance, and `/logout <name>` takes one
@@ -86,6 +184,14 @@ stopped and the line says only that the disconnect failed. A sign-out writes
 every instance on the agent's profile, so it says the same stopped-for-this-run
 line where the conversation was on any of them, and otherwise only that the
 sign-out failed; the agent's own program is not run either way.
+
+A sign-out is refused before anything changes where a run of any instance on the
+agent's profile could not be confirmed to have stopped, since the agent's own
+program signs the whole profile out and would run beside it. Crucible names the
+instances and says to restart crucible; nothing is disconnected or written, the
+agent's program is not run, and the agent's route is not asked about.
+Disconnecting the instance instead is offered by the sign-out question, before
+this refusal.
 
 Connecting an agent moves the conversation onto it at once, whatever provider
 it was asking, in a new session bound to it with nothing carried over, and the line it
@@ -145,6 +251,180 @@ the agent makes room in its own context, the transcript says so with what it
 held before and after, such as `the agent made room · 150k → 30k carried`, and
 the reading drops to what was left. `/context` gives the same figure in its
 `held by the agent` row.
+
+## `/catalog`
+
+`/catalog` lists the coding agents the ACP Registry offers, reading the
+registry whatever [`updates`](../configuration/configuration.md#updates) says,
+since you asked. Each agent stands on two rows: its key and newest version,
+over its licence and whether any version of it is installed, such as
+`Apache-2.0 · not installed` or `MIT · installed`. In a window 70 columns or
+wider, a pane beside the list says the marked agent's licence, terms link and
+caution, and which versions are installed. Typing narrows the list to the
+agents whose key or licence holds what is typed, ignoring case, and the
+heading says how many are left of how many are offered, such as
+`ACP Registry · 1 of 3 offered`; with no match the list says
+`no agent matches "the text"`. Where the registry could not be read, the list
+says so, with why, and is the index crucible cached before. A window with
+no keys to read, or no room for the list, has the agents printed one to a line
+instead.
+
+The agents are the binary releases the official ACP Registry publishes for this
+platform, read from its one address within 1 MiB and thirty seconds, and cached
+in crucible's home where the next five minutes reuse it. Only an entry whose
+target for this machine carries a SHA-256 and an archive crucible unpacks is
+offered: one without a hash, or whose archive is another format, is absent. The
+registry is not reviewed by Crucible: it has no signature, serial, expiry,
+revocation list or anti-rollback, so an offered version can be withdrawn or
+replaced only by the registry's own change. The list says so beside its agents,
+with the day the index was read and, where the cached index was used, why it
+was not verified. Its vendors give no statement of what they do with what is
+sent, and the registry records none, so an agent it lists is asked about once
+before its first start under a generic warning that says so, naming the
+registry and the day it was read. It also says that the agent's network reach
+is not recorded: a registry agent runs under the network policy of the
+conversation that starts it, and Crucible adds no vendor hosts.
+
+Taking an agent opens its own screen, which says where it comes from: the
+versions offered, its licence, its terms link and caution where its entry gives
+them, each version installed with a receipt, and whether a sign-in made under
+the sandbox is kept. Every word on it is the registry's, the catalog's or the
+store's, with any control character written out as an escape rather than acted
+on.
+
+*Add* installs the newest version offered and writes one more instance of the
+agent under
+[`externalAgents`](../configuration/configuration.md#externalagents), named by
+the agent's key, or by the key and the next free number, such as `goose-2`,
+where that name is taken. It asks first, as `/login`'s *Install* does, saying
+what it will put in place, fetch and write; a registry agent's question also
+names the archive's address, says it is downloaded up to the registry's 512 MiB
+cap, and says the same yes covers the survey and the vendor's program run once
+as a probe. The download then shows how far it
+has come, and Escape cancels it, changing nothing. After the yes, a line in the
+transcript names the instance written, such as `Added goose 1.0.0 as the
+instance "goose".`, then the other instances moved onto that version, any that
+changed meanwhile and were left as they are, whether the agent was smoke-tested
+and the older versions kept; a registry agent's line also says what the probe
+recorded. The list stands again as the store now stands, with what you had
+typed still in the search.
+
+For a release read from the ACP Registry, your yes also covers running the
+vendor's program once in the closed sandbox after the download, as the probe
+whose answer the receipt records; a probe that fails installs nothing. The
+receipt written when a version is installed records where it came from: for a
+signed catalog release the review that admitted it, or for a release read from
+the ACP Registry the registry document it was read from, with when the release
+was fetched. It also records what the install found, rather than what the
+catalog predicted: the bytes its files take up and the bytes its artifacts
+decompressed to, and for a registry release the platform its program was
+probed on and what it answered
+`initialize` with, so a later session can list and start it without starting the
+vendor's program again. Its sign-in methods, and the one variable a typed key
+is given in, come from that record too. A registry release whose receipt has no
+such record for this machine is not started: `crucible agents probe` takes one.
+
+An agent the catalog ships as a Python package comes with the Python it is
+run by, pinned in the same release, so no Python on your machine is looked for
+or used. Its install unpacks that interpreter, puts each of the agent's wheels
+under `site/` in the version, refusing a wheel whose `RECORD` disagrees with
+what it holds, and writes `launch.py` at the top of the version: a launcher
+written from a template that never changes, naming only the agent and the
+entry point the catalog gives, which adds `site/` to the interpreter's path and
+calls that entry point. The question's `Started as:` line shows the whole
+start, such as `python/bin/python3 -I launch.py acp`: the pinned interpreter,
+the arguments the catalog gives it, the launcher, then the agent's own
+arguments. Those arguments must be exactly `-I` and nothing else: it runs the
+interpreter isolated, reading no `PYTHON` variable, nothing from the directory
+it starts in and nothing from your own site-packages, and leaves the launcher
+the first thing it runs. An entry that gives the interpreter anything else is
+refused before anything is asked, and so is any start of a version whose entry
+does, before anything is started. An entry point the launcher cannot be
+written for is refused before anything is asked. A version whose `launch.py` is
+gone, or leads out of the version, is refused before anything is started, and
+so is a version holding `launch.py` once the catalog no longer says a pinned
+interpreter starts it, withdrawn or listed now as an agent of another kind,
+rather than starting its interpreter without the launcher; a version the
+catalog has moved on from to a newer Python release still starts through its
+own `launch.py`.
+
+An agent the catalog ships as an npm package comes with the Node it is run by,
+pinned in the same release, and with its package tree resolved at review into a
+lock the catalog keeps, so no Node or npm on your machine is used and no
+registry is asked what to install. Before the question, the lock is fetched
+from the catalog's own host, and every tarball it pins must be on a host the
+catalog lists for the agent, `registry.npmjs.org` among them; the question then
+says how many packages the tree holds, the whole download, Node and every
+tarball together, every host the install may reach, the licence, how many of
+the tree's packages are under each licence the lock gives, quoted as the lock
+gives it, such as `3 packages of its tree under "MIT".`, the most common first,
+a package that gives none counted as such (none is counted where no package
+gives one), at most eight and then how many more, each install
+script in the tree and what the reviewer decided of it (none is run: one that
+does nothing the agent needs, one a platform package does the work of, or one
+whose loss the agent works without), at most sixteen and then how many more,
+each script built at review, with its package and the size of its build, and
+how the agent is started, such as
+`node/bin/node --require preload.cjs node_modules/goose/bin/goose.js acp`.
+After the yes, Node is fetched as any agent's program is, then the tarballs,
+eight at a time, each held to the size and SHA-512 its lock pins from the first
+byte, with no copy to fall back on; each is unpacked to where the lock installs
+its package, and none is kept. The install writes `preload.cjs` at the top of
+the version, which Node is given before the agent's script and which refuses a
+package the version's tree does not hold, and `.bin`, which goes last on the
+agent's `PATH` and holds a stub for each program the tree's packages declare,
+which starts the pinned Node on that program's script under the preload, so a
+dependency's command started by its bare name runs from the tree; only you may
+change any of them. A package whose program's name is not one file name
+or is `node` in any case, whose script leaves the package or is not a file its tarball holds, or two
+programs whose names differ only in case, refuse the version; where two
+packages declare one name, the one at the top of the tree runs it, as npm
+installs it, and the version is refused where none at the top settles it. A
+tarball that is not its pin, or that the registry no longer has, puts nothing
+in place; a host that answers 404 or 410 is said to be
+likely permanent, since the version can likely no longer be installed. An entry
+that gives Node arguments of its own is refused before anything is fetched or
+asked. An install script built at review runs nothing on your machine, so it
+works on every platform, with the sandbox on or off, from `/catalog` and from
+`crucible agents install`: its build comes from the catalog's own host, held to
+the size and SHA-256 the catalog pins, and its package's directory is replaced
+by it, ending exactly as the review listed it, with `crucible agents verify`
+covering its files. A build holding a link, a path its list does not name, or
+missing one it does, puts nothing in place. Before anything is asked, a release
+is refused where two builds, or a build and a script run at install, fall on one
+package or on packages one inside the other, or where a build leaves out a
+program its package declares. An install script the review marks
+to run at install is named in the question with the command it runs and the
+hosts it reaches, and runs after the yes, in a sandbox of its own; it must leave
+its package exactly as the review listed it, or the version is refused and
+nothing of it is kept, and `crucible agents verify` covers the files it leaves.
+It needs the sandbox and runs on Linux alone: with the sandbox off, on macOS,
+on Windows or on FreeBSD, or from `crucible agents install`, which has no
+conversation to lend one and says to install it from `/catalog` in a
+conversation, it is refused before anything is fetched, and so is a release with
+more than sixteen such scripts and builds together, more than the question can
+show. A version
+already installed is known by its receipt: Node's files, the preload, `.bin` and its stubs, and a build's files, as the catalog
+pins them, and
+the other files of the tree only as lying where the lock installs a package, which the
+question says.
+
+*Verify*, offered where a version is installed, hashes every file of each
+installed version against the receipt written when it was installed, and only
+when chosen. It says on the same screen, a line a version, that every file and
+record is as recorded, or how many differ, naming up to eight of them. For a
+release read from the ACP Registry it also checks that the receipt still records
+the registry as its source and carries a probe record for this machine, naming
+`source` or `probe` where either is missing or does not match.
+
+Installing another version, updating, rolling back, removing and signing in
+stay on `/login`'s agent screen, described above.
+[`crucible agents`](../reference/cli.md#coding-agents-the-catalog-offers)
+lists, adds, checks, installs, updates, rolls back, removes and signs in from
+the command line too, with no conversation. `/catalog` cannot be opened
+while a turn runs, since it installs an agent and writes your configuration.
+`/agents` is not a command in this release; the name is reserved for the
+subagents mechanism, and the command line keeps its name, `crucible agents`.
 
 ## Claude Code
 
@@ -273,21 +553,35 @@ crucible speaks to Antigravity's agent server over the Agent Client Protocol.
 }
 ```
 
-**Which release.** Only release 1.3.0 of the agent server, which calls itself
-`antigravity-acp`, is run, on macOS, Linux and Windows for `x86_64` and
-`aarch64`. [`crucible agents install
-antigravity`](../reference/cli.md#agents-install-driver) downloads it for your
-platform, checks it is that release and puts it under `programs/antigravity/1.3.0`
-in crucible's home. Where no entry names Antigravity, `/login` sets one up run
-as that release, unless an `antigravity` command is on your `PATH`, and where
-the release is not there yet it says to run that command and choose *Check
-again*. An entry you write yourself names its executable,
-`agy_acp_server.par`, or `agy_acp_server.exe` on Windows, with an absolute
-path. When a later crucible runs another release, run the command again and
-change the entry's `executable` to the path it prints. A release that describes itself otherwise
-when it starts, or no longer offers loading and resuming a session, signing out
-or its usual sign-in, is sent nothing more and refused with a sentence naming
-what differs.
+**Which release.** Antigravity's agent server, which calls itself
+`antigravity-acp`, is run only as a release the agent catalog reviewed, on
+macOS, Linux and Windows for `x86_64` and `aarch64`. The releases on offer are
+those of the catalog crucible most lately believed and of the one built into
+it, which lists 1.3.0, less any the catalog has revoked, so a version reviewed
+after your crucible was made is run without a new crucible. [`crucible agents
+install antigravity`](../reference/cli.md#agents-install-agent-version) asks on
+the terminal, then downloads the newest of them for your platform, checks it is
+that release and puts it under
+`programs/antigravity/` and its version in crucible's home. Where no entry
+names Antigravity, `/login` sets one up run as that release, unless an
+`antigravity` command is on your `PATH`, and where the release is not there yet
+it offers *Install*, which puts it in place as that command does, and says the
+command can be run instead, then *Check again* chosen. An entry you write
+yourself names its executable, `agy_acp_server.par`, or `agy_acp_server.exe` on
+Windows, with an absolute path. When the catalog offers a newer release, run
+the command again and change the entry's `executable` to the path it prints.
+The agent is admitted as, and started with the arguments of, the release whose
+version directory under `programs/antigravity/` its executable is in; a program
+kept anywhere else is admitted as any release on offer and started with the
+newest one's arguments. A release is downloaded only from a host its catalog
+target lists. A
+release that calls itself another name, or a version the catalog does not
+offer, or no longer offers loading and resuming a session, signing out or its
+usual sign-in, is sent nothing more and refused with a sentence naming what
+differs. If the catalog's trust state in `state/agent-catalog/trust.json` under
+crucible's home cannot be read or used, no release is offered: `/login`, a start
+of the agent and the install command say so, naming the file, which you repair
+or remove.
 
 **Its model.** The agent chooses its own, and a `model` or an `effort` in its
 entry is refused, since nothing would read it.
@@ -303,7 +597,10 @@ shell holds for another program never reaches it, and a path under your home
 the agent names is shown as that path. Its temporary files go in the profile
 too. Its sign-in token is kept as a file in the profile rather than
 in the shared keyring, so a sign-in the Antigravity IDE or another Google
-product keeps is never read as the agent's.
+product keeps is never read as the agent's. Two entries that write one profile
+directory two ways, with and without a trailing `/` or through a link, are
+refused, naming both (see
+[configuration](../configuration/configuration.md#externalagents)).
 
 **Signing in.** Whether it is signed in is read from the agent's own answer
 when a session is opened in its profile. To sign in, the agent prints a link to
@@ -314,6 +611,34 @@ prints during a turn means the profile is signed out, and the turn fails
 saying to sign in. Signing out runs the agent's own logout, then asks again
 whether a session can be opened, and says the sign-out is unverified unless
 the agent then answers that it is signed out.
+
+**Its sign-in methods.** The agent offers four, each asked for by its id.
+`oauth-personal`, a personal Google account, needs nothing more.
+`oauth-business`, a business Google account, needs the Google Cloud project
+and location it is billed to, which the entry names as `cloudProject` and
+`cloudLocation` (see [configuration](../configuration/configuration.md#externalagents)).
+`gemini-api-key`, a Gemini API key, and `agent-platform`, a Gemini Enterprise
+Agent Platform API key, each need the key, which you type, crucible keeps
+under the agent's name and the method's id, and the agent is given in
+`GEMINI_API_KEY` or `GOOGLE_API_KEY`; neither needs a project or a location.
+The agent reads a business sign-in's project and location only from its own
+settings, so at that sign-in, once the agent's route has your yes and before
+the agent starts, crucible writes them as `antigravity-acp/settings.json` in
+its profile, replacing what is there. That file is written then and at no
+other time, so a change to either key takes effect at the next business
+sign-in. The write follows no link: where `antigravity-acp` or the file in it
+is a link, the sign-in is refused and nothing is written, and the file is
+written in the directory crucible opened at that name, so a name changed while
+it writes cannot send it elsewhere. A business sign-in for an entry that names
+neither key is refused naming both, and one whose location is too long to make
+the name of its host is refused naming `cloudLocation`, each before anything
+is asked, written or started. So is any sign-in that starts the agent where a
+run of an instance on its profile could not be confirmed to have stopped, as a
+sign-out is: crucible names the instances and says to restart crucible. So is
+one where a run of an instance on its profile is still live: crucible names the
+instances and says their runs must end first, as a disconnect ends them, and
+it ends none itself. A business sign-in read as signed in means the agent then
+opened a session, not that the project holds a licence for it.
 
 **Its session.** Each time the agent is started again, after a failed turn, a
 change of mode or `/resume`, it is asked to resume the session it last named.
@@ -330,6 +655,14 @@ offers no yes for that action alone, the question comes to you whatever the
 mode. crucible's own rules are not consulted for the agent's actions, and once
 a turn is stopped nothing more is answered yes.
 
-**Network.** Its sandbox adds to what the conversation lets it reach
-`accounts.google.com`, `oauth2.googleapis.com`, `cloudcode-pa.googleapis.com`
-and `daily-cloudcode-pa.googleapis.com`, by name, and no other Google host.
+**Network.** Its sandbox adds to what the conversation lets it reach, by name,
+`accounts.google.com`, `oauth2.googleapis.com` and `www.googleapis.com`, which
+a Google sign-in uses; `cloudcode-pa.googleapis.com` and
+`daily-cloudcode-pa.googleapis.com`, the service the agent asks;
+`generativelanguage.googleapis.com`, the Gemini API; `aiplatform.googleapis.com`,
+Agent Platform; and `businessaicode.googleapis.com`, the service a business
+sign-in is billed through. An entry naming `cloudLocation` also reaches that
+location's own host: `{location}-businessaicode.googleapis.com` for a region,
+such as `us-central1-businessaicode.googleapis.com`, and
+`businessaicode.{location}.rep.googleapis.com` for `us` or `eu`. `global`, and
+any other location, adds none. It reaches no other Google host.

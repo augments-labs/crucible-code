@@ -40,7 +40,7 @@ use super::ending::{Ending, Told};
 mod tests;
 
 /// The longest answer read to a question on the terminal, in bytes.
-const MAX_ANSWER: u64 = 256;
+pub(super) const MAX_ANSWER: u64 = 256;
 
 /// Why a piped key was refused when standard input is a terminal.
 const UNPIPED: &str = "--api-key-stdin reads a key piped to crucible, and standard input is a \
@@ -120,7 +120,7 @@ pub(super) fn login(word: &str, piped: bool) -> ExitCode {
 
 /// Why a login stored nothing.
 #[derive(Debug)]
-enum Unstored {
+pub(super) enum Unstored {
     /// It was refused, for the reason given.
     Refused(String),
     /// The process was told to stop from outside while the key's prompt
@@ -261,7 +261,7 @@ fn typed(desk: &Desk, way: &Way) -> Result<String, Unstored> {
 /// nothing, and only then is the signal obeyed, by the caller. Obeyed where
 /// it landed, it would end the process with the terminal still raw and the
 /// shell after it showing nothing that is typed.
-fn hidden(shown: &str) -> Result<Option<String>, Unstored> {
+pub(super) fn hidden(shown: &str) -> Result<Option<String>, Unstored> {
     let ending = Ending::listening(true);
     let hiding = ending.hiding();
     let outcome = match Raw::enter() {

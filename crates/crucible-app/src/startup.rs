@@ -137,6 +137,10 @@ pub struct Startup<'a> {
     pub settings: &'a Settings,
     /// Where session logs go.
     pub sessions: &'a Path,
+    /// The directory the catalog's trust state is kept under, which the
+    /// releases an installed agent is run as are read from each time one is
+    /// started.
+    pub state: &'a Path,
     /// The directory being worked in.
     pub workspace: &'a Workspace,
     /// Which files have been read. Made by the caller because the caller keeps
@@ -209,7 +213,8 @@ impl fmt::Debug for Startup<'_> {
 /// asked, and [`AppError::Unstarted`] where the runtime the conversation's
 /// turns run on would not start; nothing is written to the disk for a startup
 /// that fails. A test build also refuses, before anything is built, agents
-/// its environment asks for under a name it has no registry for.
+/// its environment asks for under a name it has no registry for, and a
+/// catalog it names in a way it does not take.
 pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     // A test build starts the agents its environment names, so a test of the
     // whole program can run it over agents this release does not ship; a
@@ -218,6 +223,11 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     let agents = crate::proof::registry_from_environment()?;
     #[cfg(not(feature = "proof"))]
     let agents = &crate::backends::REGISTRY;
+    // A test build fetches the catalog its environment names, so a test of
+    // the whole program can install from one it serves; one named in a way it
+    // does not take refuses the start here, before anything fetches.
+    #[cfg(feature = "proof")]
+    crate::proof::catalog_from_environment()?;
     assembled(startup, agents)
 }
 
@@ -391,6 +401,8 @@ fn assembled(startup: &Startup<'_>, agents: &'static Registry) -> Result<Convers
                     runtime.clone(),
                     &on.policy,
                     startup.services.consent(),
+                    startup.state,
+                    startup.sessions,
                 ),
                 on.agent.clone(),
                 &*on.instance,
@@ -403,6 +415,8 @@ fn assembled(startup: &Startup<'_>, agents: &'static Registry) -> Result<Convers
                     runtime.clone(),
                     policy,
                     startup.services.consent(),
+                    startup.state,
+                    startup.sessions,
                 ),
                 agents,
                 (startup.from)("PATH").map(OsString::from),
@@ -544,7 +558,7 @@ fn started_on(
     route: &Route,
 ) -> Result<Option<OnAgent>, AppError> {
     let Route::External {
-        provider,
+        serves,
         instance,
         driver,
         profile,
@@ -557,7 +571,7 @@ fn started_on(
     if !enabled {
         return Err(unstartable(
             instance,
-            launching::disconnected(instance, provider),
+            launching::disconnected(instance, serves),
         ));
     }
     let Some(agent) = launching::Agent::routed(route, agents, |name| {
@@ -569,8 +583,12 @@ fn started_on(
         ));
     };
     startable(startup, &agent, instance)?;
-    let route = RouteBinding::new(driver.name(), instance, profile.as_deref())
-        .map_err(|refused| unstartable(instance, refused.to_string()))?;
+    let route = RouteBinding::new(
+        &launching::bound(*driver, serves.agent()),
+        instance,
+        profile.as_deref(),
+    )
+    .map_err(|refused| unstartable(instance, refused.to_string()))?;
     Ok(Some(OnAgent {
         agent,
         instance: instance.clone(),
@@ -598,6 +616,7 @@ fn reopened_on(
     let (agent, route) = launching::reopening(
         &startup.settings.external_agents(),
         agents,
+        startup.state,
         |name| (startup.from)(name).map(OsString::from),
         startup.mode,
         opened,
@@ -1739,10 +1758,10 @@ fn key(
             });
         }
         Route::External {
-            provider, instance, ..
+            serves, instance, ..
         } => {
             return Err(AppError::ExternalAgent {
-                provider: provider.into(),
+                provider: serves.to_string().into(),
                 instance,
             });
         }

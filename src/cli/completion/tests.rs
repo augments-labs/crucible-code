@@ -40,7 +40,16 @@ const COMMANDS: &[&[&str]] = &[
     &["sessions", "list"],
     &["update"],
     &["agents"],
+    &["agents", "search"],
     &["agents", "install"],
+    &["agents", "add"],
+    &["agents", "update"],
+    &["agents", "rollback"],
+    &["agents", "remove"],
+    &["agents", "verify"],
+    &["agents", "sign-in"],
+    &["agents", "unpack-check"],
+    &["agents", "probe"],
     &["completion"],
 ];
 
@@ -77,7 +86,11 @@ fn paths(command: &Command) -> BTreeSet<Vec<String>> {
 /// word that merely appears somewhere in a script proves nothing about it.
 fn marker(shell: Shell, path: &[String]) -> String {
     match shell {
-        Shell::Bash => format!("crucible__subcmd__{})", path.join("__subcmd__")),
+        // bash spells a hyphen in a command's name as a separator too.
+        Shell::Bash => format!(
+            "crucible__subcmd__{})",
+            path.join("__subcmd__").replace('-', "__subcmd__")
+        ),
         Shell::Zsh => format!("_crucible__subcmd__{}_commands()", path.join("__subcmd__")),
         Shell::Fish => match path {
             [only] => format!("-a \"{only}\""),
@@ -204,10 +217,12 @@ fn completes_flag(shell: Shell, script: &str, path: &[String], flag: &str) -> bo
         .fold(String::new(), |joined, word| joined + ";" + word);
     match shell {
         Shell::Bash => {
+            // A hyphen inside a word, as in `sign-in`, is spelled there as the
+            // gap between two words is.
             let arm = if path.is_empty() {
                 "crucible".to_owned()
             } else {
-                format!("crucible__subcmd__{}", path.join("__subcmd__"))
+                format!("crucible__subcmd__{}", path.join("__subcmd__")).replace('-', "__subcmd__")
             };
             // The arm's `opts` line is the line before its `if`.
             between(&format!("\n        {arm})\n"), "\n            if")

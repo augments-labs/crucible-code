@@ -69,9 +69,9 @@ dependencies = [
 
 [[package]]
 name = "arboard"
-version = "3.6.1"
+version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0348a1c054491f4bfe6ab86a7b6ab1e44e45d899005de92f58b3df180b36ddaf"
+checksum = "aeb9553e62312c8756a5979254fc6d7da8bbeb5986a1e17037fab932f7037917"
 dependencies = [
  "clipboard-win",
  "image",
@@ -83,7 +83,7 @@ dependencies = [
  "objc2-foundation",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
  "wl-clipboard-rs",
  "x11rb",
 ]
@@ -149,6 +149,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 
 [[package]]
+name = "blake2"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b5d4d889834ee8ecfc0f8426ad30faf7cdcb10f741a8e6d7224d95325479f6f"
+dependencies = [
+ "digest",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -191,6 +200,15 @@ name = "bytes"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
+
+[[package]]
+name = "bzip2"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3a53fac24f34a81bc9954b5d6cfce0c21e18ec6959f44f56e8e90e4bb7c346c"
+dependencies = [
+ "libbz2-rs-sys",
+]
 
 [[package]]
 name = "cc"
@@ -271,6 +289,12 @@ checksum = "bde03770d3df201d4fb868f2c9c59e66a3e4e2bd06692a0fe701e7103c7e84d4"
 dependencies = [
  "error-code",
 ]
+
+[[package]]
+name = "cmov"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
 name = "colorchoice"
@@ -360,7 +384,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-agents"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "crucible-models",
  "crucible-tools",
@@ -370,7 +394,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-app"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "crucible-agents",
  "crucible-auth",
@@ -397,15 +421,17 @@ dependencies = [
  "crucible-types",
  "crucible-update",
  "crucible-workspace",
+ "rustix",
  "serde_core",
  "serde_json",
+ "sha2",
  "thiserror",
  "tokio",
 ]
 
 [[package]]
 name = "crucible-attachments"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "crucible-types",
  "crucible-workspace",
@@ -416,7 +442,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-auth"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "base64 0.23.1",
  "crucible-credentials",
@@ -435,7 +461,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-builtins"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "crucible-attachments",
  "crucible-runtime",
@@ -456,7 +482,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-client-api"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "crucible-types",
  "serde_core",
@@ -465,7 +491,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-code"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "arboard",
  "clap",
@@ -511,7 +537,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-config"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "crucible-models",
  "crucible-sandbox",
@@ -526,7 +552,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-context"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "crucible-models",
  "crucible-tools",
@@ -537,7 +563,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-credentials"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "crucible-types",
  "sha2",
@@ -546,7 +572,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-execution"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "crucible-runtime",
  "crucible-types",
@@ -555,7 +581,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-extension"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "crucible-registry",
  "crucible-runtime",
@@ -571,8 +597,11 @@ dependencies = [
 
 [[package]]
 name = "crucible-external-harnesses"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
+ "base64 0.23.1",
+ "blake2",
+ "bzip2",
  "crucible-execution",
  "crucible-privacy",
  "crucible-runtime",
@@ -581,8 +610,11 @@ dependencies = [
  "crucible-transport",
  "crucible-types",
  "flate2",
+ "minisign-verify",
+ "ring",
  "serde_json",
  "sha2",
+ "tar",
  "thiserror",
  "tokio",
  "zip",
@@ -590,7 +622,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-http"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "base64 0.23.1",
  "crucible-credentials",
@@ -607,7 +639,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-mcp"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "crucible-runtime",
  "crucible-sandbox",
@@ -621,7 +653,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-models"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "crucible-credentials",
  "crucible-runtime",
@@ -632,7 +664,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-privacy"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "rustix",
  "thiserror",
@@ -641,7 +673,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-provider"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "base64 0.23.1",
  "crucible-credentials",
@@ -659,7 +691,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-registry"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "thiserror",
  "uuid",
@@ -667,7 +699,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-runner"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "crucible-agents",
  "crucible-attachments",
@@ -687,14 +719,14 @@ dependencies = [
 
 [[package]]
 name = "crucible-runtime"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "tokio",
 ]
 
 [[package]]
 name = "crucible-sandbox"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "crucible-runtime",
  "crucible-storage",
@@ -708,7 +740,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-sandbox-broker"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "libc",
  "rustix",
@@ -719,7 +751,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-sandbox-local"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "base64 0.23.1",
  "crucible-http",
@@ -741,7 +773,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-session"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "crucible-privacy",
  "crucible-runtime",
@@ -759,7 +791,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-storage"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "crucible-types",
  "serde_json",
@@ -770,7 +802,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-tools"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "crucible-registry",
  "crucible-runtime",
@@ -786,7 +818,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-transport"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "crucible-runtime",
  "crucible-sandbox",
@@ -797,11 +829,13 @@ dependencies = [
 
 [[package]]
 name = "crucible-tui"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "base64 0.23.1",
  "crossterm",
  "insta",
+ "libc",
+ "rustix",
  "syntect",
  "terminal-colorsaurus",
  "thiserror",
@@ -811,7 +845,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-types"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "serde_json",
  "sha2",
@@ -821,7 +855,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-update"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "crucible-http",
  "crucible-privacy",
@@ -839,7 +873,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-workspace"
-version = "0.48.2"
+version = "0.49.0"
 dependencies = [
  "rustix",
  "thiserror",
@@ -859,6 +893,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453"
 dependencies = [
  "hybrid-array",
+]
+
+[[package]]
+name = "ctutils"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38d28fb6aa7dd680b3ffd1a3e64e115c177bdba63c0ae7f9cd48129ff05c4fa0"
+dependencies = [
+ "cmov",
 ]
 
 [[package]]
@@ -906,6 +949,7 @@ checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
 dependencies = [
  "block-buffer",
  "crypto-common",
+ "ctutils",
 ]
 
 [[package]]
@@ -1123,9 +1167,9 @@ dependencies = [
 
 [[package]]
 name = "globset"
-version = "0.4.20"
+version = "0.4.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07c34a9410465b45bd9787443bc7370f37735bad04b0f0cd57ff1a3186c98988"
+checksum = "f98b0d85522dc0a824cfebbc9594ff4a9b289c568bea0370319dfbdf20ccdd2d"
 dependencies = [
  "aho-corasick",
  "bstr",
@@ -1246,13 +1290,12 @@ dependencies = [
 
 [[package]]
 name = "hyper"
-version = "1.11.1"
+version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27b501faa50e7a26c3d3560ca625132f4078a17771f4810baf70475ae48cbe43"
+checksum = "2c3e324da4c95177d6291d4c8730197c0d1822f8a9766814a4a44fa5ab797c9c"
 dependencies = [
  "atomic-waker",
  "bytes",
- "futures-channel",
  "futures-core",
  "http",
  "http-body",
@@ -1288,9 +1331,9 @@ dependencies = [
 
 [[package]]
 name = "ignore"
-version = "0.4.33"
+version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00b69833ed729dc5aa7d19541d96d6cf8e9137194207a04916d658e43168402f"
+checksum = "484be5657551d7868d67587df967fb4fcbe9d266a761cc855aaa148fda0b3cc7"
 dependencies = [
  "crossbeam-deque",
  "globset",
@@ -1416,10 +1459,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "libc"
-version = "0.2.190"
+name = "libbz2-rs-sys"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
+checksum = "32f454fd6831a29c0e827ed075bca2a15be201bd57f4168f0fd1041124eab17e"
+
+[[package]]
+name = "libc"
+version = "0.2.191"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "linux-raw-sys"
@@ -1462,6 +1511,12 @@ checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "minisign-verify"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "871285dc19d8d0ebe0eef3d0e99a205f2a71363b122632cbbfa4a6c370a960ce"
 
 [[package]]
 name = "miniz_oxide"
@@ -2200,9 +2255,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.53.3"
+version = "1.54.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce3335fa71841cda333a58d7615b03901380ecf09d59b3296d21f8bbac0dde4e"
+checksum = "b52fd3255258d26fac7264ab5a76b53c13367136dc011d3d6ad4f8ed070396a3"
 dependencies = [
  "bytes",
  "libc",
@@ -2307,9 +2362,9 @@ checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 
 [[package]]
 name = "unicode-width"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
+checksum = "ca718471876992059f251e33aafc334346ada08042b7661dd1fe313a9bced557"
 
 [[package]]
 name = "untrusted"
@@ -2325,9 +2380,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.28.0"
+version = "1.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7cc1186384beb7dd8eedea376413fd654937285ea6c9cfbb928dc3043ea4b606"
+checksum = "4a0e2d11620c50695fe12bbbfde96b3477fe606e7284c22d505c12ce51214514"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
@@ -2346,9 +2401,9 @@ dependencies = [
 
 [[package]]
 name = "want"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfa7760aed19e106de2c7c0b581b509f2f25d3dacaf737cb82ac61bc6d760b0e"
+checksum = "ec4cdd0dd910afe868b7ef477227d8d538b46b3075031afee8a9f2acb0a2ed0b"
 dependencies = [
  "try-lock",
 ]
@@ -2677,9 +2732,9 @@ checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
 
 [[package]]
 name = "zip"
-version = "9.0.4"
+version = "9.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a954114b47a54df49f83d2722814e86b23d4bb1b54a1b90fb7d92b41619ddc22"
+checksum = "6e04976da629d3b04204ba8105b396a193af8ad2583b2c79bfb3ab8af580a11e"
 dependencies = [
  "crc32fast",
  "flate2",

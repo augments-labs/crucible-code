@@ -159,6 +159,44 @@ agent whose program is not found, cannot start the agent whatever the answer:
 it is refused with its reason before anything is asked, and nothing is written
 or started.
 
+## An agent from the catalog
+
+An agent the catalog reviewed has no row in the table above. Its own catalog
+entry carries the vendor's statement of how it uses what is sent: the words, the
+page they are published at, the day they were read there, and the origins they
+cover. Crucible holds that agent's route, `agent:` and the agent's key, to that
+statement, and asks about it once before the agent's first launch exactly as it
+does for Claude Code and Antigravity, with the same added line about what
+starting it runs. The panel is titled with the agent's key, cites the host of
+the page and the day, and names the origins after the vendor's words. The
+origins are shown and nothing more: crucible's own requests to them are not
+held.
+
+A signed catalog entry with no statement is listed and cannot be launched. The
+refusal says so before anything is asked or started, and a yes given to another
+agent's route does not stand in for it:
+
+```text
+goose cannot be launched: its catalog entry gives no statement of how its vendor uses what is sent.
+```
+
+A registry entry with no vendor statement is not refused: it is held by the
+generic warning, which says the vendor has not stated what it does with what is
+sent and that the agent's network reach is unrecorded, so the conversation's
+network policy is the agent's network. The same yes covers the probe whose
+record its install keeps, and its first launch is held by that warning.
+
+So is a signed catalog entry whose statement cannot be shown whole. The vendor's
+words and the origins together may run to 4096 bytes, and a statement longer
+than that, or whose page is not an `https` address naming a host, is treated as
+none rather than cut short. A build holds at most 32 catalog agents to a
+statement, and a catalog agent can never take a route Claude Code or Antigravity
+already has: an entry keyed with one of those names has its install script
+refused and is not
+smoke-tested under that route's yes, unless it is the entry behind that built-in.
+Signing out of a catalog agent is refused before anything is changed where its
+route has no hold, as a launch is.
+
 ## A `baseUrl` crucible recognises
 
 A `baseUrl` is warned only at an address crucible documents. Where two rows

@@ -36,11 +36,26 @@
 //! no other run of that agent is started beside it. A launch whose future is
 //! dropped before it ends releases the place, except when it was waiting on
 //! the stop of a process it could not speak to.
+//!
+//! A sign-in run as a command is not spoken to in frames: [`Host::piped`]
+//! carries it to a [`SignInChannel`] and back. What it writes reaches the
+//! channel a line at a time, each no longer than [`PIPED_LINE_BYTES`] and hidden
+//! as everything kept from a program is; [`RAN_BYTES`] in all, past which it is
+//! stopped and the last line says it was cut. A prompt that ends no line is
+//! carried once the program has gone quiet, but not while what it wrote could
+//! be the beginning of a value that is withheld. A line the channel sends goes
+//! to its input; one marked as a secret is withheld from what is carried from
+//! that moment, before a byte of it is written, and no failure repeats it; one
+//! holding a line ending is refused and not written at all. Its
+//! wait is bounded, the channel's person can give it up, and however it ends
+//! everything it started is stopped.
 
 use std::borrow::Cow;
 use std::fmt;
+use std::future::poll_fn;
 use std::io;
 use std::path::Path;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -49,12 +64,14 @@ use crucible_execution::{
     Authentication, Confinement, Decision, Detail, Effects, Event, Failure, Fault, Outcome,
     PENDINGS, Pending, PendingRef, SessionRef, Sink, Stale, Text, TurnRequest, Unraised,
 };
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_sandbox::{
     SandboxCapabilities, SandboxCapability, SandboxCommand, SandboxEnvironment, SandboxError,
     SandboxFeature, SandboxManifest, SandboxOutput, SandboxProcess, SandboxRequest, SandboxService,
 };
 use crucible_transport::{FRAME_BYTES, Finish, Frames, Heard, Muttered, Pipes, Said, Written};
 use crucible_types::{Ancestry, Diff, Line, SandboxId, ToolId};
+use tokio::io::AsyncBufRead;
 use tokio::runtime::Handle;
 use tokio::sync::{Notify, mpsc};
 use tokio::time::Instant;
@@ -94,6 +111,24 @@ pub const RAN_BYTES: usize = 64 * 1024;
 /// The shortest environment value hidden from kept text. A shorter one occurs
 /// by chance in ordinary output, and hiding it would hide that output instead.
 pub const WITHHELD_BYTES: usize = 8;
+
+/// The most of one line of a sign-in command's output that is carried, in
+/// bytes; the rest of a longer one is dropped, and the line says so.
+pub const PIPED_LINE_BYTES: usize = 4 * 1024;
+
+/// How often a run carried to a channel looks at what a read would not tell
+/// it: standard error, a line left unended, whether it has ended.
+const PIPED_TICK: Duration = Duration::from_millis(250);
+
+/// How long a line sent to a sign-in command's input waits for it to be read.
+const PIPED_WRITE: Duration = Duration::from_secs(5);
+
+/// How long stopping everything a sign-in command started is waited on.
+const STOP_WAIT: Duration = Duration::from_secs(10);
+
+/// The most secret lines one sign-in command is sent: each is held against all
+/// it writes from then on.
+const WITHHELD_VALUES: usize = 16;
 
 /// Which account step a dialect is asked to start.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -197,8 +232,9 @@ pub enum Act {
 /// [`Dialect::spoken`] says how it begins.
 pub trait Dialect: Send {
     /// The command the program is looked up as, without any suffix the
-    /// platform adds.
-    fn program(&self) -> &'static str;
+    /// platform adds; for one started only from the path its instance names,
+    /// the name it is known by.
+    fn program(&self) -> &str;
 
     /// What a turn's process is started with. A wire that names the session
     /// to resume or the workspace in its frames keeps them from here for the
@@ -256,6 +292,14 @@ pub trait Dialect: Send {
         let _ = (step, frame);
         Err(Failure::new("this agent speaks no account step"))
     }
+
+    /// Makes the sign-in step ask for the method the agent offers as `id`,
+    /// and no other; whether this wire can, which one that signs in by no
+    /// method the user names cannot.
+    fn signing_in_with(&mut self, id: &str) -> bool {
+        let _ = id;
+        false
+    }
 }
 
 /// A decision settled in the table and on its way to the program.
@@ -280,15 +324,18 @@ struct Shared {
     interrupted: AtomicBool,
     /// What a stop request rings.
     bell: Notify,
-    /// Whether a run is live, which is the bound of one process at a time.
+    /// Whether a run is live, which is the bound of one process at a time,
+    /// and what [`Control::running`] reads.
     running: AtomicBool,
     /// Whether a run could not be confirmed to have stopped, which keeps
-    /// `running` held for good.
+    /// `running` held for good, and what [`Control::unstopped`] reads.
     unstopped: AtomicBool,
 }
 
 /// The handle a backend decides and interrupts through, shared by every run
-/// of one agent.
+/// of one agent. It also says whether a run holds it, and whether a run on it
+/// could not be confirmed to have stopped, which a holder of several controls
+/// reads to refuse what would start beside one.
 #[derive(Clone)]
 pub struct Control {
     /// What every run shares.
@@ -316,6 +363,33 @@ pub enum Undecided {
 }
 
 impl Control {
+    /// Holds this control's place for a child started outside a [`Host`],
+    /// refusing where a run holds it already or could not be confirmed
+    /// stopped; the place is released when the returned [`Holding`] is
+    /// dropped, unless the holder says the stop was not confirmed.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::Unstopped`] where a run on this control could not be
+    /// confirmed stopped, and [`Refusal::Busy`] where one is live.
+    pub fn hold(&self) -> Result<Holding<'_>, Refusal> {
+        if self.shared.unstopped.load(Ordering::SeqCst) {
+            return Err(Refusal::Unstopped);
+        }
+        if self
+            .shared
+            .running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err(Refusal::Busy);
+        }
+        Ok(Holding {
+            shared: &self.shared,
+            confirmed: true,
+        })
+    }
+
     /// A handle with nothing open, or nothing once this process has numbered
     /// every instance it can.
     #[must_use]
@@ -386,6 +460,15 @@ impl Control {
         self.shared.unstopped.load(Ordering::SeqCst)
     }
 
+    /// Whether a run holds this control: one launched on it and not yet ended,
+    /// so that another is refused as busy. A run that could not be confirmed
+    /// to have stopped holds it for good, so this is true of that run too;
+    /// [`Control::unstopped`] says which.
+    #[must_use]
+    pub fn running(&self) -> bool {
+        self.shared.running.load(Ordering::SeqCst)
+    }
+
     /// What is open, oldest first.
     #[must_use]
     pub fn open(&self) -> Vec<PendingRef> {
@@ -399,6 +482,44 @@ impl Control {
             .asked
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// One run's place on a [`Control`], held by an operation that starts a child
+/// outside a [`Host`]: the control is held for as long as this is, so another
+/// run is refused beside it. A place whose child could not be confirmed
+/// stopped is left held for good, as a host's drop leaves one.
+pub struct Holding<'a> {
+    /// What every run of the agent shares.
+    shared: &'a Shared,
+    /// Whether the holder may release the place; false once it says the stop
+    /// was not confirmed.
+    confirmed: bool,
+}
+
+impl fmt::Debug for Holding<'_> {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.debug_struct("Holding")
+            .field("confirmed", &self.confirmed)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Holding<'_> {
+    /// Records that the child could not be confirmed stopped, so the control
+    /// is held for good and every later start on it is refused.
+    pub fn unstopped(mut self) {
+        self.confirmed = false;
+    }
+}
+
+impl Drop for Holding<'_> {
+    fn drop(&mut self) {
+        if self.confirmed {
+            self.shared.running.store(false, Ordering::SeqCst);
+        } else {
+            self.shared.unstopped.store(true, Ordering::SeqCst);
+        }
     }
 }
 
@@ -1250,6 +1371,169 @@ impl Host {
         }
     }
 
+    /// Carries this run to `channel` and back until it ends, `within` has
+    /// passed or `cancel` is raised, as the module documentation says, and then
+    /// stops everything it started.
+    ///
+    /// # Errors
+    ///
+    /// [`Unstopped`] where it could not be confirmed to have stopped.
+    pub async fn piped(
+        mut self,
+        channel: &dyn SignInChannel,
+        cancel: &Cancel,
+        within: Duration,
+    ) -> Result<Piped, Unstopped> {
+        let ended = self.carried(channel, cancel, within).await;
+        let grace = if matches!(ended, Carried::Over) {
+            STOP_GRACE
+        } else {
+            Duration::ZERO
+        };
+        self.finish(grace).await;
+        // The child's own end says nothing of what it started: stopping its
+        // scope is what confirms that is over too, whatever way it ended.
+        let exited = match &self.finished {
+            Some(Finish::Exited(status)) => Some(status.success()),
+            _ => None,
+        };
+        let stopped = tokio::time::timeout(STOP_WAIT, self.process.stop()).await;
+        let unconfirmed = match stopped {
+            Ok(Ok(())) => None,
+            Ok(Err(problem)) => Some(problem),
+            Err(_) => Some(io::Error::other("the stop was not answered in time")),
+        };
+        if let Some(problem) = unconfirmed {
+            self.finished = Some(Finish::Unreaped(problem));
+            return Err(self
+                .stop(Duration::ZERO)
+                .await
+                .err()
+                .unwrap_or(Unstopped::Unfinished));
+        }
+        drop(self);
+        Ok(match (ended, exited) {
+            (Carried::Over, Some(true)) => Piped::Succeeded,
+            (Carried::Over, Some(false) | None) => Piped::Failed,
+            (Carried::Cut, _) => Piped::Cut,
+            (Carried::Overran, _) => Piped::Overran,
+            (Carried::Cancelled, _) => Piped::Cancelled,
+            (Carried::Lost, _) => Piped::Lost,
+        })
+    }
+
+    /// The carrying [`Self::piped`] does, up to the end of the run.
+    async fn carried(
+        &mut self,
+        channel: &dyn SignInChannel,
+        cancel: &Cancel,
+        within: Duration,
+    ) -> Carried {
+        let Some(deadline) = Instant::now().checked_add(within) else {
+            return Carried::Overran;
+        };
+        let heard = self.frames.stream_mut();
+        heard.patient_for(within);
+        heard.abandoned_when(Some(cancel.clone()));
+        heard.bounded_until(Some(deadline.into_std()));
+        if let Some(written) = self.written.as_mut() {
+            written.patient_for(PIPED_WRITE);
+        }
+        let mut carrying = Carrying::default();
+        let mut errors_seen = 0;
+        let mut open = true;
+        // Whether the process had exited at the last look: what it left
+        // behind can hold its output open with nothing left to say.
+        let mut exited = false;
+        loop {
+            let next = tokio::select! {
+                piece = piece_of(self.frames.stream_mut()) => Next::Heard(piece),
+                line = channel.line(), if open => Next::Typed(line),
+                () = tokio::time::sleep(PIPED_TICK) => Next::Tick,
+            };
+            match next {
+                Next::Heard(Ok(piece)) if piece.is_empty() => {
+                    self.muttered.settled(SETTLING).await;
+                    let whole = carrying.err(
+                        &self.muttered.text(),
+                        &mut errors_seen,
+                        &self.withheld,
+                        channel,
+                    );
+                    carrying.last(&self.withheld, channel);
+                    return if whole { Carried::Over } else { Carried::Cut };
+                }
+                Next::Heard(Ok(piece)) => {
+                    exited = false;
+                    if !carrying.out(&piece, &self.withheld, channel) {
+                        return Carried::Cut;
+                    }
+                }
+                Next::Heard(Err(_)) if cancel.requested() => return Carried::Cancelled,
+                Next::Heard(Err(_)) if Instant::now() >= deadline => return Carried::Overran,
+                Next::Heard(Err(_)) => return Carried::Lost,
+                Next::Typed(None) => {
+                    open = false;
+                    self.written = None;
+                }
+                Next::Typed(Some(typing)) => {
+                    if self.applied(typing).await.is_err() {
+                        return Carried::Lost;
+                    }
+                }
+                Next::Tick => {
+                    if cancel.requested() {
+                        return Carried::Cancelled;
+                    }
+                    if Instant::now() >= deadline {
+                        return Carried::Overran;
+                    }
+                    if !carrying.err(
+                        &self.muttered.text(),
+                        &mut errors_seen,
+                        &self.withheld,
+                        channel,
+                    ) {
+                        return Carried::Cut;
+                    }
+                    carrying.quiet(&self.withheld, channel);
+                    if exited {
+                        carrying.last(&self.withheld, channel);
+                        return Carried::Over;
+                    }
+                    exited = matches!(self.process.try_wait(), Ok(Some(_)));
+                }
+            }
+        }
+    }
+
+    /// Writes `typing` to the child's input. A secret is withheld from all
+    /// that is carried before a byte of it goes out, and what comes of it
+    /// names nothing of it. One holding a line ending is refused before
+    /// anything is withheld or written: it would reach the child as more than
+    /// one line, and each would be carried, none being the value withheld.
+    async fn applied(&mut self, typing: Typing) -> Result<(), Unapplied> {
+        let line = match typing {
+            Typing::Line(line) => line,
+            Typing::Secret(typed) => {
+                let secret = typed.applied();
+                if secret.contains(['\n', '\r']) {
+                    return Err(Unapplied);
+                }
+                if self.withheld.len() >= WITHHELD_VALUES {
+                    return Err(Unapplied);
+                }
+                if !secret.is_empty() {
+                    self.withheld.push(secret.as_str().into());
+                }
+                secret
+            }
+        };
+        self.say(std::slice::from_ref(&line))
+            .await
+            .map_err(|_| Unapplied)
+    }
+
     /// Ends the run: its input closes, it has `grace` to exit, and it is
     /// stopped where it does not.
     ///
@@ -1275,6 +1559,274 @@ impl Host {
         };
         drop(self);
         unconfirmed.map_or(Ok(()), Err)
+    }
+}
+
+/// A secret a person typed on this machine: a key for an agent to sign in with,
+/// or a line for a sign-in command's input. Its `Debug` names nothing of it, it
+/// has no `Display`, and no refusal of it repeats it.
+pub struct Typed(String);
+
+impl Typed {
+    /// The secret as it was typed.
+    #[must_use]
+    pub const fn new(typed: String) -> Self {
+        Self(typed)
+    }
+
+    /// The secret itself, for the one place it is applied.
+    #[must_use]
+    pub fn applied(self) -> String {
+        self.0
+    }
+}
+
+impl fmt::Debug for Typed {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.write_str("Typed(<redacted>)")
+    }
+}
+
+/// One line a person sends a sign-in command's input.
+#[derive(Debug)]
+pub enum Typing {
+    /// A line that may be shown.
+    Line(String),
+    /// A line that is a secret. It is withheld by exact match on a line, so an
+    /// agent that splits or encodes what it is given is not stopped.
+    Secret(Typed),
+}
+
+/// Where a sign-in run as a command is carried: a person, at the front end
+/// that lent this.
+pub trait SignInChannel: Send + Sync {
+    /// Told each line the command wrote, as it may be shown; incomplete where
+    /// some of it was cut.
+    fn said(&self, line: Text);
+
+    /// The next line the person sends, or nothing once they will send no more.
+    /// Dropped before it answers, it loses no line.
+    fn line(&self) -> BoxFuture<'_, Option<Typing>>;
+}
+
+/// How a sign-in run as a command ended, everything it started stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Piped {
+    /// It ended by itself, in success.
+    Succeeded,
+    /// It ended by itself in failure, or would not end when it had said all
+    /// it would.
+    Failed,
+    /// It wrote more than is carried.
+    Cut,
+    /// It was still running when its bound passed.
+    Overran,
+    /// The person gave it up.
+    Cancelled,
+    /// Its output or its input failed.
+    Lost,
+}
+
+/// How carrying a run ended, before it was stopped.
+#[derive(Debug, Clone, Copy)]
+enum Carried {
+    Over,
+    Cut,
+    Overran,
+    Cancelled,
+    Lost,
+}
+
+/// What the wait in [`Host::carried`] came back with.
+enum Next {
+    Heard(io::Result<Vec<u8>>),
+    Typed(Option<Typing>),
+    Tick,
+}
+
+/// A line could not be applied to a child's input; nothing of it is said.
+struct Unapplied;
+
+/// The next bytes `heard` has, none where its stream has ended. Dropped before
+/// it answers, it has taken nothing.
+async fn piece_of(heard: &mut Heard<Box<dyn SandboxOutput>>) -> io::Result<Vec<u8>> {
+    poll_fn(|context| {
+        let mut heard = Pin::new(&mut *heard);
+        let piece = match heard.as_mut().poll_fill_buf(context) {
+            std::task::Poll::Ready(Ok(piece)) => piece.to_vec(),
+            std::task::Poll::Ready(Err(problem)) => return std::task::Poll::Ready(Err(problem)),
+            std::task::Poll::Pending => return std::task::Poll::Pending,
+        };
+        heard.consume(piece.len());
+        std::task::Poll::Ready(Ok(piece))
+    })
+    .await
+}
+
+/// What of a run's output has been carried and what is waiting on the rest of
+/// its line, standard output and standard error apart.
+#[derive(Default)]
+struct Carrying {
+    /// The bytes carried in all.
+    total: usize,
+    /// Standard output's line so far.
+    out: Unended,
+    /// Standard error's line so far.
+    err: Unended,
+    /// Whether what was dropped of standard error has been reported.
+    err_cut: bool,
+}
+
+/// One stream's line so far.
+#[derive(Default)]
+struct Unended {
+    /// Its bytes, no more than one past [`PIPED_LINE_BYTES`].
+    held: Vec<u8>,
+    /// Whether it was already cut, so that the rest of it is dropped.
+    dropping: bool,
+}
+
+impl Unended {
+    /// Takes in `bytes`, and tells `channel` each line they end.
+    fn heard(&mut self, bytes: &[u8], withheld: &[Box<str>], channel: &dyn SignInChannel) {
+        for line in bytes.split_inclusive(|byte| *byte == b'\n') {
+            let (body, ended) = match line.split_last() {
+                Some((b'\n', body)) => (body, true),
+                _ => (line, false),
+            };
+            if !self.dropping {
+                let room = (PIPED_LINE_BYTES + 1).saturating_sub(self.held.len());
+                self.held
+                    .extend_from_slice(body.get(..room.min(body.len())).unwrap_or_default());
+                if self.held.len() > PIPED_LINE_BYTES {
+                    self.said(withheld, channel);
+                    self.dropping = !ended;
+                    continue;
+                }
+                if ended {
+                    self.said(withheld, channel);
+                }
+            }
+            if ended {
+                self.dropping = false;
+            }
+        }
+    }
+
+    /// Tells `channel` what is held as a line, clipped to the bound of one.
+    fn said(&mut self, withheld: &[Box<str>], channel: &dyn SignInChannel) {
+        let line = String::from_utf8_lossy(&self.held);
+        channel.said(hidden(&Text::clipped(&line, PIPED_LINE_BYTES), withheld));
+        self.held.clear();
+    }
+
+    /// Tells `channel` what is held as a line a cut ended, where anything is.
+    fn cut(&mut self, withheld: &[Box<str>], channel: &dyn SignInChannel) {
+        let mut line = String::from_utf8_lossy(&self.held).into_owned();
+        let kept = line.len().min(PIPED_LINE_BYTES);
+        // One byte past what is kept says something was left out.
+        line.push(' ');
+        channel.said(hidden(&Text::clipped(&line, kept), withheld));
+        self.held.clear();
+    }
+
+    /// Tells `channel` what is held, where the program has gone quiet without
+    /// ending the line, as a prompt does: but not the part that could be
+    /// the beginning of a withheld value or of a character.
+    fn quiet(&mut self, withheld: &[Box<str>], channel: &dyn SignInChannel) {
+        let whole = match std::str::from_utf8(&self.held) {
+            Ok(whole) => whole,
+            Err(broken) => {
+                let valid = self.held.get(..broken.valid_up_to()).unwrap_or_default();
+                std::str::from_utf8(valid).unwrap_or_default()
+            }
+        };
+        let starting = withheld.iter().any(|value| {
+            (1..=value.len())
+                .filter_map(|end| value.get(..end))
+                .any(|part| whole.ends_with(part))
+        });
+        let carried = whole.len();
+        if starting || carried == 0 {
+            return;
+        }
+        channel.said(hidden(&Text::new(whole), withheld));
+        self.held.drain(..carried);
+    }
+
+    /// Tells `channel` the last of it, once nothing more can come.
+    fn last(&mut self, withheld: &[Box<str>], channel: &dyn SignInChannel) {
+        if !self.held.is_empty() {
+            self.said(withheld, channel);
+        }
+    }
+}
+
+impl Carrying {
+    /// Takes in what a stream of a run said next as `line` does, up to
+    /// [`RAN_BYTES`] in all; false where that was passed, so that the run is cut.
+    fn taken(
+        total: &mut usize,
+        line: &mut Unended,
+        bytes: &[u8],
+        withheld: &[Box<str>],
+        channel: &dyn SignInChannel,
+    ) -> bool {
+        let room = RAN_BYTES.saturating_sub(*total).min(bytes.len());
+        line.heard(bytes.get(..room).unwrap_or_default(), withheld, channel);
+        *total = total.saturating_add(room);
+        if room == bytes.len() {
+            return true;
+        }
+        line.cut(withheld, channel);
+        false
+    }
+
+    /// Takes in what standard output said next.
+    fn out(&mut self, bytes: &[u8], withheld: &[Box<str>], channel: &dyn SignInChannel) -> bool {
+        Self::taken(&mut self.total, &mut self.out, bytes, withheld, channel)
+    }
+
+    /// Takes in whatever of `said`, what standard error has said so far, is
+    /// past the `seen` bytes of it taken in before.
+    fn err(
+        &mut self,
+        said: &str,
+        seen: &mut usize,
+        withheld: &[Box<str>],
+        channel: &dyn SignInChannel,
+    ) -> bool {
+        // What is kept of standard error is its beginning, and only that can
+        // be read on from: the count in a footnote changes, and a character
+        // the read has half of reads as a replacement until it has the rest.
+        let (kept, cut) = match said
+            .rsplit_once("\n[")
+            .filter(|(_, footnote)| footnote.contains(" further bytes were dropped: "))
+        {
+            Some((kept, _)) => (kept, true),
+            None => (said, false),
+        };
+        let kept = kept.trim_end_matches(char::REPLACEMENT_CHARACTER);
+        let fresh = kept.as_bytes().get(*seen..).unwrap_or_default();
+        *seen = kept.len().max(*seen);
+        let whole = Self::taken(&mut self.total, &mut self.err, fresh, withheld, channel);
+        if cut && !self.err_cut {
+            self.err_cut = true;
+            self.err.cut(withheld, channel);
+        }
+        whole
+    }
+
+    /// Carries each stream's unended line, as [`Unended::quiet`] does.
+    fn quiet(&mut self, withheld: &[Box<str>], channel: &dyn SignInChannel) {
+        self.out.quiet(withheld, channel);
+        self.err.quiet(withheld, channel);
+    }
+
+    /// Carries the last of each stream.
+    fn last(&mut self, withheld: &[Box<str>], channel: &dyn SignInChannel) {
+        self.out.last(withheld, channel);
+        self.err.last(withheld, channel);
     }
 }
 

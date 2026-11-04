@@ -2,9 +2,10 @@
 
 use crucible_models::Speed;
 use crucible_tools::{Ask, Command, Mode, Remember, Sensitivity, Settled, Verdict, narrowest};
-use crucible_types::{ToolArgs, ToolCall, ToolId};
+use crucible_types::{AgentKey, ToolArgs, ToolCall, ToolId};
 
 use crate::document::{Document, Origin};
+use crate::settings::access::Serves;
 use crate::settings::{Driver, ExternalAgent, Settings};
 
 use super::*;
@@ -1045,7 +1046,8 @@ fn installing_an_agent_writes_its_block_the_provider_s_access_and_enables_it_las
             text,
             FILE,
             "anthropic",
-            &ExternalAgent::unwritten(name, driver, executable, profile),
+            &ExternalAgent::unwritten(name, driver, executable, profile, None)
+                .expect("an instance of a built-in driver"),
         )
         .unwrap_or_else(|problem| panic!("{text}: {problem}"));
         let settings = Settings::resolve(vec![Document::sample(&written, Origin::User)]);
@@ -1099,10 +1101,57 @@ fn installing_an_agent_the_file_already_names_is_refused() {
             text,
             FILE,
             "anthropic",
-            &ExternalAgent::unwritten("claude", Driver::Claude, "claude", None),
+            &ExternalAgent::unwritten("claude", Driver::Claude, "claude", None, None)
+                .expect("an instance of a built-in driver"),
         ),
         Err(ConfigError::Unspliceable { .. })
     ));
+}
+
+/// A catalog instance is written with the agent it runs beside its driver,
+/// and its profile directory under the key its driver reads, so the file
+/// read back names the same agent.
+#[test]
+fn installing_a_catalog_agent_writes_the_agent_it_runs() {
+    let profile = crate::sample::rooted("home/me/.crucible/agents/goose");
+    let executable = crate::sample::rooted("opt/goose");
+    let goose = AgentKey::new("goose").expect("an agent key");
+    for profile in [None, Some(profile.as_str())] {
+        let unwritten =
+            ExternalAgent::unwritten("goose", Driver::Catalog, &executable, profile, Some(&goose))
+                .expect("a catalog instance naming its agent");
+
+        let written = installing("", FILE, "anthropic", &unwritten)
+            .unwrap_or_else(|problem| panic!("{profile:?}: {problem}"));
+
+        let block: Value = serde_json::from_str(&written).unwrap_or_default();
+        assert_eq!(
+            block.pointer("/externalAgents/goose/agent"),
+            Some(&Value::from("goose")),
+            "{written}"
+        );
+        let settings = Settings::resolve(vec![Document::sample(&written, Origin::User)]);
+        let read = settings
+            .external_agents()
+            .into_iter()
+            .find(|agent| agent.name() == "goose")
+            .map(|agent| {
+                (
+                    agent.driver(),
+                    agent.serves(),
+                    agent.profile().map(str::to_owned),
+                )
+            });
+        assert_eq!(
+            read,
+            Some((
+                Driver::Catalog,
+                Serves::Agent(goose.clone()),
+                profile.map(str::to_owned)
+            )),
+            "{written}"
+        );
+    }
 }
 
 #[test]
@@ -1251,4 +1300,257 @@ fn an_agents_effort_is_written_beside_its_model_or_taken_out() {
     // An agent that chooses its own model takes no effort either.
     let chooses = r#"{"externalAgents": {"work": {"driver": "antigravity", "executable": "agy", "profileDir": "/home/me/agy"}}}"#;
     assert!(thinking_agent(chooses, FILE, "work", Some(Effort::High)).is_err());
+}
+
+/// `path`, a path written from the root as Unix writes it, rooted as this
+/// platform roots one: on Windows under a drive, which is what makes it
+/// absolute there, so the configuration takes it as a program's path.
+fn rooted(path: &str) -> String {
+    if cfg!(windows) {
+        format!("C:{path}")
+    } else {
+        path.to_owned()
+    }
+}
+
+#[test]
+fn pointing_instances_at_a_new_program_writes_each_executable_and_nothing_else() {
+    let was = rooted("/h/programs/goose/1.0.0/goose");
+    let to = rooted("/h/programs/goose/2.0.0/goose");
+    let mine = rooted("/usr/bin/goose");
+    let text = format!(
+        "{{\n  \"externalAgents\": {{\n    \"work\": {{\n      \"driver\": \"catalog\",\n      \"agent\": \"goose\",\n      \"executable\": \"{was}\"\n    }},\n    \"home\": {{\"driver\": \"catalog\", \"agent\": \"goose\", \"executable\": \"{was}\"}},\n    \"mine\": {{\"driver\": \"catalog\", \"agent\": \"goose\", \"executable\": \"{mine}\"}}\n  }}\n}}\n"
+    );
+
+    let (written, left) =
+        pointing(&text, FILE, &[("work", &was, &to), ("home", &was, &to)]).unwrap();
+
+    assert!(left.is_empty(), "{left:?}");
+    assert_eq!(written, text.replacen(&was, &to, 2));
+    let settings = Settings::resolve(vec![Document::sample(&written, Origin::User)]);
+    let mut executables: Vec<(String, String)> = settings
+        .external_agents()
+        .iter()
+        .map(|agent| (agent.name().to_owned(), agent.executable().to_owned()))
+        .collect();
+    executables.sort();
+    assert_eq!(
+        executables,
+        [
+            ("home".to_owned(), to.clone()),
+            ("mine".to_owned(), mine),
+            ("work".to_owned(), to.clone()),
+        ]
+    );
+    // Written again, it is already so.
+    assert_eq!(
+        pointing(&written, FILE, &[("work", &was, &to)]).unwrap(),
+        (written.clone(), Vec::new())
+    );
+    // A path is written as JSON spells it: a backslash and a quote escaped.
+    let spelled = rooted("/h/goose \"2\"\\run.exe");
+    let (escaped, _) = pointing(&text, FILE, &[("work", &was, &spelled)]).unwrap();
+    assert!(
+        escaped.contains(&format!(
+            "\"executable\": {}",
+            serde_json::Value::from(spelled.as_str())
+        )),
+        "{escaped}"
+    );
+}
+
+#[test]
+fn pointing_an_instance_the_file_does_not_name_is_refused_and_writes_nothing() {
+    let text =
+        "{\"externalAgents\": {\"work\": {\"driver\": \"claude\", \"executable\": \"claude\"}}}";
+
+    let refused = pointing(
+        text,
+        FILE,
+        &[
+            ("work", "claude", &rooted("/a")),
+            ("gone", &rooted("/b"), &rooted("/c")),
+        ],
+    );
+
+    assert!(
+        matches!(refused, Err(ConfigError::Unspliceable { .. })),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn pointing_leaves_an_instance_whose_program_changed_since_it_was_shown_and_names_it() {
+    let (own, one, two) = (
+        rooted("/usr/local/bin/goose"),
+        rooted("/h/1/goose"),
+        rooted("/h/2/goose"),
+    );
+    let text = format!(
+        "{{\"externalAgents\": {{\"work\": {{\"driver\": \"catalog\", \"agent\": \"goose\", \"executable\": \"{own}\"}}, \"home\": {{\"driver\": \"catalog\", \"agent\": \"goose\", \"executable\": \"{one}\"}}}}}}"
+    );
+
+    let (written, left) =
+        pointing(&text, FILE, &[("work", &one, &two), ("home", &one, &two)]).unwrap();
+
+    assert_eq!(left, ["work".to_owned()]);
+    assert_eq!(
+        written,
+        text.replace(&format!("\"{one}\""), &format!("\"{two}\""))
+    );
+    assert!(written.contains(&own));
+}
+
+/// An added instance is named for its agent where no instance is, and
+/// otherwise for its agent and the first count from two that none is, a gap
+/// left by one taken out included. Names of other agents' instances are no
+/// part of it.
+#[test]
+fn the_free_name_for_an_instance_is_its_agent_then_the_first_count_from_two() {
+    let goose = AgentKey::new("goose").expect("an agent key");
+    for (taken, free) in [
+        (&[][..], "goose"),
+        (&["work", "goose-2"][..], "goose"),
+        (&["goose"][..], "goose-2"),
+        (&["goose", "goose-2"][..], "goose-3"),
+        (&["goose", "goose-3"][..], "goose-2"),
+    ] {
+        assert_eq!(free_name(&goose, taken.iter().copied()), free, "{taken:?}");
+    }
+}
+
+/// An added instance is written under the first name the file leaves free,
+/// with its driver, its agent and its program and nothing else, and every
+/// other byte of the file is where it was.
+#[test]
+fn adding_a_catalog_agent_writes_one_instance_under_the_first_free_name_and_nothing_else() {
+    let goose = AgentKey::new("goose").expect("an agent key");
+    let executable = rooted("/h/programs/goose/1.0.0/goose");
+    let spelled = Value::from(executable.as_str());
+    let block = |name: &str| {
+        format!(
+            "\"{name}\": {{\"agent\":\"goose\",\"driver\":\"catalog\",\"executable\":{spelled}}}"
+        )
+    };
+
+    // A file with nothing in it is started with the one instance.
+    let (fresh, named) = adding("", FILE, &goose, &executable).unwrap();
+    assert_eq!(named, "goose");
+    assert_eq!(
+        fresh,
+        format!(
+            "{{\n  \"externalAgents\": {{\n    {}\n  }}\n}}\n",
+            block("goose")
+        )
+    );
+
+    let text = "{\n  \"provider\": \"anthropic\",\n  \"externalAgents\": {\n    \"work\": {\"driver\": \"claude\", \"executable\": \"claude\"}\n  }\n}\n";
+    let (first, named) = adding(text, FILE, &goose, &executable).unwrap();
+    assert_eq!(named, "goose");
+    let held = "{\n  \"provider\": \"anthropic\",\n  \"externalAgents\": {\n    \"work\": {\"driver\": \"claude\", \"executable\": \"claude\"}";
+    assert_eq!(
+        first,
+        format!("{held},\n    {}\n  }}\n}}\n", block("goose"))
+    );
+
+    // A second is named past the first, and the first is left as it was.
+    let (second, named) = adding(&first, FILE, &goose, &executable).unwrap();
+    assert_eq!(named, "goose-2");
+    assert_eq!(
+        second,
+        format!(
+            "{held},\n    {},\n    {}\n  }}\n}}\n",
+            block("goose"),
+            block("goose-2")
+        )
+    );
+
+    let settings = Settings::resolve(vec![Document::sample(&second, Origin::User)]);
+    let mut added: Vec<(String, bool, Driver, Serves, String)> = settings
+        .external_agents()
+        .into_iter()
+        .filter(|agent| agent.name() != "work")
+        .map(|agent| {
+            (
+                agent.name().to_owned(),
+                agent.enabled(),
+                agent.driver(),
+                agent.serves(),
+                agent.executable().to_owned(),
+            )
+        })
+        .collect();
+    added.sort_by(|one, other| one.0.cmp(&other.0));
+    assert_eq!(
+        added,
+        ["goose", "goose-2"].map(|name| (
+            name.to_owned(),
+            true,
+            Driver::Catalog,
+            Serves::Agent(goose.clone()),
+            executable.clone()
+        ))
+    );
+
+    // The names are read from the file, so a gap in them is filled.
+    let gapped = format!(
+        "{{\"externalAgents\": {{{}, {}}}}}",
+        block("goose"),
+        block("goose-3")
+    );
+    let (filled, named) = adding(&gapped, FILE, &goose, &executable).unwrap();
+    assert_eq!(named, "goose-2");
+    assert_eq!(
+        filled,
+        format!(
+            "{{\"externalAgents\": {{{}, {}, {}}}}}",
+            block("goose"),
+            block("goose-3"),
+            block("goose-2")
+        )
+    );
+}
+
+#[test]
+fn adding_an_instance_past_the_most_a_file_may_name_is_refused() {
+    let goose = AgentKey::new("goose").expect("an agent key");
+    let executable = rooted("/h/programs/goose/1.0.0/goose");
+    let mut text = String::new();
+    for _ in 0..crate::settings::access::INSTANCES {
+        text = adding(&text, FILE, &goose, &executable).unwrap().0;
+    }
+
+    let refused = adding(&text, FILE, &goose, &executable);
+
+    assert!(
+        matches!(refused, Err(ConfigError::TooMany { .. })),
+        "{refused:?}"
+    );
+    assert!(matches!(
+        adding("{", FILE, &goose, &executable),
+        Err(ConfigError::Malformed { .. })
+    ));
+}
+
+#[test]
+fn adding_into_agents_the_text_does_not_hold_plainly_is_refused_and_writes_nothing() {
+    let goose = AgentKey::new("goose").expect("an agent key");
+    let executable = rooted("/h/programs/goose/1.0.0/goose");
+    let work = serde_json::json!({"driver": "catalog", "agent": "goose", "executable": executable});
+    for text in [
+        // Written twice: the parser keeps the last, which a scan of the text
+        // cannot tell from the first.
+        format!(
+            r#"{{"externalAgents": {{"work": {work}}}, "externalAgents": {{"home": {work}}}}}"#
+        ),
+        // Spelled with an escape: the parser reads it, a scan does not find it.
+        format!(r#"{{"external\u0041gents": {{"work": {work}}}}}"#),
+    ] {
+        let refused = adding(&text, FILE, &goose, &executable);
+
+        assert!(
+            matches!(refused, Err(ConfigError::Unspliceable { .. })),
+            "{text}: {refused:?}"
+        );
+    }
 }

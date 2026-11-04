@@ -571,34 +571,281 @@ well, rather than being treated as a copy put in place by hand. If the newest
 release GitHub names is not three plain numbers, as with a prerelease, nothing
 is installed, and the name GitHub gave is not printed.
 
-## Installing a coding agent
+## Coding agents the catalog offers
 
-### `agents install DRIVER`
+These commands read and change the coding agents the catalog and the ACP
+Registry offer, the way [`/catalog`](../providers/agents.md#catalog) and
+`/login`'s agent screen do, before any conversation exists, and start none.
+`AGENT` is the agent as the catalog or the registry names it, such as `goose` or
+`antigravity`; a name neither offers for your platform is refused, and so is
+`claude`: Claude Code installs and updates itself, and neither offers it. Each
+asks for the catalog first, whatever
+[`updates`](../configuration/configuration.md#updates) says, and where it could
+not be fetched goes on with what crucible believed before. The registry is
+fetched by `/catalog` and by `search`, `install`, `add`, `update` and
+`rollback`; `remove` and `verify` never fetch it, and `sign-in` reads only the
+cached copy. A catalog trust state that cannot be read or used offers no
+catalog release; a registry with no cached index offers no registry release.
+Neither suppresses the other. Nothing about your session or directory is sent.
+The `/agents` slash command is not offered: that name is reserved for a
+subagents mechanism, and these commands keep the name `crucible agents`.
 
-`crucible agents install antigravity` downloads the release of Antigravity's
-agent server this build of crucible runs, 1.3.0, for your platform, from the
-address Google publishes it at, and stops. `DRIVER` is the agent as an
-[`externalAgents`](../configuration/configuration.md#externalagents) entry
-names its `driver`; `claude` is refused, since Claude Code installs and updates
-itself. The configuration is not read, and nothing about your session or
-directory is sent.
+A command that would download, write or remove anything first asks on this
+terminal, on standard error, what it will do: for an install, the version it
+puts in place, its size, the hosts it is fetched from, its licence, terms and
+caution, how it is started and which configured instances it moves. A registry
+install's question also names the archive's address, says it is downloaded up
+to the registry's 512 MiB cap, and says the same yes covers the survey and the
+vendor's program run once as a probe. The choices follow, numbered, such as
+`1. Install: Put 1.0.0 in place and move the instances named onto it` and
+`2. Cancel: Leave everything as it is`. Type the choice's number alone, such
+as `1`, and Enter. Any other answer is no, and nothing changes: Enter alone, a
+number with a sign, a leading zero or a space beside it, a line longer than
+255 bytes, or input that ends before Enter. Where standard
+input or standard error is not a terminal, nothing is asked and nothing
+changes: there is no flag that answers for you and no answer read from a pipe.
+The command then ends 1, saying nothing was changed because it asks its
+question on a terminal.
 
-The archive is downloaded into a file only you can read under
-`programs/antigravity` in crucible's home directory, which is removed when the
-command ends. It is given up on if it is larger than the release, if it takes
-longer than 45 minutes, if nothing arrives for a whole minute, or if the
-address answers with anything but the archive itself; a redirect is not
-followed. It is unpacked only once its size and SHA-256 are the ones this build
-pins, and only if it holds the agent server and the harness beside it and
-nothing else, each of the size pinned. Both are put under
-`programs/antigravity/1.3.0`, which is there whole or not at all. A release
-already there is kept, and nothing is downloaded. While it downloads, a
-terminal is shown the percent that has arrived; any other standard error is
-told once that the download began. What was installed, and where, goes to
-standard output.
+A catalog download is held to the release the catalog pins from its first
+byte. It reaches only the hosts the catalog lists for it, follows a redirect
+only to one of them and at most four times, and is given up on if it is larger
+than the pinned size, if it takes longer than 45 minutes or if nothing arrives
+for a whole minute. A release read from the ACP Registry has no pinned size: it is
+downloaded within the registry's 512 MiB cap, its actual size is recorded, and
+the same 45-minute and one-minute bounds apply. A registry archive is reached
+at the host the entry names, and a redirect only to `github.com` or one of
+GitHub's release-asset hosts. A body of another size or SHA-256 is refused
+whole, and nothing from it is unpacked. Each version goes under `programs/` and
+the agent's name in crucible's home, in a directory of its own with a receipt
+that says where it came from, and is there whole or not at all. While it
+downloads, a terminal is
+shown the percent that has arrived; any other standard error is told once that
+the download began. What was done, and where, goes to standard output, and a
+refusal is one line on standard error. An install, update or rollback names
+the configured instances it moved on a line of its own, such as `Moved onto
+it: work, goose-2.`, and it or an add then says it was not smoke-tested, since
+no conversation lends these commands a way to start the agent: `Not
+smoke-tested: no conversation lent a launcher to start it with.`
 
-[`/login`](../providers/agents.md#antigravity) then runs that release for an
-agent it sets up, and an Antigravity it cannot find says to run this command.
+### `agents search [TEXT]`
+
+`crucible agents search` writes one line for each agent the catalog and the
+ACP Registry offer: its name, the versions offered for your platform, newest
+first, and the versions installed, such as `goose: offers 2.0.0, 1.0.0;
+installed 1.0.0` or `codex: offers 0.1.0; not installed`. `TEXT` keeps only the
+agents whose name holds it, ignoring case. Antigravity, which `/login` sets up,
+is left out, as it is from `/catalog`. Where the catalog or the registry could
+not be read, standard error says so once, with why. When the registry is read,
+standard error also carries its source line — where it was read and that it is
+not reviewed by Crucible — beside the one-line-per-agent list on standard
+output. It asks nothing, changes nothing and ends 0.
+
+### `agents install AGENT [VERSION]`
+
+`crucible agents install` puts `VERSION` of the agent in place and moves onto
+it every configured instance that runs the agent from crucible's install
+store. Without `VERSION`, it is the newest the catalog or the registry offers
+for your platform; `crucible agents install antigravity` installs
+Antigravity's agent server, which
+[`/login`](../providers/agents.md#antigravity) then runs. A version already in
+place is not downloaded again. It ends 0 once the version is in
+place, with `Installed goose 1.0.0 at …/programs/goose/1.0.0/goose. /login
+offers it under Use an installed coding agent.` or `goose 1.0.0 is already
+installed at …`, and 1 when nothing was put in place. A release with an install
+script to run at install is refused here before anything is fetched, saying to
+install it from `/catalog` in a conversation, where the
+[sandbox it runs in](../security/sandboxing.md#installed-agents-releases) is
+lent. Such a script runs on Linux alone, so elsewhere the release is refused from
+`/catalog` too. A script built at review runs nothing, so a release with one is
+installed here as from `/catalog`, on every platform.
+
+### `agents add AGENT [VERSION]`
+
+`crucible agents add` installs as `install` does, then writes one more instance
+of the agent under
+[`externalAgents`](../configuration/configuration.md#externalagents) in the
+configuration file in your home directory, named by the agent's name, or by
+the name and the next free number, such as `goose-2`, where that one is taken.
+It ends 0 once the instance is written, saying its name, and 1 otherwise.
+
+### `agents update AGENT`
+
+`crucible agents update` moves the instances that run the agent from
+crucible's install store onto the newest version the catalog or the registry
+offers for your platform. Where they are already on it, it says so, asks
+nothing and ends 0; where none runs the agent from the store, it is refused.
+Where your own configuration file says
+[`agents.update = "reviewed"`](../configuration/configuration.md#agents), an
+update that setting allows is taken without the question, so it needs no
+terminal, and says so on a line of its own: `Taken without asking, under
+agents.update = "reviewed".` A registry release is always asked: the registry
+has no serial, review, revocation list or anti-rollback, so nothing it lists
+satisfies `reviewed`. A release with an install script to run at install is
+always asked, showing its command and hosts; one built at review runs no code,
+so the setting stands for it as for any other download. Every other check
+still runs.
+It ends 0 once the instances are moved, and 1 otherwise.
+
+### `agents rollback AGENT`
+
+`crucible agents rollback` moves the instances that run the agent from
+crucible's install store back to the version installed most lately of those
+the store still holds and they do not run, less any the signed catalog has
+revoked; a registry release has no revocation list or anti-rollback, so its
+receipt and the version held are the check. It downloads nothing. It ends 0
+once they are moved, and 1 otherwise, as when the store holds no such version.
+
+### `agents remove AGENT`
+
+`crucible agents remove` takes every installed version of the agent off this
+machine. It is refused while a configured instance still runs the agent from
+crucible's install store, naming each one. It ends 0 once the versions are
+removed, naming them, and 1 otherwise.
+
+### `agents verify AGENT`
+
+`crucible agents verify` hashes every file of each installed version against
+the receipt written when it was installed, and writes a line a version: that
+it is as it was installed, or which files or records differ, naming up to eight
+and counting the rest. For a release read from the ACP Registry it also checks
+that the receipt still records the registry as its source and carries a probe
+record for this machine, naming `source` or `probe` where either is missing or
+does not match. It asks nothing and changes nothing. It ends 0 when every file and
+record is as recorded, 1 when any differs, and 1 when nothing is installed.
+
+### `agents sign-in INSTANCE [--method NAME]`
+
+`crucible agents sign-in` signs in the instance named `INSTANCE` under
+`externalAgents` by the sign-in method `NAME`, as the agent spells its id,
+such as `gemini-api-key`. Without `--method`, it takes the only method the
+instance's agent offers; where the agent offers several, it is refused with
+their names, such as `google signs in by several methods: oauth-personal,
+oauth-business, gemini-api-key, agent-platform; name one with --method`. The
+methods are read from your configuration and the catalog or registry crucible
+believes; a registry release's methods come from the probe record its receipt
+holds, and nothing is fetched to read them.
+
+A method that takes a key, where no key is kept for it yet, asks for the key at
+a prompt that hides what you type, which needs standard input, output and
+error on a terminal; elsewhere it is refused, and the key is never read from
+an argument or a pipe. A key already kept is not asked for again. The key is
+kept with your other credentials, and the agent is given it the next time it
+starts: the command says `Kept the key for google to sign in by
+gemini-api-key; its agent is given it the next time it starts.` and ends 0.
+No conversation starts the agent, so the sign-in is checked only when it next
+starts.
+
+A method the agent runs as a command needs standard input, output and error on
+a terminal; elsewhere it is refused, saying a terminal is needed, and nothing
+is asked or started. The command, its arguments and its environment come only
+from the catalog's signed entry, or for a registry release from what its probe
+record holds, and it is run from the version installed. The agent's route is
+asked about where it has no yes yet, and the agent is then read: if what it
+says of the method now differs from the entry or the record, the sign-in is
+refused and the command is not run. Where the sandbox is on, the command reaches
+only the hosts the entry signs in at, or for a registry release the network
+policy of the conversation, and it has five minutes. On Windows with
+the sandbox on, that sandbox can close the network but not limit it to hosts, so
+nothing is run where the entry names hosts, whether for the command to sign in
+at or for the agent itself to reach; where it names neither, the command runs
+with the network closed. Each line it writes is shown on standard error, led by `sign-in command | ` so that none reads
+as crucible's own, with what crucible withholds taken out and a note where the
+line was too long, and each line you type goes to it, echoed by your terminal as
+you type it; crucible treats none of them as a secret. A
+command that writes more than crucible keeps is stopped and the sign-in refused.
+Interrupting crucible closes the command's input, and ends the command only
+where the sandbox ties it to crucible, on Linux with the sandbox on; elsewhere
+it may keep running. The command ending well does not count: the instance is
+signed in only once the agent, read afterwards, says so. `/login` runs the same
+method under the same checks in
+[a panel of its own](../providers/agents.md#catalog), where Tab hides the next line you
+type.
+
+A method the entry records as needing a real terminal is run on this
+process's terminal, on Unix alone, after a confirmation made for that run that
+says the command runs outside the sandbox. Standard input, output and error must
+all be terminals; anywhere else the method is refused before anything is asked
+or started. It is refused too while a project requires the sandbox, since no
+sandbox backend can give a child a terminal. The command is the entry's
+recorded one, or a registry release's from its probe record, run from the
+version installed with the environment the entry gives it, and it has ten
+minutes. Ctrl+C reaches the command alone, because the child is the terminal's
+foreground process group; when the bound passes the whole group is killed, so
+nothing the command started outlives it. The terminal
+is handed back and every row painted again whatever the command's outcome, and,
+as for the piped route, the agent read afterwards decides whether it is signed
+in.
+
+A method the agent carries out itself, such as signing in through a browser,
+starts the agent, which needs a conversation to start it in: sign in by it from
+`/login`'s agent screen instead. Each refused method says why, nothing is
+started, and a refusal ends 1.
+
+### `agents unpack-check ENTRY ARTIFACT OUT`
+
+`crucible agents unpack-check` is how the agent catalog's intake learns what a
+download unpacks to, by the rules crucible holds it to when it installs a
+catalog agent, and `--help` leaves it out. `ENTRY` is one artifact as the
+catalog writes it, with its address, size, SHA-256, format, ceilings and the
+members it keeps, and no file list yet; `ARTIFACT` is the download. The
+download is checked against the size and SHA-256 first, then unpacked into
+`OUT`, a directory it makes that only you can reach and that must not already
+be there; a wheel's files go under `OUT/site/`, where an install puts them, and
+its `RECORD` must agree with them. It refuses a name that is not plain relative
+ASCII, a name longer than 4096 bytes, with a part longer than 255 or with more
+than 64 parts, a name Windows takes for a device, a device, a sparse file, a
+link that does not resolve to a file inside `OUT`, more than 65536 files and
+directories, and anything past the artifact's ceilings; a leading `./` is
+dropped from a name. On standard output it writes the artifact's `unpacked` and
+`decompressed` sizes and its `files` as JSON, as the catalog records them. A
+refusal says why on standard error, with the cause the reader found, and
+removes `OUT`. It downloads nothing and reads no configuration.
+
+Where `ARTIFACT` is a directory, `ENTRY` is a package tree's lock as the
+catalog keeps one, of at most 4 MiB, and the directory holds each tarball the
+lock pins, named by its SHA-512; the tree is unpacked into `OUT` as crucible
+installs an agent that Node runs. Each tarball is checked against its size and
+SHA-512 before any of it is unpacked, and goes under its package's location,
+which for a package installed under an alias is not its name. The first part of
+every name is dropped, whatever it is; a directory or a link is skipped and
+writes nothing; and a file is runnable when its mode in the tarball has any
+execute bit. A tarball writes only into its own package and the bundled
+packages it holds: never a package the lock does not list, nor a file straight
+into a directory named `node_modules` whatever its case, though a
+`node_modules` deeper in a package's own files is written. It refuses a lock
+for other unpack rules, a package pinned by a SHA-1 alone, a tarball not
+fetched from `https://registry.npmjs.org/`, a tarball that writes anywhere
+else, a name that is not plain relative ASCII, two names in the tree that
+differ only in case, a path longer than 767 bytes, a device, a pipe, a sparse
+file, a package that writes more files or bytes than its lock gives it, and a
+tree of more than 65536 files or 4 GiB. On standard output it writes the
+`files` it wrote as JSON, and a refusal removes `OUT` as above.
+
+### `agents probe ROOT ENTRY [--unconfined]`
+
+`crucible agents probe` is how the agent catalog's intake learns what an agent
+says of itself, and `--help` leaves it out. `ROOT` is the directory a release
+was unpacked into and `ENTRY` is one catalog entry that lists the program to
+start there for this platform. A program that is the interpreter a release pins
+is given its arguments and `launch.py` at the top of `ROOT` before the agent's,
+and is not started where that file is not there or where the entry's
+`interpreter_args` are not exactly `-I`. The program is started in the sandbox
+with the network closed and `ROOT` read-only, sent `initialize` and
+nothing else, and stopped; it is given 30 seconds to answer. It is never signed
+in, and no credential is read. On standard output it writes JSON: `sandbox`
+(`closed`), `agentInfo`, `authMethods` (each with its `id`, `name` and `kind`,
+and for a `terminal` method its `command`, `args`, `env` and `tty`, which is
+`unknown` unless the method says whether it needs a real terminal),
+`capabilities`, and `conformance`, which is `not run`: the conformance cases
+need a turn, and a turn needs an account. Every text and list is bounded, and
+`incomplete` is `true` where anything was cut. Where this machine's sandbox
+cannot close the network, as on FreeBSD or on Windows without its broker,
+nothing is started and the run says so; with `--unconfined` the program is
+started without the sandbox, `sandbox` reads `unavailable: ` and why, and the
+run belongs on a machine to be thrown away: `--unconfined` is refused unless
+the environment variable `CI` is `true`, as a CI runner sets it. A refusal says
+why on standard error.
 
 ## Credentials from the command line
 
@@ -810,8 +1057,8 @@ the warning is drawn there instead and the run goes on to the next line.
 
 | Status | Meaning |
 | --- | --- |
-| 0 | The run ended as asked: a session that ended, or a report that was written. `config check` on a configuration that holds, `sandbox inspect` or `--sandbox` whatever the backend answered, an `mcp list`, `mcp get`, `extensions list` or `--extensions` that was written, a `sessions list` that was written whether `complete` or `incomplete`, a `completion` script that was written, an `update` that installed a release, found none later, or said what it would install, an `update --check` that found none later, an `agents install` that installed a release or found it in place, a `doctor` with nothing to warn about, an `auth status` that settled every provider, an `auth login` that stored a credential, and an `auth logout` that took the provider's credentials out or found none to take end here. |
-| 1 | crucible could not run, or could not carry on. One line beginning `crucible: ` on standard error says why; a control character, line break, line or paragraph separator or Unicode format character other than the zero-width joiner and non-joiner in a value it quotes, such as a configuration key or a directory's name, is written as its escape, so the line stays one, and a reason longer than 16 KiB is cut there and ends `… (cut)`. `config check` on a configuration that does not hold, a `sandbox inspect` or `sessions list` that could not be made, and an `mcp get` naming a server nothing is written down under, and an `update` that was refused or rolled back, and an `agents install` that put nothing in place, end here. A `doctor` that found warnings and no failure ends here too, with its report on standard output and nothing on standard error. So does an `auth status` that could not settle a provider, found nothing for the one named, or held a name too long to show whole, with its report on standard output, and an `auth` command given a provider nobody serves. |
+| 0 | The run ended as asked: a session that ended, or a report that was written. `config check` on a configuration that holds, `sandbox inspect` or `--sandbox` whatever the backend answered, an `mcp list`, `mcp get`, `extensions list` or `--extensions` that was written, a `sessions list` that was written whether `complete` or `incomplete`, a `completion` script that was written, an `update` that installed a release, found none later, or said what it would install, an `update --check` that found none later, an `agents search` that was written, an `agents install` or `agents add` that put a release in place or found it there, an `agents update` that moved its instances or found them current, an `agents rollback` or `agents remove` that was carried out, an `agents verify` that found every file and record as recorded, an `agents sign-in` that signed the instance in or kept its key, an `agents unpack-check` that wrote a file list, an `agents probe` that wrote what the agent said, a `doctor` with nothing to warn about, an `auth status` that settled every provider, an `auth login` that stored a credential, and an `auth logout` that took the provider's credentials out or found none to take end here. |
+| 1 | crucible could not run, or could not carry on. One line beginning `crucible: ` on standard error says why; a control character, line break, line or paragraph separator or Unicode format character other than the zero-width joiner and non-joiner in a value it quotes, such as a configuration key or a directory's name, is written as its escape, so the line stays one, and a reason longer than 16 KiB is cut there and ends `… (cut)`. `config check` on a configuration that does not hold, a `sandbox inspect` or `sessions list` that could not be made, and an `mcp get` naming a server nothing is written down under, and an `update` that was refused or rolled back, and an `agents install`, `add`, `update`, `rollback`, `remove` or `sign-in` that was refused, answered with anything but its first choice, or asked with no terminal to answer on, and so changed nothing, and an `agents verify` that found a file or record that differs or nothing installed, and an `agents unpack-check` or `agents probe` that refused, end here. A `doctor` that found warnings and no failure ends here too, with its report on standard output and nothing on standard error. So does an `auth status` that could not settle a provider, found nothing for the one named, or held a name too long to show whole, with its report on standard output, and an `auth` command given a provider nobody serves. |
 | 2 | A `doctor` that found a failure, with its report on standard output and nothing on standard error. Otherwise, the command line itself was refused by the parser: a flag it does not know, a value it cannot take, a subcommand missing its action, or flags that exclude each other. It says which, with the usage or the subcommand's help, on standard error; on an `auth` command line it says so without repeating the word it refused. `--help` and `--version` are the parser's too, and end 0. |
 | 3 | An `update --check` that found a later release, with what it found on standard output. |
 | 128 + signal | On Linux, macOS and FreeBSD, the process was told to stop from outside: a termination (`SIGTERM`, status 143) at any time, or a hang-up (`SIGHUP`, status 129) when it had a terminal to lose. A running turn is ended and written down first, and the prompt `auth login` hides a key at, or a wait for a key between turns at the prompt or in a panel, is put away with the terminal handed back as it was found, then the process ends by that signal, the way a shell expects. What the next `--continue` finds is under [Continuing](../sessions/sessions.md#continuing). On Windows neither is caught. |

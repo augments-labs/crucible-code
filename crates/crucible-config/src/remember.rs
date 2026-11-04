@@ -10,11 +10,15 @@
 //! Nothing here opens a file. This crate says what a document may hold; the
 //! wiring above it reads and writes.
 
+use std::collections::BTreeSet;
+
 use crucible_models::{Effort, Speed};
 use crucible_tools::Minted;
+use crucible_types::AgentKey;
 use serde_json::Value;
 
 use crate::error::ConfigError;
+use crate::settings::Driver;
 use crate::settings::access::ExternalAgent;
 use crate::shape::rows::{Row, Values};
 use crate::shape::whole;
@@ -669,10 +673,11 @@ pub fn reaching(
 }
 
 /// The text of a configuration file that installs `agent` under its name,
-/// with its driver, executable and profile directory where it has one, then
-/// reaches `provider` through it and lets it take new work, as
-/// [`connecting`] does, in the one text handed back: the instance is written
-/// disabled and enabled last.
+/// with its driver, the catalog agent it runs where it is a catalog
+/// instance, its executable, and its profile directory where it has one and
+/// its driver names one, then reaches `provider` through it and lets it take
+/// new work, as [`connecting`] does, in the one text handed back: the
+/// instance is written disabled and enabled last.
 ///
 /// # Errors
 ///
@@ -694,8 +699,13 @@ pub fn installing(
         "executable": agent.executable(),
         "enabled": false,
     });
-    if let (Some(profile), Some(fields)) = (agent.profile(), block.as_object_mut()) {
-        fields.insert(driver.profile_key().to_owned(), Value::from(profile));
+    if let Some(fields) = block.as_object_mut() {
+        if let Some(key) = agent.agent() {
+            fields.insert("agent".to_owned(), Value::from(key.as_str()));
+        }
+        if let (Some(profile), Some(key)) = (agent.profile(), driver.profile_key()) {
+            fields.insert(key.to_owned(), Value::from(profile));
+        }
     }
     if document
         .value()
@@ -711,6 +721,131 @@ pub fn installing(
     }
     let installed = spliced_at(text, file, &["externalAgents", instance], &at, &block)?;
     connecting(&installed, file, provider, instance)
+}
+
+/// The name an added instance of `agent` takes, out of the names `taken`:
+/// the agent's own where none is that, else the agent's and the first count
+/// from two that none is.
+///
+/// The one place the rule is written, so the name a question shows and the
+/// name [`adding`] writes differ only where the names taken did.
+#[must_use]
+pub fn free_name<'a>(agent: &AgentKey, taken: impl IntoIterator<Item = &'a str>) -> String {
+    let taken: BTreeSet<&str> = taken.into_iter().collect();
+    let mut name = agent.as_str().to_owned();
+    let mut count: usize = 1;
+    while taken.contains(name.as_str()) {
+        count += 1;
+        name = format!("{agent}-{count}");
+    }
+    name
+}
+
+/// The text of a configuration file with one more instance of the catalog
+/// agent `agent`, started as `executable`, and the name it is written under:
+/// the [`free_name`] of the instances `text` names, so a name written since a
+/// question showed one is passed over rather than written twice.
+///
+/// The instance names its driver, its agent and its program and nothing
+/// else, so it takes new work as any instance does. Every other byte is
+/// where it was, and the text is read back as the user's file before it is
+/// returned.
+///
+/// # Errors
+///
+/// Refuses malformed or invalid configuration, either as it is or as it would
+/// be, which an instance past the most one file may name is, and
+/// [`ConfigError::Unspliceable`] where the answer cannot be written without
+/// rewriting.
+pub fn adding(
+    text: &str,
+    file: &str,
+    agent: &AgentKey,
+    executable: &str,
+) -> Result<(String, String), ConfigError> {
+    let checked = if text.trim().is_empty() { "{}" } else { text };
+    let document = crate::document::Document::parse(checked, file, crate::document::Origin::User)?;
+    let instance = free_name(
+        agent,
+        document
+            .value()
+            .get("externalAgents")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flat_map(|agents| agents.keys().map(String::as_str)),
+    );
+    let block = serde_json::json!({
+        "driver": Driver::Catalog.name(),
+        "agent": agent.as_str(),
+        "executable": executable,
+    });
+    let at = format!("externalAgents.{instance}");
+    let written = spliced_at(text, file, &["externalAgents", &instance], &at, &block)?;
+    crate::document::Document::parse(&written, file, crate::document::Origin::User)?;
+    Ok((written, instance))
+}
+
+/// The text of a configuration file where each installed agent `moved` names
+/// is started as the last program beside it, where its block's `executable`
+/// still names the first, the one it was shown naming: written over, and every
+/// other byte where it was. Handed back beside the text are the instances
+/// whose `executable` names something else by now, which are left as they
+/// are; one that already names the new program is not among them.
+///
+/// Only the user file names installed agents, so `text` is that file's. Every
+/// instance is written in the one text handed back, or none is, and the text
+/// is read back before it is returned.
+///
+/// # Errors
+///
+/// Refuses malformed or invalid configuration, either as it is or as it would
+/// be, and [`ConfigError::Unspliceable`] where `externalAgents.<instance>` is
+/// not an object the file holds with an `executable` in it.
+pub fn pointing(
+    text: &str,
+    file: &str,
+    moved: &[(&str, &str, &str)],
+) -> Result<(String, Vec<String>), ConfigError> {
+    let mut left: Vec<String> = Vec::new();
+    let mut written = text.to_owned();
+    for (instance, shown, executable) in moved {
+        let answer = Value::from(*executable).to_string();
+        let refused = || ConfigError::Unspliceable {
+            file: file.into(),
+            at: format!("externalAgents.{instance}.executable").into(),
+            written: answer.clone().into(),
+        };
+        let checked = if written.trim().is_empty() {
+            "{}"
+        } else {
+            &written
+        };
+        let document =
+            crate::document::Document::parse(checked, file, crate::document::Origin::User)?;
+        let Some(was) = document
+            .value()
+            .get("externalAgents")
+            .and_then(|agents| agents.get(*instance))
+            .and_then(|block| block.get("executable"))
+        else {
+            return Err(refused());
+        };
+        if was.as_str() == Some(*executable) {
+            continue;
+        }
+        // Changed since it was shown: the person's own edit stands.
+        if was.as_str() != Some(*shown) {
+            left.push((*instance).to_owned());
+            continue;
+        }
+        let root = splice::root(&written).ok_or_else(refused)?;
+        let agents = splice::member(&written, root, "externalAgents").ok_or_else(refused)?;
+        let block = splice::member(&written, agents, instance).ok_or_else(refused)?;
+        let at = splice::member(&written, block, "executable").ok_or_else(refused)?;
+        written = splice::over(&written, at, &answer);
+    }
+    crate::document::Document::parse(&written, file, crate::document::Origin::User)?;
+    Ok((written, left))
 }
 
 /// The text of a configuration file without the installed agent `instance`.

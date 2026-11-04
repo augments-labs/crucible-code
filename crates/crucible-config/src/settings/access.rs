@@ -7,14 +7,28 @@
 //! be used at the address configured, is decided by the application's one
 //! resolver, which reads these types and nothing else of the two blocks.
 //!
+//! An instance of a built-in driver serves the one provider its driver signs
+//! in to. A catalog instance serves the catalog agent its `agent` key names,
+//! and no provider. Configuration cannot read the catalog, so it checks the
+//! key's spelling alone: never a driver's word, the native runner's name or a
+//! name Windows keeps for a device.
+//!
+//! An Antigravity instance may name the Google Cloud project and location its
+//! business sign-in is billed to, both or neither. They are checked here for
+//! their spelling alone, since the location names a host the agent reaches:
+//! whether the project exists, or the account may use it, is for the agent to
+//! learn when it signs in.
+//!
 //! The document has already been walked against the shape and checked, so a
 //! value that reaches these readers is one of the spellings below; a reader
 //! that met anything else would be reading a document that was never checked,
 //! and answers as if the key were absent.
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use crucible_models::Effort;
+use crucible_types::AgentKey;
 use serde_json::Value;
 
 use super::Settings;
@@ -32,7 +46,35 @@ pub(crate) const KINDS: &[&str] = &[
 pub(crate) const EXTERNAL: &str = Kind::ExternalAgent.name();
 
 /// The spellings `externalAgents.<instance>.driver` accepts.
-pub(crate) const DRIVERS: &[&str] = &[Driver::Claude.name(), Driver::Antigravity.name()];
+pub(crate) const DRIVERS: &[&str] = &[
+    Driver::Claude.name(),
+    Driver::Antigravity.name(),
+    Driver::Catalog.name(),
+];
+
+/// What `externalAgents.<instance>.agent` is spelled with, as an editor
+/// checks it.
+///
+/// [`AgentKey`] is what refuses one, and [`reserved`] what refuses a word a
+/// key never takes; the test beside the schema holds this pattern to the
+/// same alphabet and the same length.
+pub(crate) const AGENT: &str = "^[a-z0-9-]{1,32}$";
+
+/// The name of the runner that answers a conversation with a provider's own
+/// model, which a session it ran is listed under, so no catalog agent's key
+/// may be spelled as it.
+///
+/// The session store spells it too; a test in the application, which reads
+/// both, holds the two to one word.
+pub const NATIVE_RUNNER: &str = "native";
+
+/// The names Windows keeps for its devices, which no directory there can
+/// have: a key names the directory its agent's releases are kept in. The
+/// zeroth ports are among them, as current releases of Windows read them.
+const DEVICES: [&str; 24] = [
+    "con", "prn", "aux", "nul", "com0", "com1", "com2", "com3", "com4", "com5", "com6", "com7",
+    "com8", "com9", "lpt0", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+];
 
 /// The spellings `externalAgents.<instance>.authentication` accepts: the
 /// agent's own account login, the one way this build knows.
@@ -96,17 +138,24 @@ impl Kind {
 }
 
 /// Which agent an instance is, and so how crucible speaks to it.
+///
+/// A built-in driver is one agent. [`Driver::Catalog`] is any agent the
+/// catalog reviewed, and which one an instance of it runs is the key its
+/// `agent` names, so it is answered by [`Driver::serves`] given that key and
+/// never by the driver alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Driver {
     /// Claude Code.
     Claude,
     /// Antigravity.
     Antigravity,
+    /// An agent the catalog reviewed, named by its key.
+    Catalog,
 }
 
 impl Driver {
     /// Every driver this build declares, in the order the shape lists them.
-    pub const ALL: [Self; 2] = [Self::Claude, Self::Antigravity];
+    pub const ALL: [Self; 3] = [Self::Claude, Self::Antigravity, Self::Catalog];
 
     /// How the driver is spelled in a configuration file.
     #[must_use]
@@ -114,19 +163,22 @@ impl Driver {
         match self {
             Self::Claude => "claude",
             Self::Antigravity => "antigravity",
+            Self::Catalog => "catalog",
         }
     }
 
-    /// The key an instance of this driver names its profile directory with.
+    /// The key an instance of this driver names its profile directory with,
+    /// where it names one.
     ///
-    /// One key per driver because each agent calls the directory it keeps its
-    /// sign-in under by its own name, and a key that meant one thing to one
-    /// agent and another to the next would be read by neither.
+    /// Each agent calls the directory it keeps its sign-in under by its own
+    /// name, and a key that meant one thing to one agent and another to the
+    /// next would be read by neither. Two drivers share a key only where it
+    /// means the same to both: a catalog agent's is Antigravity's.
     #[must_use]
-    pub const fn profile_key(self) -> &'static str {
+    pub const fn profile_key(self) -> Option<&'static str> {
         match self {
-            Self::Claude => "configDir",
-            Self::Antigravity => "profileDir",
+            Self::Claude => Some("configDir"),
+            Self::Antigravity | Self::Catalog => Some("profileDir"),
         }
     }
 
@@ -136,7 +188,7 @@ impl Driver {
     #[must_use]
     pub const fn profile_needed(self) -> bool {
         match self {
-            Self::Claude => false,
+            Self::Claude | Self::Catalog => false,
             Self::Antigravity => true,
         }
     }
@@ -148,23 +200,117 @@ impl Driver {
     pub const fn takes_model(self) -> bool {
         match self {
             Self::Claude => true,
-            Self::Antigravity => false,
+            Self::Antigravity | Self::Catalog => false,
         }
     }
 
-    /// The one provider it reaches, by the name `providers` gives it: the
-    /// agent signs in to its own vendor and asks only that vendor, so no
-    /// other provider is reached through it.
+    /// Whether an instance names `cloudProject` and `cloudLocation`, the
+    /// Google Cloud project and location its business sign-in is billed to.
+    /// No other agent signs in that way, and a project written for one would
+    /// be one nothing reads.
     #[must_use]
-    pub const fn provider(self) -> &'static str {
+    pub const fn takes_cloud(self) -> bool {
         match self {
-            Self::Claude => "anthropic",
-            Self::Antigravity => "google",
+            Self::Antigravity => true,
+            Self::Claude | Self::Catalog => false,
+        }
+    }
+
+    /// What an instance of it serves, given the catalog agent its entry
+    /// names where it names one: a built-in driver's agent signs in to its
+    /// own vendor and asks only that vendor, so it serves that one provider
+    /// whatever else is written; a catalog instance serves the agent its key
+    /// names, and with no key it serves nothing.
+    #[must_use]
+    pub fn serves(self, agent: Option<&AgentKey>) -> Option<Serves> {
+        match self {
+            Self::Claude => Some(Serves::Provider("anthropic")),
+            Self::Antigravity => Some(Serves::Provider("google")),
+            Self::Catalog => agent.cloned().map(Serves::Agent),
         }
     }
 
     fn of(written: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|one| one.name() == written)
+    }
+}
+
+/// What a catalog agent's key is never spelled as, and why, where `word` is
+/// one: a built-in driver's word or the native runner's name, which routes,
+/// sessions and credentials are already named by, or a name Windows keeps for
+/// a device, which no directory can be named.
+#[must_use]
+pub(crate) fn reserved(word: &str) -> Option<&'static str> {
+    if Driver::ALL.iter().any(|driver| driver.name() == word) {
+        Some("a driver's word")
+    } else if word == NATIVE_RUNNER {
+        Some("the native runner's name")
+    } else if DEVICES.contains(&word) {
+        Some("a name Windows keeps for a device")
+    } else {
+        None
+    }
+}
+
+/// Why `written` cannot be a catalog agent's key, as a refusal says it;
+/// nothing where it can.
+#[must_use]
+pub(crate) fn unkeyed(written: &str) -> Option<String> {
+    match AgentKey::new(written) {
+        Err(refused) => Some(refused.to_string()),
+        Ok(_) => reserved(written)
+            .map(|what| format!("{written:?} is {what}, so it is never a catalog agent's key")),
+    }
+}
+
+/// `written` as a catalog agent's key, where it can be one.
+fn keyed(written: &str) -> Option<AgentKey> {
+    AgentKey::new(written)
+        .ok()
+        .filter(|key| reserved(key.as_str()).is_none())
+}
+
+/// What an installed agent serves: the turns of one provider of this
+/// build's, or the catalog agent it is, which reaches none of them.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Serves {
+    /// The one provider it signs in to and asks, by the name `providers`
+    /// gives it: no other provider is reached through it.
+    Provider(&'static str),
+    /// The catalog agent of this key, which signs in to its own vendor and
+    /// chooses its own model, so no provider of this build's is reached
+    /// through it.
+    Agent(AgentKey),
+}
+
+impl Serves {
+    /// The provider it serves, where it serves one.
+    #[must_use]
+    pub const fn provider(&self) -> Option<&'static str> {
+        match self {
+            Self::Provider(provider) => Some(provider),
+            Self::Agent(_) => None,
+        }
+    }
+
+    /// The catalog agent it is, where it is one.
+    #[must_use]
+    pub const fn agent(&self) -> Option<&AgentKey> {
+        match self {
+            Self::Provider(_) => None,
+            Self::Agent(key) => Some(key),
+        }
+    }
+}
+
+/// The provider by the name `providers` gives it, or the catalog agent by its
+/// key.
+impl fmt::Display for Serves {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Provider(provider) => out.write_str(provider),
+            Self::Agent(key) => out.write_str(key.as_str()),
+        }
     }
 }
 
@@ -190,19 +336,101 @@ pub fn model_name(found: &str) -> bool {
             .all(|one| one.is_ascii_alphanumeric() || "._-:@/[]".contains(one))
 }
 
+/// What `externalAgents.<instance>.cloudProject` is spelled with, as an
+/// editor checks it: Google's spelling of a project ID, 6 to 30 lowercase
+/// letters, digits and hyphens, starting with a letter and not ending with a
+/// hyphen.
+///
+/// [`cloud_project`] is what refuses one; the test beside the schema holds
+/// the two to one answer.
+pub(crate) const CLOUD_PROJECT: &str = "^[a-z][a-z0-9-]{4,28}[a-z0-9]$";
+
+/// What `externalAgents.<instance>.cloudLocation` is spelled with, as an
+/// editor checks it: one DNS label, 1 to 63 lowercase letters, digits and
+/// hyphens, neither starting nor ending with a hyphen, since a location
+/// names a host the agent reaches.
+///
+/// [`cloud_location`] is what refuses one; the test beside the schema holds
+/// the two to one answer.
+pub(crate) const CLOUD_LOCATION: &str = "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$";
+
+/// What [`cloud_project`] holds a project to, as a refusal says it.
+pub(crate) const CLOUD_PROJECT_NAMED: &str = "a Google Cloud project is named by its ID: 6 to 30 \
+     lowercase letters, digits and hyphens, starting with a letter and not ending with a hyphen";
+
+/// What [`cloud_location`] holds a location to, as a refusal says it.
+pub(crate) const CLOUD_LOCATION_NAMED: &str = "a Google Cloud location is one host name label: \
+     1 to 63 lowercase letters, digits and hyphens, neither starting nor ending with a hyphen, \
+     since the agent reaches a host named after it";
+
+/// Whether every byte of `found` is a lowercase ASCII letter, a digit or a
+/// hyphen.
+fn labelled(found: &str) -> bool {
+    found
+        .bytes()
+        .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
+/// Whether `found` is spelled as [`CLOUD_PROJECT`] says.
+pub(crate) fn cloud_project(found: &str) -> bool {
+    (6..=30).contains(&found.len())
+        && labelled(found)
+        && found.starts_with(|first: char| first.is_ascii_lowercase())
+        && !found.ends_with('-')
+}
+
+/// Whether `found` is spelled as [`CLOUD_LOCATION`] says.
+pub(crate) fn cloud_location(found: &str) -> bool {
+    (1..=63).contains(&found.len())
+        && labelled(found)
+        && !found.starts_with('-')
+        && !found.ends_with('-')
+}
+
+/// The Google Cloud project and location an Antigravity instance's business
+/// sign-in is billed to, both written or neither.
+///
+/// Neither is a secret: a project ID and a location name where usage is
+/// billed, not anything that signs in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cloud {
+    project: Box<str>,
+    location: Box<str>,
+}
+
+impl Cloud {
+    /// The project's ID, as `cloudProject` spells it.
+    #[must_use]
+    pub fn project(&self) -> &str {
+        &self.project
+    }
+
+    /// The location, as `cloudLocation` spells it.
+    #[must_use]
+    pub fn location(&self) -> &str {
+        &self.location
+    }
+}
+
 /// One installed agent, as the document states it.
 ///
 /// Nothing in it has been resolved: `executable` has not been looked for and
 /// `profile` names a directory nothing has opened. No field is a secret.
+/// A catalog instance always names its agent, and no other instance names
+/// one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalAgent {
     name: Box<str>,
     enabled: bool,
     driver: Driver,
+    /// What it serves, as its driver answers given its `agent`: held rather
+    /// than asked again, so it is settled once, where the instance is made.
+    serves: Serves,
     executable: Box<str>,
     profile: Option<Box<str>>,
     model: Option<Box<str>>,
     effort: Option<Effort>,
+    cloud: Option<Cloud>,
 }
 
 impl ExternalAgent {
@@ -222,6 +450,18 @@ impl ExternalAgent {
     #[must_use]
     pub const fn driver(&self) -> Driver {
         self.driver
+    }
+
+    /// The catalog agent its `agent` names, where it is a catalog instance.
+    #[must_use]
+    pub const fn agent(&self) -> Option<&AgentKey> {
+        self.serves.agent()
+    }
+
+    /// What it serves: its driver's provider, or the catalog agent it is.
+    #[must_use]
+    pub fn serves(&self) -> Serves {
+        self.serves.clone()
     }
 
     /// Its program: an absolute path, or a bare name for `PATH` to answer.
@@ -250,24 +490,52 @@ impl ExternalAgent {
         self.effort
     }
 
-    /// An instance named `name` of `driver`, run as `executable` with its
+    /// The project and location its business sign-in is billed to, where
+    /// both are written. Only an Antigravity instance names them.
+    #[must_use]
+    pub const fn cloud(&self) -> Option<&Cloud> {
+        self.cloud.as_ref()
+    }
+
+    /// An instance named `name` of `driver`, running the catalog agent
+    /// `agent` where it is a catalog instance, run as `executable` with its
     /// profile directory at `profile`, as a configuration that has not been
     /// written yet would state it, taking no new work until it is.
+    ///
+    /// Nothing where the two disagree: a catalog instance names the agent it
+    /// runs, and an instance of a built-in driver names none.
     #[must_use]
-    pub fn unwritten(name: &str, driver: Driver, executable: &str, profile: Option<&str>) -> Self {
-        Self {
+    pub fn unwritten(
+        name: &str,
+        driver: Driver,
+        executable: &str,
+        profile: Option<&str>,
+        agent: Option<&AgentKey>,
+    ) -> Option<Self> {
+        if agent.is_some() != (driver == Driver::Catalog) {
+            return None;
+        }
+        Some(Self {
             name: name.into(),
             enabled: false,
             driver,
+            serves: driver.serves(agent)?,
             executable: executable.into(),
             profile: profile.map(Into::into),
             model: None,
             effort: None,
-        }
+            cloud: None,
+        })
     }
 
     fn read(name: &str, record: &Value) -> Option<Self> {
         let driver = Driver::of(record.get("driver")?.as_str()?)?;
+        // An `agent` beside a built-in driver is one the check refused, and is
+        // read as if it were not written.
+        let agent = match driver {
+            Driver::Catalog => Some(keyed(record.get("agent")?.as_str()?)?),
+            Driver::Claude | Driver::Antigravity => None,
+        };
         Some(Self {
             name: name.into(),
             enabled: record
@@ -275,9 +543,11 @@ impl ExternalAgent {
                 .and_then(Value::as_bool)
                 .unwrap_or(true),
             driver,
+            serves: driver.serves(agent.as_ref())?,
             executable: record.get("executable")?.as_str()?.into(),
-            profile: record
-                .get(driver.profile_key())
+            profile: driver
+                .profile_key()
+                .and_then(|key| record.get(key))
                 .and_then(Value::as_str)
                 .map(Into::into),
             model: record.get("model").and_then(Value::as_str).map(Into::into),
@@ -285,6 +555,17 @@ impl ExternalAgent {
                 .get("effort")
                 .and_then(Value::as_str)
                 .and_then(|effort| effort.parse().ok()),
+            // Read for the driver that takes them, and only both together:
+            // the check refused anything else.
+            cloud: driver
+                .takes_cloud()
+                .then(|| {
+                    Some(Cloud {
+                        project: record.get("cloudProject")?.as_str()?.into(),
+                        location: record.get("cloudLocation")?.as_str()?.into(),
+                    })
+                })
+                .flatten(),
         })
     }
 }

@@ -1,0 +1,8 @@
+{
+  "linux-x86_64": {"confined": true},
+  "linux-aarch64": {"confined": true},
+  "darwin-aarch64": {"confined": true},
+  "windows-x86_64": {"confined": true},
+  "windows-aarch64": {"confined": true},
+  "freebsd-x86_64": {"confined": false, "reason": "FreeBSD has no sandbox backend"}
+}

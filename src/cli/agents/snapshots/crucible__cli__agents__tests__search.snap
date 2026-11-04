@@ -1,0 +1,10 @@
+---
+source: src/cli/agents/tests.rs
+expression: "format!(\"{listed}--\\n{matched}--\\n{unmatched}\")"
+---
+goose: offers 2.0.0, 1.0.0; installed 1.0.0
+codex: offers 0.1.0; not installed
+--
+goose: offers 2.0.0, 1.0.0; installed 1.0.0
+--
+No agent the catalog lists has nothing in its name.

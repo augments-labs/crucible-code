@@ -7,25 +7,38 @@
 //! the commands before it wrote, as it is for someone typing them one after
 //! another. A sign-out of an agent whose route has no yes is asked about
 //! first, and a no leaves the same files and runs it found.
+//!
+//! The last cases are an instance of a catalog agent, which serves its own
+//! key: no provider is reached through it and no model is offered on its
+//! route, a session opened on it is bound to its key and goes on only on that
+//! agent, and a sign-out of it, which this build cannot run, is refused before
+//! anything is written.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use crucible_app::Conversation;
 use crucible_app::access::Rewritten;
+use crucible_app::backends::{CatalogRow, Registry};
 use crucible_app::client::{self, Front};
+use crucible_app::launching::Steps;
+use crucible_app::outside::Installed;
 use crucible_client_api::{
     Capabilities as Asking, Command, Correlation, LoginOutcome, LogoutOutcome, ModelOutcome, Name,
     Outcome, Pending, Request, ResumeOutcome, Retained, Standing, Text,
 };
-use crucible_config::{Access, Settings};
+use crucible_config::{Access, Driver, ExternalAgent, Settings};
+use crucible_external_harnesses::catalog::{Catalog, Held, fixture};
 use crucible_external_harnesses::fake_peer::{self, Reply, scripts::claude};
 use crucible_runner::Turned;
-use crucible_session::Session;
-use crucible_types::{Message, SessionId};
+use crucible_sandbox::SandboxEnablement;
+use crucible_session::{RouteBinding, Session};
+use crucible_types::{AgentKey, Message, SessionId, Transcript};
 
 use super::{
     Asked, CONNECTED_FILE, Choosing, INSTALLED, Outside, Picking, SHARED, UNCONNECTED, UNINSTALLED,
-    accounting, connected, recorded_on, runtime, started_native, stepped, turn,
+    accounting, accounting_on, answered_off, connected, launching, recorded_on, resuming_at,
+    runtime, started_native, stepped, turn,
 };
 use crate::{Failed, Script, Tree};
 
@@ -734,5 +747,339 @@ fn a_sign_out_whose_yes_cannot_be_written_says_nothing_changed() -> Result<(), F
     assert_eq!(started, 0, "the agent's program was started");
     let (turned, _events) = turn(&mut outside, "again", false)?;
     assert!(turned.is_ok(), "the run was stopped: {turned:?}");
+    Ok(())
+}
+
+/// The user file holding the one instance `work`, of the catalog agent
+/// `agent`.
+fn catalog_instance(agent: &str) -> String {
+    serde_json::json!({"externalAgents": {
+        "work": {"driver": "catalog", "agent": agent, "executable": "goose"}
+    }})
+    .to_string()
+}
+
+/// A session a catalog agent ran is bound to that agent's key, so once its
+/// instance names another agent the session is refused as run by an agent
+/// this run is not using, while an instance still naming the same agent is
+/// its route; nothing is started or opened either way.
+#[test]
+fn a_session_a_catalog_agent_ran_does_not_resume_on_another_agent() -> Result<(), Failed> {
+    let tree = Tree::new("external-resume-catalog-repointed")?;
+    let opened = RouteBinding::new("catalog:goose", "work", None)?;
+    let session = Session::start_routed(&tree.sessions(), &tree.workspace()?, None, &opened)?;
+    let id = session.id().cloned().ok_or("an id")?;
+    session.append(&Message::User {
+        text: "before".into(),
+        attachments: Box::new([]),
+    });
+    drop(session);
+    let native = started_native(&tree, Script::new(Vec::new()))?;
+    let current = native.session().id().cloned();
+    let (mut conversation, peer) = stepped(&tree, native, &connected([]))?;
+    let started = fake_peer::played(&peer);
+
+    for (agent, says) in [
+        ("codex", "run by the installed agent work"),
+        ("goose", "work cannot be started"),
+    ] {
+        let outcome = resuming_at(
+            &tree,
+            &mut conversation,
+            &catalog_instance(agent),
+            id.clone(),
+        )?;
+        let told = match &outcome {
+            Outcome::Resumed(ResumeOutcome::Failed(problem)) => problem.message.as_str().to_owned(),
+            other => format!("{other:?}"),
+        };
+        assert!(told.contains(says), "{agent}: {told}");
+    }
+
+    assert_eq!(conversation.session().id(), current.as_ref());
+    assert_eq!(
+        fake_peer::played(&peer),
+        started,
+        "the agent's program was started"
+    );
+    Ok(())
+}
+
+/// A provider whose access names an instance of a catalog agent is refused
+/// naming the agent and no provider to write it under, since a catalog agent
+/// reaches no provider; and a conversation on a catalog agent's route offers
+/// no models, since the agent chooses its own.
+#[test]
+fn a_catalog_agent_reaches_no_provider_and_offers_no_model() -> Result<(), Failed> {
+    let tree = Tree::new("external-catalog-reaches-none")?;
+    let mut native = started_native(&tree, Script::new(Vec::new()))?;
+    let through = serde_json::json!({
+        "externalAgents": {"work": {"driver": "catalog", "agent": "goose", "executable": "goose"}},
+        "providers": {"anthropic": {"access": {"type": "externalAgent", "instance": "work"}}}
+    })
+    .to_string();
+
+    let refused = answered_off(
+        &tree,
+        &mut native,
+        &through,
+        Command::SelectModel {
+            provider: Name::new("anthropic")?,
+            model: Name::new("claude-sonnet-5-5")?,
+            effort: None,
+        },
+    )?;
+
+    let Outcome::Model(ModelOutcome::Unreachable(problem)) = &refused else {
+        return Err(format!("{refused:?}").into());
+    };
+    let said = problem.message.as_str();
+    assert!(
+        said.contains("providers.anthropic.access names the instance work")
+            && said.contains("catalog agent goose"),
+        "{said}"
+    );
+    assert!(!said.contains("write it under"), "{said}");
+
+    let route = RouteBinding::new("catalog:goose", "work", None)?;
+    let (launching, _peer) = launching(&tree, &connected([]))?;
+    let session = Arc::new(Session::start_routed(
+        &tree.sessions(),
+        &tree.workspace()?,
+        None,
+        &route,
+    )?);
+    let mut conversation = crate::conversation(&tree, Script::new(Vec::new()), false)?;
+    let installed = Installed {
+        backend: None,
+        relaunch: Box::new(launching),
+        route,
+    };
+    runtime()?.block_on(async {
+        conversation
+            .external(session, Transcript::new(), installed)
+            .await
+            .map_err(|refused| refused.reason().as_str().to_owned())
+    })?;
+
+    assert_eq!(
+        client::snapshot(&conversation).execution,
+        crucible_client_api::Execution::Instance(Name::new("work")?)
+    );
+    assert_eq!(client::reaching(&conversation), None);
+    Ok(())
+}
+
+/// A catalog agent has no sign-out this build can run, so a sign-out of one
+/// is said to be refused once it is chosen, before its route is asked about
+/// or anything is written: neither its own instance nor another catalog
+/// agent's is taken out of use. The question it was chosen from names only
+/// the instances of its own agent as sharing its sign-in.
+#[test]
+fn a_sign_out_of_a_catalog_agent_is_refused_and_writes_nothing() -> Result<(), Failed> {
+    const TWO_AGENTS: &str = r#"{
+  "externalAgents": {
+    "goose": {"driver": "catalog", "agent": "goose", "executable": "goose"},
+    "codex": {"driver": "catalog", "agent": "codex", "executable": "codex"}
+  }
+}
+"#;
+    let tree = Tree::new("external-sign-out-catalog")?;
+    let native = started_native(&tree, Script::new(Vec::new()))?;
+    let (mut conversation, peer) = stepped(&tree, native, &connected([]))?;
+    let started = fake_peer::played(&peer);
+    let asked = Asked {
+        installed: (TWO_AGENTS, "goose"),
+        command: &|instance| Command::SignOut { instance },
+        asking: Asking::every(),
+        after: None,
+    };
+    let mut picking = Picking::of([Some(client::accounts::SIGN_OUT), Some("Go back")]);
+
+    let (outcome, file) = accounting_on(&tree, &mut conversation, &asked, &mut picking)?;
+
+    assert_eq!(outcome, Outcome::Logout(LogoutOutcome::Undecided), "{file}");
+    assert_eq!(file, TWO_AGENTS, "an instance was written off");
+    assert_eq!(
+        fake_peer::played(&peer),
+        started,
+        "an agent's program was started"
+    );
+    let facts: Vec<Vec<&str>> = picking
+        .put
+        .iter()
+        .filter_map(|pending| match pending {
+            Pending::Account { facts, .. } => Some(facts.iter().map(Text::as_str).collect()),
+            _ => None,
+        })
+        .collect();
+    let [chosen, refused] = facts.as_slice() else {
+        return Err(format!("{facts:?}").into());
+    };
+    assert!(
+        chosen.contains(&"Sharing: goose use this profile, and each is disconnected first."),
+        "{chosen:?}"
+    );
+    assert!(
+        refused.iter().any(|fact| fact.contains("cannot run")),
+        "{refused:?}"
+    );
+    assert!(
+        !picking
+            .put
+            .iter()
+            .any(|pending| matches!(pending, Pending::Warning { .. })),
+        "the route was asked about: {:?}",
+        picking.put
+    );
+    Ok(())
+}
+
+/// The row a signed catalog entry gives the agent keyed `goose`.
+fn goose_row() -> Result<CatalogRow, Failed> {
+    let file =
+        serde_json::json!({"path": "goose", "size": 1, "sha256": "b".repeat(64), "exec": true});
+    let catalog = serde_json::json!({
+        "schema": 1,
+        "serial": 1,
+        "revoked": [],
+        "entries": [{
+            "key": "goose",
+            "registry_id": "goose",
+            "version": "1.4.1",
+            "kind": "binary",
+            "license": "Apache-2.0",
+            "review": "https://example.com/review/1",
+            "content_use": {
+                "text": "The vendor may use what you send.",
+                "source": "https://vendor.example/terms",
+                "date": "24 Oct 2026",
+                "origins": ["https://api.vendor.example"],
+            },
+            "admits": {"name": "goose", "version": "1.4.1"},
+            "targets": [{
+                "platform": "any",
+                "cmd": "goose",
+                "artifacts": [{
+                    "url": "https://example.com/goose.zip",
+                    "sha256": "a".repeat(64),
+                    "size": 1,
+                    "format": "zip",
+                    "unpacked": 1,
+                    "decompressed": 1,
+                    "files": [file],
+                }],
+            }],
+        }],
+    });
+    let signed = fixture::signed(catalog.to_string().as_bytes());
+    let catalog = Catalog::verify(
+        &signed.index,
+        &signed.signature,
+        &signed.keys,
+        Held(0),
+        std::time::SystemTime::now(),
+    )?;
+    let entry = catalog.entries().first().ok_or("an entry")?;
+    Ok(CatalogRow::new(
+        entry,
+        entry.targets.first().ok_or("a target")?,
+    )?)
+}
+
+/// A new session opened on a catalog instance is bound to the agent its key
+/// names, `catalog:<key>` on the session's route line, so it can go on only
+/// on that agent. The agent's row is the one a signed catalog entry gives, its
+/// program played by the peer.
+#[test]
+fn a_session_opened_on_a_catalog_agent_is_bound_to_its_key() -> Result<(), Failed> {
+    let tree = Tree::new("routing-catalog-bound")?;
+    let (launching, peer) = launching(&tree, &connected([]))?;
+    let listed: &'static [CatalogRow] = Box::leak(Box::new([goose_row()?]));
+    let steps = Steps::new(
+        launching.launcher(),
+        Arc::new(SandboxEnablement::new(false, false)),
+        Box::leak(Box::new(Registry::new(&[]).cataloging(listed))),
+        Some(peer.clone().into_os_string()),
+    );
+    let goose = AgentKey::new("goose")?;
+    let entry = ExternalAgent::unwritten("work", Driver::Catalog, "claude", None, Some(&goose))
+        .ok_or("a catalog instance naming its agent")?;
+    let mut conversation = crate::conversation(&tree, Script::new(Vec::new()), false)?
+        .consenting(launching.consent.clone())
+        .stepping(steps);
+    let (sessions, workspace) = (tree.sessions(), tree.workspace()?);
+
+    runtime()?.block_on(conversation.onto(&sessions, &workspace, None, &entry))?;
+
+    let bound = conversation
+        .session()
+        .route()
+        .map(|route| route.driver().to_owned());
+    assert_eq!(bound.as_deref(), Some("catalog:goose"));
+    let id = conversation.session().id().cloned().ok_or("an id")?;
+    let (_, opened) = crucible_session::pick_routed(&sessions, &workspace, Some(&id))?;
+    assert_eq!(
+        opened.map(|route| route.driver().to_owned()).as_deref(),
+        Some("catalog:goose"),
+        "the route line on the disk"
+    );
+    Ok(())
+}
+
+/// The user file of a run on the installed agent `work` that reaches google
+/// through `space`, an agent that chooses its own model, with its profile
+/// under `home`: a profile is named by a rooted path, which on Windows starts
+/// with a drive.
+fn routed_to_one_of_its_own(home: &std::path::Path) -> String {
+    serde_json::json!({
+        "externalAgents": {
+            "work": {"driver": "claude", "executable": "claude"},
+            "space": {"driver": "antigravity", "executable": "agy", "profileDir": home.join("agy")}
+        },
+        "providers": {
+            "anthropic": {"access": {"type": "externalAgent", "instance": "work"}},
+            "google": {"access": {"type": "externalAgent", "instance": "space"}}
+        }
+    })
+    .to_string()
+}
+
+/// On a route, a model of a provider reached through another agent, one that
+/// chooses its own model, is refused with what that agent is, and the
+/// conversation stays on its route in the session it was in.
+#[test]
+fn a_model_of_a_provider_reached_through_an_agent_choosing_its_own_is_refused() -> Result<(), Failed>
+{
+    use crucible_client_api::{Execution, ModelOutcome, Name};
+
+    let tree = Tree::new("external-model-onto-its-own")?;
+    let mut outside = Outside::new(&tree, &connected([]))?;
+    let left = outside.conversation.session().id().cloned();
+
+    let refused = answered_off(
+        &tree,
+        &mut outside.conversation,
+        &routed_to_one_of_its_own(tree.home()?.path()),
+        Command::SelectModel {
+            provider: Name::new("google")?,
+            model: Name::new("gemini-3.8-flash")?,
+            effort: None,
+        },
+    )?;
+
+    let Outcome::Model(ModelOutcome::Unreachable(problem)) = &refused else {
+        return Err(format!("{refused:?}").into());
+    };
+    assert_eq!(
+        problem.message.as_str(),
+        "providers.google.access names the agent space, which runs the conversation in \
+         place of google's models; remove access to reach google directly"
+    );
+    assert_eq!(
+        client::snapshot(&outside.conversation).execution,
+        Execution::Instance(Name::new("work")?)
+    );
+    assert_eq!(outside.conversation.session().id().cloned(), left);
     Ok(())
 }

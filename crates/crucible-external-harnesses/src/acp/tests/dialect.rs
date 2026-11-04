@@ -8,12 +8,13 @@ use crucible_execution::{
 use crucible_types::TurnId;
 use serde_json::{Value, json};
 
-use crate::acp::{Acp, Allowing, Initialized, Profile};
+use crate::acp::{Acp, Allowing, Initialized, Profile, SignIn};
+use crate::catalog::{Admits, Method, Route, Variable};
 use crate::{Account, Act, Dialect, Reading, Shape, Told};
 
 /// Admits every agent.
 #[expect(clippy::unnecessary_wraps, reason = "a profile's check has this shape")]
-const fn anyone(_: &Initialized) -> Result<(), Failure> {
+const fn anyone(_: &Initialized, _: &[Admits]) -> Result<(), Failure> {
     Ok(())
 }
 
@@ -22,7 +23,7 @@ const PROFILE: Profile = Profile {
     program: "agent",
     versions: &[1],
     admits: anyone,
-    sign_in: Some("login"),
+    sign_in: &[SignIn::named("login")],
 };
 
 /// A response to request `id` carrying `result`.
@@ -192,6 +193,128 @@ fn a_status_check_reads_sign_in_from_opening_a_session() {
             acp.told(Account::Status, &answer).unwrap(),
             Told::Done(Reading::Signed(signed))
         );
+    }
+}
+
+/// A sign-in the agent answers as done is read as a status step reads it, by
+/// opening a session on the same start: signed in only where one opens.
+#[test]
+fn a_sign_in_reads_signed_in_only_once_a_session_opens_after_it() {
+    for (answer, signed) in [
+        (
+            json!({"jsonrpc": "2.0", "id": 2, "error": {"code": -32000, "message": "Authentication required"}}).to_string(),
+            crucible_execution::Authentication::SignedOut,
+        ),
+        (response(2, &json!({"sessionId": "probe"})), crucible_execution::Authentication::SignedIn),
+    ] {
+        let mut acp = Acp::new(PROFILE);
+        let _ = acp.account(Account::SignIn, Shape { workspace: Some(Path::new("/work")), ..Shape::default() });
+        let _ = acp.spoken(Account::SignIn).unwrap();
+        let asked = acp.told(Account::SignIn, &initialized(1)).unwrap();
+        assert!(matches!(&asked, Told::Send(frame) if frame.contains("\"authenticate\"")), "{asked:?}");
+
+        let took = acp.told(Account::SignIn, &response(1, &json!({}))).unwrap();
+
+        assert!(matches!(&took, Told::Send(frame) if frame.contains("session/new")), "{took:?}");
+        assert_eq!(
+            acp.told(Account::SignIn, &answer).unwrap(),
+            Told::Done(Reading::Signed(signed))
+        );
+    }
+}
+
+/// A sign-in asks for the first of the profile's methods the agent offers, in
+/// the profile's order whatever the agent's, and for none where the agent
+/// offers none of them.
+#[test]
+fn a_sign_in_asks_for_the_first_of_its_methods_the_agent_offers() {
+    const METHODS: Profile = Profile {
+        sign_in: &[
+            SignIn::named("browser"),
+            SignIn::named("login"),
+            SignIn::named("key"),
+        ],
+        ..PROFILE
+    };
+    let offering = |methods: &[&str]| {
+        let methods: Vec<Value> = methods
+            .iter()
+            .map(|id| json!({"id": id, "name": id}))
+            .collect();
+        response(
+            0,
+            &json!({"protocolVersion": 1, "agentCapabilities": {}, "authMethods": methods}),
+        )
+    };
+    for (offered, asked) in [
+        (vec!["login"], Some("login")),
+        (vec!["key", "login", "browser"], Some("browser")),
+        (vec!["other"], None),
+    ] {
+        let mut acp = Acp::new(METHODS);
+        let _ = acp.spoken(Account::SignIn).unwrap();
+
+        let told = acp.told(Account::SignIn, &offering(&offered)).unwrap();
+
+        match (told, asked) {
+            (Told::Send(frame), Some(method)) => {
+                let sent: Value = serde_json::from_str(&frame).unwrap();
+                assert_eq!(sent.pointer("/method"), Some(&json!("authenticate")));
+                assert_eq!(
+                    sent.pointer("/params/methodId"),
+                    Some(&json!(method)),
+                    "{offered:?}"
+                );
+            }
+            (Told::Done(Reading::Unreadable(_)), None) => {}
+            (told, asked) => panic!("{offered:?}: {told:?}, not {asked:?}"),
+        }
+    }
+}
+
+/// A sign-in the user named a method for asks for that method alone, even one
+/// the profile lists later or not at all, and for none where the agent does
+/// not offer it.
+#[test]
+fn a_sign_in_by_a_named_method_asks_for_that_method_alone() {
+    const METHODS: Profile = Profile {
+        sign_in: &[SignIn::named("browser"), SignIn::named("key")],
+        ..PROFILE
+    };
+    let offering = |methods: &[&str]| {
+        let methods: Vec<Value> = methods
+            .iter()
+            .map(|id| json!({"id": id, "name": id}))
+            .collect();
+        response(
+            0,
+            &json!({"protocolVersion": 1, "agentCapabilities": {}, "authMethods": methods}),
+        )
+    };
+    for (named, offered, asked) in [
+        ("key", vec!["browser", "key"], Some("key")),
+        ("business", vec!["browser", "business"], Some("business")),
+        ("key", vec!["browser"], None),
+    ] {
+        let mut acp = Acp::new(METHODS);
+        assert!(Dialect::signing_in_with(&mut acp, named));
+        let _ = acp.spoken(Account::SignIn).unwrap();
+
+        let told = acp.told(Account::SignIn, &offering(&offered)).unwrap();
+
+        match (told, asked) {
+            (Told::Send(frame), Some(method)) => {
+                let sent: Value = serde_json::from_str(&frame).unwrap();
+                assert_eq!(sent.pointer("/method"), Some(&json!("authenticate")));
+                assert_eq!(
+                    sent.pointer("/params/methodId"),
+                    Some(&json!(method)),
+                    "{named:?} of {offered:?}"
+                );
+            }
+            (Told::Done(Reading::Unreadable(_)), None) => {}
+            (told, asked) => panic!("{named:?} of {offered:?}: {told:?}, not {asked:?}"),
+        }
     }
 }
 
@@ -483,6 +606,155 @@ fn a_permission_asked_after_a_stop_is_never_answered_yes() {
     assert!(matches!(acts.as_slice(), [Act::Ask { .. }]), "{acts:?}");
 }
 
+/// What a signed catalog entry reviewed as calling the agent `name` at 1.0.0
+/// makes of it, where the entry names `profile_env` as the variable the agent
+/// reads its home from.
+#[cfg(feature = "proof")]
+fn profiled(name: &str, profile_env: Option<&str>) -> crate::catalog::CatalogProfile {
+    use std::time::SystemTime;
+
+    use crate::catalog::{Catalog, CatalogProfile, Held, fixture};
+
+    let file = json!({"path": "peer", "size": 1, "sha256": "b".repeat(64), "exec": true});
+    let mut entry = json!({
+            "key": "peer",
+            "registry_id": "fake-peer",
+            "version": "1.0.0",
+            "kind": "binary",
+            "license": "MIT",
+            "review": "https://example.com/review/1",
+            "admits": {"name": name, "version": "1.0.0"},
+            "auth_methods": [{"id": "login", "name": "Log in", "kind": "agent"}],
+            "targets": [{
+                "platform": "any",
+                "cmd": "peer",
+                "artifacts": [{
+                    "url": "https://example.com/peer.zip",
+                    "sha256": "a".repeat(64),
+                    "size": 1,
+                    "format": "zip",
+                    "unpacked": 1,
+                    "decompressed": 1,
+                    "files": [file],
+                }],
+            }],
+    });
+    if let (Some(profile_env), Some(entry)) = (profile_env, entry.as_object_mut()) {
+        entry.insert("profile_env".to_owned(), json!(profile_env));
+    }
+    let catalog = json!({"schema": 1, "serial": 1, "revoked": [], "entries": [entry]});
+    let signed = fixture::signed(catalog.to_string().as_bytes());
+    let catalog = Catalog::verify(
+        &signed.index,
+        &signed.signature,
+        &signed.keys,
+        Held(0),
+        SystemTime::now(),
+    )
+    .unwrap();
+    let entry = catalog.entries().first().unwrap();
+    CatalogProfile::from_entry(entry, entry.targets.first().unwrap()).unwrap()
+}
+
+/// The client of the agent a signed catalog entry reviewed as calling itself
+/// `name` at 1.0.0, working in this directory, its first turn opened.
+#[cfg(feature = "proof")]
+fn cataloged(name: &str) -> Acp {
+    let mut acp = Acp::cataloged(profiled(name, None), Allowing::Nothing);
+    let _ = acp.request(Shape {
+        workspace: Some(Path::new("/work")),
+        ..Shape::default()
+    });
+    let _ = acp.open(&TurnRequest::new(TurnId::FIRST, "hello")).unwrap();
+    acp
+}
+
+/// A client run from a catalog entry that names the variable its agent reads
+/// its home from gives the agent the profile directory the host asked for
+/// through that variable, and never the shell's own value of it.
+#[cfg(feature = "proof")]
+#[test]
+fn a_catalog_client_passes_the_profile_directory_through_the_variable_its_entry_names() {
+    let mut acp = Acp::cataloged(profiled("fake-peer", Some("HOME")), Allowing::Nothing);
+    let profile = Path::new("/profiles/work");
+
+    let request = acp.request(Shape {
+        profile: Some(profile),
+        workspace: Some(Path::new("/work")),
+        ..Shape::default()
+    });
+
+    let homes: Vec<&str> = request
+        .environment
+        .iter()
+        .filter(|(name, _)| name == "HOME")
+        .map(|(_, value)| value.as_str())
+        .collect();
+    // The one value of the variable is the profile directory, so the shell's
+    // own never reaches the agent through it. Another variable passed on as it
+    // stands may hold the same path, as `USERPROFILE` does on Windows.
+    assert_eq!(homes, ["/profiles/work"], "{:?}", request.shown);
+    assert!(!request.shown.contains(&"HOME"), "{:?}", request.shown);
+}
+
+/// A client run from a catalog entry admits the agent the entry names, as the
+/// fake peer answers initializing, and sends nothing more to one that calls
+/// itself anything else.
+#[cfg(feature = "proof")]
+#[test]
+fn a_catalog_profile_admits_the_agent_its_entry_names_and_no_other() {
+    use crate::fake_peer::scripts::acp;
+
+    let mut admitting = cataloged("fake-peer");
+    let admitted = admitting
+        .heard(&acp::initialized("fake-peer", "1.0.0", "login"))
+        .unwrap();
+    let mut refusing = cataloged("fake-peer");
+    let refused = refusing
+        .heard(&acp::initialized("another-agent", "1.0.0", "login"))
+        .unwrap();
+
+    let [Act::Send(opened)] = admitted.as_slice() else {
+        panic!("{admitted:?}")
+    };
+    let opened: Value = serde_json::from_str(opened).unwrap();
+    assert_eq!(opened.pointer("/method"), Some(&json!("session/new")));
+    let [Act::Fail(failure)] = refused.as_slice() else {
+        panic!("{refused:?}")
+    };
+    let said = failure.reason().as_str();
+    assert!(
+        said.contains("fake-peer") && said.contains("another-agent"),
+        "{said}"
+    );
+}
+
+/// A client run from a catalog entry names its program by the agent's key, as
+/// the backend it runs under is described by.
+#[cfg(feature = "proof")]
+#[test]
+fn a_catalog_profile_names_its_program_by_the_agent_s_key() {
+    assert_eq!(cataloged("fake-peer").program(), "peer");
+}
+
+/// A client run from a catalog entry sends nothing more to the agent its
+/// entry names once it answers at a version the entry did not review.
+#[cfg(feature = "proof")]
+#[test]
+fn a_catalog_profile_refuses_its_agent_at_a_version_its_entry_did_not_review() {
+    use crate::fake_peer::scripts::acp;
+
+    let refused = cataloged("fake-peer")
+        .heard(&acp::initialized("fake-peer", "1.0.1", "login"))
+        .unwrap();
+
+    let [Act::Fail(failure)] = refused.as_slice() else {
+        panic!("{refused:?}")
+    };
+    let said = failure.reason().as_str();
+    assert!(said.contains("1.0.1") && said.contains("1.0.0"), "{said}");
+}
+
 /// Asked to load a session it kept, an agent that has none by that name ends
 /// the turn saying the session is gone; refused for want of a sign-in, or
 /// refused a new session the same way, the session is not said to be gone.
@@ -515,4 +787,146 @@ fn only_a_kept_session_the_agent_cannot_find_is_said_to_be_gone() {
         };
         assert_eq!(failure.fate(), fate, "{method}: {refused}");
     }
+}
+
+/// The catalog's record of a method run as a command with no real terminal.
+fn recorded() -> Method {
+    Method::Terminal {
+        command: "agent".into(),
+        args: vec!["login".into(), "--device".into()],
+        env: vec![
+            Variable {
+                name: "LOGIN".into(),
+                value: "1".into(),
+            },
+            Variable {
+                name: "AFTER".into(),
+                value: "2".into(),
+            },
+        ],
+        route: Route::Piped,
+    }
+}
+
+/// What an agent that offers `methods` is initialized to.
+fn offering(methods: &Value) -> Initialized {
+    let mut acp = Acp::new(PROFILE);
+    let _ = acp.account(
+        Account::Status,
+        Shape {
+            workspace: Some(Path::new("/work")),
+            ..Shape::default()
+        },
+    );
+    let _ = acp.spoken(Account::Status).unwrap();
+    let answer = response(
+        0,
+        &json!({
+            "protocolVersion": 1,
+            "agentInfo": {"name": "agent", "version": "1.0.0"},
+            "agentCapabilities": {},
+            "authMethods": methods,
+        }),
+    );
+    let _ = acp.told(Account::Status, &answer).unwrap();
+    acp.initialized().cloned().unwrap()
+}
+
+/// `method` as the live answer states `recorded`, then changed by `change`.
+fn stating(change: impl FnOnce(&mut Value)) -> Value {
+    let mut method = json!({
+        "type": "terminal",
+        "id": "cli",
+        "name": "At a terminal",
+        "command": "agent",
+        "args": ["login", "--device"],
+        "env": {"AFTER": "2", "LOGIN": "1"},
+    });
+    change(&mut method);
+    method
+}
+
+/// The agent's own word agrees with the record, whatever order it gives its
+/// environment in, and whatever else it offers.
+#[test]
+fn a_terminal_method_that_says_what_the_catalog_records_agrees() {
+    let said = offering(&json!([{"id": "web", "name": "In a browser"}, stating(|_| {})]));
+    assert!(said.states("cli", &recorded()));
+}
+
+/// Anything it says differently is a disagreement, as is not offering it, or
+/// offering it as something other than a command.
+#[test]
+fn a_terminal_method_that_differs_in_any_part_does_not_agree() {
+    let differing = [
+        stating(|method| method["command"] = json!("other")),
+        stating(|method| method["args"] = json!(["login"])),
+        stating(|method| method["args"] = json!(["--device", "login"])),
+        stating(|method| method["env"] = json!({"LOGIN": "1"})),
+        stating(|method| method["env"] = json!({"AFTER": "2", "LOGIN": "changed"})),
+        stating(|method| method["id"] = json!("elsewhere")),
+        stating(|method| method["type"] = json!("env_var")),
+    ];
+    for method in differing {
+        let said = offering(&json!([method]));
+        assert!(!said.states("cli", &recorded()), "{method}");
+    }
+    let said = offering(&json!([]));
+    assert!(!said.states("cli", &recorded()));
+}
+
+/// Two methods by one id, one of them the record's, are not believed: the
+/// agent has not said one thing of it.
+#[test]
+fn a_second_method_by_the_same_id_saying_otherwise_does_not_agree() {
+    let said = offering(&json!([
+        stating(|_| {}),
+        stating(|method| method["command"] = json!("other")),
+    ]));
+    assert!(!said.states("cli", &recorded()));
+}
+
+/// The route is compared only where the agent states one, since the protocol
+/// gives none of its own.
+#[test]
+fn the_route_is_compared_only_where_the_agent_states_it() {
+    let needing = offering(&json!([stating(|method| {
+        method["_meta"] = json!({"tty": true});
+    })]));
+    let not_needing = offering(&json!([stating(|method| {
+        method["_meta"] = json!({"tty": false});
+    })]));
+    let silent = offering(&json!([stating(|_| {})]));
+
+    assert!(!needing.states("cli", &recorded()));
+    assert!(not_needing.states("cli", &recorded()));
+    assert!(silent.states("cli", &recorded()));
+}
+
+/// A method past the bound of bytes, or not in the protocol's shape, is not
+/// believed, so a record of it is not agreed with.
+#[test]
+fn a_method_past_its_bound_or_out_of_shape_does_not_agree() {
+    let long = "x".repeat(16 * 1024);
+    for method in [
+        stating(|method| method["name"] = json!(long)),
+        stating(|method| method["args"] = json!("login --device")),
+        stating(|method| method["args"] = json!(["login", 1])),
+        stating(|method| method["env"] = json!({"LOGIN": 1})),
+    ] {
+        let said = offering(&json!([method]));
+        assert!(!said.states("cli", &recorded()));
+    }
+}
+
+/// More methods run at a terminal than are kept: the ones past the bound cannot
+/// be held against the record, so none agrees.
+#[test]
+fn more_terminal_methods_than_are_kept_does_not_agree() {
+    let mut methods = vec![stating(|_| {})];
+    methods.extend((0..16).map(|at| stating(|method| method["id"] = json!(format!("m{at}")))));
+
+    let said = offering(&json!(methods));
+
+    assert!(!said.states("cli", &recorded()));
 }

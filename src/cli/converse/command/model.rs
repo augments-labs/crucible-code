@@ -910,7 +910,7 @@ fn listed<T: Terminal>(
     let lines = lines(
         narrowing::every(&providers),
         &using,
-        terms.consent.routes(),
+        &terms.consent.routes(),
         terms.style().glyphs(),
     );
 

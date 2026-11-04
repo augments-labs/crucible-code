@@ -157,6 +157,33 @@ fn outside(backend: Box<dyn Backend>, relaunch: Box<dyn Relaunch>) -> Outside {
     )
 }
 
+/// A conversation on a catalog agent's route is named by the catalog's
+/// driver and has no window, whatever model it holds, since the agent chooses
+/// its own and reaches no provider whose windows this program records; one
+/// on Claude Code's route has its model's.
+#[test]
+fn a_catalog_agent_s_route_is_its_driver_s_and_has_no_window() {
+    for (bound, driver, windowed) in [
+        ("claude", "claude", true),
+        ("catalog:goose", "catalog", false),
+    ] {
+        let mut outside = Outside::new(
+            Installed {
+                backend: None,
+                relaunch: Again::launching([]).0,
+                route: RouteBinding::new(bound, "work", None).expect("a route"),
+            },
+            Transcript::new(),
+            Mode::Ask,
+            None,
+        );
+        outside.choose("claude-opus-5-5", None);
+
+        assert_eq!(outside.driver(), driver, "{bound}");
+        assert_eq!(outside.window().is_some(), windowed, "{bound}");
+    }
+}
+
 /// A conversation whose agent tells `turns` in order.
 fn scripted(turns: impl IntoIterator<Item = Told>) -> Outside {
     outside(Scripted::playing(turns), Again::launching([]).0)

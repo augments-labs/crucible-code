@@ -91,8 +91,9 @@ pub struct External {
     session: SessionRef,
     /// The program's own name for its session, as last posted.
     opened: Mutex<Option<SessionRef>>,
-    /// The command its program is looked up as.
-    driver: &'static str,
+    /// The name its program is known by: the command it is looked up as, or
+    /// a catalog agent's key.
+    driver: Box<str>,
     /// The `externalAgents` entry it is.
     instance: Box<str>,
     /// What it claims.
@@ -124,7 +125,7 @@ impl External {
     ) -> Self {
         let confined = Confined::new(host.claim(), Scope::Instance);
         Self {
-            driver: dialect.program(),
+            driver: dialect.program().into(),
             control: host.control().clone(),
             slot: Mutex::new(Slot::Idle(Running { host, dialect })),
             returned: Notify::new(),
@@ -202,7 +203,7 @@ impl Drop for Away<'_> {
 
 impl Backend for External {
     fn describe(&self) -> Description {
-        Description::new(self.driver, &self.instance, self.capabilities)
+        Description::new(&self.driver, &self.instance, self.capabilities)
     }
 
     fn open(&self, session: Option<SessionRef>) -> BoxFuture<'_, Result<SessionRef, Error>> {

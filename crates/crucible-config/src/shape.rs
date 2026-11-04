@@ -656,6 +656,23 @@ const INPUT: &[Field] = &[Field {
 /// Every answer `updates.check` accepts.
 pub(crate) const UPDATE_CHECK: &[&str] = &["auto", "never"];
 
+/// Every answer `agents.update` accepts.
+pub(crate) const AGENT_UPDATE: &[&str] = &["ask", "reviewed"];
+
+/// What crucible does about the installed agents it can update.
+///
+/// `update` widens: `reviewed` takes a new program in without a question, so
+/// a file that arrives with a checkout cannot be the one that says so.
+const AGENTS: &[Field] = &[Field {
+    name: "update",
+    about: "Whether an update of an installed coding agent to a version the reviewed catalog lists is put to you (ask) or taken without asking (reviewed). A first install, a rollback and a removal are always asked. Read only from the configuration file in your home directory",
+    shape: Shape::Choice(AGENT_UPDATE),
+    examples: &[],
+    usual: Some("ask"),
+    needed: false,
+    widens: true,
+}];
+
 /// Whether crucible finds out that it is out of date.
 ///
 /// A key rather than a fact about the build, because asking means reaching a
@@ -1473,8 +1490,19 @@ const EXTERNAL_AGENT: Shape = Shape::Fields(&[
     },
     Field {
         name: "profileDir",
-        about: "For an antigravity agent, and required for one: an absolute path to the profile directory it signs in and keeps its state under. Read only from the configuration file in your home directory",
+        about: "For an antigravity agent, and required for one, or a catalog agent: an absolute path to the profile directory it signs in and keeps its state under. Read only from the configuration file in your home directory",
         shape: Shape::Text,
+        examples: &[],
+        usual: None,
+        needed: false,
+        widens: true,
+    },
+    Field {
+        name: "agent",
+        about: "For a catalog agent, and required for one: the key the catalog reviewed it under, 1 to 32 lowercase letters, digits and hyphens, never a driver's word. Read only from the configuration file in your home directory",
+        shape: Shape::Pattern(access::AGENT),
+        // No example: an example is checked written beside the example
+        // driver, and an agent beside a claude instance is refused.
         examples: &[],
         usual: None,
         needed: false,
@@ -1502,6 +1530,28 @@ const EXTERNAL_AGENT: Shape = Shape::Fields(&[
         usual: None,
         needed: false,
         widens: false,
+    },
+    Field {
+        name: "cloudProject",
+        about: "For an antigravity agent: the ID of the Google Cloud project its business sign-in is billed to, written with cloudLocation and only with it. 6 to 30 lowercase letters, digits and hyphens, starting with a letter and not ending with a hyphen. Takes effect at the next business sign-in. Read only from the configuration file in your home directory",
+        shape: Shape::Pattern(access::CLOUD_PROJECT),
+        // No example: an example is checked written beside the example
+        // driver, and a project beside a claude instance is refused.
+        examples: &[],
+        usual: None,
+        needed: false,
+        // Which project is billed, and which location's host the agent's
+        // sandbox opens, is the user's to choose and never a checkout's.
+        widens: true,
+    },
+    Field {
+        name: "cloudLocation",
+        about: "For an antigravity agent: the Google Cloud location its business sign-in is billed in, such as us-central1, written with cloudProject and only with it. One host name label of 1 to 63 lowercase letters, digits and hyphens, neither starting nor ending with a hyphen. Takes effect at the next business sign-in. Read only from the configuration file in your home directory",
+        shape: Shape::Pattern(access::CLOUD_LOCATION),
+        examples: &[],
+        usual: None,
+        needed: false,
+        widens: true,
     },
 ]);
 
@@ -1620,6 +1670,15 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         usual: None,
         needed: false,
         widens: true,
+    },
+    Field {
+        name: "agents",
+        about: "What crucible does about the installed coding agents it can update",
+        shape: Shape::Fields(AGENTS),
+        examples: &[],
+        usual: None,
+        needed: false,
+        widens: false,
     },
     Field {
         name: "input",

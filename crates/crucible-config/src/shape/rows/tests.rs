@@ -33,6 +33,10 @@ const EXCLUDED: &[(&str, &str)] = &[
         "installed agents a provider may be reached through: programs to start, read only from the user's own file",
     ),
     (
+        "agents.update",
+        "takes a new program in without asking, so it is read only from the user's own file",
+    ),
+    (
         "systemPrompt.custom",
         "the system prompt, which is free text",
     ),

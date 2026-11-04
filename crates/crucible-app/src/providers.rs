@@ -22,6 +22,7 @@ use crucible_provider::{
 use crucible_registry::{
     Collision, Provenance, Registered, Registry, RegistryError, RegistrySnapshot, SourceKind,
 };
+use crucible_types::AgentKey;
 
 use crate::AppError;
 use crate::access::{self, AccessError, KeySource, Route};
@@ -754,9 +755,36 @@ impl Rows {
     }
 
     /// The names the store writes credentials under.
+    ///
+    /// The rows' alone: the key an agent signs in with is written under
+    /// [`Rows::signing_in`]'s name, which is never told to the store, so no
+    /// write of a provider's takes one out and no provider is served by one.
     #[must_use]
     pub fn names(&self) -> Names {
         Names::new(self.rows.iter().map(|row| row.stored))
+    }
+
+    /// The name the key the agent `agent` signs in with by the method
+    /// `method` is written under, `<agent>@<method>`, which never changes once
+    /// written.
+    ///
+    /// # Errors
+    ///
+    /// [`Unnamed::Provider`] where `agent` is the name of a provider this
+    /// build has, or of what a row's credential is stored under, since the
+    /// store reads everything before a name's `@` as its provider: that agent's
+    /// key could take the provider's out, or be served as its. Else
+    /// [`Unnamed::Method`] where the method's id cannot be part of a name.
+    pub fn signing_in(&self, agent: &AgentKey, method: &str) -> Result<String, Unnamed> {
+        let agent = agent.as_str();
+        let provided = PROVIDERS.iter().any(|served| served.name == agent)
+            || self.rows.iter().any(|row| {
+                row.provider == agent || crucible_auth::provider_of(row.stored) == agent
+            });
+        if provided {
+            return Err(Unnamed::Provider(agent.to_owned()));
+        }
+        crucible_auth::signing_in(agent, method).ok_or(Unnamed::Method)
     }
 
     /// The row a credential held in `kind`'s map under `name` was given on.
@@ -815,6 +843,20 @@ impl Rows {
         let Held { kind, name } = stored.held(provider)?;
         self.of(kind, &name)
     }
+}
+
+/// Why an agent's key has no name to be written under.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum Unnamed {
+    /// The agent is named as a provider is.
+    #[error("the agent {0} has a provider's name, so a key it signs in with is never kept for it")]
+    Provider(String),
+    /// The method's id cannot be part of a name.
+    #[error(
+        "the method's id is not one a kept key can be named by: at most 64 ASCII letters, digits, \
+         '-', '_' or '.'"
+    )]
+    Method,
 }
 
 /// What the generated table knows about a model's limits, if it knows anything.

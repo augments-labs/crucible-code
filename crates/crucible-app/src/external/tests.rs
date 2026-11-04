@@ -158,6 +158,34 @@ async fn a_clean_turn_is_complete() {
     );
 }
 
+/// A catalog agent's run is described by the agent's key, the name its
+/// client gives its program, whatever command started it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_catalog_agent_s_run_is_described_by_its_key() {
+    let sample = Sample::new("external-catalog-described");
+    let peer = fake_peer::install(
+        &sample.root(),
+        "plain",
+        &Script::of([Reply::new().hear_out()]),
+    )
+    .expect("the fake peer is built");
+    let control = Control::new().expect("a control");
+    let sandbox = Arc::new(LocalSandbox::new().watching_on(Handle::current()));
+    let host = launched(sandbox, &peer, &control).await.expect("started");
+    let backend = External::new(
+        host,
+        crate::launching::tests::cataloged().dialect(crucible_tools::Mode::Ask),
+        SessionRef::new("one").expect("a name"),
+        "work",
+        claims(),
+    );
+
+    let described = backend.describe();
+    let _closed = backend.close().await;
+
+    assert_eq!(described.driver().as_str(), "peer");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_crash_after_an_effect_is_incomplete() {
     let sample = Sample::new("external-crash");

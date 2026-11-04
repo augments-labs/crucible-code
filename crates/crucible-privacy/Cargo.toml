@@ -16,7 +16,9 @@ thiserror.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 # No-follow opens make the same lookup both reject a symbolic-link leaf and
-# return the handle whose permissions are tightened; std exposes no O_NOFOLLOW.
+# return the handle whose permissions are tightened, and a held directory is
+# written and renamed into by descriptor; std exposes neither O_NOFOLLOW nor
+# the descriptor-relative calls.
 rustix.workspace = true
 
 [target.'cfg(windows)'.dependencies]

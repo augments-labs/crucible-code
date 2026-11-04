@@ -1,0 +1,33 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "version": 1,
+  "components": [
+    {
+      "type": "library",
+      "name": "serde",
+      "version": "1.0.210",
+      "licenses": [{"expression": "MIT OR Apache-2.0"}]
+    },
+    {
+      "type": "application",
+      "name": "fake-agent",
+      "version": "1.0.0",
+      "licenses": [
+        {"license": {"id": "MIT", "text": {"content": "Copyright (c) 2026 The Fake Agent Authors\n"}}}
+      ]
+    },
+    {
+      "type": "library",
+      "name": "unwinder",
+      "version": "0.3.1",
+      "licenses": [{"expression": "Apache-2.0 WITH LLVM-exception"}]
+    },
+    {
+      "type": "library",
+      "name": "hasher",
+      "version": "0.17.8",
+      "licenses": [{"expression": "(Unlicense OR ISC) AND MIT"}]
+    }
+  ]
+}

@@ -76,12 +76,25 @@ impl Screen {
             return Ok(None);
         }
 
-        write(ENTER)?;
+        enter()?;
 
         Ok(Some(Self {
             leave: || write(LEAVE),
         }))
     }
+}
+
+/// Takes the alternate screen for a session that has already decided it holds
+/// one, for [`super::suspend`], which puts back a screen the guard still holds
+/// rather than taking one of its own.
+pub(super) fn enter() -> io::Result<()> {
+    write(ENTER)
+}
+
+/// Gives the alternate screen back, for the same reason [`enter`] exists.
+#[cfg(unix)]
+pub(super) fn leave() -> io::Result<()> {
+    write(LEAVE)
 }
 
 impl Drop for Screen {

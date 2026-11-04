@@ -5,6 +5,7 @@ use std::io::Cursor;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use crucible_app::catalog_fetch::trust_in;
 use crucible_app::content_use::{Consent, LAUNCHING, Routes, Serving, WARNED, agent_route};
 use crucible_runner::Tools;
 use crucible_session::Session;
@@ -70,7 +71,7 @@ fn down_a_pipe_a_warned_route_with_no_yes_ends_the_run_and_sends_nothing() {
         .iter()
         .find(|warned| warned.route == "key:google")
         .expect("the Google key row is warned");
-    assert!(said.contains(google.warning.sentence), "{said}");
+    assert!(said.contains(google.warning.sentence.as_ref()), "{said}");
     assert!(said.ends_with("answer it once in a terminal."), "{said}");
     assert!(
         crate::cli::Fatal::Unanswered(said.clone())
@@ -194,7 +195,7 @@ fn a_missing_agent_program_is_refused_before_the_warning_is_put() {
     use crucible_app::backends::REGISTRY;
     use crucible_app::launching::{Agent, Controls, Launcher, Runs};
     use crucible_app::outside::Installed;
-    use crucible_config::Driver;
+    use crucible_config::{Driver, Serves};
     use crucible_sandbox::{SandboxEnablement, SandboxPolicy, SandboxService};
     use crucible_sandbox_local::LocalSandbox;
     use crucible_session::RouteBinding;
@@ -203,7 +204,7 @@ fn a_missing_agent_program_is_refused_before_the_warning_is_put() {
 
     let consent = Consent::new(Routes::production());
     let route = Route::External {
-        provider: "anthropic",
+        serves: Serves::Provider("anthropic"),
         instance: "work".into(),
         driver: Driver::Claude,
         executable: std::env::temp_dir()
@@ -213,11 +214,13 @@ fn a_missing_agent_program_is_refused_before_the_warning_is_put() {
         profile: None,
         model: None,
         effort: None,
+        location: None,
         enabled: true,
     };
     let agent = Agent::routed(&route, &REGISTRY, |_| None).expect("Claude Code's route");
+    let state = std::env::temp_dir().join("crucible-no-such-state");
     let reason = agent
-        .program(&consent)
+        .program(&consent, &trust_in(&state))
         .expect_err("the program is not there")
         .to_string();
     let runtime = crate::cli::fake::runtime();
@@ -227,7 +230,14 @@ fn a_missing_agent_program_is_refused_before_the_warning_is_put() {
         .with_enabled(false);
     let sandbox: Arc<dyn SandboxService> = Arc::new(LocalSandbox::new());
     let runs = Runs::new(
-        Launcher::new(sandbox, runtime.clone(), &policy, &consent),
+        Launcher::new(
+            sandbox,
+            runtime.clone(),
+            &policy,
+            &consent,
+            &state,
+            &std::env::temp_dir().join("crucible-no-such-sessions"),
+        ),
         Arc::new(SandboxEnablement::new(false, false)),
         agent,
         "work",

@@ -20,7 +20,11 @@
 //! not held while the question is out; [`perform`] answers the same command
 //! whole. [`account`] is the door for an account operation on an installed
 //! agent: it asks a [`Front`] which way to go before anything changes, so
-//! [`perform`] refuses those commands.
+//! [`perform`] refuses those commands. [`agents::run`] is the agents door:
+//! it lists, installs, updates, rolls back, removes and verifies the agents
+//! the reviewed catalog offers, with no conversation at all, and asks a
+//! [`Front`] before anything is fetched or changed; every other door refuses
+//! those commands.
 //!
 //! What comes back is the application's own value — [`Performed`], [`Ended`] —
 //! and not yet the contract's. A terminal draws from the first, because a
@@ -36,6 +40,7 @@
 //! [`deciding`].
 
 pub mod accounts;
+pub mod agents;
 pub(crate) mod asking;
 pub mod deciding;
 mod performing;

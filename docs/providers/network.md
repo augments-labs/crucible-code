@@ -5,7 +5,7 @@ environment, the certificates it trusts and how long it waits.
 
 ## What crucible connects to
 
-crucible makes requests of its own for four things, and nothing else:
+crucible makes requests of its own for seven things, and nothing else:
 
 - **The provider's endpoint**, for every request a turn makes and for
   [`web_search` and `web_fetch`](../tools/web.md), which are asked of the same
@@ -22,6 +22,30 @@ crucible makes requests of its own for four things, and nothing else:
   fails keeps the last answer and still counts as that day's check.
   `{ "updates": { "check": "never" } }` turns it off
   ([`updates`](../configuration/configuration.md#updates)).
+- **`github.com`**, for the catalog of agents crucible's own review admitted.
+  It is asked once crucible has started, no sooner than a day after the last
+  time it was asked, whether or not that got a catalog crucible believes, and is
+  given thirty seconds for the two files it is made of; GitHub answers with a
+  redirect to its asset storage, and crucible follows a redirect only to
+  `github.com` or one of GitHub's release-asset hosts, over `https` on the
+  ordinary port. A catalog is believed only if its signature verifies under a
+  key built into crucible. `{ "updates": { "check": "never" } }` turns off the
+  asking crucible does on its own
+  ([`updates`](../configuration/configuration.md#updates)); opening `/catalog`
+  or `/login`'s agent choice, or running a `crucible agents` command, asks for
+  the catalog whatever it says.
+- **`cdn.agentclientprotocol.com`**, for the ACP Registry's index when
+  `/catalog` opens, when `crucible agents search` runs, or when an install,
+  add, update or rollback starts. It is asked within one megabyte and thirty
+  seconds, and the cached index is reused for five minutes. The registry is
+  unsigned and not reviewed by Crucible: there is no signature, serial,
+  expiry, revocation list or anti-rollback.
+- **The archive host a registry entry names, and GitHub's release-asset
+  hosts**, for a registry agent's install. The archive is downloaded within the
+  registry's 512 MiB cap, at the host the entry names, and a redirect is
+  followed only to `github.com`, `objects.githubusercontent.com`,
+  `release-assets.githubusercontent.com` or
+  `github-releases.githubusercontent.com`, over `https` on the ordinary port.
 - **`api.github.com`, `github.com` and `githubusercontent.com`**, when you run
   [`crucible update`](../reference/cli.md#update---check----dry-run). It asks
   `api.github.com` which release is the newest whatever `updates.check` says,
