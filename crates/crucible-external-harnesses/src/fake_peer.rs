@@ -489,6 +489,7 @@ pub fn archive(members: &[(&str, &[u8])]) -> Vec<u8> {
     for (path, bytes) in members {
         let options = SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Stored)
+            .system(zip::System::Unix)
             .unix_permissions(0o755);
         writer.start_file(*path, options).expect("a member name");
         writer.write_all(bytes).expect("a member");
@@ -880,4 +881,27 @@ fn linger(directory: &Path) -> ExitCode {
         std::thread::sleep(BEAT);
     }
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    /// The fake archive's members carry the Unix mode a survey reads, even
+    /// where the writer would otherwise stamp a DOS system and lose the
+    /// executable bit.
+    #[test]
+    fn the_fake_archive_marks_each_member_executable() {
+        let archive = super::archive(&[("goose.exe", b"the program"), ("script", b"{}")]);
+        let mut zip = zip::ZipArchive::new(Cursor::new(archive)).expect("a zip archive");
+
+        for name in ["goose.exe", "script"] {
+            let member = zip.by_name(name).expect("a named member");
+            assert_eq!(
+                member.unix_mode().map(|mode| mode & 0o777),
+                Some(0o755),
+                "{name}"
+            );
+        }
+    }
 }
