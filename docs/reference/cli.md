@@ -636,8 +636,10 @@ first, and the versions installed, such as `goose: offers 2.0.0, 1.0.0;
 installed 1.0.0` or `codex: offers 0.1.0; not installed`. `TEXT` keeps only the
 agents whose name holds it, ignoring case. Antigravity, which `/login` sets up,
 is left out, as it is from `/catalog`. Where the catalog or the registry could
-not be read, standard error says so once, with why. It asks nothing, changes
-nothing and ends 0.
+not be read, standard error says so once, with why. When the registry is read,
+standard error also carries its source line — where it was read and that it is
+not reviewed by Crucible — beside the one-line-per-agent list on standard
+output. It asks nothing, changes nothing and ends 0.
 
 ### `agents install AGENT [VERSION]`
 
