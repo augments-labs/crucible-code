@@ -69,16 +69,19 @@
 //! A release the ACP Registry offers is asked about as a registry row, and
 //! its question says that crucible will download the vendor's archive, survey
 //! it and run the vendor's program once for a probe after the yes; a failed
-//! probe installs nothing. Its receipt records the source and the probe
-//! record the caller supplies through `Door::switch`, with the platform the
-//! probe was taken for, what the program answered and the sizes the survey
-//! found.
+//! probe installs nothing. Its one archive is downloaded within the registry's
+//! cap, surveyed from the file it landed in, and the probe is taken before
+//! anything is committed. Its receipt records the source and the probe record
+//! `Door::switch` took, with the platform the probe was for, what the program
+//! answered and the sizes the survey found.
 //!
 //! After a yes, the release the question named is the one installed: each
 //! artifact is downloaded within its pin by [`crate::agent_download`] into a
 //! file beside the staging directory, unpacked from it into that directory
 //! against its file list, a wheel of a release a pinned interpreter starts
 //! with its files under `site/`, and committed to the store with its receipt.
+//! A registry artifact has no exact size and no file list: it is downloaded
+//! by [`agent_download::capped`] and committed from the list its survey wrote.
 //! Such a release's launcher, `launch.py`, is written at the top of the
 //! version for its entry point from a template that never changes and is
 //! committed and named in the receipt with the rest, so a second install of
