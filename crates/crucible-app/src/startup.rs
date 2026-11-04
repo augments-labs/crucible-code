@@ -616,6 +616,7 @@ fn reopened_on(
     let (agent, route) = launching::reopening(
         &startup.settings.external_agents(),
         agents,
+        startup.state,
         |name| (startup.from)(name).map(OsString::from),
         startup.mode,
         opened,

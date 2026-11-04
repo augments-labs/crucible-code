@@ -39,7 +39,7 @@
 //! | sign out | sign out, its agent's route unanswered, declined | [`LogoutOutcome::Undecided`] |
 //! | sign out | sign out, its agent's route unanswered, the yes not written | [`LogoutOutcome::HoldUnkept`] |
 //! | sign out, its agent's route unanswered, the agent cannot be started | sign out | [`LogoutOutcome::Undecided`], the route not asked |
-//! | sign out, an agent this release has no launch for, as a catalog agent whose row is not listed | sign out | [`LogoutOutcome::Undecided`], said so, the route not asked |
+//! | sign out, an agent this release has no launch for, or a catalog agent the catalog believed gives no row | sign out | [`LogoutOutcome::Undecided`], said so, the route not asked |
 //! | sign out, a run of an instance sharing the scope not confirmed stopped | sign out | [`LogoutOutcome::Undecided`], the route not asked |
 //! | sign out | disconnect instead | as disconnect |
 //! | any | cancel, back, or nobody | [`LogoutOutcome::Undecided`] |
@@ -171,7 +171,7 @@ use super::agents::LISTED;
 use super::deciding::{Confirmation, Front, confirmed};
 use super::performing::{Desk, Performed};
 use crate::Conversation;
-use crate::backends::AgentRow;
+use crate::backends::{AgentRow, Unbelieved};
 use crate::launching::{Unlaunched, quoted};
 use crate::remember::{self, RememberError};
 
@@ -511,10 +511,20 @@ pub async fn account(
                     Some(Picked::Moving(action)) => {
                         return Performed::Account(Account::AgentChosen(action));
                     }
+                    Some(Picked::Refused(agent, why)) => {
+                        let capabilities = request.capabilities();
+                        return Performed::Account(
+                            unconnected(capabilities, front, &agent, &why).await,
+                        );
+                    }
                     None => return Performed::Account(Account::Unconnected),
                 };
-                let Some(provider) = served(desk, row) else {
-                    return Performed::Refused(ErrorCode::UnknownProvider.into());
+                let provider = match &row {
+                    AgentRow::Built(row) => match served(desk, row) {
+                        Some(provider) => Some(provider),
+                        None => return Performed::Refused(ErrorCode::UnknownProvider.into()),
+                    },
+                    AgentRow::Catalog(_) => None,
                 };
                 let asked = Connecting {
                     provider,
@@ -535,17 +545,31 @@ pub async fn account(
             else {
                 return Performed::Refused(ErrorCode::InvalidArgument.into());
             };
-            let row = match crate::backends::REGISTRY.row(agent.driver(), agent.agent()) {
-                Some(AgentRow::Built(row)) => row,
-                // A catalog agent signs in to its own vendor, and no provider
-                // of this build's is reached through it.
-                Some(AgentRow::Catalog(_)) => {
-                    return Performed::Refused(ErrorCode::UnknownProvider.into());
+            let (provider, row) = match crate::backends::REGISTRY.row(agent.driver(), agent.agent())
+            {
+                Some(AgentRow::Built(row)) => {
+                    let Some(provider) = served(desk, row) else {
+                        return Performed::Refused(ErrorCode::UnknownProvider.into());
+                    };
+                    (Some(provider), AgentRow::Built(row))
                 }
-                None => return Performed::Refused(ErrorCode::InvalidArgument.into()),
-            };
-            let Some(provider) = served(desk, row) else {
-                return Performed::Refused(ErrorCode::UnknownProvider.into());
+                // A catalog agent signs in to its own vendor, and no provider
+                // of this build's is reached through it: the conversation is
+                // only moved onto it, under the row the catalog believed gives.
+                Some(AgentRow::Catalog(_)) | None if agent.driver() == Driver::Catalog => {
+                    match catalog_row(conversation, &agent) {
+                        Ok(row) => (None, row),
+                        Err(why) => {
+                            let capabilities = request.capabilities();
+                            return Performed::Account(
+                                unconnected(capabilities, front, &agent, &why).await,
+                            );
+                        }
+                    }
+                }
+                Some(AgentRow::Catalog(_)) | None => {
+                    return Performed::Refused(ErrorCode::InvalidArgument.into());
+                }
             };
             let asked = Connecting {
                 provider,
@@ -736,8 +760,8 @@ async fn still_running(
 /// Settles, before a sign-out changes anything, that the agent's own program
 /// can be run for it, and puts the agent's route to `front` where it has no
 /// yes. A launch the launcher would refuse, the program not installed, the
-/// row withheld or no row for the agent at all, as for a catalog agent whose
-/// row the registry does not list, is said to be so first, whatever state the
+/// row withheld or no row for the agent at all, as for a catalog agent the
+/// catalog believed gives none, is said to be so first, whatever state the
 /// route is in, and the route is not put: nobody agrees to what cannot happen,
 /// and nothing is written for a sign-out that cannot run. Answers the account
 /// to end the sign-out with where the launch is so refused and the client goes
@@ -751,17 +775,32 @@ async fn launch_asked(
     agent: &ExternalAgent,
 ) -> Option<Account> {
     let capabilities = request.capabilities();
-    let Some(row) = conversation.agents().row(agent.driver(), agent.agent()) else {
-        return Some(
-            unrun(
-                capabilities,
-                front,
-                agent,
-                "This release has no launch for its driver, so the agent's own sign-out \
-                 cannot run, and nothing is changed.",
-            )
-            .await,
-        );
+    let row = match conversation.steps() {
+        Some(steps) => steps.row_of(agent),
+        None => conversation
+            .agents()
+            .row(agent.driver(), agent.agent())
+            .ok_or_else(|| Unbelieved::NoLaunch.into()),
+    };
+    let row = match row {
+        Ok(row) => row,
+        Err(Unlaunched::Unbelieved(Unbelieved::NoLaunch)) => {
+            return Some(
+                unrun(
+                    capabilities,
+                    front,
+                    agent,
+                    "This release has no launch for its driver, so the agent's own sign-out \
+                     cannot run, and nothing is changed.",
+                )
+                .await,
+            );
+        }
+        Err(why) => {
+            let said =
+                format!("{why} The agent's own sign-out cannot run, and nothing is changed.");
+            return Some(unrun(capabilities, front, agent, &said).await);
+        }
     };
     // A sign-out offers no move on the agent in place of itself.
     if found(
@@ -822,6 +861,36 @@ async fn unrun(
     };
     let _seen = confirmed(capabilities, front, &unrun).await;
     Account::Undecided
+}
+
+/// Tells `front` that `agent` cannot be connected for `why`, and that nothing
+/// is changed, and answers the account to end it with. A catalog agent reaches
+/// no provider of this build's, so nothing of it is written that a next run
+/// could start from, and [`Account::Unmoved`] would say what is not so.
+async fn unconnected(
+    capabilities: crucible_client_api::Capabilities,
+    front: &mut dyn Front,
+    agent: &ExternalAgent,
+    why: &str,
+) -> Account {
+    // A reason can be a whole sentence already, as a catalog refusal is, or a
+    // clause that needs its full stop, as the sandbox policy's does: one full
+    // stop ends the fact either way.
+    let said = if why.ends_with('.') {
+        why.to_owned()
+    } else {
+        format!("{why}.")
+    };
+    let refused = Confirmation {
+        asks: format!("{} cannot be connected.", agent.name()),
+        facts: vec![
+            said,
+            format!("Agent: {}, run as {}.", agent.name(), agent.executable()),
+        ],
+        choices: vec![("Go back".to_owned(), "Change nothing.".to_owned())],
+    };
+    let _seen = confirmed(capabilities, front, &refused).await;
+    Account::Unconnected
 }
 
 /// Takes every instance in `sharing` out of use from Crucible, durably, and
@@ -903,6 +972,23 @@ async fn sign_out(
     }
 }
 
+/// The row the configured catalog `agent` is run as, its route taught so it is
+/// asked about; or what to say, with nothing started: its row cannot be made,
+/// or it is disconnected, which only the user file puts back for an agent that
+/// serves no provider.
+fn catalog_row(conversation: &Conversation, agent: &ExternalAgent) -> Result<AgentRow, String> {
+    if !agent.enabled() {
+        return Err(crate::launching::disconnected(
+            agent.name(),
+            &agent.serves(),
+        ));
+    }
+    let Some(steps) = conversation.steps() else {
+        return Err("the sandbox policy its runs are confined by could not be built".to_owned());
+    };
+    steps.row_of(agent).map_err(|why| why.to_string())
+}
+
 /// The provider `row`'s agent signs in to, where this build offers it.
 fn served(desk: &Desk<'_>, row: &crate::backends::Row) -> Option<&'static str> {
     let provider = row.driver.serves(None)?.provider()?;
@@ -911,20 +997,21 @@ fn served(desk: &Desk<'_>, row: &crate::backends::Row) -> Option<&'static str> {
         .then_some(provider)
 }
 
-/// A connect asked for: the provider to reach, the instance to reach it
-/// through, the row of that instance's agent, and whether the user file
-/// already names the instance or it is written with the route.
+/// A connect asked for: the provider to reach, where the agent reaches one of
+/// this build's, the instance to reach it through, the row of that instance's
+/// agent, and whether the user file already names the instance or it is
+/// written with the route.
 struct Connecting<'a> {
-    provider: &'static str,
+    provider: Option<&'static str>,
     agent: &'a ExternalAgent,
-    row: &'static crate::backends::Row,
+    row: AgentRow,
     written: bool,
 }
 
 /// What a connect naming no instance goes through: the agent the client
 /// picks, the instance of it, its row, and whether the user file already
 /// names the instance.
-type Chosen = (ExternalAgent, &'static crate::backends::Row, bool);
+type Chosen = (ExternalAgent, AgentRow, bool);
 
 /// What the client picked when asked which agent to connect.
 enum Picked {
@@ -932,7 +1019,20 @@ enum Picked {
     Through(Chosen),
     /// A move on an agent, in place of the connect.
     Moving(AgentAction),
+    /// A catalog instance whose row is refused, and why.
+    Refused(ExternalAgent, String),
 }
+
+/// What was chosen of what Crucible can do with a catalog agent.
+enum Managed {
+    /// One of the moves the agents door carries out.
+    Moving(AgentAction),
+    /// Moving the conversation onto its configured instance.
+    Connecting(ExternalAgent),
+}
+
+/// The choice that moves a conversation onto a configured catalog instance.
+const CONNECT: &str = "Connect";
 
 /// A move offered as a choice: its name, what it does, and what the connect
 /// ends with once it is chosen.
@@ -1009,7 +1109,13 @@ async fn choose(
             // Cancel.
             let key = keys.get(picked.checked_sub(rows.len())?)?;
             match manage(front, capabilities, releases.as_ref()?, key).await? {
-                Some(action) => return Some(Picked::Moving(action)),
+                Some(Managed::Moving(action)) => return Some(Picked::Moving(action)),
+                Some(Managed::Connecting(agent)) => {
+                    return Some(match catalog_row(conversation, &agent) {
+                        Ok(row) => Picked::Through((agent, row, true)),
+                        Err(why) => Picked::Refused(agent, why),
+                    });
+                }
                 None => continue,
             }
         };
@@ -1036,7 +1142,9 @@ async fn choose(
         )
         .await?
         {
-            Looked::Startable => return Some(Picked::Through((agent, row, written))),
+            Looked::Startable => {
+                return Some(Picked::Through((agent, AgentRow::Built(row), written)));
+            }
             Looked::Moving(action) => return Some(Picked::Moving(action)),
             Looked::Back => {}
         }
@@ -1138,10 +1246,9 @@ fn listed(trust: &Trust) -> (Vec<(AgentKey, Box<str>)>, bool) {
     let mut more = false;
     for offer in trust.offers(None) {
         let key = offer.entry.key;
-        let built = Driver::ALL
-            .iter()
-            .any(|driver| driver.name() == key.as_str());
-        if built || agents.iter().any(|(listed, _)| *listed == key) {
+        if crate::backends::kept_word(key.as_str())
+            || agents.iter().any(|(listed, _)| *listed == key)
+        {
             continue;
         }
         if agents.len() == LISTED {
@@ -1199,14 +1306,16 @@ fn instances_of(releases: &Releases, key: &AgentKey) -> Result<Vec<ExternalAgent
 }
 
 /// Asks `front` what Crucible should do with the catalog agent `key`, which
-/// no provider of this build's is reached through, so it is never connected.
+/// no provider of this build's is reached through, so connecting it writes no
+/// route and only moves the conversation onto it.
 ///
 /// The instance it speaks of is chosen as [`instance`] chooses one, among the
 /// instances of `key`: the one configured, one asked for of several, or none.
 /// It says which versions crucible's store holds of the agent, that instance
 /// or that there is none, and the instance's note; then offers the moves that
 /// apply, as [`moves`] finds them, a sign-in by each method the agent's entry
-/// gives for a configured instance, and going back. Where the user file cannot
+/// gives for a configured instance, connecting that instance, and going back.
+/// Where the user file cannot
 /// be read it says so, in what the door says of it, and offers going back alone,
 /// since the door refuses every move on that same read. Answers the move chosen,
 /// `Some(None)` where the client went back to the list of agents, and nothing
@@ -1216,7 +1325,7 @@ async fn manage(
     capabilities: crucible_client_api::Capabilities,
     releases: &Releases,
     key: &AgentKey,
-) -> Option<Option<AgentAction>> {
+) -> Option<Option<Managed>> {
     let shown = quoted(key.as_str());
     let noted = |one: &ExternalAgent| releases.note(key, one.executable());
     let read = instances_of(releases, key);
@@ -1258,7 +1367,7 @@ async fn manage(
     if let Some(one) = &instance {
         let named: Vec<String> = offered.iter().map(|(name, ..)| name.clone()).collect();
         let mut taken: Vec<&str> = named.iter().map(String::as_str).collect();
-        taken.push("Go back");
+        taken.extend([CONNECT, "Go back"]);
         let methods = methods_of(&releases.trust, key, running.as_ref());
         let (signing, more) = sign_ins(one, methods, &taken);
         if more {
@@ -1266,10 +1375,19 @@ async fn manage(
         }
         offered.extend(signing);
     }
-    let (mut choices, actions): (Vec<(String, String)>, Vec<AgentAction>) = offered
+    let (mut choices, mut actions): (Vec<(String, String)>, Vec<Managed>) = offered
         .into_iter()
-        .map(|(name, says, action)| ((name, says), action))
+        .map(|(name, says, action)| ((name, says), Managed::Moving(action)))
         .unzip();
+    // A row is made only for a release the store holds, so an instance run as
+    // anything else has nothing to connect.
+    if let Some(one) = instance.filter(|_| running.is_some()) {
+        choices.push((
+            CONNECT.to_owned(),
+            "Move this conversation onto it.".to_owned(),
+        ));
+        actions.push(Managed::Connecting(one));
+    }
     choices.push(("Go back".to_owned(), "Choose another agent.".to_owned()));
     let question = Confirmation {
         asks: format!("What should Crucible do with {shown}?"),
@@ -1730,7 +1848,7 @@ async fn connect(
     let Connecting {
         provider,
         agent,
-        row,
+        ref row,
         written,
     } = *asked;
     let capabilities = request.capabilities();
@@ -1742,20 +1860,20 @@ async fn connect(
     // Nothing of the agent's is started before its route has a yes, and a yes
     // is written down before anything is.
     if let Some(consent) = conversation.consent()
-        && let Some(warned) = consent.asks(row.route)
+        && let Some(warned) = consent.asks(row.route())
     {
         // A launch that is refused whatever the answer is not asked about.
-        let install = installable(Releases::of(capabilities, desk).as_ref(), row);
+        let install = match row {
+            AgentRow::Built(row) => installable(Releases::of(capabilities, desk).as_ref(), row),
+            AgentRow::Catalog(_) => None,
+        };
         match found(
             conversation,
             desk,
             front,
             capabilities,
             agent,
-            (
-                &AgentRow::Built(row),
-                &shown_as(conversation, &AgentRow::Built(row)),
-            ),
+            (row, &shown_as(conversation, row)),
             install.as_ref(),
         )
         .await
@@ -1780,7 +1898,13 @@ async fn connect(
         let (question, moves) = match &status {
             // Signed in, it is already connected: there is nothing to ask.
             Reading::Signed(Authentication::SignedIn) => {
-                return moved(conversation, desk, provider, agent, written).await;
+                let moved = moved(conversation, desk, provider, agent, written).await;
+                return match (provider, moved) {
+                    (None, Account::Unmoved(why)) => {
+                        unconnected(capabilities, front, agent, &why).await
+                    }
+                    (_, moved) => moved,
+                };
             }
             Reading::Signed(Authentication::SignedOut) => signed_out(
                 agent,
@@ -1810,18 +1934,22 @@ async fn connect(
     Account::Unconnected
 }
 
-/// [`commit`], then moves `conversation` onto `agent`, from whichever model
+/// [`commit`], where a `provider` is reached through it, then moves
+/// `conversation` onto `agent`, from whichever model
 /// or route it was on, as [`Conversation::onto`] says. A conversation already
 /// on `agent` stays where it is, and its next turn starts the agent again
 /// where it was disconnected from it.
 async fn moved(
     conversation: &mut Conversation,
     desk: &Desk<'_>,
-    provider: &str,
+    provider: Option<&str>,
     agent: &ExternalAgent,
     written: bool,
 ) -> Account {
-    let committed = commit(desk, provider, agent, written);
+    // An agent that reaches no provider of this build's has no route to write.
+    let committed = provider.map_or(Account::Connected, |provider| {
+        commit(desk, provider, agent, written)
+    });
     if !matches!(committed, Account::Connected) {
         return committed;
     }
@@ -1886,11 +2014,15 @@ fn commit(desk: &Desk<'_>, provider: &str, agent: &ExternalAgent, written: bool)
 /// that does not claim it gives `None` and is offered no move.
 fn signed_out(
     agent: &ExternalAgent,
-    row: &'static crate::backends::Row,
+    row: &AgentRow,
     written: Option<bool>,
 ) -> (Confirmation, Vec<AgentAction>) {
     let name = agent.name();
-    let how = match (row.sign_in)(agent.profile().map(Path::new)) {
+    let told = match row {
+        AgentRow::Built(row) => (row.sign_in)(agent.profile().map(Path::new)),
+        AgentRow::Catalog(_) => None,
+    };
+    let how = match told {
         Some(command) => {
             format!("Sign in: run `{command}` in a terminal, then choose Check again.")
         }
@@ -1901,7 +2033,7 @@ fn signed_out(
         profiled(agent),
         how,
     ];
-    let methods = written.map_or_else(Vec::new, |_| AgentRow::Built(row).methods());
+    let methods = written.map_or_else(Vec::new, |_| row.methods());
     let (offered, more) = match written {
         Some(true) => sign_ins(agent, methods, &[CHECK_AGAIN, "Cancel"]),
         Some(false) if !methods.is_empty() => {

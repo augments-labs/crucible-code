@@ -31,26 +31,34 @@
 //! answers a built-in driver with its row and a catalog instance with the row
 //! listed for its key, each as an [`AgentRow`], which also says by which
 //! methods its agent signs in: its entry's for a catalog agent, and for one
-//! built in what its driver's own module offers. The registry this build ships lists no catalog row, so
-//! a catalog instance has none to run until one is listed.
+//! built in what its driver's own module offers.
+//!
+//! The registry this build ships lists no catalog row: a catalog instance's
+//! row is made per question by [`believed_row`], the one place that chooses
+//! it, from the verified offer the catalog believed now pins to the version
+//! the instance's program lies in. Nothing in the configuration alone makes
+//! one, and neither does anything the agent replies. The reasons there is none
+//! are [`Unbelieved`], each naming what to do. A row so made is owned by the
+//! question it answers, so none is kept past it.
 //!
 //! The rows agree with the configuration's driver list and with the
 //! content-use routes by a test, because neither can be derived from the
 //! other: a driver is a word the user writes, and its route is asked about in
 //! the vendor's own terms.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crucible_config::Driver;
+use crucible_config::{Driver, NATIVE_RUNNER};
 use crucible_execution::{Failure, Text};
 use crucible_external_harnesses::Dialect;
 use crucible_external_harnesses::acp::{Acp, Allowing};
 use crucible_external_harnesses::antigravity::{self, Antigravity};
 use crucible_external_harnesses::catalog::{
-    AuthMethod, CatalogProfile, Entry, Target, Trust, Unprofiled,
+    AuthMethod, CatalogProfile, Entry, Offer, Target, Trust, Unprofiled, Unusable,
 };
 use crucible_external_harnesses::claude::Claude;
 use crucible_external_harnesses::release::OwnedPin;
+use crucible_external_harnesses::store::Store;
 use crucible_sandbox::SandboxDomainPattern;
 use crucible_tools::Mode;
 use crucible_types::AgentKey;
@@ -161,6 +169,12 @@ impl CatalogRow {
         self.warned.as_ref().map(|warned| &**warned)
     }
 
+    /// The agent, as its instance names it.
+    #[must_use]
+    pub const fn key(&self) -> &AgentKey {
+        &self.key
+    }
+
     /// The content-use route a launch of it is held under.
     #[must_use]
     pub fn route(&self) -> &str {
@@ -180,6 +194,216 @@ impl CatalogRow {
     pub fn dialect(&self, mode: Mode) -> Box<dyn Dialect> {
         Box::new(Acp::cataloged(self.profile.clone(), allowing(mode)))
     }
+}
+
+/// Why an `externalAgents` entry has no row to run as, each saying what to do.
+#[derive(Debug, thiserror::Error)]
+pub enum Unbelieved {
+    /// The registry has no row for its driver, and it names no catalog agent.
+    #[error("this release has no launch for its driver")]
+    NoLaunch,
+    /// Its key spells a word a built-in driver or the native runner is written
+    /// with, which is not the same agent whatever the catalog signed.
+    #[error(
+        "the name {key} is kept for what is built into crucible, so no catalog agent runs \
+         under it; run `crucible agents remove {key}` and choose another agent"
+    )]
+    Reserved {
+        /// The key, as the instance names it.
+        key: AgentKey,
+    },
+    /// The trust state that says what the catalog believes cannot be used.
+    #[error(
+        "the catalog trust state at {} cannot be used ({why}), so nothing says what {key} is; \
+         repair or remove that file",
+        .file.display()
+    )]
+    Untrusted {
+        /// The key, as the instance names it.
+        key: AgentKey,
+        /// The file the trust state is kept in.
+        file: PathBuf,
+        /// Why it cannot be used.
+        why: Unusable,
+    },
+    /// Its program is not where crucible installed a release of the agent.
+    #[error(
+        "{key} is not run from a release crucible installed; run `crucible agents install {key}`"
+    )]
+    NotInstalled {
+        /// The key, as the instance names it.
+        key: AgentKey,
+    },
+    /// The version its program lies in has no readable record of its install.
+    #[error(
+        "{key} {version} has no record of being installed; run `crucible agents remove {key}` \
+         and then `crucible agents install {key}`"
+    )]
+    Unreceipted {
+        /// The key, as the instance names it.
+        key: AgentKey,
+        /// The version, as the store names it.
+        version: Box<str>,
+    },
+    /// Its program is not the one its release says is started.
+    #[error(
+        "{key} {version} is not started by the program configured for it; run \
+         `crucible agents install {key}`"
+    )]
+    Elsewhere {
+        /// The key, as the instance names it.
+        key: AgentKey,
+        /// The version, as the store names it.
+        version: Box<str>,
+    },
+    /// The catalog revoked the version its program lies in.
+    #[error(
+        "{key} {version} was revoked by the agent catalog{}, so it is not started; run \
+         `crucible agents update {key}`",
+        .reason.as_deref().map_or_else(String::new, |reason| format!(" ({reason})"))
+    )]
+    Revoked {
+        /// The key, as the instance names it.
+        key: AgentKey,
+        /// The version revoked.
+        version: Box<str>,
+        /// Why, quoted, where the catalog says.
+        reason: Option<Box<str>>,
+    },
+    /// The catalog believed offers the agent, but not that version.
+    #[error(
+        "the agent catalog no longer offers {key} {version}, so it is not started; run \
+         `crucible agents update {key}`"
+    )]
+    Unoffered {
+        /// The key, as the instance names it.
+        key: AgentKey,
+        /// The version no longer offered.
+        version: Box<str>,
+    },
+    /// No catalog believed offers the agent.
+    #[error(
+        "no agent catalog this run can believe offers {key}, so it is not started; run \
+         `crucible agents search` to fetch the catalog"
+    )]
+    NoCatalog {
+        /// The key, as the instance names it.
+        key: AgentKey,
+    },
+    /// Its entry gives no profile to run it under.
+    #[error("{key}'s catalog entry cannot be run ({why}); run `crucible agents update {key}`")]
+    Unprofiled {
+        /// The key, as the instance names it.
+        key: AgentKey,
+        /// Why not.
+        why: Unprofiled,
+    },
+}
+
+/// Whether a catalog key spells a word a built-in driver or the native runner
+/// is written with, which no catalog agent runs as.
+#[must_use]
+pub fn kept_word(key: &str) -> bool {
+    key == NATIVE_RUNNER || Driver::ALL.iter().any(|driver| driver.name() == key)
+}
+
+/// The verified offer an instance of the catalog agent `key`, started as
+/// `executable`, runs under: the one the catalog believed through `trust` pins
+/// to the version in `store` the program lies in, and the program that
+/// release's receipt and `cmd` say is started there. Reads the store and the
+/// trust state it is handed; nothing is fetched.
+///
+/// # Errors
+///
+/// [`Unbelieved`], saying what to do.
+pub fn believed(
+    trust: &Trust,
+    store: &Store,
+    key: &AgentKey,
+    executable: &Path,
+) -> Result<Offer, Unbelieved> {
+    let agent = || key.clone();
+    if kept_word(key.as_str()) {
+        return Err(Unbelieved::Reserved { key: agent() });
+    }
+    if let Some(why) = trust.unusable() {
+        return Err(Unbelieved::Untrusted {
+            key: agent(),
+            file: trust.file(),
+            why,
+        });
+    }
+    let version = executable
+        .is_absolute()
+        .then(|| store.version_of(key, executable))
+        .flatten()
+        .ok_or_else(|| Unbelieved::NotInstalled { key: agent() })?;
+    let (named, revision) = (version.version(), version.lock_revision());
+    let shown = || -> Box<str> { crate::launching::quoted(named).into() };
+    if trust.revoked(key, named, revision) {
+        return Err(Unbelieved::Revoked {
+            key: agent(),
+            version: shown(),
+            reason: trust
+                .reason(key, named, revision)
+                .map(|reason| crate::launching::quoted(reason).into()),
+        });
+    }
+    let offers = trust.offers(Some(key));
+    if offers.is_empty() {
+        return Err(Unbelieved::NoCatalog { key: agent() });
+    }
+    let offer = offers
+        .into_iter()
+        .find(|offer| *offer.pin.version == *named && offer.pin.lock_revision == revision)
+        .ok_or_else(|| Unbelieved::Unoffered {
+            key: agent(),
+            version: shown(),
+        })?;
+    if !matches!(store.receipt(key, &version), Ok(Some(_))) {
+        return Err(Unbelieved::Unreceipted {
+            key: agent(),
+            version: shown(),
+        });
+    }
+    // Both followed: a link the release holds, or an instance pointed at it,
+    // counts as where it leads.
+    let root = store.directory(key, &version);
+    let started = std::fs::canonicalize(root.join(&*offer.pin.target.cmd)).ok();
+    let inside = std::fs::canonicalize(&root).ok();
+    let found = std::fs::canonicalize(executable).ok();
+    let the_release_s = started.is_some()
+        && started == found
+        && found
+            .as_deref()
+            .zip(inside.as_deref())
+            .is_some_and(|(found, inside)| found.starts_with(inside));
+    if !the_release_s {
+        return Err(Unbelieved::Elsewhere {
+            key: agent(),
+            version: shown(),
+        });
+    }
+    Ok(offer)
+}
+
+/// The row of [`believed`]'s offer, the one a catalog instance runs as.
+///
+/// # Errors
+///
+/// As [`believed`], and [`Unbelieved::Unprofiled`] where its entry gives no
+/// profile to run it under.
+pub fn believed_row(
+    trust: &Trust,
+    store: &Store,
+    key: &AgentKey,
+    executable: &Path,
+) -> Result<CatalogRow, Unbelieved> {
+    let offer = believed(trust, store, key, executable)?;
+    CatalogRow::new(&offer.entry, &offer.pin.target).map_err(|why| Unbelieved::Unprofiled {
+        key: key.clone(),
+        why,
+    })
 }
 
 /// An agent's row: one built in, or one made from the catalog entry of the
@@ -355,8 +579,9 @@ impl Registry {
     }
 }
 
-/// The registry this build ships, which lists no catalog row: the agents door
-/// builds those per question, and no conversation starts on one.
+/// The registry this build ships, which lists no catalog row: those are made
+/// per question by [`believed_row`], for the agents door and a conversation
+/// alike.
 pub static REGISTRY: Registry = Registry::new(&[CLAUDE, ANTIGRAVITY]);
 
 /// Claude Code's row, as this release ships it.

@@ -414,10 +414,12 @@ fn a_client_that_does_not_install_is_put_the_questions_it_was_put_before() -> Re
 
 /// Each agent the catalog offers is listed after the shipping ones, saying
 /// the version offered and, of an instance running the user's own program,
-/// so; choosing it asks what to do with that agent, whose instance is never
-/// connected, and going back offers the agents again.
+/// so; choosing it asks what to do with that agent, whose instance running
+/// the user's own program has nothing to connect, and going back offers the
+/// agents again.
 #[test]
-fn a_catalog_agent_is_listed_after_the_shipping_ones_and_never_connected() -> Result<(), Failed> {
+fn a_catalog_agent_is_listed_after_the_shipping_ones_and_its_own_program_is_not_connected()
+-> Result<(), Failed> {
     let tree = Tree::new("external-choosing-catalog")?;
     trusting(&tree, &[entry("goose", "1.0.0", ONE)])?;
     let before = goose_file("goose")?;
@@ -638,6 +640,7 @@ fn a_catalog_agent_with_two_versions_stored_offers_update_or_roll_back() -> Resu
             "2.0.0",
             vec![
                 ("Roll back", "Roll back goose from 2.0.0."),
+                ("Connect", "Move this conversation onto it."),
                 ("Go back", "Choose another agent."),
             ],
             "Roll back",
@@ -648,6 +651,7 @@ fn a_catalog_agent_with_two_versions_stored_offers_update_or_roll_back() -> Resu
             vec![
                 ("Update", "Update goose from 1.0.0."),
                 ("Roll back", "Roll back goose from 1.0.0."),
+                ("Connect", "Move this conversation onto it."),
                 ("Go back", "Choose another agent."),
             ],
             "Update",

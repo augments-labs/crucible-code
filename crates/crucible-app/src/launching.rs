@@ -13,8 +13,10 @@
 //! session goes on only on the agent that ran it and never on another agent
 //! its instance was pointed at since.
 //!
-//! A start is refused, before any process exists, in this order: a row this
-//! release does not ship, with the sentence naming its documentation; a
+//! A start is refused, before any process exists, in this order: a catalog
+//! agent the catalog believed gives no row, with what to do about it, read from
+//! the store and the trust state alone so that a start fetches nothing; a row
+//! this release does not ship, with the sentence naming its documentation; a
 //! catalog agent whose entry gives no statement of content use, with the
 //! reason, since nothing installed could change that; an instance that sets a
 //! profile directory on a catalog agent whose entry names no variable it reads
@@ -292,7 +294,7 @@ use crucible_types::{AgentKey, Ancestry, SandboxId, ToolId};
 use tokio::runtime::Handle;
 
 use crate::access::Route;
-use crate::backends::{AgentRow, Registry};
+use crate::backends::{AgentRow, Registry, Unbelieved, believed, believed_row};
 use crate::content_use::{self, Consent, Unheld, Unstated, Warned, agent_route};
 use crate::external::External;
 use crate::installing;
@@ -325,6 +327,10 @@ pub enum Unlaunched {
         /// Why its entry gives none.
         why: Unstated,
     },
+    /// The catalog believed gives it no row to run as, or no longer gives the
+    /// one it was found with.
+    #[error("{0}.")]
+    Unbelieved(#[from] Unbelieved),
     /// Its route is not one this build warns about.
     #[error("{0} is not an agent route this build knows, so nothing is started on it.")]
     Unknown(String),
@@ -597,6 +603,10 @@ pub struct Agent {
     /// to, written in its profile before it starts; only that sign-in sets
     /// it.
     billed: Option<Cloud>,
+    /// Crucible's install store, where its row was made from the catalog
+    /// believed: the program is held to that catalog again each time it is
+    /// asked for, under the trust state that asks.
+    believed: Option<PathBuf>,
 }
 
 /// The model and effort an agent of `driver`, serving `serves`, is started
@@ -682,6 +692,7 @@ impl Agent {
             effort,
             location: location.clone(),
             billed: None,
+            believed: None,
         })
     }
 
@@ -709,12 +720,13 @@ impl Agent {
             effort,
             location: located_in(agent),
             billed: None,
+            believed: None,
         })
     }
 
     /// The configuration's entry `agent`, run as `row`, with its program
     /// looked for through `lookup`: for an agent whose row no registry lists,
-    /// as a catalog agent's is made from the entry the trust state offers.
+    /// as the agents door's sign-in makes one, which ties it to no release.
     #[must_use]
     pub(crate) fn of_row(
         agent: &ExternalAgent,
@@ -736,7 +748,42 @@ impl Agent {
             effort,
             location: located_in(agent),
             billed: None,
+            believed: None,
         }
+    }
+
+    /// The configuration's entry `agent`, as `registry` knows it, else, for a
+    /// catalog instance, with the row [`believed_row`] makes for it from the
+    /// trust state in `state` and the install store beside it, which reads
+    /// both and fetches nothing. Its program is then held to that catalog each
+    /// time it is asked for.
+    ///
+    /// # Errors
+    ///
+    /// [`Unbelieved`], saying what to do.
+    pub fn believing(
+        agent: &ExternalAgent,
+        registry: &Registry,
+        state: &Path,
+        lookup: impl Fn(&str) -> Option<OsString>,
+    ) -> Result<Self, Unbelieved> {
+        if let Some(row) = registry.row(agent.driver(), agent.agent()) {
+            return Ok(Self::of_row(agent, row, lookup));
+        }
+        let (Driver::Catalog, Some(key)) = (agent.driver(), agent.agent()) else {
+            return Err(Unbelieved::NoLaunch);
+        };
+        let programs = programs_beside(state);
+        let row = believed_row(
+            &Trust::load(state, SystemTime::now()),
+            &Store::new(programs.clone()),
+            key,
+            Path::new(agent.executable()),
+        )?;
+        Ok(Self {
+            believed: Some(programs),
+            ..Self::of_row(agent, AgentRow::Catalog(row), lookup)
+        })
     }
 
     /// The same agent started for a business sign-in billed to `cloud`, whose
@@ -836,21 +883,13 @@ impl Agent {
     /// an instance that sets a profile directory, else
     /// [`Unlaunched::NotInstalled`] for a program not found or not
     /// executable, else [`Unlaunched::Unknown`] where its route has no
-    /// sentences to say what to do.
+    /// sentences to say what to do, else [`Unlaunched::Unbelieved`] where the
+    /// program of a row made from the catalog believed is no longer that
+    /// catalog's, as `trust` now says: its receipt, its `cmd`, its version and
+    /// whether that was revoked are read here, before it is given back.
     pub fn program(&self, consent: &Consent, trust: &Trust) -> Result<&Program, Unlaunched> {
         let row = &self.row;
-        if let AgentRow::Catalog(catalog) = row {
-            match catalog.warned() {
-                Ok(warned) if consent.learn(warned) => {}
-                Ok(_) => return Err(Unlaunched::Unknown(row.route().to_owned())),
-                Err(why) => {
-                    return Err(Unlaunched::Unstated {
-                        agent: row.named().to_owned(),
-                        why: why.clone(),
-                    });
-                }
-            }
-        }
+        self.teach(consent)?;
         let routes = consent.routes();
         let shown = routes
             .warned(row.route())
@@ -876,7 +915,17 @@ impl Agent {
             });
         }
         match &self.discovery {
-            Discovery::Found(program) => Ok(program),
+            Discovery::Found(program) => {
+                if let (Some(programs), AgentRow::Catalog(catalog)) = (&self.believed, row) {
+                    believed(
+                        trust,
+                        &Store::new(programs.clone()),
+                        catalog.key(),
+                        program.path(),
+                    )?;
+                }
+                Ok(program)
+            }
             missing @ (Discovery::Missing | Discovery::NotExecutable(_)) => {
                 Err(unfound(row, missing, shown, trust).map_or_else(
                     || Unlaunched::Unknown(row.route().to_owned()),
@@ -887,17 +936,25 @@ impl Agent {
     }
 
     /// Tells `consent` the route of its catalog row, so that a conversation
-    /// on it is asked about that route before anything is launched: a row's
-    /// program is decided under it again before a start. Nothing for a built-in
-    /// row, or an entry with no statement. A shipped [`REGISTRY`] lists no
-    /// catalog row, so only a registry that does reaches this with one.
+    /// on it is asked about that route before anything is launched. Nothing
+    /// for a built-in row.
     ///
-    /// [`REGISTRY`]: crate::backends::REGISTRY
-    fn teach(&self, consent: &Consent) {
-        if let AgentRow::Catalog(catalog) = &self.row
-            && let Ok(warned) = catalog.warned()
-        {
-            consent.learn(warned);
+    /// # Errors
+    ///
+    /// [`Unlaunched::Unstated`] for an entry with no statement, and
+    /// [`Unlaunched::Unknown`] for a route `consent` does not hold, which would
+    /// otherwise be asked about by nobody.
+    fn teach(&self, consent: &Consent) -> Result<(), Unlaunched> {
+        let AgentRow::Catalog(catalog) = &self.row else {
+            return Ok(());
+        };
+        match catalog.warned() {
+            Ok(warned) if consent.learn(warned) => Ok(()),
+            Ok(_) => Err(Unlaunched::Unknown(self.row.route().to_owned())),
+            Err(why) => Err(Unlaunched::Unstated {
+                agent: self.row.named().to_owned(),
+                why: why.clone(),
+            }),
         }
     }
 
@@ -1400,9 +1457,13 @@ pub enum Unresumable {
 ///
 /// [`Unresumable`] where no entry is that agent, or the one that is cannot be
 /// started.
+// Each is a place or an input of its own that the reopening reads, and a value
+// gathering them would be built at each caller and taken apart here.
+#[allow(clippy::too_many_arguments)]
 pub fn reopening(
     entries: &[ExternalAgent],
     registry: &Registry,
+    state: &Path,
     lookup: impl Fn(&str) -> Option<OsString>,
     mode: Mode,
     opened: &RouteBinding,
@@ -1426,7 +1487,8 @@ pub fn reopening(
             entry.name()
         )));
     }
-    let agent = startable(entry, registry, lookup, mode).map_err(Unresumable::Unstartable)?;
+    let agent =
+        startable(entry, registry, state, lookup, mode).map_err(Unresumable::Unstartable)?;
     Ok((agent, route))
 }
 
@@ -1447,21 +1509,22 @@ pub(crate) fn disconnected(instance: &str, serves: &Serves) -> String {
     }
 }
 
-/// The agent the configuration's `entry` is, as `registry` knows its driver,
-/// its program looked for through `lookup`, where it can be started in `mode`.
+/// The agent the configuration's `entry` is, as [`Agent::believing`] finds it
+/// from `registry` and the catalog believed in `state`, its program looked for
+/// through `lookup`, where it can be started in `mode`. Nothing is fetched.
 ///
 /// # Errors
 ///
-/// What to say where `registry` has no row for its driver, `mode` has no
-/// launch for it, or its program cannot be run.
+/// What to say where it has no row, `mode` has no launch for it, or its
+/// program cannot be run.
 pub fn startable(
     entry: &ExternalAgent,
     registry: &Registry,
+    state: &Path,
     lookup: impl Fn(&str) -> Option<OsString>,
     mode: Mode,
 ) -> Result<Agent, String> {
-    let agent = Agent::configured(entry, registry, lookup)
-        .ok_or_else(|| "this release has no launch for its driver".to_owned())?;
+    let agent = Agent::believing(entry, registry, state, lookup).map_err(|why| why.to_string())?;
     agent.startable(mode, entry.name())?;
     Ok(agent)
 }
@@ -4209,7 +4272,9 @@ impl Runs {
         instance: &str,
         controls: &Controls,
     ) -> Self {
-        agent.teach(launcher.consent);
+        // A route that is not learned here is refused by the program it would
+        // start, under this same answer, before anything is.
+        let _refused_at_the_start = agent.teach(launcher.consent);
         Self {
             service: launcher.service,
             runtime: launcher.runtime,
@@ -4409,13 +4474,33 @@ impl Steps {
         mode: Mode,
         opened: &RouteBinding,
     ) -> Result<(Agent, RouteBinding), Unresumable> {
-        reopening(
+        let (agent, route) = reopening(
             entries,
             self.registry,
+            &self.state,
             |name| (name == "PATH").then(|| self.path.clone()).flatten(),
             mode,
             opened,
-        )
+        )?;
+        agent
+            .teach(&self.consent)
+            .map_err(|why| Unresumable::Unstartable(why.to_string()))?;
+        Ok((agent, route))
+    }
+
+    /// The row the configured `entry` runs as, as [`Agent::believing`] finds
+    /// it, with its route taught to the consent every step is held by, so that
+    /// a question about it can be put.
+    ///
+    /// # Errors
+    ///
+    /// What to say where it has no row or its route cannot be held.
+    pub(crate) fn row_of(&self, entry: &ExternalAgent) -> Result<AgentRow, Unlaunched> {
+        let agent = Agent::believing(entry, self.registry, &self.state, |name| {
+            (name == "PATH").then(|| self.path.clone()).flatten()
+        })?;
+        agent.teach(&self.consent)?;
+        Ok(agent.row)
     }
 
     /// The agent the configuration's `entry` is, as [`startable`] finds it on
@@ -4436,9 +4521,13 @@ impl Steps {
         let agent = startable(
             entry,
             self.registry,
+            &self.state,
             |name| (name == "PATH").then(|| self.path.clone()).flatten(),
             mode,
         )?;
+        agent
+            .teach(&self.consent)
+            .map_err(|refused| refused.to_string())?;
         Ok((agent, route))
     }
 
@@ -4447,7 +4536,9 @@ impl Steps {
     /// this hands out for that entry is launched on.
     #[must_use]
     pub fn runs(&self, agent: Agent, instance: &str) -> Runs {
-        agent.teach(&self.consent);
+        // A route that is not learned here is refused by the program it would
+        // start, under this same answer, before anything is.
+        let _refused_at_the_start = agent.teach(&self.consent);
         Runs {
             service: Arc::clone(&self.service),
             runtime: self.runtime.clone(),
@@ -4519,10 +4610,14 @@ impl Steps {
     /// run of the entry could not be confirmed stopped.
     pub async fn account(&self, agent: &ExternalAgent, step: Account) -> Reading {
         let unreadable = |why: &str| Reading::Unreadable(Failure::new(why));
-        let Some(chosen) = Agent::configured(agent, self.registry, |name| {
+        let chosen = match Agent::believing(agent, self.registry, &self.state, |name| {
             (name == "PATH").then(|| self.path.clone()).flatten()
-        }) else {
-            return unreadable("this release has no launch for the agent's driver");
+        }) {
+            Ok(chosen) => chosen,
+            Err(Unbelieved::NoLaunch) => {
+                return unreadable("this release has no launch for the agent's driver");
+            }
+            Err(why) => return unreadable(&why.to_string()),
         };
         // The releases on offer as they are now, which the agent is admitted as.
         let trust = Trust::load(&self.state, SystemTime::now());
