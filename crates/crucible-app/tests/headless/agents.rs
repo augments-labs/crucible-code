@@ -74,6 +74,8 @@ mod login_row;
 mod npm;
 #[path = "agents/piped.rs"]
 mod piped;
+#[path = "agents/registry.rs"]
+mod registry;
 #[path = "agents/shipped_hold.rs"]
 mod shipped_hold;
 #[path = "agents/uvx.rs"]
@@ -472,6 +474,7 @@ impl Bench {
     ) -> Result<(Result<Outcome, AgentsError>, Vec<InstallProgress>), Failed> {
         let lent = Shelf {
             catalog: self.server.source(),
+            registry: None,
             home: &self.home,
             smoke: None,
             steps: None,
@@ -534,6 +537,10 @@ const fn shape(outcome: &Result<Outcome, AgentsError>) -> &'static str {
         Err(AgentsError::Config(_)) => "Err(Config)",
         Err(AgentsError::Unoffered { .. }) => "Err(Unoffered)",
         Err(AgentsError::Unlisted(_)) => "Err(Unlisted)",
+        Err(AgentsError::UnreadInstall { .. }) => "Err(UnreadInstall)",
+        Err(AgentsError::UnreadUpdate { .. }) => "Err(UnreadUpdate)",
+        Err(AgentsError::Unregistered { .. }) => "Err(Unregistered)",
+        Err(AgentsError::Unreadable { .. }) => "Err(Unreadable)",
         Err(AgentsError::NotInstalled(_)) => "Err(NotInstalled)",
         Err(AgentsError::NoPrevious(_)) => "Err(NoPrevious)",
         Err(AgentsError::InUse { .. }) => "Err(InUse)",
@@ -1174,6 +1181,7 @@ fn a_listing_fetches_the_catalog_even_where_updates_are_never_checked() -> Resul
         agents,
         more: false,
         unrefreshed: None,
+        registry: None,
     }) = outcome
     else {
         return Err(format!("a listing, not {}", shape(&outcome)).into());
@@ -1201,6 +1209,7 @@ fn a_client_that_did_not_claim_install_is_refused_before_anything_is_fetched() -
     bench.server.publish(1, &[("1.0.0", ONE)], &[]);
     let shelf = Shelf {
         catalog: bench.server.source(),
+        registry: None,
         home: &bench.home,
         smoke: None,
         steps: None,
@@ -2080,6 +2089,7 @@ impl Bench {
         }
         let lent = Shelf {
             catalog: self.server.source(),
+            registry: None,
             home: &self.home,
             smoke: Some(&launcher),
             steps: Some(&steps),
@@ -3826,6 +3836,7 @@ impl Bench {
         );
         let lent = Shelf {
             catalog: self.server.source(),
+            registry: None,
             home: &self.home,
             smoke: Some(&launcher),
             steps,

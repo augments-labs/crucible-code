@@ -253,6 +253,17 @@ says so, with why, and is the catalog crucible believed before. A window with
 no keys to read, or no room for the list, has the agents printed one to a line
 instead.
 
+The agents are the binary releases the official ACP Registry publishes for this
+platform, read from its one address within 1 MiB and thirty seconds, and cached
+in crucible's home where the next five minutes reuse it. Only an entry whose
+target for this machine carries a SHA-256 and an archive crucible unpacks is
+offered: one without a hash, or whose archive is another format, is absent. The
+registry is not reviewed by Crucible: it has no signature, serial, expiry or
+revocation list, so an offered version can be withdrawn or replaced only by the
+registry's own change. Its vendors give no statement of what they do with what
+is sent, so an agent it lists is asked about once before its first start under
+a generic warning that says so, naming the registry and the day it was read.
+
 Taking an agent opens its own screen, which says where it comes from: the
 versions offered, its licence, its terms link and caution where the catalog
 gives them, each version installed with a receipt, and whether a sign-in made

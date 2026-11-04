@@ -24,22 +24,25 @@
 //! [`CatalogRow`], owned and made from the entry and target it was installed
 //! from, and held under the agent route of its key. It is spoken to over the
 //! Agent Client Protocol as its entry's profile says, reaches only the hosts
-//! that profile grants, and always ships, since a registry lists one only for
-//! an entry the catalog reviewed. It also holds the warning its entry's
-//! statement of content use gives its route, or why the entry gives none, in
-//! which case the agent is listed and never launched. [`Registry::row`]
-//! answers a built-in driver with its row and a catalog instance with the row
-//! listed for its key, each as an [`AgentRow`], which also says by which
-//! methods its agent signs in: its entry's for a catalog agent, and for one
-//! built in what its driver's own module offers.
+//! that profile grants, and always ships, since it is offered only for an
+//! entry read from the catalog or the ACP Registry. It holds the warning its
+//! entry's statement of content use gives its route; where a registry entry
+//! gives none it holds [`crate::content_use::generic`]'s warning instead, and a
+//! signed entry that gives none is listed and never launched.
+//! [`Registry::row`] answers a built-in driver with its row and a catalog
+//! instance with the row listed for its key, each as an [`AgentRow`], which
+//! also says by which methods its agent signs in: its entry's for a catalog
+//! agent, and for one built in what its driver's own module offers.
 //!
 //! The registry this build ships lists no catalog row: a catalog instance's
-//! row is made per question by [`believed_row`], the one place that chooses
-//! it, from the verified offer the catalog believed now pins to the version
-//! the instance's program lies in. Nothing in the configuration alone makes
-//! one, and neither does anything the agent replies. The reasons there is none
-//! are [`Unbelieved`], each naming what to do. A row so made is owned by the
-//! question it answers, so none is kept past it.
+//! row is made per question by [`believed_row`], or for a release the ACP
+//! Registry lists by [`believed_registry_row`], the one place each chooses it,
+//! from the verified offer the catalog believed now pins to the version the
+//! instance's program lies in, or from the cached registry index, the receipt's
+//! survey and the probe record it stored. Nothing in the configuration alone
+//! makes one, and neither does anything the agent replies. The reasons there is
+//! none are [`Unbelieved`], each naming what to do. A row so made is owned by
+//! the question it answers, so none is kept past it.
 //!
 //! The rows agree with the configuration's driver list and with the
 //! content-use routes by a test, because neither can be derived from the
@@ -53,17 +56,19 @@ use crucible_execution::{Failure, Text};
 use crucible_external_harnesses::Dialect;
 use crucible_external_harnesses::acp::{Acp, Allowing};
 use crucible_external_harnesses::antigravity::{self, Antigravity};
+use crucible_external_harnesses::catalog::registry::{RegistryIndex, Unoffered};
 use crucible_external_harnesses::catalog::{
-    AuthMethod, CatalogProfile, Entry, Offer, Target, Trust, Unprofiled, Unusable,
+    AuthMethod, CatalogError, CatalogProfile, Entry, Offer, Target, Trust, Unprofiled, Unusable,
 };
 use crucible_external_harnesses::claude::Claude;
 use crucible_external_harnesses::release::OwnedPin;
-use crucible_external_harnesses::store::Store;
+use crucible_external_harnesses::store::{Probe, Source as ReleaseSource, Store, StoreError};
 use crucible_sandbox::SandboxDomainPattern;
 use crucible_tools::Mode;
 use crucible_types::AgentKey;
 
-use crate::content_use::{Unstated, Warned, agent_route, stated};
+use crate::catalog_fetch::RegistryUnread;
+use crate::content_use::{Unstated, Warned, agent_route, generic, stated};
 
 /// A row's wire as it is made for a run, or why the agent does not run in the
 /// mode asked for.
@@ -137,8 +142,13 @@ pub struct CatalogRow {
     route: String,
     /// How it is run, as its entry reviewed it.
     profile: CatalogProfile,
+    /// Where the entry came from.
+    source: ReleaseSource,
+    /// The day the ACP Registry was read, for a row built from it.
+    read: Option<Box<str>>,
     /// The warning a launch of it is held under, built from its entry's
-    /// statement of content use, or why the entry gives none.
+    /// statement of content use, from the registry's generic warning where a
+    /// registry entry gives none, or why no warning can be given.
     warned: Result<Box<Warned>, Unstated>,
 }
 
@@ -153,8 +163,47 @@ impl CatalogRow {
             key: entry.key.clone(),
             route: agent_route(entry.key.as_str()),
             profile: CatalogProfile::from_entry(entry, target)?,
+            source: ReleaseSource::Catalog,
+            read: None,
             warned: stated(entry).map(Box::new),
         })
+    }
+
+    /// The row of the agent `entry` the ACP Registry lists, installed from its
+    /// `target`, read from the registry on `read`: its entry carries no
+    /// statement of content use, so the row holds the registry's generic
+    /// warning. An entry that does carry a statement keeps it, as a catalog
+    /// entry's is kept.
+    ///
+    /// # Errors
+    ///
+    /// [`Unprofiled`] where the entry gives no profile to run it under.
+    pub fn registry(entry: &Entry, target: &Target, read: Box<str>) -> Result<Self, Unprofiled> {
+        let warned = match stated(entry) {
+            Ok(warned) => Ok(Box::new(warned)),
+            Err(Unstated::Missing) => Ok(Box::new(generic(entry.key.as_str(), &read))),
+            Err(why) => Err(why),
+        };
+        Ok(Self {
+            key: entry.key.clone(),
+            route: agent_route(entry.key.as_str()),
+            profile: CatalogProfile::from_entry(entry, target)?,
+            source: ReleaseSource::Registry,
+            read: Some(read),
+            warned,
+        })
+    }
+
+    /// Where its entry came from.
+    #[must_use]
+    pub const fn source(&self) -> ReleaseSource {
+        self.source
+    }
+
+    /// The day the ACP Registry was read, for a row built from it.
+    #[must_use]
+    pub fn read(&self) -> Option<&str> {
+        self.read.as_deref()
     }
 
     /// The warning a launch of it is held under, which the consent of the run
@@ -298,6 +347,45 @@ pub enum Unbelieved {
         /// Why not.
         why: Unprofiled,
     },
+    /// The ACP Registry lists no entry this build can install under that key.
+    #[error("the ACP Registry does not offer {key}: {why}")]
+    Unregistered {
+        /// The key, as the instance names it.
+        key: AgentKey,
+        /// Why it is not offered.
+        why: Unoffered,
+    },
+    /// The cached ACP Registry index could not be read.
+    #[error("no ACP Registry index can be read, so {key} is not started: {why}")]
+    Registry {
+        /// The key, as the instance names it.
+        key: AgentKey,
+        /// Why it could not be read.
+        why: RegistryUnread,
+    },
+    /// The install recorded nothing of what the agent answered when it was
+    /// probed.
+    #[error("{key} {version} cannot be started: {why}")]
+    Unprobed {
+        /// The key, as the instance names it.
+        key: AgentKey,
+        /// The version, quoted.
+        version: Box<str>,
+        /// Why there is no probe record.
+        why: &'static str,
+    },
+    /// The entry the adapter built from the registry, the survey and the probe
+    /// record is not one the catalog reader accepts.
+    #[error("{key}'s ACP Registry entry cannot be read: {why}")]
+    Unreadable {
+        /// The key, as the instance names it.
+        key: AgentKey,
+        /// Why not.
+        why: CatalogError,
+    },
+    /// The install store could not be read.
+    #[error(transparent)]
+    Store(#[from] StoreError),
 }
 
 /// Whether a catalog key spells a word a built-in driver or the native runner
@@ -406,8 +494,133 @@ pub fn believed_row(
     })
 }
 
+/// The verified offer an instance of the ACP Registry agent `key`, started as
+/// `executable`, runs under: the registry's entry for this platform, the survey
+/// the install recorded in `store`'s receipt, and the `probe` record that
+/// install stored. It reads no trust state, no key and no signature, and
+/// fetches nothing: the registry is unsigned, and the receipt's own hash and
+/// probe record are what say the installed bytes are the ones offered.
+///
+/// # Errors
+///
+/// [`Unbelieved`], saying what to do.
+pub fn believed_registry(
+    index: &RegistryIndex,
+    store: &Store,
+    key: &AgentKey,
+    executable: &Path,
+    probe: &Probe,
+) -> Result<Offer, Unbelieved> {
+    if kept_word(key.as_str()) {
+        return Err(Unbelieved::Reserved { key: key.clone() });
+    }
+    let offered = index.offer(key).map_err(|why| Unbelieved::Unregistered {
+        key: key.clone(),
+        why,
+    })?;
+    let version = executable
+        .is_absolute()
+        .then(|| store.version_of(key, executable))
+        .flatten()
+        .ok_or_else(|| Unbelieved::NotInstalled { key: key.clone() })?;
+    let shown = || -> Box<str> { crate::launching::quoted(version.version()).into() };
+    let receipt = store
+        .receipt(key, &version)?
+        .ok_or_else(|| Unbelieved::Unreceipted {
+            key: key.clone(),
+            version: shown(),
+        })?;
+    if let Some(why) = receipt.unprobed(&crucible_external_harnesses::catalog::registry::platform())
+    {
+        return Err(Unbelieved::Unprobed {
+            key: key.clone(),
+            version: shown(),
+            why,
+        });
+    }
+    if *probe.target != crucible_external_harnesses::catalog::registry::platform() {
+        return Err(Unbelieved::Unprobed {
+            key: key.clone(),
+            version: shown(),
+            why: crucible_external_harnesses::store::UNPROBED,
+        });
+    }
+    let entry = offered
+        .installed(&receipt, probe)
+        .map_err(|why| Unbelieved::Unreadable {
+            key: key.clone(),
+            why,
+        })?;
+    let target = entry
+        .here()
+        .cloned()
+        .ok_or_else(|| Unbelieved::Unreadable {
+            key: key.clone(),
+            why: CatalogError::Field {
+                field: "targets".into(),
+                why: "names no target for this platform",
+            },
+        })?;
+    // Both followed: a link the release holds, or an instance pointed at it,
+    // counts as where it leads.
+    let root = store.directory(key, &version);
+    let started = std::fs::canonicalize(root.join(&*target.cmd)).ok();
+    let inside = std::fs::canonicalize(&root).ok();
+    let found = std::fs::canonicalize(executable).ok();
+    let the_release_s = started.is_some()
+        && started == found
+        && found
+            .as_deref()
+            .zip(inside.as_deref())
+            .is_some_and(|(found, inside)| found.starts_with(inside));
+    if !the_release_s {
+        return Err(Unbelieved::Elsewhere {
+            key: key.clone(),
+            version: shown(),
+        });
+    }
+    Ok(Offer {
+        pin: OwnedPin {
+            key: key.clone(),
+            version: receipt.version.clone(),
+            lock_revision: None,
+            admits: entry.admits.clone(),
+            target,
+        },
+        entry,
+        serial: 0,
+    })
+}
+
+/// The row of [`believed_registry`]'s offer, the one a registry instance runs
+/// as, carrying the registry's generic content-use warning and the day the
+/// index was read.
+///
+/// # Errors
+///
+/// As [`believed_registry`], and [`Unbelieved::Unprofiled`] where its entry
+/// gives no profile to run it under.
+pub fn believed_registry_row(
+    index: &RegistryIndex,
+    store: &Store,
+    key: &AgentKey,
+    executable: &Path,
+    probe: &Probe,
+) -> Result<CatalogRow, Unbelieved> {
+    let offer = believed_registry(index, store, key, executable, probe)?;
+    CatalogRow::registry(&offer.entry, &offer.pin.target, index.read_date().into()).map_err(|why| {
+        Unbelieved::Unprofiled {
+            key: key.clone(),
+            why,
+        }
+    })
+}
+
 /// An agent's row: one built in, or one made from the catalog entry of the
 /// agent an instance names.
+// A row is made for one question and dropped with it, never collected; boxing
+// the catalog row would put a dereference in every match to save no allocation.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum AgentRow {
     /// A row this build ships for its driver.

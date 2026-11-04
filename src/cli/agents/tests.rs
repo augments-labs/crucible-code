@@ -603,6 +603,7 @@ impl Bench {
             home: &self.home,
             shelf: Shelf {
                 catalog: self.host.source(),
+                registry: None,
                 home: &self.home,
                 smoke: None,
                 steps: None,

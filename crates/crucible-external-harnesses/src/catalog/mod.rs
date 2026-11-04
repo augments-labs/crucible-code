@@ -1,6 +1,13 @@
 //! The signed catalog of agent releases crucible's own review admitted, read
 //! and believed.
 //!
+//! The official ACP Registry is read beside it, unsigned, by [`registry`]: an
+//! index of the agents its vendors publish, of which only a target with a
+//! SHA-256 and an archive the hardened unpacker reads is offered, and whose
+//! entries are assembled into catalog [`Entry`] values and read back through
+//! [`Entry::unsigned`] as a signed catalog's are. No key, serial, signature or
+//! revocation is consulted for it.
+//!
 //! The catalog is hostile text until its detached minisign signature verifies
 //! under one of the public keys compiled into the binary, two of them so that
 //! one can be rotated out; until that happens nothing in it is parsed. It is
@@ -40,6 +47,7 @@ mod entry;
 #[cfg(feature = "proof")]
 pub mod fixture;
 mod profile;
+pub mod registry;
 mod snapshot;
 mod trust;
 

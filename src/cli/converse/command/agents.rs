@@ -137,6 +137,7 @@ pub(super) fn run<T: Terminal>(
                 agents,
                 more,
                 unrefreshed,
+                registry: _,
             }) => Listing::new(agents, more, unrefreshed.as_ref()),
             Ok(door::Outcome::Refused(refusal)) => return say(renderer, &format!("! {refusal}")),
             Ok(_) => return say(renderer, ASTRAY),

@@ -31,6 +31,14 @@
 //! allows an asset, and is believed only when its size and its SHA-256 are the
 //! listed ones.
 //!
+//! The official ACP Registry is unsigned and is not believed: [`registry`]
+//! fetches its index from its one address within the same one MiB and thirty
+//! seconds, parses it to at most 512 agents, and caches it under
+//! `<home>/caches/acp-registry/registry.json`, which is reused for five
+//! minutes. A fetch that fails leaves the cached index in use with a line
+//! saying it was not verified against the registry as it is now; with no cache
+//! the failure is refused with the line that stopped it.
+//!
 //! Who asked is a [`Trigger`]. Opening `/catalog`, `/login`'s agent choice or
 //! running a `crucible agents` command is a request, and fetches whatever
 //! `updates.check` says. The fetch beside the release check is [`Background`]:
@@ -57,6 +65,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crucible_external_harnesses::catalog::registry::{
+    HOSTS as REGISTRY_HOSTS, RegistryError, RegistryIndex,
+};
 use crucible_external_harnesses::catalog::{
     ASSET_BYTES, AssetRef, Catalog, CatalogError, Held, INDEX_BYTES, KEYS, Keys, SIGNATURE_BYTES,
     SNAPSHOT, Trust, TrustError,
@@ -78,16 +89,15 @@ pub const PUBLISHED: &str =
     "https://github.com/augments-labs/crucible-agent-catalog/releases/download/catalog/";
 
 /// The hosts a fetch of the catalog follows a redirect to: GitHub, and the
-/// hosts it serves release assets from.
-pub const HOSTS: &[&str] = &[
-    "github.com",
-    "objects.githubusercontent.com",
-    "release-assets.githubusercontent.com",
-    "github-releases.githubusercontent.com",
-];
+/// hosts it serves release assets from. The same hosts a registry archive may
+/// be redirected through.
+pub const HOSTS: &[&str] = REGISTRY_HOSTS;
 
 /// How long a fetch of the catalog, both files and every redirect, is given.
 const LIFETIME: Duration = Duration::from_secs(30);
+
+/// How long a cached registry index is reused before it is fetched again.
+pub const REGISTRY_REUSE: Duration = Duration::from_mins(5);
 
 /// The most redirects followed for one file.
 const HOPS: usize = 4;
@@ -178,6 +188,202 @@ impl Source {
     fn address(&self, name: &str) -> String {
         format!("{}/{name}", self.base.trim_end_matches('/'))
     }
+}
+
+/// The official ACP Registry, where it is read from and what a redirect may
+/// reach.
+#[derive(Debug, Clone)]
+pub struct RegistrySource {
+    /// The address of the registry index.
+    pub url: String,
+    /// The places a redirect may lead to.
+    pub hosts: &'static [&'static str],
+    /// The proxy settings requests go out under.
+    pub proxy: ProxyEnv,
+}
+
+impl RegistrySource {
+    /// The official registry, through the proxy settings `from` names.
+    ///
+    /// A test build never reaches the live registry: it reads the catalog a
+    /// test serves, at `registry.json` under that catalog's base, or, where it
+    /// serves none, an address on this machine nothing answers, so a missing
+    /// fixture refuses rather than fetching the network.
+    #[must_use]
+    pub fn published(from: &dyn Fn(&str) -> Option<String>) -> Self {
+        #[cfg(feature = "proof")]
+        {
+            let url = crate::proof::catalog(from).map_or_else(
+                || "http://127.0.0.1:1/registry.json".to_owned(),
+                |served| format!("{}/registry.json", served.base.trim_end_matches('/')),
+            );
+            Self {
+                url,
+                hosts: &[],
+                proxy: ProxyEnv::read(from),
+            }
+        }
+        #[cfg(not(feature = "proof"))]
+        {
+            Self {
+                url: crucible_external_harnesses::catalog::registry::URL.to_owned(),
+                hosts: REGISTRY_HOSTS,
+                proxy: ProxyEnv::read(from),
+            }
+        }
+    }
+}
+
+/// The registry index this run read, and why it was the cached copy where it
+/// was.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegistryRead {
+    /// The index.
+    pub index: RegistryIndex,
+    /// Why a fresh fetch was not used, so the index is not verified against
+    /// the registry as it is now.
+    pub unverified: Option<Box<str>>,
+}
+
+/// Why no registry index could be read.
+#[derive(Debug, thiserror::Error)]
+pub enum RegistryUnread {
+    /// There is no cached index and none could be fetched.
+    #[error(
+        "there is no ACP Registry index on this machine; open `/catalog` while online to read one"
+    )]
+    Missing,
+    /// The fetch failed.
+    #[error(transparent)]
+    Fetch(#[from] FetchError),
+    /// The bytes are not a registry index this crucible reads.
+    #[error(transparent)]
+    Index(#[from] RegistryError),
+    /// The cache could not be read or written.
+    #[error("the cached ACP Registry index could not be read: {0}")]
+    Cache(#[source] io::Error),
+}
+
+/// The directory under `home` the registry index is cached in.
+#[must_use]
+pub fn registry_in(home: &Path) -> PathBuf {
+    home.join("caches").join("acp-registry")
+}
+
+/// The file in it the index is kept in.
+fn registry_file(home: &Path) -> PathBuf {
+    registry_in(home).join("registry.json")
+}
+
+/// The cached registry index under `home`, read within [`INDEX_BYTES`], with
+/// the time it was fetched as its read date. Nothing is fetched.
+///
+/// # Errors
+///
+/// [`RegistryUnread::Missing`] where nothing is cached, and
+/// [`RegistryUnread`] naming why the cache could not be read or parsed.
+pub fn cached_registry(home: &Path) -> Result<RegistryRead, RegistryUnread> {
+    let path = registry_file(home);
+    let fetched = match fs::metadata(&path) {
+        Ok(metadata) => metadata.modified().unwrap_or(UNIX_EPOCH),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Err(RegistryUnread::Missing);
+        }
+        Err(error) => return Err(RegistryUnread::Cache(error)),
+    };
+    let mut bytes = Vec::new();
+    fs::File::open(&path)
+        .map_err(RegistryUnread::Cache)?
+        .take(
+            u64::try_from(INDEX_BYTES)
+                .unwrap_or(u64::MAX)
+                .saturating_add(1),
+        )
+        .read_to_end(&mut bytes)
+        .map_err(RegistryUnread::Cache)?;
+    if bytes.len() > INDEX_BYTES {
+        return Err(RegistryUnread::Index(RegistryError::Size(bytes.len())));
+    }
+    let index = RegistryIndex::parse(&bytes, fetched)?;
+    Ok(RegistryRead {
+        index,
+        unverified: None,
+    })
+}
+
+/// The registry index at `source`, read now: the cached one where it was
+/// fetched within [`REGISTRY_REUSE`], else a fresh fetch kept in the cache. A
+/// fetch that fails leaves the cached index as it was and says why it is not
+/// verified against the registry as it is now.
+///
+/// # Errors
+///
+/// [`RegistryUnread`] where no index could be fetched or read.
+pub async fn registry(
+    home: &Path,
+    source: &RegistrySource,
+    now: SystemTime,
+) -> Result<RegistryRead, RegistryUnread> {
+    let cached = cached_registry(home);
+    if let Ok(view) = &cached
+        && now
+            .duration_since(view.index.read())
+            .is_ok_and(|age| age < REGISTRY_REUSE)
+    {
+        return Ok(view.clone());
+    }
+    match downloaded(source, now).await {
+        Ok((bytes, index)) => {
+            // A cache that cannot be written leaves this run's index as it
+            // is; the next run fetches again.
+            let _ = cache(home, &bytes);
+            Ok(RegistryRead {
+                index,
+                unverified: None,
+            })
+        }
+        Err(failure) => match cached {
+            Ok(mut view) => {
+                view.unverified =
+                    Some(format!("the ACP Registry was not verified: {failure}").into());
+                Ok(view)
+            }
+            Err(RegistryUnread::Missing) => Err(failure),
+            Err(unusable) => Err(unusable),
+        },
+    }
+}
+
+/// The registry index at `source` and the bytes it was read from, within
+/// [`LIFETIME`] and [`INDEX_BYTES`].
+async fn downloaded(
+    source: &RegistrySource,
+    now: SystemTime,
+) -> Result<(Vec<u8>, RegistryIndex), RegistryUnread> {
+    let reaching = Reaching::at(&source.url, source.hosts, &source.proxy, LIFETIME)?;
+    let bytes = timeout(LIFETIME, reaching.get(source.url.clone(), INDEX_BYTES))
+        .await
+        .map_err(|_| RegistryUnread::Fetch(FetchError::Late))??;
+    let index = RegistryIndex::parse(&bytes, now)?;
+    Ok((bytes, index))
+}
+
+/// Keeps `bytes` as the cached registry index under `home`, replaced whole
+/// through a draft of its own beside it.
+fn cache(home: &Path, bytes: &[u8]) -> io::Result<()> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let directory = registry_in(home);
+    fs::create_dir_all(&directory)?;
+    let draft = directory.join(format!(
+        ".registry.{}.{}.writing",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let landed = fs::write(&draft, bytes).and_then(|()| fs::rename(&draft, registry_file(home)));
+    if landed.is_err() {
+        let _ = fs::remove_file(&draft);
+    }
+    landed
 }
 
 /// Why the catalog was not fetched, believed or kept.
@@ -470,7 +676,7 @@ pub(crate) fn lookups() -> PlainLookups {
 /// given.
 struct Reaching<'a> {
     client: Http,
-    scheme: &'a str,
+    scheme: String,
     listed: &'a [&'a str],
     within: Duration,
 }
@@ -481,8 +687,25 @@ impl<'a> Reaching<'a> {
     fn to(source: &'a Source, origin: &'a Origin, within: Duration) -> Result<Self, FetchError> {
         Ok(Self {
             client: client(Limited::to(origin, source.hosts), source.proxy.clone())?,
-            scheme: origin.scheme(),
+            scheme: origin.scheme().to_owned(),
             listed: source.hosts,
+            within,
+        })
+    }
+
+    /// What `url` is fetched with, following a redirect only to a place
+    /// `hosts` names, through `proxy`, giving a body `within`.
+    fn at(
+        url: &'a str,
+        hosts: &'a [&'a str],
+        proxy: &ProxyEnv,
+        within: Duration,
+    ) -> Result<Self, FetchError> {
+        let origin = Origin::of(url).ok_or(FetchError::Address)?;
+        Ok(Self {
+            client: client(Limited::to(&origin, hosts), proxy.clone())?,
+            scheme: origin.scheme().to_owned(),
+            listed: hosts,
             within,
         })
     }
@@ -503,7 +726,7 @@ impl<'a> Reaching<'a> {
                         .headers()
                         .get("location")
                         .and_then(|location| location.to_str().ok())
-                        .and_then(|location| redirect_to(location, self.scheme, self.listed))
+                        .and_then(|location| redirect_to(location, &self.scheme, self.listed))
                         .ok_or(FetchError::Redirect)?;
                 }
                 other => return Err(FetchError::Status(other)),

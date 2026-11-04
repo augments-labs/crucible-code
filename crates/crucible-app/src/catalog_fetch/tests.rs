@@ -1265,3 +1265,218 @@ fn an_asset_the_host_does_not_have_is_a_failure_with_its_status() {
         "{refused:?}"
     );
 }
+
+/// A registry index of one hashed binary for this machine.
+fn registry_index_json(version: &str) -> Value {
+    json!({
+        "version": "1.0.0",
+        "agents": [{
+            "id": "goose",
+            "name": "Goose",
+            "version": version,
+            "license": "Apache-2.0",
+            "distribution": {"binary": {platform(): {
+                "archive": "https://downloads.example.com/goose.tar.gz",
+                "cmd": "./goose",
+                "sha256": "a".repeat(64),
+            }}},
+        }],
+    })
+}
+
+/// The address of a registry index on `server`.
+fn registry_source(server: &Server) -> RegistrySource {
+    RegistrySource {
+        url: server.at("/registry.json"),
+        hosts: &[],
+        proxy: ProxyEnv::default(),
+    }
+}
+
+/// Writes a cached registry index under `home`, fetched at `at`.
+fn cache(home: &Path, at: SystemTime, index: &Value) {
+    let path = registry_file(home);
+    std::fs::create_dir_all(path.parent().expect("a directory")).expect("the directory");
+    std::fs::write(&path, serde_json::to_vec(index).expect("JSON")).expect("the cache");
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .and_then(|file| file.set_modified(at))
+        .expect("the time");
+}
+
+#[test]
+fn a_registry_index_is_fetched_within_its_bound_and_the_cache_is_reused() {
+    let sample = Sample::new("registry-fetch-reuse");
+    let home = sample.home();
+    let server = Server::start();
+    server.serve(
+        "/registry.json",
+        Reply::Body(serde_json::to_vec(&registry_index_json("1.0.0")).expect("JSON")),
+    );
+    let source = registry_source(&server);
+    let now = SystemTime::now();
+
+    let first = run(registry(&home, &source, now)).expect("a fetched index");
+    assert_eq!(first.index.agents().len(), 1);
+    assert_eq!(
+        first.index.agents().first().map(|agent| &*agent.version),
+        Some("1.0.0")
+    );
+    assert!(first.unverified.is_none());
+    assert_eq!(server.asked(), ["/registry.json"]);
+    assert!(registry_file(&home).is_file());
+
+    server.forget();
+    let reused = run(registry(
+        &home,
+        &source,
+        now + REGISTRY_REUSE - Duration::from_secs(1),
+    ))
+    .expect("a cached index");
+    assert_eq!(
+        reused.index.agents().first().map(|agent| &*agent.version),
+        Some("1.0.0")
+    );
+    assert!(reused.unverified.is_none());
+    assert!(server.asked().is_empty(), "the cache was reused");
+
+    let fetched = run(registry(
+        &home,
+        &source,
+        now + REGISTRY_REUSE + Duration::from_secs(1),
+    ))
+    .expect("a refreshed index");
+    assert_eq!(
+        fetched.index.agents().first().map(|agent| &*agent.version),
+        Some("1.0.0")
+    );
+    assert_eq!(server.asked(), ["/registry.json"], "the cache was stale");
+}
+
+#[test]
+fn a_registry_fetch_past_its_cap_or_not_an_index_is_refused() {
+    let sample = Sample::new("registry-fetch-refused");
+    let home = sample.home();
+    let server = Server::start();
+    let source = registry_source(&server);
+    let now = SystemTime::now();
+
+    server.serve("/registry.json", Reply::Body(vec![b' '; INDEX_BYTES + 1]));
+    let too_large = run(registry(&home, &source, now)).expect_err("an oversize index");
+    assert!(
+        too_large.to_string().contains("longer than its limit"),
+        "{too_large}"
+    );
+
+    server.serve("/registry.json", Reply::Body(b"not json".to_vec()));
+    let invalid = run(registry(&home, &source, now)).expect_err("an invalid index");
+    assert!(invalid.to_string().contains("not JSON"), "{invalid}");
+    assert!(!registry_file(&home).exists(), "nothing unusable was kept");
+}
+
+#[test]
+fn a_cached_registry_index_is_used_offline_and_says_it_is_not_verified() {
+    let sample = Sample::new("registry-fetch-offline");
+    let home = sample.home();
+    let server = Server::start();
+    let source = registry_source(&server);
+    let now = SystemTime::now();
+    cache(
+        &home,
+        now - REGISTRY_REUSE - Duration::from_secs(1),
+        &registry_index_json("1.0.0"),
+    );
+
+    // Nothing serves the index: the fetch is a 404.
+    let offline = run(registry(&home, &source, now)).expect("the cached index");
+    assert_eq!(
+        offline.index.agents().first().map(|agent| &*agent.version),
+        Some("1.0.0")
+    );
+    let why = offline
+        .unverified
+        .expect("a line saying it was not verified");
+    assert!(why.contains("not verified"), "{why}");
+    assert!(why.contains("404"), "{why}");
+}
+
+#[test]
+fn no_registry_index_at_all_is_refused_naming_the_catalog() {
+    let sample = Sample::new("registry-fetch-none");
+    let home = sample.home();
+    let server = Server::start();
+    let source = registry_source(&server);
+
+    let unread = run(registry(&home, &source, SystemTime::now())).expect_err("no index");
+    assert!(unread.to_string().contains("404"), "{unread}");
+    assert!(cached_registry(&home).is_err(), "nothing was cached");
+}
+
+#[test]
+fn a_redirect_to_a_host_the_registry_does_not_list_is_refused() {
+    assert!(redirect_to("https://evil.example.com/x", "https", HOSTS).is_none());
+    for host in HOSTS {
+        assert_eq!(
+            redirect_to(&format!("https://{host}/x"), "https", HOSTS).as_deref(),
+            Some(format!("https://{host}/x").as_str()),
+            "{host}"
+        );
+    }
+    // The archive's own host is its first hop, not one of the redirect hosts.
+    assert!(redirect_to("https://downloads.example.com/x", "https", HOSTS).is_none());
+}
+
+#[test]
+fn a_registry_archive_is_admitted_from_its_own_host_and_no_other() {
+    let server = Server::start();
+    let source = source(&server);
+    let hosts: Vec<Box<str>> = vec!["downloads.example.com".into()];
+
+    assert!(
+        crate::agent_download::capped_places(
+            &source,
+            &hosts,
+            "https://downloads.example.com/agent.tar.gz",
+        )
+        .is_ok(),
+        "the archive's host is its first hop"
+    );
+    assert!(
+        crate::agent_download::capped_places(
+            &source,
+            &hosts,
+            "https://evil.example.com/agent.tar.gz",
+        )
+        .is_err(),
+        "a host the target does not list is refused"
+    );
+}
+
+#[cfg(feature = "proof")]
+#[test]
+fn a_test_build_reads_the_registry_from_the_catalog_it_serves() {
+    let serving = |name: &str| {
+        (name == crate::proof::CATALOG).then(|| "http://127.0.0.1:9/catalog/ key".to_owned())
+    };
+    let local = RegistrySource::published(&serving);
+    assert_eq!(local.url, "http://127.0.0.1:9/catalog/registry.json");
+    assert!(
+        local.hosts.is_empty(),
+        "a test build reaches no redirect host"
+    );
+
+    let published = RegistrySource::published(&|_| None);
+    assert_eq!(
+        published.url, "http://127.0.0.1:1/registry.json",
+        "a test build never builds the live registry address"
+    );
+    assert!(
+        published.hosts.is_empty(),
+        "a test build reaches no redirect host"
+    );
+    assert_ne!(
+        published.url,
+        crucible_external_harnesses::catalog::registry::URL
+    );
+}

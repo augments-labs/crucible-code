@@ -3204,3 +3204,414 @@ fn a_trust_state_that_cannot_be_used_offers_nothing_and_counts_every_release_rev
     assert!(trust.offers(None).is_empty());
     assert!(trust.revoked(&agent("goose"), "1.4.1", None));
 }
+
+// The official ACP Registry: what it offers, what it refuses, and the entry
+// the adapter builds from it.
+
+use super::registry::{RegistryIndex, Unoffered};
+
+/// One agent of a registry index, published at `platform` with `target`.
+fn registry_agent(id: &str, platform: &str, target: &Value) -> Value {
+    json!({
+        "id": id,
+        "name": id,
+        "version": "1.0.0",
+        "license": "Apache-2.0",
+        "distribution": {"binary": {platform: target}},
+    })
+}
+
+/// A binary target of the registry at `archive`, with `sha256` where given.
+fn registry_target(archive: &str, sha256: Option<&str>) -> Value {
+    match sha256 {
+        Some(sha256) => json!({
+            "archive": archive,
+            "cmd": "./bin\\agent",
+            "sha256": sha256,
+            "args": ["acp"],
+            "env": {"AGENT_HOME": "/tmp/agent"},
+        }),
+        None => json!({"archive": archive, "cmd": "./agent", "args": ["acp"]}),
+    }
+}
+
+/// A registry index for the platform this build runs on: a hashed `.tar.gz`,
+/// an unhashed target, a hashed `.tar.bz2`, four hashed targets on four hosts
+/// that are not GitHub, an agent with no binary at all, one with only another
+/// platform, and one whose archive this crucible does not unpack.
+fn registry(platform: &str) -> Value {
+    let hashed = hash('a');
+    let host = |name: &str| format!("https://{name}/agent-1.0.0.tar.gz");
+    json!({
+        "version": "1.0.0",
+        "agents": [
+            registry_agent("hashed", platform, &registry_target(&host("downloads.example.com"), Some(&hashed))),
+            registry_agent("unhashed", platform, &registry_target(&host("unhashed.example.com"), None)),
+            registry_agent("bzipped", platform, &registry_target("https://downloads.example.com/agent-1.0.0.tar.bz2", Some(&hashed))),
+            registry_agent("one", platform, &registry_target(&host("one.example.com"), Some(&hashed))),
+            registry_agent("two", platform, &registry_target(&host("two.example.com"), Some(&hashed))),
+            registry_agent("three", platform, &registry_target(&host("three.example.com"), Some(&hashed))),
+            registry_agent("four", platform, &registry_target(&host("four.example.com"), Some(&hashed))),
+            json!({
+                "id": "npx", "name": "npx", "version": "1.0.0", "license": "MIT",
+                "distribution": {"npx": {"package": "npx@1.0.0"}},
+            }),
+            json!({
+                "id": "elsewhere", "name": "elsewhere", "version": "1.0.0", "license": "MIT",
+                "distribution": {"binary": {"plan9-x86_64": {
+                    "archive": "https://downloads.example.com/agent.zip",
+                    "cmd": "./agent.exe",
+                    "sha256": hash('b'),
+                }}},
+            }),
+            registry_agent("zipped", platform, &registry_target("https://downloads.example.com/agent.rar", Some(&hashed))),
+        ],
+    })
+}
+
+#[allow(clippy::expect_used)] // a fixture that cannot be built is the test's own failure
+fn registry_of(platform: &str) -> RegistryIndex {
+    RegistryIndex::parse(
+        &serde_json::to_vec(&registry(platform)).expect("a registry is JSON"),
+        at(0),
+    )
+    .expect("a registry index")
+}
+
+#[test]
+fn a_registry_offers_only_a_hashed_target_with_an_archive_crucible_unpacks() {
+    let platform = super::trust::here();
+    let index = registry_of(&platform);
+    let offered: Vec<&str> = index
+        .offers()
+        .iter()
+        .map(|offer| offer.entry().id.as_str())
+        .collect();
+
+    assert_eq!(
+        offered,
+        ["hashed", "bzipped", "one", "two", "three", "four"],
+        "the hashed targets this build unpacks, and no other"
+    );
+    assert_eq!(index.offers().len(), 6, "the per-platform count");
+    for id in ["unhashed", "npx", "elsewhere", "zipped"] {
+        assert!(index.offer(&agent(id)).is_err(), "{id} is offered");
+    }
+    let why = index
+        .offer(&agent("unhashed"))
+        .expect_err("no hash")
+        .to_string();
+    assert!(why.contains("SHA-256"), "{why}");
+    assert_eq!(
+        index.offer(&agent("npx")).expect_err("no binary"),
+        Unoffered::Platform {
+            id: agent("npx"),
+            platform: platform.as_str().into(),
+        }
+    );
+    assert_eq!(
+        index
+            .offer(&agent("elsewhere"))
+            .expect_err("another platform"),
+        Unoffered::Platform {
+            id: agent("elsewhere"),
+            platform: platform.as_str().into(),
+        }
+    );
+    assert!(matches!(
+        index
+            .offer(&agent("zipped"))
+            .expect_err("an archive to unpack"),
+        Unoffered::Archive { .. }
+    ));
+    assert!(matches!(
+        index.offer(&agent("missing")).expect_err("no such agent"),
+        Unoffered::Unknown { .. }
+    ));
+}
+
+#[test]
+fn a_registry_target_reaches_its_archive_host_and_the_four_redirect_hosts() {
+    let index = registry_of(&super::trust::here());
+    let offer = index.offer(&agent("one")).expect("an offer");
+    let hosted = offer.target().hosts();
+    let hosts: Vec<&str> = hosted.iter().map(|host| &**host).collect();
+
+    assert_eq!(
+        hosts,
+        [
+            "one.example.com",
+            "github.com",
+            "objects.githubusercontent.com",
+            "release-assets.githubusercontent.com",
+            "github-releases.githubusercontent.com",
+        ]
+    );
+    for id in ["two", "three", "four"] {
+        let offer = index.offer(&agent(id)).expect("an offer");
+        assert!(
+            offer
+                .target()
+                .hosts()
+                .iter()
+                .any(|host| **host == format!("{id}.example.com")),
+            "{id}"
+        );
+    }
+}
+
+#[test]
+fn a_registry_index_is_bounded_and_refused_when_it_is_not_one() {
+    let too_large = vec![b' '; INDEX_BYTES + 1];
+    assert!(matches!(
+        RegistryIndex::parse(&too_large, at(0)),
+        Err(super::registry::RegistryError::Size(_))
+    ));
+
+    assert!(matches!(
+        RegistryIndex::parse(b"not json", at(0)),
+        Err(super::registry::RegistryError::Json(_))
+    ));
+
+    let mut future = registry(&super::trust::here());
+    set(&mut future, "/version", json!("2.0.0"));
+    assert!(matches!(
+        RegistryIndex::parse(&serde_json::to_vec(&future).expect("JSON"), at(0)),
+        Err(super::registry::RegistryError::Field { .. })
+    ));
+
+    let crowded = json!({
+        "version": "1.0.0",
+        "agents": (0..=super::registry::AGENTS)
+            .map(|index| json!({
+                "id": format!("agent-{index}"), "name": "agent", "version": "1.0.0",
+                "license": "MIT", "distribution": {},
+            }))
+            .collect::<Vec<_>>(),
+    });
+    assert!(matches!(
+        RegistryIndex::parse(&serde_json::to_vec(&crowded).expect("JSON"), at(0)),
+        Err(super::registry::RegistryError::Agents(_))
+    ));
+}
+
+#[test]
+fn the_registry_adapter_builds_an_entry_the_catalog_reader_validates() {
+    let index = registry_of(&super::trust::here());
+    let offer = index.offer(&agent("hashed")).expect("an offer");
+    let entry = offer.provisional().expect("an entry");
+    let target = entry.here().expect("a target here");
+
+    assert_eq!(entry.key, agent("hashed"));
+    assert_eq!(&*entry.registry_id, "hashed");
+    assert_eq!(&*entry.version, "1.0.0");
+    assert_eq!(&*entry.review, super::registry::URL);
+    assert_eq!(&*target.cmd, "bin/agent");
+    assert_eq!(target.args, ["acp".into()]);
+    let artifact = target.artifacts.first().expect("an artifact");
+    assert_eq!(&*artifact.sha256, hash('a'));
+    assert_eq!(artifact.size, crate::release::ARCHIVE_BYTES);
+    assert_eq!(target.hosts.len(), 5);
+}
+
+#[test]
+fn the_registry_adapter_refuses_what_the_catalog_reader_refuses() {
+    let platform = super::trust::here();
+    let build = |target: Value| {
+        let index = RegistryIndex::parse(
+            &serde_json::to_vec(&json!({
+                "version": "1.0.0",
+                "agents": [registry_agent("agent", &platform, &target)],
+            }))
+            .expect("JSON"),
+            at(0),
+        )
+        .expect("an index");
+        index
+            .offer(&agent("agent"))
+            .expect("an offer")
+            .provisional()
+    };
+
+    let loader = build(registry_target(
+        "https://downloads.example.com/agent.tar.gz",
+        Some(&hash('a')),
+    ));
+    assert!(loader.is_ok(), "the base entry is valid");
+
+    let absolute = build(json!({
+        "archive": "https://downloads.example.com/agent.tar.gz",
+        "cmd": "/usr/bin/agent",
+        "sha256": hash('a'),
+    }))
+    .expect_err("an absolute command");
+    assert!(absolute.to_string().contains("cmd"), "{absolute}");
+
+    let climbing = build(json!({
+        "archive": "https://downloads.example.com/agent.tar.gz",
+        "cmd": "bin/../..\\..\\agent",
+        "sha256": hash('a'),
+    }))
+    .expect_err("a command that leaves its directory");
+    assert!(climbing.to_string().contains("cmd"), "{climbing}");
+
+    let variable = build(json!({
+        "archive": "https://downloads.example.com/agent.tar.gz",
+        "cmd": "./agent",
+        "sha256": hash('a'),
+        "env": {"LD_PRELOAD": "lib.so"},
+    }))
+    .expect_err("a loader variable");
+    assert!(variable.to_string().contains("LD_PRELOAD"), "{variable}");
+}
+
+/// A receipt of an installed registry release, surveyed at what it holds.
+fn registry_receipt(version: &str, artifact: &str) -> crate::store::Receipt {
+    let files: Vec<File> = [
+        ("agent", 10_u64, hash('c'), true),
+        ("LICENSE", 3, hash('d'), false),
+    ]
+    .into_iter()
+    .map(|(path, size, sha256, exec)| File {
+        path: path.into(),
+        kind: FileKind::File {
+            size,
+            sha256: sha256.into(),
+            exec,
+        },
+    })
+    .collect();
+    crate::store::Receipt {
+        key: agent("hashed"),
+        version: version.into(),
+        lock_revision: None,
+        listing: crate::store::Listing {
+            serial: 0,
+            review: super::registry::URL.into(),
+            terms: None,
+        },
+        source: crate::store::Source::Registry,
+        probe: None,
+        unpacked: 13,
+        decompressed: 20,
+        fetched: at(0),
+        origin: crate::store::Origin::Fetched,
+        artifacts: vec![crate::store::Fetched {
+            url: "https://downloads.example.com/agent-1.0.0.tar.gz".into(),
+            hosts: vec!["downloads.example.com".into()],
+            size: 100,
+            sha256: artifact.into(),
+        }],
+        files,
+    }
+}
+
+/// The probe record of the same install.
+fn registry_probe() -> crate::store::Probe {
+    crate::store::Probe {
+        target: super::trust::here().into(),
+        admits: Admits {
+            name: "agent".into(),
+            version: "2.0.0".into(),
+        },
+        auth_methods: vec![
+            crate::store::ProbedMethod {
+                id: "key".into(),
+                name: "API key".into(),
+                kind: crate::store::ProbedKind::EnvVar,
+            },
+            crate::store::ProbedMethod {
+                id: "login".into(),
+                name: "Log in".into(),
+                kind: crate::store::ProbedKind::Terminal {
+                    command: "agent".into(),
+                    args: ["login".into()].into(),
+                    env: vec![Variable {
+                        name: "AGENT_LOGIN".into(),
+                        value: "1".into(),
+                    }],
+                    tty: Some(false),
+                },
+            },
+            crate::store::ProbedMethod {
+                id: "browser".into(),
+                name: "Sign in".into(),
+                kind: crate::store::ProbedKind::Agent,
+            },
+            crate::store::ProbedMethod {
+                id: "other".into(),
+                name: "Other".into(),
+                kind: crate::store::ProbedKind::Other,
+            },
+        ],
+    }
+}
+
+#[test]
+fn the_registry_adapter_rebuilds_an_installed_release_from_its_receipt_and_probe() {
+    let index = registry_of(&super::trust::here());
+    let offer = index.offer(&agent("hashed")).expect("an offer");
+    let receipt = registry_receipt("1.0.0", &hash('e'));
+    let probe = registry_probe();
+    let entry = offer
+        .installed(&receipt, &probe)
+        .expect("an installed entry");
+    let target = entry.here().expect("a target here");
+
+    assert_eq!(&*entry.version, "1.0.0");
+    assert_eq!(&*entry.admits.name, "agent");
+    assert_eq!(&*entry.admits.version, "2.0.0");
+    assert_eq!(
+        entry
+            .auth_methods
+            .iter()
+            .map(|method| &*method.id)
+            .collect::<Vec<_>>(),
+        ["key", "login", "browser"],
+        "the variable is named from the target's one, the other kind is left out"
+    );
+    assert!(matches!(
+        entry.auth_methods.first().map(|method| &method.method),
+        Some(Method::EnvVar { var }) if &**var == "AGENT_HOME"
+    ));
+    assert!(matches!(
+        entry.auth_methods.get(1).map(|method| &method.method),
+        Some(Method::Terminal {
+            route: Route::Piped,
+            ..
+        })
+    ));
+    let artifact = target.artifacts.first().expect("an artifact");
+    assert_eq!(&*artifact.sha256, hash('e'), "the receipt's hash");
+    assert_eq!(artifact.size, 100);
+    assert_eq!(artifact.unpacked, 13);
+    assert_eq!(artifact.decompressed, 20);
+    assert!(matches!(&artifact.files, Files::Listed(files) if files.len() == 2));
+    assert!(
+        entry.content_use.is_none(),
+        "the registry carries no statement"
+    );
+    assert_eq!(&*entry.review, super::registry::URL);
+}
+
+#[test]
+fn a_registry_rows_survey_past_the_listed_files_is_refused() {
+    let index = registry_of(&super::trust::here());
+    let offer = index.offer(&agent("hashed")).expect("an offer");
+    let mut receipt = registry_receipt("1.0.0", &hash('e'));
+    receipt.files = (0..=super::LISTED_FILES)
+        .map(|index| File {
+            path: format!("file-{index}").into(),
+            kind: FileKind::File {
+                size: 0,
+                sha256: hash('a').into(),
+                exec: false,
+            },
+        })
+        .collect();
+
+    let refused = offer
+        .installed(&receipt, &registry_probe())
+        .expect_err("a survey past the listed files");
+    assert!(refused.to_string().contains("files"), "{refused}");
+}

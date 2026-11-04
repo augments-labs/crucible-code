@@ -274,7 +274,7 @@ use crucible_external_harnesses::catalog::{
     self, AuthMethod, CatalogProfile, Entry, Method, Target, Trust, Unprofiled, Unusable, Variable,
 };
 use crucible_external_harnesses::release::{BIN, LAUNCHER, LaunchScript, PRELOAD, Preload};
-use crucible_external_harnesses::store::Store;
+use crucible_external_harnesses::store::{Source as ReleaseSource, Store};
 use crucible_external_harnesses::{
     Account, Act, Control, Dialect, Discovery, Held, Host, Launch, PREPARING, Piped, Program, Ran,
     Reading, Refusal, Request, Shape, SignInChannel, Told, Unstopped, antigravity,
@@ -294,7 +294,9 @@ use crucible_types::{AgentKey, Ancestry, SandboxId, ToolId};
 use tokio::runtime::Handle;
 
 use crate::access::Route;
-use crate::backends::{AgentRow, Registry, Unbelieved, believed, believed_row};
+use crate::backends::{
+    AgentRow, Registry, Unbelieved, believed, believed_registry_row, believed_row,
+};
 use crate::content_use::{self, Consent, Unheld, Unstated, Warned, agent_route};
 use crate::external::External;
 use crate::installing;
@@ -782,12 +784,49 @@ impl Agent {
             return Err(Unbelieved::NoLaunch);
         };
         let programs = programs_beside(state);
-        let row = believed_row(
-            &Trust::load(state, SystemTime::now()),
-            &Store::new(programs.clone()),
-            key,
-            Path::new(agent.executable()),
-        )?;
+        let store = Store::new(programs.clone());
+        let executable = Path::new(agent.executable());
+        let version = executable
+            .is_absolute()
+            .then(|| store.version_of(key, executable))
+            .flatten();
+        let receipt = version
+            .as_ref()
+            .and_then(|version| store.receipt(key, version).ok().flatten());
+        let home = state.parent().unwrap_or(state);
+        let index = crate::catalog_fetch::cached_registry(home);
+        let listed = index
+            .as_ref()
+            .is_ok_and(|view| view.index.entry(key).is_some());
+        let row = if receipt
+            .as_ref()
+            .is_some_and(|receipt| receipt.source == ReleaseSource::Registry)
+            || (receipt.is_none() && listed)
+        {
+            let view = index.map_err(|why| Unbelieved::Registry {
+                key: key.clone(),
+                why,
+            })?;
+            let probe = receipt
+                .as_ref()
+                .and_then(|receipt| receipt.probe.as_deref())
+                .ok_or_else(|| Unbelieved::Unprobed {
+                    key: key.clone(),
+                    version: version.as_ref().map_or_else(
+                        || "its version".into(),
+                        |version| quoted(version.version()).into(),
+                    ),
+                    why: crucible_external_harnesses::store::UNPROBED,
+                })?;
+            believed_registry_row(&view.index, &store, key, executable, probe)?
+        } else {
+            believed_row(
+                &Trust::load(state, SystemTime::now()),
+                &store,
+                key,
+                executable,
+            )?
+        };
         Ok(Self {
             believed: Some(programs),
             ..Self::of_row(agent, AgentRow::Catalog(row), lookup)
@@ -925,12 +964,37 @@ impl Agent {
         match &self.discovery {
             Discovery::Found(program) => {
                 if let (Some(programs), AgentRow::Catalog(catalog)) = (&self.believed, row) {
-                    believed(
-                        trust,
-                        &Store::new(programs.clone()),
-                        catalog.key(),
-                        program.path(),
-                    )?;
+                    let store = Store::new(programs.clone());
+                    if catalog.source() == ReleaseSource::Registry {
+                        // A registry row is held to its own receipt: the probe
+                        // record it needs and the version its program lies in,
+                        // never to the signed catalog's trust state.
+                        let version =
+                            store
+                                .version_of(catalog.key(), program.path())
+                                .ok_or_else(|| Unbelieved::NotInstalled {
+                                    key: catalog.key().clone(),
+                                })?;
+                        let receipt = store
+                            .receipt(catalog.key(), &version)
+                            .map_err(Unbelieved::Store)?
+                            .ok_or_else(|| Unbelieved::Unreceipted {
+                                key: catalog.key().clone(),
+                                version: quoted(version.version()).into(),
+                            })?;
+                        if let Some(why) = receipt
+                            .unprobed(&crucible_external_harnesses::catalog::registry::platform())
+                        {
+                            return Err(Unbelieved::Unprobed {
+                                key: catalog.key().clone(),
+                                version: quoted(version.version()).into(),
+                                why,
+                            }
+                            .into());
+                        }
+                    } else {
+                        believed(trust, &store, catalog.key(), program.path())?;
+                    }
                 }
                 Ok(program)
             }
@@ -1010,30 +1074,47 @@ impl Agent {
         let Some(version) = store.version_of(&key, program.path()) else {
             return Err(unstored("in no version the store keeps".to_owned()));
         };
-        if let Some(why) = trust.unusable() {
-            return Err(Unlaunched::Untrusted {
-                agent: key.to_string(),
-                file: trust.file(),
-                why,
-            });
-        }
-        let (named, revision) = (version.version(), version.lock_revision());
-        if trust.revoked(&key, named, revision) {
-            return Err(Unlaunched::Revoked {
-                agent: key.to_string(),
-                version: quoted(named).into(),
-                reason: trust
-                    .reason(&key, named, revision)
-                    .map(|reason| quoted(reason).into()),
-            });
+        // A registry row is held to its own receipt's hash and probe record,
+        // which `program` has already read; the signed catalog's trust state
+        // says nothing about it and is not read for it.
+        let registry = matches!(
+            self.row,
+            AgentRow::Catalog(ref row) if row.source() == ReleaseSource::Registry
+        );
+        if !registry {
+            if let Some(why) = trust.unusable() {
+                return Err(Unlaunched::Untrusted {
+                    agent: key.to_string(),
+                    file: trust.file(),
+                    why,
+                });
+            }
+            let (named, revision) = (version.version(), version.lock_revision());
+            if trust.revoked(&key, named, revision) {
+                return Err(Unlaunched::Revoked {
+                    agent: key.to_string(),
+                    version: quoted(named).into(),
+                    reason: trust
+                        .reason(&key, named, revision)
+                        .map(|reason| quoted(reason).into()),
+                });
+            }
         }
         // Its own entry's variable and launch where the catalog still lists
         // it; else those of the release an update would install, since a
-        // release superseded or gone back to is still that agent's program.
-        let offers = trust.offers(Some(&key));
+        // release superseded or gone back to is still that agent's program. A
+        // registry row has neither: its release is the registry binary's.
+        let offers = if registry {
+            Vec::new()
+        } else {
+            trust.offers(Some(&key))
+        };
         let offer = offers
             .iter()
-            .find(|offer| *offer.pin.version == *named && offer.pin.lock_revision == revision)
+            .find(|offer| {
+                *offer.pin.version == *version.version()
+                    && offer.pin.lock_revision == version.lock_revision()
+            })
             .or_else(|| offers.first());
         let root = store.directory(&key, &version);
         let unlaunchable = |why| Unlaunched::Launcher {

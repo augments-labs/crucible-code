@@ -1014,6 +1014,9 @@ struct Connecting<'a> {
 type Chosen = (ExternalAgent, AgentRow, bool);
 
 /// What the client picked when asked which agent to connect.
+// A choice is made for one question and dropped with it; the row it carries is
+// larger than the refusal beside it and is not collected.
+#[allow(clippy::large_enum_variant)]
 enum Picked {
     /// An instance to connect through.
     Through(Chosen),

@@ -50,7 +50,7 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
 use crucible_app::Conversation;
-use crucible_app::catalog_fetch::Source;
+use crucible_app::catalog_fetch::{RegistrySource, Source};
 use crucible_app::client::agents::{
     self as door, AgentsError, HandoverFailed, SaidLine, Shelf, SignInChannel, SignInTerminal,
     Typing, Watching,
@@ -1008,6 +1008,7 @@ pub(crate) const fn coded(refused: &AgentsError) -> ErrorCode {
         AgentsError::Running(_) | AgentsError::Unstopped(_) => ErrorCode::Busy,
         // What the request named is not one there is, or not one this can do.
         AgentsError::Unoffered { .. }
+        | AgentsError::Unregistered { .. }
         | AgentsError::Unlisted(_)
         | AgentsError::NoInstance(_)
         | AgentsError::Unsigned(_)
@@ -1016,6 +1017,9 @@ pub(crate) const fn coded(refused: &AgentsError) -> ErrorCode {
         | AgentsError::Unlent(_)
         | AgentsError::Typed => ErrorCode::InvalidArgument,
         AgentsError::Config(_)
+        | AgentsError::UnreadInstall { .. }
+        | AgentsError::UnreadUpdate { .. }
+        | AgentsError::Unreadable { .. }
         | AgentsError::NotInstalled(_)
         | AgentsError::NoPrevious(_)
         | AgentsError::InUse { .. }
@@ -1198,6 +1202,7 @@ pub(crate) fn shelf<'a>(
 ) -> Shelf<'a> {
     Shelf {
         catalog: Source::published(&|name| std::env::var(name).ok()),
+        registry: Some(RegistrySource::published(&|name| std::env::var(name).ok())),
         home,
         smoke,
         steps,
