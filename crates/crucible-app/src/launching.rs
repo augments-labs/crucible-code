@@ -3152,7 +3152,7 @@ impl<'a> Launcher<'a> {
     /// The command is the one the catalog records, from the directory of the
     /// version installed, with the environment the entry gives it; nothing is
     /// confined, since no sandbox backend can hold a terminal. Its bound is
-    /// [`TERMINAL_SIGNING_IN`], and its whole process group is killed when the
+    /// `TERMINAL_SIGNING_IN`, and its whole process group is killed when the
     /// bound passes, so nothing it started outlives it. The child is in a
     /// process group of its own before `terminal` is told its id, and the
     /// front end makes that group the terminal's foreground one, so Ctrl+C is

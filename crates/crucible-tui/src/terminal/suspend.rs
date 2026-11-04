@@ -195,7 +195,7 @@ impl Suspend {
     ///
     /// # Errors
     ///
-    /// [`SuspendError::Handed`] if a mode could not be left or the child could
+    /// `SuspendError::Handed` if a mode could not be left or the child could
     /// not be made the foreground group. The modes already left are entered
     /// again before this returns.
     pub fn handed(&self, pid: u32) -> Result<(), SuspendError> {
@@ -229,7 +229,7 @@ impl Suspend {
     ///
     /// # Errors
     ///
-    /// [`SuspendError::Resumed`] if the foreground group could not be taken
+    /// `SuspendError::Resumed` if the foreground group could not be taken
     /// back or a mode could not be entered. Every mode is still given back
     /// before this returns.
     pub fn resumed(&self) -> Result<(), SuspendError> {
