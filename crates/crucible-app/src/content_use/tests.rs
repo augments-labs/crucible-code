@@ -62,6 +62,10 @@ fn a_documented_address_is_recognised_however_it_is_spelled() {
             "key:deepseek@deepseek.com",
         ),
         ("https://api.meta.ai/v1/responses", "key:meta@meta.ai"),
+        (
+            "https://api.mistral.ai/v1/chat/completions",
+            "key:mistral@mistral.ai",
+        ),
     ] {
         assert_eq!(recognised(spelled), Some(route), "{spelled}");
     }
@@ -110,6 +114,7 @@ fn every_key_row_is_recognised_at_the_address_it_sends_to() {
         "deepseek" => crucible_provider::DeepSeek::VENDOR.as_str().to_owned(),
         "meta" => crucible_provider::Meta::VENDOR.as_str().to_owned(),
         "mimo" => crucible_provider::Mimo::VENDOR.as_str().to_owned(),
+        "mistral" => crucible_provider::Mistral::VENDOR.as_str().to_owned(),
         "xai" => crucible_provider::Xai::VENDOR.as_str().to_owned(),
         _ => panic!("no default address for {provider}"),
     };
@@ -243,6 +248,7 @@ fn the_routes_warned_are_those_whose_vendor_says_so() {
         "key:zai@bigmodel.cn",
         "model:meta/muse-spark-1.3-contributor",
         "model:meta/muse-spark-1.2-contributor",
+        "model:mistral/mistral-large-4",
         "api.moonshot.ai",
         "agent:claude",
         "agent:antigravity",
@@ -303,6 +309,31 @@ fn a_contributor_model_is_asked_about_and_its_standard_twin_is_not() {
             .unanswered("meta", "muse-spark-1.2-contributor")
             .is_some()
     );
+}
+
+/// A session on Mistral's Preview model, served on a key, is asked about
+/// before its first send and goes nowhere until the yes: its terms let Mistral
+/// train on what is sent to a Preview model whatever the account's opt-out.
+/// The host is not held, since it serves every other Mistral model too.
+#[test]
+fn a_session_on_mistral_large_4_sends_nothing_before_its_yes() {
+    let consent = Consent::new(Routes::production());
+    consent.served("mistral", Some(serving("key:mistral@mistral.ai")));
+    let route = model_route("mistral", "mistral-large-4");
+
+    let asked = consent.unanswered("mistral", "mistral-large-4");
+    assert_eq!(asked.as_ref().map(|one| &*one.route), Some(route.as_str()));
+    assert_eq!(
+        asked.map(|one| one.warning.caution),
+        Some("may train on what is sent".into())
+    );
+    assert_eq!(
+        consent.held(&origin("https://api.mistral.ai/v1/chat/completions")),
+        None
+    );
+
+    consent.record(&route);
+    assert_eq!(consent.unanswered("mistral", "mistral-large-4"), None);
 }
 
 /// A Qwen Token Plan key of aliyun.com says what holds it before anything is

@@ -154,6 +154,7 @@ beside the price under `Fast`, where the vendor states one.
 | Qwen | any | None in this release | | `qwen3.8-max-prime`, priced on the mainland China site only, is a faster `qwen3.8-max`. No source shows how an answer says the speed it was served at, or how a refusal reads, and the vendor's own pages on its fast mode do not list it. | | [Model Studio pricing](https://www.alibabacloud.com/help/en/model-studio/model-pricing) | 1 Oct 2026 |
 | MiMo | key | None in this release | | `mimo-v2.6-pro-ultraspeed` is a faster `mimo-v2.6-pro`, up to 20x faster at 10x the price. No source shows how an answer says the speed it was served at, or how a refusal reads. | | [MiMo pay-as-you-go pricing](https://mimo.mi.com/static/docs/price/pay-as-you-go.md) | 1 Oct 2026 |
 | MiniMax | any | None in this release | | `MiniMax-M3` takes a priority tier at 1.5x the price; `MiniMax-M3.1-Flash` lists none and no faster form, and takes no `none` rung (MiniMax answers it with a 400). No source shows how a Chat Completions answer says the tier it was served at, or how it is refused. | | [MiniMax pay-as-you-go pricing](https://platform.minimax.io/docs/guides/pricing-paygo) | 1 Oct 2026 |
+| Mistral | key | None | | Mistral's page for `mistral-large-4` lists one rate, $0.7 / $2.1 per million input / output tokens, and no faster tier or model. | | [Mistral Large 4](https://docs.mistral.ai/models/mistral-large-4-0) | 5 Nov 2026 |
 
 OpenAI states twice the price for GPT-6 Astra, GPT-6.1 Sol and GPT-5.6 Sol;
 for GPT-6 Sol, GPT-6 Luna, GPT-5.6 Terra and Luna, and for GPT-5.5, the

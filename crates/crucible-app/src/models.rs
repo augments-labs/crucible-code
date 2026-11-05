@@ -289,6 +289,16 @@ pub(crate) const FACTS: &[Facts] = &[
             .insert(Modality::Video),
     },
     Facts {
+        provider: "mistral",
+        model: "mistral-large-4",
+        window: 1_048_576,
+        output: 262_144,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
+    },
+    Facts {
         provider: "moonshot",
         model: "k3",
         window: 1_048_576,

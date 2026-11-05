@@ -1819,7 +1819,7 @@ fn moonshot_serves_both_halves_from_kimi_code() {
 #[test]
 fn each_provider_is_given_only_the_web_tools_its_vendor_serves_on_its_wire() {
     // (provider, a model it offers, search, fetch). Meta's and xAI's
-    // Responses serve a search and nothing that opens one page; the five on
+    // Responses serve a search and nothing that opens one page; the six on
     // Chat Completions are served neither there.
     for (named, model, searching, fetching) in [
         ("anthropic", "claude-opus-5", true, true),
@@ -1833,6 +1833,7 @@ fn each_provider_is_given_only_the_web_tools_its_vendor_serves_on_its_wire() {
         ("qwen", "qwen3.8-max", false, false),
         ("mimo", "mimo-v2.6-pro", false, false),
         ("minimax", "MiniMax-M3", false, false),
+        ("mistral", "mistral-large-4", false, false),
     ] {
         let reaching = reaching_for(named, Some(model));
 
@@ -1841,7 +1842,7 @@ fn each_provider_is_given_only_the_web_tools_its_vendor_serves_on_its_wire() {
     }
     assert_eq!(
         crate::providers::offered(&catalogue()).count(),
-        11,
+        12,
         "a provider this test does not name"
     );
 }
