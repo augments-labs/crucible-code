@@ -111,6 +111,13 @@ const OFFERED: &[Offer] = &[
         Some("gemini-3.1-pro-preview"),
         None,
     ),
+    ("moonshot", "k3.1-pro", Some("kimi-k3.1-pro"), None),
+    (
+        "moonshot",
+        "k3.1-pro-highspeed",
+        Some("kimi-k3.1-pro-highspeed"),
+        None,
+    ),
     ("moonshot", "k3", Some("kimi-k3"), None),
     // The same model held to a quarter of its window, which the database does
     // not list separately. The divisor is the vendor's stated figure, checked

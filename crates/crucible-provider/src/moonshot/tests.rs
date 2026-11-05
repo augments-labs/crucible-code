@@ -282,3 +282,33 @@ fn a_kimi_ai_credential_is_sent_to_the_global_coding_address_alone() {
         PromptCacheSupport::Supported
     );
 }
+
+#[test]
+fn the_k31_highspeed_model_answers_its_own_cost_and_the_k2_one_keeps_its_own() {
+    use crucible_models::FastForm;
+
+    let (provider, _replay) = provider(Moonshot::CODING, ANSWER, 200);
+
+    assert_eq!(
+        provider.fast("k3.1-pro-highspeed"),
+        FastForm::Own(K31_HIGHSPEED)
+    );
+    assert_eq!(
+        provider.fast("kimi-for-coding-highspeed"),
+        FastForm::Own(HIGHSPEED)
+    );
+    assert_eq!(provider.fast("k3.1-pro"), FastForm::None);
+    assert_eq!(K31_HIGHSPEED.price, "2x the quota");
+    assert_eq!(K31_HIGHSPEED.speed, Some("2–3x the speed"));
+}
+
+#[test]
+fn both_k31_models_have_the_reviewed_automatic_cache_record() {
+    let (provider, _replay) = provider(Moonshot::CODING, ANSWER, 200);
+
+    for model in ["k3.1-pro", "k3.1-pro-highspeed"] {
+        let record = provider.prompt_cache_capabilities(model);
+        assert_eq!(record.support(), PromptCacheSupport::Supported, "{model}");
+        assert_eq!(record.model_revision(), Some(model), "{model}");
+    }
+}

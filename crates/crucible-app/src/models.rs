@@ -298,6 +298,26 @@ pub(crate) const FACTS: &[Facts] = &[
     },
     Facts {
         provider: "moonshot",
+        model: "k3.1-pro",
+        window: 1_048_576,
+        output: 1_048_576,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Video),
+    },
+    Facts {
+        provider: "moonshot",
+        model: "k3.1-pro-highspeed",
+        window: 1_048_576,
+        output: 1_048_576,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Video),
+    },
+    Facts {
+        provider: "moonshot",
         model: "kimi-for-coding",
         window: 262_144,
         output: 262_144,

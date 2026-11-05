@@ -185,19 +185,27 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: Moonshot::fast_at_vendor,
         fast_signed_in: None,
-        reviewed: "2026-10-16",
+        reviewed: "2026-11-05",
         // Spelled the way the coding console spells them, that being the one
         // crucible asks. The open platform serves the same models under longer
-        // names and does not serve the second of these at all, so a key from
-        // there is a `baseUrl` and a typed name rather than a shorter list.
+        // names (`kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`) and does not serve
+        // the 256k K3 at all, so a key from there is a `baseUrl` and a typed
+        // name rather than a shorter list.
         models: &[
+            // The vendor's default rung here is `max`; a session still starts
+            // at `default_rung`, as it does for every model.
+            Model::shown("k3.1-pro", "K3.1 Pro", KIMI),
+            Model::shown("k3.1-pro-highspeed", "K3.1 Pro Highspeed", KIMI),
             Model::shown("k3", "K3", KIMI),
             // The same model held to a quarter of its context. Offered beside
             // it because the smaller context is a distinct provider offering
             // rather than a local preference.
             Model::shown("k3-256k", "K3-256k", KIMI),
             // The coding models are known by their product names; the wire
-            // identifier stays the one the console serves them under.
+            // identifier stays the one the console serves them under. The K2
+            // series closed to new registrations on the open platform on
+            // 2026-10-31 and is to be retired by the end of December 2026;
+            // Kimi Code still lists both, so they stay offered.
             Model::shown("kimi-for-coding", "K2.8 Preview", KIMI),
             Model::shown("kimi-for-coding-highspeed", "K2.7 Coding Highspeed", KIMI),
         ],

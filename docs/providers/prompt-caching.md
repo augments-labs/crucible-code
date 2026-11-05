@@ -110,7 +110,7 @@ ordinary startup never scrapes mutable documentation.
 | MiMo Chat Completions: `mimo-v2.6-pro`, `mimo-v2.6-flash` | provider-managed caching, reported usage only | [MiMo pricing](https://mimo.mi.com/static/docs/price/pay-as-you-go.md) | `mimo-prompt-cache-2026-10-01` |
 | MiniMax Chat Completions: `MiniMax-M3.1-Flash` | provider-managed caching from 512 input tokens, reported usage only | [MiniMax prompt caching](https://platform.minimax.io/docs/api-reference/text-prompt-caching) | `minimax-prompt-cache-2026-11-05` |
 | MiniMax Chat Completions: `MiniMax-M3` | provider-managed caching from 512 input tokens, reported usage only | [MiniMax prompt caching](https://platform.minimax.io/docs/api-reference/text-prompt-caching) | `minimax-prompt-cache-2026-10-01` |
-| Moonshot/Kimi Chat Completions: `k3`, `k3-256k`, `kimi-for-coding`, `kimi-for-coding-highspeed` | provider-managed automatic caching after the documented prefix minimum, with a stable routing key for agent sessions | [Kimi context caching](https://platform.kimi.ai/docs/guide/use-context-caching-feature-of-kimi-api) and [Chat Completions API](https://platform.kimi.ai/docs/api/chat) | `kimi-prompt-cache-2026-08-31` |
+| Moonshot/Kimi Chat Completions: `k3.1-pro`, `k3.1-pro-highspeed`, `k3`, `k3-256k`, `kimi-for-coding`, `kimi-for-coding-highspeed` | provider-managed automatic caching after the documented prefix minimum, with a stable routing key for agent sessions | [Kimi context caching](https://platform.kimi.ai/docs/guide/use-context-caching-feature-of-kimi-api) and [Chat Completions API](https://platform.kimi.ai/docs/api/chat) | `kimi-prompt-cache-2026-08-31` |
 
 `gpt-6.1-terra` is priced at $1.00 input, $0.05 cached, $1.25 per million for
 a 30-minute cache write and $5.00 output, and OpenAI states that "Prompts with
@@ -119,6 +119,11 @@ output for the full request"; the record carries both bands. The 12-hour write
 ($2.50) is not asked for or priced: crucible requests the 30-minute lifetime
 only. The model's page does not say whether PDFs are accepted, so the models
 table keeps the database's text, image and PDF.
+
+Kimi's caching is automatic for `k3.1-pro` and `k3.1-pro-highspeed` as for the
+other Kimi models, with a default lifetime of 5 minutes (read 5 Nov 2026); the
+record names no lifetime of its own and carries no price, since Kimi Code
+bills a plan's quota.
 
 The OpenAI public pricing record uses the current [OpenAI pricing](https://developers.openai.com/api/docs/pricing)
 and model-specific documentation. The Anthropic record uses the pricing table in

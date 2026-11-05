@@ -173,7 +173,7 @@ This build serves eleven providers. The name in the first column is what
 | `meta` | Meta | `muse-wonder-1.0`, `muse-spark-1.3`: all five; `muse-spark-1.3-contributor`, `muse-spark-1.2`, `muse-spark-1.2-contributor`: low, medium, high, xhigh | `META_API_KEY` |
 | `mimo` | MiMo | `mimo-v2.6-pro`, `mimo-v2.6-flash`: none | `MIMO_API_KEY` |
 | `minimax` | MiniMax | `MiniMax-M3.1-Flash`: all five; `MiniMax-M3`: none | `MINIMAX_API_KEY` |
-| `moonshot` | MoonshotAI | `k3`, `k3-256k`, `kimi-for-coding`, `kimi-for-coding-highspeed`: low, high, max | `MOONSHOT_API_KEY` |
+| `moonshot` | MoonshotAI | `k3.1-pro`, `k3.1-pro-highspeed`, `k3`, `k3-256k`, `kimi-for-coding`, `kimi-for-coding-highspeed`: low, high, max | `MOONSHOT_API_KEY` |
 | `openai` | OpenAI | `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`: all five; `gpt-5.5`: low, medium, high, xhigh | `OPENAI_API_KEY` |
 | `qwen` | Qwen | `qwen3.8-max`, `qwen3.8-flash`: low, medium, xhigh; `qwen3.7-plus`, `qwen3.6-plus`: none | `DASHSCOPE_API_KEY` |
 | `xai` | xAI | `grok-4.7`, `grok-4.6`: low, medium, high, xhigh | `XAI_API_KEY` |
@@ -812,10 +812,21 @@ from the open platform says so in
 base address with the path of the endpoint after it.
 
 The two consoles also spell their models differently. What `/model` offers is
-the coding console's spelling, that being the one crucible asks: `k3`,
-`k3-256k`, `kimi-for-coding` and `kimi-for-coding-highspeed`. The open platform
-serves `kimi-k3`, `kimi-k2.7-code` and `kimi-k2.7-code-highspeed`, and does not
-serve a 256k K3 at all, so a key from there is a `baseUrl` and a typed name.
+the coding console's spelling, that being the one crucible asks: `k3.1-pro`,
+`k3.1-pro-highspeed`, `k3`, `k3-256k`, `kimi-for-coding` and
+`kimi-for-coding-highspeed`. The open platform serves `kimi-k3.1-pro`,
+`kimi-k3.1-pro-highspeed`, `kimi-k3`, `kimi-k2.7-code` and
+`kimi-k2.7-code-highspeed`, and does not serve a 256k K3 at all, so a key from
+there is a `baseUrl` and a typed name.
+
+`k3.1-pro` always reasons: Kimi rejects a request with thinking off, and its own
+default rung is `max`. A session still starts at `high`, as every model's does,
+and the rung is changed in `/model`. `k3.1-pro` is available to Moderato / Plus
+members and above and `k3.1-pro-highspeed` to Allegretto / Pro members and
+above (read 5 Nov 2026). Kimi closed the K2 series to new open-platform
+registrations from 31 Oct 2026 and plans to retire it by the end of December
+2026; Kimi Code still lists `kimi-for-coding` and `kimi-for-coding-highspeed`,
+so they stay offered.
 
 A Kimi Code key or sign-in has a plan with limits, which `/usage` asks Kimi for
 at the coding console of its own site. A key from the open platform has no such
