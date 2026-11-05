@@ -5876,6 +5876,18 @@ fn room_asked_for_on_a_warned_route_is_asked_about_and_going_back_says_nothing_w
     window.types_until("\x1b", "nothing was sent");
     let picture = window.picture();
     assert!(!picture.contains("your message is back"), "{picture}");
+    // The reply stands on the row under the command it answers, behind the
+    // mark every reply to a command carries.
+    let rows = trimmed(&picture);
+    let command = rows
+        .iter()
+        .rposition(|row| row == "\u{203a} /compact")
+        .unwrap_or_else(|| panic!("no /compact row at\n{picture}"));
+    assert_eq!(
+        rows.get(command + 1).map(String::as_str),
+        Some("\u{23bf} nothing was sent"),
+        "{picture}"
+    );
     assert_eq!(proxy.asked(), Vec::<String>::new());
 }
 
