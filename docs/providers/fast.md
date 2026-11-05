@@ -144,6 +144,7 @@ beside the price under `Fast`, where the vendor states one.
 | Anthropic | key | `claude-opus-5` | $10 / $50 per million input / output tokens | Fast mode is a research preview; Anthropic turns it on per organization. | up to 2.5x higher output tokens per second | [Anthropic fast mode](https://platform.claude.com/docs/en/build-with-claude/fast-mode) | 30 Sep 2026 |
 | Anthropic | key | `claude-opus-5-5` | $8 / $40 per million input / output tokens | Fast mode is a research preview; Anthropic turns it on per organization. | up to 2.5x higher output tokens per second | [Anthropic fast mode](https://platform.claude.com/docs/en/build-with-claude/fast-mode) | 1 Oct 2026 |
 | Google | key | `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-pro-preview` | 75-100% more than Standard | For Tier 2 and Tier 3 accounts only. Google serves a priority request at standard speed when priority is congested, and bills it at the standard price. | Not stated | [Gemini priority inference](https://ai.google.dev/gemini-api/docs/priority-inference) | 30 Sep 2026 |
+| Google | key | `gemini-4-argon` | 75-100% more than Standard | For Tier 2 and Tier 3 accounts only. Google serves a priority request at standard speed when priority is congested, and bills it at the standard price. | Not stated | [Gemini priority inference](https://ai.google.dev/gemini-api/docs/priority-inference) | 5 Nov 2026 |
 | MoonshotAI | any | `kimi-for-coding-highspeed`, a fast model of its own | 3x the quota | | 6x the speed | [Kimi Code models](https://www.kimi.com/code/docs/en/kimi-code/models.html) | 29 Sep 2026 |
 | MoonshotAI | any | `k3.1-pro-highspeed`, a fast model of its own | 2x the quota | | 2–3x the speed | [Kimi Code models](https://www.kimi.com/code/docs/en/index.html) | 5 Nov 2026 |
 | DeepSeek | key | None | | DeepSeek serves no faster tier and no faster model. | | [DeepSeek models and pricing](https://api-docs.deepseek.com/quick_start/pricing) | 1 Oct 2026 |
@@ -159,6 +160,10 @@ for GPT-6 Sol, GPT-6 Luna, GPT-5.6 Terra and Luna, and for GPT-5.5, the
 multiple is worked out from the prices on its pricing page. The ChatGPT speed
 page states no speed for the GPT-6 models or GPT-6.1 Sol. OpenAI serves no
 fast form of the GPT-6 models or GPT-6.1 Sol with EU data residency.
+
+For Gemini 4 Argon, Google's pricing page gives Priority at $3.60 input and
+$18.00 output per million tokens through 30 Nov 2026 and $7.20 and $36.00 from
+1 Dec 2026: 1.8x its Standard price, inside the range its row states.
 
 A provider whose row says `None in this release` serves a faster form, but no
 source settled how it refuses one, or how an answer says which speed served

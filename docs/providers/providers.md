@@ -169,7 +169,7 @@ This build serves eleven providers. The name in the first column is what
 | --- | --- | --- | --- |
 | `anthropic` | Anthropic | `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5-5`, `claude-opus-5`, `claude-sonnet-5-5`, `claude-sonnet-5`, `claude-haiku-5-5`: all five; `claude-haiku-4-5`: none | `ANTHROPIC_API_KEY` |
 | `deepseek` | DeepSeek | `deepseek-flash`, `deepseek-v4-pro`: low, high, max | `DEEPSEEK_API_KEY` |
-| `google` | Google | `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-pro-preview`: low, medium, high | `GEMINI_API_KEY` |
+| `google` | Google | `gemini-4-argon`, `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-pro-preview`: low, medium, high | `GEMINI_API_KEY` |
 | `meta` | Meta | `muse-wonder-1.0`, `muse-spark-1.3`: all five; `muse-spark-1.3-contributor`, `muse-spark-1.2`, `muse-spark-1.2-contributor`: low, medium, high, xhigh | `META_API_KEY` |
 | `mimo` | MiMo | `mimo-v2.6-pro`, `mimo-v2.6-flash`: none | `MIMO_API_KEY` |
 | `minimax` | MiniMax | `MiniMax-M3.1-Flash`: all five; `MiniMax-M3`: none | `MINIMAX_API_KEY` |
@@ -461,6 +461,7 @@ current effort first. Nothing is silently mapped to a different rung.
 
 | Provider | Exact model name | Offered effort |
 | --- | --- | --- |
+| Google | `gemini-4-argon` | low, medium, high |
 | Google | `gemini-3.8-flash` | low, medium, high |
 | Google | `gemini-3.7-flash` | low, medium, high |
 | Google | `gemini-3.6-flash` | low, medium, high |
@@ -723,6 +724,16 @@ with `stream:true`, `store:false`, and local input history, never
 `previous_interaction_id`. A custom `providers.google.baseUrl` is the complete
 Interactions endpoint, not a base path to which Crucible appends a route.
 See [Google's Interactions documentation](https://ai.google.dev/gemini-api/docs/interactions-overview).
+
+`gemini-4-argon` (read 5 Nov 2026) takes a window of 1,048,576 tokens. Google's
+model page gives its output as "65,536" by default and "up to 1,048,576 (with
+long decode)"; crucible states 32,768, the figure of the model database it is
+built from, which is smaller than Google's and so costs answer room but refuses
+no request. Google's pricing page says "Gemini 4 Argon is not available on the
+Free tier": it needs a paid key. Its Standard price is $2.00 input and $10.00
+output per million tokens through 30 Nov 2026, and $4.00 and $20.00 from
+1 Dec 2026. Google lists its product-improvement use of paid-tier content as
+"No".
 
 Moonshot authorization and model requests identify the host truthfully as
 crucible with a stable protected device id.

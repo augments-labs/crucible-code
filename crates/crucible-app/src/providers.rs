@@ -108,10 +108,11 @@ const PROVIDERS: [Served; 11] = [
         reach: startup::google_web,
         fast: Google::fast_at_vendor,
         fast_signed_in: None,
-        reviewed: "2026-10-16",
+        reviewed: "2026-11-05",
         window: 200_000,
         most: None,
         models: &[
+            Model::shown("gemini-4-argon", "Gemini 4 Argon", GEMINI),
             Model::shown("gemini-3.8-flash", "Gemini 3.8 Flash", GEMINI),
             Model::shown("gemini-3.7-flash", "Gemini 3.7 Flash", GEMINI),
             Model::shown("gemini-3.6-flash", "Gemini 3.6 Flash", GEMINI),
