@@ -122,12 +122,11 @@ def uncommented(lines):
     kept = []
     index = 0
     while index < len(text):
-        rest = text[index:]
-        if rest.startswith("//"):
+        if text.startswith("//", index):
             end = text.find("\n", index)
             index = len(text) if end < 0 else end
             continue
-        if rest.startswith("/*"):
+        if text.startswith("/*", index):
             depth = 0
             while index < len(text):
                 if text.startswith("/*", index):
@@ -161,7 +160,9 @@ def constructions(body, helpers=None, within=()):
     call it belongs to. A call to one of `helpers`, the functions of the file
     `body` is in, is followed into that function, so a window a helper opens is
     keyed as the case's own; `within` is the helpers already being read, which
-    a helper that calls itself back is not read through again.
+    a helper that calls itself back is not read through again. A helper defined
+    more than once in the file is not followed, since its name does not say
+    which definition a call means.
     """
     text = "\n".join(body)
     helpers = helpers or {}

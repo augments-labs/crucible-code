@@ -75,7 +75,7 @@ provider](../providers/providers.md#which-provider).
 
 This is 0.43.3 or earlier started with no `--model` over a configuration file
 in which 0.44 or later wrote `provider` as one of the providers 0.43.3 does not
-have: `deepseek`, `meta`, `mimo`, `minimax`, `qwen`, `xai` or `zai`. `/model`
+have: `deepseek`, `meta`, `mimo`, `minimax`, `mistral`, `qwen`, `xai` or `zai`. `/model`
 writes it when one of them is chosen, and so does a `/login` that sets the
 session up. Before rolling back to
 0.43.3, set `provider` in the configuration file in your home directory to
@@ -90,8 +90,8 @@ alone, and are used again by a later crucible.
 Said under the welcome, and again at a prompt, when no provider holds a
 credential: none of `ANTHROPIC_API_KEY`, `DASHSCOPE_API_KEY`,
 `DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, `META_API_KEY`, `MIMO_API_KEY`,
-`MINIMAX_API_KEY`, `MOONSHOT_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY` or
-`ZAI_API_KEY` is exported with a value, and `/login` has stored nothing.
+`MINIMAX_API_KEY`, `MISTRAL_API_KEY`, `MOONSHOT_API_KEY`, `OPENAI_API_KEY`,
+`XAI_API_KEY` or `ZAI_API_KEY` is exported with a value, and `/login` has stored nothing.
 An exported variable that is empty holds no key. Everything but a turn works in
 this state, so run `/login`, which takes a model as well or connects an
 [installed agent](../providers/agents.md), or export a key, start again and

@@ -729,6 +729,7 @@ fn a_row_holding_its_providers_credential_says_so_and_no_secret_reaches_the_scre
                 "MiniMax · minimaxi.com",
                 "may use what is sent · a pay-as-you-go key, mainland China accounts".to_owned()
             ),
+            ("Mistral", "set MISTRAL_API_KEY".to_owned()),
             (
                 "MoonshotAI · kimi.ai",
                 "signed in · may train on what is sent".to_owned()
@@ -927,7 +928,7 @@ fn a_window_with_no_room_for_a_panel_is_given_every_row_as_the_line_to_type() {
     // columns too, folded only where the words are wider than the window.
     let rows = production();
     for columns in [80, 40] {
-        let written = opened_into(columns, 40, false);
+        let written = opened_into(columns, 48, false);
         let unfolded = crucible_tui::Picture::of(&written, columns, 200)
             .said()
             .join(" ");

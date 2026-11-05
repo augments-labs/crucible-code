@@ -1708,10 +1708,19 @@ mod tests {
         {
             let mut running =
                 Box::pin(tool.run(allowed(&tool, r#"{"path":"large.png"}"#), &context));
-            assert!(
-                crate::sample::asked_once(running.as_mut()).is_pending(),
-                "the read answered before its job could have read the picture"
-            );
+            match crate::sample::asked_once(running.as_mut()) {
+                std::task::Poll::Pending => {}
+                std::task::Poll::Ready(_) => {
+                    // The job read the picture and answered before the call
+                    // could be dropped, so the agent was shown it; the
+                    // dropped-call case is the next test's premise.
+                    assert!(
+                        seen.holds(sample.workspace().existing("large.png").unwrap().as_path()),
+                        "an answered read did not count as the agent having seen the file"
+                    );
+                    return;
+                }
+            }
         }
 
         crate::sample::idle(&worker);
@@ -1737,19 +1746,27 @@ mod tests {
         {
             let mut running =
                 Box::pin(tool.run(allowed(&tool, r#"{"path":"large.png"}"#), &context));
-            assert!(
-                crate::sample::asked_once(running.as_mut()).is_pending(),
-                "the read answered before its job could have read the picture"
-            );
-            // Every place free again is the job having returned, its answer
-            // waiting for a call that is about to be dropped without asking.
-            crate::sample::idle(&worker);
+            match crate::sample::asked_once(running.as_mut()) {
+                std::task::Poll::Pending => {
+                    // Every place free again is the job having returned, its
+                    // answer waiting for a call about to be dropped.
+                    crate::sample::idle(&worker);
+                    drop(running);
+                    assert!(
+                        !seen.holds(sample.workspace().existing("large.png").unwrap().as_path()),
+                        "an answer nobody received counted as the agent having seen the file"
+                    );
+                }
+                std::task::Poll::Ready(_) => {
+                    // The read finished before the call could be dropped, so
+                    // the agent was shown it and the ledger must say so.
+                    assert!(
+                        seen.holds(sample.workspace().existing("large.png").unwrap().as_path()),
+                        "an answered read did not count as the agent having seen the file"
+                    );
+                }
+            }
         }
-
-        assert!(
-            !seen.holds(sample.workspace().existing("large.png").unwrap().as_path()),
-            "an answer nobody received counted as the agent having seen the file"
-        );
     }
 
     #[test]

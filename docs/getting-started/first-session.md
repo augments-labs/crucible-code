@@ -257,11 +257,12 @@ model and effort in force; `/model` and `/effort` change either.
 
 Some vendors say they may use what you send to train or improve their models:
 a ChatGPT plan, Kimi Code and the Kimi open platform, a Gemini key on unpaid
-quota, MiniMax, Qwen's plans on aliyun.com, Z.ai's bigmodel.cn key, and Meta's
-two contributor models. Before the first message on one of those goes, crucible asks you once,
-with what the vendor's terms say and where; **Use it anyway** sends it
-and is remembered, **Go back** keeps the message and sends nothing. [Content
-use](../providers/content-use.md) lists each route and what its vendor says.
+quota, MiniMax, Qwen's plans on aliyun.com, Z.ai's bigmodel.cn key, Meta's
+two contributor models, and Mistral's Preview models. Before the first message
+on one of those goes, crucible asks you once, with what the vendor's terms say
+and where; **Use it anyway** sends it and is remembered, **Go back** keeps the
+message and sends nothing. [Content use](../providers/content-use.md) lists
+each route and what its vendor says.
 
 You do not have to know that command to find it. A run holding no key for any
 provider says so under the welcome and names both halves of setting one up:
@@ -361,7 +362,9 @@ a machine where that is a real question.
 The row is redrawn on every keystroke, and both ends move while a session runs:
 <kbd>Shift-Tab</kbd> steps the left, `/model`, `/effort`, `/fast` and `/login`
 change the right. Where the window is too narrow for both, the right end gives way whole
-rather than being cut, and the mode keeps its place.
+rather than being cut, and the mode keeps its place. Without a frame, the
+window reading shortens or goes to leave the mode room, and only a terminal too narrow
+for the mode's whole sentence drops it in favour of the reading.
 
 The arrows move a character, <kbd>Ctrl</kbd> or <kbd>Alt</kbd> held with one
 moves a word (as do <kbd>Alt-B</kbd> and <kbd>Alt-F</kbd>), and <kbd>Home</kbd>
@@ -997,8 +1000,8 @@ Anthropic, OpenAI and Google, whose requests have a shape for a document;
 MoonshotAI's have none, and say so rather than sending the file as anything
 else. A video, which has to be an `.mp4`, goes to Google and MoonshotAI;
 Anthropic's and OpenAI's requests have no shape for one. The seven providers new
-in 0.44 are sent text alone in this release, and say so of a file the same
-way.
+in 0.44 and Mistral, which came after it, are sent text alone in this release,
+and say so of a file the same way.
 
 Nothing asks you first. Every other way a file reaches the model goes through a
 tool, and a tool is something the agent chose to run, which is the thing a
@@ -1466,7 +1469,7 @@ sessions never write a plan or ask a question about the world.
 
 `web_search` and `web_fetch` exist only where the provider serves them.
 Anthropic, Google, MoonshotAI and OpenAI serve both; Meta and xAI serve
-`web_search` alone; DeepSeek, MiMo, MiniMax, Qwen and Z.ai serve neither, and a
+`web_search` alone; DeepSeek, MiMo, MiniMax, Mistral, Qwen and Z.ai serve neither, and a
 session there has ten tools or fewer.
 
 Reads inside the workspace never ask; one that leads outside it puts the path

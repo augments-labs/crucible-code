@@ -986,9 +986,12 @@ echo '==> a spinner that cannot act on its stop signal does not hold its step'
 # frame pause does not return cannot act on the signal that ends it, and a step
 # that waited for it would wait as long as the pause. This `sleep` holds the
 # spinner's frame pause, and only that one, for longer than the whole step list
-# takes; every other wait goes to the real sleep. The pause is held away from
+# takes, and for so much less than the watchdog's bound that all four steps
+# held in turn still end before it: a spinner that cannot be stopped then
+# returns the install to the case's own check below and not to the watchdog.
+# Every other wait goes to the real sleep. The pause is held away from
 # the terminal, so `script` is not kept open by what the spinner leaves behind.
-held_for=120
+held_for=$((terminal_bound / 6))
 real_sleep=$(command -v sleep)
 held_tools=$scratch/held-tools
 mkdir -p "$held_tools"

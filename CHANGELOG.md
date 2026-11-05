@@ -8,6 +8,33 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.50.0] - 2026-11-06
+
+**Crucible 0.50.0 adds Mistral as a provider and brings the model lists up to date: Gemini 4 Argon, gpt-6.1-terra, Kimi K3.1 Pro, MiniMax-M3.1-Flash and Muse Wonder are offered, and `deepseek-flash` is now DeepSeek-V4.1-Flash-1017, the name `/model` shows beside it.** Mistral Large 4 is a Preview model whose terms let Mistral train on what you send, so crucible asks before the first request. `MiniMax-M2.7`, which MiniMax retires on 18 November, is gone from `/model`.
+
+### Added
+
+- **Gemini 4 Argon.** Google's top tier, `gemini-4-argon`, is now in `/model` with low, medium and high thinking, implicit caching and Priority speed. It needs a paid Google key, and its price doubles on 1 December 2026.
+- **gpt-6.1-terra.** OpenAI's `gpt-6.1-terra` is offered at every effort rung, with fast mode and its cache and over-272K prices recorded. A ChatGPT sign-in can use it too.
+- **Kimi K3.1 Pro** and K3.1 Pro Highspeed are offered under MoonshotAI. K3.1 Pro always reasons, with `max` as Kimi's own default, and the highspeed form is a fast model of its own at about 2x the quota for 2–3x the speed.
+- **MiniMax-M3.1-Flash.** MiniMax's new model is offered at every effort rung, and `MiniMax-M2.7`, which MiniMax retires on 18 November, is gone from the model list. `MiniMax-M3` stays the default, and its output limit is now 524,288.
+- **Mistral.** Mistral Large 4 is available under `MISTRAL_API_KEY`, with low, medium and high effort. It is a Preview model, and Mistral's terms let it train on what you send and what it answers with no opt-out, so crucible asks before the first request, as it does for its versioned name and the two `labs` models.
+- **Muse Wonder.** `muse-wonder-1.0` is offered with every reasoning rung, and `muse-spark-1.3` now serves `max`, which Meta's reasoning page supports there and not on the contributor variant. `muse-wonder-full-1.0` stays unoffered: Meta serves it only inside Muse Code subscriptions.
+
+### Changed
+
+- **DeepSeek V4.1 Flash.** `deepseek-flash` is now DeepSeek-V4.1-Flash-1017, and `/model` shows it by that name, as it shows `deepseek-v4-pro` as DeepSeek-V4-Pro-0813. Both DeepSeek models start at their native 1,048,576-token window instead of 1,000,000. `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` are still accepted by DeepSeek and answer as `deepseek-flash`.
+
+### Fixed
+
+- **A control character in an update notice no longer pushes its row past the window.** The notice now counts it as the space it draws.
+- **A narrow status row keeps the permission mode whole.** Below 24 columns the mode stays readable and the window reading shortens to `N%` or goes to make room. A row too narrow for the mode shows only the reading instead of the mode's first letters.
+- **The first sandboxed command on Windows no longer waits for a profile.** Windows sandbox setup now builds the sandbox account's profile, which took over 20 seconds during the first command on a CI runner. Setup takes that much longer instead, and an account set up by an earlier version still waits once unless setup is run again.
+
+### Internal
+
+- **The model-drift check now reports models of families crucible does not offer, and a vendor reusing a model name.** A family's model is listed as a lead whatever its release date, and a revision such as DeepSeek's V4.1-Flash-1017 is no longer silent. A family is still chosen by hand.
+
 ## [0.49.0] - 2026-11-04
 
 **Crucible 0.49.0 can browse, install, launch, update and sign in to the ACP Registry's binary agents from `/catalog`, `/login` or `crucible agents`.** A sign-in that needs a real terminal now suspends Crucible and runs the vendor's command outside the sandbox after a per-run yes. The registry is not reviewed, so a generic content-use warning and the conversation's network policy hold it, and its reach is unrecorded.
@@ -5489,7 +5516,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.48.2...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.50.0...HEAD
+[0.50.0]: https://github.com/augments-labs/crucible-code/compare/v0.49.0...v0.50.0
 [0.49.0]: https://github.com/augments-labs/crucible-code/compare/v0.48.2...v0.49.0
 [0.48.2]: https://github.com/augments-labs/crucible-code/compare/v0.48.1...v0.48.2
 [0.48.1]: https://github.com/augments-labs/crucible-code/compare/v0.48.0...v0.48.1

@@ -1,15 +1,11 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 1422
 expression: keys
 ---
 40x30 cursor 29,0 scrolled 0
 |────────────────────────────────────────|
 |                                        |
 |Log in                                  |
-|                                        |
-|  DeepSeek                              |
-|  set DEEPSEEK_API_KEY                  |
 |                                        |
 |  Google                                |
 |  uses what is sent · set GEMINI_API_KEY|
@@ -26,11 +22,14 @@ expression: keys
 |  MiniMax · minimaxi.com                |
 |  may use what is sent · a pay-as-you-g…|
 |                                        |
+|  Mistral                               |
+|  set MISTRAL_API_KEY                   |
+|                                        |
 |  MoonshotAI · kimi.ai                  |
 |  may train on what is sent · a Kimi Co…|
 |                                        |
 |› MoonshotAI · kimi.com                 |
 |  signed in · may use what is sent      |
-|  · 7 more                              |
+|  · 8 more                              |
 |                                        |
 |esc to go back                          |

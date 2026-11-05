@@ -110,6 +110,10 @@ pub trait Dialect: Send + Sync + 'static {
         Reasoning::Unread
     }
 
+    /// Where the reasoning a model writes rides on this wire, on the way in
+    /// and on the way back. A field of its own beside the answer, by default.
+    const THOUGHT_AT: ThoughtAt = ThoughtAt::Field;
+
     /// Whether the counts of a response have to be asked for. A vendor that
     /// sends them unasked, and does not document the field that asks, is sent
     /// nothing it might refuse.
@@ -199,6 +203,19 @@ pub enum Reasoning {
     /// has none, once a request carries tools: the vendor refuses a turn with
     /// tools that leaves any earlier answer without it.
     Required,
+}
+
+/// Where reasoning rides on this wire, for a vendor whose models write it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThoughtAt {
+    /// A `reasoning_content` string beside the answer's `content`, read from
+    /// each event and sent back on the message it came with.
+    Field,
+    /// A `thinking` chunk inside the answer's `content` when that is a list:
+    /// its inner text chunks are the reasoning, and the list's `text` chunks
+    /// the answer. Sent back the same way, the thinking chunk ahead of the
+    /// text, since the vendor reads the message as it wrote it.
+    ContentChunk,
 }
 
 /// What this harness is called, to a vendor on this wire.

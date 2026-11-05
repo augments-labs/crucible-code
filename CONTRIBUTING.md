@@ -42,12 +42,12 @@ options.
 came through `dev` first, except a hotfix, so `main` is always a state that was
 released or is about to be.
 
-Branch from `dev`, and open the pull request against `dev`. One opened against
-`main` is asked to retarget before anyone reviews it — not as ceremony, but
-because merging it would put an unreleased change into the branch a tag is cut
-from. Only two kinds of branch target `main`: a release branch carrying the
-version bump, and a hotfix for something already published.
-[`RELEASING.md`](RELEASING.md) owns both.
+Branch from `dev`, and open the pull request against `dev` or against another
+branch that merges into it. One opened against `main` is asked to retarget
+before anyone reviews it — not as ceremony, but because merging it would put an
+unreleased change into the branch a tag is cut from. Only two kinds of branch
+target `main`: a release branch carrying the version bump, and a hotfix for
+something already published. [`RELEASING.md`](RELEASING.md) owns both.
 
 Both branches refuse direct pushes, force-pushes and deletion, and need
 `CI required` green before a merge. A pull request to `dev` merges once
@@ -105,7 +105,9 @@ no web tool, no fast form) and the docs say which fact was not settled.
 
 Vendors release and retire models several times a year. The `model-drift`
 workflow puts the models.dev database against the shipped lists on the 1st and
-15th of each month and keeps one `model-drift` issue open while they differ;
+15th of each month and keeps one `model-drift` issue open while they differ,
+reporting a newer model, one gone or deprecated, rungs that differ, a family
+crucible does not offer and an offered model revised since it was reviewed;
 [refresh-the-models](.agents/skills/refresh-the-models/SKILL.md) says how to
 settle it.
 
@@ -262,9 +264,15 @@ harness, is part of reproducing the work, and a reviewer reads what an agent
 wrote with different questions than what a person wrote. It closes by asking
 whether a person has read the complete diff. A green gate is evidence about the
 checks that ran, not about whether the change answers the right problem, so
-that reading is a separate thing a pull request either has or is still waiting
-for — and one nobody has read yet leaves the box empty rather than claiming
-otherwise.
+that reading is a separate thing a pull request either has or has not — and
+one nobody has read leaves the box empty, with `-` in the table, rather than
+claiming otherwise; a name goes in that row only when a human wrote the change
+or asked for their name there, never on an agent's own initiative. That is a
+complete answer when whoever orchestrated the change relies on the agent's own
+review, and the template then asks for that review instead: which agents read
+the diff, in the table, and what each checked against and found, under the
+box. The pull request is weighed on who made it, its proof and that review,
+not closed for the empty box.
 
 ## Changelog entries
 

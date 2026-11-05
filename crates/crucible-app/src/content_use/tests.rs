@@ -62,6 +62,10 @@ fn a_documented_address_is_recognised_however_it_is_spelled() {
             "key:deepseek@deepseek.com",
         ),
         ("https://api.meta.ai/v1/responses", "key:meta@meta.ai"),
+        (
+            "https://api.mistral.ai/v1/chat/completions",
+            "key:mistral@mistral.ai",
+        ),
     ] {
         assert_eq!(recognised(spelled), Some(route), "{spelled}");
     }
@@ -110,6 +114,7 @@ fn every_key_row_is_recognised_at_the_address_it_sends_to() {
         "deepseek" => crucible_provider::DeepSeek::VENDOR.as_str().to_owned(),
         "meta" => crucible_provider::Meta::VENDOR.as_str().to_owned(),
         "mimo" => crucible_provider::Mimo::VENDOR.as_str().to_owned(),
+        "mistral" => crucible_provider::Mistral::VENDOR.as_str().to_owned(),
         "xai" => crucible_provider::Xai::VENDOR.as_str().to_owned(),
         _ => panic!("no default address for {provider}"),
     };
@@ -139,11 +144,56 @@ fn every_key_row_is_recognised_at_the_address_it_sends_to() {
     }
 }
 
+/// Each warned model that is not offered, by its provider, its name and the
+/// offered name of the model it is: the database lists both names with the
+/// same status, day and limits, and a typed name is sent as typed.
+const NAMED_TOO: [(&str, &str, &str); 1] = [("mistral", "mistral-large-4-0-8", "mistral-large-4")];
+
+/// Each warned model that no name of an offered model reaches, by its
+/// provider and its name, with why it is held: a typed name is sent as typed.
+const HELD_UNOFFERED: [(&str, &str, &str); 2] = [
+    ("mistral", "labs-devstral-small-2512", LABS),
+    ("mistral", "labs-leanstral-1-5-1", LABS),
+];
+
+/// Why a `labs` model of Mistral is held though nobody offers it.
+const LABS: &str = "a Preview model Mistral's terms name by its `labs` prefix; held so a typed \
+                    name asks first";
+
+/// Each row of [`NAMED_TOO`] and [`HELD_UNOFFERED`] is a route the build
+/// warns about, each with a reason, and another name of an offered model
+/// carries the very warning that model does.
+#[test]
+fn every_unoffered_warned_model_is_warned_and_an_alias_as_its_model_is() {
+    let warned = |provider: &str, model: &str| {
+        let route = model_route(provider, model);
+        WARNED
+            .iter()
+            .find(|warned| warned.route == route)
+            .unwrap_or_else(|| panic!("{route} is not warned"))
+    };
+    for (provider, alias, offered) in NAMED_TOO {
+        assert_eq!(
+            warned(provider, alias).warning,
+            warned(provider, offered).warning,
+            "{alias}"
+        );
+    }
+    for (provider, model, why) in HELD_UNOFFERED {
+        assert!(!why.is_empty(), "{model}");
+        let _ = warned(provider, model);
+    }
+}
+
 /// The routes and the rows agree: each warned row route names a row, each
 /// sends only to its route's origins, an agent's route claims none, a Kimi row's sign-in, model and web tool
 /// hosts are its site's, and route spellings are distinct. A warned model is
-/// one its provider offers, and claims no origin: the host it is sent to
-/// serves that provider's other models too, so it is asked about at the send.
+/// one its provider offers, or another name of one it offers that a name
+/// typed in `/model` reaches ([`NAMED_TOO`]), or one held though nobody
+/// offers it ([`HELD_UNOFFERED`]) of a provider that is served, and claims no
+/// origin: the host
+/// it is sent to serves that provider's other models too, so it is asked
+/// about at the send.
 #[test]
 fn every_warned_route_names_its_row_and_every_origin_it_is_sent_to() {
     let rows = Rows::production();
@@ -164,9 +214,23 @@ fn every_warned_route_names_its_row_and_every_origin_it_is_sent_to() {
         }
         if let Some(named) = warned.route.strip_prefix("model:") {
             let (provider, model) = named.split_once('/').expect("provider/model");
+            let offers = |model: &str| {
+                crate::providers::offered(&catalogue).any(|served| {
+                    served.name == provider
+                        && served.models.iter().any(|offered| offered.name == model)
+                })
+            };
+            let named_too = NAMED_TOO
+                .iter()
+                .find(|(of, name, _)| *of == provider && *name == model);
+            let held_unoffered = HELD_UNOFFERED
+                .iter()
+                .any(|(of, name, _)| *of == provider && *name == model);
+            let served = crate::providers::offered(&catalogue).any(|one| one.name == provider);
             assert!(
-                crate::providers::offered(&catalogue).any(|served| served.name == provider
-                    && served.models.iter().any(|offered| offered.name == model)),
+                offers(model)
+                    || named_too.is_some_and(|(_, _, offered)| offers(offered))
+                    || (held_unoffered && served),
                 "{} names no model offered",
                 warned.route
             );
@@ -243,6 +307,10 @@ fn the_routes_warned_are_those_whose_vendor_says_so() {
         "key:zai@bigmodel.cn",
         "model:meta/muse-spark-1.3-contributor",
         "model:meta/muse-spark-1.2-contributor",
+        "model:mistral/mistral-large-4",
+        "model:mistral/mistral-large-4-0-8",
+        "model:mistral/labs-devstral-small-2512",
+        "model:mistral/labs-leanstral-1-5-1",
         "api.moonshot.ai",
         "agent:claude",
         "agent:antigravity",
@@ -301,6 +369,81 @@ fn a_contributor_model_is_asked_about_and_its_standard_twin_is_not() {
     assert!(
         consent
             .unanswered("meta", "muse-spark-1.2-contributor")
+            .is_some()
+    );
+}
+
+/// A session on Mistral's Preview model, served on a key, is asked about
+/// before its first send and goes nowhere until the yes: its terms let Mistral
+/// train on what is sent to a Preview model whatever the account's opt-out.
+/// The model is asked about under either name the database lists it by, each
+/// with a yes of its own, since a name typed in `/model` is sent as typed. The
+/// host is not held, since it serves every other Mistral model too.
+#[test]
+fn a_session_on_mistral_large_4_sends_nothing_before_its_yes() {
+    let consent = Consent::new(Routes::production());
+    consent.served("mistral", Some(serving("key:mistral@mistral.ai")));
+
+    for model in ["mistral-large-4", "mistral-large-4-0-8"] {
+        let route = model_route("mistral", model);
+        let asked = consent.unanswered("mistral", model);
+        assert_eq!(
+            asked.as_ref().map(|one| &*one.route),
+            Some(route.as_str()),
+            "{model}"
+        );
+        assert_eq!(
+            asked.map(|one| one.warning.caution),
+            Some("may train on what is sent".into()),
+            "{model}"
+        );
+    }
+    assert_eq!(
+        consent.held(&origin("https://api.mistral.ai/v1/chat/completions")),
+        None
+    );
+
+    consent.record(&model_route("mistral", "mistral-large-4"));
+    assert_eq!(consent.unanswered("mistral", "mistral-large-4"), None);
+    assert!(
+        consent
+            .unanswered("mistral", "mistral-large-4-0-8")
+            .is_some()
+    );
+}
+
+/// A session on a Mistral model its database names with the `labs` prefix,
+/// which its terms name as a Preview model, is asked about before its first
+/// send although crucible offers neither, since a typed name is sent as
+/// typed; each name has a yes of its own.
+#[test]
+fn a_session_on_a_labs_model_of_mistral_sends_nothing_before_its_yes() {
+    let consent = Consent::new(Routes::production());
+    consent.served("mistral", Some(serving("key:mistral@mistral.ai")));
+
+    for model in ["labs-devstral-small-2512", "labs-leanstral-1-5-1"] {
+        let route = model_route("mistral", model);
+        let asked = consent.unanswered("mistral", model);
+        assert_eq!(
+            asked.as_ref().map(|one| &*one.route),
+            Some(route.as_str()),
+            "{model}"
+        );
+        assert_eq!(
+            asked.map(|one| one.warning.caution),
+            Some("may train on what is sent".into()),
+            "{model}"
+        );
+    }
+
+    consent.record(&model_route("mistral", "labs-devstral-small-2512"));
+    assert_eq!(
+        consent.unanswered("mistral", "labs-devstral-small-2512"),
+        None
+    );
+    assert!(
+        consent
+            .unanswered("mistral", "labs-leanstral-1-5-1")
             .is_some()
     );
 }

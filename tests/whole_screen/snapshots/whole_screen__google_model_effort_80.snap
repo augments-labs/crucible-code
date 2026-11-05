@@ -10,18 +10,18 @@ expression: models
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |╭─────────────────────┬────────────────────────────────────────────────────────╮|
-|│  Providers          │  Models                                        4 of 43 │|
+|│  Providers          │  Models                                        5 of 49 │|
 |├─────────────────────┼────────────────────────────────────────────────────────┤|
-|│ › All             4 │ › gemini-3.8-flash         Google        1.0M  ← now   │|
-|│   Anthropic       · │   gemini-3.7-flash         Google        1.0M  fast    │|
-|│   DeepSeek        · │   gemini-3.6-flash         Google        1.0M  fast    │|
-|│   Google          4 │   gemini-3.1-pro-preview   Google        1.0M  fast    │|
-|│   Meta            · │                                                        │|
+|│ › All             5 │ › gemini-4-argon           Google        1.0M  fast    │|
+|│   Anthropic       · │   gemini-3.8-flash         Google        1.0M  ← now   │|
+|│   DeepSeek        · │   gemini-3.7-flash         Google        1.0M  fast    │|
+|│   Google          5 │   gemini-3.6-flash         Google        1.0M  fast    │|
+|│   Meta            · │   gemini-3.1-pro-preview   Google        1.0M  fast    │|
 |│   MiMo            · │                                                        │|
 |│   MiniMax         · │                                                        │|
+|│   Mistral         · │                                                        │|
 |│   MoonshotAI      · │                                                        │|
 |│   OpenAI          · │                                                        │|
-|│   Qwen            · │                                                        │|
 |╰─────────────────────┴────────────────────────────────────────────────────────╯|
 |                                                                                |
 |  Effort   ‹ low ›  medium   high                                               |

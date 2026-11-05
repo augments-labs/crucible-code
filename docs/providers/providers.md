@@ -156,12 +156,12 @@ Naming a provider this build does not have is a startup failure that says which
 ones it has:
 
 ```
-crucible: no provider called gemini; this build has anthropic, deepseek, google, meta, mimo, minimax, moonshot, openai, qwen, xai, zai
+crucible: no provider called gemini; this build has anthropic, deepseek, google, meta, mimo, minimax, mistral, moonshot, openai, qwen, xai, zai
 ```
 
 ## What each provider serves
 
-This build serves eleven providers. The name in the first column is what
+This build serves twelve providers. The name in the first column is what
 `--model`, `provider` and `providers.<name>` take, and the models are what
 `/model` offers for it, each with the rungs it takes:
 
@@ -169,25 +169,31 @@ This build serves eleven providers. The name in the first column is what
 | --- | --- | --- | --- |
 | `anthropic` | Anthropic | `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5-5`, `claude-opus-5`, `claude-sonnet-5-5`, `claude-sonnet-5`, `claude-haiku-5-5`: all five; `claude-haiku-4-5`: none | `ANTHROPIC_API_KEY` |
 | `deepseek` | DeepSeek | `deepseek-flash`, `deepseek-v4-pro`: low, high, max | `DEEPSEEK_API_KEY` |
-| `google` | Google | `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-pro-preview`: low, medium, high | `GEMINI_API_KEY` |
-| `meta` | Meta | `muse-spark-1.3`, `muse-spark-1.3-contributor`, `muse-spark-1.2`, `muse-spark-1.2-contributor`: low, medium, high, xhigh | `META_API_KEY` |
+| `google` | Google | `gemini-4-argon`, `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-pro-preview`: low, medium, high | `GEMINI_API_KEY` |
+| `meta` | Meta | `muse-wonder-1.0`, `muse-spark-1.3`: all five; `muse-spark-1.3-contributor`, `muse-spark-1.2`, `muse-spark-1.2-contributor`: low, medium, high, xhigh | `META_API_KEY` |
 | `mimo` | MiMo | `mimo-v2.6-pro`, `mimo-v2.6-flash`: none | `MIMO_API_KEY` |
-| `minimax` | MiniMax | `MiniMax-M3`, `MiniMax-M2.7`: none | `MINIMAX_API_KEY` |
-| `moonshot` | MoonshotAI | `k3`, `k3-256k`, `kimi-for-coding`, `kimi-for-coding-highspeed`: low, high, max | `MOONSHOT_API_KEY` |
-| `openai` | OpenAI | `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`: all five; `gpt-5.5`: low, medium, high, xhigh | `OPENAI_API_KEY` |
+| `minimax` | MiniMax | `MiniMax-M3.1-Flash`: all five; `MiniMax-M3`: none | `MINIMAX_API_KEY` |
+| `mistral` | Mistral | `mistral-large-4`: low, medium, high | `MISTRAL_API_KEY` |
+| `moonshot` | MoonshotAI | `k3.1-pro`, `k3.1-pro-highspeed`, `k3`, `k3-256k`, `kimi-for-coding`, `kimi-for-coding-highspeed`: low, high, max | `MOONSHOT_API_KEY` |
+| `openai` | OpenAI | `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`: all five; `gpt-5.5`: low, medium, high, xhigh | `OPENAI_API_KEY` |
 | `qwen` | Qwen | `qwen3.8-max`, `qwen3.8-flash`: low, medium, xhigh; `qwen3.7-plus`, `qwen3.6-plus`: none | `DASHSCOPE_API_KEY` |
 | `xai` | xAI | `grok-4.7`, `grok-4.6`: low, medium, high, xhigh | `XAI_API_KEY` |
 | `zai` | Z.ai | `glm-5.3`, `glm-5.3-flash`: low, high, max; `glm-5.2`: high, max | `ZAI_API_KEY` |
 
 The two Meta models whose names end in `-contributor` are cheaper because Meta
 may train on what is sent to them; crucible asks before the first one is
-chosen or sent to, and the standard two are not asked about. See [content
+chosen or sent to, and the standard three are not asked about. `muse-wonder-1.0`
+costs $4 per million input tokens, $0.20 cached and $20 output, against
+$1.25, $0.15 and $4.25 for `muse-spark-1.3` (Meta's pricing page, read 5 Nov
+2026). `muse-wonder-full-1.0`, which Meta serves only inside Muse Code on its
+Power and Maximum plans, is not offered; `max` on `muse-wonder-1.0` does not
+select it. See [content
 use](content-use.md).
 
 Meta and xAI are spoken to over the Responses protocol, the other five vendors
-new in this release over Chat Completions. crucible sends those seven text
-alone in this release: a picture, a PDF, audio or video stays out of the
-request, whatever the model reads. A refusal from any of them reaches you in
+new in 0.44 and Mistral, which came after it, over Chat Completions. crucible
+sends those eight text alone in this release: a picture, a PDF, audio or video
+stays out of the request, whatever the model reads. A refusal from any of them reaches you in
 the vendor's own words, except Z.ai's refusal of a prompt too long for the
 model, which makes room and asks again as a
 [full window](../sessions/sessions.md#when-the-window-fills) does. Meta's refusal
@@ -217,10 +223,11 @@ xAI.
 | Qwen Token Plan · alibabacloud.com | subscription | start `sk-sp-` | `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` | `qwen3.8-max`, `qwen3.8-flash`, `qwen3.7-plus` |
 | Qwen Token Plan · aliyun.com | subscription | start `sk-sp-` | `https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1` | `qwen3.8-max`, `qwen3.8-flash`, `qwen3.7-plus` |
 | DeepSeek | API key | | `https://api.deepseek.com` | both |
-| Meta | API key | | `https://api.meta.ai/v1` | all four |
+| Meta | API key | | `https://api.meta.ai/v1` | all five |
 | MiMo | API key | never start `tp-` or `ttp-` | `https://api.xiaomimimo.com/v1` | both |
 | MiniMax · minimax.io | API key | start `sk-api-` | `https://api.minimax.io/v1` | both |
 | MiniMax · minimaxi.com | API key | start `sk-api-` | `https://api.minimax.cn/v1` | both |
+| Mistral | API key | | `https://api.mistral.ai/v1` | `mistral-large-4` |
 | Qwen · alibabacloud.com | API key | | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | all four |
 | Qwen · aliyun.com | API key | | `https://dashscope.aliyuncs.com/compatible-mode/v1` | all four |
 | xAI | API key | | `https://api.x.ai/v1` | both |
@@ -239,13 +246,13 @@ other site makes of one.
 
 A Qwen Coding Plan or Token Plan key starts with `sk-sp-` either way, and
 nothing in it says which plan, or whether a Token Plan key is the Personal or
-the Team edition. The plans are for interactive use in a coding tool;
-Alibaba Cloud's pages say a plan's key used in a script or a backend may be
-suspended. MiniMax sells M Plan in place of Token Plan to new buyers, with one
-key prefix for both, and its M Plan pages list only `MiniMax-M3.1-Flash-Preview`
-as a text model, which this build does not offer. Whether an M Plan key is
-served `MiniMax-M3` and `MiniMax-M2.7` is not settled by any page; the vendor
-answers.
+the Team edition. The plans are for interactive use in a coding tool; Alibaba
+Cloud's pages say a plan's key used in a script or a backend may be suspended.
+MiniMax sells M Plan in place of Token Plan to new buyers, with one key prefix
+for both. Its M Plan page, read on 5 Nov 2026, names only `MiniMax-M3.1-Flash`
+as a text model, the released name of the model earlier called
+`MiniMax-M3.1-Flash-Preview`. Whether an M Plan key is served `MiniMax-M3` is
+not settled by any page; the vendor answers.
 
 A MiniMax key given on a Token Plan row has a plan with limits, which `/usage`
 asks MiniMax for at that row's site; the plan limits are asked for on the
@@ -278,15 +285,23 @@ choice that asks least of it, and this says which fact it was.
 
 - **Meta.** Web search through `web_search`, and no fetch: Meta serves none.
   Provider-managed caching. No fast form: Meta's `service_tier` field has no
-  stated price, speed or behaviour. `max` is not offered on
-  `muse-spark-1.3`, because Meta's pages disagree on whether it takes one.
+  stated price, speed or behaviour. `max` is offered on `muse-wonder-1.0` and
+  `muse-spark-1.3`, where Meta's reasoning page says it is supported, and not
+  on the contributor models, where the same page says it is not available.
+  Meta's smallest cached prefix is published for no model, `muse-wonder-1.0`
+  included, so the 1,024-token floor the wire's other vendors share is assumed.
   What a failed `web_search` call carries is not documented.
 - **xAI.** Web search through `web_search`, and no fetch: xAI's search item
   documents no action that opens one page. Provider-managed caching. No fast
   form: xAI serves a priority tier, but no source shows how it refuses one.
 - **DeepSeek.** No web tool on Chat Completions. Provider-managed caching,
   with no published smallest prefix. No fast form: DeepSeek serves none.
-  `deepseek-flash` reads pictures; crucible sends it text alone.
+  `deepseek-flash` is DeepSeek-V4.1-Flash-1017 and `deepseek-v4-pro` is
+  DeepSeek-V4-Pro-0813, the names `/model` shows beside them, since the
+  model behind `deepseek-flash` changes when DeepSeek upgrades Flash.
+  DeepSeek still accepts `deepseek-v4-flash` and
+  `deepseek-v4-flash-vision-exp`, retired names it routes to that model.
+  It reads pictures; crucible sends it text alone.
 - **Z.ai.** No web tool: its Chat Completions search is not a tool the model
   calls, and its pages disagree on which models take it. Provider-managed
   caching, with no stated lifetime. No fast form: no source shows how
@@ -305,10 +320,24 @@ choice that asks least of it, and this says which fact it was.
   refused or reported. Xiaomi's agreement forbids tools it has not authorised,
   without saying what that covers; accepting those terms is yours.
 - **MiniMax.** No web tool on Chat Completions. Provider-managed caching from
-  512 input tokens. No fast form: no source shows how its priority tier or
-  `MiniMax-M2.7-highspeed` is refused, or how a Chat Completions answer says
-  which served it. MiniMax's reference and guide name different fields for the
-  reasoning it sends back.
+  512 input tokens. `MiniMax-M3.1-Flash` takes every rung and cannot be run
+  without thinking: MiniMax answers `thinking` disabled or effort `none` with a
+  400, which crucible never sends. It is priced at $0.15 input, $0.60 output
+  and $0.015 cache read per million tokens, read on 5 Nov 2026. No fast form:
+  no source shows how the priority tier of `MiniMax-M3` is refused, or how a
+  Chat Completions answer says which served it. MiniMax's reference and guide
+  name different fields for the reasoning it sends back.
+- **Mistral.** No web tool on Chat Completions. Its cache keeps a prefix in
+  blocks of 64 tokens, read at 10% of the input price, and crucible sends the
+  session's cache key with every request; the page states no lifetime and
+  does not say whether a prompt is cached without the key. No fast form:
+  Mistral serves none for `mistral-large-4`. Its reasoning arrives as a
+  thinking part of the answer's content and goes back on the answer unchanged,
+  as its reasoning page asks. `mistral-large-4` is a Preview model, priced at
+  $0.7 input and $2.1 output per million tokens, read on 5 Nov 2026, and
+  Mistral may train on what it is sent; crucible asks before the first send,
+  under that name or its versioned one, `mistral-large-4-0-8`.
+  It reads pictures and documents; crucible sends it text alone.
 
 ## How much context is used
 
@@ -335,7 +364,7 @@ OpenAI with a key and Z.ai make room and ask again, as a
 and Meta's refusals carry no code, so crucible reads each by its shape and the
 words it opens with; the words matched for MiniMax are not printed on its own
 pages, so a refusal worded otherwise ends the turn. On Google,
-DeepSeek, Moonshot, Qwen, xAI and MiMo a request too long for the model still
+DeepSeek, Mistral, Moonshot, Qwen, xAI and MiMo a request too long for the model still
 ends the turn; a lower `defaultContextWindow` compacts the session before it gets
 there.
 
@@ -448,6 +477,7 @@ current effort first. Nothing is silently mapped to a different rung.
 
 | Provider | Exact model name | Offered effort |
 | --- | --- | --- |
+| Google | `gemini-4-argon` | low, medium, high |
 | Google | `gemini-3.8-flash` | low, medium, high |
 | Google | `gemini-3.7-flash` | low, medium, high |
 | Google | `gemini-3.6-flash` | low, medium, high |
@@ -458,6 +488,7 @@ current effort first. Nothing is silently mapped to a different rung.
 | Anthropic | `claude-haiku-5-5` | low, medium, high, xhigh, max |
 | OpenAI | `gpt-6-astra` | low, medium, high, xhigh, max |
 | OpenAI | `gpt-6.1-sol` | low, medium, high, xhigh, max |
+| OpenAI | `gpt-6.1-terra` | low, medium, high, xhigh, max |
 | OpenAI | `gpt-6-sol` | low, medium, high, xhigh, max |
 | OpenAI | `gpt-6-luna` | low, medium, high, xhigh, max |
 
@@ -487,6 +518,7 @@ with. Which variable is read follows from the provider:
 | `meta` | `META_API_KEY` | `authorization: Bearer …` |
 | `mimo` | `MIMO_API_KEY` | `authorization: Bearer …` |
 | `minimax` | `MINIMAX_API_KEY` | `authorization: Bearer …` |
+| `mistral` | `MISTRAL_API_KEY` | `authorization: Bearer …` |
 | `moonshot` | `MOONSHOT_API_KEY` | `authorization: Bearer …` |
 | `openai` | `OPENAI_API_KEY` | `authorization: Bearer …` |
 | `qwen` | `DASHSCOPE_API_KEY` | `authorization: Bearer …` |
@@ -692,8 +724,8 @@ to receive either token.
 Anthropic subscription OAuth is deliberately absent: Claude subscription tokens
 are not a third-party authentication contract. Anthropic is reached with a
 Console API key instead. The *Provide your own API key* route also stores API
-keys for DeepSeek, Google, Meta, MiMo, MiniMax, MoonshotAI, OpenAI, Qwen, xAI
-and Z.ai. Meta's Muse Code subscription, the Z.ai Coding Plan, MiMo's Token
+keys for DeepSeek, Google, Meta, MiMo, MiniMax, Mistral, MoonshotAI, OpenAI,
+Qwen, xAI and Z.ai. Meta's Muse Code subscription, the Z.ai Coding Plan, MiMo's Token
 Plan and xAI's SuperGrok have no row: Meta keeps the Muse Code credential for
 Muse Code alone, the Z.ai Coding Plan names the tools it may be used in and
 crucible is not one, and the other two are not offered in this release. Google accepts a Gemini Developer API
@@ -709,6 +741,16 @@ with `stream:true`, `store:false`, and local input history, never
 `previous_interaction_id`. A custom `providers.google.baseUrl` is the complete
 Interactions endpoint, not a base path to which Crucible appends a route.
 See [Google's Interactions documentation](https://ai.google.dev/gemini-api/docs/interactions-overview).
+
+`gemini-4-argon` (read 5 Nov 2026) takes a window of 1,048,576 tokens. Google's
+model page gives its output as "65,536" by default and "up to 1,048,576 (with
+long decode)"; crucible states 32,768, the figure of the model database it is
+built from, which is smaller than Google's and so costs answer room but refuses
+no request. Google's pricing page says "Gemini 4 Argon is not available on the
+Free tier": it needs a paid key. Its Standard price is $2.00 input and $10.00
+output per million tokens through 30 Nov 2026, and $4.00 and $20.00 from
+1 Dec 2026. Google lists its product-improvement use of paid-tier content as
+"No".
 
 Moonshot authorization and model requests identify the host truthfully as
 crucible with a stable protected device id.
@@ -729,7 +771,7 @@ function tools on the older endpoint. Crucible needs tool calls to work with
 reasoning enabled. The cost is that most other vendors serving an
 "OpenAI-compatible" API implement the older endpoint and not this one, so
 `openai` means OpenAI here rather than anything that speaks its shape. `moonshot` is that older endpoint, read by a provider of
-its own, and so are `deepseek`, `zai`, `qwen`, `mimo` and `minimax`, each with
+its own, and so are `deepseek`, `zai`, `qwen`, `mimo`, `minimax` and `mistral`, each with
 its vendor's own ways of asking for reasoning and of reporting usage. `meta` and
 `xai` speak Responses, with what each vendor does differently kept beside it.
 
@@ -800,10 +842,21 @@ from the open platform says so in
 base address with the path of the endpoint after it.
 
 The two consoles also spell their models differently. What `/model` offers is
-the coding console's spelling, that being the one crucible asks: `k3`,
-`k3-256k`, `kimi-for-coding` and `kimi-for-coding-highspeed`. The open platform
-serves `kimi-k3`, `kimi-k2.7-code` and `kimi-k2.7-code-highspeed`, and does not
-serve a 256k K3 at all, so a key from there is a `baseUrl` and a typed name.
+the coding console's spelling, that being the one crucible asks: `k3.1-pro`,
+`k3.1-pro-highspeed`, `k3`, `k3-256k`, `kimi-for-coding` and
+`kimi-for-coding-highspeed`. The open platform serves `kimi-k3.1-pro`,
+`kimi-k3.1-pro-highspeed`, `kimi-k3`, `kimi-k2.7-code` and
+`kimi-k2.7-code-highspeed`, and does not serve a 256k K3 at all, so a key from
+there is a `baseUrl` and a typed name.
+
+`k3.1-pro` always reasons: Kimi rejects a request with thinking off, and its own
+default rung is `max`. A session still starts at `high`, as every model's does,
+and the rung is changed in `/model`. `k3.1-pro` is available to Moderato / Plus
+members and above and `k3.1-pro-highspeed` to Allegretto / Pro members and
+above (read 5 Nov 2026). Kimi closed the K2 series to new open-platform
+registrations from 31 Oct 2026 and plans to retire it by the end of December
+2026; Kimi Code still lists `kimi-for-coding` and `kimi-for-coding-highspeed`,
+so they stay offered.
 
 A Kimi Code key or sign-in has a plan with limits, which `/usage` asks Kimi for
 at the coding console of its own site. A key from the open platform has no such

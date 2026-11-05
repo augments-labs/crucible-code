@@ -98,8 +98,11 @@ fn a_status_of_success_is_no_failure() {
     })]);
     let (provider, _) = at::<MiniMaxChat>(MiniMax::IO, 200, &body);
 
-    let deltas =
-        read(&provider, asking("MiniMax-M2.7", question(), false, None)).expect("the answer reads");
+    let deltas = read(
+        &provider,
+        asking("MiniMax-M3.1-Flash", question(), false, None),
+    )
+    .expect("the answer reads");
 
     assert_eq!(deltas.first(), Some(&Delta::Text("Hi.".into())));
 }
@@ -200,4 +203,18 @@ fn the_words_echoed_inside_another_refusal_are_not_a_request_too_large() {
         matches!(refused, ProviderError::Refused { status: 400, .. }),
         "{refused:?}"
     );
+}
+
+/// Both models the registry offers have a reviewed cache record; a name it
+/// does not offer has none.
+#[test]
+fn each_model_offered_has_a_reviewed_prompt_cache_record() {
+    use crate::completions::Dialect;
+    use crucible_models::PromptCacheCapabilities;
+
+    let unreviewed = PromptCacheCapabilities::unknown("unreviewed model");
+    for model in ["MiniMax-M3.1-Flash", "MiniMax-M3"] {
+        assert_ne!(MiniMaxChat::prompt_cache(model), unreviewed, "{model}");
+    }
+    assert_eq!(MiniMaxChat::prompt_cache("MiniMax-M2.7"), unreviewed);
 }

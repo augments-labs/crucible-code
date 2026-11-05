@@ -30,8 +30,8 @@ use crucible_mcp::Hosting;
 use crucible_models::{Effort, ModelCapabilities, Provider};
 use crucible_provider::{
     Anthropic, AnthropicWeb, DeepSeek, Endpoint, Google, GoogleWeb, HttpTurns, Meta, MetaWeb, Mimo,
-    MiniMax, Moonshot, MoonshotWeb, OpenAi, OpenAiWeb, Qwen, Transport, Unavailable, Xai, XaiWeb,
-    Zai,
+    MiniMax, Mistral, Moonshot, MoonshotWeb, OpenAi, OpenAiWeb, Qwen, Transport, Unavailable, Xai,
+    XaiWeb, Zai,
 };
 use crucible_runner::{Agent, AgentBuilder, Bounds, Compaction, Model, RunPolicy, Runner, Tools};
 use crucible_sandbox::SandboxPolicy;
@@ -1041,6 +1041,22 @@ pub fn deepseek(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     let http = wiring.http;
     let (endpoint, credential) = keyed(wiring, DeepSeek::VENDOR)?;
     Ok(Box::new(DeepSeek::at(
+        endpoint,
+        credential,
+        Box::new(http.clone()),
+    )))
+}
+
+/// Mistral's Chat Completions, with a key.
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn mistral(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
+    let http = wiring.http;
+    let (endpoint, credential) = keyed(wiring, Mistral::VENDOR)?;
+    Ok(Box::new(Mistral::at(
         endpoint,
         credential,
         Box::new(http.clone()),

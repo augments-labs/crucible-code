@@ -16,8 +16,8 @@ use crucible_auth::{Held, Kind, Names};
 use crucible_config::Settings;
 use crucible_models::{Effort, FastForm, ModelCapabilities, ModelError, ModelLimits, Provider};
 use crucible_provider::{
-    Anthropic, DeepSeek, Endpoint, Google, HttpTurns, Meta, Mimo, MiniMax, Moonshot, OpenAi, Qwen,
-    Xai, Zai,
+    Anthropic, DeepSeek, Endpoint, Google, HttpTurns, Meta, Mimo, MiniMax, Mistral, Moonshot,
+    OpenAi, Qwen, Xai, Zai,
 };
 use crucible_registry::{
     Collision, Provenance, Registered, Registry, RegistryError, RegistrySnapshot, SourceKind,
@@ -55,7 +55,7 @@ use crate::subscription::Subscriptions;
 /// and the defaults are read again from the vendors' documentation as they
 /// release models: a scheduled check reports what the models.dev database
 /// lists against them, and each entry says when its vendor was last read.
-const PROVIDERS: [Served; 11] = [
+const PROVIDERS: [Served; 12] = [
     Served {
         name: "anthropic",
         default: "claude-opus-5-5",
@@ -93,10 +93,12 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: DeepSeek::fast_at_vendor,
         fast_signed_in: None,
-        reviewed: "2026-10-16",
+        reviewed: "2026-11-05",
         models: &[
-            Model::new("deepseek-flash", LOW_HIGH_MAX),
-            Model::new("deepseek-v4-pro", LOW_HIGH_MAX),
+            // DeepSeek's pricing page names the version behind each id, and
+            // `deepseek-flash` follows each Flash upgrade.
+            Model::shown("deepseek-flash", "DeepSeek-V4.1-Flash-1017", LOW_HIGH_MAX),
+            Model::shown("deepseek-v4-pro", "DeepSeek-V4-Pro-0813", LOW_HIGH_MAX),
         ],
     },
     Served {
@@ -108,10 +110,11 @@ const PROVIDERS: [Served; 11] = [
         reach: startup::google_web,
         fast: Google::fast_at_vendor,
         fast_signed_in: None,
-        reviewed: "2026-10-16",
+        reviewed: "2026-11-05",
         window: 200_000,
         most: None,
         models: &[
+            Model::shown("gemini-4-argon", "Gemini 4 Argon", GEMINI),
             Model::shown("gemini-3.8-flash", "Gemini 3.8 Flash", GEMINI),
             Model::shown("gemini-3.7-flash", "Gemini 3.7 Flash", GEMINI),
             Model::shown("gemini-3.6-flash", "Gemini 3.6 Flash", GEMINI),
@@ -129,11 +132,12 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: Meta::fast_at_vendor,
         fast_signed_in: None,
-        reviewed: "2026-10-16",
-        // `max` on 1.3 is named by some of the vendor's pages and left out by
-        // its parameter lists, so it is not offered until a source settles it.
+        reviewed: "2026-11-05",
+        // The contributor variant stays without `max`: the reasoning page
+        // says it is not available there.
         models: &[
-            Model::new("muse-spark-1.3", UP_TO_XHIGH),
+            Model::new("muse-wonder-1.0", EVERY),
+            Model::new("muse-spark-1.3", EVERY),
             Model::new("muse-spark-1.3-contributor", UP_TO_XHIGH),
             Model::new("muse-spark-1.2", UP_TO_XHIGH),
             Model::new("muse-spark-1.2-contributor", UP_TO_XHIGH),
@@ -167,12 +171,25 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: MiniMax::fast_at_vendor,
         fast_signed_in: None,
-        reviewed: "2026-10-16",
+        reviewed: "2026-11-05",
         models: &[
+            Model::new("MiniMax-M3.1-Flash", EVERY),
             Model::new("MiniMax-M3", NONE),
-            // Closed to new accounts by its vendor and retired on 2026-11-18.
-            Model::new("MiniMax-M2.7", NONE),
         ],
+    },
+    Served {
+        name: "mistral",
+        default: "mistral-large-4",
+        shown: "Mistral",
+        key: "MISTRAL_API_KEY",
+        build: startup::mistral,
+        reach: startup::unreached,
+        window: 200_000,
+        most: None,
+        fast: Mistral::fast_at_vendor,
+        fast_signed_in: None,
+        reviewed: "2026-11-05",
+        models: &[Model::new("mistral-large-4", MISTRAL)],
     },
     Served {
         name: "moonshot",
@@ -185,19 +202,27 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: Moonshot::fast_at_vendor,
         fast_signed_in: None,
-        reviewed: "2026-10-16",
+        reviewed: "2026-11-05",
         // Spelled the way the coding console spells them, that being the one
         // crucible asks. The open platform serves the same models under longer
-        // names and does not serve the second of these at all, so a key from
-        // there is a `baseUrl` and a typed name rather than a shorter list.
+        // names (`kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`) and does not serve
+        // the 256k K3 at all, so a key from there is a `baseUrl` and a typed
+        // name rather than a shorter list.
         models: &[
+            // The vendor's default rung here is `max`; a session still starts
+            // at `default_rung`, as it does for every model.
+            Model::shown("k3.1-pro", "K3.1 Pro", KIMI),
+            Model::shown("k3.1-pro-highspeed", "K3.1 Pro Highspeed", KIMI),
             Model::shown("k3", "K3", KIMI),
             // The same model held to a quarter of its context. Offered beside
             // it because the smaller context is a distinct provider offering
             // rather than a local preference.
             Model::shown("k3-256k", "K3-256k", KIMI),
             // The coding models are known by their product names; the wire
-            // identifier stays the one the console serves them under.
+            // identifier stays the one the console serves them under. The K2
+            // series closed to new registrations on the open platform on
+            // 2026-10-31 and is to be retired by the end of December 2026;
+            // Kimi Code still lists both, so they stay offered.
             Model::shown("kimi-for-coding", "K2.8 Preview", KIMI),
             Model::shown("kimi-for-coding-highspeed", "K2.7 Coding Highspeed", KIMI),
         ],
@@ -217,12 +242,13 @@ const PROVIDERS: [Served; 11] = [
         most: Some(872_000),
         fast: OpenAi::fast_at_vendor,
         fast_signed_in: Some(OpenAi::fast_signed_in),
-        reviewed: "2026-10-16",
+        reviewed: "2026-11-05",
         // The `-pro` variants are left off: they answer in one piece rather
         // than streaming, and every turn here is drawn as it arrives.
         models: &[
             Model::shown("gpt-6-astra", "GPT-6 Astra", EVERY),
             Model::new("gpt-6.1-sol", EVERY),
+            Model::new("gpt-6.1-terra", EVERY),
             Model::new("gpt-6-sol", EVERY),
             Model::new("gpt-6-luna", EVERY),
             Model::new("gpt-5.6-sol", EVERY),
@@ -354,6 +380,7 @@ impl Row {
             (Kind::Account, "openai") => Some(&[
                 "gpt-6-astra",
                 "gpt-6.1-sol",
+                "gpt-6.1-terra",
                 "gpt-6-sol",
                 "gpt-6-luna",
                 "gpt-5.6-sol",
@@ -404,7 +431,7 @@ pub enum Misfit {
 /// Subscription rows in the order the vendors are grouped; key rows by shown
 /// name, since that list is long and looked up by name. A provider's rows share
 /// its typed name, and each carries the name its credential is stored under.
-const ROWS: [Row; 24] = [
+const ROWS: [Row; 25] = [
     Row {
         list: List::Subscription,
         shown: "OpenAI",
@@ -614,6 +641,19 @@ const ROWS: [Row; 24] = [
         stored: "minimax@minimaxi.com",
         environment: false,
         address: Some(MiniMax::CN),
+    },
+    Row {
+        list: List::Key,
+        shown: "Mistral",
+        provider: "mistral",
+        site: None,
+        says: None,
+        kind: Kind::Key,
+        mark: None,
+        refuses: &[],
+        stored: "mistral@mistral.ai",
+        environment: true,
+        address: None,
     },
     Row {
         list: List::Key,
@@ -883,6 +923,10 @@ const EVERY: &[Effort] = &Effort::LADDER;
 
 /// The supported intersection of Gemini thinking levels and this UI's ladder.
 const GEMINI: &[Effort] = &[Effort::Low, Effort::Medium, Effort::High];
+
+/// The rungs Mistral's reasoning page says its reasoning models take; it
+/// refuses `none`, `minimal`, `xhigh` and `max` rather than mapping them.
+const MISTRAL: &[Effort] = &[Effort::Low, Effort::Medium, Effort::High];
 
 /// The three rungs the Kimi thinking models serve.
 ///

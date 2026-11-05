@@ -1,0 +1,21 @@
+---
+source: src/cli/converse/command/usage/tests.rs
+expression: picture.trim_end()
+---
+Usage · anthropic
+
+Session
+  Total cost       nothing asked yet
+  API time         Ns
+  Wall time        Ns
+  Lines changed    +0 −0
+  Tokens           0 in · 0 out · 0 cache read · 0 cache write
+
+Context
+  window not known
+
+Plan limits
+  Weekly window    ███████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  31% used
+
+  gpt-5.3-codex-spark
+  5-hour window    ██████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  12% used

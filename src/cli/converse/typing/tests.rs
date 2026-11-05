@@ -1106,9 +1106,10 @@ fn esc_closes_the_command_list_and_leaves_the_line_as_it_was_typed() {
 
 #[test]
 fn esc_closes_an_open_list_once_and_otherwise_means_interrupt() {
-    // During a turn, Esc has two meanings: if a list is open it closes it; if not, it means
-    // interrupt the turn. The order `during` reads them in is pinned by the
-    // whole-screen case `esc_mid_turn_closes_the_command_list_and_the_turn_runs_on`.
+    // During a turn, Esc has two meanings: if a list is open it closes it; if
+    // not, it means interrupt the turn. The order `during` reads them in is
+    // pinned by the whole-screen case
+    // `esc_mid_turn_closes_the_command_list_and_the_turn_runs_on`.
     let mut open = listing("/");
 
     assert!(open.close(), "an open list said there was nothing to close");

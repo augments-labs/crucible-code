@@ -125,6 +125,7 @@ pub(super) fn setup(owner: Option<&std::ffi::OsStr>) -> io::Result<String> {
         .installed(account_sid.clone())?;
         registry::store(&identity, &owner_sid_string, &installed)?;
         account::probe(&identity.account_name, &account_sid, &password)?;
+        account::create_profile(&identity.account_name, &password)?;
         wfp::probe(&identity, &identity.account_name)?;
         Ok(())
     })();

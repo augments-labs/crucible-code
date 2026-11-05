@@ -21,7 +21,7 @@ continued later.
 ## Highlights
 
 - **Provider-independent sessions.** Anthropic, DeepSeek, Google, Meta, MiMo,
-  MiniMax, Moonshot, OpenAI, Qwen, xAI and Z.ai are wire adapters. Each
+  MiniMax, Mistral, Moonshot, OpenAI, Qwen, xAI and Z.ai are wire adapters. Each
   provider uses either an API key or a supported account login; switching
   login methods replaces that provider’s stored credential.
 - **Permissioned tools.** Reads inside the workspace are available by default;
@@ -146,15 +146,15 @@ coding agents](docs/providers/agents.md).
 Google Gemini uses `GEMINI_API_KEY` or `/login google`; Google and Anthropic
 accept API keys only, not product subscription logins. The other providers read
 `DEEPSEEK_API_KEY`, `META_API_KEY`, `MIMO_API_KEY`, `MINIMAX_API_KEY`,
-`MOONSHOT_API_KEY`, `OPENAI_API_KEY`, `DASHSCOPE_API_KEY` (Qwen), `XAI_API_KEY`
+`MISTRAL_API_KEY`, `MOONSHOT_API_KEY`, `OPENAI_API_KEY`, `DASHSCOPE_API_KEY` (Qwen), `XAI_API_KEY`
 and `ZAI_API_KEY`; see [providers and
 models](docs/providers/providers.md#what-each-provider-serves).
 
 Where a vendor says it may train on what is sent (a ChatGPT plan, Kimi Code,
 the Kimi open platform, a Gemini key on unpaid quota, MiniMax, Qwen's plans on
-aliyun.com, Z.ai's bigmodel.cn key, or Meta's contributor models), Crucible
-asks once before anything is sent and remembers the answer; see [content
-use](docs/providers/content-use.md).
+aliyun.com, Z.ai's bigmodel.cn key, Meta's contributor models, or Mistral's
+Preview models), Crucible asks once before anything is sent and remembers the
+answer; see [content use](docs/providers/content-use.md).
 
 Useful commands:
 

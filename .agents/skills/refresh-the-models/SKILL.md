@@ -11,8 +11,9 @@ description: >-
 The providers and their models are written by hand in
 `crates/crucible-app/src/providers.rs`, and the vendor's own documentation is
 the authority on them. The models.dev database is a lead: it says where to
-look, and is never copied in unread. No provider and no model family is added
-here; those are product decisions made before this skill is used.
+look, and is never copied in unread. No provider is added here, and a model
+family is offered only by a hand-made product decision, never because the
+database lists it.
 
 ## Read what drifted
 
@@ -37,6 +38,7 @@ Read the provider's own pages for each line of the report:
 | meta | dev.meta.ai: models |
 | mimo | the Xiaomi MiMo platform's model list |
 | minimax | platform.minimax.io: models, text generation |
+| mistral | docs.mistral.ai: models, reasoning, prompt caching; legal.mistral.ai: commercial terms |
 | moonshot | platform.kimi.ai: pricing, chat, thinking models; kimi.com: Kimi Code membership |
 | openai | developers.openai.com: models, reasoning |
 | qwen | alibabacloud.com Model Studio: models, text generation, deep thinking |
@@ -65,6 +67,13 @@ Read the provider's own pages for each line of the report:
    rung is `default_rung`'s, medium or the nearest above it. Move it only when
    the vendor's middle tier moved.
 5. Set the provider's `reviewed` to the date the pages were read.
+6. **A family crucible does not offer.** Read the vendor's page for the model.
+   Offer it as in 1, or add the model to `PASSED` with the reason. The check
+   never adds it: a family is chosen by hand.
+7. **A revised model.** The database dates an offered model after the
+   provider's `reviewed` day, so the vendor released or revised it under the
+   same name. Re-read the model's records against the vendor's pages as in 1,
+   then set the provider's `reviewed` as in 5.
 
 ## Regenerate and prove
 

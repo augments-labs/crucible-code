@@ -364,4 +364,84 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn argon_history_is_native_alone_and_across_the_listed_google_models() {
+        use crucible_types::{
+            Continuation, ContinuationData, ContinuationPart, RecordedToolOutput, StopReason,
+            ToolArgs, ToolCall, ToolId, ToolResult,
+        };
+        let steps = |recorded: &str, asked: &str| -> Vec<Value> {
+            let mut state = Continuation::new(super::super::PROTOCOL, recorded, scope()).unwrap();
+            for part in [
+                ContinuationPart::Opaque(
+                    ContinuationData::new(
+                        r#"{"type":"thought","signature":"signed-thought","summary":[]}"#,
+                    )
+                    .unwrap(),
+                ),
+                ContinuationPart::Call {
+                    index: 0,
+                    data: ContinuationData::new(
+                        r#"{"type":"function_call","signature":"signed-call"}"#,
+                    )
+                    .unwrap(),
+                },
+            ] {
+                state.push(part).unwrap();
+            }
+            let mut transcript = Transcript::new();
+            transcript.push(Message::said("go")).unwrap();
+            transcript
+                .push(Message::Agent {
+                    text: "".into(),
+                    calls: vec![ToolCall {
+                        id: ToolId::new("call-1"),
+                        name: "read".into(),
+                        args: ToolArgs::new(r#"{"path":"a"}"#),
+                    }],
+                    stop: Some(StopReason::WantsTools),
+                    continuation: Some(state.finish("", 1, Some(StopReason::WantsTools)).unwrap()),
+                })
+                .unwrap();
+            transcript
+                .push(Message::ToolResults(vec![ToolResult {
+                    id: ToolId::new("call-1"),
+                    output: RecordedToolOutput::ok("contents"),
+                }]))
+                .unwrap();
+            let request = Request {
+                purpose: RequestPurpose::Turn,
+                model: asked,
+                transcript: &transcript,
+                tools: &[],
+                max_tokens: 4096,
+                system: None,
+                effort: None,
+                attached: &[],
+                prompt_cache: None,
+            };
+            let body: Value = serde_json::from_str(&serialize(&request, scope()).unwrap()).unwrap();
+            body.get("input").unwrap().as_array().unwrap().clone()
+        };
+        let native = |steps: &[Value]| {
+            steps
+                .iter()
+                .any(|step| step.get("signature").and_then(Value::as_str) == Some("signed-call"))
+                && steps
+                    .iter()
+                    .any(|step| step.get("type").and_then(Value::as_str) == Some("thought"))
+        };
+        for (recorded, asked) in [
+            ("gemini-4-argon", "gemini-4-argon"),
+            ("gemini-3.7-flash", "gemini-4-argon"),
+            ("gemini-4-argon", "gemini-3.1-pro-preview"),
+        ] {
+            assert!(native(&steps(recorded, asked)), "{recorded} -> {asked}");
+        }
+        assert!(
+            !native(&steps("gemini-4-argon", "gemini-unlisted")),
+            "an unlisted recipient gets neutral history"
+        );
+    }
 }

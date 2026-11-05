@@ -3,11 +3,12 @@
 //! `x-gemini-service-tier` says served it.
 //!
 //! Read on 2026-09-30 from the vendor's priority inference pages and the
-//! Interactions API reference. No page says what a refused priority request
-//! returns, so no refusal is taken for a refusal of fast: whatever comes back
-//! is reported as it would be at standard speed. Congestion does not refuse;
-//! it serves the request at the standard tier, which the vendor says to watch
-//! the header for.
+//! Interactions API reference; `gemini-4-argon` was added on 2026-11-05, when
+//! the page listed it with the same 75-100% sentence. No page says what a
+//! refused priority request returns, so no refusal is taken for a refusal of
+//! fast: whatever comes back is reported as it would be at standard speed.
+//! Congestion does not refuse; it serves the request at the standard tier,
+//! which the vendor says to watch the header for.
 
 use crucible_models::{Cost, FastForm, Served};
 
@@ -33,7 +34,11 @@ pub(super) fn form(vendor: bool, model: &str) -> FastForm {
     match (vendor, model) {
         (
             true,
-            "gemini-3.8-flash" | "gemini-3.7-flash" | "gemini-3.6-flash" | "gemini-3.1-pro-preview",
+            "gemini-4-argon"
+            | "gemini-3.8-flash"
+            | "gemini-3.7-flash"
+            | "gemini-3.6-flash"
+            | "gemini-3.1-pro-preview",
         ) => FastForm::Field(PRICE),
         _ => FastForm::None,
     }

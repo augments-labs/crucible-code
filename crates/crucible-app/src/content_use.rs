@@ -278,6 +278,19 @@ const META_CONTRIBUTOR: Warning = Warning {
     caution: Cow::Borrowed("may train on what is sent"),
 };
 
+const MISTRAL_PREVIEW: Warning = Warning {
+    sentence: Cow::Borrowed(
+        "Mistral may use what you send to a Preview model, and what it answers, to train its AI \
+               models, and neither the opt-out nor zero data retention applies to Preview models. \
+               Its terms offer them only to commercial customers, for professional use.",
+    ),
+    condition: None,
+    source: Cow::Borrowed("Mistral AI commercial terms of service"),
+    link: Cow::Borrowed("https://legal.mistral.ai/terms/commercial-terms-of-service"),
+    read: Cow::Borrowed("5 Nov 2026"),
+    caution: Cow::Borrowed("may train on what is sent"),
+};
+
 const CLAUDE_CODE: Warning = Warning {
     sentence: Cow::Borrowed(
         "On Free, Pro and Max, Anthropic trains new models on what you send through \
@@ -325,7 +338,7 @@ pub fn full_sentence(warned: &Warned) -> String {
 }
 
 /// Every warned route this build has.
-pub const WARNED: [Warned; 19] = [
+pub const WARNED: [Warned; 23] = [
     Warned {
         route: Cow::Borrowed("subscription:openai"),
         shown: Cow::Borrowed("OpenAI"),
@@ -417,6 +430,30 @@ pub const WARNED: [Warned; 19] = [
         origins: &[],
     },
     Warned {
+        route: Cow::Borrowed("model:mistral/mistral-large-4"),
+        shown: Cow::Borrowed("Mistral · mistral-large-4"),
+        warning: MISTRAL_PREVIEW,
+        origins: &[],
+    },
+    Warned {
+        route: Cow::Borrowed("model:mistral/mistral-large-4-0-8"),
+        shown: Cow::Borrowed("Mistral · mistral-large-4-0-8"),
+        warning: MISTRAL_PREVIEW,
+        origins: &[],
+    },
+    Warned {
+        route: Cow::Borrowed("model:mistral/labs-devstral-small-2512"),
+        shown: Cow::Borrowed("Mistral · labs-devstral-small-2512"),
+        warning: MISTRAL_PREVIEW,
+        origins: &[],
+    },
+    Warned {
+        route: Cow::Borrowed("model:mistral/labs-leanstral-1-5-1"),
+        shown: Cow::Borrowed("Mistral · labs-leanstral-1-5-1"),
+        warning: MISTRAL_PREVIEW,
+        origins: &[],
+    },
+    Warned {
         route: Cow::Borrowed("api.moonshot.ai"),
         shown: Cow::Borrowed("Kimi open platform · api.moonshot.ai"),
         warning: PLATFORM_AI,
@@ -460,7 +497,7 @@ pub struct Recognised {
 /// where two such rows share it, since only a key is ever sent to a
 /// `baseUrl`; so the `OpenAI` sign-in's address, where no key row stands, is
 /// not among them. Each Kimi open platform address is a route of its own.
-pub const RECOGNISED: [Recognised; 21] = [
+pub const RECOGNISED: [Recognised; 22] = [
     Recognised {
         address: "https://api.anthropic.com/v1",
         route: "key:anthropic",
@@ -496,6 +533,10 @@ pub const RECOGNISED: [Recognised; 21] = [
     Recognised {
         address: "https://api.minimax.cn/v1",
         route: "key:minimax@minimaxi.com",
+    },
+    Recognised {
+        address: "https://api.mistral.ai/v1",
+        route: "key:mistral@mistral.ai",
     },
     Recognised {
         address: "https://api.openai.com/v1",

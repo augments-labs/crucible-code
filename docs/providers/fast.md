@@ -122,8 +122,8 @@ sent again. What counts as a refusal of fast:
   taken from open harnesses that are not Anthropic's.
 - **Google**: none is documented. Congestion does not refuse; it serves the
   request at standard speed, which the answer then says.
-- **Kimi Code**: `kimi-for-coding-highspeed` is a model of its own and asks for
-  nothing, so there is nothing to refuse. A plan without it answers with an
+- **Kimi Code**: `kimi-for-coding-highspeed` and `k3.1-pro-highspeed` are models of their own and ask
+  for nothing, so there is nothing to refuse. A plan without one answers with an
   error like any other, and nothing is sent again.
 
 ## The fast forms
@@ -138,24 +138,33 @@ beside the price under `Fast`, where the vendor states one.
 | OpenAI | sign-in | `gpt-6-astra` | 2.5x your plan's usage; 2x purchased credits | | Not stated | [ChatGPT speed](https://learn.chatgpt.com/docs/agent-configuration/speed) | 30 Sep 2026 |
 | OpenAI | sign-in | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` | 2.5x your plan's usage; 2x purchased credits | | 1.5x faster | [ChatGPT speed](https://learn.chatgpt.com/docs/agent-configuration/speed) | 30 Sep 2026 |
 | OpenAI | key | `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna` | 2x the price | OpenAI may serve a fast request at standard speed when fast capacity is short; it is then billed at the standard price. | up to 2.5x faster | [OpenAI fast mode](https://developers.openai.com/api/docs/guides/fast-mode), [OpenAI pricing](https://developers.openai.com/api/docs/pricing) | 1 Oct 2026 |
+| OpenAI | key | `gpt-6.1-terra` | 2x the price | OpenAI may serve a fast request at standard speed when fast capacity is short; it is then billed at the standard price. | up to 2.5x faster | [OpenAI fast mode](https://developers.openai.com/api/docs/guides/fast-mode), [OpenAI pricing](https://developers.openai.com/api/docs/pricing) | 5 Nov 2026 |
 | OpenAI | sign-in | `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna` | 2.5x your plan's usage; 2x purchased credits | | Not stated | [ChatGPT speed](https://learn.chatgpt.com/docs/agent-configuration/speed) | 1 Oct 2026 |
+| OpenAI | sign-in | `gpt-6.1-terra` | 2.5x your plan's usage; 2x purchased credits | | Not stated | [ChatGPT speed](https://learn.chatgpt.com/docs/agent-configuration/speed) | 5 Nov 2026 |
 | Anthropic | key | `claude-opus-5` | $10 / $50 per million input / output tokens | Fast mode is a research preview; Anthropic turns it on per organization. | up to 2.5x higher output tokens per second | [Anthropic fast mode](https://platform.claude.com/docs/en/build-with-claude/fast-mode) | 30 Sep 2026 |
 | Anthropic | key | `claude-opus-5-5` | $8 / $40 per million input / output tokens | Fast mode is a research preview; Anthropic turns it on per organization. | up to 2.5x higher output tokens per second | [Anthropic fast mode](https://platform.claude.com/docs/en/build-with-claude/fast-mode) | 1 Oct 2026 |
 | Google | key | `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-pro-preview` | 75-100% more than Standard | For Tier 2 and Tier 3 accounts only. Google serves a priority request at standard speed when priority is congested, and bills it at the standard price. | Not stated | [Gemini priority inference](https://ai.google.dev/gemini-api/docs/priority-inference) | 30 Sep 2026 |
+| Google | key | `gemini-4-argon` | 75-100% more than Standard | For Tier 2 and Tier 3 accounts only. Google serves a priority request at standard speed when priority is congested, and bills it at the standard price. | Not stated | [Gemini priority inference](https://ai.google.dev/gemini-api/docs/priority-inference) | 5 Nov 2026 |
 | MoonshotAI | any | `kimi-for-coding-highspeed`, a fast model of its own | 3x the quota | | 6x the speed | [Kimi Code models](https://www.kimi.com/code/docs/en/kimi-code/models.html) | 29 Sep 2026 |
+| MoonshotAI | any | `k3.1-pro-highspeed`, a fast model of its own | 2x the quota | | 2–3x the speed | [Kimi Code models](https://www.kimi.com/code/docs/en/index.html) | 5 Nov 2026 |
 | DeepSeek | key | None | | DeepSeek serves no faster tier and no faster model. | | [DeepSeek models and pricing](https://api-docs.deepseek.com/quick_start/pricing) | 1 Oct 2026 |
-| Meta | key | None | | Meta's reference lists a `service_tier` field, `priority` among its values, with no price, no speed and no stated behaviour, so no source settles what it costs, how it is refused or how an answer says its speed. | | [Meta Create Response](https://dev.meta.ai/docs/api-reference/responses/create-response) | 1 Oct 2026 |
+| Meta | key | None | | Meta's reference lists a `service_tier` field, `priority` among its values, with no price, no speed and no stated behaviour, so no source settles what it costs, how it is refused or how an answer says its speed. Meta's pricing page lists one Standard rate for `muse-wonder-1.0` and no faster form (read 5 Nov 2026). | | [Meta Create Response](https://dev.meta.ai/docs/api-reference/responses/create-response) | 1 Oct 2026 |
 | xAI | key | None in this release | | xAI serves a priority tier at 2x the price, and bills a request it served at standard speed at the standard price. No source shows how xAI refuses a priority request. | | [xAI priority processing](https://docs.x.ai/developers/advanced-api-usage/priority-processing) | 1 Oct 2026 |
 | Z.ai | key | None in this release | | `glm-5.3-flashx` is a faster `glm-5.3-flash`, at 200 tokens/s for a higher price. No source shows how Z.ai refuses it or prints an answer from it. | | [Z.ai glm-5.3-flash](https://docs.z.ai/guides/vlm/glm-5.3-flash) | 1 Oct 2026 |
 | Qwen | any | None in this release | | `qwen3.8-max-prime`, priced on the mainland China site only, is a faster `qwen3.8-max`. No source shows how an answer says the speed it was served at, or how a refusal reads, and the vendor's own pages on its fast mode do not list it. | | [Model Studio pricing](https://www.alibabacloud.com/help/en/model-studio/model-pricing) | 1 Oct 2026 |
 | MiMo | key | None in this release | | `mimo-v2.6-pro-ultraspeed` is a faster `mimo-v2.6-pro`, up to 20x faster at 10x the price. No source shows how an answer says the speed it was served at, or how a refusal reads. | | [MiMo pay-as-you-go pricing](https://mimo.mi.com/static/docs/price/pay-as-you-go.md) | 1 Oct 2026 |
-| MiniMax | any | None in this release | | `MiniMax-M3` takes a priority tier and `MiniMax-M2.7` has a faster `MiniMax-M2.7-highspeed`, each at a higher price. No source shows how a Chat Completions answer says the tier it was served at, or how either is refused. | | [MiniMax pay-as-you-go pricing](https://platform.minimax.io/docs/guides/pricing-paygo) | 1 Oct 2026 |
+| MiniMax | any | None in this release | | `MiniMax-M3` takes a priority tier at 1.5x the price; `MiniMax-M3.1-Flash` lists none and no faster form, and takes no `none` rung (MiniMax answers it with a 400). No source shows how a Chat Completions answer says the tier it was served at, or how it is refused. | | [MiniMax pay-as-you-go pricing](https://platform.minimax.io/docs/guides/pricing-paygo) | 1 Oct 2026 |
+| Mistral | key | None | | Mistral's page for `mistral-large-4` lists one rate, $0.7 / $2.1 per million input / output tokens, and no faster tier or model. | | [Mistral Large 4](https://docs.mistral.ai/models/mistral-large-4-0) | 5 Nov 2026 |
 
 OpenAI states twice the price for GPT-6 Astra, GPT-6.1 Sol and GPT-5.6 Sol;
 for GPT-6 Sol, GPT-6 Luna, GPT-5.6 Terra and Luna, and for GPT-5.5, the
 multiple is worked out from the prices on its pricing page. The ChatGPT speed
 page states no speed for the GPT-6 models or GPT-6.1 Sol. OpenAI serves no
 fast form of the GPT-6 models or GPT-6.1 Sol with EU data residency.
+
+For Gemini 4 Argon, Google's pricing page gives Priority at $3.60 input and
+$18.00 output per million tokens through 30 Nov 2026 and $7.20 and $36.00 from
+1 Dec 2026: 1.8x its Standard price, inside the range its row states.
 
 A provider whose row says `None in this release` serves a faster form, but no
 source settled how it refuses one, or how an answer says which speed served

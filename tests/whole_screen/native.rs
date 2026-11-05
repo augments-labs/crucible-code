@@ -190,8 +190,9 @@ fn without_id(window: &Watched, id: &str) -> String {
 /// beside it so that its directory outlives the second run.
 ///
 /// Both open at 80 by 24. A case that wants a narrower window resizes the
-/// second once it is up: one opened at sixteen columns never draws the line
-/// that says it has settled.
+/// second once it is up: under 24 columns the status row shares its width with
+/// the window reading and clips the mode sentence, and that sentence is what a
+/// launch waits for to call the screen settled.
 fn ended_then_relaunched(case: &str, vendor: &Vendor) -> (Watched, Watched, String) {
     let mut first = Watched::native(case, 80, 24, vendor);
     first.types_until("say something\r", "The first thing");
@@ -963,6 +964,28 @@ fn a_row_sealed_after_narrowing_is_folded_not_clipped_in_native_mode() {
     // nothing on screen reports a stream cut short.
     assert!(!all.contains("the response ended before"), "{all}");
     insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn a_status_row_narrowed_to_twenty_columns_keeps_the_mode_whole_in_native_mode() {
+    // The window is narrowed from forty to twenty once the session is up. The
+    // window reading owns the far end of the row there and takes sixteen of
+    // the twenty cells, which left two for the mode: `as`, the front of
+    // `ask mode on`, which reads as a word and says nothing about the session.
+    // The mode outranks the reading, so the reading gives way to `100%` and the
+    // mode stands whole.
+    let vendor = Vendor::answering("Unused.");
+    let mut window = Watched::native("native-status-narrowed", 40, 24, &vendor);
+    window.resize(20, 24);
+
+    window.assert_never_alternate();
+    let picture = window.picture();
+    let status = picture
+        .lines()
+        .find(|row| row.contains("100%"))
+        .unwrap_or_default();
+    assert_eq!(status, "|ask mode on     100%|", "{picture}");
+    insta::assert_snapshot!(picture);
 }
 
 #[test]

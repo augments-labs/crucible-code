@@ -17,10 +17,11 @@
 //! What the counts in the last event mean is the one thing vendors on this
 //! wire disagree about, so the dialect reads them.
 //!
-//! A model that thinks first sends its reasoning beside the answer. Most
-//! vendors want none of it back; a vendor whose dialect asks for it has it kept
-//! here, bounded, as the answer's private continuation, which the request
-//! writer sends back on the message it came with.
+//! A model that thinks first sends its reasoning beside the answer, in a field
+//! of its own or, where the dialect says so, as a chunk of a content list.
+//! Most vendors want none of it back; a vendor whose dialect asks for it has
+//! it kept here, bounded, as the answer's private continuation, which the
+//! request writer sends back on the message it came with.
 
 use std::fmt;
 use std::marker::PhantomData;
@@ -32,7 +33,7 @@ use crucible_types::{
 };
 use serde_json::Value;
 
-use super::Dialect;
+use super::{Dialect, ThoughtAt};
 use crate::refusal::SILENT;
 use crate::sse::SseEvent;
 use crate::stream::Wire;
@@ -333,6 +334,11 @@ fn deltas<D: Dialect>(
         if let Some(said) = text(delta, "content").filter(|said| !said.is_empty()) {
             deltas.push(Delta::Text(said.into()));
         }
+        if D::THOUGHT_AT == ThoughtAt::ContentChunk
+            && let Some(chunks) = delta.get("content").and_then(Value::as_array)
+        {
+            chunked(chunks, kept, &mut deltas);
+        }
 
         calls::<D>(delta, open, &mut deltas)?;
     }
@@ -344,6 +350,33 @@ fn deltas<D: Dialect>(
     }
 
     Ok(deltas)
+}
+
+/// The pieces of a content list, for a dialect whose reasoning rides in it:
+/// a `thinking` chunk's inner text is reasoning, kept like any other, and a
+/// `text` chunk is the answer. A chunk of any other type is read past, as an
+/// unknown field is.
+fn chunked<K: Keeps>(chunks: &[Value], kept: &mut K, deltas: &mut Vec<Delta>) {
+    for chunk in chunks {
+        match text(chunk, "type") {
+            Some("thinking") => {
+                let inner = chunk.get("thinking").and_then(Value::as_array);
+                for piece in inner.into_iter().flatten() {
+                    if text(piece, "type") == Some("text")
+                        && let Some(thought) = text(piece, "text")
+                    {
+                        kept.more(thought);
+                    }
+                }
+            }
+            Some("text") => {
+                if let Some(said) = text(chunk, "text").filter(|said| !said.is_empty()) {
+                    deltas.push(Delta::Text(said.into()));
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// The tool calls one event carries, opened or continued.

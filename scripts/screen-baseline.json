@@ -1,7 +1,7 @@
 {
   "harness": {
     "tests/whole_screen/screen.rs": "50ba111632e53d8a38402f258586548babe76be99832fbea1aa141d582323852",
-    "tests/whole_screen/vendor.rs": "47b1c989828849cf2b712646681e350c048b59fe1fbc2b8838bfb3663db6dd3c",
+    "tests/whole_screen/vendor.rs": "e0a073bccef228848c35dc9968f2ba4e34e6911d22f9996de65d287053b76d60",
     "tests/whole_screen/watched.rs": "8f820968049de75f151a8a0b21025e0c000d46ef487f25a0c5ea986cc71b2a98"
   },
   "captures": [
@@ -1341,7 +1341,7 @@
       "opened": [
         "Watched::open(&format!(\"google-login-{columns}\"), columns, 24)"
       ],
-      "sha256": "24580b5e6ff0a801d984c982a52289d7afe125c8237d9c492204553d26186550"
+      "sha256": "3624fda9fab2b99073e2b49e0c2bcdf4fd2b31f97cdd15c948528432ed9742bb"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__google_model_effort_80.snap",
@@ -1349,7 +1349,7 @@
       "opened": [
         "Watched::open(&format!(\"google-login-{columns}\"), columns, 24)"
       ],
-      "sha256": "f88fdd4537980aa6dfc4a9fd4259b85372b271cf79975a248e837d3cc7ce93ae"
+      "sha256": "ac900375383dbec234885b903c5ed5740925d2b1f4bf482962fd858d1b764b83"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__leaving_the_key_box_says_nothing_was_signed_in.snap",
@@ -1373,7 +1373,7 @@
       "opened": [
         "Watched::open(\"login-signed-in-40\", 40, 30)"
       ],
-      "sha256": "b38b161a558c757828a5e50cd1894b473d9380ec43e07b6a9a8bbae8130bc49b"
+      "sha256": "53e0ef817374eb57a906ea2d4357bf2092a4cdb139f73fdeeff773095c12467f"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__login_narrowed_40.snap",
@@ -1397,7 +1397,7 @@
       "opened": [
         "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[], args: &[], home: Some(&home), }, )"
       ],
-      "sha256": "842e0e46b000c0526743620c05d9e0a2a121c6913a8b27f5eed1d7eb0781c6f0"
+      "sha256": "2b55e1a408f55910b168579bdf88dc1c1a89aee9360f890aa6b20d0cfed4436a"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__model_signed_in_80.snap",
@@ -1405,7 +1405,7 @@
       "opened": [
         "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[], args: &[], home: Some(&home), }, )"
       ],
-      "sha256": "9f61080be7f63ff1e52f09ecb46476040d53496f209a2daf777dc6c0daee1bf1"
+      "sha256": "5bda6f09a28018e4badadfd8ddb9869379b19c968758fbc6e3306ab19704a856"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__model_trains_80.snap",
@@ -1414,7 +1414,7 @@
         "Vendor::answering(\"Two plus two is four.\")",
         "Watched::keyless(\"model-trains\", 80, 24, &vendor)"
       ],
-      "sha256": "fc10203f46c358c3980cca117cb7fbca85ac424cf3b6af0707aa529d1a9f7e83"
+      "sha256": "93457ebf24d93312e1bd3714305f754d5fa5fb56d1dc74710ef99e2dbf62e7e7"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__a_one_row_reply_carries_its_mark_in_native_mode.snap",
@@ -1481,6 +1481,15 @@
         "Watched::native(\"native-sealed-after-narrowing\", 80, 24, &vendor)"
       ],
       "sha256": "ca6021dae968a4e677b0b95974f48f1eaf10816399247d900b3b54dd2fa4d679"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__a_status_row_narrowed_to_twenty_columns_keeps_the_mode_whole_in_native_mode.snap",
+      "case": "a_status_row_narrowed_to_twenty_columns_keeps_the_mode_whole_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"Unused.\")",
+        "Watched::native(\"native-status-narrowed\", 40, 24, &vendor)"
+      ],
+      "sha256": "dec7d4c9ca7d5677506f7e336268f964c9750c6e2d0b15ba4f9ded6bc9f5fc54"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__a_turn_is_written_once_and_the_box_stands_under_it_in_native_mode.snap",
@@ -1577,7 +1586,7 @@
         "Vendor::answering(&crate::a_long_answer())",
         "Watched::native(case, 80, 24, vendor)"
       ],
-      "sha256": "d6cce7e43d321919abb559a855ecaffa2b4cca70ea8981306e7153e690d00360"
+      "sha256": "b3ee3da32e7c444d287ce232623e2752da589581bfdf1d961f58887afb595305"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__native_queue_sent_all_now_in_ascii_at_40.snap",
@@ -1628,7 +1637,7 @@
         "Watched::native(case, 80, 24, vendor)",
         "Watched::native(case, 80, 24, vendor)"
       ],
-      "sha256": "2c3f28bb81cc5474f0b2ffe429d021230a67c798617c9d3b7d09ac71ba3c7bf5"
+      "sha256": "85a713c9a1833bc462ff0c2c8e456fff7518a6ac6b34e584a2ae9340afd5c3e3"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__resume_takes_at_most_half_the_window_in_native_mode.snap",

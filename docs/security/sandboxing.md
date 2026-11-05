@@ -185,6 +185,10 @@ record remain so the command can be retried safely.
 `--windows-sandbox-uninstall`, with the same `--owner`, run the same setup and
 removal from the broker alone.
 
+Setup also has Windows build the account's profile, which takes a while the
+first time, so that the first command does not wait for it. An account set up
+by an earlier version has its profile built by its first command instead.
+
 An enabled command starts through the packaged broker, which logs on that
 dedicated account and then creates a `WRITE_RESTRICTED` token with all ordinary
 privileges disabled except the standard directory-traversal privilege required

@@ -113,7 +113,7 @@ pub(crate) const FACTS: &[Facts] = &[
     Facts {
         provider: "deepseek",
         model: "deepseek-flash",
-        window: 1_000_000,
+        window: 1_048_576,
         output: 393_216,
         accepts: Modalities::empty()
             .insert(Modality::Text)
@@ -122,7 +122,7 @@ pub(crate) const FACTS: &[Facts] = &[
     Facts {
         provider: "deepseek",
         model: "deepseek-v4-pro",
-        window: 1_000_000,
+        window: 1_048_576,
         output: 393_216,
         accepts: Modalities::empty().insert(Modality::Text),
     },
@@ -167,6 +167,18 @@ pub(crate) const FACTS: &[Facts] = &[
         model: "gemini-3.8-flash",
         window: 1_048_576,
         output: 65_536,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf)
+            .insert(Modality::Video)
+            .insert(Modality::Audio),
+    },
+    Facts {
+        provider: "google",
+        model: "gemini-4-argon",
+        window: 1_048_576,
+        output: 32_768,
         accepts: Modalities::empty()
             .insert(Modality::Text)
             .insert(Modality::Image)
@@ -223,6 +235,18 @@ pub(crate) const FACTS: &[Facts] = &[
             .insert(Modality::Audio),
     },
     Facts {
+        provider: "meta",
+        model: "muse-wonder-1.0",
+        window: 1_048_576,
+        output: 131_072,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf)
+            .insert(Modality::Video)
+            .insert(Modality::Audio),
+    },
+    Facts {
         provider: "mimo",
         model: "mimo-v2.6-flash",
         window: 1_048_576,
@@ -246,20 +270,33 @@ pub(crate) const FACTS: &[Facts] = &[
     },
     Facts {
         provider: "minimax",
-        model: "MiniMax-M2.7",
-        window: 204_800,
-        output: 131_072,
-        accepts: Modalities::empty().insert(Modality::Text),
-    },
-    Facts {
-        provider: "minimax",
         model: "MiniMax-M3",
         window: 1_000_000,
-        output: 512_000,
+        output: 524_288,
         accepts: Modalities::empty()
             .insert(Modality::Text)
             .insert(Modality::Image)
             .insert(Modality::Video),
+    },
+    Facts {
+        provider: "minimax",
+        model: "MiniMax-M3.1-Flash",
+        window: 1_000_000,
+        output: 524_288,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Video),
+    },
+    Facts {
+        provider: "mistral",
+        model: "mistral-large-4",
+        window: 1_048_576,
+        output: 262_144,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "moonshot",
@@ -276,6 +313,26 @@ pub(crate) const FACTS: &[Facts] = &[
         model: "k3-256k",
         window: 262_144,
         output: 262_144,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Video),
+    },
+    Facts {
+        provider: "moonshot",
+        model: "k3.1-pro",
+        window: 1_048_576,
+        output: 1_048_576,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Video),
+    },
+    Facts {
+        provider: "moonshot",
+        model: "k3.1-pro-highspeed",
+        window: 1_048_576,
+        output: 1_048_576,
         accepts: Modalities::empty()
             .insert(Modality::Text)
             .insert(Modality::Image)
@@ -374,6 +431,16 @@ pub(crate) const FACTS: &[Facts] = &[
     Facts {
         provider: "openai",
         model: "gpt-6.1-sol",
+        window: 922_000,
+        output: 128_000,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
+    },
+    Facts {
+        provider: "openai",
+        model: "gpt-6.1-terra",
         window: 922_000,
         output: 128_000,
         accepts: Modalities::empty()

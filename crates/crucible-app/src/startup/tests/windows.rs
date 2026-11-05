@@ -12,15 +12,20 @@ fn a_model_this_build_knows_starts_at_its_native_window() {
         ("anthropic", "claude-sonnet-5", 1_000_000),
         ("anthropic", "claude-haiku-5-5", 1_000_000),
         ("anthropic", "claude-haiku-4-5", 200_000),
-        ("deepseek", "deepseek-v4-pro", 1_000_000),
+        ("deepseek", "deepseek-v4-pro", 1_048_576),
+        ("google", "gemini-4-argon", 1_048_576),
         ("google", "gemini-3.1-pro-preview", 1_048_576),
+        ("meta", "muse-wonder-1.0", 1_048_576),
         ("meta", "muse-spark-1.3", 1_048_576),
         ("meta", "muse-spark-1.3-contributor", 1_048_576),
         ("meta", "muse-spark-1.2", 1_048_576),
         ("meta", "muse-spark-1.2-contributor", 1_048_576),
         ("mimo", "mimo-v2.6-pro", 1_048_576),
+        ("minimax", "MiniMax-M3.1-Flash", 1_000_000),
         ("minimax", "MiniMax-M3", 1_000_000),
-        ("minimax", "MiniMax-M2.7", 204_800),
+        ("mistral", "mistral-large-4", 1_048_576),
+        ("moonshot", "k3.1-pro", 1_048_576),
+        ("moonshot", "k3.1-pro-highspeed", 1_048_576),
         ("moonshot", "k3", 1_048_576),
         ("moonshot", "kimi-for-coding-highspeed", 262_144),
         ("qwen", "qwen3.8-max", 1_000_000),
@@ -30,6 +35,7 @@ fn a_model_this_build_knows_starts_at_its_native_window() {
         // sign-in, which serves the same names a key does.
         ("openai", "gpt-5.6-sol", 872_000),
         ("openai", "gpt-6-astra", 872_000),
+        ("openai", "gpt-6.1-terra", 872_000),
     ] {
         assert_eq!(
             window(&catalogue(), serving(provider), model, &settings),
@@ -55,8 +61,13 @@ fn a_configured_window_still_wins_over_the_native_one() {
         300_000
     );
     assert_eq!(
-        window(&catalogue(), serving("minimax"), "MiniMax-M2.7", &settings),
-        204_800
+        window(
+            &catalogue(),
+            serving("minimax"),
+            "MiniMax-M3.1-Flash",
+            &settings
+        ),
+        1_000_000
     );
 }
 
