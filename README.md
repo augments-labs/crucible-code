@@ -152,9 +152,9 @@ models](docs/providers/providers.md#what-each-provider-serves).
 
 Where a vendor says it may train on what is sent (a ChatGPT plan, Kimi Code,
 the Kimi open platform, a Gemini key on unpaid quota, MiniMax, Qwen's plans on
-aliyun.com, Z.ai's bigmodel.cn key, or Meta's contributor models), Crucible
-asks once before anything is sent and remembers the answer; see [content
-use](docs/providers/content-use.md).
+aliyun.com, Z.ai's bigmodel.cn key, Meta's contributor models, or Mistral's
+Preview models), Crucible asks once before anything is sent and remembers the
+answer; see [content use](docs/providers/content-use.md).
 
 Useful commands:
 

@@ -24,8 +24,8 @@ here is whatever that table said when this build was made.
 | `zai` | `glm-5.3`, `glm-5.2` | text |
 | `zai` | `glm-5.3-flash` | text, pictures, PDFs, video |
 
-What a model reads is not what crucible sends it: the eight providers new in
-this release are sent text alone, as [the protocol's
+What a model reads is not what crucible sends it: the seven providers new in
+0.44 and Mistral, which came after it, are sent text alone, as [the protocol's
 half](#what-crucible-puts-in-a-request) below decides.
 
 A model crucible has never heard of is not in that table and has no row here.
