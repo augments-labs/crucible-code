@@ -17,7 +17,7 @@ here is whatever that table said when this build was made.
 | `minimax` | `MiniMax-M3` | text, pictures, video |
 | `minimax` | `MiniMax-M2.7` | text |
 | `moonshot` | `k3`, `k3-256k`, `kimi-for-coding`, `kimi-for-coding-highspeed` | text, pictures, video |
-| `openai` | `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5` | text, pictures, PDFs |
+| `openai` | `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5` | text, pictures, PDFs |
 | `qwen` | `qwen3.8-max` | text, pictures, PDFs, video |
 | `qwen` | `qwen3.8-flash`, `qwen3.7-plus`, `qwen3.6-plus` | text, pictures, video |
 | `xai` | `grok-4.7`, `grok-4.6` | text, pictures, PDFs |

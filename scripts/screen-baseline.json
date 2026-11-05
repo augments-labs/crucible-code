@@ -1349,7 +1349,7 @@
       "opened": [
         "Watched::open(&format!(\"google-login-{columns}\"), columns, 24)"
       ],
-      "sha256": "bb773d7c1676fb6706f8486e74aedf1f3c695b52c979a0f05d0b61e3dd8b4415"
+      "sha256": "0703ac5d3367b47dccce88d6f5ca9af5f68b23536deb74358855d12f9a17ec79"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__leaving_the_key_box_says_nothing_was_signed_in.snap",
@@ -1397,7 +1397,7 @@
       "opened": [
         "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[], args: &[], home: Some(&home), }, )"
       ],
-      "sha256": "842e0e46b000c0526743620c05d9e0a2a121c6913a8b27f5eed1d7eb0781c6f0"
+      "sha256": "2b55e1a408f55910b168579bdf88dc1c1a89aee9360f890aa6b20d0cfed4436a"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__model_signed_in_80.snap",
@@ -1405,7 +1405,7 @@
       "opened": [
         "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[], args: &[], home: Some(&home), }, )"
       ],
-      "sha256": "0aa07e126555d9a1b82aaaadd35af75850867726ef480d6c7b3541e547065d70"
+      "sha256": "843a1c66fe025ba3d9a4ef0c7ffac6f5c1389c01a94fad2b2b8d81ff71ea2ba5"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__model_trains_80.snap",
@@ -1414,7 +1414,7 @@
         "Vendor::answering(\"Two plus two is four.\")",
         "Watched::keyless(\"model-trains\", 80, 24, &vendor)"
       ],
-      "sha256": "be947adf553170cd216a8ff7c800c802389acfcd38f51a594ed1ede5281a7bf7"
+      "sha256": "8bd69c79e8b75df17eb0fd5dc5ce9c9d751b3524886a0555fd912e6f1c6045fd"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__a_one_row_reply_carries_its_mark_in_native_mode.snap",
@@ -1586,7 +1586,7 @@
         "Vendor::answering(&crate::a_long_answer())",
         "Watched::native(case, 80, 24, vendor)"
       ],
-      "sha256": "87dfc1543ca7ba61232120cf45d41793bc85a3c358bf4338bc79dad1290b8d10"
+      "sha256": "30ef2551999791bf7d1eca7080d34b5bd247bce0ac6b3bf66295fe038d13729d"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__native_queue_sent_all_now_in_ascii_at_40.snap",
