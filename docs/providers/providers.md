@@ -247,10 +247,10 @@ nothing in it says which plan, or whether a Token Plan key is the Personal or
 the Team edition. The plans are for interactive use in a coding tool;
 Alibaba Cloud's pages say a plan's key used in a script or a backend may be
 suspended. MiniMax sells M Plan in place of Token Plan to new buyers, with one
-key prefix for both, and its M Plan pages list only `MiniMax-M3.1-Flash-Preview`
-as a text model, now `MiniMax-M3.1-Flash`. Whether an M Plan key is
-served `MiniMax-M3` is not settled by any page; the vendor
-answers.
+key prefix for both. Its M Plan page, read on 5 Nov 2026, names only
+`MiniMax-M3.1-Flash` as a text model, the released name of the model earlier
+called `MiniMax-M3.1-Flash-Preview`. Whether an M Plan key is served `MiniMax-M3` is not settled by any
+page; the vendor answers.
 
 A MiniMax key given on a Token Plan row has a plan with limits, which `/usage`
 asks MiniMax for at that row's site; the plan limits are asked for on the
@@ -313,13 +313,13 @@ choice that asks least of it, and this says which fact it was.
   refused or reported. Xiaomi's agreement forbids tools it has not authorised,
   without saying what that covers; accepting those terms is yours.
 - **MiniMax.** No web tool on Chat Completions. Provider-managed caching from
-  512 input tokens. `MiniMax-M3.1-Flash` takes every rung and
-  cannot be run without thinking: MiniMax answers `thinking` disabled or
-  effort `none` with a 400, which crucible never sends. It is priced at $0.15
-  input, $0.60 output and $0.015 cache read per million tokens, read on 5 Nov
-  2026. No fast form: no source shows how the priority tier of `MiniMax-M3` is
-  refused, or how a Chat Completions answer says which served it. MiniMax's reference and guide name different fields for the
-  reasoning it sends back.
+  512 input tokens. `MiniMax-M3.1-Flash` takes every rung and cannot be run
+  without thinking: MiniMax answers `thinking` disabled or effort `none` with a
+  400, which crucible never sends. It is priced at $0.15 input, $0.60 output
+  and $0.015 cache read per million tokens, read on 5 Nov 2026. No fast form:
+  no source shows how the priority tier of `MiniMax-M3` is refused, or how a
+  Chat Completions answer says which served it. MiniMax's reference and guide
+  name different fields for the reasoning it sends back.
 
 ## How much context is used
 
