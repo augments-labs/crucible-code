@@ -315,7 +315,7 @@ async fn minimax_usage_a_family_group_holds_its_models_and_an_exact_one_its_own(
             .collect()
     };
 
-    assert_eq!(holding("MiniMax-M2.7"), ["MiniMax-M*"]);
+    assert_eq!(holding("MiniMax-M3.1-Flash"), ["MiniMax-M*"]);
     assert_eq!(holding("MiniMax-M3"), ["MiniMax-M*"]);
     assert_eq!(holding("speech-2.8-hd"), Vec::<String>::new());
     assert_eq!(holding("speech-hd"), ["speech-hd"]);
@@ -353,9 +353,9 @@ async fn minimax_usage_a_reset_past_any_window_is_no_reset_and_stops_no_turn() {
             .map(WindowReading::resets_at)
     };
     assert!(matches!(five_hour(&soon), Some(Some(_))));
-    assert!(soon.exhausted("MiniMax-M2.7", now).is_some());
+    assert!(soon.exhausted("MiniMax-M3.1-Flash", now).is_some());
     assert_eq!(five_hour(&never), Some(None));
-    assert_eq!(never.exhausted("MiniMax-M2.7", now), None);
+    assert_eq!(never.exhausted("MiniMax-M3.1-Flash", now), None);
 }
 
 #[tokio::test]
@@ -376,7 +376,7 @@ async fn minimax_usage_a_count_of_0_alone_never_reads_a_fresh_window_as_spent() 
     ]))
     .await;
 
-    assert_eq!(fresh.exhausted("MiniMax-M2.7", now), None);
+    assert_eq!(fresh.exhausted("MiniMax-M3.1-Flash", now), None);
     // Its weekly total is 0, so with the 5-hour window unread the family has
     // no window to show.
     let names: Vec<String> = grouped(&fresh).into_iter().map(|(name, _)| name).collect();
@@ -389,5 +389,5 @@ async fn minimax_usage_a_count_of_0_alone_never_reads_a_fresh_window_as_spent() 
         ("end_time", json!(soon)),
     ]))
     .await;
-    assert!(spent.exhausted("MiniMax-M2.7", now).is_some());
+    assert!(spent.exhausted("MiniMax-M3.1-Flash", now).is_some());
 }

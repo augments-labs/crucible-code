@@ -20,7 +20,7 @@ fn every_model_whose_reasoning_goes_back_is_of_a_dialect_that_keeps_it() {
 
     agrees::<crate::deepseek::DeepSeekChat>(&["deepseek-flash", "deepseek-v4-pro"]);
     agrees::<crate::mimo::MimoChat>(&["mimo-v2.6-pro", "mimo-v2.6-flash"]);
-    agrees::<crate::minimax::MiniMaxChat>(&["MiniMax-M3", "MiniMax-M2.7"]);
+    agrees::<crate::minimax::MiniMaxChat>(&["MiniMax-M3.1-Flash", "MiniMax-M3"]);
     agrees::<crate::moonshot::Kimi>(&[
         "k3",
         "k3-256k",

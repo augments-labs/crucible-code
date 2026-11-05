@@ -97,17 +97,28 @@ impl Dialect for MiniMaxChat {
     }
 
     fn prompt_cache(model: &str) -> PromptCacheCapabilities {
-        let revision = match model {
-            "MiniMax-M3" => "MiniMax-M3",
-            "MiniMax-M2.7" => "MiniMax-M2.7",
+        // The page lists both models as cached automatically from 512 input
+        // tokens, and states no lifetime. `MiniMax-M3.1-Flash` was read on
+        // 2026-11-05; `MiniMax-M3` keeps the record of 2026-10-01.
+        let (revision, read, record) = match model {
+            "MiniMax-M3.1-Flash" => (
+                "MiniMax-M3.1-Flash",
+                "2026-11-05",
+                "minimax-prompt-cache-2026-11-05",
+            ),
+            "MiniMax-M3" => (
+                "MiniMax-M3",
+                "2026-10-01",
+                "minimax-prompt-cache-2026-10-01",
+            ),
             _ => return PromptCacheCapabilities::unknown("unreviewed model"),
         };
         crate::completions::automatic(
             revision,
             PromptCacheProvenance::new(
                 "https://platform.minimax.io/docs/api-reference/text-prompt-caching",
-                "2026-10-01",
-                "minimax-prompt-cache-2026-10-01",
+                read,
+                record,
             ),
             512,
         )

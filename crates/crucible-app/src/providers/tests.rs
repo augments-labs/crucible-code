@@ -538,6 +538,7 @@ fn requested_models_have_exact_limits_and_supported_effort_ladders() {
         ("openai", "gpt-6-astra", 922_000, 128_000),
         ("openai", "gpt-6.1-terra", 922_000, 128_000),
         ("meta", "muse-wonder-1.0", 1_048_576, 131_072),
+        ("minimax", "MiniMax-M3.1-Flash", 1_000_000, 524_288),
     ] {
         let served = serving(provider);
         assert!(
@@ -554,6 +555,9 @@ fn requested_models_have_exact_limits_and_supported_effort_ladders() {
         assert_eq!(rungs(&catalogue(), provider, model), expected);
     }
     assert_eq!(serving("google").key, "GEMINI_API_KEY");
+    // The database's output for `MiniMax-M3`; the vendor's pages state none.
+    let m3 = facts("minimax", "MiniMax-M3").expect("reviewed model facts");
+    assert_eq!((m3.window, m3.output), (1_000_000, 524_288));
 }
 
 #[test]
@@ -752,7 +756,7 @@ fn the_models_table_has_a_row_for_every_model_crucible_offers_and_no_others() {
 }
 
 #[test]
-fn the_models_table_says_every_model_reads_text_and_all_but_four_read_an_image() {
+fn the_models_table_says_every_model_reads_text_and_all_but_three_read_an_image() {
     assert!(
         !models::FACTS.is_empty(),
         "the table is generated and is never empty"
@@ -760,11 +764,8 @@ fn the_models_table_says_every_model_reads_text_and_all_but_four_read_an_image()
     for facts in models::FACTS {
         let named = facts.model;
         assert!(facts.accepts.contains(Modality::Text), "{named} reads text");
-        // These four read text alone, as their vendors' pages say.
-        let text_alone = matches!(
-            named,
-            "deepseek-v4-pro" | "glm-5.3" | "glm-5.2" | "MiniMax-M2.7"
-        );
+        // These three read text alone, as their vendors' pages say.
+        let text_alone = matches!(named, "deepseek-v4-pro" | "glm-5.3" | "glm-5.2");
         assert_eq!(
             facts.accepts.contains(Modality::Image),
             !text_alone,
@@ -796,7 +797,10 @@ fn the_models_table_gives_video_and_audio_to_the_models_whose_vendors_read_them(
         let video = matches!(
             facts.provider,
             "moonshot" | "google" | "meta" | "mimo" | "qwen"
-        ) || matches!(facts.model, "glm-5.3-flash" | "MiniMax-M3");
+        ) || matches!(
+            facts.model,
+            "glm-5.3-flash" | "MiniMax-M3" | "MiniMax-M3.1-Flash"
+        );
         assert_eq!(
             facts.accepts.contains(Modality::Video),
             video,
@@ -1606,8 +1610,8 @@ fn every_model_of_a_new_vendor_serves_the_rungs_its_reference_names() {
         ("qwen", "qwen3.6-plus", &[][..]),
         ("mimo", "mimo-v2.6-pro", &[][..]),
         ("mimo", "mimo-v2.6-flash", &[][..]),
+        ("minimax", "MiniMax-M3.1-Flash", &Effort::LADDER[..]),
         ("minimax", "MiniMax-M3", &[][..]),
-        ("minimax", "MiniMax-M2.7", &[][..]),
     ] {
         assert_eq!(
             rungs(&catalogue(), provider, model),

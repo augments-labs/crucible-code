@@ -172,7 +172,7 @@ This build serves eleven providers. The name in the first column is what
 | `google` | Google | `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-pro-preview`: low, medium, high | `GEMINI_API_KEY` |
 | `meta` | Meta | `muse-wonder-1.0`, `muse-spark-1.3`: all five; `muse-spark-1.3-contributor`, `muse-spark-1.2`, `muse-spark-1.2-contributor`: low, medium, high, xhigh | `META_API_KEY` |
 | `mimo` | MiMo | `mimo-v2.6-pro`, `mimo-v2.6-flash`: none | `MIMO_API_KEY` |
-| `minimax` | MiniMax | `MiniMax-M3`, `MiniMax-M2.7`: none | `MINIMAX_API_KEY` |
+| `minimax` | MiniMax | `MiniMax-M3.1-Flash`: all five; `MiniMax-M3`: none | `MINIMAX_API_KEY` |
 | `moonshot` | MoonshotAI | `k3`, `k3-256k`, `kimi-for-coding`, `kimi-for-coding-highspeed`: low, high, max | `MOONSHOT_API_KEY` |
 | `openai` | OpenAI | `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`: all five; `gpt-5.5`: low, medium, high, xhigh | `OPENAI_API_KEY` |
 | `qwen` | Qwen | `qwen3.8-max`, `qwen3.8-flash`: low, medium, xhigh; `qwen3.7-plus`, `qwen3.6-plus`: none | `DASHSCOPE_API_KEY` |
@@ -248,8 +248,8 @@ the Team edition. The plans are for interactive use in a coding tool;
 Alibaba Cloud's pages say a plan's key used in a script or a backend may be
 suspended. MiniMax sells M Plan in place of Token Plan to new buyers, with one
 key prefix for both, and its M Plan pages list only `MiniMax-M3.1-Flash-Preview`
-as a text model, which this build does not offer. Whether an M Plan key is
-served `MiniMax-M3` and `MiniMax-M2.7` is not settled by any page; the vendor
+as a text model, now `MiniMax-M3.1-Flash`. Whether an M Plan key is
+served `MiniMax-M3` is not settled by any page; the vendor
 answers.
 
 A MiniMax key given on a Token Plan row has a plan with limits, which `/usage`
@@ -313,9 +313,12 @@ choice that asks least of it, and this says which fact it was.
   refused or reported. Xiaomi's agreement forbids tools it has not authorised,
   without saying what that covers; accepting those terms is yours.
 - **MiniMax.** No web tool on Chat Completions. Provider-managed caching from
-  512 input tokens. No fast form: no source shows how its priority tier or
-  `MiniMax-M2.7-highspeed` is refused, or how a Chat Completions answer says
-  which served it. MiniMax's reference and guide name different fields for the
+  512 input tokens. `MiniMax-M3.1-Flash` takes every rung and
+  cannot be run without thinking: MiniMax answers `thinking` disabled or
+  effort `none` with a 400, which crucible never sends. It is priced at $0.15
+  input, $0.60 output and $0.015 cache read per million tokens, read on 5 Nov
+  2026. No fast form: no source shows how the priority tier of `MiniMax-M3` is
+  refused, or how a Chat Completions answer says which served it. MiniMax's reference and guide name different fields for the
   reasoning it sends back.
 
 ## How much context is used
