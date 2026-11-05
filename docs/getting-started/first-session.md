@@ -362,7 +362,7 @@ The row is redrawn on every keystroke, and both ends move while a session runs:
 <kbd>Shift-Tab</kbd> steps the left, `/model`, `/effort`, `/fast` and `/login`
 change the right. Where the window is too narrow for both, the right end gives way whole
 rather than being cut, and the mode keeps its place. Without a frame, the
-window reading shortens to leave the mode room, and only a terminal too narrow
+window reading shortens or goes to leave the mode room, and only a terminal too narrow
 for the mode's whole sentence drops it in favour of the reading.
 
 The arrows move a character, <kbd>Ctrl</kbd> or <kbd>Alt</kbd> held with one
