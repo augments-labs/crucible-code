@@ -194,6 +194,32 @@ const PASSED: &[(&str, &str, &str)] = &[
         "qwen3.8-omni-flash",
         "the vendor's audio and video model; its coding models are the 3.8 max and flash already offered",
     ),
+    ("google", "gemini-2.5-flash-lite", "family not chosen"),
+    ("google", "gemini-3.1-flash-lite", "family not chosen"),
+    ("google", "gemini-3.5-flash-lite", "family not chosen"),
+    ("google", "gemini-flash-lite-latest", "family not chosen"),
+    ("google", "gemma-4-26b-a4b-it", "family not chosen"),
+    ("google", "gemma-4-31b-it", "family not chosen"),
+    ("openai", "gpt-4.1-mini", "family not chosen"),
+    ("openai", "gpt-4o-mini", "family not chosen"),
+    ("openai", "gpt-5-mini", "family not chosen"),
+    ("openai", "gpt-5-nano", "family not chosen"),
+    ("openai", "gpt-5-pro", "family not chosen"),
+    ("openai", "gpt-5.2-pro", "family not chosen"),
+    ("openai", "gpt-5.3-codex", "family not chosen"),
+    ("openai", "gpt-5.3-codex-spark", "family not chosen"),
+    ("openai", "gpt-5.4-mini", "family not chosen"),
+    ("openai", "gpt-5.4-nano", "family not chosen"),
+    ("openai", "gpt-5.4-pro", "family not chosen"),
+    ("openai", "gpt-5.5-pro", "family not chosen"),
+    ("openai", "o3", "family not chosen"),
+    ("openai", "o3-pro", "family not chosen"),
+    ("qwen", "deepseek-v4-flash-0731", "family not chosen"),
+    ("qwen", "glm-5.2", "family not chosen"),
+    ("qwen", "kimi-k3", "family not chosen"),
+    ("qwen", "qwen3.6-flash", "family not chosen"),
+    ("xai", "grok-build-0.1", "family not chosen"),
+    ("zai", "glm-4.5-air", "family not chosen"),
 ];
 
 /// Offered models whose rungs crucible keeps apart from the database's, and
@@ -1374,7 +1400,7 @@ mod tests {
             assert!(
                 !OFFERED
                     .iter()
-                    .any(|(_, _, offered, _)| *offered == Some(*key)),
+                    .any(|(of, _, offered, _)| of == provider && *offered == Some(*key)),
                 "{provider}/{key} is offered and declined at once"
             );
             assert!(
