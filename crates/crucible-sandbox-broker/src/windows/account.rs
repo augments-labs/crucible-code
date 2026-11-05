@@ -111,8 +111,9 @@ pub(super) fn probe(name: &str, expected_sid: &[u8], password: &SecretWide) -> i
 ///
 /// Every launch logs on with its profile, and Windows builds that profile the
 /// first time it is asked for: over 23 seconds on a CI runner, against about
-/// 0.15 seconds for each logon after it. Setup has someone waiting for it;
-/// a launch can have a bound that the building would use up.
+/// 0.15 seconds for each logon after it. Setup has someone waiting for it; a
+/// launch holds the setup lock while it builds, and other launches wait on that
+/// lock for 30 seconds at most.
 pub(super) fn create_profile(name: &str, password: &SecretWide) -> io::Result<()> {
     let token = logon(name, password)?;
     let mut name = wide(name);
