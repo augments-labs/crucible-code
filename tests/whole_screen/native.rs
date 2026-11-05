@@ -967,12 +967,13 @@ fn a_row_sealed_after_narrowing_is_folded_not_clipped_in_native_mode() {
 }
 
 #[test]
-fn a_status_row_narrowed_to_twenty_columns_never_shows_a_fragment_of_the_mode_in_native_mode() {
+fn a_status_row_narrowed_to_twenty_columns_keeps_the_mode_whole_in_native_mode() {
     // The window is narrowed from forty to twenty once the session is up. The
     // window reading owns the far end of the row there and takes sixteen of
-    // the twenty cells, which leaves two for the mode: `as`, the front of
+    // the twenty cells, which left two for the mode: `as`, the front of
     // `ask mode on`, which reads as a word and says nothing about the session.
-    // Whole or not at all, as the model and the keys are.
+    // The mode outranks the reading, so the reading gives way to `100%` and the
+    // mode stands whole.
     let vendor = Vendor::answering("Unused.");
     let mut window = Watched::native("native-status-narrowed", 40, 24, &vendor);
     window.resize(20, 24);
@@ -981,9 +982,9 @@ fn a_status_row_narrowed_to_twenty_columns_never_shows_a_fragment_of_the_mode_in
     let picture = window.picture();
     let status = picture
         .lines()
-        .find(|row| row.contains("window left"))
+        .find(|row| row.contains("100%"))
         .unwrap_or_default();
-    assert_eq!(status, "|    100% window left|", "{picture}");
+    assert_eq!(status, "|ask mode on     100%|", "{picture}");
     insta::assert_snapshot!(picture);
 }
 

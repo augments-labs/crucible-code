@@ -294,9 +294,23 @@ fn a_held_reading_says_what_is_held_of_the_window_and_gives_it_up_first() {
             .is_some_and(|row| row.text().ends_with("41k/1.0M · 95% window left")),
         "{framed:#?}"
     );
-    let narrow = row(&held, 1, 23, Glyphs::Unicode);
+    // The mode outranks the reading, so a mode short enough leaves the full
+    // form room at 23 columns and the held form is what gives way, while
+    // beside the longer fixture mode only the percentage is left.
+    let brief = Prompt {
+        mode: "ask",
+        ..held
+    };
+    let narrow = row(&brief, 1, 23, Glyphs::Unicode);
+    assert!(narrow.starts_with("ask"), "{narrow:?}");
     assert!(narrow.contains("95% window left"), "{narrow:?}");
     assert!(!narrow.contains("41k"), "{narrow:?}");
+    let narrower = row(&held, 1, 23, Glyphs::Unicode);
+    assert!(narrower.starts_with(MODE), "{narrower:?}");
+    assert!(
+        narrower.ends_with("95%") && !narrower.contains("window"),
+        "{narrower:?}"
+    );
     assert!(row(&held, 1, 10, Glyphs::Unicode).ends_with("95%"));
     assert!(tokens(999) == "999" && tokens(1_000) == "1k" && tokens(272_000) == "272k");
 }
@@ -307,7 +321,17 @@ fn a_bare_prompt_keeps_the_window_fact_and_degrades_it_in_place() {
         left: Remaining::new(Some(75)),
         ..typed("")
     };
-    assert!(row(&known, 1, 23, Glyphs::Unicode).contains("75% window left"));
+    let brief = Prompt {
+        mode: "ask",
+        ..known
+    };
+    assert!(row(&brief, 1, 23, Glyphs::Unicode).contains("75% window left"));
+    // At 23 columns the mode is whole and the reading is the percentage beside it.
+    let beside = row(&known, 1, 23, Glyphs::Unicode);
+    assert!(
+        beside.starts_with(MODE) && beside.ends_with("75%"),
+        "{beside:?}"
+    );
     assert!(row(&known, 1, 10, Glyphs::Unicode).ends_with("75%"));
     assert_eq!(row(&known, 1, 2, Glyphs::Unicode), " ?");
 
@@ -323,29 +347,102 @@ fn a_bare_prompt_keeps_the_window_fact_and_degrades_it_in_place() {
 }
 
 #[test]
-fn a_mode_is_drawn_whole_or_not_at_all_at_every_width() {
-    // The first letters of a mode read as a word and say nothing about the
-    // session, so whatever the window reading leaves of the row, the mode is
-    // all of its sentence or none of it.
-    for (said, _, _) in MODES {
+fn a_bare_status_row_keeps_the_mode_whole_and_gives_the_reading_what_is_left() {
+    // The mode outranks the window reading. Where it fits whole it is drawn
+    // whole and the reading takes the longest of its forms that fits beside it,
+    // or none; where it does not fit and a reading is known it is left off, with
+    // no fragment of it and nothing alone in its place; where no reading is
+    // known it is clipped, because it has the whole row to itself.
+    for (mode, tone, _) in MODES {
+        let wide = width::columns(mode);
+        for running in [0, 1, 2] {
+            for known in [true, false] {
+                let prompt = Prompt {
+                    mode,
+                    tone,
+                    left: Remaining::new(known.then_some(100)),
+                    commands: CommandCount::new(running, false),
+                    ..typed("")
+                };
+                for columns in WIDTHS.filter(|columns| *columns < FRAMED_AT) {
+                    let status = row(&prompt, 1, columns, Glyphs::Unicode);
+                    let at = format!("{mode:?} at {columns}, {running} running, known {known}");
+                    let rest = status.trim_start();
+
+                    // Whatever is on the row, the mode is the first thing on it
+                    // or it is not there at all: never a separator or a count
+                    // or the keys alone.
+                    assert!(!rest.starts_with('·'), "{at}: {status:?}");
+                    if status.contains("command") || status.contains(HINT) {
+                        assert!(status.starts_with(mode), "{at}: {status:?}");
+                    }
+
+                    if !known {
+                        // Rule 3: as the row has always clipped it.
+                        assert!(
+                            status.starts_with(width::clip(mode, columns)),
+                            "{at}: {status:?}"
+                        );
+                        assert!(
+                            !status.contains('%') && !status.contains('?'),
+                            "{at}: {status:?}"
+                        );
+                    } else if wide <= columns {
+                        // Rule 1: whole, and the reading in what is left of it.
+                        assert!(status.starts_with(mode), "{at}: {status:?}");
+                        let room = columns.saturating_sub(wide + APART);
+                        assert_eq!(
+                            status.contains('%'),
+                            room >= "100%".len(),
+                            "{at}: {status:?}"
+                        );
+                        assert!(!status.contains('?'), "{at}: {status:?}");
+                        if room >= "100%".len() {
+                            assert!(
+                                status.ends_with("100%") || status.ends_with("window left"),
+                                "{at}: {status:?}"
+                            );
+                        }
+                    } else {
+                        // Rule 2: no fragment, and nothing but the reading.
+                        assert!(
+                            rest.is_empty()
+                                || rest.starts_with(|c: char| c.is_ascii_digit() || c == '?'),
+                            "{at}: {status:?}"
+                        );
+                        assert!(
+                            !status.contains("command") && !status.contains(HINT),
+                            "{at}: {status:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_mode_left_off_a_narrow_row_takes_no_separator_or_count_with_it() {
+    // A mode clipped to the room it has is the only thing standing on the row
+    // while no window is known, and a count or the keys beside nothing would
+    // read as a row that began with a dot.
+    for (mode, tone, _) in MODES {
         let prompt = Prompt {
-            mode: said,
-            left: Remaining::new(Some(100)),
+            mode,
+            tone,
+            commands: CommandCount::new(1, false),
             ..typed("")
         };
-        // The bare rows, where the reading shares the status row with the mode.
         for columns in WIDTHS.filter(|columns| *columns < FRAMED_AT) {
             let status = row(&prompt, 1, columns, Glyphs::Unicode);
-            // No mode has a digit in it, and the reading's first character is a
-            // digit or, with no room, the question mark.
-            let before = status
-                .split(|c: char| c.is_ascii_digit() || c == '?')
-                .next()
-                .unwrap_or_default()
-                .trim();
+
             assert!(
-                before.is_empty() || before.starts_with(said),
-                "{said:?} at {columns}: {status:?}"
+                !status.trim_start().starts_with('·'),
+                "{mode:?} at {columns}: {status:?}"
+            );
+            assert!(
+                width::columns(mode) <= columns || !status.contains("command"),
+                "{mode:?} at {columns}: {status:?}"
             );
         }
     }

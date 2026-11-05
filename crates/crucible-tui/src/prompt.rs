@@ -19,7 +19,10 @@
 //! typed. Outside the frame it is a row like any other, which is what let the
 //! model join it without re-bordering anything. On a terminal too narrow for a
 //! frame, the remaining-window fact joins this row and shortens before it can
-//! overflow, and the mode gives way whole rather than in part.
+//! overflow. The mode outranks it: where the mode fits whole the reading is
+//! shortened to what is left beside it, down to nothing, and where the mode
+//! cannot fit and a reading is known the mode is left off whole, never shown in
+//! part. With no reading known the mode has the row to itself and is clipped.
 //!
 //! That row has two ends, and what decides which end a fact goes to is whether
 //! it is about the next key or about the next turn. The mode is the first: it
@@ -861,31 +864,48 @@ impl Prompt<'_> {
             return self.session_status(columns, glyphs);
         }
 
-        let Some(reading) = self.bare_reading(columns, glyphs) else {
+        let Some(known) = self.bare_reading(columns, glyphs) else {
+            // No window known: the mode has the row to itself and is clipped to
+            // it, because a safety fact cut short is still mostly readable.
             return self.session_status(columns, glyphs);
         };
-        let wide = width::columns(&reading);
+
+        // The mode outranks the reading. Where it fits whole it is drawn whole
+        // and the reading takes the longest form that fits beside it, or none.
+        let mode = width::columns(self.mode);
+        if mode <= columns {
+            let beside = columns.saturating_sub(mode + APART);
+            let Some(reading) = self.reading_form(beside, glyphs) else {
+                return self.session_status(columns, glyphs);
+            };
+            return self.with_reading(columns, reading, glyphs);
+        }
+
+        // Too long for the row: left off rather than shown in part, and with it
+        // everything that stands after it, which would otherwise start the row.
+        let wide = width::columns(&known);
         let gap = APART.min(columns.saturating_sub(wide));
-        let room = columns.saturating_sub(wide + gap);
+        let mut row = Row::new();
+        row.pad(columns.saturating_sub(wide + gap));
+        row.push(Slot::Quiet, " ".repeat(gap));
+        row.push(Slot::Quiet, known);
+        (row, false)
+    }
+
+    /// The session facts, then `reading` against the right edge.
+    fn with_reading(&self, columns: usize, reading: String, glyphs: Glyphs) -> (Row, bool) {
+        let wide = width::columns(&reading);
+        let room = columns.saturating_sub(wide + APART);
         let (mut row, counted) = self.session_status(room, glyphs);
         row.pad(room);
-        row.push(Slot::Quiet, " ".repeat(gap));
+        row.push(Slot::Quiet, " ".repeat(APART));
         row.push(Slot::Quiet, reading);
         (row, counted)
     }
 
     /// The session facts that occupy the status row before its window reading.
     fn session_status(&self, columns: usize, glyphs: Glyphs) -> (Row, bool) {
-        // Whole or not at all, like everything after it. The first letters of a
-        // mode read as a word and say nothing about the session, and this is the
-        // fact the row must never be read wrong, so a row with less room than the
-        // sentence needs leaves it off.
-        let mode = if width::columns(self.mode) <= columns {
-            self.mode
-        } else {
-            ""
-        };
-        let mut row = Row::new().then(self.tone, mode);
+        let mut row = Row::new().then(self.tone, width::clip(self.mode, columns));
 
         let said = self.asked(glyphs);
         let wide = width::columns(&said);
@@ -957,6 +977,17 @@ impl Prompt<'_> {
     /// fact. The tokens held of the window lead it where they are known, and
     /// are the first thing given up.
     fn bare_reading(&self, columns: usize, glyphs: Glyphs) -> Option<String> {
+        self.left.get()?;
+
+        Some(
+            self.reading_form(columns, glyphs)
+                .unwrap_or_else(|| width::clip("?", columns).to_owned()),
+        )
+    }
+
+    /// The longest spelling of a known window reading that fits `columns`, or
+    /// nothing where none does. Held, full, then the bare percentage.
+    fn reading_form(&self, columns: usize, glyphs: Glyphs) -> Option<String> {
         let left = self.left.get()?;
         let full = format!("{left}% window left");
         if let Some((used, window)) = self.left.held {
@@ -975,11 +1006,7 @@ impl Prompt<'_> {
         }
 
         let compact = format!("{left}%");
-        if width::columns(&compact) <= columns {
-            return Some(compact);
-        }
-
-        Some(width::clip("?", columns).to_owned())
+        (width::columns(&compact) <= columns).then_some(compact)
     }
 
     /// Where in the line the word that names a command is, while one does.
