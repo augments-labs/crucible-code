@@ -516,7 +516,7 @@ wire_names_no_vendor() {
 
 section "the shared Chat Completions wire names no vendor"
 wire_names_no_vendor 'Chat Completions' \
-    'moonshot|kimi|deepseek|\bzai\b|z\.ai|bigmodel|\bglm|qwen|dashscope|aliyun|\bmimo\b|xiaomi|minimax|\bmeta\b|muse|xai|grok' \
+    'moonshot|kimi|deepseek|\bzai\b|z\.ai|bigmodel|\bglm|qwen|dashscope|aliyun|\bmimo\b|xiaomi|minimax|mistral|\bmeta\b|muse|xai|grok' \
     'crates/crucible-provider/src/completions.rs' \
     'crates/crucible-provider/src/completions/*'
 
@@ -526,7 +526,7 @@ section "the shared Responses wire names no vendor"
 # one it is `metadata`, which the cache code on this wire says on purpose, and
 # a check that failed on that would be one people learn to read past.
 wire_names_no_vendor 'Responses' \
-    'openai|chatgpt|codex|astra|\bmeta\b|muse|xai|grok|moonshot|kimi|deepseek|\bzai\b|z\.ai|bigmodel|\bglm|qwen|dashscope|aliyun|\bmimo\b|xiaomi|minimax' \
+    'openai|chatgpt|codex|astra|\bmeta\b|muse|xai|grok|moonshot|kimi|deepseek|\bzai\b|z\.ai|bigmodel|\bglm|qwen|dashscope|aliyun|\bmimo\b|xiaomi|minimax|mistral' \
     'crates/crucible-provider/src/responses.rs' \
     'crates/crucible-provider/src/responses/*'
 

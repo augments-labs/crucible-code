@@ -1468,7 +1468,7 @@ sessions never write a plan or ask a question about the world.
 
 `web_search` and `web_fetch` exist only where the provider serves them.
 Anthropic, Google, MoonshotAI and OpenAI serve both; Meta and xAI serve
-`web_search` alone; DeepSeek, MiMo, MiniMax, Qwen and Z.ai serve neither, and a
+`web_search` alone; DeepSeek, MiMo, MiniMax, Mistral, Qwen and Z.ai serve neither, and a
 session there has ten tools or fewer.
 
 Reads inside the workspace never ask; one that leads outside it puts the path

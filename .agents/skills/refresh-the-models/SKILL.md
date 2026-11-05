@@ -38,6 +38,7 @@ Read the provider's own pages for each line of the report:
 | meta | dev.meta.ai: models |
 | mimo | the Xiaomi MiMo platform's model list |
 | minimax | platform.minimax.io: models, text generation |
+| mistral | docs.mistral.ai: models, reasoning, prompt caching; legal.mistral.ai: commercial terms |
 | moonshot | platform.kimi.ai: pricing, chat, thinking models; kimi.com: Kimi Code membership |
 | openai | developers.openai.com: models, reasoning |
 | qwen | alibabacloud.com Model Studio: models, text generation, deep thinking |

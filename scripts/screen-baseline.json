@@ -1349,7 +1349,7 @@
       "opened": [
         "Watched::open(&format!(\"google-login-{columns}\"), columns, 24)"
       ],
-      "sha256": "73ddd7a731886fd276520977e7f677dfdf77993b918c93220bba385276018acc"
+      "sha256": "ac900375383dbec234885b903c5ed5740925d2b1f4bf482962fd858d1b764b83"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__leaving_the_key_box_says_nothing_was_signed_in.snap",
@@ -1373,7 +1373,7 @@
       "opened": [
         "Watched::open(\"login-signed-in-40\", 40, 30)"
       ],
-      "sha256": "b38b161a558c757828a5e50cd1894b473d9380ec43e07b6a9a8bbae8130bc49b"
+      "sha256": "53e0ef817374eb57a906ea2d4357bf2092a4cdb139f73fdeeff773095c12467f"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__login_narrowed_40.snap",
@@ -1405,7 +1405,7 @@
       "opened": [
         "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[], args: &[], home: Some(&home), }, )"
       ],
-      "sha256": "b1179bbfb7428fc0636d385eff18b9a43c61cd8aa04770bb2c2579e8269820b2"
+      "sha256": "5bda6f09a28018e4badadfd8ddb9869379b19c968758fbc6e3306ab19704a856"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__model_trains_80.snap",
@@ -1414,7 +1414,7 @@
         "Vendor::answering(\"Two plus two is four.\")",
         "Watched::keyless(\"model-trains\", 80, 24, &vendor)"
       ],
-      "sha256": "75265e4958d580018037832d59aff7f7b5be857163f51f61f5eaecef30c3406b"
+      "sha256": "93457ebf24d93312e1bd3714305f754d5fa5fb56d1dc74710ef99e2dbf62e7e7"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__a_one_row_reply_carries_its_mark_in_native_mode.snap",
@@ -1586,7 +1586,7 @@
         "Vendor::answering(&crate::a_long_answer())",
         "Watched::native(case, 80, 24, vendor)"
       ],
-      "sha256": "9fc0ebad5da3fd3aec2d612cecf29358e30842ee5dbeb715ee1b4a70f19a7ef2"
+      "sha256": "b3ee3da32e7c444d287ce232623e2752da589581bfdf1d961f58887afb595305"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__native_queue_sent_all_now_in_ascii_at_40.snap",

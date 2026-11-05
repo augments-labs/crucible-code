@@ -131,17 +131,30 @@ fn offering(
     window: Option<u32>,
     tools: Tools,
 ) -> Result<Conversation, Failed> {
+    offering_as(tree, script, serving, scripted("script", window), tools)
+}
+
+/// The model a scripted conversation is settled on, called `named`.
+fn scripted(named: &'static str, window: Option<u32>) -> Model {
+    Model {
+        name: named.into(),
+        max_tokens: 64,
+        window,
+        accepts: None,
+        effort: None,
+    }
+}
+
+/// [`offering`], with the conversation settled on `model`.
+fn offering_as(
+    tree: &Tree,
+    script: Script,
+    serving: Option<&'static str>,
+    model: Model,
+    tools: Tools,
+) -> Result<Conversation, Failed> {
     let session = Arc::new(Session::start(&tree.sessions(), &tree.workspace()?, None)?);
-    let agent = AgentBuilder::new(
-        AgentId::new("test"),
-        Model {
-            name: "script".into(),
-            max_tokens: 64,
-            window,
-            accepts: None,
-            effort: None,
-        },
-    );
+    let agent = AgentBuilder::new(AgentId::new("test"), model);
     let work = tree.0.join("work");
     let conversation = Conversation::recording(session, serving, |session| {
         Runner::new(
@@ -1249,6 +1262,69 @@ fn a_send_on_a_warned_route_is_put_to_the_client_and_only_a_yes_sends_it() -> Re
             (0, Outcome::Turn(TurnOutcome::Warned { route, .. })) => {
                 assert_eq!(route.as_str(), "key:google");
                 assert!(!written.contains("key:google"), "{written}");
+            }
+            other => return Err(format!("{said:?}: {other:?}").into()),
+        }
+    }
+    Ok(())
+}
+
+/// A send on Mistral's Preview model, on a key that is itself not asked about,
+/// is put to the client before anything is sent: Mistral's terms let it train
+/// on what a Preview model is sent, whatever the account's opt-out. Only a yes
+/// sends it, and that yes is the model's alone.
+#[test]
+fn a_send_on_mistral_large_4_goes_nowhere_before_its_yes() -> Result<(), Failed> {
+    use crucible_app::content_use::{Consent, Routes, Serving, model_route};
+
+    let route = model_route("mistral", "mistral-large-4");
+    for (said, sends) in [(Saying::Heeding(true), 1), (Saying::Heeding(false), 0)] {
+        let tree = Tree::new("client-warned-mistral")?;
+        let script = Script::new(vec![saying("answered")]);
+        let asked = Arc::clone(&script.asked);
+        let conversation = offering_as(
+            &tree,
+            script,
+            Some("mistral"),
+            scripted("mistral-large-4", None),
+            Tools::new(),
+        )?;
+        let file = tree.0.join("config.json");
+        let consent = Consent::new(Routes::production());
+        consent.keeps_in(file.clone());
+        let mut conversation = conversation.consenting(consent.clone());
+        consent.served(
+            "mistral",
+            Some(Serving {
+                route: Some("key:mistral@mistral.ai".to_owned()),
+                at: None,
+            }),
+        );
+        let mut remote = Remote::new(vec![said]);
+        let request = Wire::default().sent(prompt("hello")?)?;
+
+        let (response, _) = turned(&mut conversation, &request, &mut remote)?;
+
+        assert_eq!(asked.load(Ordering::Relaxed), sends, "{said:?}");
+        assert!(
+            matches!(
+                remote.put.as_slice(),
+                [Pending::Warning { route: put, source, .. }]
+                    if put.as_str() == route
+                        && source.as_str() == "Mistral AI commercial terms of service, 5 Nov 2026"
+            ),
+            "{:?}",
+            remote.put
+        );
+        let written = std::fs::read_to_string(&file).unwrap_or_default();
+        match (sends, &response.outcome) {
+            (1, Outcome::Turn(TurnOutcome::Ran { .. })) => {
+                assert!(written.contains(&route), "{written}");
+                assert!(!written.contains("key:mistral@mistral.ai"), "{written}");
+            }
+            (0, Outcome::Turn(TurnOutcome::Warned { route: warned, .. })) => {
+                assert_eq!(warned.as_str(), route);
+                assert!(!written.contains(&route), "{written}");
             }
             other => return Err(format!("{said:?}: {other:?}").into()),
         }

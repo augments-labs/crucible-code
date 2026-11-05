@@ -90,7 +90,8 @@ and where nothing says, crucible starts and asks rather than picking one;
 A bare name goes to whichever provider holds a usable credential: a key in one
 of `ANTHROPIC_API_KEY`, `DASHSCOPE_API_KEY`, `DEEPSEEK_API_KEY`,
 `GEMINI_API_KEY`, `META_API_KEY`, `MIMO_API_KEY`, `MINIMAX_API_KEY`,
-`MOONSHOT_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY` and `ZAI_API_KEY` (a
+`MISTRAL_API_KEY`, `MOONSHOT_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY` and
+`ZAI_API_KEY` (a
 variable exported empty holds none, so it does not compete), or one stored by
 `/login`. A key in `DASHSCOPE_API_KEY`, `MINIMAX_API_KEY` or `ZAI_API_KEY` is
 sent to the vendor's international site; a key of its mainland China site is

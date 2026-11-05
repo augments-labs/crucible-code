@@ -16,8 +16,8 @@ use crucible_auth::{Held, Kind, Names};
 use crucible_config::Settings;
 use crucible_models::{Effort, FastForm, ModelCapabilities, ModelError, ModelLimits, Provider};
 use crucible_provider::{
-    Anthropic, DeepSeek, Endpoint, Google, HttpTurns, Meta, Mimo, MiniMax, Moonshot, OpenAi, Qwen,
-    Xai, Zai,
+    Anthropic, DeepSeek, Endpoint, Google, HttpTurns, Meta, Mimo, MiniMax, Mistral, Moonshot,
+    OpenAi, Qwen, Xai, Zai,
 };
 use crucible_registry::{
     Collision, Provenance, Registered, Registry, RegistryError, RegistrySnapshot, SourceKind,
@@ -55,7 +55,7 @@ use crate::subscription::Subscriptions;
 /// and the defaults are read again from the vendors' documentation as they
 /// release models: a scheduled check reports what the models.dev database
 /// lists against them, and each entry says when its vendor was last read.
-const PROVIDERS: [Served; 11] = [
+const PROVIDERS: [Served; 12] = [
     Served {
         name: "anthropic",
         default: "claude-opus-5-5",
@@ -174,6 +174,20 @@ const PROVIDERS: [Served; 11] = [
             Model::new("MiniMax-M3.1-Flash", EVERY),
             Model::new("MiniMax-M3", NONE),
         ],
+    },
+    Served {
+        name: "mistral",
+        default: "mistral-large-4",
+        shown: "Mistral",
+        key: "MISTRAL_API_KEY",
+        build: startup::mistral,
+        reach: startup::unreached,
+        window: 200_000,
+        most: None,
+        fast: Mistral::fast_at_vendor,
+        fast_signed_in: None,
+        reviewed: "2026-11-05",
+        models: &[Model::new("mistral-large-4", MISTRAL)],
     },
     Served {
         name: "moonshot",
@@ -415,7 +429,7 @@ pub enum Misfit {
 /// Subscription rows in the order the vendors are grouped; key rows by shown
 /// name, since that list is long and looked up by name. A provider's rows share
 /// its typed name, and each carries the name its credential is stored under.
-const ROWS: [Row; 24] = [
+const ROWS: [Row; 25] = [
     Row {
         list: List::Subscription,
         shown: "OpenAI",
@@ -625,6 +639,19 @@ const ROWS: [Row; 24] = [
         stored: "minimax@minimaxi.com",
         environment: false,
         address: Some(MiniMax::CN),
+    },
+    Row {
+        list: List::Key,
+        shown: "Mistral",
+        provider: "mistral",
+        site: None,
+        says: None,
+        kind: Kind::Key,
+        mark: None,
+        refuses: &[],
+        stored: "mistral@mistral.ai",
+        environment: true,
+        address: None,
     },
     Row {
         list: List::Key,
@@ -894,6 +921,10 @@ const EVERY: &[Effort] = &Effort::LADDER;
 
 /// The supported intersection of Gemini thinking levels and this UI's ladder.
 const GEMINI: &[Effort] = &[Effort::Low, Effort::Medium, Effort::High];
+
+/// The rungs Mistral's reasoning page says its reasoning models take; it
+/// refuses `none`, `minimal`, `xhigh` and `max` rather than mapping them.
+const MISTRAL: &[Effort] = &[Effort::Low, Effort::Medium, Effort::High];
 
 /// The three rungs the Kimi thinking models serve.
 ///

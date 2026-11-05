@@ -19,7 +19,7 @@ use crucible_types::{
     ToolResult, ToolSchema,
 };
 
-use super::{Dialect, Reasoning};
+use super::{Dialect, Reasoning, ThoughtAt};
 use crate::json::{Array, Json, Object, described};
 
 /// The whole request body, as `D` reads it, with no reasoning to send back.
@@ -189,6 +189,18 @@ fn kept(continuation: Option<&ProviderContinuation>, scope: ContinuationScope) -
     })
 }
 
+/// Reasoning as the chunk of a content list a dialect that keeps it there
+/// reads: one `thinking` chunk around one text chunk holding all of it.
+fn write_thought(chunk: &mut Object<'_>, thought: &str) {
+    chunk.text("type", "thinking");
+    chunk.array("thinking", |inner| {
+        inner.object(|piece| {
+            piece.text("type", "text");
+            piece.text("text", thought);
+        });
+    });
+}
+
 /// One message, as however many this wire needs for it.
 ///
 /// Appends rather than maps because the counts differ both ways: a turn that
@@ -251,16 +263,41 @@ fn append<D: Dialect>(
 
             messages.object(|assistant| {
                 assistant.text("role", "assistant");
-                if !text.is_empty() {
-                    assistant.text("content", text);
-                }
                 let reasoning = match back {
                     Back::Nothing | Back::Owned(_) => None,
                     Back::Kept(scope) => kept(continuation.as_ref(), scope),
                     Back::Every(scope) => kept(continuation.as_ref(), scope).or(Some("")),
                 };
-                if let Some(reasoning) = reasoning {
-                    assistant.text("reasoning_content", reasoning);
+                match (
+                    D::THOUGHT_AT,
+                    reasoning.filter(|thought| !thought.is_empty()),
+                ) {
+                    // The message as the model wrote it: its thinking chunk,
+                    // then its text, in one list.
+                    (ThoughtAt::ContentChunk, Some(thought)) => {
+                        assistant.array("content", |content| {
+                            content.object(|chunk| write_thought(chunk, thought));
+                            if !text.is_empty() {
+                                content.object(|chunk| {
+                                    chunk.text("type", "text");
+                                    chunk.text("text", text);
+                                });
+                            }
+                        });
+                    }
+                    (ThoughtAt::ContentChunk, None) => {
+                        if !text.is_empty() {
+                            assistant.text("content", text);
+                        }
+                    }
+                    (ThoughtAt::Field, _) => {
+                        if !text.is_empty() {
+                            assistant.text("content", text);
+                        }
+                        if let Some(reasoning) = reasoning {
+                            assistant.text("reasoning_content", reasoning);
+                        }
+                    }
                 }
                 if !calls.is_empty() {
                     assistant.array("tool_calls", |items| {
@@ -285,7 +322,9 @@ fn append<D: Dialect>(
                     message.text("content", said);
                     // A vendor that wants reasoning on every earlier answer
                     // wants it on this one too; it has none of its own.
-                    if matches!(back, Back::Every(_)) {
+                    // A field it can be empty in, where the vendor has one;
+                    // a chunk with nothing in it says nothing.
+                    if matches!(back, Back::Every(_)) && D::THOUGHT_AT == ThoughtAt::Field {
                         message.text("reasoning_content", "");
                     }
                 });

@@ -101,9 +101,9 @@ your home directory, or set it in the shell you start crucible in`. See
 
 - `ANTHROPIC_API_KEY`, `DASHSCOPE_API_KEY`, `DEEPSEEK_API_KEY`,
   `GEMINI_API_KEY`, `META_API_KEY`, `MIMO_API_KEY`, `MINIMAX_API_KEY`,
-  `MOONSHOT_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY`, `ZAI_API_KEY`: the key
-  for `anthropic`, `qwen`, `deepseek`, `google`, `meta`, `mimo`, `minimax`,
-  `moonshot`, `openai`, `xai` and `zai` respectively, unless `providers.<name>.apiKeyEnv`
+  `MISTRAL_API_KEY`, `MOONSHOT_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY`,
+  `ZAI_API_KEY`: the key for `anthropic`, `qwen`, `deepseek`, `google`, `meta`,
+  `mimo`, `minimax`, `mistral`, `moonshot`, `openai`, `xai` and `zai` respectively, unless `providers.<name>.apiKeyEnv`
   names another variable to read instead. The value is trimmed, and unset or
   blank is treated as no key, which is how a shell turns a variable off for
   one run. A key in `DASHSCOPE_API_KEY`, `MINIMAX_API_KEY` or `ZAI_API_KEY`

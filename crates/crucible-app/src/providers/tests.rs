@@ -785,7 +785,10 @@ fn the_models_table_gives_a_pdf_to_the_models_whose_vendors_read_one() {
         let expected = matches!(
             facts.provider,
             "anthropic" | "google" | "meta" | "openai" | "xai"
-        ) || matches!(facts.model, "glm-5.3-flash" | "qwen3.8-max");
+        ) || matches!(
+            facts.model,
+            "glm-5.3-flash" | "mistral-large-4" | "qwen3.8-max"
+        );
         assert_eq!(
             facts.accepts.contains(Modality::Pdf),
             expected,
@@ -1522,7 +1525,7 @@ fn a_provider_is_read_again_from_the_store_and_an_unreadable_store_settles_nothi
 }
 
 #[test]
-fn the_registry_serves_eleven_providers_each_under_its_name_and_variable() {
+fn the_registry_serves_twelve_providers_each_under_its_name_and_variable() {
     let served: Vec<_> = every()
         .iter()
         .map(|one| (one.name, one.shown, one.key))
@@ -1537,6 +1540,7 @@ fn the_registry_serves_eleven_providers_each_under_its_name_and_variable() {
             ("meta", "Meta", "META_API_KEY"),
             ("mimo", "MiMo", "MIMO_API_KEY"),
             ("minimax", "MiniMax", "MINIMAX_API_KEY"),
+            ("mistral", "Mistral", "MISTRAL_API_KEY"),
             ("moonshot", "MoonshotAI", "MOONSHOT_API_KEY"),
             ("openai", "OpenAI", "OPENAI_API_KEY"),
             ("qwen", "Qwen", "DASHSCOPE_API_KEY"),
@@ -1617,6 +1621,7 @@ fn every_model_of_a_new_vendor_serves_the_rungs_its_reference_names() {
         ("mimo", "mimo-v2.6-flash", &[][..]),
         ("minimax", "MiniMax-M3.1-Flash", &Effort::LADDER[..]),
         ("minimax", "MiniMax-M3", &[][..]),
+        ("mistral", "mistral-large-4", &[Low, Medium, High][..]),
     ] {
         assert_eq!(
             rungs(&catalogue(), provider, model),
@@ -1645,6 +1650,7 @@ fn every_offered_model_starts_at_its_native_window_and_a_new_name_at_its_provide
             ("meta", 200_000, None),
             ("mimo", 200_000, None),
             ("minimax", 200_000, None),
+            ("mistral", 200_000, None),
             ("moonshot", 262_144, None),
             ("openai", 272_000, Some(872_000)),
             ("qwen", 200_000, None),
@@ -1928,6 +1934,7 @@ fn every_default_is_asked_at_the_approved_rung() {
             ("meta", "muse-spark-1.3", Some(Effort::Medium)),
             ("mimo", "mimo-v2.6-pro", None),
             ("minimax", "MiniMax-M3", None),
+            ("mistral", "mistral-large-4", Some(Effort::Medium)),
             ("moonshot", "k3", Some(Effort::High)),
             ("openai", "gpt-6.1-sol", Some(Effort::Medium)),
             ("qwen", "qwen3.7-plus", None),

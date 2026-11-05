@@ -373,12 +373,20 @@ fn a_search_on_a_provider_with_no_search_is_refused_before_it_is_asked_about() {
         Keys::EXPORTED,
     );
 
-    run.switch("deepseek", "deepseek-flash");
-    let (answered, asked) = run.search();
+    for (provider, model) in [
+        ("deepseek", "deepseek-flash"),
+        ("mistral", "mistral-large-4"),
+    ] {
+        run.switch(provider, model);
+        let (answered, asked) = run.search();
 
-    assert!(answered.contains("nothing was sent"), "{answered}");
-    assert_eq!(asked, 0, "{answered}");
-    assert!(heard(&requests).is_empty());
+        assert!(
+            answered.contains("nothing was sent"),
+            "{provider}: {answered}"
+        );
+        assert_eq!(asked, 0, "{provider}: {answered}");
+        assert!(heard(&requests).is_empty(), "{provider}");
+    }
 }
 
 /// A key given again with `/login` for the provider in force is the one the

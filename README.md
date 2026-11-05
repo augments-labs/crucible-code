@@ -21,7 +21,7 @@ continued later.
 ## Highlights
 
 - **Provider-independent sessions.** Anthropic, DeepSeek, Google, Meta, MiMo,
-  MiniMax, Moonshot, OpenAI, Qwen, xAI and Z.ai are wire adapters. Each
+  MiniMax, Mistral, Moonshot, OpenAI, Qwen, xAI and Z.ai are wire adapters. Each
   provider uses either an API key or a supported account login; switching
   login methods replaces that provider’s stored credential.
 - **Permissioned tools.** Reads inside the workspace are available by default;
@@ -146,7 +146,7 @@ coding agents](docs/providers/agents.md).
 Google Gemini uses `GEMINI_API_KEY` or `/login google`; Google and Anthropic
 accept API keys only, not product subscription logins. The other providers read
 `DEEPSEEK_API_KEY`, `META_API_KEY`, `MIMO_API_KEY`, `MINIMAX_API_KEY`,
-`MOONSHOT_API_KEY`, `OPENAI_API_KEY`, `DASHSCOPE_API_KEY` (Qwen), `XAI_API_KEY`
+`MISTRAL_API_KEY`, `MOONSHOT_API_KEY`, `OPENAI_API_KEY`, `DASHSCOPE_API_KEY` (Qwen), `XAI_API_KEY`
 and `ZAI_API_KEY`; see [providers and
 models](docs/providers/providers.md#what-each-provider-serves).
 

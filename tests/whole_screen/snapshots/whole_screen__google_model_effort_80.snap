@@ -10,7 +10,7 @@ expression: models
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |╭─────────────────────┬────────────────────────────────────────────────────────╮|
-|│  Providers          │  Models                                        5 of 48 │|
+|│  Providers          │  Models                                        5 of 49 │|
 |├─────────────────────┼────────────────────────────────────────────────────────┤|
 |│ › All             5 │ › gemini-4-argon           Google        1.0M  fast    │|
 |│   Anthropic       · │   gemini-3.8-flash         Google        1.0M  ← now   │|
@@ -19,9 +19,9 @@ expression: models
 |│   Meta            · │   gemini-3.1-pro-preview   Google        1.0M  fast    │|
 |│   MiMo            · │                                                        │|
 |│   MiniMax         · │                                                        │|
+|│   Mistral         · │                                                        │|
 |│   MoonshotAI      · │                                                        │|
 |│   OpenAI          · │                                                        │|
-|│   Qwen            · │                                                        │|
 |╰─────────────────────┴────────────────────────────────────────────────────────╯|
 |                                                                                |
 |  Effort   ‹ low ›  medium   high                                               |

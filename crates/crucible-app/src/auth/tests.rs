@@ -188,6 +188,10 @@ fn status_says_each_source_and_state_in_one_bounded_document() {
     let deepseek = one("deepseek");
     assert_eq!(at(&deepseek, "/state"), "absent");
     assert_eq!(at(&deepseek, "/source"), &Value::Null);
+
+    let mistral = one("mistral");
+    assert_eq!(at(&mistral, "/state"), "absent");
+    assert_eq!(at(&mistral, "/variable"), "MISTRAL_API_KEY");
     assert_eq!(
         status.exit(),
         0,
