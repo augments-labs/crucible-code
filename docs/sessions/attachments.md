@@ -113,6 +113,7 @@ protocol's half, with each provider under the name a refusal line uses:
 | `meta` | nothing but text |
 | `mimo` | nothing but text |
 | `minimax` | nothing but text |
+| `mistral` | nothing but text |
 | `moonshot` | pictures, video |
 | `openai` | pictures, PDFs |
 | `qwen` | nothing but text |

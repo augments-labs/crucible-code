@@ -120,7 +120,7 @@ changes a file or starts a process.
 claude-sonnet-5, or openai/gpt-5.6-terra. The provider is whichever holds a \
 usable credential — a key in one of ANTHROPIC_API_KEY, DASHSCOPE_API_KEY, \
 DEEPSEEK_API_KEY, GEMINI_API_KEY, META_API_KEY, MIMO_API_KEY, MINIMAX_API_KEY, \
-MOONSHOT_API_KEY, OPENAI_API_KEY, XAI_API_KEY and ZAI_API_KEY (a variable \
+MISTRAL_API_KEY, MOONSHOT_API_KEY, OPENAI_API_KEY, XAI_API_KEY and ZAI_API_KEY (a variable \
 exported empty holds none, so it does not compete), \
 or one stored by /login, whether an API key or an account login. Where more \
 than one is usable, qualify the name or set provider for one of them. \

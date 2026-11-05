@@ -193,7 +193,7 @@ headless() {
     local status=0
     (cd "$work" && env -u ANTHROPIC_API_KEY -u GEMINI_API_KEY -u MOONSHOT_API_KEY -u OPENAI_API_KEY \
         -u DASHSCOPE_API_KEY -u DEEPSEEK_API_KEY -u META_API_KEY -u MIMO_API_KEY -u MINIMAX_API_KEY \
-        -u XAI_API_KEY -u ZAI_API_KEY \
+        -u MISTRAL_API_KEY -u XAI_API_KEY -u ZAI_API_KEY \
         "CRUCIBLE_CODE_HOME=$home" "$binary" "$@" </dev/null >"$stage/out" 2>"$stage/err") || status=$?
     printf '%s' "$status"
 }

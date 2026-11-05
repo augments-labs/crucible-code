@@ -156,12 +156,12 @@ Naming a provider this build does not have is a startup failure that says which
 ones it has:
 
 ```
-crucible: no provider called gemini; this build has anthropic, deepseek, google, meta, mimo, minimax, moonshot, openai, qwen, xai, zai
+crucible: no provider called gemini; this build has anthropic, deepseek, google, meta, mimo, minimax, mistral, moonshot, openai, qwen, xai, zai
 ```
 
 ## What each provider serves
 
-This build serves eleven providers. The name in the first column is what
+This build serves twelve providers. The name in the first column is what
 `--model`, `provider` and `providers.<name>` take, and the models are what
 `/model` offers for it, each with the rungs it takes:
 
@@ -173,6 +173,7 @@ This build serves eleven providers. The name in the first column is what
 | `meta` | Meta | `muse-wonder-1.0`, `muse-spark-1.3`: all five; `muse-spark-1.3-contributor`, `muse-spark-1.2`, `muse-spark-1.2-contributor`: low, medium, high, xhigh | `META_API_KEY` |
 | `mimo` | MiMo | `mimo-v2.6-pro`, `mimo-v2.6-flash`: none | `MIMO_API_KEY` |
 | `minimax` | MiniMax | `MiniMax-M3.1-Flash`: all five; `MiniMax-M3`: none | `MINIMAX_API_KEY` |
+| `mistral` | Mistral | `mistral-large-4`: low, medium, high | `MISTRAL_API_KEY` |
 | `moonshot` | MoonshotAI | `k3.1-pro`, `k3.1-pro-highspeed`, `k3`, `k3-256k`, `kimi-for-coding`, `kimi-for-coding-highspeed`: low, high, max | `MOONSHOT_API_KEY` |
 | `openai` | OpenAI | `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`: all five; `gpt-5.5`: low, medium, high, xhigh | `OPENAI_API_KEY` |
 | `qwen` | Qwen | `qwen3.8-max`, `qwen3.8-flash`: low, medium, xhigh; `qwen3.7-plus`, `qwen3.6-plus`: none | `DASHSCOPE_API_KEY` |
@@ -189,8 +190,8 @@ Power and Maximum plans, is not offered; `max` on `muse-wonder-1.0` does not
 select it. See [content
 use](content-use.md).
 
-Meta and xAI are spoken to over the Responses protocol, the other five vendors
-new in this release over Chat Completions. crucible sends those seven text
+Meta and xAI are spoken to over the Responses protocol, the other six vendors
+new in this release over Chat Completions. crucible sends those eight text
 alone in this release: a picture, a PDF, audio or video stays out of the
 request, whatever the model reads. A refusal from any of them reaches you in
 the vendor's own words, except Z.ai's refusal of a prompt too long for the
@@ -226,6 +227,7 @@ xAI.
 | MiMo | API key | never start `tp-` or `ttp-` | `https://api.xiaomimimo.com/v1` | both |
 | MiniMax · minimax.io | API key | start `sk-api-` | `https://api.minimax.io/v1` | both |
 | MiniMax · minimaxi.com | API key | start `sk-api-` | `https://api.minimax.cn/v1` | both |
+| Mistral | API key | | `https://api.mistral.ai/v1` | `mistral-large-4` |
 | Qwen · alibabacloud.com | API key | | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | all four |
 | Qwen · aliyun.com | API key | | `https://dashscope.aliyuncs.com/compatible-mode/v1` | all four |
 | xAI | API key | | `https://api.x.ai/v1` | both |
@@ -322,6 +324,16 @@ choice that asks least of it, and this says which fact it was.
   no source shows how the priority tier of `MiniMax-M3` is refused, or how a
   Chat Completions answer says which served it. MiniMax's reference and guide
   name different fields for the reasoning it sends back.
+- **Mistral.** No web tool on Chat Completions. Its cache keeps a prefix in
+  blocks of 64 tokens, read at 10% of the input price, and crucible sends the
+  session's cache key with every request; the page states no lifetime and
+  does not say whether a prompt is cached without the key. No fast form:
+  Mistral serves none for `mistral-large-4`. Its reasoning arrives as a
+  thinking part of the answer's content and goes back on the answer unchanged,
+  as its reasoning page asks. `mistral-large-4` is a Preview model, priced at
+  $0.7 input and $2.1 output per million tokens, read on 5 Nov 2026, and
+  Mistral may train on what it is sent; crucible asks before the first send.
+  It reads pictures and documents; crucible sends it text alone.
 
 ## How much context is used
 
@@ -348,7 +360,7 @@ OpenAI with a key and Z.ai make room and ask again, as a
 and Meta's refusals carry no code, so crucible reads each by its shape and the
 words it opens with; the words matched for MiniMax are not printed on its own
 pages, so a refusal worded otherwise ends the turn. On Google,
-DeepSeek, Moonshot, Qwen, xAI and MiMo a request too long for the model still
+DeepSeek, Mistral, Moonshot, Qwen, xAI and MiMo a request too long for the model still
 ends the turn; a lower `defaultContextWindow` compacts the session before it gets
 there.
 
@@ -502,6 +514,7 @@ with. Which variable is read follows from the provider:
 | `meta` | `META_API_KEY` | `authorization: Bearer …` |
 | `mimo` | `MIMO_API_KEY` | `authorization: Bearer …` |
 | `minimax` | `MINIMAX_API_KEY` | `authorization: Bearer …` |
+| `mistral` | `MISTRAL_API_KEY` | `authorization: Bearer …` |
 | `moonshot` | `MOONSHOT_API_KEY` | `authorization: Bearer …` |
 | `openai` | `OPENAI_API_KEY` | `authorization: Bearer …` |
 | `qwen` | `DASHSCOPE_API_KEY` | `authorization: Bearer …` |
@@ -707,8 +720,8 @@ to receive either token.
 Anthropic subscription OAuth is deliberately absent: Claude subscription tokens
 are not a third-party authentication contract. Anthropic is reached with a
 Console API key instead. The *Provide your own API key* route also stores API
-keys for DeepSeek, Google, Meta, MiMo, MiniMax, MoonshotAI, OpenAI, Qwen, xAI
-and Z.ai. Meta's Muse Code subscription, the Z.ai Coding Plan, MiMo's Token
+keys for DeepSeek, Google, Meta, MiMo, MiniMax, Mistral, MoonshotAI, OpenAI,
+Qwen, xAI and Z.ai. Meta's Muse Code subscription, the Z.ai Coding Plan, MiMo's Token
 Plan and xAI's SuperGrok have no row: Meta keeps the Muse Code credential for
 Muse Code alone, the Z.ai Coding Plan names the tools it may be used in and
 crucible is not one, and the other two are not offered in this release. Google accepts a Gemini Developer API
@@ -754,7 +767,7 @@ function tools on the older endpoint. Crucible needs tool calls to work with
 reasoning enabled. The cost is that most other vendors serving an
 "OpenAI-compatible" API implement the older endpoint and not this one, so
 `openai` means OpenAI here rather than anything that speaks its shape. `moonshot` is that older endpoint, read by a provider of
-its own, and so are `deepseek`, `zai`, `qwen`, `mimo` and `minimax`, each with
+its own, and so are `deepseek`, `zai`, `qwen`, `mimo`, `minimax` and `mistral`, each with
 its vendor's own ways of asking for reasoning and of reporting usage. `meta` and
 `xai` speak Responses, with what each vendor does differently kept beside it.
 

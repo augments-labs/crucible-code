@@ -768,7 +768,8 @@ fn a_narrow_window_with_no_shelf_folds_a_line_rather_than_cut_its_note() {
         .said()
         .join(" ");
     assert!(said.contains("muse-spark-1.3-contributor"), "{said}");
-    assert_eq!(said.matches("trains").count(), 2, "{said}");
+    assert!(said.contains("mistral-large-4 — trains"), "{said}");
+    assert_eq!(said.matches("trains").count(), 3, "{said}");
 }
 
 #[test]

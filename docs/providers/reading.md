@@ -15,6 +15,7 @@ here is whatever that table said when this build was made.
 | `meta` | `muse-wonder-1.0`, `muse-spark-1.3`, `muse-spark-1.3-contributor`, `muse-spark-1.2`, `muse-spark-1.2-contributor` | text, pictures, PDFs, audio, video |
 | `mimo` | `mimo-v2.6-pro`, `mimo-v2.6-flash` | text, pictures, audio, video |
 | `minimax` | `MiniMax-M3.1-Flash`, `MiniMax-M3` | text, pictures, video |
+| `mistral` | `mistral-large-4` | text, pictures, PDFs |
 | `moonshot` | `k3.1-pro`, `k3.1-pro-highspeed`, `k3`, `k3-256k`, `kimi-for-coding`, `kimi-for-coding-highspeed` | text, pictures, video |
 | `openai` | `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5` | text, pictures, PDFs |
 | `qwen` | `qwen3.8-max` | text, pictures, PDFs, video |
@@ -23,7 +24,7 @@ here is whatever that table said when this build was made.
 | `zai` | `glm-5.3`, `glm-5.2` | text |
 | `zai` | `glm-5.3-flash` | text, pictures, PDFs, video |
 
-What a model reads is not what crucible sends it: the seven providers new in
+What a model reads is not what crucible sends it: the eight providers new in
 this release are sent text alone, as [the protocol's
 half](#what-crucible-puts-in-a-request) below decides.
 

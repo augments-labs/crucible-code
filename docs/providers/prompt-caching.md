@@ -20,6 +20,7 @@ and forbids persistent cached-content resources.
 | Google Gemini | Provider-managed implicit prefix caching | No additional cache field or remote cached-content resource. |
 | Moonshot/Kimi | Provider-managed automatic context caching | An opaque, derived `prompt_cache_key` scoped to the session by default; Kimi manages cache creation and lifetime. |
 | Meta, xAI | Provider-managed automatic prefix caching | An opaque, derived `prompt_cache_key` scoped to the session by default; the vendor manages cache creation and lifetime. |
+| Mistral | Provider-managed prefix caching in 64-token blocks | An opaque, derived `prompt_cache_key` scoped to the session by default; Mistral says the key raises the chance of a hit without guaranteeing one. |
 | DeepSeek, Z.ai, Qwen, MiMo, MiniMax | Provider-managed automatic prefix caching | None. These vendors take no cache field on the route crucible uses; crucible reads the cached-token count each answer reports. |
 
 Only exact built-in endpoint/model records advertise support. A custom
@@ -111,6 +112,7 @@ ordinary startup never scrapes mutable documentation.
 | MiMo Chat Completions: `mimo-v2.6-pro`, `mimo-v2.6-flash` | provider-managed caching, reported usage only | [MiMo pricing](https://mimo.mi.com/static/docs/price/pay-as-you-go.md) | `mimo-prompt-cache-2026-10-01` |
 | MiniMax Chat Completions: `MiniMax-M3.1-Flash` | provider-managed caching from 512 input tokens, reported usage only | [MiniMax prompt caching](https://platform.minimax.io/docs/api-reference/text-prompt-caching) | `minimax-prompt-cache-2026-11-05` |
 | MiniMax Chat Completions: `MiniMax-M3` | provider-managed caching from 512 input tokens, reported usage only | [MiniMax prompt caching](https://platform.minimax.io/docs/api-reference/text-prompt-caching) | `minimax-prompt-cache-2026-10-01` |
+| Mistral Chat Completions: `mistral-large-4` | prefix caching in 64-token blocks with a routing key; cached tokens cost 10% of the input price; no lifetime stated | [Mistral prompt caching](https://docs.mistral.ai/inference/conversations/advanced/prompt-caching) | `mistral-prompt-cache-2026-11-05` |
 | Moonshot/Kimi Chat Completions: `k3.1-pro`, `k3.1-pro-highspeed`, `k3`, `k3-256k`, `kimi-for-coding`, `kimi-for-coding-highspeed` | provider-managed automatic caching after the documented prefix minimum, with a stable routing key for agent sessions | [Kimi context caching](https://platform.kimi.ai/docs/guide/use-context-caching-feature-of-kimi-api) and [Chat Completions API](https://platform.kimi.ai/docs/api/chat) | `kimi-prompt-cache-2026-08-31` |
 
 `gpt-6.1-terra` is priced at $1.00 input, $0.05 cached, $1.25 per million for
@@ -145,6 +147,11 @@ what an answer reports for it. Qwen does not document caching at its plan
 addresses, Z.ai and MiniMax state no cache lifetime, and MiMo's examples never
 show whether its cached count lies inside the prompt's; crucible reads it as
 inside. Qwen's explicit `cache_control` markers are not written.
+
+Mistral, added later, states no cache lifetime and does not say whether a
+prompt is cached without the key, so crucible sends the session's key
+whenever it has one and claims a hit only from the cached count an answer
+reports.
 
 Private continuation is distinct from a cache hit. Compatible Google and Astra
 native history is replayed in order; Fable thinking whose bound prefix was
