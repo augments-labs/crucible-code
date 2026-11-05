@@ -95,8 +95,10 @@ const PROVIDERS: [Served; 12] = [
         fast_signed_in: None,
         reviewed: "2026-11-05",
         models: &[
-            Model::new("deepseek-flash", LOW_HIGH_MAX),
-            Model::new("deepseek-v4-pro", LOW_HIGH_MAX),
+            // DeepSeek's pricing page names the version behind each id, and
+            // `deepseek-flash` follows each Flash upgrade.
+            Model::shown("deepseek-flash", "DeepSeek-V4.1-Flash-1017", LOW_HIGH_MAX),
+            Model::shown("deepseek-v4-pro", "DeepSeek-V4-Pro-0813", LOW_HIGH_MAX),
         ],
     },
     Served {
