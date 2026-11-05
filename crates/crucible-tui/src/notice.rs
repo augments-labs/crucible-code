@@ -13,7 +13,7 @@
 use crate::color::Slot;
 use crate::glyphs::Glyphs;
 use crate::row::Row;
-use crate::width::{clip, fold};
+use crate::width::fold;
 
 /// Something worth saying before the session starts.
 #[derive(Debug, Clone, Copy)]
@@ -39,7 +39,7 @@ impl Notice<'_> {
 
         let mut rows = vec![
             rule(),
-            Row::new().then(Slot::Strong, clip(self.heading, columns)),
+            Row::new().then(Slot::Strong, self.heading).clipped(columns),
         ];
         rows.extend(self.sentence(columns));
         rows.push(rule());
@@ -57,20 +57,17 @@ impl Notice<'_> {
             return prose(self.said, columns, Slot::Plain);
         };
 
-        let named = clip(named, columns);
-        let together = crate::width::columns(self.said) + 1 + crate::width::columns(named);
+        // Measured as rows, which clean their text as it goes in: a control
+        // character in either half draws as a space and costs its column.
+        let named = Row::new().then(Slot::Accent, named).clipped(columns);
+        let said = Row::new().then(Slot::Plain, self.said);
 
-        if together <= columns {
-            return vec![
-                Row::new()
-                    .then(Slot::Plain, self.said)
-                    .then(Slot::Plain, " ")
-                    .then(Slot::Accent, named),
-            ];
+        if said.columns() + 1 + named.columns() <= columns {
+            return vec![said.then(Slot::Plain, " ").join(named)];
         }
 
         let mut rows = prose(self.said, columns, Slot::Plain);
-        rows.push(Row::new().then(Slot::Accent, named));
+        rows.push(named);
         rows
     }
 }
@@ -187,5 +184,28 @@ mod tests {
         let heading = rows.get(1).expect("a heading");
 
         assert!(!heading.paint(&palette).is_empty());
+    }
+
+    #[test]
+    fn a_control_character_costs_the_column_of_the_space_it_is_drawn_as() {
+        // Counted as nothing, the two halves "ab\u{1}cd" and "xyz" were thought
+        // to fit eight columns and drew nine.
+        let notice = Notice {
+            heading: "a\u{1}\u{1}\u{1}\u{1}bc",
+            said: "ab\u{1}cd",
+            named: Some("xy\u{1}z"),
+        };
+
+        for columns in 4..=12 {
+            for row in notice.rows(columns, Glyphs::Unicode) {
+                let drawn = row.columns();
+                assert!(
+                    drawn <= columns,
+                    "{:?} draws {drawn} columns in {columns}",
+                    row.text()
+                );
+            }
+        }
+        assert_eq!(at(&drawn(&notice, 9), 2), "ab cd");
     }
 }
