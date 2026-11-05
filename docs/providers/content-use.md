@@ -102,7 +102,12 @@ models. For `muse-wonder-1.0` Meta's models page says "In Standard mode, your
 content — the prompts, code, files, and context you send, plus the model
 responses you get back — is not used to train Meta models" and "For Muse
 Wonder, Contributor mode isn't available on pay-as-you-go" (read 5 Nov 2026),
-so the key route has no Contributor variant to ask about. A web
+so the key route has no Contributor variant to ask about. The same page says
+"Muse Wonder is in preview". Meta's terms of service (last updated 9 Oct 2026)
+give preview models no separate rule, and §5.1 says Meta "will not use Content
+submitted in a request to the Standard Services to train Meta Models"; Meta's
+model designation policy (last updated 12 Oct 2026) lists Muse Wonder and Muse
+Wonder Full as Standard Models (read 5 Nov 2026). A web
 search names the model the session is asking now, so it is held while that
 model is a contributor model without its yes, and goes out on the standard
 model once the session has moved to one.
