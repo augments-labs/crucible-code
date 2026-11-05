@@ -65,6 +65,13 @@ Read the provider's own pages for each line of the report:
    rung is `default_rung`'s, medium or the nearest above it. Move it only when
    the vendor's middle tier moved.
 5. Set the provider's `reviewed` to the date the pages were read.
+6. **A family crucible does not offer.** Read the vendor's page for the model.
+   Offer it as in 1, or add the model to `PASSED` with the reason. The check
+   never adds it: a family is chosen by hand.
+7. **A revised model.** The database dates an offered model after the
+   provider's `reviewed` day, so the vendor released or revised it under the
+   same name. Re-read the model's records against the vendor's pages as in 1,
+   then set the provider's `reviewed` as in 5.
 
 ## Regenerate and prove
 

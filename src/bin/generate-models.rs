@@ -21,8 +21,9 @@
 //! The second writes nothing. It reports, as Markdown on standard output, what
 //! the database says against what this build offers: a newer model in a family
 //! crucible offers, a coding model of a family crucible does not offer from a
-//! provider it does, an offered model gone or deprecated, and rungs listed
-//! apart from the ones offered. It exits 0 with nothing to report, 1 with
+//! provider it does, an offered model gone or deprecated, rungs listed apart
+//! from the ones offered, and an offered model released or revised after its
+//! provider's `reviewed` day. It exits 0 with nothing to report, 1 with
 //! something, and 2 when the input could not be read. A scheduled workflow runs
 //! it, and what it reports is settled by hand from the vendors' own pages.
 //!
@@ -271,7 +272,11 @@ fn drifted(database: &Value) -> i32 {
     };
     let rungs =
         |provider: &str, model: &str| crucible_app::providers::rungs(&providers, provider, model);
-    let found = drift(database, OFFERED, PASSED, KEPT, &rungs);
+    let found = drift(database, OFFERED, PASSED, KEPT, &rungs, &|provider| {
+        crucible_app::providers::offered(&providers)
+            .find(|one| one.name == provider)
+            .map(|one| one.reviewed)
+    });
     if found.is_empty() {
         return 0;
     }
@@ -417,6 +422,12 @@ enum Finding {
         key: String,
         released: String,
     },
+    /// An offered model the database dates after its provider's pages were read.
+    Revised {
+        provider: &'static str,
+        key: &'static str,
+        released: String,
+    },
     /// An offered model the database no longer lists.
     Gone {
         provider: &'static str,
@@ -447,16 +458,21 @@ enum Finding {
 /// are compared only where the database lists effort at all, since one that
 /// lists none says nothing either way, only in the words crucible's ladder
 /// has, and not for a model whose difference is `kept`.
+// Six inputs of one comparison, each a different kind of thing and each named
+// at its two call sites; a struct holding them would only rename them.
+#[allow(clippy::too_many_arguments)]
 fn drift(
     database: &Value,
     offered: &[Offer],
     passed: &[(&str, &str, &str)],
     kept: &[(&str, &str, &str)],
     rungs: &dyn Fn(&str, &str) -> Vec<Effort>,
+    reviewed: &dyn Fn(&str) -> Option<&str>,
 ) -> Vec<Finding> {
     let mut found = Vec::new();
     let mut newest: BTreeMap<(&'static str, &str), &str> = BTreeMap::new();
     let mut families: BTreeSet<(&'static str, &str)> = BTreeSet::new();
+    let mut revised: BTreeSet<(&'static str, &str)> = BTreeSet::new();
     for (provider, model, key, _) in offered {
         let Some(key) = key else { continue };
         let models = database
@@ -471,6 +487,16 @@ fn drift(
         }
         if let Some(family) = word(entry, "family") {
             families.insert((provider, family));
+        }
+        if let (Some(released), Some(day)) = (word(entry, "release_date"), reviewed(provider))
+            && released > day
+            && revised.insert((provider, key))
+        {
+            found.push(Finding::Revised {
+                provider,
+                key,
+                released: released.to_owned(),
+            });
         }
         if let (Some(family), Some(released)) = (word(entry, "family"), word(entry, "release_date"))
         {
@@ -640,6 +666,16 @@ fn reported(found: &[Finding]) -> String {
                 shown(family),
                 shown(released)
             ),
+            Finding::Revised {
+                provider,
+                key,
+                released,
+            } => writeln!(
+                out,
+                "- {provider}: `{}` was released or revised on {}, after its pages were read.",
+                shown(key),
+                shown(released)
+            ),
             Finding::Gone { provider, model } => {
                 writeln!(out, "- {provider}: `{model}` is no longer listed.")
             }
@@ -663,7 +699,8 @@ fn reported(found: &[Finding]) -> String {
         "\nThe database is a lead, not the authority: check each against the vendor's \
          own pages and settle it as the repository's `refresh-the-models` skill says. \
          A family is a product decision taken by hand, and declining a model of one is a \
-         `PASSED` entry.\n",
+         `PASSED` entry. A revised name is settled by re-reading the provider's pages \
+         and moving its `reviewed` day.\n",
     );
     out
 }
@@ -943,6 +980,11 @@ mod tests {
         Effort::LADDER.to_vec()
     }
 
+    /// A build that has no `reviewed` day for any provider.
+    fn unreviewed(_: &str) -> Option<&str> {
+        None
+    }
+
     fn database(models: &Value) -> Value {
         json!({ "anthropic": { "models": models } })
     }
@@ -969,7 +1011,7 @@ mod tests {
         }));
 
         assert_eq!(
-            drift(&database, SHIPPED, &[], &[], &every),
+            drift(&database, SHIPPED, &[], &[], &every, &unreviewed),
             vec![Finding::Newer {
                 provider: "anthropic",
                 family: String::from("claude-opus"),
@@ -977,6 +1019,45 @@ mod tests {
                 released: String::from("2026-10-01"),
             }],
             "an older model of the family is no news, and a newer one is"
+        );
+    }
+
+    #[test]
+    fn drift_reports_an_offered_model_the_vendor_revised_since_it_was_reviewed() {
+        let flash: Offer = ("deepseek", "deepseek-flash", Some("deepseek-flash"), None);
+        let database = json!({ "deepseek": { "models": {
+            "deepseek-flash": listing("deepseek-flash", "2026-10-17", RUNGS),
+        } } });
+        let on = |database: &Value, offered: &[Offer], day: &'static str| {
+            drift(database, offered, &[], &[], &every, &|_| Some(day))
+        };
+
+        assert_eq!(
+            on(&database, &[flash], "2026-10-16"),
+            vec![Finding::Revised {
+                provider: "deepseek",
+                key: "deepseek-flash",
+                released: String::from("2026-10-17"),
+            }],
+            "a release after the pages were read is news"
+        );
+        assert_eq!(
+            on(&database, &[flash], "2026-10-17"),
+            vec![],
+            "a release on the day the pages were read is not"
+        );
+
+        let aliases: [Offer; 2] = [
+            ("moonshot", "k3", Some("kimi-k3"), None),
+            ("moonshot", "k3-256k", Some("kimi-k3"), Some(4)),
+        ];
+        let database = json!({ "moonshotai": { "models": {
+            "kimi-k3": listing("kimi-k3", "2026-10-20", RUNGS),
+        } } });
+        assert_eq!(
+            on(&database, &aliases, "2026-10-16").len(),
+            1,
+            "two offered names on one key are one record to re-read"
         );
     }
 
@@ -992,7 +1073,7 @@ mod tests {
             "no-family": with(listing("x", "2026-10-16", RUNGS), "/family", Value::Null),
         } } });
         let passed = [("google", "gemini-4-declined", "declined")];
-        let mut shown: Vec<_> = drift(&database, &[flash], &passed, &[], &every)
+        let mut shown: Vec<_> = drift(&database, &[flash], &passed, &[], &every, &unreviewed)
             .into_iter()
             .filter_map(|one| match one {
                 Finding::Family { key, family, .. } => Some((family, key)),
@@ -1024,7 +1105,7 @@ mod tests {
         }));
 
         assert_eq!(
-            drift(&database, SHIPPED, &[], &[], &every),
+            drift(&database, SHIPPED, &[], &[], &every, &unreviewed),
             Vec::new(),
             "an offered entry without a date still makes its family offered"
         );
@@ -1078,7 +1159,7 @@ mod tests {
         let passed = [("anthropic", "claude-opus-declined", "fabricated")];
 
         assert_eq!(
-            drift(&database, SHIPPED, &passed, &[], &every),
+            drift(&database, SHIPPED, &passed, &[], &every, &unreviewed),
             Vec::new(),
             "an image model, a model that calls no tools, a retired one and one \
              already declined are all quiet"
@@ -1094,7 +1175,14 @@ mod tests {
         );
 
         assert_eq!(
-            drift(&database(&json!({})), SHIPPED, &[], &[], &every),
+            drift(
+                &database(&json!({})),
+                SHIPPED,
+                &[],
+                &[],
+                &every,
+                &unreviewed
+            ),
             vec![Finding::Gone {
                 provider: "anthropic",
                 model: "claude-opus-5-5",
@@ -1106,7 +1194,8 @@ mod tests {
                 SHIPPED,
                 &[],
                 &[],
-                &every
+                &every,
+                &unreviewed
             ),
             vec![Finding::Retired {
                 provider: "anthropic",
@@ -1123,7 +1212,7 @@ mod tests {
         }));
 
         assert_eq!(
-            drift(&database, SHIPPED, &[], &[], &fewer),
+            drift(&database, SHIPPED, &[], &[], &fewer, &unreviewed),
             vec![Finding::Rungs {
                 provider: "anthropic",
                 model: "claude-opus-5-5",
@@ -1142,7 +1231,10 @@ mod tests {
         }));
         let kept = [("anthropic", "claude-opus-5-5", "fabricated")];
 
-        assert_eq!(drift(&database, SHIPPED, &[], &kept, &fewer), vec![]);
+        assert_eq!(
+            drift(&database, SHIPPED, &[], &kept, &fewer, &unreviewed),
+            vec![]
+        );
     }
 
     #[test]
@@ -1184,7 +1276,8 @@ mod tests {
                 SHIPPED,
                 &[],
                 &[],
-                &every
+                &every,
+                &unreviewed
             ),
             Vec::new()
         );
