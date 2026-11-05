@@ -124,15 +124,18 @@ Personal one, so that row states the edition first.
 `mistral-large-4` is asked about when it is chosen in `/model`, and at the
 first send on it, whichever way it was reached; so is `mistral-large-4-0-8`,
 the same model under its versioned name, which is sent when it is typed, and
-each name has a yes of its own. Mistral's models page marks it
-"Public Preview" (read 5 Nov 2026), and §4.3 of its commercial terms is the
-section on Labs and Preview models. That section also names as Preview
-models those "identifiable by the prefix “labs”", so the two `labs` models the
-model database lists, `labs-devstral-small-2512` and `labs-leanstral-1-5-1`,
-are asked about by those exact names, though crucible offers neither. A `labs`
-model the database adds later is held once it is named here, which the
-model drift check prompts by reporting it. The Mistral key row is not asked about: the
-same key serves Mistral's other models, which that section does not cover.
+each name has a yes of its own. Mistral's models page marks it "Public
+Preview" (read 5 Nov 2026), and §4.3 of its commercial terms is the section on
+Labs and Preview models. That section also names as Preview models those
+"identifiable by the prefix “labs”", so the two `labs` models the model
+database lists, `labs-devstral-small-2512` and `labs-leanstral-1-5-1`, are
+asked about by those exact names, though crucible offers neither. A `labs`
+model the database adds later is asked about only once crucible names it as a
+route of its own in this table. The model drift check reports a new model only
+when it can call tools, answers in text alone and is not marked deprecated, so
+a later `labs` model may never be reported. The Mistral key row is not asked
+about: the same key serves Mistral's other models, which that section does not
+cover.
 
 These are not asked about, because their vendors' terms say what is sent is
 not used for training unless you agree:
