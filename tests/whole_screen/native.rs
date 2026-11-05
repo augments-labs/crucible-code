@@ -967,6 +967,28 @@ fn a_row_sealed_after_narrowing_is_folded_not_clipped_in_native_mode() {
 }
 
 #[test]
+fn a_status_row_narrowed_to_twenty_columns_keeps_the_mode_whole_in_native_mode() {
+    // The window is narrowed from forty to twenty once the session is up. The
+    // window reading owns the far end of the row there and takes sixteen of
+    // the twenty cells, which left two for the mode: `as`, the front of
+    // `ask mode on`, which reads as a word and says nothing about the session.
+    // The mode outranks the reading, so the reading gives way to `100%` and the
+    // mode stands whole.
+    let vendor = Vendor::answering("Unused.");
+    let mut window = Watched::native("native-status-narrowed", 40, 24, &vendor);
+    window.resize(20, 24);
+
+    window.assert_never_alternate();
+    let picture = window.picture();
+    let status = picture
+        .lines()
+        .find(|row| row.contains("100%"))
+        .unwrap_or_default();
+    assert_eq!(status, "|ask mode on     100%|", "{picture}");
+    insta::assert_snapshot!(picture);
+}
+
+#[test]
 fn five_waiting_prompts_stand_in_one_panel_in_native_mode() {
     // As in fullscreen, with no rail. Forty-eight rows, because native mode
     // holds what stands under the transcript to half the window, and the
