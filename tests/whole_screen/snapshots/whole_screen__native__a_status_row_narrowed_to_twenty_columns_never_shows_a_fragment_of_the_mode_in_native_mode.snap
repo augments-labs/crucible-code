@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/native.rs
+expression: picture
+---
+20x24 cursor 4,2 scrollback 0
+|CRUCIBLE            |
+|/…/workspace        |
+|                    |
+|                    |
+|›                   |
+|    100% window left|
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |

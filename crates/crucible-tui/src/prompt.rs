@@ -19,7 +19,7 @@
 //! typed. Outside the frame it is a row like any other, which is what let the
 //! model join it without re-bordering anything. On a terminal too narrow for a
 //! frame, the remaining-window fact joins this row and shortens before it can
-//! overflow.
+//! overflow, and the mode gives way whole rather than in part.
 //!
 //! That row has two ends, and what decides which end a fact goes to is whether
 //! it is about the next key or about the next turn. The mode is the first: it
@@ -876,7 +876,16 @@ impl Prompt<'_> {
 
     /// The session facts that occupy the status row before its window reading.
     fn session_status(&self, columns: usize, glyphs: Glyphs) -> (Row, bool) {
-        let mut row = Row::new().then(self.tone, width::clip(self.mode, columns));
+        // Whole or not at all, like everything after it. The first letters of a
+        // mode read as a word and say nothing about the session, and this is the
+        // fact the row must never be read wrong, so a row with less room than the
+        // sentence needs leaves it off.
+        let mode = if width::columns(self.mode) <= columns {
+            self.mode
+        } else {
+            ""
+        };
+        let mut row = Row::new().then(self.tone, mode);
 
         let said = self.asked(glyphs);
         let wide = width::columns(&said);

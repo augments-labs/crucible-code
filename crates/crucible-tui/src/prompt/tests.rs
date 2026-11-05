@@ -323,6 +323,35 @@ fn a_bare_prompt_keeps_the_window_fact_and_degrades_it_in_place() {
 }
 
 #[test]
+fn a_mode_is_drawn_whole_or_not_at_all_at_every_width() {
+    // The first letters of a mode read as a word and say nothing about the
+    // session, so whatever the window reading leaves of the row, the mode is
+    // all of its sentence or none of it.
+    for (said, _, _) in MODES {
+        let prompt = Prompt {
+            mode: said,
+            left: Remaining::new(Some(100)),
+            ..typed("")
+        };
+        // The bare rows, where the reading shares the status row with the mode.
+        for columns in WIDTHS.filter(|columns| *columns < FRAMED_AT) {
+            let status = row(&prompt, 1, columns, Glyphs::Unicode);
+            // No mode has a digit in it, and the reading's first character is a
+            // digit or, with no room, the question mark.
+            let before = status
+                .split(|c: char| c.is_ascii_digit() || c == '?')
+                .next()
+                .unwrap_or_default()
+                .trim();
+            assert!(
+                before.is_empty() || before.starts_with(said),
+                "{said:?} at {columns}: {status:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn nothing_is_ever_drawn_past_the_last_column() {
     // Including the status row, which is never padded out to the width, and
     // including every terminal too narrow for a frame at all.

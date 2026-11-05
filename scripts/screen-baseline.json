@@ -1483,6 +1483,15 @@
       "sha256": "ca6021dae968a4e677b0b95974f48f1eaf10816399247d900b3b54dd2fa4d679"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__a_status_row_narrowed_to_twenty_columns_never_shows_a_fragment_of_the_mode_in_native_mode.snap",
+      "case": "a_status_row_narrowed_to_twenty_columns_never_shows_a_fragment_of_the_mode_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"Unused.\")",
+        "Watched::native(\"native-status-narrowed\", 40, 24, &vendor)"
+      ],
+      "sha256": "2855f5df5eee9b36e96a655ddb02dbfed7907669471fb761a5a2e32c342e7d88"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__a_turn_is_written_once_and_the_box_stands_under_it_in_native_mode.snap",
       "case": "a_turn_is_written_once_and_the_box_stands_under_it_in_native_mode",
       "opened": [
