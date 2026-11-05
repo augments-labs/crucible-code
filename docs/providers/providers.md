@@ -294,7 +294,9 @@ choice that asks least of it, and this says which fact it was.
   form: xAI serves a priority tier, but no source shows how it refuses one.
 - **DeepSeek.** No web tool on Chat Completions. Provider-managed caching,
   with no published smallest prefix. No fast form: DeepSeek serves none.
-  `deepseek-flash` reads pictures; crucible sends it text alone.
+  `deepseek-flash` is DeepSeek-V4.1-Flash-1017; DeepSeek still accepts
+  `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp`, retired names it
+  routes to that model. It reads pictures; crucible sends it text alone.
 - **Z.ai.** No web tool: its Chat Completions search is not a tool the model
   calls, and its pages disagree on which models take it. Provider-managed
   caching, with no stated lifetime. No fast form: no source shows how
