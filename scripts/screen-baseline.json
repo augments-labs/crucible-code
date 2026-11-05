@@ -1483,6 +1483,15 @@
       "sha256": "ca6021dae968a4e677b0b95974f48f1eaf10816399247d900b3b54dd2fa4d679"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__native__a_status_row_narrowed_to_twenty_columns_keeps_the_mode_whole_in_native_mode.snap",
+      "case": "a_status_row_narrowed_to_twenty_columns_keeps_the_mode_whole_in_native_mode",
+      "opened": [
+        "Vendor::answering(\"Unused.\")",
+        "Watched::native(\"native-status-narrowed\", 40, 24, &vendor)"
+      ],
+      "sha256": "dec7d4c9ca7d5677506f7e336268f964c9750c6e2d0b15ba4f9ded6bc9f5fc54"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__a_turn_is_written_once_and_the_box_stands_under_it_in_native_mode.snap",
       "case": "a_turn_is_written_once_and_the_box_stands_under_it_in_native_mode",
       "opened": [
@@ -1628,7 +1637,7 @@
         "Watched::native(case, 80, 24, vendor)",
         "Watched::native(case, 80, 24, vendor)"
       ],
-      "sha256": "2c3f28bb81cc5474f0b2ffe429d021230a67c798617c9d3b7d09ac71ba3c7bf5"
+      "sha256": "85a713c9a1833bc462ff0c2c8e456fff7518a6ac6b34e584a2ae9340afd5c3e3"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__resume_takes_at_most_half_the_window_in_native_mode.snap",
