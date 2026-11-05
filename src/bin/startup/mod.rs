@@ -120,6 +120,35 @@ fn configuration(screen: Option<&str>) -> String {
     }
 }
 
+/// What the fake terminal does with a question the child asks it.
+///
+/// A real terminal answers some escape sequences and ignores the rest, and the
+/// shipped program may wait on one before it draws. A probe that never answers
+/// measures the wait; one that answers at once measures the exchange without
+/// it. Those are two different readings of the same startup path, so both are
+/// taken rather than one standing for the other.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Answering {
+    /// Every query the child writes is answered as soon as it is whole.
+    AtOnce,
+    /// Nothing is ever answered.
+    Never,
+}
+
+/// Whether the measured child is allowed to draw in colour.
+///
+/// A budget measured with `NO_COLOR=1` says nothing about the path a user with
+/// colour takes, and the bytes and work a palette adds are what this is for.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Colour {
+    /// The child reads no `NO_COLOR`, so a terminal gets colour.
+    On,
+    /// `NO_COLOR=1`, as every probe measured before colour had its own.
+    Off,
+}
+
 /// What proves that the timed startup operation happened.
 ///
 /// This source is compiled separately into one probe per variant, so each
@@ -227,13 +256,26 @@ pub(crate) fn readings_in(
     measure: Measure,
     screen: Option<&str>,
 ) -> Result<Readings, StartupError> {
+    readings_on(measure, screen, Answering::Never, Colour::Off)
+}
+
+/// The same, with the fake terminal's answers and the child's colour chosen.
+///
+/// A probe that names neither gets the terminal every probe measured before:
+/// silent, and told not to write colour.
+pub(crate) fn readings_on(
+    measure: Measure,
+    screen: Option<&str>,
+    answering: Answering,
+    colour: Colour,
+) -> Result<Readings, StartupError> {
     let binary = beside("crucible")?;
     let home = Scratch::in_screen(measure.label(), screen)?;
 
     let mut taken = Vec::with_capacity(RUNS);
     for _ in 0..RUNS {
         home.restore_fixture()?;
-        taken.push(once(&binary, home.path(), measure)?);
+        taken.push(once(&binary, home.path(), measure, answering, colour)?);
     }
 
     Ok(Readings::new(taken))
@@ -437,32 +479,48 @@ fn ms(taken: Duration) -> String {
 
 /// One run: start against a controlling terminal and wait for its proof.
 #[cfg(target_os = "linux")]
-fn once(binary: &Path, home: &Path, measure: Measure) -> Result<Duration, StartupError> {
+fn once(
+    binary: &Path,
+    home: &Path,
+    measure: Measure,
+    answering: Answering,
+    colour: Colour,
+) -> Result<Duration, StartupError> {
     let (terminal, inside) = pair()?;
     let reading = terminal.try_clone()?;
+    let replying = terminal.try_clone()?;
     let (sender, bytes) = mpsc::channel();
     let reader = std::thread::Builder::new()
         .name("crucible-startup-terminal".into())
-        .spawn(move || read(reading, &sender))?;
+        .spawn(move || read(reading, replying, answering, &sender))?;
 
     let second = inside.try_clone()?;
     let third = inside.try_clone()?;
     let started = Instant::now();
-    let child = Command::new("setsid")
-        .arg("--ctty")
-        .arg(binary)
-        .current_dir(std::env::current_dir()?)
-        .env_clear()
-        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-        .env("HOME", home)
-        .env("TERM", "xterm-256color")
-        .env("NO_COLOR", "1")
-        .env(crucible_config::HOME, home)
-        .env("ANTHROPIC_API_KEY", KEY)
-        .stdin(Stdio::from(inside))
-        .stdout(Stdio::from(second))
-        .stderr(Stdio::from(third))
-        .spawn()?;
+    let child = {
+        let mut command = Command::new("setsid");
+        command
+            .arg("--ctty")
+            .arg(binary)
+            .current_dir(std::env::current_dir()?)
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("HOME", home)
+            .env("TERM", "xterm-256color")
+            .env(crucible_config::HOME, home)
+            .env("ANTHROPIC_API_KEY", KEY)
+            .stdin(Stdio::from(inside))
+            .stdout(Stdio::from(second))
+            .stderr(Stdio::from(third));
+        if matches!(colour, Colour::Off) {
+            command.env("NO_COLOR", "1");
+        }
+        // Dropped here rather than carried past the spawn: a `Command` keeps
+        // its `Stdio` handles, and this process holding the far side of the
+        // terminal open would keep the reading thread waiting for an end that
+        // never comes.
+        command.spawn()?
+    };
 
     let mut running = Running {
         terminal,
@@ -474,7 +532,13 @@ fn once(binary: &Path, home: &Path, measure: Measure) -> Result<Duration, Startu
 }
 
 #[cfg(not(target_os = "linux"))]
-fn once(_binary: &Path, _home: &Path, _measure: Measure) -> Result<Duration, StartupError> {
+fn once(
+    _binary: &Path,
+    _home: &Path,
+    _measure: Measure,
+    _answering: Answering,
+    _colour: Colour,
+) -> Result<Duration, StartupError> {
     Err(StartupError::Unsupported)
 }
 
@@ -597,20 +661,231 @@ fn pair() -> Result<(File, File), StartupError> {
 }
 
 /// Reads until the child closes the far side of the terminal.
+///
+/// The same pass also answers queries when the probe asked for a terminal that
+/// does. The answer goes out on the master's write side, which is the child's
+/// standard input; every byte the child wrote still goes to the waiting probe,
+/// answers or none.
 #[cfg(target_os = "linux")]
-fn read(mut terminal: File, sender: &Sender<Vec<u8>>) {
+fn read(mut terminal: File, mut reply: File, answering: Answering, sender: &Sender<Vec<u8>>) {
+    let mut answers = Answers::new(answering);
     let mut buffer = [0_u8; 8192];
     while let Ok(read) = terminal.read(&mut buffer) {
         if read == 0 {
             break;
         }
-        if sender
-            .send(buffer.get(..read).unwrap_or_default().to_vec())
-            .is_err()
-        {
+
+        let bytes = buffer.get(..read).unwrap_or_default();
+        let said = answers.feed(bytes);
+        if !said.is_empty() && reply.write_all(&said).and_then(|()| reply.flush()).is_err() {
+            break;
+        }
+
+        if sender.send(bytes.to_vec()).is_err() {
             break;
         }
     }
+}
+
+/// The longest query a question can start with.
+///
+/// Only a tail this long is kept between reads, because a query is one escape
+/// sequence and the child may write it across two of them.
+#[cfg(target_os = "linux")]
+const QUERY_START: usize = 24;
+
+/// The most the fake terminal will hold while a query has no end.
+///
+/// A child that writes a query it never terminates is a probe that must keep
+/// reading, not a probe that grows with what the child wrote. Past this the
+/// unterminated bytes are dropped and the session carries on unanswered, which
+/// is what a real terminal does with a sequence it cannot parse.
+#[cfg(target_os = "linux")]
+const UNSENT: usize = 4096;
+
+/// What a terminal saw in the child's output.
+#[cfg(target_os = "linux")]
+#[derive(Debug)]
+struct Asked {
+    /// Where the query starts.
+    start: usize,
+    /// One past its last byte, or `None` while more must arrive.
+    end: Option<usize>,
+    /// What a terminal says back once the query is whole.
+    reply: Vec<u8>,
+}
+
+/// The fake terminal's half of the conversation.
+///
+/// It is a scanner, not a parser: it looks for the four escapes a terminal can
+/// answer and says what one would say. Every byte that is not one of those is
+/// ignored, and only an unterminated query's start is held back.
+#[cfg(target_os = "linux")]
+#[derive(Debug)]
+struct Answers {
+    answering: Answering,
+    pending: Vec<u8>,
+}
+
+#[cfg(target_os = "linux")]
+impl Answers {
+    fn new(answering: Answering) -> Self {
+        Self {
+            answering,
+            pending: Vec::new(),
+        }
+    }
+
+    /// Adds what the child just wrote and returns what a terminal answers.
+    fn feed(&mut self, bytes: &[u8]) -> Vec<u8> {
+        if matches!(self.answering, Answering::Never) {
+            return Vec::new();
+        }
+
+        self.pending.extend_from_slice(bytes);
+        let mut said = Vec::new();
+        let mut from = 0;
+
+        while let Some(asked) = asked(&self.pending, from) {
+            let Some(end) = asked.end else {
+                // The query's start is here but its end is not. Hold it until
+                // the next read, or drop it if it will never be answerable.
+                self.pending.drain(..asked.start);
+                if self.pending.len() > UNSENT {
+                    self.pending.clear();
+                }
+                return said;
+            };
+
+            said.extend_from_slice(&asked.reply);
+            from = end;
+        }
+
+        let keep = QUERY_START.saturating_sub(1).min(self.pending.len());
+        let drop = self.pending.len().saturating_sub(keep).max(from);
+        self.pending.drain(..drop);
+        said
+    }
+}
+
+/// Finds the first answerable escape in `bytes` at or after `from`.
+#[cfg(target_os = "linux")]
+fn asked(bytes: &[u8], from: usize) -> Option<Asked> {
+    let cursor = find(bytes, b"\x1b[6n", from).map(|start| Asked {
+        start,
+        end: Some(start + b"\x1b[6n".len()),
+        reply: b"\x1b[1;1R".to_vec(),
+    });
+    let attributes = find(bytes, b"\x1b[c", from)
+        .map(|start| Asked {
+            start,
+            end: Some(start + b"\x1b[c".len()),
+            reply: attributes_reply(),
+        })
+        .into_iter()
+        .chain(find(bytes, b"\x1b[0c", from).map(|start| Asked {
+            start,
+            end: Some(start + b"\x1b[0c".len()),
+            reply: attributes_reply(),
+        }));
+    let graphics = find(bytes, b"\x1b_G", from).map(|start| kitty(bytes, start));
+    let cell = find(bytes, b"\x1b]1337;ReportCellSize", from).map(|start| cell_size(bytes, start));
+
+    cursor
+        .into_iter()
+        .chain(attributes)
+        .chain(graphics)
+        .chain(cell)
+        .min_by_key(|asked| asked.start)
+}
+
+/// The terminal's answer to a device-attributes query.
+///
+/// Parameter `4` is Sixel graphics, which is the one attribute a protocol
+/// choice reads; the rest describe a VT220-class terminal answering the way
+/// xterm does.
+#[cfg(target_os = "linux")]
+fn attributes_reply() -> Vec<u8> {
+    b"\x1b[?62;4;6;9;15;22c".to_vec()
+}
+
+/// A Kitty graphics query, which ends with ST and only asks when `a=q`.
+#[cfg(target_os = "linux")]
+fn kitty(bytes: &[u8], start: usize) -> Asked {
+    let body = start + b"\x1b_G".len();
+    let Some(over) = find(bytes, b"\x1b\\", body) else {
+        return Asked {
+            start,
+            end: None,
+            reply: Vec::new(),
+        };
+    };
+
+    let parameters = bytes.get(body..over).unwrap_or_default();
+    let reply = if parameters
+        .windows(b"a=q".len())
+        .any(|window| window == b"a=q")
+    {
+        format!("\x1b_Gi={};OK\x1b\\", image_id(parameters)).into_bytes()
+    } else {
+        Vec::new()
+    };
+
+    Asked {
+        start,
+        end: Some(over + b"\x1b\\".len()),
+        reply,
+    }
+}
+
+/// The `i` parameter of a Kitty query, or zero when it has none.
+#[cfg(target_os = "linux")]
+fn image_id(parameters: &[u8]) -> u64 {
+    let text = String::from_utf8_lossy(parameters);
+    let before_reply = text.split(';').next().unwrap_or_default();
+
+    before_reply
+        .split(',')
+        .find_map(|pair| pair.strip_prefix("i=")?.parse().ok())
+        .unwrap_or(0)
+}
+
+/// iTerm2's cell-size query, which ends with BEL or ST.
+#[cfg(target_os = "linux")]
+fn cell_size(bytes: &[u8], start: usize) -> Asked {
+    let body = start + b"\x1b]1337;ReportCellSize".len();
+    let bel = find(bytes, b"\x07", body).map(|at| (at, 1));
+    let st = find(bytes, b"\x1b\\", body).map(|at| (at, 2));
+    let end = match (bel, st) {
+        (Some(bel), Some(st)) => Some(if bel.0 <= st.0 { bel } else { st }),
+        (Some(bel), None) => Some(bel),
+        (None, Some(st)) => Some(st),
+        (None, None) => None,
+    };
+
+    match end {
+        Some((end, width)) => Asked {
+            start,
+            end: Some(end + width),
+            // The shipped program reads the ioctl rather than this reply when
+            // it wants a cell's pixels; the answer is here so a query has one.
+            reply: b"\x1b]1337;ReportCellSize=16;8\x07".to_vec(),
+        },
+        None => Asked {
+            start,
+            end: None,
+            reply: Vec::new(),
+        },
+    }
+}
+
+/// Where `needle` first sits in `bytes` at or after `from`.
+#[cfg(target_os = "linux")]
+fn find(bytes: &[u8], needle: &[u8], from: usize) -> Option<usize> {
+    let rest = bytes.get(from..)?;
+    rest.windows(needle.len())
+        .position(|window| window == needle)
+        .map(|at| from + at)
 }
 
 /// How many session logs the bench home is given.
@@ -854,8 +1129,8 @@ mod tests {
     use super::chosen;
 
     use super::{
-        AT_LIBERTY, CONFIG, PER_WINDOW, RUNS, Readings, Scratch, TITLE, USABLE, WINDOWS, best,
-        configuration,
+        AT_LIBERTY, Answering, Answers, CONFIG, PER_WINDOW, RUNS, Readings, Scratch, TITLE, UNSENT,
+        USABLE, WINDOWS, attributes_reply, best, configuration,
     };
 
     /// A full set of readings, stalled from end to end of the first `windows`
@@ -1059,5 +1334,96 @@ mod tests {
             .expect("an output block")
             .insert("screen".to_owned(), "native".into());
         assert_eq!(named, plain);
+    }
+
+    #[test]
+    fn a_cursor_position_query_split_across_two_reads_is_answered_once() {
+        // What a real terminal receives is one write, but the master's read
+        // side is free to hand it over one byte at a time. A response lost to
+        // that split would make the probe stall for a query the terminal
+        // answered, which is a startup budget measuring the probe instead.
+        let mut answers = Answers::new(Answering::AtOnce);
+
+        assert!(answers.feed(b"\x1b").is_empty());
+        assert_eq!(answers.feed(b"[6n"), b"\x1b[1;1R".to_vec());
+        assert!(answers.feed(b"more text").is_empty());
+    }
+
+    #[test]
+    fn device_attributes_are_answered_with_sixel_among_the_parameters() {
+        let mut answers = Answers::new(Answering::AtOnce);
+
+        let said = answers.feed(b"\x1b[c");
+        assert_eq!(said, attributes_reply());
+        assert!(said.windows(3).any(|window| window == b";4;"), "{said:?}");
+    }
+
+    #[test]
+    fn a_kitty_graphic_query_is_answered_with_its_own_image_id() {
+        let mut answers = Answers::new(Answering::AtOnce);
+        let query = b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\";
+
+        assert_eq!(
+            answers.feed(query),
+            b"\x1b_Gi=31;OK\x1b\\".to_vec(),
+            "a query is answered with the id it asked about"
+        );
+    }
+
+    #[test]
+    fn a_kitty_transmission_is_not_a_question_and_is_not_answered() {
+        // Only `a=q` asks. Answering a picture being sent would put bytes into
+        // the child's input that it never asked for, in the middle of a draw.
+        let mut answers = Answers::new(Answering::AtOnce);
+
+        assert!(
+            answers
+                .feed(b"\x1b_Ga=t,f=24,s=1,v=1;AAAA\x1b\\")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn iterm2_cell_size_is_answered_when_the_osc_ends_with_bel_or_st() {
+        for terminator in [&b"\x07"[..], &b"\x1b\\"[..]] {
+            let mut answers = Answers::new(Answering::AtOnce);
+            let mut query = b"\x1b]1337;ReportCellSize".to_vec();
+            query.extend_from_slice(terminator);
+
+            assert_eq!(
+                answers.feed(&query),
+                b"\x1b]1337;ReportCellSize=16;8\x07".to_vec()
+            );
+        }
+    }
+
+    #[test]
+    fn a_terminal_that_never_answers_says_nothing_to_any_query() {
+        let mut answers = Answers::new(Answering::Never);
+
+        assert!(answers.feed(b"\x1b[6n\x1b[c").is_empty());
+        assert!(answers.feed(b"\x1b_Gi=31,a=q;AAAA\x1b\\").is_empty());
+    }
+
+    #[test]
+    fn an_unterminated_query_is_bounded_rather_than_collected() {
+        // A child that never closes a query is a probe that must keep reading.
+        // The held bytes are a tail, not a copy of everything the child wrote.
+        let mut answers = Answers::new(Answering::AtOnce);
+        let flood = vec![b'x'; UNSENT * 4];
+
+        assert!(answers.feed(b"\x1b_G").is_empty());
+        assert!(answers.feed(&flood).is_empty());
+        assert!(answers.pending.len() <= UNSENT);
+    }
+
+    #[test]
+    fn two_queries_in_one_read_are_both_answered_in_order() {
+        let mut answers = Answers::new(Answering::AtOnce);
+
+        assert_eq!(
+            answers.feed(b"\x1b[6n\x1b[6n"),
+            b"\x1b[1;1R\x1b[1;1R".to_vec()
+        );
     }
 }
