@@ -527,7 +527,7 @@ fn every_provider_offers_a_few_models_and_never_a_list_to_scroll() {
 }
 
 #[test]
-fn seven_requested_models_have_exact_limits_and_supported_effort_ladders() {
+fn requested_models_have_exact_limits_and_supported_effort_ladders() {
     for (provider, model, window, output) in [
         ("google", "gemini-3.8-flash", 1_048_576, 65_536),
         ("google", "gemini-3.7-flash", 1_048_576, 65_536),
@@ -536,6 +536,7 @@ fn seven_requested_models_have_exact_limits_and_supported_effort_ladders() {
         ("anthropic", "claude-fable-5-1", 1_000_000, 128_000),
         ("anthropic", "claude-haiku-5-5", 1_000_000, 128_000),
         ("openai", "gpt-6-astra", 922_000, 128_000),
+        ("meta", "muse-wonder-1.0", 1_048_576, 131_072),
     ] {
         let served = serving(provider);
         assert!(
@@ -1584,9 +1585,8 @@ fn every_model_of_a_new_vendor_serves_the_rungs_its_reference_names() {
         ("anthropic", "claude-opus-5-5", &Effort::LADDER[..]),
         ("anthropic", "claude-sonnet-5-5", &Effort::LADDER[..]),
         ("anthropic", "claude-haiku-5-5", &Effort::LADDER[..]),
-        // `max` on 1.3 is named by some of Meta's pages and left out by its
-        // parameter lists, so it is not offered until a source settles it.
-        ("meta", "muse-spark-1.3", up_to_xhigh),
+        ("meta", "muse-wonder-1.0", &Effort::LADDER[..]),
+        ("meta", "muse-spark-1.3", &Effort::LADDER[..]),
         ("meta", "muse-spark-1.3-contributor", up_to_xhigh),
         ("meta", "muse-spark-1.2", up_to_xhigh),
         ("meta", "muse-spark-1.2-contributor", up_to_xhigh),
