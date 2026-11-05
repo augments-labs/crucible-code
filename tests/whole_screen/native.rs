@@ -190,8 +190,9 @@ fn without_id(window: &Watched, id: &str) -> String {
 /// beside it so that its directory outlives the second run.
 ///
 /// Both open at 80 by 24. A case that wants a narrower window resizes the
-/// second once it is up: one opened at sixteen columns never draws the line
-/// that says it has settled.
+/// second once it is up: under 24 columns the status row shares its width with
+/// the window reading and clips the mode sentence, and that sentence is what a
+/// launch waits for to call the screen settled.
 fn ended_then_relaunched(case: &str, vendor: &Vendor) -> (Watched, Watched, String) {
     let mut first = Watched::native(case, 80, 24, vendor);
     first.types_until("say something\r", "The first thing");

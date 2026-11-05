@@ -308,6 +308,8 @@ impl<T: Terminal> Renderer<T> {
             self.record.parts();
             return Ok(());
         }
+        // [`Renderer::present`]'s terminal path, written out because the mark
+        // has to go in between its laying the row and its drawing the frame.
         self.record.end();
         self.record.lay([divider]);
         self.record.parts();
