@@ -113,7 +113,7 @@ pub(crate) const FACTS: &[Facts] = &[
     Facts {
         provider: "deepseek",
         model: "deepseek-flash",
-        window: 1_000_000,
+        window: 1_048_576,
         output: 393_216,
         accepts: Modalities::empty()
             .insert(Modality::Text)
@@ -122,7 +122,7 @@ pub(crate) const FACTS: &[Facts] = &[
     Facts {
         provider: "deepseek",
         model: "deepseek-v4-pro",
-        window: 1_000_000,
+        window: 1_048_576,
         output: 393_216,
         accepts: Modalities::empty().insert(Modality::Text),
     },

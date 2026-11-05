@@ -93,7 +93,7 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: DeepSeek::fast_at_vendor,
         fast_signed_in: None,
-        reviewed: "2026-10-16",
+        reviewed: "2026-11-05",
         models: &[
             Model::new("deepseek-flash", LOW_HIGH_MAX),
             Model::new("deepseek-v4-pro", LOW_HIGH_MAX),
