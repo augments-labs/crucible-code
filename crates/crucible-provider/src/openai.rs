@@ -84,7 +84,10 @@ const ASTRA: &str = "gpt-6-astra";
 fn cache_writes(model: &str) -> bool {
     model == ASTRA
         || model.starts_with("gpt-5.6-")
-        || matches!(model, "gpt-6.1-sol" | "gpt-6-sol" | "gpt-6-luna")
+        || matches!(
+            model,
+            "gpt-6.1-sol" | "gpt-6.1-terra" | "gpt-6-sol" | "gpt-6-luna"
+        )
 }
 
 /// Where requests go unless a setting says otherwise.
@@ -112,6 +115,8 @@ const OPENAI_55_RETENTIONS: &[PromptCacheRetentionClass] = &[
 const USD: PricingCurrency = PricingCurrency::new("USD");
 const PRICING_REVIEWED: PricingDate = PricingDate::new(2026, 8, 31);
 const ASTRA_REVIEWED: PricingDate = PricingDate::new(2026, 9, 6);
+const TERRA: &str = "gpt-6.1-terra";
+const TERRA_REVIEWED: PricingDate = PricingDate::new(2026, 11, 5);
 const PRICING_SOURCE: &str = "https://developers.openai.com/api/docs/pricing";
 const MODEL_55_PRICING_SOURCE: &str = "https://developers.openai.com/api/docs/models/gpt-5.5";
 
@@ -290,6 +295,12 @@ fn prompt_cache(route: Serving, model: &str) -> PromptCacheCapabilities {
             OPENAI_56_RETENTIONS,
             PromptCacheUsageReporting::ReadAndWriteTokens,
         ),
+        "gpt-6.1-terra" => (
+            1_024,
+            "gpt-6.1-terra",
+            OPENAI_56_RETENTIONS,
+            PromptCacheUsageReporting::ReadAndWriteTokens,
+        ),
         "gpt-6-sol" => (
             1_024,
             "gpt-6-sol",
@@ -350,6 +361,7 @@ fn prompt_cache(route: Serving, model: &str) -> PromptCacheCapabilities {
         "gpt-6.1-sol" | "gpt-6-sol" | "gpt-6-luna" => {
             ("2026-10-01", "openai-prompt-cache-2026-10-01")
         }
+        "gpt-6.1-terra" => ("2026-11-05", "openai-prompt-cache-2026-11-05"),
         _ => ("2026-08-31", "openai-prompt-cache-2026-08-31"),
     };
     PromptCacheCapabilities::supported(
@@ -377,6 +389,8 @@ fn price(route: Option<Serving>, asked: Priced<'_>) -> Option<PromptCachePricing
     } = asked;
     let reviewed = if model == ASTRA {
         ASTRA_REVIEWED
+    } else if model == TERRA {
+        TERRA_REVIEWED
     } else {
         PRICING_REVIEWED
     };
@@ -399,6 +413,22 @@ fn price(route: Option<Serving>, asked: Priced<'_>) -> Option<PromptCachePricing
                 2_000_000_000,
                 rate(25_000_000_000),
                 75_000_000_000,
+            ),
+        ),
+        (TERRA, Some(TERRA)) => (
+            TERRA,
+            "https://developers.openai.com/api/docs/models/gpt-6.1-terra",
+            openai_rates(
+                1_000_000_000,
+                50_000_000,
+                rate(1_250_000_000),
+                5_000_000_000,
+            ),
+            openai_rates(
+                2_000_000_000,
+                100_000_000,
+                rate(2_500_000_000),
+                7_500_000_000,
             ),
         ),
         ("gpt-5.6-sol", Some("gpt-5.6-sol")) => (
@@ -475,6 +505,11 @@ fn price(route: Option<Serving>, asked: Priced<'_>) -> Option<PromptCachePricing
         (
             "openai-standard-short-2026-09-06",
             "openai-standard-long-2026-09-06",
+        )
+    } else if model == TERRA {
+        (
+            "openai-standard-short-2026-11-05",
+            "openai-standard-long-2026-11-05",
         )
     } else {
         (

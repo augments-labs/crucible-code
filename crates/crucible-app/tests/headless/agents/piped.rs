@@ -603,7 +603,7 @@ fn a_handover_that_fails_refuses_and_kills_the_group() -> Result<(), Failed> {
             signed_in_after(),
         ]),
     )?;
-    let root = bench.with_installed(&release)?;
+    bench.with_installed(&release)?;
     let handed = Handed::default();
     handed
         .refuse
@@ -623,6 +623,11 @@ fn a_handover_that_fails_refuses_and_kills_the_group() -> Result<(), Failed> {
     );
     assert_eq!(handed.offered().len(), 1, "no child was handed over");
     assert_eq!(
+        handed.stopped(),
+        [true],
+        "the child was not held stopped when the handover was asked for"
+    );
+    assert_eq!(
         handed.resumed.load(std::sync::atomic::Ordering::Relaxed),
         1,
         "the terminal was not taken back once"
@@ -639,11 +644,10 @@ fn a_handover_that_fails_refuses_and_kills_the_group() -> Result<(), Failed> {
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    assert_eq!(
-        fake_peer::played(&root),
-        1,
-        "the command played past the handover that refused it"
-    );
+    // Not held: that the command never started. It is stopped from the parent
+    // once `spawn` returns, so it may start (and count itself as played) in
+    // the moment before. Held instead: it was stopped when the handover was
+    // asked for, and the refusal ended its group.
     Ok(())
 }
 
