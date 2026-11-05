@@ -42,6 +42,7 @@ mod native;
 mod providers;
 mod reaching;
 mod screen;
+mod transcript;
 mod vendor;
 mod warning;
 mod watched;
@@ -6521,4 +6522,748 @@ fn a_send_key_changed_in_settings_over_a_running_turn_is_obeyed_once_it_closes()
         !typed.lines().any(|row| row.starts_with("|› one")),
         "{typed}"
     );
+}
+
+// The corpus of model answers, one case each. The answers live in
+// `transcript`, and every case here opens the window it is keyed by.
+
+#[test]
+fn transcript_tables_40_fullscreen() {
+    // Colour, because a run with none keeps every markdown marker instead of
+    // reading it: the corpus exists to keep what the reader draws.
+    let vendor = Vendor::answering(transcript::said("tables"));
+    let mut window = Watched::in_default_colours(
+        "transcript-tables-40-fullscreen",
+        (40, 97),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_tables_40_native() {
+    // The same answer where the terminal keeps the scrollback and crucible
+    // draws at the foot of the buffer.
+    let vendor = Vendor::answering(transcript::said("tables"));
+    let mut window = Watched::native("transcript-tables-40-native", 40, 97, &vendor);
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_tables_80_fullscreen() {
+    // Colour, because a run with none keeps every markdown marker instead of
+    // reading it: the corpus exists to keep what the reader draws.
+    let vendor = Vendor::answering(transcript::said("tables"));
+    let mut window = Watched::in_default_colours(
+        "transcript-tables-80-fullscreen",
+        (80, 66),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_tables_80_native() {
+    // The same answer where the terminal keeps the scrollback and crucible
+    // draws at the foot of the buffer.
+    let vendor = Vendor::answering(transcript::said("tables"));
+    let mut window = Watched::native("transcript-tables-80-native", 80, 66, &vendor);
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_tables_120_fullscreen() {
+    // Colour, because a run with none keeps every markdown marker instead of
+    // reading it: the corpus exists to keep what the reader draws.
+    let vendor = Vendor::answering(transcript::said("tables"));
+    let mut window = Watched::in_default_colours(
+        "transcript-tables-120-fullscreen",
+        (120, 60),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_tables_120_native() {
+    // The same answer where the terminal keeps the scrollback and crucible
+    // draws at the foot of the buffer.
+    let vendor = Vendor::answering(transcript::said("tables"));
+    let mut window = Watched::native("transcript-tables-120-native", 120, 60, &vendor);
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_rules_80_fullscreen() {
+    // Colour, because a run with none keeps every markdown marker instead of
+    // reading it: the corpus exists to keep what the reader draws.
+    let vendor = Vendor::answering(transcript::said("rules"));
+    let mut window = Watched::in_default_colours(
+        "transcript-rules-80-fullscreen",
+        (80, 42),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_rules_80_native() {
+    // The same answer where the terminal keeps the scrollback and crucible
+    // draws at the foot of the buffer.
+    let vendor = Vendor::answering(transcript::said("rules"));
+    let mut window = Watched::native("transcript-rules-80-native", 80, 42, &vendor);
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_lists_80_fullscreen() {
+    // Colour, because a run with none keeps every markdown marker instead of
+    // reading it: the corpus exists to keep what the reader draws.
+    let vendor = Vendor::answering(transcript::said("lists"));
+    let mut window = Watched::in_default_colours(
+        "transcript-lists-80-fullscreen",
+        (80, 39),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_lists_80_native() {
+    // The same answer where the terminal keeps the scrollback and crucible
+    // draws at the foot of the buffer.
+    let vendor = Vendor::answering(transcript::said("lists"));
+    let mut window = Watched::native("transcript-lists-80-native", 80, 39, &vendor);
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_quotes_80_fullscreen() {
+    // Colour, because a run with none keeps every markdown marker instead of
+    // reading it: the corpus exists to keep what the reader draws.
+    let vendor = Vendor::answering(transcript::said("quotes"));
+    let mut window = Watched::in_default_colours(
+        "transcript-quotes-80-fullscreen",
+        (80, 35),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_quotes_80_native() {
+    // The same answer where the terminal keeps the scrollback and crucible
+    // draws at the foot of the buffer.
+    let vendor = Vendor::answering(transcript::said("quotes"));
+    let mut window = Watched::native("transcript-quotes-80-native", 80, 35, &vendor);
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_code_80_fullscreen() {
+    // Colour, because a run with none keeps every markdown marker instead of
+    // reading it: the corpus exists to keep what the reader draws.
+    let vendor = Vendor::answering(transcript::said("code"));
+    let mut window = Watched::in_default_colours(
+        "transcript-code-80-fullscreen",
+        (80, 43),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_code_80_native() {
+    // The same answer where the terminal keeps the scrollback and crucible
+    // draws at the foot of the buffer.
+    let vendor = Vendor::answering(transcript::said("code"));
+    let mut window = Watched::native("transcript-code-80-native", 80, 43, &vendor);
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_headings_80_fullscreen() {
+    // Colour, because a run with none keeps every markdown marker instead of
+    // reading it: the corpus exists to keep what the reader draws.
+    let vendor = Vendor::answering(transcript::said("headings"));
+    let mut window = Watched::in_default_colours(
+        "transcript-headings-80-fullscreen",
+        (80, 43),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_headings_80_native() {
+    // The same answer where the terminal keeps the scrollback and crucible
+    // draws at the foot of the buffer.
+    let vendor = Vendor::answering(transcript::said("headings"));
+    let mut window = Watched::native("transcript-headings-80-native", 80, 43, &vendor);
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_alerts_80_fullscreen() {
+    // Colour, because a run with none keeps every markdown marker instead of
+    // reading it: the corpus exists to keep what the reader draws.
+    let vendor = Vendor::answering(transcript::said("alerts"));
+    let mut window = Watched::in_default_colours(
+        "transcript-alerts-80-fullscreen",
+        (80, 43),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_alerts_80_native() {
+    // The same answer where the terminal keeps the scrollback and crucible
+    // draws at the foot of the buffer.
+    let vendor = Vendor::answering(transcript::said("alerts"));
+    let mut window = Watched::native("transcript-alerts-80-native", 80, 43, &vendor);
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_images_80_fullscreen() {
+    // Colour, because a run with none keeps every markdown marker instead of
+    // reading it: the corpus exists to keep what the reader draws.
+    let vendor = Vendor::answering(transcript::said("images"));
+    let mut window = Watched::in_default_colours(
+        "transcript-images-80-fullscreen",
+        (80, 36),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_images_80_native() {
+    // The same answer where the terminal keeps the scrollback and crucible
+    // draws at the foot of the buffer.
+    let vendor = Vendor::answering(transcript::said("images"));
+    let mut window = Watched::native("transcript-images-80-native", 80, 36, &vendor);
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_notes_80_fullscreen() {
+    // Colour, because a run with none keeps every markdown marker instead of
+    // reading it: the corpus exists to keep what the reader draws.
+    let vendor = Vendor::answering(transcript::said("notes"));
+    let mut window = Watched::in_default_colours(
+        "transcript-notes-80-fullscreen",
+        (80, 42),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_notes_80_native() {
+    // The same answer where the terminal keeps the scrollback and crucible
+    // draws at the foot of the buffer.
+    let vendor = Vendor::answering(transcript::said("notes"));
+    let mut window = Watched::native("transcript-notes-80-native", 80, 42, &vendor);
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_links_80_fullscreen() {
+    // Colour, because a run with none keeps every markdown marker instead of
+    // reading it: the corpus exists to keep what the reader draws.
+    let vendor = Vendor::answering(transcript::said("links"));
+    let mut window = Watched::in_default_colours(
+        "transcript-links-80-fullscreen",
+        (80, 48),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_links_80_native() {
+    // The same answer where the terminal keeps the scrollback and crucible
+    // draws at the foot of the buffer.
+    let vendor = Vendor::answering(transcript::said("links"));
+    let mut window = Watched::native("transcript-links-80-native", 80, 48, &vendor);
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_inline_80_fullscreen() {
+    // Colour, because a run with none keeps every markdown marker instead of
+    // reading it: the corpus exists to keep what the reader draws.
+    let vendor = Vendor::answering(transcript::said("inline"));
+    let mut window = Watched::in_default_colours(
+        "transcript-inline-80-fullscreen",
+        (80, 46),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_inline_80_native() {
+    // The same answer where the terminal keeps the scrollback and crucible
+    // draws at the foot of the buffer.
+    let vendor = Vendor::answering(transcript::said("inline"));
+    let mut window = Watched::native("transcript-inline-80-native", 80, 46, &vendor);
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_math_40_fullscreen() {
+    // Colour, because a run with none keeps every markdown marker instead of
+    // reading it: the corpus exists to keep what the reader draws.
+    let vendor = Vendor::answering(transcript::said("math"));
+    let mut window = Watched::in_default_colours(
+        "transcript-math-40-fullscreen",
+        (40, 63),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_math_40_native() {
+    // The same answer where the terminal keeps the scrollback and crucible
+    // draws at the foot of the buffer.
+    let vendor = Vendor::answering(transcript::said("math"));
+    let mut window = Watched::native("transcript-math-40-native", 40, 63, &vendor);
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_math_80_fullscreen() {
+    // Colour, because a run with none keeps every markdown marker instead of
+    // reading it: the corpus exists to keep what the reader draws.
+    let vendor = Vendor::answering(transcript::said("math"));
+    let mut window = Watched::in_default_colours(
+        "transcript-math-80-fullscreen",
+        (80, 72),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_math_80_native() {
+    // The same answer where the terminal keeps the scrollback and crucible
+    // draws at the foot of the buffer.
+    let vendor = Vendor::answering(transcript::said("math"));
+    let mut window = Watched::native("transcript-math-80-native", 80, 72, &vendor);
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_math_120_fullscreen() {
+    // Colour, because a run with none keeps every markdown marker instead of
+    // reading it: the corpus exists to keep what the reader draws.
+    let vendor = Vendor::answering(transcript::said("math"));
+    let mut window = Watched::in_default_colours(
+        "transcript-math-120-fullscreen",
+        (120, 77),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_math_120_native() {
+    // The same answer where the terminal keeps the scrollback and crucible
+    // draws at the foot of the buffer.
+    let vendor = Vendor::answering(transcript::said("math"));
+    let mut window = Watched::native("transcript-math-120-native", 120, 77, &vendor);
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_mermaid_graphs_40_fullscreen() {
+    // Colour, because a run with none keeps every markdown marker instead of
+    // reading it: the corpus exists to keep what the reader draws.
+    let vendor = Vendor::answering(transcript::said("mermaid_graphs"));
+    let mut window = Watched::in_default_colours(
+        "transcript-mermaid_graphs-40-fullscreen",
+        (40, 47),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_mermaid_graphs_40_native() {
+    // The same answer where the terminal keeps the scrollback and crucible
+    // draws at the foot of the buffer.
+    let vendor = Vendor::answering(transcript::said("mermaid_graphs"));
+    let mut window = Watched::native("transcript-mermaid_graphs-40-native", 40, 47, &vendor);
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_mermaid_graphs_80_fullscreen() {
+    // Colour, because a run with none keeps every markdown marker instead of
+    // reading it: the corpus exists to keep what the reader draws.
+    let vendor = Vendor::answering(transcript::said("mermaid_graphs"));
+    let mut window = Watched::in_default_colours(
+        "transcript-mermaid_graphs-80-fullscreen",
+        (80, 58),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_mermaid_graphs_80_native() {
+    // The same answer where the terminal keeps the scrollback and crucible
+    // draws at the foot of the buffer.
+    let vendor = Vendor::answering(transcript::said("mermaid_graphs"));
+    let mut window = Watched::native("transcript-mermaid_graphs-80-native", 80, 58, &vendor);
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_mermaid_graphs_120_fullscreen() {
+    // Colour, because a run with none keeps every markdown marker instead of
+    // reading it: the corpus exists to keep what the reader draws.
+    let vendor = Vendor::answering(transcript::said("mermaid_graphs"));
+    let mut window = Watched::in_default_colours(
+        "transcript-mermaid_graphs-120-fullscreen",
+        (120, 64),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_mermaid_graphs_120_native() {
+    // The same answer where the terminal keeps the scrollback and crucible
+    // draws at the foot of the buffer.
+    let vendor = Vendor::answering(transcript::said("mermaid_graphs"));
+    let mut window = Watched::native("transcript-mermaid_graphs-120-native", 120, 64, &vendor);
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_mermaid_timelines_40_fullscreen() {
+    // Colour, because a run with none keeps every markdown marker instead of
+    // reading it: the corpus exists to keep what the reader draws.
+    let vendor = Vendor::answering(transcript::said("mermaid_timelines"));
+    let mut window = Watched::in_default_colours(
+        "transcript-mermaid_timelines-40-fullscreen",
+        (40, 44),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_mermaid_timelines_40_native() {
+    // The same answer where the terminal keeps the scrollback and crucible
+    // draws at the foot of the buffer.
+    let vendor = Vendor::answering(transcript::said("mermaid_timelines"));
+    let mut window = Watched::native("transcript-mermaid_timelines-40-native", 40, 44, &vendor);
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_mermaid_timelines_80_fullscreen() {
+    // Colour, because a run with none keeps every markdown marker instead of
+    // reading it: the corpus exists to keep what the reader draws.
+    let vendor = Vendor::answering(transcript::said("mermaid_timelines"));
+    let mut window = Watched::in_default_colours(
+        "transcript-mermaid_timelines-80-fullscreen",
+        (80, 55),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_mermaid_timelines_80_native() {
+    // The same answer where the terminal keeps the scrollback and crucible
+    // draws at the foot of the buffer.
+    let vendor = Vendor::answering(transcript::said("mermaid_timelines"));
+    let mut window = Watched::native("transcript-mermaid_timelines-80-native", 80, 55, &vendor);
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_mermaid_timelines_120_fullscreen() {
+    // Colour, because a run with none keeps every markdown marker instead of
+    // reading it: the corpus exists to keep what the reader draws.
+    let vendor = Vendor::answering(transcript::said("mermaid_timelines"));
+    let mut window = Watched::in_default_colours(
+        "transcript-mermaid_timelines-120-fullscreen",
+        (120, 61),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_mermaid_timelines_120_native() {
+    // The same answer where the terminal keeps the scrollback and crucible
+    // draws at the foot of the buffer.
+    let vendor = Vendor::answering(transcript::said("mermaid_timelines"));
+    let mut window = Watched::native("transcript-mermaid_timelines-120-native", 120, 61, &vendor);
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_diff_80_fullscreen() {
+    // Colour, because a run with none keeps every markdown marker instead of
+    // reading it: the corpus exists to keep what the reader draws.
+    let vendor = Vendor::answering(transcript::said("diff"));
+    let mut window = Watched::in_default_colours(
+        "transcript-diff-80-fullscreen",
+        (80, 50),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_diff_80_native() {
+    // The same answer where the terminal keeps the scrollback and crucible
+    // draws at the foot of the buffer.
+    let vendor = Vendor::answering(transcript::said("diff"));
+    let mut window = Watched::native("transcript-diff-80-native", 80, 50, &vendor);
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_hostile_80_fullscreen() {
+    // The answer carries a combining mark, and a terminal that counts one as a
+    // column of its own is a terminal on which a row crucible fitted runs past
+    // the edge. The profile says which terminal this case stands for. It asks
+    // for no colour: the answer holds no markdown marker for the reader to
+    // draw, and what it is here to show is that no byte of it reaches the
+    // terminal as an instruction.
+    let vendor = Vendor::answering(transcript::said("hostile"));
+    let mut window = Watched::answering_on(
+        "transcript-hostile-80-fullscreen",
+        80,
+        32,
+        &vendor,
+        Profile {
+            widths: Widths::Unicode,
+            ..Profile::default()
+        },
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_hostile_80_native() {
+    let vendor = Vendor::answering(transcript::said("hostile"));
+    let mut window = Watched::native_on(
+        "transcript-hostile-80-native",
+        80,
+        32,
+        &vendor,
+        Profile {
+            widths: Widths::Unicode,
+            ..Profile::default()
+        },
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_tool_edit_80_fullscreen() {
+    // A call that rewrites every line of a file: more changed lines than a tool
+    // keeps, so what is drawn is the header's count, the lines it kept and the
+    // count of the ones it did not.
+    let vendor = Vendor::calling(
+        "edit",
+        &transcript::rewrite_input(),
+        transcript::said("tool_edit"),
+    );
+    let mut window = Watched::in_default_colours(
+        "transcript-tool-edit-80-fullscreen",
+        (80, 120),
+        Some(&vendor),
+        Some("edit(*)"),
+    );
+    std::fs::write(
+        window.workspace().join(transcript::REWRITTEN),
+        transcript::rewrite("was"),
+    )
+    .expect("a file for the call to rewrite");
+    window.types_until(transcript::ASK, transcript::END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_tool_edit_80_native() {
+    // The same call where finished rows go out to the terminal's own buffer.
+    // The rule-bearing constructor is the one that can also ask for native,
+    // and the change has to be let through for the block to be drawn.
+    let vendor = Vendor::calling(
+        "edit",
+        &transcript::rewrite_input(),
+        transcript::said("tool_edit"),
+    );
+    let mut window = Watched::allowing_drawn(
+        "transcript-tool-edit-80-native",
+        (80, 120),
+        &vendor,
+        "edit(*)",
+        ("unicode", "native"),
+    );
+    std::fs::write(
+        window.workspace().join(transcript::REWRITTEN),
+        transcript::rewrite("was"),
+    )
+    .expect("a file for the call to rewrite");
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
 }

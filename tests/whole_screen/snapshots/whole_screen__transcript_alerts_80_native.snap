@@ -1,0 +1,48 @@
+---
+source: tests/whole_screen/main.rs
+expression: window.picture()
+---
+80x43 cursor 38,4 scrollback 0
+|╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
+|│                                  │ Recent sessions                           │|
+|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
+|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No earlier session for this workspace     │|
+|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
+|│                                  │ ───────────────────────────────────────── │|
+|│  /…/workspace                    │                                           │|
+|│                                  │ Tips                                      │|
+|│                                  │                                           │|
+|│                                  │ · /          opens the command list       │|
+|│                                  │ · \ enter    adds a line without sending  │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|› show me the corpus                                                            |
+|                                                                                |
+|> [!NOTE]                                                                       |
+|> Useful information.                                                           |
+|                                                                                |
+|> [!TIP]                                                                        |
+|> A shortcut worth taking.                                                      |
+|                                                                                |
+|> [!IMPORTANT]                                                                  |
+|> Something that must not be missed.                                            |
+|                                                                                |
+|> [!WARNING]                                                                    |
+|> Something that could go wrong.                                                |
+|                                                                                |
+|> [!CAUTION]                                                                    |
+|> Something that could go wrong badly.                                          |
+|                                                                                |
+|The corpus ends here.                                                           |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                 99% window left|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|
+|                                                                                |
+|                                                                                |

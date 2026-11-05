@@ -1,0 +1,22 @@
+---
+source: crates/crucible-tui/src/markdown/corpus_pictures.rs
+expression: "pictured(\"inline\", 120, Glyphs::Unicode)"
+---
+A line that ends in a backslash\                                                                                        
+continues on the next row.                                                                                              
+                                                                                                                        
+An ampersand written as &amp;, a tag as &lt;tag&gt;, a copy as &copy; and a number as &#169;.                           
+                                                                                                                        
+An empty reference &#0; and an override &#x202E; are written as they came.                                              
+                                                                                                                        
+~one~ is struck under GitHub's rules, and <Struck>two</> is struck under both.                                                     
+                                                                                                                        
+A pair may cross a line break: ~the phrase goes                                                                         
+on~ here.                                                                                                               
+                                                                                                                        
+And these strike nothing: edit ~/.config/crucible/config.json then ~/bin/run, between ~/a and ~/b, about ~5 minutes or  
+~10.                                                                                                                    
+                                                                                                                        
+Nested emphasis: <Bold>both</>, <Bold>bold </><Bold>italic</><Bold> bold</>, and <Emphasis>leant </><Bold>and raised</><Emphasis> again</>.                                                    
+                                                                                                                        
+The corpus ends here.

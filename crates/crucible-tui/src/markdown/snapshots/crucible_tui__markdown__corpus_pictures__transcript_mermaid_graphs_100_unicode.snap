@@ -1,0 +1,35 @@
+---
+source: crates/crucible-tui/src/markdown/corpus_pictures.rs
+expression: "pictured(\"mermaid_graphs\", 100, Glyphs::Unicode)"
+---
+A flow chart:                                                                                       
+                                                                                                    
+<Quiet>graph TD</>                                                                                            
+<Quiet>  A[Start] --> B{Ok?}</>                                                                               
+<Quiet>  B -->|yes| C[Done]</>                                                                                
+<Quiet>  B -->|no| A</>                                                                                       
+                                                                                                    
+A state diagram:                                                                                    
+                                                                                                    
+<Quiet>stateDiagram</>                                                                                        
+<Quiet>  [*] --> Idle</>                                                                                      
+                                                                                                    
+And the versioned spelling:                                                                         
+                                                                                                    
+<Quiet>stateDiagram-v2</>                                                                                     
+<Quiet>  [*] --> Idle</>                                                                                      
+<Quiet>  Idle --> Running: start</>                                                                           
+<Quiet>  Running --> [*]</>                                                                                   
+                                                                                                    
+A class diagram:                                                                                    
+                                                                                                    
+<Quiet>classDiagram</>                                                                                        
+<Quiet>  class Reader</>                                                                                      
+<Quiet>  Reader : +read(delta)</>                                                                             
+                                                                                                    
+An entity relationship diagram:                                                                     
+                                                                                                    
+<Quiet>erDiagram</>                                                                                           
+<Quiet>  ANSWER ||--o{ BLOCK : draws</>                                                                       
+                                                                                                    
+The corpus ends here.

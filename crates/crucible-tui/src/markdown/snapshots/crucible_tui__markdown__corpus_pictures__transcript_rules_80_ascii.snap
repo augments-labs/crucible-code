@@ -1,0 +1,19 @@
+---
+source: crates/crucible-tui/src/markdown/corpus_pictures.rs
+expression: "pictured(\"rules\", 80, Glyphs::Ascii)"
+---
+A rule parts what is above it from what is below.                               
+                                                                                
+<Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</>
+                                                                                
+The rule above is three hyphens in the source.                                  
+                                                                                
+<Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</>
+                                                                                
+The rule above is three stars in the source.                                    
+                                                                                
+<Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</>
+                                                                                
+And this one is three underscores, which is also a rule.                        
+                                                                                
+The corpus ends here.

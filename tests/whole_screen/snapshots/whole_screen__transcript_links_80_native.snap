@@ -1,0 +1,53 @@
+---
+source: tests/whole_screen/main.rs
+expression: window.picture()
+---
+80x48 cursor 43,4 scrollback 0
+|╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
+|│                                  │ Recent sessions                           │|
+|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
+|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No earlier session for this workspace     │|
+|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
+|│                                  │ ───────────────────────────────────────── │|
+|│  /…/workspace                    │                                           │|
+|│                                  │ Tips                                      │|
+|│                                  │                                           │|
+|│                                  │ · /          opens the command list       │|
+|│                                  │ · \ enter    adds a line without sending  │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|› show me the corpus                                                            |
+|                                                                                |
+|[docs]: https://example.com/docs                                                |
+|                                                                                |
+|A reference to [the documentation][docs] defined before it.                     |
+|                                                                                |
+|A reference to [the changelog][notes] defined after it.                         |
+|                                                                                |
+|A reference to [nothing][missing] that is defined never.                        |
+|                                                                                |
+|An address in brackets, <https://example.com/a>, and one without,               |
+|www.example.com.                                                                |
+|                                                                                |
+|An ordinary link to [the issue list](https://example.com/issues).               |
+|                                                                                |
+|Forge references: https://github.com/augments-labs/crucible-code/pull/1324,     |
+|https://github.com/augments-labs/crucible-code/issues/1288 and                  |
+|https://github.com/augments-labs/crucible-code/commit/0a1b2c3d4e5f60718293a4b5c6|
+|d7e8f901234567.                                                                 |
+|                                                                                |
+|[notes]: https://example.com/changelog                                          |
+|                                                                                |
+|The corpus ends here.                                                           |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                 99% window left|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|
+|                                                                                |
+|                                                                                |

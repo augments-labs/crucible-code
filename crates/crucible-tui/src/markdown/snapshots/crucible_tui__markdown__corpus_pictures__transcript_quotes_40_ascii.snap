@@ -1,0 +1,14 @@
+---
+source: crates/crucible-tui/src/markdown/corpus_pictures.rs
+expression: "pictured(\"quotes\", 40, Glyphs::Ascii)"
+---
+The reply quoted somebody else:         
+                                        
+<Quiet>|</><Quiet> </><Quote>a quote long enough that it </><Quote>ha</><Quote>s to</>    
+<Quote>wrap onto another row, and then onto one</>
+<Quote>more</>                                    
+>                                       
+<Quiet>|</><Quiet> </><Quote>and a second paragraph inside the same</>
+<Quote>quote</>                                   
+                                        
+The corpus ends here.

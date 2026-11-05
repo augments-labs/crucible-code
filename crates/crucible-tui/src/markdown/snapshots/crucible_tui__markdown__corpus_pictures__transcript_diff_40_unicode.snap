@@ -1,0 +1,28 @@
+---
+source: crates/crucible-tui/src/markdown/corpus_pictures.rs
+expression: "pictured(\"diff\", 40, Glyphs::Unicode)"
+---
+A change written as a diff fence:       
+                                        
+--- a/x.rs                              
++++ b/x.rs                              
+@@ -1,2 +1,2 @@                         
+-let a = <Figure>1</>;                             
++let a = <Figure>2</>;                             
+ context                                
+                                        
+The same change written as a patch:     
+                                        
+--- a/y.rs                              
++++ b/y.rs                              
+@@ -1 +1 @@                             
+-old                                    
++new                                    
+                                        
+A fence named diff that is not a diff at
+all:                                    
+                                        
+this is not a unified diff              
+it has no hunks                         
+                                        
+The corpus ends here.

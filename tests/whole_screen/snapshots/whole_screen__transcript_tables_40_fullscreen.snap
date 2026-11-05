@@ -1,0 +1,102 @@
+---
+source: tests/whole_screen/main.rs
+expression: window.picture()
+---
+40x97 cursor 94,4 scrolled 0
+|CRUCIBLE                                |
+|/…/workspace                            |
+|                                        |
+|› show me the corpus                    |
+|                                        |
+|Here is what the release carries:       |
+|                                        |
+|name  │ what it does            │ since |
+|──────┼─────────────────────────┼────── |
+|alpha │ reads the markdown out  │ 0.1   |
+|      │ of a stream             │       |
+|beta  │ lays a table against    │ 0.2   |
+|      │ the window              │       |
+|gamma │ keeps the source of a   │ 0.3   |
+|      │ drawn block             │       |
+|                                        |
+|A table may be written without its      |
+|outer bars:                             |
+|                                        |
+|name | what it does | since             |
+|--|--|--                                |
+|delta | draws a rule across the window  |
+|| 0.4                                   |
+|epsilon | folds a long cell | 0.5       |
+|                                        |
+|And one with more columns than a window |
+|can hold:                               |
+|                                        |
+|reg │ own │ wi │ ro │ sc │ th │ gl │ no |
+|ion │ er  │ nd │ ws │ ro │ em │ yp │ te |
+|    │     │ ow │    │ ll │ e  │ hs │ s  |
+|    │     │    │    │ ba │    │    │    |
+|    │     │    │    │ ck │    │    │    |
+|────┼─────┼────┼────┼────┼────┼────┼─── |
+|nor │ the │ ei │ tw │ tw │ da │ un │ a  |
+|th  │ dra │ gh │ en │ o  │ rk │ ic │ no |
+|    │ win │ ty │ ty │ ro │    │ od │ te |
+|    │ g   │ co │ -f │ ws │    │ e  │ lo |
+|    │ thr │ lu │ ou │    │    │    │ ng |
+|    │ ead │ mn │ r  │    │    │    │ en |
+|    │     │ s  │    │    │    │    │ ou |
+|    │     │ of │    │    │    │    │ gh |
+|    │     │ pr │    │    │    │    │ to |
+|    │     │ os │    │    │    │    │ be |
+|    │     │ e  │    │    │    │    │ sp |
+|    │     │ th │    │    │    │    │ li |
+|    │     │ at │    │    │    │    │ t  |
+|    │     │ ha │    │    │    │    │ ac |
+|    │     │ s  │    │    │    │    │ ro |
+|    │     │ to │    │    │    │    │ ss |
+|    │     │ wr │    │    │    │    │ ro |
+|    │     │ ap │    │    │    │    │ ws |
+|    │     │ so │    │    │    │    │ ag |
+|    │     │ me │    │    │    │    │ ai |
+|    │     │ wh │    │    │    │    │ n  |
+|    │     │ er │    │    │    │    │    |
+|    │     │ e  │    │    │    │    │    |
+|sou │ the │ on │ fo │ no │ li │ as │ an |
+|th  │ rea │ e  │ rt │ ne │ gh │ ci │ ot |
+|    │ din │ hu │ y  │    │ t  │ i  │ he |
+|    │ g   │ nd │    │    │    │    │ r  |
+|    │ thr │ re │    │    │    │    │ no |
+|    │ ead │ d  │    │    │    │    │ te |
+|    │     │ an │    │    │    │    │ ,  |
+|    │     │ d  │    │    │    │    │ ju |
+|    │     │ tw │    │    │    │    │ st |
+|    │     │ en │    │    │    │    │ as |
+|    │     │ ty │    │    │    │    │ lo |
+|    │     │ co │    │    │    │    │ ng |
+|    │     │ lu │    │    │    │    │ ,  |
+|    │     │ mn │    │    │    │    │ so |
+|    │     │ s  │    │    │    │    │ th |
+|    │     │ of │    │    │    │    │ e  |
+|    │     │ pr │    │    │    │    │ sp |
+|    │     │ os │    │    │    │    │ li |
+|    │     │ e  │    │    │    │    │ t  |
+|    │     │ th │    │    │    │    │ is |
+|    │     │ at │    │    │    │    │ no |
+|    │     │ al │    │    │    │    │ t  |
+|    │     │ so │    │    │    │    │ a  |
+|    │     │ wr │    │    │    │    │ sp |
+|    │     │ ap │    │    │    │    │ ec |
+|    │     │ s  │    │    │    │    │ ia |
+|    │     │    │    │    │    │    │ l  |
+|    │     │    │    │    │    │    │ ca |
+|    │     │    │    │    │    │    │ se |
+|                                        |
+|The corpus ends here.                   |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                         99% window left|
+|╭──────────────────────────────────────╮|
+|│ ›                                    │|
+|╰──────────────────────────────────────╯|
+|ask mode on    anthropic · claude-test-1|

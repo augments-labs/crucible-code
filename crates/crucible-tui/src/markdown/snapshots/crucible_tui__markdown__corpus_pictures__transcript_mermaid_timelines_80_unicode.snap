@@ -1,0 +1,32 @@
+---
+source: crates/crucible-tui/src/markdown/corpus_pictures.rs
+expression: "pictured(\"mermaid_timelines\", 80, Glyphs::Unicode)"
+---
+A sequence diagram:                                                             
+                                                                                
+<Quiet>sequenceDiagram</>                                                                 
+<Quiet>  Alice->>Bob: Hello</>                                                            
+<Quiet>  Bob-->>Alice: Hi</>                                                              
+                                                                                
+A gantt chart:                                                                  
+                                                                                
+<Quiet>gantt</>                                                                           
+<Quiet>  title Release</>                                                                 
+<Quiet>  section Tests</>                                                                 
+<Quiet>  Gate :a1, 2026-11-01, 3d</>                                                      
+                                                                                
+A git graph:                                                                    
+                                                                                
+<Quiet>gitGraph</>                                                                        
+<Quiet>  commit id: "one"</>                                                              
+<Quiet>  branch feature</>                                                                
+<Quiet>  commit id: "two"</>                                                              
+<Quiet>  checkout main</>                                                                 
+<Quiet>  merge feature</>                                                                 
+                                                                                
+A kind with no drawing of its own:                                              
+                                                                                
+<Quiet>pie</>                                                                             
+<Quiet>  "drawn" : 1</>                                                                   
+                                                                                
+The corpus ends here.

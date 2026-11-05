@@ -1,0 +1,20 @@
+---
+source: crates/crucible-tui/src/markdown/corpus_pictures.rs
+expression: "pictured(\"code\", 80, Glyphs::Ascii)"
+---
+A fence that names its language:                                                
+                                                                                
+<Keyword>fn</> <Name>main</>() {                                                                     
+    <Keyword>let</> value <Operator>=</> compute_something_long(argument_one, argument_two);             
+}                                                                               
+                                                                                
+A fence that names nothing:                                                     
+                                                                                
+<Quiet>plain block</>                                                                     
+                                                                                
+And a block indented four spaces, after a blank line:                           
+                                                                                
+    let x = <Figure>1</>;                                                                  
+    let y = <Figure>2</>;                                                                  
+                                                                                
+The corpus ends here.

@@ -1,0 +1,20 @@
+---
+source: crates/crucible-tui/src/markdown/corpus_pictures.rs
+expression: "pictured(\"alerts\", 120, Glyphs::Unicode)"
+---
+<Quiet>│</><Quiet> </>[!NOTE]                                                                                                               
+<Quiet>│</><Quiet> </><Quote>Useful information.</>                                                                                                   
+                                                                                                                        
+<Quiet>│</><Quiet> </>[!TIP]                                                                                                                
+<Quiet>│</><Quiet> </><Quote>A shortcut worth taking.</>                                                                                              
+                                                                                                                        
+<Quiet>│</><Quiet> </>[!IMPORTANT]                                                                                                          
+<Quiet>│</><Quiet> </><Quote>Something that must not be missed.</>                                                                                    
+                                                                                                                        
+<Quiet>│</><Quiet> </>[!WARNING]                                                                                                            
+<Quiet>│</><Quiet> </><Quote>Something that could go wrong.</>                                                                                        
+                                                                                                                        
+<Quiet>│</><Quiet> </>[!CAUTION]                                                                                                            
+<Quiet>│</><Quiet> </><Quote>Something that could go wrong badly.</>                                                                                  
+                                                                                                                        
+The corpus ends here.

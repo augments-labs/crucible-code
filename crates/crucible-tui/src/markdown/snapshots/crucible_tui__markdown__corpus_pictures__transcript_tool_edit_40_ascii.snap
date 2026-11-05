@@ -1,0 +1,12 @@
+---
+source: crates/crucible-tui/src/markdown/corpus_pictures.rs
+expression: "pictured(\"tool_edit\", 40, Glyphs::Ascii)"
+---
+The whole file is rewritten now, every  
+line of it.                             
+                                        
+Nothing else in the workspace moved, so 
+the change in the call above is the     
+whole of it.                            
+                                        
+The corpus ends here.

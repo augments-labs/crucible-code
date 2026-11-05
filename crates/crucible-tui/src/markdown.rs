@@ -1480,5 +1480,11 @@ fn written(held: Held) -> &'static str {
     whole.get(..held.count).unwrap_or(whole)
 }
 
+/// The answers every drawing of an answer is compared with, and the line a
+/// case watching them waits for.
+#[cfg(test)]
+mod corpus;
+#[cfg(test)]
+mod corpus_pictures;
 #[cfg(test)]
 mod tests;

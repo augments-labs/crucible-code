@@ -1,0 +1,51 @@
+---
+source: tests/whole_screen/main.rs
+expression: window.picture()
+---
+80x46 cursor 42,4 scrollback 0
+|╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
+|│                                  │ Recent sessions                           │|
+|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
+|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No earlier session for this workspace     │|
+|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
+|│                                  │ ───────────────────────────────────────── │|
+|│  /…/workspace                    │                                           │|
+|│                                  │ Tips                                      │|
+|│                                  │                                           │|
+|│                                  │ · /          opens the command list       │|
+|│                                  │ · \ enter    adds a line without sending  │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|› show me the corpus                                                            |
+|                                                                                |
+|A line that ends in a backslash\                                                |
+|continues on the next row.                                                      |
+|                                                                                |
+|An ampersand written as &amp;, a tag as &lt;tag&gt;, a copy as &copy; and a     |
+|number as &#169;.                                                               |
+|                                                                                |
+|An empty reference &#0; and an override &#x202E; are written as they came.      |
+|                                                                                |
+|~one~ is struck under GitHub's rules, and ~~two~~ is struck under both.         |
+|                                                                                |
+|A pair may cross a line break: ~the phrase goes                                 |
+|on~ here.                                                                       |
+|                                                                                |
+|And these strike nothing: edit ~/.config/crucible/config.json then ~/bin/run,   |
+|between ~/a and ~/b, about ~5 minutes or ~10.                                   |
+|                                                                                |
+|Nested emphasis: ***both***, **bold _italic_ bold**, and *leant **and raised**  |
+|again*.                                                                         |
+|                                                                                |
+|The corpus ends here.                                                           |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                 99% window left|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|
+|                                                                                |
