@@ -1,16 +1,18 @@
 <!--
 Read every word before filling this in, and read AGENTS.md first if you are an
 AI agent. Every section needs a specific, true answer. A PR that leaves a
-section blank, keeps placeholder text, bundles unrelated changes, or shows no
-evidence of a human reading the diff is closed without review.
+section blank, keeps placeholder text, bundles unrelated changes, hides who
+made it, or claims a human reading of the diff that nobody gave is closed
+without review. One that says no human has read the diff is reviewed as it is.
 
 Security issues do not belong here. See SECURITY.md.
 -->
 
-> **This PR must target `dev`, not `main`.** `main` holds what shipped and is
-> the branch a tag is cut from; every change lands on `dev` first through a
-> reviewed PR. Only release and hotfix branches open against `main`, and any
-> other PR opened there is asked to retarget `dev` before review.
+> **This PR must not target `main` unless it is a release or hotfix
+> branch.** `main` holds what shipped and is the branch a release tag is cut
+> from. Work lands on `dev`, directly or through another branch that merges
+> into it, and a PR opened against `main` from any other branch is asked to
+> retarget before review.
 
 ## Who made this change? (required)
 
@@ -26,7 +28,8 @@ a real session. Hiding the authoring environment is grounds for closing it. -->
 | Orchestrated by | human / agent / both |
 | Model + exact id | <!-- every model that wrote any of it, and which part each wrote; or n/a when no agent did --> |
 | Harness + version | <!-- the IDE, CLI, or runner, or n/a --> |
-| Human who reviewed this diff | <!-- a person, not a role; while the box below is empty, who is being asked --> |
+| Agent that reviewed this diff | <!-- every agent that reviewed it, each with its exact model id and whether it wrote the change or reviewed separately; or n/a when no agent did --> |
+| Human who reviewed this diff | <!-- `-` by default; a person, not a role, only when a human wrote this PR or asked the agent to put their name here; an agent never names a person on its own --> |
 
 ## What problem did you hit?
 
@@ -139,13 +142,28 @@ and what the crate costs in build time, binary size and startup. -->
 
 - [ ] A human has read the **complete** diff before this PR was opened.
 
+<!-- Required while the box is empty, since a reader weighs this review in
+place of a human one; who reviewed is the table's "Agent that reviewed this
+diff" row. For each reviewer there, what it read: the complete diff, and which
+callers, contracts or docs it checked against. What it found, and what became
+of each finding: fixed, refuted with the evidence, or left with the reason.
+"None" is an answer. -->
+
 <!--
 Tick the box only once the person named in the table has said they read the
-complete diff or authorized this PR. Until then leave it empty and name in the
-table who is being asked. A tick nobody gave is a false statement about a person.
+complete diff or authorized this PR. Otherwise leave it empty, with `-` in the
+table: a name goes there only when a human wrote this PR or asked the agent to
+put their name there, never on an agent's own initiative. An empty box is a
+complete answer, not a defect: no human read the diff, which is acceptable when
+whoever orchestrated the change relies on the agent's own review. Nobody has
+to be named, the PR is not closed for it, and a reader weighs the table above,
+the Proof and the review reported here instead. The person whose name is on
+the PR still answers for it. A tick nobody gave is a false statement about a
+person.
 
 A PR is closed without review when it:
 - ticks the box for a person who has neither read the diff nor authorized it;
+- hides who orchestrated it, which models wrote it or where it ran;
 - bundles unrelated changes;
 - leaves a required section blank or keeps placeholder text;
 - targets `main` without being a release or hotfix branch;

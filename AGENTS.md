@@ -121,9 +121,10 @@ needs no protocol, parser or platform branching; otherwise add the crate:
 ## Writing the change
 
 Work lands on `dev`; `main` holds what shipped. Open a pull request against
-`dev`: one against `main` is retargeted before review, because merging it would
-put an unreleased change into the branch a tag is cut from. Only a release
-branch and a hotfix target `main`, and [`RELEASING.md`](RELEASING.md) owns both.
+`dev`, or against another branch that merges into it: one against `main` is
+retargeted before review, because merging it would put an unreleased change
+into the branch a tag is cut from. Only a release branch and a hotfix target
+`main`, and [`RELEASING.md`](RELEASING.md) owns both.
 
 Write about shipped behavior and why the reader cares:
 
@@ -164,10 +165,15 @@ pays for that.
   documentation reads differently from one a real session produced; hiding it
   is what closes a pull request.
 - **A person answering for it.** The complete diff reaches the person whose
-  name is on it. Tick the human-review box, naming them in the table, only once
-  they have said they read the diff or authorized the pull request; otherwise
-  leave it empty and name who is being asked. A tick nobody gave is a false
-  statement about a person.
+  name is on it. Tick the human-review box only once the person named in the
+  table has said they read the diff or authorized the pull request; otherwise
+  leave it empty, with `-` in the table, since a name goes there only when a
+  human wrote the change or asked for it. An empty box is a complete answer
+  when whoever orchestrated the change relies on the agent's own review: the
+  template then asks which agents read the diff, with exact model ids, what
+  each checked against and what became of each finding, and the pull request
+  is weighed on that, its provenance and Proof rather than closed. A tick
+  nobody gave is a false statement about a person.
 
 Finishing, review and publication follow [`CONTRIBUTING.md`](CONTRIBUTING.md)
 and [`RELEASING.md`](RELEASING.md).
