@@ -332,7 +332,8 @@ choice that asks least of it, and this says which fact it was.
   thinking part of the answer's content and goes back on the answer unchanged,
   as its reasoning page asks. `mistral-large-4` is a Preview model, priced at
   $0.7 input and $2.1 output per million tokens, read on 5 Nov 2026, and
-  Mistral may train on what it is sent; crucible asks before the first send.
+  Mistral may train on what it is sent; crucible asks before the first send,
+  under that name or its versioned one, `mistral-large-4-0-8`.
   It reads pictures and documents; crucible sends it text alone.
 
 ## How much context is used
