@@ -4920,9 +4920,9 @@ fn release_notes_list_a_resize_that_leaves_no_room_closes_it_and_prints_nothing(
 }
 
 /// The rows between the last line that typed `command` and the top of the box
-/// under it, trimmed, and less the scroll rail's cell at the end of each, which
-/// stands where the transcript is longer than the window and is not the row's.
-/// Takes off at most one rail cell at the end of each row.
+/// under it, trimmed, and less the scroll rail's cell, which stands in the
+/// last column of a row where the transcript is longer than the window and is
+/// not the row's. A glyph that ends a row's words anywhere else stays.
 fn under_echo(picture: &str, command: &str) -> Vec<String> {
     let lines = trimmed(picture);
     let echo = lines
@@ -4934,11 +4934,14 @@ fn under_echo(picture: &str, command: &str) -> Vec<String> {
         .iter()
         .position(|line| line.starts_with('\u{256d}'))
         .unwrap_or_else(|| panic!("no box under {command} at\n{picture}"));
-    under
-        .get(..top)
-        .unwrap_or_default()
-        .iter()
+    picture
+        .lines()
+        .skip(1)
+        .skip(echo + 1)
+        .take(top)
         .map(|row| {
+            let row = row.strip_prefix('|').unwrap_or(row);
+            let row = row.strip_suffix('|').unwrap_or(row);
             row.strip_suffix(['\u{2502}', '\u{2503}', '\u{2022}', '\u{25cf}'])
                 .unwrap_or(row)
                 .trim_end()
@@ -4948,14 +4951,22 @@ fn under_echo(picture: &str, command: &str) -> Vec<String> {
 }
 
 #[test]
-fn under_echo_strips_only_one_trailing_rail_cell() {
+fn under_echo_strips_only_the_rail_cell_at_the_last_column() {
+    // Rows are padded to the window's width, as a picture draws them, so the
+    // rail's cell is the one in the last column; a row with no rail there
+    // keeps a glyph that ends its words.
     let picture = "80×24\n\
-        |› /x │\n\
+        |› /x   │\n\
         |content ends •│\n\
         |marked here ●┃\n\
-        |╭─ box top|";
+        |no rail here •  |\n\
+        |nor here │    |\n\
+        |╭─ box top    |";
     let result = under_echo(picture, "/x");
-    assert_eq!(result, vec!["content ends •", "marked here ●"]);
+    assert_eq!(
+        result,
+        vec!["content ends •", "marked here ●", "no rail here •", "nor here │"]
+    );
 }
 
 /// A window of 80 by 24 on `screen`, `fullscreen` or `native`, answered by
