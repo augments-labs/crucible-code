@@ -102,6 +102,11 @@ const OFFERED: &[Offer] = &[
         Some("claude-haiku-4-5"),
         None,
     ),
+    // The database says 32,768 output; the vendor's model page (read
+    // 2026-11-05) says 65,536 by default and, "with long decode", up to
+    // 1,048,576. The row takes the database's smaller figure: it costs answer
+    // room and refuses no request.
+    ("google", "gemini-4-argon", Some("gemini-4-argon"), None),
     ("google", "gemini-3.8-flash", Some("gemini-3.8-flash"), None),
     ("google", "gemini-3.7-flash", Some("gemini-3.7-flash"), None),
     ("google", "gemini-3.6-flash", Some("gemini-3.6-flash"), None),

@@ -133,12 +133,18 @@ fn compatible(state: &ProviderContinuation, scope: ContinuationScope, model: &st
         && replay_model(model)
 }
 
-/// These models share the reviewed Interactions step contract. Other names use
-/// neutral history rather than inheriting signed-state compatibility by spelling.
+/// These models share the reviewed Interactions step contract; Google's
+/// thinking page (read 2026-11-05) gives `gemini-4-argon` the same thought
+/// steps and signatures as the others. Other names use neutral history rather
+/// than inheriting signed-state compatibility by spelling.
 fn replay_model(model: &str) -> bool {
     matches!(
         model,
-        "gemini-3.8-flash" | "gemini-3.7-flash" | "gemini-3.6-flash" | "gemini-3.1-pro-preview"
+        "gemini-4-argon"
+            | "gemini-3.8-flash"
+            | "gemini-3.7-flash"
+            | "gemini-3.6-flash"
+            | "gemini-3.1-pro-preview"
     )
 }
 

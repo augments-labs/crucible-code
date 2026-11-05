@@ -69,6 +69,7 @@ fn tier_sent(endpoint: Endpoint, model: &'static str, speed: Speed) -> Option<St
 #[test]
 fn a_fast_request_asks_for_the_priority_tier_and_a_standard_one_names_none() {
     for model in [
+        "gemini-4-argon",
         "gemini-3.8-flash",
         "gemini-3.7-flash",
         "gemini-3.6-flash",

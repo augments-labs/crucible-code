@@ -269,6 +269,72 @@ fn google_cache_and_prices_use_exact_model_date_and_long_context_tiers() {
     );
 }
 #[test]
+fn argon_is_implicit_only_and_priced_in_two_steps_with_the_change_on_2026_12_01() {
+    use crucible_models::{PriceRate, UsageRate};
+    use crucible_types::{PricingDate, PromptCacheMechanism, PromptCacheRetentionClass};
+    let (provider, _) = provider(200, ANSWER);
+    let retention = PromptCacheRetentionClass::ProviderDefault;
+    let model = "gemini-4-argon";
+    let caps = provider.prompt_cache_capabilities(model);
+    assert_eq!(caps.mechanisms().len(), 1);
+    assert_eq!(
+        caps.mechanisms().first().unwrap().mechanism(),
+        PromptCacheMechanism::AutomaticPrefix
+    );
+    assert_eq!(
+        caps.mechanisms().first().unwrap().minimum_prefix_tokens(),
+        4096
+    );
+    for (date, input, read, output) in [
+        (
+            PricingDate::new(2026, 11, 30),
+            2_000_000_000,
+            100_000_000,
+            10_000_000_000,
+        ),
+        (
+            PricingDate::new(2026, 12, 1),
+            4_000_000_000,
+            200_000_000,
+            20_000_000_000,
+        ),
+    ] {
+        let price = provider
+            .prompt_cache_pricing(model, Some(model), Some(500_000), retention, date)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            price.rates().uncached_input,
+            UsageRate::priced(PriceRate::per_million(input)),
+            "{date:?}"
+        );
+        assert_eq!(
+            price.rates().cache_read,
+            UsageRate::priced(PriceRate::per_million(read)),
+            "{date:?}"
+        );
+        assert_eq!(
+            price.rates().output,
+            UsageRate::priced(PriceRate::per_million(output)),
+            "{date:?}"
+        );
+    }
+    assert!(
+        provider
+            .prompt_cache_pricing(
+                model,
+                Some(model),
+                Some(5000),
+                retention,
+                PricingDate::new(2026, 11, 4)
+            )
+            .unwrap()
+            .is_none(),
+        "no price is taken for a day before the page was read"
+    );
+}
+
+#[test]
 fn debug_never_delegates_to_a_transport_holding_private_history() {
     let replay = Arc::new(Replay::new(200, "private-transport-canary"));
     let provider = Google::at(

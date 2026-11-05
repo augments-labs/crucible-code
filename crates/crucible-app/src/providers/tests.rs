@@ -533,6 +533,7 @@ fn every_provider_offers_a_few_models_and_never_a_list_to_scroll() {
 #[test]
 fn requested_models_have_exact_limits_and_supported_effort_ladders() {
     for (provider, model, window, output) in [
+        ("google", "gemini-4-argon", 1_048_576, 32_768),
         ("google", "gemini-3.8-flash", 1_048_576, 65_536),
         ("google", "gemini-3.7-flash", 1_048_576, 65_536),
         ("google", "gemini-3.6-flash", 1_048_576, 65_536),

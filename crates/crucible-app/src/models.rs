@@ -175,6 +175,18 @@ pub(crate) const FACTS: &[Facts] = &[
             .insert(Modality::Audio),
     },
     Facts {
+        provider: "google",
+        model: "gemini-4-argon",
+        window: 1_048_576,
+        output: 32_768,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf)
+            .insert(Modality::Video)
+            .insert(Modality::Audio),
+    },
+    Facts {
         provider: "meta",
         model: "muse-spark-1.2",
         window: 1_048_576,

@@ -11,7 +11,7 @@ here is whatever that table said when this build was made.
 | `anthropic` | `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5-5`, `claude-opus-5`, `claude-sonnet-5-5`, `claude-sonnet-5`, `claude-haiku-5-5`, `claude-haiku-4-5` | text, pictures, PDFs |
 | `deepseek` | `deepseek-flash` | text, pictures |
 | `deepseek` | `deepseek-v4-pro` | text |
-| `google` | `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-pro-preview` | text, pictures, PDFs, audio, video |
+| `google` | `gemini-4-argon`, `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-pro-preview` | text, pictures, PDFs, audio, video |
 | `meta` | `muse-wonder-1.0`, `muse-spark-1.3`, `muse-spark-1.3-contributor`, `muse-spark-1.2`, `muse-spark-1.2-contributor` | text, pictures, PDFs, audio, video |
 | `mimo` | `mimo-v2.6-pro`, `mimo-v2.6-flash` | text, pictures, audio, video |
 | `minimax` | `MiniMax-M3.1-Flash`, `MiniMax-M3` | text, pictures, video |

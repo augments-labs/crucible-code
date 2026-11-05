@@ -17,6 +17,11 @@ use crucible_types::{
 
 const REVIEWED: PricingDate = PricingDate::new(2026, 9, 6);
 const CHANGE: PricingDate = PricingDate::new(2027, 1, 1);
+/// The day `gemini-4-argon`'s model, caching and pricing pages were read. Its
+/// standard price rises on `ARGON_CHANGE`, so the price record has two steps.
+const ARGON: &str = "gemini-4-argon";
+const ARGON_REVIEWED: PricingDate = PricingDate::new(2026, 11, 5);
+const ARGON_CHANGE: PricingDate = PricingDate::new(2026, 12, 1);
 const CONTENT: &[PromptCacheContent] = &[
     PromptCacheContent::Text,
     PromptCacheContent::Tools,
@@ -32,6 +37,7 @@ fn reviewed(model: &str) -> Option<&'static str> {
         "gemini-3.7-flash" => Some("gemini-3.7-flash"),
         "gemini-3.6-flash" => Some("gemini-3.6-flash"),
         "gemini-3.1-pro-preview" => Some("gemini-3.1-pro-preview"),
+        ARGON => Some(ARGON),
         _ => None,
     }
 }
@@ -42,13 +48,20 @@ pub(super) fn capabilities(model: &str) -> PromptCacheCapabilities {
     };
     let automatic = PromptCacheMechanismCapability::automatic_prefix(4096, false, false, CONTENT)
         .with_retentions(&[PromptCacheRetentionClass::ProviderDefault]);
+    // Argon's caching page says explicit caching is not supported for it and
+    // gives a 4,096-token minimum for implicit caching; read 2026-11-05.
+    let (day, version) = if model == ARGON {
+        ("2026-11-05", "google-interactions-cache-2026-11-05")
+    } else {
+        ("2026-09-06", "google-interactions-cache-2026-09-06")
+    };
     PromptCacheCapabilities::supported(
-        "google-interactions-cache-2026-09-06",
+        version,
         Some(model),
         PromptCacheProvenance::new(
             "https://ai.google.dev/gemini-api/docs/caching",
-            "2026-09-06",
-            "google-interactions-cache-2026-09-06",
+            day,
+            version,
         ),
         StatefulTransportCapability::Unsupported,
         &[automatic],
@@ -82,14 +95,23 @@ pub(super) fn pricing(
 ) -> Option<PromptCachePricing> {
     let model = reviewed(model)?;
     let tokens = tokens?;
+    let argon = model == ARGON;
     if revision != Some(model)
-        || at < REVIEWED
+        || at < if argon { ARGON_REVIEWED } else { REVIEWED }
         || retention != PromptCacheRetentionClass::ProviderDefault
     {
         return None;
     }
     let pro = model == "gemini-3.1-pro-preview";
-    let (input, read, output) = if pro {
+    // Argon, per million tokens: $2.00 in, $0.10 read, $10.00 out through
+    // 2026-11-30, then $4.00, $0.20 and $20.00 from 2026-12-01.
+    let (input, read, output) = if argon {
+        if at < ARGON_CHANGE {
+            (2_000_000_000, 100_000_000, 10_000_000_000)
+        } else {
+            (4_000_000_000, 200_000_000, 20_000_000_000)
+        }
+    } else if pro {
         if tokens > 200_000 {
             (4_000_000_000, 400_000_000, 18_000_000_000)
         } else {
@@ -105,12 +127,22 @@ pub(super) fn pricing(
         VENDOR_URL,
         model,
         Some(model),
-        if !pro && at >= CHANGE {
+        if argon {
+            if at >= ARGON_CHANGE {
+                ARGON_CHANGE
+            } else {
+                ARGON_REVIEWED
+            }
+        } else if !pro && at >= CHANGE {
             CHANGE
         } else {
             REVIEWED
         },
-        "google-standard-2026-09-06",
+        if argon {
+            "google-standard-2026-11-05"
+        } else {
+            "google-standard-2026-09-06"
+        },
         "https://ai.google.dev/gemini-api/docs/pricing",
         PricingCurrency::new("USD"),
         PricingUnit::MillionTokens,
@@ -130,6 +162,10 @@ pub(super) fn pricing(
         } else {
             price.with_input_band(0, Some(200_000))
         };
+    } else if argon {
+        if at < ARGON_CHANGE {
+            price = price.through(PricingDate::new(2026, 11, 30));
+        }
     } else if at < CHANGE {
         price = price.through(PricingDate::new(2026, 12, 31));
     }
