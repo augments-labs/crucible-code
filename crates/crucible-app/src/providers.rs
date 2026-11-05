@@ -168,11 +168,10 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: MiniMax::fast_at_vendor,
         fast_signed_in: None,
-        reviewed: "2026-10-16",
+        reviewed: "2026-11-05",
         models: &[
+            Model::new("MiniMax-M3.1-Flash", EVERY),
             Model::new("MiniMax-M3", NONE),
-            // Closed to new accounts by its vendor and retired on 2026-11-18.
-            Model::new("MiniMax-M2.7", NONE),
         ],
     },
     Served {

@@ -20,8 +20,8 @@ fn a_model_this_build_knows_starts_at_its_native_window() {
         ("meta", "muse-spark-1.2", 1_048_576),
         ("meta", "muse-spark-1.2-contributor", 1_048_576),
         ("mimo", "mimo-v2.6-pro", 1_048_576),
+        ("minimax", "MiniMax-M3.1-Flash", 1_000_000),
         ("minimax", "MiniMax-M3", 1_000_000),
-        ("minimax", "MiniMax-M2.7", 204_800),
         ("moonshot", "k3", 1_048_576),
         ("moonshot", "kimi-for-coding-highspeed", 262_144),
         ("qwen", "qwen3.8-max", 1_000_000),
@@ -57,8 +57,13 @@ fn a_configured_window_still_wins_over_the_native_one() {
         300_000
     );
     assert_eq!(
-        window(&catalogue(), serving("minimax"), "MiniMax-M2.7", &settings),
-        204_800
+        window(
+            &catalogue(),
+            serving("minimax"),
+            "MiniMax-M3.1-Flash",
+            &settings
+        ),
+        1_000_000
     );
 }
 

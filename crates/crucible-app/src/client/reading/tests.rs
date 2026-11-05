@@ -244,12 +244,12 @@ fn limit_a_family_group_is_drawn_by_the_catalogs_name_for_the_model_in_use_it_ho
         Some("GPT-6 Astra")
     );
     assert_eq!(
-        prefix_drawn("MiniMax-M*", "minimax", "MiniMax-M2.7").as_deref(),
-        Some("MiniMax-M2.7")
+        prefix_drawn("MiniMax-M*", "minimax", "MiniMax-M3.1-Flash").as_deref(),
+        Some("MiniMax-M3.1-Flash")
     );
     // A family that does not hold the model in use keeps the vendor's name.
     assert_eq!(
-        prefix_drawn("speech-*", "minimax", "MiniMax-M2.7").as_deref(),
+        prefix_drawn("speech-*", "minimax", "MiniMax-M3.1-Flash").as_deref(),
         Some("speech-*")
     );
     // So does one whose model the catalog has no name for.

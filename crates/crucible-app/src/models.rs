@@ -258,16 +258,19 @@ pub(crate) const FACTS: &[Facts] = &[
     },
     Facts {
         provider: "minimax",
-        model: "MiniMax-M2.7",
-        window: 204_800,
-        output: 131_072,
-        accepts: Modalities::empty().insert(Modality::Text),
+        model: "MiniMax-M3",
+        window: 1_000_000,
+        output: 524_288,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Video),
     },
     Facts {
         provider: "minimax",
-        model: "MiniMax-M3",
+        model: "MiniMax-M3.1-Flash",
         window: 1_000_000,
-        output: 512_000,
+        output: 524_288,
         accepts: Modalities::empty()
             .insert(Modality::Text)
             .insert(Modality::Image)
