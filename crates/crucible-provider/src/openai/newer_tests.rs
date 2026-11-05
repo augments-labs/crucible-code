@@ -1,11 +1,11 @@
-//! GPT-6.1 Sol, GPT-6 Sol and GPT-6 Luna: cached as the vendor's other
+//! GPT-6.1 Sol, GPT-6.1 Terra, GPT-6 Sol and GPT-6 Luna: cached as the vendor's other
 //! models that bill a cache write are, and fast at twice the price with a key
 //! and at the plan's rate signed in.
 
 use super::*;
 use crucible_models::FastForm;
 
-const NEWER: [&str; 3] = ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"];
+const NEWER: [&str; 4] = ["gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna"];
 
 #[test]
 fn the_newer_models_have_a_reviewed_cache_record_that_counts_writes() {

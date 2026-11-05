@@ -174,7 +174,7 @@ This build serves eleven providers. The name in the first column is what
 | `mimo` | MiMo | `mimo-v2.6-pro`, `mimo-v2.6-flash`: none | `MIMO_API_KEY` |
 | `minimax` | MiniMax | `MiniMax-M3`, `MiniMax-M2.7`: none | `MINIMAX_API_KEY` |
 | `moonshot` | MoonshotAI | `k3`, `k3-256k`, `kimi-for-coding`, `kimi-for-coding-highspeed`: low, high, max | `MOONSHOT_API_KEY` |
-| `openai` | OpenAI | `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`: all five; `gpt-5.5`: low, medium, high, xhigh | `OPENAI_API_KEY` |
+| `openai` | OpenAI | `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`: all five; `gpt-5.5`: low, medium, high, xhigh | `OPENAI_API_KEY` |
 | `qwen` | Qwen | `qwen3.8-max`, `qwen3.8-flash`: low, medium, xhigh; `qwen3.7-plus`, `qwen3.6-plus`: none | `DASHSCOPE_API_KEY` |
 | `xai` | xAI | `grok-4.7`, `grok-4.6`: low, medium, high, xhigh | `XAI_API_KEY` |
 | `zai` | Z.ai | `glm-5.3`, `glm-5.3-flash`: low, high, max; `glm-5.2`: high, max | `ZAI_API_KEY` |
@@ -466,6 +466,7 @@ current effort first. Nothing is silently mapped to a different rung.
 | Anthropic | `claude-haiku-5-5` | low, medium, high, xhigh, max |
 | OpenAI | `gpt-6-astra` | low, medium, high, xhigh, max |
 | OpenAI | `gpt-6.1-sol` | low, medium, high, xhigh, max |
+| OpenAI | `gpt-6.1-terra` | low, medium, high, xhigh, max |
 | OpenAI | `gpt-6-sol` | low, medium, high, xhigh, max |
 | OpenAI | `gpt-6-luna` | low, medium, high, xhigh, max |
 

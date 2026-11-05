@@ -146,6 +146,7 @@ const OFFERED: &[Offer] = &[
     ("minimax", "MiniMax-M2.7", Some("MiniMax-M2.7"), None),
     ("openai", "gpt-6-astra", Some("gpt-6-astra"), None),
     ("openai", "gpt-6.1-sol", Some("gpt-6.1-sol"), None),
+    ("openai", "gpt-6.1-terra", Some("gpt-6.1-terra"), None),
     ("openai", "gpt-6-sol", Some("gpt-6-sol"), None),
     ("openai", "gpt-6-luna", Some("gpt-6-luna"), None),
     ("openai", "gpt-5.6-sol", Some("gpt-5.6-sol"), None),

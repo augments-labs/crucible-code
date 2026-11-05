@@ -536,6 +536,7 @@ fn requested_models_have_exact_limits_and_supported_effort_ladders() {
         ("anthropic", "claude-fable-5-1", 1_000_000, 128_000),
         ("anthropic", "claude-haiku-5-5", 1_000_000, 128_000),
         ("openai", "gpt-6-astra", 922_000, 128_000),
+        ("openai", "gpt-6.1-terra", 922_000, 128_000),
         ("meta", "muse-wonder-1.0", 1_048_576, 131_072),
     ] {
         let served = serving(provider);
@@ -1551,6 +1552,7 @@ fn openai_and_anthropic_list_their_current_models_before_the_ones_they_replace()
         [
             "gpt-6-astra",
             "gpt-6.1-sol",
+            "gpt-6.1-terra",
             "gpt-6-sol",
             "gpt-6-luna",
             "gpt-5.6-sol",
@@ -1580,6 +1582,7 @@ fn every_model_of_a_new_vendor_serves_the_rungs_its_reference_names() {
     let up_to_xhigh = &[Low, Medium, High, Xhigh][..];
     for (provider, model, served) in [
         ("openai", "gpt-6.1-sol", &Effort::LADDER[..]),
+        ("openai", "gpt-6.1-terra", &Effort::LADDER[..]),
         ("openai", "gpt-6-sol", &Effort::LADDER[..]),
         ("openai", "gpt-6-luna", &Effort::LADDER[..]),
         ("anthropic", "claude-opus-5-5", &Effort::LADDER[..]),
@@ -1738,6 +1741,7 @@ fn the_credential_in_use_heads_the_models_it_serves() {
     let serves = openai.serves.expect("a narrower list");
     assert!(!serves.contains(&"gpt-5.5"), "{serves:?}");
     assert!(serves.contains(&"gpt-6.1-sol"), "{serves:?}");
+    assert!(serves.contains(&"gpt-6.1-terra"), "{serves:?}");
 
     // A plan's key serves its plan's models.
     let coding = Sample::new("credential-in-use-coding").stored("qwen@coding-plan.aliyun.com");
