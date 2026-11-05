@@ -1006,8 +1006,9 @@ fn answerable(conversation: &Conversation) -> bool {
 
 /// Says that what was asked has nobody to ask, where [`answerable`] said
 /// so: a prompt typed at the box or queued, `/compact` down a pipe (at a
-/// terminal the command says it itself), and room asked for with no model
-/// to make a recap, a picked-up session's or the application's refusal.
+/// terminal the command says it itself), and room needed for a picked-up
+/// session taken as notes. The application's own refusal of work it was sent,
+/// which [`answerable`] should have headed off, comes here too.
 ///
 /// At a terminal it draws the warning. Down a pipe it fails instead: there
 /// is nobody to type `/model`, so carrying on reads every remaining line
