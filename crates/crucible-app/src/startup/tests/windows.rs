@@ -22,6 +22,8 @@ fn a_model_this_build_knows_starts_at_its_native_window() {
         ("mimo", "mimo-v2.6-pro", 1_048_576),
         ("minimax", "MiniMax-M3.1-Flash", 1_000_000),
         ("minimax", "MiniMax-M3", 1_000_000),
+        ("moonshot", "k3.1-pro", 1_048_576),
+        ("moonshot", "k3.1-pro-highspeed", 1_048_576),
         ("moonshot", "k3", 1_048_576),
         ("moonshot", "kimi-for-coding-highspeed", 262_144),
         ("qwen", "qwen3.8-max", 1_000_000),

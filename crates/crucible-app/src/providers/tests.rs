@@ -181,6 +181,8 @@ fn kimi_product_names_keep_their_wire_identifiers_and_effort_sets() {
     assert_eq!(
         offered,
         [
+            ("k3.1-pro", "K3.1 Pro", KIMI),
+            ("k3.1-pro-highspeed", "K3.1 Pro Highspeed", KIMI),
             ("k3", "K3", KIMI),
             ("k3-256k", "K3-256k", KIMI),
             ("kimi-for-coding", "K2.8 Preview", KIMI),
@@ -188,6 +190,8 @@ fn kimi_product_names_keep_their_wire_identifiers_and_effort_sets() {
         ]
     );
     for model in [
+        "k3.1-pro",
+        "k3.1-pro-highspeed",
         "k3",
         "k3-256k",
         "kimi-for-coding",

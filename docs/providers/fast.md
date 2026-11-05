@@ -122,8 +122,8 @@ sent again. What counts as a refusal of fast:
   taken from open harnesses that are not Anthropic's.
 - **Google**: none is documented. Congestion does not refuse; it serves the
   request at standard speed, which the answer then says.
-- **Kimi Code**: `kimi-for-coding-highspeed` is a model of its own and asks for
-  nothing, so there is nothing to refuse. A plan without it answers with an
+- **Kimi Code**: `kimi-for-coding-highspeed` and `k3.1-pro-highspeed` are models of their own and ask
+  for nothing, so there is nothing to refuse. A plan without one answers with an
   error like any other, and nothing is sent again.
 
 ## The fast forms
@@ -145,6 +145,7 @@ beside the price under `Fast`, where the vendor states one.
 | Anthropic | key | `claude-opus-5-5` | $8 / $40 per million input / output tokens | Fast mode is a research preview; Anthropic turns it on per organization. | up to 2.5x higher output tokens per second | [Anthropic fast mode](https://platform.claude.com/docs/en/build-with-claude/fast-mode) | 1 Oct 2026 |
 | Google | key | `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-pro-preview` | 75-100% more than Standard | For Tier 2 and Tier 3 accounts only. Google serves a priority request at standard speed when priority is congested, and bills it at the standard price. | Not stated | [Gemini priority inference](https://ai.google.dev/gemini-api/docs/priority-inference) | 30 Sep 2026 |
 | MoonshotAI | any | `kimi-for-coding-highspeed`, a fast model of its own | 3x the quota | | 6x the speed | [Kimi Code models](https://www.kimi.com/code/docs/en/kimi-code/models.html) | 29 Sep 2026 |
+| MoonshotAI | any | `k3.1-pro-highspeed`, a fast model of its own | 2x the quota | | 2–3x the speed | [Kimi Code models](https://www.kimi.com/code/docs/en/index.html) | 5 Nov 2026 |
 | DeepSeek | key | None | | DeepSeek serves no faster tier and no faster model. | | [DeepSeek models and pricing](https://api-docs.deepseek.com/quick_start/pricing) | 1 Oct 2026 |
 | Meta | key | None | | Meta's reference lists a `service_tier` field, `priority` among its values, with no price, no speed and no stated behaviour, so no source settles what it costs, how it is refused or how an answer says its speed. Meta's pricing page lists one Standard rate for `muse-wonder-1.0` and no faster form (read 5 Nov 2026). | | [Meta Create Response](https://dev.meta.ai/docs/api-reference/responses/create-response) | 1 Oct 2026 |
 | xAI | key | None in this release | | xAI serves a priority tier at 2x the price, and bills a request it served at standard speed at the standard price. No source shows how xAI refuses a priority request. | | [xAI priority processing](https://docs.x.ai/developers/advanced-api-usage/priority-processing) | 1 Oct 2026 |

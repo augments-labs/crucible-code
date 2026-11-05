@@ -68,6 +68,13 @@ const HIGHSPEED: crucible_models::Cost = crucible_models::Cost {
     caveat: None,
 };
 
+/// What Kimi Code's K3.1 highspeed model costs, in the vendor's words.
+const K31_HIGHSPEED: crucible_models::Cost = crucible_models::Cost {
+    price: "2x the quota",
+    speed: Some("2–3x the speed"),
+    caveat: None,
+};
+
 /// Kimi's dialect of Chat Completions.
 #[derive(Debug)]
 pub struct Kimi;
@@ -104,11 +111,17 @@ impl Dialect for Kimi {
     fn own_fast(model: &str) -> Option<crucible_models::Cost> {
         // A fast model of its own rather than a switch: nothing in the request
         // asks for it but its id, and it has no standard form to go back to.
-        (model == "kimi-for-coding-highspeed").then_some(HIGHSPEED)
+        match model {
+            "kimi-for-coding-highspeed" => Some(HIGHSPEED),
+            "k3.1-pro-highspeed" => Some(K31_HIGHSPEED),
+            _ => None,
+        }
     }
 
     fn prompt_cache(model: &str) -> PromptCacheCapabilities {
         let revision = match model {
+            "k3.1-pro" => "k3.1-pro",
+            "k3.1-pro-highspeed" => "k3.1-pro-highspeed",
             "k3" => "k3",
             "k3-256k" => "k3-256k",
             "kimi-for-coding" => "kimi-for-coding",
