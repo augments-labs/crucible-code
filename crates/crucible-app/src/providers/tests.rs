@@ -205,6 +205,26 @@ fn kimi_product_names_keep_their_wire_identifiers_and_effort_sets() {
 }
 
 #[test]
+fn deepseek_rows_show_the_version_its_pricing_page_names() {
+    // `deepseek-flash` names no version, and the model behind it changes
+    // when DeepSeek upgrades it, so the row says which one it is now.
+    let deepseek = serving("deepseek");
+    let offered: Vec<_> = deepseek
+        .models
+        .iter()
+        .map(|model| (model.name, model.shown))
+        .collect();
+
+    assert_eq!(
+        offered,
+        [
+            ("deepseek-flash", "DeepSeek-V4.1-Flash-1017"),
+            ("deepseek-v4-pro", "DeepSeek-V4-Pro-0813"),
+        ]
+    );
+}
+
+#[test]
 fn a_provider_holding_a_key_both_ways_is_one_provider_rather_than_two() {
     // Somebody who logged in and then exported the same key — which is what
     // happens the first time they put it in a shell profile. Counted twice it
