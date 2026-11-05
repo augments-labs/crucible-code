@@ -128,6 +128,47 @@ fn astra_exact_rates_and_capabilities_respect_route_revision_retention_and_long_
 }
 
 #[test]
+fn terra_prices_the_published_rates_and_doubles_input_and_cache_over_272k() {
+    const TERRA: &str = "gpt-6.1-terra";
+    let date = PricingDate::new(2026, 11, 5);
+    let (keyed, _) = provider(VENDOR, "");
+    for (tokens, multiplier, output) in [(272_000, 1, 5_000_000_000), (272_001, 2, 7_500_000_000)] {
+        let price = keyed
+            .prompt_cache_pricing(
+                TERRA,
+                Some(TERRA),
+                Some(tokens),
+                PromptCacheRetentionClass::Ephemeral,
+                date,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            price.rates().uncached_input,
+            rate(multiplier * 1_000_000_000)
+        );
+        assert_eq!(price.rates().cache_read, rate(multiplier * 50_000_000));
+        assert_eq!(
+            price.rates().cache_write_or_creation,
+            rate(multiplier * 1_250_000_000)
+        );
+        assert_eq!(price.rates().output, rate(output));
+    }
+    let (plan, _) = provider(SUBSCRIPTION, "");
+    assert!(
+        plan.prompt_cache_pricing(
+            TERRA,
+            Some(TERRA),
+            Some(1000),
+            PromptCacheRetentionClass::Ephemeral,
+            date
+        )
+        .unwrap()
+        .is_none()
+    );
+}
+
+#[test]
 fn astra_uses_current_cache_options_and_preserves_every_effort_and_route_output_budget() {
     for endpoint in [VENDOR, SUBSCRIPTION] {
         let (provider, replay) = provider(endpoint.clone(), "");

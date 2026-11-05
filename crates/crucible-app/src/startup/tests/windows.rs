@@ -31,6 +31,7 @@ fn a_model_this_build_knows_starts_at_its_native_window() {
         // sign-in, which serves the same names a key does.
         ("openai", "gpt-5.6-sol", 872_000),
         ("openai", "gpt-6-astra", 872_000),
+        ("openai", "gpt-6.1-terra", 872_000),
     ] {
         assert_eq!(
             window(&catalogue(), serving(provider), model, &settings),

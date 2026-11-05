@@ -394,6 +394,16 @@ pub(crate) const FACTS: &[Facts] = &[
             .insert(Modality::Pdf),
     },
     Facts {
+        provider: "openai",
+        model: "gpt-6.1-terra",
+        window: 922_000,
+        output: 128_000,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
+    },
+    Facts {
         provider: "qwen",
         model: "qwen3.6-plus",
         window: 1_000_000,
