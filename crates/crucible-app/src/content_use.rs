@@ -338,7 +338,7 @@ pub fn full_sentence(warned: &Warned) -> String {
 }
 
 /// Every warned route this build has.
-pub const WARNED: [Warned; 21] = [
+pub const WARNED: [Warned; 23] = [
     Warned {
         route: Cow::Borrowed("subscription:openai"),
         shown: Cow::Borrowed("OpenAI"),
@@ -438,6 +438,18 @@ pub const WARNED: [Warned; 21] = [
     Warned {
         route: Cow::Borrowed("model:mistral/mistral-large-4-0-8"),
         shown: Cow::Borrowed("Mistral · mistral-large-4-0-8"),
+        warning: MISTRAL_PREVIEW,
+        origins: &[],
+    },
+    Warned {
+        route: Cow::Borrowed("model:mistral/labs-devstral-small-2512"),
+        shown: Cow::Borrowed("Mistral · labs-devstral-small-2512"),
+        warning: MISTRAL_PREVIEW,
+        origins: &[],
+    },
+    Warned {
+        route: Cow::Borrowed("model:mistral/labs-leanstral-1-5-1"),
+        shown: Cow::Borrowed("Mistral · labs-leanstral-1-5-1"),
         warning: MISTRAL_PREVIEW,
         origins: &[],
     },
