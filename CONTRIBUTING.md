@@ -105,7 +105,9 @@ no web tool, no fast form) and the docs say which fact was not settled.
 
 Vendors release and retire models several times a year. The `model-drift`
 workflow puts the models.dev database against the shipped lists on the 1st and
-15th of each month and keeps one `model-drift` issue open while they differ;
+15th of each month and keeps one `model-drift` issue open while they differ,
+reporting a newer model, one gone or deprecated, rungs that differ, a family
+crucible does not offer and an offered model revised since it was reviewed;
 [refresh-the-models](.agents/skills/refresh-the-models/SKILL.md) says how to
 settle it.
 
