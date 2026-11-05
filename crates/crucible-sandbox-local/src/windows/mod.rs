@@ -23,10 +23,14 @@ use super::process::{
 };
 
 pub(super) fn probe() -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError> {
+    let t0 = std::time::Instant::now();
+    crate::probe_span("sandbox probe(): start", t0);
     let broker = broker::Broker::find(&[])?;
+    crate::probe_span("sandbox probe(): Broker::find done", t0);
     crucible_sandbox_broker::probe_windows_sandbox().map_err(|_| unavailable(
         "native Windows sandbox setup is missing, incomplete, or no longer matches machine policy",
     ))?;
+    crate::probe_span("sandbox probe(): probe_windows_sandbox done", t0);
     Ok((broker.identity().clone(), declared_capabilities()))
 }
 
@@ -103,6 +107,8 @@ pub(super) fn prepare(
     active: Arc<AtomicUsize>,
     runtime: Option<tokio::runtime::Handle>,
 ) -> Result<Box<dyn SandboxSession>, SandboxError> {
+    let t0 = std::time::Instant::now();
+    crate::probe_span("sandbox prepare(): start", t0);
     if let Some(refused) = policy_refusal(&request) {
         return Err(refused);
     }
@@ -114,16 +120,21 @@ pub(super) fn prepare(
         .map(crucible_sandbox::SandboxFilesystemRule::path)
         .collect();
     let broker = broker::Broker::find(&excluded)?;
+    crate::probe_span("sandbox prepare(): Broker::find done", t0);
     crucible_sandbox_broker::probe_windows_sandbox().map_err(|_| unavailable(
         "native Windows sandbox setup is missing, incomplete, or no longer matches machine policy",
     ))?;
+    crate::probe_span("sandbox prepare(): probe_windows_sandbox done", t0);
     let capabilities = declared_capabilities();
     request.negotiate(&capabilities)?;
+    crate::probe_span("sandbox prepare(): negotiate done", t0);
     let inspection = confined_inspection(broker.identity().clone(), capabilities, &request)?;
+    crate::probe_span("sandbox prepare(): confined_inspection done", t0);
     request.audit().record(
         request.id(),
         SandboxFactKind::Negotiated(Box::new(inspection.clone())),
     )?;
+    crate::probe_span("sandbox prepare(): audit negotiated done", t0);
     let maximum = request
         .policy()
         .limits()
@@ -131,6 +142,7 @@ pub(super) fn prepare(
         .and_then(|value| usize::try_from(value).ok())
         .unwrap_or(MAX_LOCAL_COMMANDS);
     let scratch_root = scratch_path(&request)?;
+    crate::probe_span("sandbox prepare(): scratch_path done", t0);
     let mut reservation = Some(Reservation::take(active, maximum)?);
     let mut scratch = None;
     let setup = (|| {
@@ -141,6 +153,7 @@ pub(super) fn prepare(
         )?;
         Ok(())
     })();
+    crate::probe_span("sandbox prepare(): create_scratch + audit done", t0);
     if let Err(problem) = setup {
         let cleanup = cleanup_prepared_owners(&mut scratch, &mut reservation);
         return Err(preparation_failure(problem, cleanup));
@@ -205,6 +218,8 @@ impl SandboxSession for WindowsSession {
         Self: 'a,
     {
         Box::pin(async move {
+            let t0 = std::time::Instant::now();
+            crate::probe_span("session stage(): start", t0);
             if !self.materialized {
                 self.record_start_failure(SandboxFailureKind::Materialization)?;
                 return Err(materialization(
@@ -238,6 +253,7 @@ impl SandboxSession for WindowsSession {
                     return Err(problem);
                 }
             };
+            crate::probe_span("session stage(): launch_frame done", t0);
             let mut process = crate::windows_helper::command(
                 self.broker.path(),
                 self.request.policy().working_directory(),
@@ -361,7 +377,12 @@ impl SandboxLaunch for WindowsLaunch {
                 ))
             })?;
             self.released = true;
+            let t_spawn = std::time::Instant::now();
             let spawned = super::process::spawn(process, plan);
+            crate::probe_span(
+                "launch release(): process::spawn (host hop spawned)",
+                t_spawn,
+            );
             if let Err(problem) = &spawned {
                 let cleanup = if matches!(problem, SandboxError::Lifecycle(_)) {
                     SandboxCleanup::Failed

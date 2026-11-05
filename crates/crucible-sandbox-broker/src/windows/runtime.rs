@@ -38,11 +38,17 @@ use super::winutil::{OwnedHandle, error, wide};
 const RELAY_POLL: Duration = Duration::from_millis(5);
 
 pub(super) fn host(request: &WindowsLaunchRequest) -> io::Result<u32> {
+    let t0 = std::time::Instant::now();
+    crate::probe_span("host hop: start", t0);
     let candidate = super::current_launch_setup()?;
+    crate::probe_span("host hop: first current_launch_setup", t0);
     let setup_lock = super::lock::SetupLock::acquire(&candidate.identity)?;
+    crate::probe_span("host hop: setup lock acquired", t0);
     drop(candidate);
     let setup = super::current_launch_setup()?;
+    crate::probe_span("host hop: second current_launch_setup", t0);
     let plan = LaunchPlan::resolve(request)?;
+    crate::probe_span("host hop: LaunchPlan::resolve", t0);
     let broker = std::env::current_exe()?.canonicalize()?;
     if !plan.protects_broker(&broker) {
         return Err(io::Error::new(
@@ -51,7 +57,9 @@ pub(super) fn host(request: &WindowsLaunchRequest) -> io::Result<u32> {
         ));
     }
     super::acl::apply(plan.request(), &setup.record.account_sid)?;
+    crate::probe_span("host hop: acl::apply (all roots)", t0);
     let mut desktop = super::desktop::PrivateDesktop::create(&setup.record.account_sid)?;
+    crate::probe_span("host hop: PrivateDesktop::create", t0);
 
     let (child_input, host_input) = pipe()?;
     let process = logon_child(
@@ -63,6 +71,10 @@ pub(super) fn host(request: &WindowsLaunchRequest) -> io::Result<u32> {
     )?;
     drop(child_input);
     drop(setup_lock);
+    crate::probe_span(
+        "host hop: logon_child (CreateProcessWithLogonW) returned",
+        t0,
+    );
 
     let mut host_input = handle_file(host_input);
     encode_windows_launch(plan.request(), &mut host_input)?;
@@ -76,7 +88,9 @@ pub(super) fn host(request: &WindowsLaunchRequest) -> io::Result<u32> {
 
     // SAFETY: `process` owns the live process handle and no timeout is used;
     // the outer kill-on-close Job remains the cancellation authority.
+    crate::probe_span("host hop: relay started, waiting for child hop", t0);
     let waited = unsafe { WaitForSingleObject(process.get(), u32::MAX) };
+    crate::probe_span("host hop: child hop exited", t0);
     finished.store(true, Ordering::Release);
     let relay_result = relay
         .join()
@@ -95,13 +109,20 @@ pub(super) fn host(request: &WindowsLaunchRequest) -> io::Result<u32> {
 }
 
 pub(super) fn child(request: &WindowsLaunchRequest) -> io::Result<u32> {
+    let t0 = std::time::Instant::now();
+    crate::probe_span("child hop: start", t0);
     let plan = LaunchPlan::from_host(request);
     let account_sid = super::winutil::current_user_sid()?;
     let mut desktop = super::desktop::PrivateDesktop::from_environment()?;
+    crate::probe_span("child hop: desktop from environment", t0);
     let mut capabilities = plan.capability_sids(&account_sid);
     capabilities.push(desktop.capability_sid(&account_sid));
+    crate::probe_span("child hop: capability sids", t0);
     let token = super::token::RestrictedToken::create(&mut capabilities, &account_sid)?;
-    super::process::launch(&plan, &token, &mut desktop)
+    crate::probe_span("child hop: RestrictedToken::create", t0);
+    let code = super::process::launch(&plan, &token, &mut desktop);
+    crate::probe_span("child hop: process::launch returned (workload ended)", t0);
+    code
 }
 
 fn logon_child(

@@ -5,6 +5,31 @@ use std::io::{self, Read, Write};
 #[cfg(target_os = "windows")]
 mod windows;
 
+/// TEMPORARY timing probe (issue 1409), never merged. Appends one line to a
+/// file every process of a Windows run can reach, and echoes it to stderr.
+#[allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
+pub fn probe_span(label: &str, since: std::time::Instant) {
+    if !cfg!(windows) {
+        return;
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis());
+    let line = format!(
+        "{now} pid={} {label} +{}ms\n",
+        std::process::id(),
+        since.elapsed().as_millis()
+    );
+    eprint!("PROBE {line}");
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(r"C:\Users\Public\crucible-probe-spans.log")
+    {
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
 /// The names a writable root's metadata is protected under, as
 /// `crucible_sandbox::PROTECTED_METADATA` lists them for a crate this one does
 /// not depend on; the local sandbox's tests hold the two lists equal.

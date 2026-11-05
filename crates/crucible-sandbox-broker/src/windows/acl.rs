@@ -35,6 +35,7 @@ const SELF_AND_DESCENDANTS: u32 = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE;
 
 pub(super) fn apply(request: &WindowsLaunchRequest, account_sid: &[u8]) -> io::Result<()> {
     for root in request.readable_roots() {
+        let t0 = std::time::Instant::now();
         grant(
             &path(root),
             account_sid,
@@ -45,8 +46,10 @@ pub(super) fn apply(request: &WindowsLaunchRequest, account_sid: &[u8]) -> io::R
                 descendants: READ,
             },
         )?;
+        crate::probe_span(&format!("acl read grant {}", path(root).display()), t0);
     }
     for root in request.writable_roots() {
+        let t0 = std::time::Instant::now();
         grant(
             &path(root),
             account_sid,
@@ -57,13 +60,16 @@ pub(super) fn apply(request: &WindowsLaunchRequest, account_sid: &[u8]) -> io::R
                 descendants: WRITE_DESCENDANT,
             },
         )?;
+        crate::probe_span(&format!("acl write grant {}", path(root).display()), t0);
     }
     for root in request.protected_roots() {
+        let t0 = std::time::Instant::now();
         deny(
             &path(root),
             &capability_sid(account_sid, Access::DenyWrite, root),
             DENY_WRITE,
         )?;
+        crate::probe_span(&format!("acl deny-write {}", path(root).display()), t0);
     }
     Ok(())
 }
@@ -122,6 +128,7 @@ fn edit(
     path: &Path,
     build: impl FnOnce(*mut windows_sys::Win32::Security::ACL) -> io::Result<AclMemory>,
 ) -> io::Result<()> {
+    let t0 = std::time::Instant::now();
     let handle = open(path)?;
     let mut old = null_mut();
     let mut descriptor = null_mut();
@@ -144,7 +151,9 @@ fn edit(
         return Err(code_error("GetSecurityInfo", status));
     }
     let _descriptor = LocalMemory(descriptor);
+    crate::probe_span("  acl edit: GetSecurityInfo", t0);
     let replacement = build(old)?;
+    crate::probe_span("  acl edit: build entries", t0);
     // SAFETY: the handle remains live and `replacement` owns the complete ACL
     // for the duration of this synchronous update.
     let status = unsafe {
@@ -158,6 +167,10 @@ fn edit(
             null(),
         )
     };
+    crate::probe_span(
+        "  acl edit: SetSecurityInfo (propagates to descendants)",
+        t0,
+    );
     if status == ERROR_SUCCESS {
         Ok(())
     } else {

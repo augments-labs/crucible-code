@@ -2297,19 +2297,31 @@ fn a_switch_says_why_it_is_not_smoke_tested_where_the_sandbox_is_off_or_the_rout
 /// `script`, says when its version is asked, started from the store with the
 /// sandbox on.
 fn asked_from_the_store(name: &str, script: &Peer) -> Result<Reading, Failed> {
+    use crucible_sandbox_local::probe_span as span;
+    let t0 = std::time::Instant::now();
+    span(&format!("TEST[{name}]: begin"), t0);
     let runtime = runtime()?;
     let bench = Bench::new(name)?;
+    span(&format!("TEST[{name}]: Bench::new done"), t0);
     let release = bench.server.peer_release("1.0.0", &peer(script)?);
     bench
         .server
         .catalog(1, std::slice::from_ref(&release), &json!([]))?;
     let program = bench.programs().join("1.0.0").join(command());
     bench.configure(&program, &json!({}))?;
+    span(
+        &format!("TEST[{name}]: release, catalog, configure done"),
+        t0,
+    );
     let (installed, _) = bench.ask(
         install("1.0.0")?,
         &mut answering(&bench.server, Some("Install")),
         false,
     )?;
+    span(
+        &format!("TEST[{name}]: store install (bench.ask Install) done"),
+        t0,
+    );
     if !matches!(installed, Ok(Outcome::Moved { .. })) {
         return Err(format!("installed: {}", shape(&installed)).into());
     }
@@ -2342,8 +2354,10 @@ fn asked_from_the_store(name: &str, script: &Peer) -> Result<Reading, Failed> {
         &state,
         bench.home.sessions(),
     );
+    span(&format!("TEST[{name}]: launcher built"), t0);
     let control = Control::new().ok_or("a control")?;
     let mut dialect = agent.row().dialect(Mode::Ask, None, None)?;
+    let t_first = std::time::Instant::now();
     let read = runtime.block_on(launcher.account(
         &agent,
         &control,
@@ -2351,6 +2365,28 @@ fn asked_from_the_store(name: &str, script: &Peer) -> Result<Reading, Failed> {
         Account::Version,
         &|_| {},
     ))?;
+    span(
+        &format!("TEST[{name}]: FIRST launcher.account done"),
+        t_first,
+    );
+    if name.ends_with("read") {
+        // The same bench and process again: what every launch costs once the
+        // first has been paid.
+        let control = Control::new().ok_or("a control")?;
+        let mut dialect = agent.row().dialect(Mode::Ask, None, None)?;
+        let t_second = std::time::Instant::now();
+        let _ = runtime.block_on(launcher.account(
+            &agent,
+            &control,
+            dialect.as_mut(),
+            Account::Version,
+            &|_| {},
+        ))?;
+        span(
+            &format!("TEST[{name}]: SECOND launcher.account done"),
+            t_second,
+        );
+    }
     assert!(
         !bench.programs().join("1.0.0").join("played").exists(),
         "it wrote into its root"
@@ -2359,12 +2395,20 @@ fn asked_from_the_store(name: &str, script: &Peer) -> Result<Reading, Failed> {
 }
 
 #[test]
+#[allow(unreachable_code)]
 fn an_agent_started_from_the_store_reads_its_version_and_cannot_write_into_it() -> Result<(), Failed>
 {
-    if !enforcing(&runtime()?)? {
+    let t_enforcing = std::time::Instant::now();
+    let began_enforcing = enforcing(&runtime()?)?;
+    crucible_sandbox_local::probe_span("TEST: enforcing() probe", t_enforcing);
+    if !began_enforcing {
         return Ok(());
     }
 
+    let began_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis());
+    let whole = std::time::Instant::now();
     let reading = asked_from_the_store("agents-door-root-read", &answers("1.0.0"))?;
     let writing = asked_from_the_store(
         "agents-door-root-write",
@@ -2372,6 +2416,36 @@ fn an_agent_started_from_the_store_reads_its_version_and_cannot_write_into_it() 
             .hear(1)
             .say(acp::initialized("goose", "1.0.0", "agent-login"))]),
     )?;
+    crucible_sandbox_local::probe_span("TEST: whole test body", whole);
+    #[cfg(windows)]
+    {
+        // TEMPORARY (issue 1409): nextest prints a failing test's output in
+        // the job log, so the spans are carried out by a panic.
+        let log = std::fs::read_to_string(r"C:\Users\Public\crucible-probe-spans.log")
+            .unwrap_or_default();
+        let mut lines: Vec<&str> = log
+            .lines()
+            .filter(|line| {
+                line.split_whitespace()
+                    .next()
+                    .and_then(|ms| ms.parse::<u128>().ok())
+                    .is_some_and(|ms| ms >= began_ms)
+            })
+            .collect();
+        lines.sort_by_key(|line| {
+            line.split_whitespace()
+                .next()
+                .and_then(|ms| ms.parse::<u128>().ok())
+        });
+        panic!(
+            "PROBE REPORT (read: {}, write: {}); spans since {began_ms} (ms epoch, pid, label, +elapsed in its span):\n{}",
+            matches!(&reading, Reading::Version(_)),
+            matches!(&writing, Reading::Unreadable(_)),
+            lines.join("\n")
+        );
+    }
+    #[cfg(not(windows))]
+    let _ = began_ms;
 
     // What an account step read is never written into a failure.
     assert!(

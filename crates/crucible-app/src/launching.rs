@@ -3039,11 +3039,16 @@ impl<'a> Launcher<'a> {
             )));
         };
         let spoken = dialect.spoken(step);
+        let t0 = std::time::Instant::now();
+        crucible_sandbox_local::probe_span("account(): begin", t0);
         let host = self.start(agent, control, request, Life::Step).await?;
+        crucible_sandbox_local::probe_span("account(): start() returned a Host", t0);
         if let Some(frames) = spoken {
-            return Ok(host
+            let read = host
                 .speak(dialect, step, &frames, shown, within(step))
-                .await);
+                .await;
+            crucible_sandbox_local::probe_span("account(): speak returned", t0);
+            return Ok(read);
         }
         let ran = host.run().await;
         Ok(dialect.read(step, &ran))
@@ -3337,9 +3342,12 @@ impl<'a> Launcher<'a> {
         life: Life<'_>,
     ) -> Result<Host, Unlaunched> {
         let row = &agent.row;
+        let t0 = std::time::Instant::now();
         let trust = Trust::load(self.state, SystemTime::now());
+        crucible_sandbox_local::probe_span("Launcher::start: Trust::load", t0);
         let (program, stored) =
             agent.release(self.consent, &trust, &programs_beside(self.state))?;
+        crucible_sandbox_local::probe_span("Launcher::start: Agent::release", t0);
         // What a sign-in runs is checked against the same release, and its
         // run answers to that release's being usable as the agent's does.
         let signing_in = match life {
@@ -3439,7 +3447,9 @@ impl<'a> Launcher<'a> {
                 "a business sign-in's settings are written in the agent's profile directory, and none is configured",
             )));
         }
+        crucible_sandbox_local::probe_span("Launcher::start: policy, profile, roots done", t0);
         agent.made(&kept, created)?;
+        crucible_sandbox_local::probe_span("Launcher::start: agent.made done", t0);
         let mut launch = Launch::new(program, policy, held).asking(request);
         if let Some(profile) = &agent.profile {
             launch = launch.in_profile(profile.clone());

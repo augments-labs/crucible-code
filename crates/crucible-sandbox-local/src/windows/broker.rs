@@ -77,8 +77,15 @@ pub(super) struct Broker {
 
 impl Broker {
     pub(super) fn find(excluded: &[&Path]) -> Result<Self, SandboxError> {
+        let t0 = std::time::Instant::now();
         let directory = HELD.directory(std::env::current_exe).map_err(unavailable)?;
-        Self::first_trusted(candidates(&directory), excluded)
+        crate::probe_span("Broker::find: HELD.directory", t0);
+        let found = Self::first_trusted(candidates(&directory), excluded);
+        crate::probe_span(
+            "Broker::find: first_trusted (canonicalize, metadata, sha256)",
+            t0,
+        );
+        found
     }
 
     fn first_trusted(candidates: Vec<PathBuf>, excluded: &[&Path]) -> Result<Self, SandboxError> {
@@ -99,7 +106,12 @@ impl Broker {
             {
                 continue;
             }
+            let t_digest = std::time::Instant::now();
             let digest = digest(&path, metadata.len())?;
+            crate::probe_span(
+                &format!("Broker::find: digest of {} bytes", metadata.len()),
+                t_digest,
+            );
             let id = SandboxBackendId::new("windows-native")
                 .map_err(|_| unavailable("invalid built-in Windows backend identity"))?;
             let identity = SandboxBackendIdentity::new(

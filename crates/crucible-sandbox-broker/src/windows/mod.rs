@@ -151,14 +151,17 @@ pub(super) fn probe() -> io::Result<String> {
 }
 
 fn current_launch_setup() -> io::Result<LaunchSetup> {
+    let t0 = std::time::Instant::now();
     let owner_sid = winutil::current_user_sid()?;
     let identity = SetupIdentity::for_owner(&owner_sid);
+    crate::probe_span("broker setup: owner sid", t0);
     let record = registry::load(&identity)?.ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::NotFound,
             "Windows sandbox setup is missing; run Crucible's setup command in an Administrator PowerShell",
         )
     })?;
+    crate::probe_span("broker setup: registry load", t0);
     validate_record_owner(&record, &identity, &owner_sid)?;
     if record.status != Status::Installed {
         return Err(io::Error::new(
@@ -167,8 +170,11 @@ fn current_launch_setup() -> io::Result<LaunchSetup> {
         ));
     }
     let password = SecretWide::unprotect(&record.protected_password, &identity.entropy)?;
+    crate::probe_span("broker setup: dpapi unprotect", t0);
     account::probe(&record.account_name, &record.account_sid, &password)?;
+    crate::probe_span("broker setup: account::probe", t0);
     wfp::probe(&identity, &record.account_name)?;
+    crate::probe_span("broker setup: wfp::probe", t0);
     Ok(LaunchSetup {
         identity,
         record,

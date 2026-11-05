@@ -15,6 +15,9 @@
 //! hands [`LocalSandbox`] to whatever asks for confinement, which is what lets
 //! the tool that runs a shell command name no operating system at all.
 
+/// TEMPORARY timing probe (issue 1409), never merged.
+pub use crucible_sandbox_broker::probe_span;
+
 mod local;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 mod network;

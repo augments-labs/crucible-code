@@ -104,6 +104,31 @@ const SETTLING: Duration = Duration::from_millis(500);
 /// How long the sandbox has to prepare a launch.
 pub const PREPARING: Duration = Duration::from_secs(30);
 
+/// TEMPORARY timing probe (issue 1409), never merged.
+#[allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
+fn probe_span(label: &str, since: std::time::Instant) {
+    use std::io::Write as _;
+    if !cfg!(windows) {
+        return;
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis());
+    let line = format!(
+        "{now} pid={} {label} +{}ms\n",
+        std::process::id(),
+        since.elapsed().as_millis()
+    );
+    eprint!("PROBE {line}");
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(r"C:\Users\Public\crucible-probe-spans.log")
+    {
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
 /// The most bytes an account step's output keeps: a version line or a status
 /// document, never a stream.
 pub const RAN_BYTES: usize = 64 * 1024;
@@ -713,6 +738,8 @@ impl Host {
         if !control.asked().relaunch() {
             return Err(Refusal::Spent);
         }
+        let t0 = std::time::Instant::now();
+        probe_span("Host::start: begin", t0);
         let required = launch.policy().enabled();
         let request = SandboxRequest::new(
             SandboxId::new(),
@@ -728,6 +755,7 @@ impl Host {
                     reason: "the sandbox did not prepare the agent in time".into(),
                 })
             });
+        probe_span("Host::start: service.prepare returned", t0);
         let mut session = match prepared {
             Ok(session) => session,
             Err(
@@ -760,6 +788,7 @@ impl Host {
             return Err(Refusal::Unconfined(claim));
         }
         session.materialize().await?;
+        probe_span("Host::start: materialize done", t0);
         let Request {
             arguments,
             environment,
@@ -785,12 +814,18 @@ impl Host {
         // Preparing can take a while, and the program is run as it was found
         // or not at all: its metadata is compared again, not its bytes.
         launch.program().unchanged()?;
+        probe_span("Host::start: program unchanged check done", t0);
         let mut process = session.start(command).await?;
+        probe_span(
+            "Host::start: session.start (stage + release/spawn) done",
+            t0,
+        );
         // Taking the pipes waits only where it stops a process it cannot
         // speak to, so a drop inside it abandons a stop.
         let stopping = Unconfirmed(Some(&control.shared));
         let pipes = Pipes::taken(process.as_mut(), patience, runtime).await;
         stopping.confirmed();
+        probe_span("Host::start: Pipes::taken done", t0);
         let pipes = pipes.map_err(|unspoken| {
             // A stop that was not confirmed leaves a process that may still be
             // running, which keeps the agent's place as an abandoned one does.
@@ -1309,8 +1344,15 @@ impl Host {
         shown: &(dyn Fn(Text) + Sync),
         within: Duration,
     ) -> Reading {
+        let t0 = std::time::Instant::now();
+        probe_span("speak: begin", t0);
         let reading = match self.say(frames).await {
-            Ok(()) => self.listened(dialect, step, shown, within).await,
+            Ok(()) => {
+                probe_span("speak: say(frames) done", t0);
+                let reading = self.listened(dialect, step, shown, within).await;
+                probe_span("speak: listened returned", t0);
+                reading
+            }
             Err(lost) => Reading::Unreadable(Failure::new(&lost)),
         };
         let grace = match reading {
@@ -1318,6 +1360,7 @@ impl Host {
             Reading::Version(_) | Reading::Signed(_) => STOP_GRACE,
         };
         self.finish(grace).await;
+        probe_span("speak: finish(grace) done", t0);
         match reading {
             Reading::Version(version) => Reading::Version(self.shown(&version)),
             Reading::Unreadable(failure) => {
@@ -1349,6 +1392,7 @@ impl Host {
                     );
                 }
             };
+            probe_span("listened: a frame arrived", Instant::now().into_std());
             let line = match frame {
                 None => return unread("the agent stopped before it finished the step"),
                 Some(Err(problem)) => return unread(&problem.to_string()),
