@@ -156,6 +156,16 @@ jobs:
           if [[ ${{ matrix.shard }} == 1 ]]; then cargo test --workspace --locked --doc; fi
         env:
           CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
+      # A case whose manifest names this platform is reconciled where it runs,
+      # not only on Linux: a row narrowed to another platform or hollowed turns
+      # this job red instead of going unseen. Each platform runs it once, in
+      # the part that also runs the documentation examples.
+      - name: Required cases
+        if: ${{ matrix.shard == 1 }}
+        shell: bash
+        run: bash scripts/sh/rust-checks.sh --only required
+        env:
+          CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
       - if: ${{ runner.os == 'Windows' && always() }}
         name: Remove the native Windows sandbox setup
         shell: pwsh

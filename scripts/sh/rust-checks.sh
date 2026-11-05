@@ -194,8 +194,22 @@ check_examples() {
     fi
 }
 
+# A native program on Windows reads a Windows path. Git Bash's own `/tmp` is
+# not one: guessed at, it would read the current drive's root instead.
+native_path() {
+    if command -v cygpath >/dev/null 2>&1; then
+        cygpath -w "$1"
+    else
+        printf '%s\n' "$1"
+    fi
+}
+
 check_required() {
     section "required cases"
+    # Git Bash on Windows has `python`; its Linux and macOS peers have
+    # `python3`, and either reads the same manifest.
+    local python=python3
+    command -v python3 >/dev/null 2>&1 || python=python
     artifacts=$(mktemp)
     examples=$(mktemp)
     silenced=$(mktemp)
@@ -209,7 +223,8 @@ check_required() {
         ! cargo test "${TEST_SELECTION[@]}" --doc -- --list --ignored >"$silenced"; then
         printf '    FAIL the documentation examples did not list; the required cases were not checked\n'
         failed=1
-    elif ! python3 scripts/python/required-cases.py "$artifacts" "$examples" "$silenced" "${TEST_SELECTION[@]}"; then
+    elif ! "$python" scripts/python/required-cases.py "$(native_path "$artifacts")" \
+        "$(native_path "$examples")" "$(native_path "$silenced")" "${TEST_SELECTION[@]}"; then
         printf '    FAIL a named obligation in scripts/required-cases.json is missing, silenced or changed\n'
         failed=1
     fi
