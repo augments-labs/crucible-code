@@ -3815,7 +3815,7 @@ fn expanded_results_use_the_configured_wheel_speed() {
     for (during, speed) in [(false, 6), (false, 12), (true, 6), (true, 12)] {
         let args = r#"{"path":"wheel.txt"}"#;
         let vendor = if during {
-            Vendor::calling_then_holding("read", args, "Ready to inspect.")
+            Vendor::calling_then_holding_long("read", args, "Ready to inspect.")
         } else {
             Vendor::calling("read", args, "Ready to inspect.")
         };
@@ -3842,6 +3842,31 @@ fn expanded_results_use_the_configured_wheel_speed() {
                 "the view under the running turn",
                 |picture| picture.contains("esc to close") && picture.contains("esc to interrupt"),
             );
+            // The working row's clock keeps the picture from settling, so
+            // each step is caught by where the view's first line stands.
+            let top = |picture: &str| {
+                picture
+                    .lines()
+                    .find_map(|line| line.split("wheel line ").nth(1))
+                    .and_then(|number| number.trim_end_matches(['|', ' ']).parse::<usize>().ok())
+            };
+            let live = |picture: &str| picture.contains("esc to interrupt");
+            // The read's heading takes two of the rows the view moves.
+            let moved = speed - 1;
+            window.types_and_catches_where(
+                "\x1b[B".repeat(speed).as_str(),
+                "the arrows' rows",
+                |picture| live(picture) && top(picture) == Some(moved),
+            );
+            window.types_and_catches_where("\x0f\x0f", "the view reopened at its top", |picture| {
+                live(picture) && top(picture) == Some(1)
+            });
+            window.types_and_catches_where("\x1b[<65;5;10M", "the wheel's rows", |picture| {
+                live(picture) && top(picture) == Some(moved)
+            });
+            window.types_and_catches_where("\x1b[<64;5;10M", "the wheel's rows back", |picture| {
+                live(picture) && top(picture) == Some(1)
+            });
             vendor.ends_the_turn();
             window.catches_where(
                 "the turn ended",
@@ -4965,7 +4990,12 @@ fn under_echo_strips_only_the_rail_cell_at_the_last_column() {
     let result = under_echo(picture, "/x");
     assert_eq!(
         result,
-        vec!["content ends •", "marked here ●", "no rail here •", "nor here │"]
+        vec![
+            "content ends •",
+            "marked here ●",
+            "no rail here •",
+            "nor here │"
+        ]
     );
 }
 
