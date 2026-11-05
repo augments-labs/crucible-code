@@ -421,14 +421,24 @@ section "whole-screen cases reach /login rows by name"
 # of the suite is read, since a case in any of them can walk the same way; the
 # check measured nothing when none of them types /login.
 screens=(tests/whole_screen/*.rs)
-if ((${#screens[@]} == 0)) || ! grep -qE '(types_until|types)\("/login' "${screens[@]}"; then
+if ((${#screens[@]} == 0)) || ! grep -qE '"/login' "${screens[@]}"; then
     printf '    FAIL no file under tests/whole_screen types /login; this check measured nothing\n'
     failed=1
 else
+    # A walk is counted when its presses are spelled twice in a function,
+    # on one line or several, taken from `downs(`, or sent from a loop that
+    # has not looked at the picture since it opened; one press in a loop that
+    # looks first stops when it sees its row and counts nothing. A call may
+    # wrap, so a function is read whole rather than by the line naming /login.
     counted=$(awk '
-        FNR == 1 || /^fn |^    fn / { login = 0 }
+        FNR == 1 || /^fn |^    fn / { login = 0; presses = 0; looked = 1 }
         /\/login/ { login = 1 }
-        login && (/\\x1b\[B.*\\x1b\[B/ || /\\x1b\[B"\.repeat/) { print FILENAME ":" FNR ": " $0 }
+        /for .* in / { looked = 0 }
+        /picture\(\)/ { looked = 1 }
+        /\\x1b\[B/ { presses += gsub(/\\x1b\[B/, "&") }
+        login && (presses > 1 || /downs\(/ || /\\x1b\[B"\.repeat/ || (/\\x1b\[B/ && !looked)) {
+            print FILENAME ":" FNR ": " $0
+        }
     ' "${screens[@]}")
     if [[ -n "$counted" ]]; then
         printf '%s\n' "$counted"

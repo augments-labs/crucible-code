@@ -3815,7 +3815,7 @@ fn expanded_results_use_the_configured_wheel_speed() {
     for (during, speed) in [(false, 6), (false, 12), (true, 6), (true, 12)] {
         let args = r#"{"path":"wheel.txt"}"#;
         let vendor = if during {
-            Vendor::calling_then_holding("read", args, "Ready to inspect.")
+            Vendor::calling_then_holding_long("read", args, "Ready to inspect.")
         } else {
             Vendor::calling("read", args, "Ready to inspect.")
         };
@@ -3842,6 +3842,31 @@ fn expanded_results_use_the_configured_wheel_speed() {
                 "the view under the running turn",
                 |picture| picture.contains("esc to close") && picture.contains("esc to interrupt"),
             );
+            // The working row's clock keeps the picture from settling, so
+            // each step is caught by where the view's first line stands.
+            let top = |picture: &str| {
+                picture
+                    .lines()
+                    .find_map(|line| line.split("wheel line ").nth(1))
+                    .and_then(|number| number.trim_end_matches(['|', ' ']).parse::<usize>().ok())
+            };
+            let live = |picture: &str| picture.contains("esc to interrupt");
+            // The read's heading takes two of the rows the view moves.
+            let moved = speed - 1;
+            window.types_and_catches_where(
+                "\x1b[B".repeat(speed).as_str(),
+                "the arrows' rows",
+                |picture| live(picture) && top(picture) == Some(moved),
+            );
+            window.types_and_catches_where("\x0f\x0f", "the view reopened at its top", |picture| {
+                live(picture) && top(picture) == Some(1)
+            });
+            window.types_and_catches_where("\x1b[<65;5;10M", "the wheel's rows", |picture| {
+                live(picture) && top(picture) == Some(moved)
+            });
+            window.types_and_catches_where("\x1b[<64;5;10M", "the wheel's rows back", |picture| {
+                live(picture) && top(picture) == Some(1)
+            });
             vendor.ends_the_turn();
             window.catches_where(
                 "the turn ended",
@@ -4920,9 +4945,9 @@ fn release_notes_list_a_resize_that_leaves_no_room_closes_it_and_prints_nothing(
 }
 
 /// The rows between the last line that typed `command` and the top of the box
-/// under it, trimmed, and less the scroll rail's cell at the end of each, which
-/// stands where the transcript is longer than the window and is not the row's.
-/// Takes off at most one rail cell at the end of each row.
+/// under it, trimmed, and less the scroll rail's cell, which stands in the
+/// last column of a row where the transcript is longer than the window and is
+/// not the row's. A glyph that ends a row's words anywhere else stays.
 fn under_echo(picture: &str, command: &str) -> Vec<String> {
     let lines = trimmed(picture);
     let echo = lines
@@ -4934,11 +4959,14 @@ fn under_echo(picture: &str, command: &str) -> Vec<String> {
         .iter()
         .position(|line| line.starts_with('\u{256d}'))
         .unwrap_or_else(|| panic!("no box under {command} at\n{picture}"));
-    under
-        .get(..top)
-        .unwrap_or_default()
-        .iter()
+    picture
+        .lines()
+        .skip(1)
+        .skip(echo + 1)
+        .take(top)
         .map(|row| {
+            let row = row.strip_prefix('|').unwrap_or(row);
+            let row = row.strip_suffix('|').unwrap_or(row);
             row.strip_suffix(['\u{2502}', '\u{2503}', '\u{2022}', '\u{25cf}'])
                 .unwrap_or(row)
                 .trim_end()
@@ -4948,14 +4976,27 @@ fn under_echo(picture: &str, command: &str) -> Vec<String> {
 }
 
 #[test]
-fn under_echo_strips_only_one_trailing_rail_cell() {
+fn under_echo_strips_only_the_rail_cell_at_the_last_column() {
+    // Rows are padded to the window's width, as a picture draws them, so the
+    // rail's cell is the one in the last column; a row with no rail there
+    // keeps a glyph that ends its words.
     let picture = "80×24\n\
-        |› /x │\n\
+        |› /x   │\n\
         |content ends •│\n\
         |marked here ●┃\n\
-        |╭─ box top|";
+        |no rail here •  |\n\
+        |nor here │    |\n\
+        |╭─ box top    |";
     let result = under_echo(picture, "/x");
-    assert_eq!(result, vec!["content ends •", "marked here ●"]);
+    assert_eq!(
+        result,
+        vec![
+            "content ends •",
+            "marked here ●",
+            "no rail here •",
+            "nor here │"
+        ]
+    );
 }
 
 /// A window of 80 by 24 on `screen`, `fullscreen` or `native`, answered by
@@ -5865,6 +5906,18 @@ fn room_asked_for_on_a_warned_route_is_asked_about_and_going_back_says_nothing_w
     window.types_until("\x1b", "nothing was sent");
     let picture = window.picture();
     assert!(!picture.contains("your message is back"), "{picture}");
+    // The reply stands on the row under the command it answers, behind the
+    // mark every reply to a command carries.
+    let rows = trimmed(&picture);
+    let command = rows
+        .iter()
+        .rposition(|row| row == "\u{203a} /compact")
+        .unwrap_or_else(|| panic!("no /compact row at\n{picture}"));
+    assert_eq!(
+        rows.get(command + 1).map(String::as_str),
+        Some("\u{23bf} nothing was sent"),
+        "{picture}"
+    );
     assert_eq!(proxy.asked(), Vec::<String>::new());
 }
 
