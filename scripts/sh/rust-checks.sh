@@ -46,12 +46,19 @@ named() {
 only=()
 skip=()
 partition=()
+# Every option takes an argument. macOS's /bin/bash is 3.2 and has no `;;&`,
+# so the count check they share and the option's own act are a nested case
+# rather than a fallthrough.
 while (($#)); do
     case $1 in
-    --only | --skip | --partition) (($# > 1)) || usage ;;&
-    --only) IFS=, read -ra only <<<"$2" && named "${only[@]}" ;;
-    --skip) IFS=, read -ra skip <<<"$2" && named "${skip[@]}" ;;
-    --partition) partition=(--partition "$2") ;;
+    --only | --skip | --partition)
+        (($# > 1)) || usage
+        case $1 in
+        --only) IFS=, read -ra only <<<"$2" && named "${only[@]}" ;;
+        --skip) IFS=, read -ra skip <<<"$2" && named "${skip[@]}" ;;
+        --partition) partition=(--partition "$2") ;;
+        esac
+        ;;
     *) usage ;;
     esac
     shift 2
