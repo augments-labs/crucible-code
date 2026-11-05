@@ -257,11 +257,12 @@ model and effort in force; `/model` and `/effort` change either.
 
 Some vendors say they may use what you send to train or improve their models:
 a ChatGPT plan, Kimi Code and the Kimi open platform, a Gemini key on unpaid
-quota, MiniMax, Qwen's plans on aliyun.com, Z.ai's bigmodel.cn key, and Meta's
-two contributor models. Before the first message on one of those goes, crucible asks you once,
-with what the vendor's terms say and where; **Use it anyway** sends it
-and is remembered, **Go back** keeps the message and sends nothing. [Content
-use](../providers/content-use.md) lists each route and what its vendor says.
+quota, MiniMax, Qwen's plans on aliyun.com, Z.ai's bigmodel.cn key, Meta's
+two contributor models, and Mistral's Preview models. Before the first message
+on one of those goes, crucible asks you once, with what the vendor's terms say
+and where; **Use it anyway** sends it and is remembered, **Go back** keeps the
+message and sends nothing. [Content use](../providers/content-use.md) lists
+each route and what its vendor says.
 
 You do not have to know that command to find it. A run holding no key for any
 provider says so under the welcome and names both halves of setting one up:
@@ -999,8 +1000,8 @@ Anthropic, OpenAI and Google, whose requests have a shape for a document;
 MoonshotAI's have none, and say so rather than sending the file as anything
 else. A video, which has to be an `.mp4`, goes to Google and MoonshotAI;
 Anthropic's and OpenAI's requests have no shape for one. The seven providers new
-in 0.44 are sent text alone in this release, and say so of a file the same
-way.
+in 0.44 and Mistral, which came after it, are sent text alone in this release,
+and say so of a file the same way.
 
 Nothing asks you first. Every other way a file reaches the model goes through a
 tool, and a tool is something the agent chose to run, which is the thing a

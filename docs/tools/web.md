@@ -83,14 +83,14 @@ held until that model's question has its yes, and on a standard model it is
 not. Meta has no fetch tool, and xAI opens pages only inside its search, with no
 documented way to ask it to open one address, so neither offers `web_fetch`.
 
-The other six vendors new in this release get neither tool. DeepSeek,
-MiniMax and Mistral serve none on the Chat Completions protocol crucible uses for them.
-Z.ai's search on that protocol runs for the whole request rather than as a
-tool the model calls, and its pages disagree on which models take it. Qwen's
-pages disagree on whether these models take search there. MiMo's search must be
-switched on in its console first, and no source shows how a request is refused
-where it is not. Where a source settles the missing fact, a later release can
-add the tool.
+The other six vendors, the five of 0.44 and Mistral, which came after it, get
+neither tool. DeepSeek, MiniMax and Mistral serve none on the Chat Completions
+protocol crucible uses for them. Z.ai's search on that protocol runs for the
+whole request rather than as a tool the model calls, and its pages disagree on
+which models take it. Qwen's pages disagree on whether these models take search
+there. MiMo's search must be switched on in its console first, and no source
+shows how a request is refused where it is not. Where a source settles the
+missing fact, a later release can add the tool.
 
 Moonshot's two services belong to the Kimi Code platform, which is where
 crucible sends this provider unless you have set `providers.moonshot.baseUrl`

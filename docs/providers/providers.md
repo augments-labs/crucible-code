@@ -190,10 +190,10 @@ Power and Maximum plans, is not offered; `max` on `muse-wonder-1.0` does not
 select it. See [content
 use](content-use.md).
 
-Meta and xAI are spoken to over the Responses protocol, the other six vendors
-new in this release over Chat Completions. crucible sends those eight text
-alone in this release: a picture, a PDF, audio or video stays out of the
-request, whatever the model reads. A refusal from any of them reaches you in
+Meta and xAI are spoken to over the Responses protocol, the other five vendors
+new in 0.44 and Mistral, which came after it, over Chat Completions. crucible
+sends those eight text alone in this release: a picture, a PDF, audio or video
+stays out of the request, whatever the model reads. A refusal from any of them reaches you in
 the vendor's own words, except Z.ai's refusal of a prompt too long for the
 model, which makes room and asks again as a
 [full window](../sessions/sessions.md#when-the-window-fills) does. Meta's refusal

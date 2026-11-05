@@ -114,7 +114,7 @@ A provider this build does not have is refused at the same point, with the
 ones it has:
 
 ```
-crucible: no provider called gemini; this build has anthropic, deepseek, google, meta, mimo, minimax, moonshot, openai, qwen, xai, zai
+crucible: no provider called gemini; this build has anthropic, deepseek, google, meta, mimo, minimax, mistral, moonshot, openai, qwen, xai, zai
 ```
 
 ### `-e`, `--effort <RUNG>`
