@@ -12,14 +12,11 @@ use windows_sys::Win32::NetworkManagement::NetManagement::{
 use windows_sys::Win32::Security::{
     LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, LogonUserW,
 };
+use windows_sys::Win32::System::GroupPolicy::PI_NOUI;
 use windows_sys::Win32::UI::Shell::{LoadUserProfileW, PROFILEINFOW, UnloadUserProfile};
 
 use super::secret::SecretWide;
 use super::winutil::{OwnedHandle, account_sid, code_error, wide};
-
-// `userenv.h`'s `PI_NOUI`, which windows-sys does not carry: no dialog, since
-// setup may run where nobody can answer one.
-const PROFILE_NO_DIALOG: u32 = 1;
 
 const REQUIRED_FLAGS: u32 =
     UF_SCRIPT | UF_NORMAL_ACCOUNT | UF_DONT_EXPIRE_PASSWD | UF_NOT_DELEGATED;
@@ -122,7 +119,7 @@ pub(super) fn create_profile(name: &str, password: &SecretWide) -> io::Result<()
     let mut profile = PROFILEINFOW {
         dwSize: u32::try_from(size_of::<PROFILEINFOW>())
             .map_err(|_| io::Error::other("invalid Windows profile structure size"))?,
-        dwFlags: PROFILE_NO_DIALOG,
+        dwFlags: PI_NOUI,
         lpUserName: name.as_mut_ptr(),
         ..PROFILEINFOW::default()
     };
