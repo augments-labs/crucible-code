@@ -20,7 +20,8 @@
 //!
 //! The second writes nothing. It reports, as Markdown on standard output, what
 //! the database says against what this build offers: a newer model in a family
-//! crucible offers, an offered model gone or deprecated, and rungs listed
+//! crucible offers, a coding model of a family crucible does not offer from a
+//! provider it does, an offered model gone or deprecated, and rungs listed
 //! apart from the ones offered. It exits 0 with nothing to report, 1 with
 //! something, and 2 when the input could not be read. A scheduled workflow runs
 //! it, and what it reports is settled by hand from the vendors' own pages.
@@ -39,7 +40,7 @@
 // protects.
 #![allow(clippy::print_stderr)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::io::{Read, Write as _};
 
@@ -409,6 +410,13 @@ enum Finding {
         key: String,
         released: String,
     },
+    /// A coding model of a family crucible does not offer from that provider.
+    Family {
+        provider: &'static str,
+        family: String,
+        key: String,
+        released: String,
+    },
     /// An offered model the database no longer lists.
     Gone {
         provider: &'static str,
@@ -431,8 +439,9 @@ enum Finding {
 /// What the database says against what this build offers.
 ///
 /// Read through [`OFFERED`] and [`listed`], so the providers it looks at and the
-/// keys it reads are the generator's own, and it never proposes a provider or a
-/// family crucible does not already offer: those are chosen by hand. A newer
+/// keys it reads are the generator's own, and it never proposes a provider
+/// crucible does not already offer; a family it does not offer is reported as a
+/// lead and chosen by hand. A newer
 /// model is one released after every offered model of its family, that calls
 /// tools and answers in text, and that nobody has declined in `passed`. Rungs
 /// are compared only where the database lists effort at all, since one that
@@ -447,6 +456,7 @@ fn drift(
 ) -> Vec<Finding> {
     let mut found = Vec::new();
     let mut newest: BTreeMap<(&'static str, &str), &str> = BTreeMap::new();
+    let mut families: BTreeSet<(&'static str, &str)> = BTreeSet::new();
     for (provider, model, key, _) in offered {
         let Some(key) = key else { continue };
         let models = database
@@ -458,6 +468,9 @@ fn drift(
         };
         if entry.get("status").and_then(Value::as_str) == Some("deprecated") {
             found.push(Finding::Retired { provider, model });
+        }
+        if let Some(family) = word(entry, "family") {
+            families.insert((provider, family));
         }
         if let (Some(family), Some(released)) = (word(entry, "family"), word(entry, "release_date"))
         {
@@ -505,6 +518,34 @@ fn drift(
                     family: (*family).to_owned(),
                     key: key.clone(),
                     released: released.to_owned(),
+                });
+            }
+        }
+    }
+
+    let providers: BTreeSet<&'static str> =
+        offered.iter().map(|(provider, ..)| *provider).collect();
+    for provider in providers {
+        let Some(models) = database
+            .get(listed(provider))
+            .and_then(|provider| provider.get("models"))
+            .and_then(Value::as_object)
+        else {
+            continue;
+        };
+        for (key, entry) in models {
+            let Some(family) = word(entry, "family") else {
+                continue;
+            };
+            let declined = passed
+                .iter()
+                .any(|(of, declined, _)| *of == provider && declined == key);
+            if !families.contains(&(provider, family)) && !declined && coding(entry) {
+                found.push(Finding::Family {
+                    provider,
+                    family: family.to_owned(),
+                    key: key.clone(),
+                    released: word(entry, "release_date").unwrap_or_default().to_owned(),
                 });
             }
         }
@@ -587,6 +628,18 @@ fn reported(found: &[Finding]) -> String {
                 shown(family),
                 shown(released)
             ),
+            Finding::Family {
+                provider,
+                family,
+                key,
+                released,
+            } => writeln!(
+                out,
+                "- {provider}: `{}` is of the `{}` family, which crucible does not offer ({}).",
+                shown(key),
+                shown(family),
+                shown(released)
+            ),
             Finding::Gone { provider, model } => {
                 writeln!(out, "- {provider}: `{model}` is no longer listed.")
             }
@@ -608,7 +661,9 @@ fn reported(found: &[Finding]) -> String {
     }
     out.push_str(
         "\nThe database is a lead, not the authority: check each against the vendor's \
-         own pages and settle it as the repository's `refresh-the-models` skill says.\n",
+         own pages and settle it as the repository's `refresh-the-models` skill says. \
+         A family is a product decision taken by hand, and declining a model of one is a \
+         `PASSED` entry.\n",
     );
     out
 }
@@ -926,6 +981,77 @@ mod tests {
     }
 
     #[test]
+    fn drift_reports_a_coding_model_of_a_family_crucible_does_not_offer() {
+        let flash: Offer = ("google", "gemini-flash-5", Some("gemini-flash-5"), None);
+        let database = json!({ "google": { "models": {
+            "gemini-flash-5": listing("gemini-flash", "2026-09-01", RUNGS),
+            "gemini-4-argon": listing("gemini", "2026-10-13", RUNGS),
+            "gemini-2-old": listing("gemini", "2025-01-01", RUNGS),
+            "gemini-4-declined": listing("gemini", "2026-10-14", RUNGS),
+            "gemini-4-image": with(listing("gemini", "2026-10-15", RUNGS), "/modalities/output", json!(["image"])),
+            "no-family": with(listing("x", "2026-10-16", RUNGS), "/family", Value::Null),
+        } } });
+        let passed = [("google", "gemini-4-declined", "declined")];
+        let mut shown: Vec<_> = drift(&database, &[flash], &passed, &[], &every)
+            .into_iter()
+            .filter_map(|one| match one {
+                Finding::Family { key, family, .. } => Some((family, key)),
+                _ => None,
+            })
+            .collect();
+        shown.sort();
+
+        assert_eq!(
+            shown,
+            vec![
+                (String::from("gemini"), String::from("gemini-2-old")),
+                (String::from("gemini"), String::from("gemini-4-argon")),
+            ],
+            "`gemini` is not `gemini-flash`, an older sibling counts, and a declined, \
+             image-only or family-less entry is quiet"
+        );
+    }
+
+    #[test]
+    fn drift_counts_the_family_of_an_offered_model_that_has_no_release_date() {
+        let mut undated = listing("claude-opus", "2026-09-01", RUNGS);
+        undated
+            .as_object_mut()
+            .map(|entry| entry.remove("release_date"));
+        let database = database(&json!({
+            "claude-opus-5-5": undated,
+            "claude-opus-5-4": listing("claude-opus", "2026-08-01", RUNGS),
+        }));
+
+        assert_eq!(
+            drift(&database, SHIPPED, &[], &[], &every),
+            Vec::new(),
+            "an offered entry without a date still makes its family offered"
+        );
+    }
+
+    #[test]
+    fn drift_writes_a_family_finding_as_a_lead_chosen_by_hand() {
+        let report = reported(&[Finding::Family {
+            provider: "google",
+            family: String::from("gemini"),
+            key: String::from("gemini-4-argon"),
+            released: String::from("2026-10-13"),
+        }]);
+
+        assert!(
+            report.contains(
+                "- google: `gemini-4-argon` is of the `gemini` family, which crucible does not offer (2026-10-13)."
+            ),
+            "{report}"
+        );
+        assert!(
+            report.contains("A family is a product decision"),
+            "{report}"
+        );
+    }
+
+    #[test]
     fn drift_leaves_out_what_no_coding_session_could_be_asked() {
         let image = with(
             listing("claude-opus", "2026-10-01", RUNGS),
@@ -948,15 +1074,14 @@ mod tests {
             "claude-opus-toolless": toolless,
             "claude-opus-retired": retired,
             "claude-opus-declined": listing("claude-opus", "2026-10-04", RUNGS),
-            "claude-other-5": listing("claude-other", "2026-10-05", RUNGS),
         }));
         let passed = [("anthropic", "claude-opus-declined", "fabricated")];
 
         assert_eq!(
             drift(&database, SHIPPED, &passed, &[], &every),
             Vec::new(),
-            "an image model, a model that calls no tools, a retired one, one \
-             already declined and a family crucible never offered are all quiet"
+            "an image model, a model that calls no tools, a retired one and one \
+             already declined are all quiet"
         );
     }
 
