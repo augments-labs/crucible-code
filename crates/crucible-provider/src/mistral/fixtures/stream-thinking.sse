@@ -1,0 +1,8 @@
+data: {"id":"cmpl-fixture","object":"chat.completion.chunk","model":"mistral-large-4","choices":[{"index":0,"delta":{"role":"assistant","content":[{"type":"thinking","thinking":[{"type":"text","text":"17 * 23 is 340 + 51, "}]}]},"finish_reason":null}]}
+
+data: {"id":"cmpl-fixture","object":"chat.completion.chunk","model":"mistral-large-4","choices":[{"index":0,"delta":{"content":[{"type":"thinking","thinking":[{"type":"text","text":"which is 391."}]},{"type":"text","text":"17 * 23 = "}]},"finish_reason":null}]}
+
+data: {"id":"cmpl-fixture","object":"chat.completion.chunk","model":"mistral-large-4","choices":[{"index":0,"delta":{"content":"391."},"finish_reason":"stop"}],"usage":{"prompt_tokens":1013,"total_tokens":1043,"completion_tokens":30,"prompt_tokens_details":{"cached_tokens":1008}}}
+
+data: [DONE]
+
