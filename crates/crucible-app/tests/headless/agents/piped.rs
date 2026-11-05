@@ -623,6 +623,11 @@ fn a_handover_that_fails_refuses_and_kills_the_group() -> Result<(), Failed> {
     );
     assert_eq!(handed.offered().len(), 1, "no child was handed over");
     assert_eq!(
+        handed.stopped(),
+        [true],
+        "the child was not held stopped when the handover was asked for"
+    );
+    assert_eq!(
         handed.resumed.load(std::sync::atomic::Ordering::Relaxed),
         1,
         "the terminal was not taken back once"
@@ -641,10 +646,8 @@ fn a_handover_that_fails_refuses_and_kills_the_group() -> Result<(), Failed> {
     }
     // Not held: that the command never started. It is stopped from the parent
     // once `spawn` returns, so it may start (and count itself as played) in
-    // the moment before, as the module above documents. What it must not do is
-    // run on, and that is held above: a child that was not stopped is refused
-    // as one that would not stop, never as a failed handover, and one not
-    // killed outlives the group check.
+    // the moment before. Held instead: it was stopped when the handover was
+    // asked for, and the refusal ended its group.
     Ok(())
 }
 
