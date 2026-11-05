@@ -11,8 +11,9 @@ description: >-
 The providers and their models are written by hand in
 `crates/crucible-app/src/providers.rs`, and the vendor's own documentation is
 the authority on them. The models.dev database is a lead: it says where to
-look, and is never copied in unread. No provider and no model family is added
-here; those are product decisions made before this skill is used.
+look, and is never copied in unread. No provider is added here, and a model
+family is offered only by a hand-made product decision, never because the
+database lists it.
 
 ## Read what drifted
 

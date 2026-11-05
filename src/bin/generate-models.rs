@@ -1133,6 +1133,28 @@ mod tests {
     }
 
     #[test]
+    fn drift_writes_a_revised_finding_and_says_how_a_revised_name_is_settled() {
+        let report = reported(&[Finding::Revised {
+            provider: "deepseek",
+            key: "deepseek-flash",
+            released: String::from("2026-10-17"),
+        }]);
+
+        assert!(
+            report.contains(
+                "- deepseek: `deepseek-flash` was released or revised on 2026-10-17, after its pages were read.\n"
+            ),
+            "{report}"
+        );
+        assert!(
+            report.contains(
+                "A revised name is settled by re-reading the provider's pages and moving its `reviewed` day."
+            ),
+            "{report}"
+        );
+    }
+
+    #[test]
     fn drift_leaves_out_what_no_coding_session_could_be_asked() {
         let image = with(
             listing("claude-opus", "2026-10-01", RUNGS),
