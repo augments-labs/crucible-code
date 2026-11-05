@@ -69,8 +69,9 @@ const PINGING: Duration = Duration::from_millis(250);
 /// on a case that forgot to, not a pace any case runs at.
 const HOLDING: usize = 40;
 
-/// How many hold a turn open for a case that queues five prompts behind it
-/// and then works on them: forty seconds, which a loaded machine still takes
+/// How many hold a turn open for a case with many steps to take during it, as
+/// queueing five prompts behind it and then working on them, or walking a
+/// result with the wheel: forty seconds, which a loaded machine still takes
 /// every step of such a case inside.
 const HOLDING_LONG: usize = 160;
 
