@@ -218,12 +218,13 @@ const PROVIDERS: [Served; 11] = [
         most: Some(872_000),
         fast: OpenAi::fast_at_vendor,
         fast_signed_in: Some(OpenAi::fast_signed_in),
-        reviewed: "2026-10-16",
+        reviewed: "2026-11-05",
         // The `-pro` variants are left off: they answer in one piece rather
         // than streaming, and every turn here is drawn as it arrives.
         models: &[
             Model::shown("gpt-6-astra", "GPT-6 Astra", EVERY),
             Model::new("gpt-6.1-sol", EVERY),
+            Model::new("gpt-6.1-terra", EVERY),
             Model::new("gpt-6-sol", EVERY),
             Model::new("gpt-6-luna", EVERY),
             Model::new("gpt-5.6-sol", EVERY),
@@ -355,6 +356,7 @@ impl Row {
             (Kind::Account, "openai") => Some(&[
                 "gpt-6-astra",
                 "gpt-6.1-sol",
+                "gpt-6.1-terra",
                 "gpt-6-sol",
                 "gpt-6-luna",
                 "gpt-5.6-sol",

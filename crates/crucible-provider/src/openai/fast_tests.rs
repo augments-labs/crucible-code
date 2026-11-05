@@ -71,6 +71,7 @@ fn tier_sent(endpoint: Endpoint, model: &'static str, speed: Speed) -> Option<St
 fn a_fast_request_asks_for_the_priority_tier_and_a_standard_one_names_none() {
     for model in [
         "gpt-6-astra",
+        "gpt-6.1-terra",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-5.6-luna",

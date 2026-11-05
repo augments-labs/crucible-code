@@ -98,6 +98,7 @@ ordinary startup never scrapes mutable documentation.
 | OpenAI Responses: `gpt-5.5` | implicit automatic caching; optional documented 24-hour retention | [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching) | `openai-prompt-cache-2026-08-31` |
 | Anthropic Messages: `claude-fable-5`, `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5` | top-level automatic control and up to four explicit block breakpoints; 5-minute and 1-hour classes | [Anthropic prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching), [tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching) | `anthropic-prompt-cache-2026-08-31` |
 | OpenAI Responses: `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna` | implicit automatic caching; up to four explicit input-content breakpoints on the public API | [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching) | `openai-prompt-cache-2026-10-01` |
+| OpenAI Responses: `gpt-6.1-terra` | implicit automatic caching; up to four explicit input-content breakpoints on the public API; the default 30-minute lifetime, written at 1.25x the input rate | [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching), [`gpt-6.1-terra`](https://developers.openai.com/api/docs/models/gpt-6.1-terra) | `openai-prompt-cache-2026-11-05` |
 | Anthropic Messages: `claude-opus-5-5`, `claude-sonnet-5-5` | top-level automatic control and up to four explicit block breakpoints; 5-minute and 1-hour classes | [Anthropic prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) | `anthropic-prompt-cache-2026-10-01` |
 | Anthropic Messages: `claude-haiku-5-5` | top-level automatic control and up to four explicit block breakpoints; 5-minute and 1-hour classes | [Anthropic prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) | `anthropic-prompt-cache-2026-10-16` |
 | Meta Responses: `muse-spark-1.3`, `muse-spark-1.3-contributor`, `muse-spark-1.2`, `muse-spark-1.2-contributor` | automatic prefix caching with a routing key | [Meta prompt caching](https://dev.meta.ai/docs/prompt-caching) | `meta-prompt-cache-2026-10-01` |
@@ -109,6 +110,14 @@ ordinary startup never scrapes mutable documentation.
 | MiMo Chat Completions: `mimo-v2.6-pro`, `mimo-v2.6-flash` | provider-managed caching, reported usage only | [MiMo pricing](https://mimo.mi.com/static/docs/price/pay-as-you-go.md) | `mimo-prompt-cache-2026-10-01` |
 | MiniMax Chat Completions: `MiniMax-M3`, `MiniMax-M2.7` | provider-managed caching from 512 input tokens, reported usage only | [MiniMax prompt caching](https://platform.minimax.io/docs/api-reference/text-prompt-caching) | `minimax-prompt-cache-2026-10-01` |
 | Moonshot/Kimi Chat Completions: `k3`, `k3-256k`, `kimi-for-coding`, `kimi-for-coding-highspeed` | provider-managed automatic caching after the documented prefix minimum, with a stable routing key for agent sessions | [Kimi context caching](https://platform.kimi.ai/docs/guide/use-context-caching-feature-of-kimi-api) and [Chat Completions API](https://platform.kimi.ai/docs/api/chat) | `kimi-prompt-cache-2026-08-31` |
+
+`gpt-6.1-terra` is priced at $1.00 input, $0.05 cached, $1.25 per million for
+a 30-minute cache write and $5.00 output, and OpenAI states that "Prompts with
+more than 272K input tokens are priced at 2x input and cache rates and 1.5x
+output for the full request"; the record carries both bands. The 12-hour write
+($2.50) is not asked for or priced: crucible requests the 30-minute lifetime
+only. The model's page does not say whether PDFs are accepted, so the models
+table keeps the database's text, image and PDF.
 
 The OpenAI public pricing record uses the current [OpenAI pricing](https://developers.openai.com/api/docs/pricing)
 and model-specific documentation. The Anthropic record uses the pricing table in
