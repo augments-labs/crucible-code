@@ -10,17 +10,17 @@ expression: picture
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |╭─────────────────────┬────────────────────────────────────────────────────────╮|
-|│  Providers          │  openai · ChatGPT sign-in                      7 of 43 │|
+|│  Providers          │  openai · ChatGPT sign-in                      8 of 44 │|
 |├─────────────────────┼────────────────────────────────────────────────────────┤|
-|│   All            43 │ › gpt-6-astra                            872k  fast    │|
+|│   All            44 │ › gpt-6-astra                            872k  fast    │|
 |│   Anthropic       8 │   gpt-6.1-sol                            872k  fast    │|
-|│   DeepSeek        2 │   gpt-6-sol                              872k  ← now   │|
-|│   Google          4 │   gpt-6-luna                             872k  fast    │|
-|│   Meta            5 │   gpt-5.6-sol                            872k  fast    │|
-|│   MiMo            2 │   gpt-5.6-terra                          872k  fast    │|
-|│   MiniMax         2 │   gpt-5.6-luna                           872k  fast    │|
-|│   MoonshotAI      4 │   1 more with an API key · /login                      │|
-|│ › OpenAI          7 │                                                        │|
+|│   DeepSeek        2 │   gpt-6.1-terra                          872k  fast    │|
+|│   Google          4 │   gpt-6-sol                              872k  ← now   │|
+|│   Meta            5 │   gpt-6-luna                             872k  fast    │|
+|│   MiMo            2 │   gpt-5.6-sol                            872k  fast    │|
+|│   MiniMax         2 │   gpt-5.6-terra                          872k  fast    │|
+|│   MoonshotAI      4 │   gpt-5.6-luna                           872k  fast    │|
+|│ › OpenAI          8 │   1 more with an API key · /login                      │|
 |│   Qwen            4 │                                                        │|
 |╰─────────────────────┴────────────────────────────────────────────────────────╯|
 |                                                                                |
