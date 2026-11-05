@@ -670,6 +670,11 @@ async fn a_sign_in_shows_its_link_while_it_waits_and_is_stopped_past_its_bound()
     .await
     .expect("started");
     let shown = Mutex::new(Vec::new());
+    // The bound covers the peer's own start as well as the wait for its link,
+    // and a slow start (a Windows runner's can pass half a second) leaves no
+    // link shown. The peer pauses a minute, so a bound this long still ends in
+    // the stop under test.
+    let bound = Duration::from_secs(5);
 
     let read = host
         .speak(
@@ -682,7 +687,7 @@ async fn a_sign_in_shows_its_link_while_it_waits_and_is_stopped_past_its_bound()
                     .unwrap_or_else(PoisonError::into_inner)
                     .push(link.as_str().to_owned());
             },
-            Duration::from_millis(500),
+            bound,
         )
         .await;
 
