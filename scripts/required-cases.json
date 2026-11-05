@@ -691,8 +691,7 @@
       "body_sha256": "03ab440c80c489091d11d7023bd9299d78fe0642226f30d5189c87110320e038",
       "platforms": [
         "linux",
-        "macos",
-        "windows"
+        "macos"
       ]
     },
     {
