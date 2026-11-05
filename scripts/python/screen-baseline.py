@@ -122,12 +122,11 @@ def uncommented(lines):
     kept = []
     index = 0
     while index < len(text):
-        rest = text[index:]
-        if rest.startswith("//"):
+        if text.startswith("//", index):
             end = text.find("\n", index)
             index = len(text) if end < 0 else end
             continue
-        if rest.startswith("/*"):
+        if text.startswith("/*", index):
             depth = 0
             while index < len(text):
                 if text.startswith("/*", index):
