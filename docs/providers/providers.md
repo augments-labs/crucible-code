@@ -244,13 +244,13 @@ other site makes of one.
 
 A Qwen Coding Plan or Token Plan key starts with `sk-sp-` either way, and
 nothing in it says which plan, or whether a Token Plan key is the Personal or
-the Team edition. The plans are for interactive use in a coding tool;
-Alibaba Cloud's pages say a plan's key used in a script or a backend may be
-suspended. MiniMax sells M Plan in place of Token Plan to new buyers, with one
-key prefix for both. Its M Plan page, read on 5 Nov 2026, names only
-`MiniMax-M3.1-Flash` as a text model, the released name of the model earlier
-called `MiniMax-M3.1-Flash-Preview`. Whether an M Plan key is served `MiniMax-M3` is not settled by any
-page; the vendor answers.
+the Team edition. The plans are for interactive use in a coding tool; Alibaba
+Cloud's pages say a plan's key used in a script or a backend may be suspended.
+MiniMax sells M Plan in place of Token Plan to new buyers, with one key prefix
+for both. Its M Plan page, read on 5 Nov 2026, names only `MiniMax-M3.1-Flash`
+as a text model, the released name of the model earlier called
+`MiniMax-M3.1-Flash-Preview`. Whether an M Plan key is served `MiniMax-M3` is
+not settled by any page; the vendor answers.
 
 A MiniMax key given on a Token Plan row has a plan with limits, which `/usage`
 asks MiniMax for at that row's site; the plan limits are asked for on the
