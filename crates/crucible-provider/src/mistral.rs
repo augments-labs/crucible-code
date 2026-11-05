@@ -1,9 +1,10 @@
 //! The Mistral provider, as a dialect of Chat Completions.
 //!
-//! The wire is [`crate::completions`]; what is Mistral's is here: its
-//! address, the name it is told crucible goes by, what its cache is known to
-//! do, and that its model's reasoning arrives as a thinking chunk inside the
-//! answer's content and is wanted back the same way.
+//! The wire is the crate's shared Chat Completions module, which is not
+//! public; what is Mistral's is here: its address, the name it is told
+//! crucible goes by, what its cache is known to do, and that its model's
+//! reasoning arrives as a thinking chunk inside the answer's content and is
+//! wanted back the same way.
 //!
 //! What its pages left unsaid is taken the way that asks least of it: text
 //! alone, since its reference spells a picture and a document in shapes of its
