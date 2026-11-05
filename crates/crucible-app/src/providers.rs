@@ -129,11 +129,12 @@ const PROVIDERS: [Served; 11] = [
         most: None,
         fast: Meta::fast_at_vendor,
         fast_signed_in: None,
-        reviewed: "2026-10-16",
-        // `max` on 1.3 is named by some of the vendor's pages and left out by
-        // its parameter lists, so it is not offered until a source settles it.
+        reviewed: "2026-11-05",
+        // The contributor variant stays without `max`: the reasoning page
+        // says it is not available there.
         models: &[
-            Model::new("muse-spark-1.3", UP_TO_XHIGH),
+            Model::new("muse-wonder-1.0", EVERY),
+            Model::new("muse-spark-1.3", EVERY),
             Model::new("muse-spark-1.3-contributor", UP_TO_XHIGH),
             Model::new("muse-spark-1.2", UP_TO_XHIGH),
             Model::new("muse-spark-1.2-contributor", UP_TO_XHIGH),

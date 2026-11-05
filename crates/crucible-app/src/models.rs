@@ -223,6 +223,18 @@ pub(crate) const FACTS: &[Facts] = &[
             .insert(Modality::Audio),
     },
     Facts {
+        provider: "meta",
+        model: "muse-wonder-1.0",
+        window: 1_048_576,
+        output: 131_072,
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf)
+            .insert(Modality::Video)
+            .insert(Modality::Audio),
+    },
+    Facts {
         provider: "mimo",
         model: "mimo-v2.6-flash",
         window: 1_048_576,

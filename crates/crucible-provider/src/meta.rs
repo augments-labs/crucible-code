@@ -64,22 +64,46 @@ impl Dialect for Muse {
     }
 
     fn prompt_cache(_route: (), model: &str) -> PromptCacheCapabilities {
-        let revision = match model {
-            "muse-spark-1.3" => "muse-spark-1.3",
-            "muse-spark-1.3-contributor" => "muse-spark-1.3-contributor",
-            "muse-spark-1.2" => "muse-spark-1.2",
-            "muse-spark-1.2-contributor" => "muse-spark-1.2-contributor",
+        // Each model is reviewed against the page on the day it was read: the
+        // Spark records on 2026-10-01, Muse Wonder's on 2026-11-05.
+        let (revision, reviewed, version) = match model {
+            "muse-wonder-1.0" => (
+                "muse-wonder-1.0",
+                "2026-11-05",
+                "meta-prompt-cache-2026-11-05",
+            ),
+            "muse-spark-1.3" => (
+                "muse-spark-1.3",
+                "2026-10-01",
+                "meta-prompt-cache-2026-10-01",
+            ),
+            "muse-spark-1.3-contributor" => (
+                "muse-spark-1.3-contributor",
+                "2026-10-01",
+                "meta-prompt-cache-2026-10-01",
+            ),
+            "muse-spark-1.2" => (
+                "muse-spark-1.2",
+                "2026-10-01",
+                "meta-prompt-cache-2026-10-01",
+            ),
+            "muse-spark-1.2-contributor" => (
+                "muse-spark-1.2-contributor",
+                "2026-10-01",
+                "meta-prompt-cache-2026-10-01",
+            ),
             _ => return PromptCacheCapabilities::unknown("unreviewed model"),
         };
         crate::responses::automatic(
             revision,
             PromptCacheProvenance::new(
                 "https://dev.meta.ai/docs/prompt-caching",
-                "2026-10-01",
-                "meta-prompt-cache-2026-10-01",
+                reviewed,
+                version,
             ),
-            // No smallest cached prefix is published; this assumes no hit
-            // below the floor the wire's other vendors share.
+            // No smallest cached prefix is published for any model, Muse
+            // Wonder included; this assumes no hit below the floor the wire's
+            // other vendors share.
             1_024,
         )
     }
