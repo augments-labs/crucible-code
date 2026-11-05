@@ -14,6 +14,7 @@ fn a_model_this_build_knows_starts_at_its_native_window() {
         ("anthropic", "claude-haiku-4-5", 200_000),
         ("deepseek", "deepseek-v4-pro", 1_000_000),
         ("google", "gemini-3.1-pro-preview", 1_048_576),
+        ("meta", "muse-wonder-1.0", 1_048_576),
         ("meta", "muse-spark-1.3", 1_048_576),
         ("meta", "muse-spark-1.3-contributor", 1_048_576),
         ("meta", "muse-spark-1.2", 1_048_576),
