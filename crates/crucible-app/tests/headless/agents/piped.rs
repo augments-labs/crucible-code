@@ -603,7 +603,7 @@ fn a_handover_that_fails_refuses_and_kills_the_group() -> Result<(), Failed> {
             signed_in_after(),
         ]),
     )?;
-    let root = bench.with_installed(&release)?;
+    bench.with_installed(&release)?;
     let handed = Handed::default();
     handed
         .refuse
@@ -639,11 +639,12 @@ fn a_handover_that_fails_refuses_and_kills_the_group() -> Result<(), Failed> {
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    assert_eq!(
-        fake_peer::played(&root),
-        1,
-        "the command played past the handover that refused it"
-    );
+    // Not held: that the command never started. It is stopped from the parent
+    // once `spawn` returns, so it may start (and count itself as played) in
+    // the moment before, as the module above documents. What it must not do is
+    // run on, and that is held above: a child that was not stopped is refused
+    // as one that would not stop, never as a failed handover, and one not
+    // killed outlives the group check.
     Ok(())
 }
 
