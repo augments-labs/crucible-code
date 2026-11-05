@@ -1130,6 +1130,44 @@ fn usage_printed_waits_for_the_plan_and_draws_what_it_answered() {
 }
 
 #[test]
+fn usage_printed_with_plan_windows_is_one_screen_at_each_width() {
+    // The plan answers a plan-wide weekly window and a five-hour window for
+    // one model, through the same command path the loop runs. What is held is
+    // the terminal as a reader sees it, rows and rule and blank lines
+    // together, at the width where a label stands beside its value and at the
+    // one where it stands over it.
+    for columns in [80, 40] {
+        let (mut conversation, _asked) = asking_plan();
+        let terms = plain();
+        let mut renderer = Renderer::new(Recording::new(columns, 40));
+
+        run(&mut renderer, &mut conversation, &terms, false).unwrap();
+
+        let rows = renderer.terminal().picture().rows();
+        let picture = rows
+            .iter()
+            .map(|row| row.trim_end())
+            // How long the case took is this machine's seconds; the rows
+            // around it are what is held.
+            .map(|row| {
+                let Some(label) = ["  API time", "  Wall time"]
+                    .into_iter()
+                    .find(|label| row.starts_with(label))
+                else {
+                    return row.to_owned();
+                };
+                let gap = row[label.len()..].len() - row[label.len()..].trim_start().len();
+                format!("{}Ns", &row[..label.len() + gap])
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        insta::with_settings!({snapshot_suffix => columns.to_string()}, {
+            insta::assert_snapshot!("usage_plan_windows", picture.trim_end());
+        });
+    }
+}
+
+#[test]
 fn usage_opened_again_within_a_minute_asks_nothing_and_shows_the_last_answer() {
     let (mut conversation, asked) = asking_plan();
     let terms = plain();
