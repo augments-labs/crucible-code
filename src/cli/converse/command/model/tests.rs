@@ -807,3 +807,293 @@ fn a_pick_applied_as_a_turn_ends_folds_its_refusal_at_the_whole_window() {
     );
     assert_eq!(conversation.settled().model(), "old");
 }
+
+/// A provider that keeps a persistent cache resource at the vendor and cannot
+/// confirm deleting it, so retiring that resource leaves one behind.
+///
+/// Only the lifecycle is its own; every request is answered by the script it
+/// wraps.
+struct Retaining(Script);
+
+impl crucible_models::Provider for Retaining {
+    fn name(&self) -> &'static str {
+        self.0.name()
+    }
+
+    fn spells(&self) -> crucible_types::Modalities {
+        self.0.spells()
+    }
+
+    fn prompt_cache_capabilities(&self, _model: &str) -> crucible_models::PromptCacheCapabilities {
+        crucible_models::PromptCacheCapabilities::supported(
+            "cli-retaining-fixture-v1",
+            Some("cli-retaining-revision-v1"),
+            crucible_models::PromptCacheProvenance::new(
+                "https://provider.invalid/persistent-cache",
+                "2026-08-31",
+                "cli-retaining-fixture-v1",
+            ),
+            crucible_models::StatefulTransportCapability::Unsupported,
+            &[
+                crucible_models::PromptCacheMechanismCapability::persistent_content(
+                    0,
+                    &[crucible_models::PromptCacheContent::Text],
+                ),
+            ],
+            crucible_types::PromptCacheUsageReporting::ReadAndWriteTokens,
+        )
+    }
+
+    fn prompt_cache_route(&self) -> crucible_models::PromptCacheRoute<'_> {
+        self.0.prompt_cache_route()
+    }
+
+    fn prompt_cache_encoding(
+        &self,
+        request: &crucible_models::Request<'_>,
+    ) -> crucible_types::PromptCacheEncoding {
+        if request
+            .prompt_cache
+            .and_then(|cache| cache.resource)
+            .is_some()
+        {
+            crucible_types::PromptCacheEncoding::PersistentResourceReferenced
+        } else {
+            crucible_types::PromptCacheEncoding::NoControlIntended
+        }
+    }
+
+    fn prompt_cache_resources(&self) -> Option<&dyn crucible_models::PromptCacheResourceLifecycle> {
+        Some(self)
+    }
+
+    fn stream<'a>(
+        &'a self,
+        request: crucible_models::Request<'a>,
+        cancel: &'a crucible_runtime::Cancel,
+    ) -> crucible_runtime::BoxFuture<
+        'a,
+        Result<Box<dyn crucible_models::DeltaStream>, crucible_models::ProviderError>,
+    > {
+        self.0.stream(request, cancel)
+    }
+}
+
+impl crucible_models::PromptCacheResourceLifecycle for Retaining {
+    fn create<'a>(
+        &'a self,
+        _request: crucible_models::PromptCacheResourceCreate<'a>,
+        _cancel: &'a crucible_runtime::Cancel,
+    ) -> crucible_runtime::BoxFuture<
+        'a,
+        Result<
+            crucible_models::PromptCacheResourceCreated,
+            crucible_types::PromptCacheResourceError,
+        >,
+    > {
+        Box::pin(async {
+            Ok(crucible_models::PromptCacheResourceCreated {
+                handle: crucible_types::PromptCacheResourceHandle::new("retained-at-the-vendor")
+                    .expect("a bounded handle"),
+                expires_at: u64::MAX,
+            })
+        })
+    }
+
+    fn resolve<'a>(
+        &'a self,
+        record: &'a crucible_types::PromptCacheResourceRecord,
+        _deadline: crucible_models::PromptCacheResourceDeadline,
+        _cancel: &'a crucible_runtime::Cancel,
+    ) -> crucible_runtime::BoxFuture<
+        'a,
+        Result<
+            crucible_models::PromptCacheResourceRemote,
+            crucible_types::PromptCacheResourceError,
+        >,
+    > {
+        Box::pin(async {
+            Ok(crucible_models::PromptCacheResourceRemote {
+                handle: record.handle().cloned(),
+                state: crucible_types::PromptCacheResourceState::Ready,
+                expires_at: record.expires_at(),
+            })
+        })
+    }
+
+    fn renew<'a>(
+        &'a self,
+        record: &'a crucible_types::PromptCacheResourceRecord,
+        _retention: crucible_types::PromptCacheRetention,
+        deadline: crucible_models::PromptCacheResourceDeadline,
+        cancel: &'a crucible_runtime::Cancel,
+    ) -> crucible_runtime::BoxFuture<
+        'a,
+        Result<
+            crucible_models::PromptCacheResourceRemote,
+            crucible_types::PromptCacheResourceError,
+        >,
+    > {
+        self.resolve(record, deadline, cancel)
+    }
+
+    /// The vendor never says whether the delete reached it.
+    fn delete<'a>(
+        &'a self,
+        _record: &'a crucible_types::PromptCacheResourceRecord,
+        _deadline: crucible_models::PromptCacheResourceDeadline,
+        _cancel: &'a crucible_runtime::Cancel,
+    ) -> crucible_runtime::BoxFuture<
+        'a,
+        Result<
+            crucible_models::PromptCacheResourceRemote,
+            crucible_types::PromptCacheResourceError,
+        >,
+    > {
+        Box::pin(async {
+            Err(crucible_types::PromptCacheResourceError::Ambiguous(
+                crucible_types::PromptCacheResourceOperation::Delete,
+            ))
+        })
+    }
+
+    fn reconcile<'a>(
+        &'a self,
+        record: &'a crucible_types::PromptCacheResourceRecord,
+        deadline: crucible_models::PromptCacheResourceDeadline,
+        cancel: &'a crucible_runtime::Cancel,
+    ) -> crucible_runtime::BoxFuture<
+        'a,
+        Result<
+            crucible_models::PromptCacheResourceRemote,
+            crucible_types::PromptCacheResourceError,
+        >,
+    > {
+        self.resolve(record, deadline, cancel)
+    }
+
+    fn inspect<'a>(
+        &'a self,
+        record: &'a crucible_types::PromptCacheResourceRecord,
+        deadline: crucible_models::PromptCacheResourceDeadline,
+        cancel: &'a crucible_runtime::Cancel,
+    ) -> crucible_runtime::BoxFuture<
+        'a,
+        Result<
+            crucible_models::PromptCacheResourceRemote,
+            crucible_types::PromptCacheResourceError,
+        >,
+    > {
+        self.resolve(record, deadline, cancel)
+    }
+}
+
+/// A conversation that has taken one turn on a provider keeping a persistent
+/// cache resource, so that leaving its model means retiring that resource.
+fn retaining(sample: &Sample) -> Conversation {
+    use crate::cli::fake::Awaited as _;
+
+    struct Nobody;
+
+    impl crucible_tools::Ask for Nobody {
+        fn ask<'a>(
+            &'a mut self,
+            _call: &'a crucible_types::ToolCall,
+            _sensitivity: &'a crucible_tools::Sensitivity,
+        ) -> crucible_runtime::BoxFuture<'a, (crucible_tools::Verdict, crucible_tools::Remember)>
+        {
+            Box::pin(async {
+                (
+                    crucible_tools::Verdict::Deny,
+                    crucible_tools::Remember::Never,
+                )
+            })
+        }
+    }
+
+    let session = Arc::new(Session::nowhere());
+    let mut runner = crucible_runner::Runner::new(
+        Box::new(Retaining(Script::new(vec![vec![
+            crucible_models::Delta::Text("done".into()),
+            crucible_models::Delta::Stopped(crucible_types::StopReason::Yielded),
+        ]]))),
+        Tools::new(),
+        Agent::new(
+            AgentId::new("test"),
+            RunnerModel {
+                name: "old".into(),
+                max_tokens: 1024,
+                window: Some(200_000),
+                accepts: None,
+                effort: None,
+            },
+        ),
+        crucible_context::ContextInputs::new(std::env::temp_dir()),
+        session.clone(),
+    )
+    .with_prompt_cache_store(crucible_session::FilePromptCacheResourceStore::in_home(
+        &sample.root(),
+    ))
+    .under(crucible_runner::RunPolicy {
+        prompt_cache: crucible_types::PromptCachePolicy::default()
+            .with_persistent_resources(crucible_types::PromptCachePersistentMode::Create),
+        ..crucible_runner::RunPolicy::default()
+    });
+    runner.telling("stable fixture instructions");
+
+    let (events, _seen) = std::sync::mpsc::channel::<crucible_runner::EventEnvelope>();
+    let (cancel, steer, aside) = (
+        crucible_runtime::Cancel::new(),
+        crucible_runtime::Steer::new(),
+        crucible_runtime::Aside::new(),
+    );
+    let run = runner.starting(&events, &cancel, &steer, &aside);
+    runner
+        .turn("go", Box::new([]), &mut Nobody, &run)
+        .awaited()
+        .expect("the turn to finish");
+    assert!(
+        runner.prompt_cache_retirement_pending(),
+        "the turn left no resource to retire"
+    );
+    drop(run);
+
+    Conversation::recording(session, Some("anthropic"), |_| runner)
+}
+
+#[test]
+fn a_pick_applied_as_a_turn_ends_says_what_its_cache_retirement_retained() {
+    // The retirement runs on the real runner against a store on disk, and the
+    // pick is applied the way the loop applies one made over a turn. The
+    // vendor never confirms the delete, so the resource stays behind, and the
+    // line saying so is drawn from the left edge at the window's forty columns.
+    let sample = Sample::new("model-applied-retained");
+    let terms = keeping(&sample);
+    let mut conversation = retaining(&sample);
+    let mut renderer = Renderer::new(Recording::new(40, 40));
+    let sonnet = row("anthropic", "claude-sonnet-5");
+
+    super::apply(
+        &mut renderer,
+        &mut conversation,
+        &terms,
+        sonnet.provider,
+        "claude-sonnet-5",
+    )
+    .expect("the pick to be applied");
+
+    let rows = renderer.terminal().picture().rows();
+    let opened = rows
+        .iter()
+        .position(|row| row.starts_with("! cache retirement"))
+        .unwrap_or_else(|| panic!("nothing was said of the retirement in {rows:#?}"));
+    assert_eq!(
+        rows.get(opened..opened + 2).unwrap_or_default(),
+        [
+            "! cache retirement retained 1 ambiguous",
+            "and 0 orphaned resource(s)",
+        ],
+        "{rows:#?}"
+    );
+    assert_eq!(conversation.settled().model(), "claude-sonnet-5");
+}
