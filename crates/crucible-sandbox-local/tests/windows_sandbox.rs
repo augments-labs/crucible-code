@@ -65,16 +65,15 @@ const WHOAMI: &str = "CRUCIBLE_WINDOWS_SANDBOX_TEST_WHOAMI";
 // seconds. Keep each test's own deadline longer so a timed-out setup wait is
 // reported as the command's result instead of being hidden by this harness.
 // The broker does not bound the sandbox account's logon or its wait for the
-// process, so the first launch, which carries a one-off cost, gets
-// `FIRST_LAUNCH_WAIT` instead.
+// process, so the first launch gets `FIRST_LAUNCH_WAIT` instead.
 const COMMAND_WAIT: Duration = Duration::from_secs(45);
 
-// This harness pays for the first native launch once per test binary. In every
-// passing sample it finished within 13.7 to 23.4 seconds of the binary
-// starting, against about 0.2 to 0.65 seconds for each launch after it, and it
-// once did not finish within `COMMAND_WAIT`. Nothing in the broker bounds it,
-// so this budget is its only limit: about five times the slowest passing
-// sample, while a launch that hangs still fails within two minutes.
+// This harness takes the first native launch once per test binary. It took 13.7
+// to 23.4 seconds while it built the account's profile, and once did not finish
+// within `COMMAND_WAIT`; setup builds that profile now, and it takes under a
+// second. Nothing in the broker bounds it, so this budget is its only limit:
+// enough for a stalled runner, while a launch that hangs still fails within two
+// minutes.
 const FIRST_LAUNCH_WAIT: Duration = Duration::from_mins(2);
 
 // These independent checks share one machine-wide setup lock and account.
@@ -126,8 +125,8 @@ impl Fixture {
         fixture
     }
 
-    // Pays the one-off cost of the first native launch before any test's own
-    // command runs, so that cost is measured against its own budget.
+    // Takes the first native launch before any test's own command runs, so
+    // whatever is slow about it is measured against its own budget.
     fn first_launch(&self) {
         let (status, _, errors) = finish(
             start(

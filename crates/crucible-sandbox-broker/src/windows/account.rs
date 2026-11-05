@@ -4,7 +4,6 @@ use std::io;
 use std::ptr::NonNull;
 use std::ptr::{null, null_mut};
 
-use windows_sys::Win32::Foundation::CloseHandle;
 use windows_sys::Win32::NetworkManagement::NetManagement::{
     NERR_Success, NERR_UserExists, NERR_UserNotFound, NetApiBufferFree, NetUserAdd, NetUserDel,
     NetUserGetInfo, NetUserSetInfo, UF_ACCOUNTDISABLE, UF_DONT_EXPIRE_PASSWD, UF_NORMAL_ACCOUNT,
@@ -13,9 +12,11 @@ use windows_sys::Win32::NetworkManagement::NetManagement::{
 use windows_sys::Win32::Security::{
     LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, LogonUserW,
 };
+use windows_sys::Win32::System::GroupPolicy::PI_NOUI;
+use windows_sys::Win32::UI::Shell::{LoadUserProfileW, PROFILEINFOW, UnloadUserProfile};
 
 use super::secret::SecretWide;
-use super::winutil::{account_sid, code_error, wide};
+use super::winutil::{OwnedHandle, account_sid, code_error, wide};
 
 const REQUIRED_FLAGS: u32 =
     UF_SCRIPT | UF_NORMAL_ACCOUNT | UF_DONT_EXPIRE_PASSWD | UF_NOT_DELEGATED;
@@ -102,6 +103,40 @@ pub(super) fn probe(name: &str, expected_sid: &[u8], password: &SecretWide) -> i
             "Windows sandbox account SID does not match setup state",
         ));
     }
+    logon(name, password)?;
+    Ok(())
+}
+
+/// Makes the account's profile exist before anyone waits on a launch.
+///
+/// Every launch logs on with its profile, and Windows builds that profile the
+/// first time it is asked for: over 23 seconds on a CI runner, against about
+/// 0.15 seconds for each logon after it. Setup has someone waiting for it; a
+/// launch holds the setup lock while it builds, and other launches wait on that
+/// lock for 30 seconds at most.
+pub(super) fn create_profile(name: &str, password: &SecretWide) -> io::Result<()> {
+    let token = logon(name, password)?;
+    let mut name = wide(name);
+    let mut profile = PROFILEINFOW {
+        dwSize: u32::try_from(size_of::<PROFILEINFOW>())
+            .map_err(|_| io::Error::other("invalid Windows profile structure size"))?,
+        dwFlags: PI_NOUI,
+        lpUserName: name.as_mut_ptr(),
+        ..PROFILEINFOW::default()
+    };
+    // SAFETY: `token` is a live logon token, and `name` outlives this
+    // synchronous call through the structure that points at it.
+    if unsafe { LoadUserProfileW(token.get(), &raw mut profile) } == 0 {
+        return Err(super::winutil::error("LoadUserProfileW"));
+    }
+    // SAFETY: the same token and the profile handle its load just returned.
+    if unsafe { UnloadUserProfile(token.get(), profile.hProfile) } == 0 {
+        return Err(super::winutil::error("UnloadUserProfile"));
+    }
+    Ok(())
+}
+
+fn logon(name: &str, password: &SecretWide) -> io::Result<OwnedHandle> {
     let name = wide(name);
     let domain = wide(".");
     let mut token = null_mut();
@@ -120,11 +155,7 @@ pub(super) fn probe(name: &str, expected_sid: &[u8], password: &SecretWide) -> i
     if logged_on == 0 {
         return Err(super::winutil::error("LogonUserW"));
     }
-    // SAFETY: successful `LogonUserW` returned ownership of this token handle.
-    unsafe {
-        CloseHandle(token);
-    }
-    Ok(())
+    OwnedHandle::new(token, "LogonUserW token")
 }
 
 pub(super) fn disable(name: &str) -> io::Result<()> {
