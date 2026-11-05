@@ -54,8 +54,8 @@ while (($#)); do
     --only | --skip | --partition)
         (($# > 1)) || usage
         case $1 in
-        --only) IFS=, read -ra only <<<"$2" && named "${only[@]}" ;;
-        --skip) IFS=, read -ra skip <<<"$2" && named "${skip[@]}" ;;
+        --only) IFS=, read -ra only <<<"$2" && named ${only[@]+"${only[@]}"} ;;
+        --skip) IFS=, read -ra skip <<<"$2" && named ${skip[@]+"${skip[@]}"} ;;
         --partition) partition=(--partition "$2") ;;
         esac
         ;;
@@ -65,18 +65,18 @@ while (($#)); do
 done
 ((${#only[@]} == 0 || ${#skip[@]} == 0)) || usage
 # A part of the suite says nothing about any other section, so it runs alone.
-if ((${#partition[@]})) && [[ "${only[*]}" != tests ]]; then
+if ((${#partition[@]})) && [[ ${only[*]+"${only[*]}"} != tests ]]; then
     printf 'rust-checks: --partition runs part of the suite, so it needs --only tests\n' >&2
     exit 2
 fi
 
 wanted() {
     local one
-    for one in "${skip[@]}"; do
+    for one in ${skip[@]+"${skip[@]}"}; do
         [[ $one == "$1" ]] && return 1
     done
     ((${#only[@]} == 0)) && return 0
-    for one in "${only[@]}"; do
+    for one in ${only[@]+"${only[@]}"}; do
         [[ $one == "$1" ]] && return 0
     done
     return 1
@@ -187,7 +187,7 @@ check_tests() {
     if ! cargo nextest --version >/dev/null 2>&1; then
         printf '    FAIL cargo-nextest is not installed; CONTRIBUTING.md says how to install it\n'
         failed=1
-    elif ! cargo nextest run "${TEST_SELECTION[@]}" "${partition[@]}" --no-fail-fast; then
+    elif ! cargo nextest run "${TEST_SELECTION[@]}" ${partition[@]+"${partition[@]}"} --no-fail-fast; then
         printf '    FAIL read the assertion, not the count\n'
         failed=1
     fi
