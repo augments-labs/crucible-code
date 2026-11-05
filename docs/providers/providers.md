@@ -170,7 +170,7 @@ This build serves eleven providers. The name in the first column is what
 | `anthropic` | Anthropic | `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5-5`, `claude-opus-5`, `claude-sonnet-5-5`, `claude-sonnet-5`, `claude-haiku-5-5`: all five; `claude-haiku-4-5`: none | `ANTHROPIC_API_KEY` |
 | `deepseek` | DeepSeek | `deepseek-flash`, `deepseek-v4-pro`: low, high, max | `DEEPSEEK_API_KEY` |
 | `google` | Google | `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-pro-preview`: low, medium, high | `GEMINI_API_KEY` |
-| `meta` | Meta | `muse-spark-1.3`, `muse-spark-1.3-contributor`, `muse-spark-1.2`, `muse-spark-1.2-contributor`: low, medium, high, xhigh | `META_API_KEY` |
+| `meta` | Meta | `muse-wonder-1.0`, `muse-spark-1.3`: all five; `muse-spark-1.3-contributor`, `muse-spark-1.2`, `muse-spark-1.2-contributor`: low, medium, high, xhigh | `META_API_KEY` |
 | `mimo` | MiMo | `mimo-v2.6-pro`, `mimo-v2.6-flash`: none | `MIMO_API_KEY` |
 | `minimax` | MiniMax | `MiniMax-M3`, `MiniMax-M2.7`: none | `MINIMAX_API_KEY` |
 | `moonshot` | MoonshotAI | `k3`, `k3-256k`, `kimi-for-coding`, `kimi-for-coding-highspeed`: low, high, max | `MOONSHOT_API_KEY` |
@@ -181,7 +181,12 @@ This build serves eleven providers. The name in the first column is what
 
 The two Meta models whose names end in `-contributor` are cheaper because Meta
 may train on what is sent to them; crucible asks before the first one is
-chosen or sent to, and the standard two are not asked about. See [content
+chosen or sent to, and the standard three are not asked about. `muse-wonder-1.0`
+costs $4 per million input tokens, $0.20 cached and $20 output, against
+$1.25, $0.15 and $4.25 for `muse-spark-1.3` (Meta's pricing page, read 5 Nov
+2026). `muse-wonder-full-1.0`, which Meta serves only inside Muse Code on its
+Power and Maximum plans, is not offered; `max` on `muse-wonder-1.0` does not
+select it. See [content
 use](content-use.md).
 
 Meta and xAI are spoken to over the Responses protocol, the other five vendors
@@ -217,7 +222,7 @@ xAI.
 | Qwen Token Plan · alibabacloud.com | subscription | start `sk-sp-` | `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` | `qwen3.8-max`, `qwen3.8-flash`, `qwen3.7-plus` |
 | Qwen Token Plan · aliyun.com | subscription | start `sk-sp-` | `https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1` | `qwen3.8-max`, `qwen3.8-flash`, `qwen3.7-plus` |
 | DeepSeek | API key | | `https://api.deepseek.com` | both |
-| Meta | API key | | `https://api.meta.ai/v1` | all four |
+| Meta | API key | | `https://api.meta.ai/v1` | all five |
 | MiMo | API key | never start `tp-` or `ttp-` | `https://api.xiaomimimo.com/v1` | both |
 | MiniMax · minimax.io | API key | start `sk-api-` | `https://api.minimax.io/v1` | both |
 | MiniMax · minimaxi.com | API key | start `sk-api-` | `https://api.minimax.cn/v1` | both |
@@ -278,8 +283,11 @@ choice that asks least of it, and this says which fact it was.
 
 - **Meta.** Web search through `web_search`, and no fetch: Meta serves none.
   Provider-managed caching. No fast form: Meta's `service_tier` field has no
-  stated price, speed or behaviour. `max` is not offered on
-  `muse-spark-1.3`, because Meta's pages disagree on whether it takes one.
+  stated price, speed or behaviour. `max` is offered on `muse-wonder-1.0` and
+  `muse-spark-1.3`, where Meta's reasoning page says it is supported, and not
+  on the contributor models, where the same page says it is not available.
+  Meta's smallest cached prefix is published for no model, `muse-wonder-1.0`
+  included, so the 1,024-token floor the wire's other vendors share is assumed.
   What a failed `web_search` call carries is not documented.
 - **xAI.** Web search through `web_search`, and no fetch: xAI's search item
   documents no action that opens one page. Provider-managed caching. No fast

@@ -10,3 +10,10 @@ with nothing added or changed.
 - `error-400-reasoning-order.json`: "Common issues > Invalid conversation
   structure".
 - `error-400-validation.json`: "Error response format".
+
+No fixture comes from the pages below, which were read 2026-11-05 for the
+per-model prompt cache record in `meta.rs` and the offered rungs:
+https://dev.meta.ai/docs/prompt-caching (prefix caching, `cached_tokens`, and
+no smallest cached prefix for any model), https://dev.meta.ai/docs/models,
+https://dev.meta.ai/docs/pricing-rate-limits and
+https://dev.meta.ai/docs/reasoning.
