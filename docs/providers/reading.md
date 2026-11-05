@@ -12,7 +12,7 @@ here is whatever that table said when this build was made.
 | `deepseek` | `deepseek-flash` | text, pictures |
 | `deepseek` | `deepseek-v4-pro` | text |
 | `google` | `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-pro-preview` | text, pictures, PDFs, audio, video |
-| `meta` | `muse-spark-1.3`, `muse-spark-1.3-contributor`, `muse-spark-1.2`, `muse-spark-1.2-contributor` | text, pictures, PDFs, audio, video |
+| `meta` | `muse-wonder-1.0`, `muse-spark-1.3`, `muse-spark-1.3-contributor`, `muse-spark-1.2`, `muse-spark-1.2-contributor` | text, pictures, PDFs, audio, video |
 | `mimo` | `mimo-v2.6-pro`, `mimo-v2.6-flash` | text, pictures, audio, video |
 | `minimax` | `MiniMax-M3` | text, pictures, video |
 | `minimax` | `MiniMax-M2.7` | text |

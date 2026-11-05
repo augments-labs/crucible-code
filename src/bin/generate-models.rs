@@ -125,6 +125,7 @@ const OFFERED: &[Offer] = &[
     ),
     ("deepseek", "deepseek-flash", Some("deepseek-flash"), None),
     ("deepseek", "deepseek-v4-pro", Some("deepseek-v4-pro"), None),
+    ("meta", "muse-wonder-1.0", Some("muse-wonder-1.0"), None),
     ("meta", "muse-spark-1.3", Some("muse-spark-1.3"), None),
     (
         "meta",
@@ -181,8 +182,8 @@ const PASSED: &[(&str, &str, &str)] = &[
     ),
     (
         "meta",
-        "muse-wonder-1.0",
-        "a preview whose terms on what Meta does with what is sent have not been read",
+        "muse-wonder-full-1.0",
+        "served only inside Muse Code on the Power and Maximum plans, not on the Model API; `max` on muse-wonder-1.0 does not select it",
     ),
     (
         "zai",
@@ -224,11 +225,7 @@ const PASSED: &[(&str, &str, &str)] = &[
 
 /// Offered models whose rungs crucible keeps apart from the database's, and
 /// why: the vendor's own pages are the authority, and the database is not.
-const KEPT: &[(&str, &str, &str)] = &[(
-    "meta",
-    "muse-spark-1.3",
-    "Meta's parameter lists leave out the max some of its pages name, so it is not offered until a source settles it",
-)];
+const KEPT: &[(&str, &str, &str)] = &[];
 
 /// The table this writes.
 const TABLE: &str = "crates/crucible-app/src/models.rs";
