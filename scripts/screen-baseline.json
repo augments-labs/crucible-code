@@ -1,7 +1,7 @@
 {
   "harness": {
     "tests/whole_screen/screen.rs": "50ba111632e53d8a38402f258586548babe76be99832fbea1aa141d582323852",
-    "tests/whole_screen/vendor.rs": "47b1c989828849cf2b712646681e350c048b59fe1fbc2b8838bfb3663db6dd3c",
+    "tests/whole_screen/vendor.rs": "e0a073bccef228848c35dc9968f2ba4e34e6911d22f9996de65d287053b76d60",
     "tests/whole_screen/watched.rs": "8f820968049de75f151a8a0b21025e0c000d46ef487f25a0c5ea986cc71b2a98"
   },
   "captures": [
