@@ -6546,9 +6546,15 @@ fn transcript_tables_40_fullscreen() {
 #[test]
 fn transcript_tables_40_native() {
     // The same answer where the terminal keeps the scrollback and crucible
-    // draws at the foot of the buffer.
+    // draws at the foot of the buffer, in colour so the reader draws it.
     let vendor = Vendor::answering(transcript::said("tables"));
-    let mut window = Watched::native("transcript-tables-40-native", 40, 97, &vendor);
+    let mut window = Watched::drawn_in_colour(
+        "transcript-tables-40-native",
+        (40, 97),
+        &vendor,
+        None,
+        ("unicode", "native", Profile::default()),
+    );
     window.types_until(transcript::ASK, transcript::END);
 
     window.assert_never_alternate();
@@ -6574,9 +6580,15 @@ fn transcript_tables_80_fullscreen() {
 #[test]
 fn transcript_tables_80_native() {
     // The same answer where the terminal keeps the scrollback and crucible
-    // draws at the foot of the buffer.
+    // draws at the foot of the buffer, in colour so the reader draws it.
     let vendor = Vendor::answering(transcript::said("tables"));
-    let mut window = Watched::native("transcript-tables-80-native", 80, 66, &vendor);
+    let mut window = Watched::drawn_in_colour(
+        "transcript-tables-80-native",
+        (80, 66),
+        &vendor,
+        None,
+        ("unicode", "native", Profile::default()),
+    );
     window.types_until(transcript::ASK, transcript::END);
 
     window.assert_never_alternate();
@@ -6602,9 +6614,15 @@ fn transcript_tables_120_fullscreen() {
 #[test]
 fn transcript_tables_120_native() {
     // The same answer where the terminal keeps the scrollback and crucible
-    // draws at the foot of the buffer.
+    // draws at the foot of the buffer, in colour so the reader draws it.
     let vendor = Vendor::answering(transcript::said("tables"));
-    let mut window = Watched::native("transcript-tables-120-native", 120, 60, &vendor);
+    let mut window = Watched::drawn_in_colour(
+        "transcript-tables-120-native",
+        (120, 60),
+        &vendor,
+        None,
+        ("unicode", "native", Profile::default()),
+    );
     window.types_until(transcript::ASK, transcript::END);
 
     window.assert_never_alternate();
@@ -6630,9 +6648,15 @@ fn transcript_rules_80_fullscreen() {
 #[test]
 fn transcript_rules_80_native() {
     // The same answer where the terminal keeps the scrollback and crucible
-    // draws at the foot of the buffer.
+    // draws at the foot of the buffer, in colour so the reader draws it.
     let vendor = Vendor::answering(transcript::said("rules"));
-    let mut window = Watched::native("transcript-rules-80-native", 80, 42, &vendor);
+    let mut window = Watched::drawn_in_colour(
+        "transcript-rules-80-native",
+        (80, 42),
+        &vendor,
+        None,
+        ("unicode", "native", Profile::default()),
+    );
     window.types_until(transcript::ASK, transcript::END);
 
     window.assert_never_alternate();
@@ -6658,9 +6682,15 @@ fn transcript_lists_80_fullscreen() {
 #[test]
 fn transcript_lists_80_native() {
     // The same answer where the terminal keeps the scrollback and crucible
-    // draws at the foot of the buffer.
+    // draws at the foot of the buffer, in colour so the reader draws it.
     let vendor = Vendor::answering(transcript::said("lists"));
-    let mut window = Watched::native("transcript-lists-80-native", 80, 39, &vendor);
+    let mut window = Watched::drawn_in_colour(
+        "transcript-lists-80-native",
+        (80, 39),
+        &vendor,
+        None,
+        ("unicode", "native", Profile::default()),
+    );
     window.types_until(transcript::ASK, transcript::END);
 
     window.assert_never_alternate();
@@ -6686,9 +6716,15 @@ fn transcript_quotes_80_fullscreen() {
 #[test]
 fn transcript_quotes_80_native() {
     // The same answer where the terminal keeps the scrollback and crucible
-    // draws at the foot of the buffer.
+    // draws at the foot of the buffer, in colour so the reader draws it.
     let vendor = Vendor::answering(transcript::said("quotes"));
-    let mut window = Watched::native("transcript-quotes-80-native", 80, 35, &vendor);
+    let mut window = Watched::drawn_in_colour(
+        "transcript-quotes-80-native",
+        (80, 35),
+        &vendor,
+        None,
+        ("unicode", "native", Profile::default()),
+    );
     window.types_until(transcript::ASK, transcript::END);
 
     window.assert_never_alternate();
@@ -6714,9 +6750,15 @@ fn transcript_code_80_fullscreen() {
 #[test]
 fn transcript_code_80_native() {
     // The same answer where the terminal keeps the scrollback and crucible
-    // draws at the foot of the buffer.
+    // draws at the foot of the buffer, in colour so the reader draws it.
     let vendor = Vendor::answering(transcript::said("code"));
-    let mut window = Watched::native("transcript-code-80-native", 80, 43, &vendor);
+    let mut window = Watched::drawn_in_colour(
+        "transcript-code-80-native",
+        (80, 43),
+        &vendor,
+        None,
+        ("unicode", "native", Profile::default()),
+    );
     window.types_until(transcript::ASK, transcript::END);
 
     window.assert_never_alternate();
@@ -6742,9 +6784,15 @@ fn transcript_headings_80_fullscreen() {
 #[test]
 fn transcript_headings_80_native() {
     // The same answer where the terminal keeps the scrollback and crucible
-    // draws at the foot of the buffer.
+    // draws at the foot of the buffer, in colour so the reader draws it.
     let vendor = Vendor::answering(transcript::said("headings"));
-    let mut window = Watched::native("transcript-headings-80-native", 80, 43, &vendor);
+    let mut window = Watched::drawn_in_colour(
+        "transcript-headings-80-native",
+        (80, 43),
+        &vendor,
+        None,
+        ("unicode", "native", Profile::default()),
+    );
     window.types_until(transcript::ASK, transcript::END);
 
     window.assert_never_alternate();
@@ -6770,9 +6818,15 @@ fn transcript_alerts_80_fullscreen() {
 #[test]
 fn transcript_alerts_80_native() {
     // The same answer where the terminal keeps the scrollback and crucible
-    // draws at the foot of the buffer.
+    // draws at the foot of the buffer, in colour so the reader draws it.
     let vendor = Vendor::answering(transcript::said("alerts"));
-    let mut window = Watched::native("transcript-alerts-80-native", 80, 43, &vendor);
+    let mut window = Watched::drawn_in_colour(
+        "transcript-alerts-80-native",
+        (80, 43),
+        &vendor,
+        None,
+        ("unicode", "native", Profile::default()),
+    );
     window.types_until(transcript::ASK, transcript::END);
 
     window.assert_never_alternate();
@@ -6798,9 +6852,15 @@ fn transcript_images_80_fullscreen() {
 #[test]
 fn transcript_images_80_native() {
     // The same answer where the terminal keeps the scrollback and crucible
-    // draws at the foot of the buffer.
+    // draws at the foot of the buffer, in colour so the reader draws it.
     let vendor = Vendor::answering(transcript::said("images"));
-    let mut window = Watched::native("transcript-images-80-native", 80, 36, &vendor);
+    let mut window = Watched::drawn_in_colour(
+        "transcript-images-80-native",
+        (80, 36),
+        &vendor,
+        None,
+        ("unicode", "native", Profile::default()),
+    );
     window.types_until(transcript::ASK, transcript::END);
 
     window.assert_never_alternate();
@@ -6826,9 +6886,15 @@ fn transcript_notes_80_fullscreen() {
 #[test]
 fn transcript_notes_80_native() {
     // The same answer where the terminal keeps the scrollback and crucible
-    // draws at the foot of the buffer.
+    // draws at the foot of the buffer, in colour so the reader draws it.
     let vendor = Vendor::answering(transcript::said("notes"));
-    let mut window = Watched::native("transcript-notes-80-native", 80, 42, &vendor);
+    let mut window = Watched::drawn_in_colour(
+        "transcript-notes-80-native",
+        (80, 42),
+        &vendor,
+        None,
+        ("unicode", "native", Profile::default()),
+    );
     window.types_until(transcript::ASK, transcript::END);
 
     window.assert_never_alternate();
@@ -6854,9 +6920,15 @@ fn transcript_links_80_fullscreen() {
 #[test]
 fn transcript_links_80_native() {
     // The same answer where the terminal keeps the scrollback and crucible
-    // draws at the foot of the buffer.
+    // draws at the foot of the buffer, in colour so the reader draws it.
     let vendor = Vendor::answering(transcript::said("links"));
-    let mut window = Watched::native("transcript-links-80-native", 80, 48, &vendor);
+    let mut window = Watched::drawn_in_colour(
+        "transcript-links-80-native",
+        (80, 48),
+        &vendor,
+        None,
+        ("unicode", "native", Profile::default()),
+    );
     window.types_until(transcript::ASK, transcript::END);
 
     window.assert_never_alternate();
@@ -6882,9 +6954,15 @@ fn transcript_inline_80_fullscreen() {
 #[test]
 fn transcript_inline_80_native() {
     // The same answer where the terminal keeps the scrollback and crucible
-    // draws at the foot of the buffer.
+    // draws at the foot of the buffer, in colour so the reader draws it.
     let vendor = Vendor::answering(transcript::said("inline"));
-    let mut window = Watched::native("transcript-inline-80-native", 80, 46, &vendor);
+    let mut window = Watched::drawn_in_colour(
+        "transcript-inline-80-native",
+        (80, 46),
+        &vendor,
+        None,
+        ("unicode", "native", Profile::default()),
+    );
     window.types_until(transcript::ASK, transcript::END);
 
     window.assert_never_alternate();
@@ -6910,9 +6988,15 @@ fn transcript_math_40_fullscreen() {
 #[test]
 fn transcript_math_40_native() {
     // The same answer where the terminal keeps the scrollback and crucible
-    // draws at the foot of the buffer.
+    // draws at the foot of the buffer, in colour so the reader draws it.
     let vendor = Vendor::answering(transcript::said("math"));
-    let mut window = Watched::native("transcript-math-40-native", 40, 63, &vendor);
+    let mut window = Watched::drawn_in_colour(
+        "transcript-math-40-native",
+        (40, 63),
+        &vendor,
+        None,
+        ("unicode", "native", Profile::default()),
+    );
     window.types_until(transcript::ASK, transcript::END);
 
     window.assert_never_alternate();
@@ -6938,9 +7022,15 @@ fn transcript_math_80_fullscreen() {
 #[test]
 fn transcript_math_80_native() {
     // The same answer where the terminal keeps the scrollback and crucible
-    // draws at the foot of the buffer.
+    // draws at the foot of the buffer, in colour so the reader draws it.
     let vendor = Vendor::answering(transcript::said("math"));
-    let mut window = Watched::native("transcript-math-80-native", 80, 72, &vendor);
+    let mut window = Watched::drawn_in_colour(
+        "transcript-math-80-native",
+        (80, 72),
+        &vendor,
+        None,
+        ("unicode", "native", Profile::default()),
+    );
     window.types_until(transcript::ASK, transcript::END);
 
     window.assert_never_alternate();
@@ -6966,9 +7056,15 @@ fn transcript_math_120_fullscreen() {
 #[test]
 fn transcript_math_120_native() {
     // The same answer where the terminal keeps the scrollback and crucible
-    // draws at the foot of the buffer.
+    // draws at the foot of the buffer, in colour so the reader draws it.
     let vendor = Vendor::answering(transcript::said("math"));
-    let mut window = Watched::native("transcript-math-120-native", 120, 77, &vendor);
+    let mut window = Watched::drawn_in_colour(
+        "transcript-math-120-native",
+        (120, 77),
+        &vendor,
+        None,
+        ("unicode", "native", Profile::default()),
+    );
     window.types_until(transcript::ASK, transcript::END);
 
     window.assert_never_alternate();
@@ -6994,9 +7090,15 @@ fn transcript_mermaid_graphs_40_fullscreen() {
 #[test]
 fn transcript_mermaid_graphs_40_native() {
     // The same answer where the terminal keeps the scrollback and crucible
-    // draws at the foot of the buffer.
+    // draws at the foot of the buffer, in colour so the reader draws it.
     let vendor = Vendor::answering(transcript::said("mermaid_graphs"));
-    let mut window = Watched::native("transcript-mermaid_graphs-40-native", 40, 47, &vendor);
+    let mut window = Watched::drawn_in_colour(
+        "transcript-mermaid_graphs-40-native",
+        (40, 47),
+        &vendor,
+        None,
+        ("unicode", "native", Profile::default()),
+    );
     window.types_until(transcript::ASK, transcript::END);
 
     window.assert_never_alternate();
@@ -7022,9 +7124,15 @@ fn transcript_mermaid_graphs_80_fullscreen() {
 #[test]
 fn transcript_mermaid_graphs_80_native() {
     // The same answer where the terminal keeps the scrollback and crucible
-    // draws at the foot of the buffer.
+    // draws at the foot of the buffer, in colour so the reader draws it.
     let vendor = Vendor::answering(transcript::said("mermaid_graphs"));
-    let mut window = Watched::native("transcript-mermaid_graphs-80-native", 80, 58, &vendor);
+    let mut window = Watched::drawn_in_colour(
+        "transcript-mermaid_graphs-80-native",
+        (80, 58),
+        &vendor,
+        None,
+        ("unicode", "native", Profile::default()),
+    );
     window.types_until(transcript::ASK, transcript::END);
 
     window.assert_never_alternate();
@@ -7050,9 +7158,15 @@ fn transcript_mermaid_graphs_120_fullscreen() {
 #[test]
 fn transcript_mermaid_graphs_120_native() {
     // The same answer where the terminal keeps the scrollback and crucible
-    // draws at the foot of the buffer.
+    // draws at the foot of the buffer, in colour so the reader draws it.
     let vendor = Vendor::answering(transcript::said("mermaid_graphs"));
-    let mut window = Watched::native("transcript-mermaid_graphs-120-native", 120, 64, &vendor);
+    let mut window = Watched::drawn_in_colour(
+        "transcript-mermaid_graphs-120-native",
+        (120, 64),
+        &vendor,
+        None,
+        ("unicode", "native", Profile::default()),
+    );
     window.types_until(transcript::ASK, transcript::END);
 
     window.assert_never_alternate();
@@ -7078,9 +7192,15 @@ fn transcript_mermaid_timelines_40_fullscreen() {
 #[test]
 fn transcript_mermaid_timelines_40_native() {
     // The same answer where the terminal keeps the scrollback and crucible
-    // draws at the foot of the buffer.
+    // draws at the foot of the buffer, in colour so the reader draws it.
     let vendor = Vendor::answering(transcript::said("mermaid_timelines"));
-    let mut window = Watched::native("transcript-mermaid_timelines-40-native", 40, 44, &vendor);
+    let mut window = Watched::drawn_in_colour(
+        "transcript-mermaid_timelines-40-native",
+        (40, 44),
+        &vendor,
+        None,
+        ("unicode", "native", Profile::default()),
+    );
     window.types_until(transcript::ASK, transcript::END);
 
     window.assert_never_alternate();
@@ -7106,9 +7226,15 @@ fn transcript_mermaid_timelines_80_fullscreen() {
 #[test]
 fn transcript_mermaid_timelines_80_native() {
     // The same answer where the terminal keeps the scrollback and crucible
-    // draws at the foot of the buffer.
+    // draws at the foot of the buffer, in colour so the reader draws it.
     let vendor = Vendor::answering(transcript::said("mermaid_timelines"));
-    let mut window = Watched::native("transcript-mermaid_timelines-80-native", 80, 55, &vendor);
+    let mut window = Watched::drawn_in_colour(
+        "transcript-mermaid_timelines-80-native",
+        (80, 55),
+        &vendor,
+        None,
+        ("unicode", "native", Profile::default()),
+    );
     window.types_until(transcript::ASK, transcript::END);
 
     window.assert_never_alternate();
@@ -7134,9 +7260,15 @@ fn transcript_mermaid_timelines_120_fullscreen() {
 #[test]
 fn transcript_mermaid_timelines_120_native() {
     // The same answer where the terminal keeps the scrollback and crucible
-    // draws at the foot of the buffer.
+    // draws at the foot of the buffer, in colour so the reader draws it.
     let vendor = Vendor::answering(transcript::said("mermaid_timelines"));
-    let mut window = Watched::native("transcript-mermaid_timelines-120-native", 120, 61, &vendor);
+    let mut window = Watched::drawn_in_colour(
+        "transcript-mermaid_timelines-120-native",
+        (120, 61),
+        &vendor,
+        None,
+        ("unicode", "native", Profile::default()),
+    );
     window.types_until(transcript::ASK, transcript::END);
 
     window.assert_never_alternate();
@@ -7162,9 +7294,15 @@ fn transcript_diff_80_fullscreen() {
 #[test]
 fn transcript_diff_80_native() {
     // The same answer where the terminal keeps the scrollback and crucible
-    // draws at the foot of the buffer.
+    // draws at the foot of the buffer, in colour so the reader draws it.
     let vendor = Vendor::answering(transcript::said("diff"));
-    let mut window = Watched::native("transcript-diff-80-native", 80, 50, &vendor);
+    let mut window = Watched::drawn_in_colour(
+        "transcript-diff-80-native",
+        (80, 50),
+        &vendor,
+        None,
+        ("unicode", "native", Profile::default()),
+    );
     window.types_until(transcript::ASK, transcript::END);
 
     window.assert_never_alternate();
@@ -7198,15 +7336,19 @@ fn transcript_hostile_80_fullscreen() {
 #[test]
 fn transcript_hostile_80_native() {
     let vendor = Vendor::answering(transcript::said("hostile"));
-    let mut window = Watched::native_on(
+    let mut window = Watched::drawn_in_colour(
         "transcript-hostile-80-native",
-        80,
-        32,
+        (80, 32),
         &vendor,
-        Profile {
-            widths: Widths::Unicode,
-            ..Profile::default()
-        },
+        None,
+        (
+            "unicode",
+            "native",
+            Profile {
+                widths: Widths::Unicode,
+                ..Profile::default()
+            },
+        ),
     );
     window.types_until(transcript::ASK, transcript::END);
 
@@ -7243,25 +7385,79 @@ fn transcript_tool_edit_80_fullscreen() {
 #[test]
 fn transcript_tool_edit_80_native() {
     // The same call where finished rows go out to the terminal's own buffer.
-    // The rule-bearing constructor is the one that can also ask for native,
-    // and the change has to be let through for the block to be drawn.
+    // The change has to be let through for the block to be drawn, and the
+    // colour is what makes the block's rows the ones a person sees.
     let vendor = Vendor::calling(
         "edit",
         &transcript::rewrite_input(),
         transcript::said("tool_edit"),
     );
-    let mut window = Watched::allowing_drawn(
+    let mut window = Watched::drawn_in_colour(
         "transcript-tool-edit-80-native",
         (80, 120),
         &vendor,
-        "edit(*)",
-        ("unicode", "native"),
+        Some("edit(*)"),
+        ("unicode", "native", Profile::default()),
     );
     std::fs::write(
         window.workspace().join(transcript::REWRITTEN),
         transcript::rewrite("was"),
     )
     .expect("a file for the call to rewrite");
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_tables_80_native_ascii() {
+    // The same answer under `glyphs: ascii`, where every frame, bar and mark
+    // is a character any terminal has.
+    let vendor = Vendor::answering(transcript::said("tables"));
+    let mut window = Watched::drawn_in_colour(
+        "transcript-tables-80-native-ascii",
+        (80, 66),
+        &vendor,
+        None,
+        ("ascii", "native", Profile::default()),
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_lists_80_native_ascii() {
+    // The same answer under `glyphs: ascii`, where every frame, bar and mark
+    // is a character any terminal has.
+    let vendor = Vendor::answering(transcript::said("lists"));
+    let mut window = Watched::drawn_in_colour(
+        "transcript-lists-80-native-ascii",
+        (80, 39),
+        &vendor,
+        None,
+        ("ascii", "native", Profile::default()),
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.assert_never_alternate();
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn transcript_code_80_native_ascii() {
+    // The same answer under `glyphs: ascii`, where every frame, bar and mark
+    // is a character any terminal has.
+    let vendor = Vendor::answering(transcript::said("code"));
+    let mut window = Watched::drawn_in_colour(
+        "transcript-code-80-native-ascii",
+        (80, 43),
+        &vendor,
+        None,
+        ("ascii", "native", Profile::default()),
+    );
     window.types_until(transcript::ASK, transcript::END);
 
     window.assert_never_alternate();

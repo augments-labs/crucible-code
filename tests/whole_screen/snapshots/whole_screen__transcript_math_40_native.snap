@@ -2,7 +2,7 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-40x63 cursor 59,4 scrollback 0
+40x63 cursor 57,4 scrollback 0
 |CRUCIBLE                                |
 |/…/workspace                            |
 |                                        |
@@ -39,22 +39,20 @@ expression: window.picture()
 |                                        |
 |A bracketed display:                    |
 |                                        |
-|\[                                      |
+|[                                       |
 |\int_0^1 x^2 \, dx = \frac{1}{3}        |
 |\]                                      |
 |                                        |
 |An aligned one:                         |
 |                                        |
 |\begin{align}                           |
-|a &= b + c \\                           |
+|a &= b + c \                            |
 |d &= e + f                              |
 |\end{align}                             |
 |                                        |
 |A math fence:                           |
 |                                        |
-|```math                                 |
 |x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}  |
-|```                                     |
 |                                        |
 |The corpus ends here.                   |
 |                                        |
@@ -65,4 +63,6 @@ expression: window.picture()
 |│ ›                                    │|
 |╰──────────────────────────────────────╯|
 |ask mode on    anthropic · claude-test-1|
+|                                        |
+|                                        |
 |                                        |

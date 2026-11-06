@@ -31,7 +31,7 @@ expression: window.picture()
 |An address in brackets, <https://example.com/a>, and one without,               |
 |www.example.com.                                                                |
 |                                                                                |
-|An ordinary link to [the issue list](https://example.com/issues).               |
+|An ordinary link to the issue list.                                             |
 |                                                                                |
 |Forge references: https://github.com/augments-labs/crucible-code/pull/1324,     |
 |https://github.com/augments-labs/crucible-code/issues/1288 and                  |

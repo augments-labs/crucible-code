@@ -1142,6 +1142,53 @@ impl Watched {
         Self::configured(case, columns, rows, &document, vendor.is_some())
     }
 
+    /// Colour, a screen, a glyph set and a terminal profile together, for a
+    /// case that has to see a construct drawn the way a person sees it.
+    ///
+    /// The markdown reader is unreached without colour (see
+    /// [`Self::in_colour`]), and the other constructors that name a screen or
+    /// glyphs write none, so a native capture made through them records the
+    /// answer as the model wrote it. This asks for colour outright, as
+    /// [`Self::in_default_colours`] does and with the theme left to its
+    /// default, and for `drawn` as [`Self::allowing_drawn`] spells it: glyphs
+    /// first, then the screen, then the profile [`Self::native_on`] takes for a
+    /// terminal that counts columns its own way. `rule` is what
+    /// [`Self::allowing`] takes, for the case whose call has to be let through.
+    pub(crate) fn drawn_in_colour(
+        case: &str,
+        size: (u16, u16),
+        vendor: &Vendor,
+        rule: Option<&str>,
+        drawn: (&str, &str, Profile),
+    ) -> Self {
+        let (glyphs, screen, profile) = drawn;
+        let plain = document(Some(vendor), rule);
+        let rest = plain
+            .strip_prefix("{\n")
+            .expect("a whole-screen configuration object");
+        let document = format!(
+            "{{\n  \"output\": {{\"color\": \"always\", \"glyphs\": \"{glyphs}\", \
+             \"screen\": \"{screen}\"}},\n{rest}"
+        );
+        let (columns, rows) = size;
+
+        Self::configured_with_terminal(
+            case,
+            &document,
+            true,
+            &TerminalFixture {
+                columns,
+                rows,
+                reply: None,
+                native: screen == "native",
+                profile,
+                cooked: false,
+                shipped: false,
+            },
+            None,
+        )
+    }
+
     /// A provider to reach and nothing to sign a request with.
     ///
     /// The machine `/login` is for: a vendor is there and configured, and this

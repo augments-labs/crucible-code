@@ -20,12 +20,12 @@ expression: window.picture()
 |                                                                                |
 |› show me the corpus                                                            |
 |                                                                                |
-|# One                                                                           |
-|## Two                                                                          |
-|### Three                                                                       |
-|#### Four                                                                       |
-|##### Five                                                                      |
-|###### Six                                                                      |
+|One                                                                             |
+|Two                                                                             |
+|Three                                                                           |
+|Four                                                                            |
+|Five                                                                            |
+|Six                                                                             |
 |                                                                                |
 |A heading may also be underlined instead:                                       |
 |                                                                                |
@@ -33,7 +33,7 @@ expression: window.picture()
 |=====                                                                           |
 |                                                                                |
 |Sub                                                                             |
-|-----                                                                           |
+|────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |The corpus ends here.                                                           |
 |                                                                                |

@@ -995,7 +995,7 @@
     {
       "id": "CASE-TRANSCRIPT-TABLES-40-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's tables answer draws on a real terminal at 40 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's tables answer draws on a real terminal at 40 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1003,7 +1003,7 @@
       },
       "case": "transcript_tables_40_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "b8fbf7c4b56cb7cbbb9d0ba5af81730d7841df7c762f8d7c62da89e988fafab3",
+      "body_sha256": "62b5ffb6741250a7789e8d3bd6e9a17a3bade5ba5bc3f5121c37476571575d20",
       "platforms": [
         "linux"
       ]
@@ -1027,7 +1027,7 @@
     {
       "id": "CASE-TRANSCRIPT-TABLES-80-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's tables answer draws on a real terminal at 80 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's tables answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1035,7 +1035,23 @@
       },
       "case": "transcript_tables_80_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "4b7e93083b312ccc40d7535ea2a46d3765836eb03384580415ba532fdb93fc8b",
+      "body_sha256": "3900494712bcba9c3d17cfbe2111b7d2ab32f7d97804557f10aae5c4de4f440e",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-TABLES-80-NATIVE-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tables answer draws on a real terminal at 80 columns in native mode and in colour, in ascii glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_tables_80_native_ascii",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "1b3f2c2999ebd39a5e86660c5f26def9791f618ac6b2b7a091793a61d02943d8",
       "platforms": [
         "linux"
       ]
@@ -1059,7 +1075,7 @@
     {
       "id": "CASE-TRANSCRIPT-TABLES-120-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's tables answer draws on a real terminal at 120 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's tables answer draws on a real terminal at 120 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1067,7 +1083,7 @@
       },
       "case": "transcript_tables_120_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "26824884eea8a2c8c3109f361f06be5bbfe713b19c4ac63f8b5aa4dd941e5c9f",
+      "body_sha256": "fd2ea195c7b83482c66a879d2205c930aefb6799eace3c2716762144883340d0",
       "platforms": [
         "linux"
       ]
@@ -1091,7 +1107,7 @@
     {
       "id": "CASE-TRANSCRIPT-RULES-80-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's rules answer draws on a real terminal at 80 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's rules answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1099,7 +1115,7 @@
       },
       "case": "transcript_rules_80_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "f893c644f903204bc16abcd332060af54752609fa1a7095f73136baa1bff7a4b",
+      "body_sha256": "7739c7f3e54df7c54e32e279fbbdcaca6e901fcff9ac97cf627384554323cb9d",
       "platforms": [
         "linux"
       ]
@@ -1123,7 +1139,7 @@
     {
       "id": "CASE-TRANSCRIPT-LISTS-80-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's lists answer draws on a real terminal at 80 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's lists answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1131,7 +1147,23 @@
       },
       "case": "transcript_lists_80_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "42f9e9e2cc0bb9f78e411015df3060edac38fa746572c4ca1cc27b6fcaa8ffb4",
+      "body_sha256": "09a96730c0beb69032deeb6b9af89e42ade70d6bfb8e70786fb5df78390ecf6b",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-LISTS-80-NATIVE-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's lists answer draws on a real terminal at 80 columns in native mode and in colour, in ascii glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_lists_80_native_ascii",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "98abbd3faf0a6e5c11873ec9e374b7a6a997425dda0273e33dcf5fd585fb1e5e",
       "platforms": [
         "linux"
       ]
@@ -1155,7 +1187,7 @@
     {
       "id": "CASE-TRANSCRIPT-QUOTES-80-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's quotes answer draws on a real terminal at 80 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's quotes answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1163,7 +1195,7 @@
       },
       "case": "transcript_quotes_80_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "77d67e772f31223b21a61f3fa3a546b4d36862723300fa3d1bdce236a1a9e731",
+      "body_sha256": "a0fadbc03f59b0565e24a07685e4a00eea41d8a5fb42564dbd42ad7d487ffb08",
       "platforms": [
         "linux"
       ]
@@ -1187,7 +1219,7 @@
     {
       "id": "CASE-TRANSCRIPT-CODE-80-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's code answer draws on a real terminal at 80 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's code answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1195,7 +1227,23 @@
       },
       "case": "transcript_code_80_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "dbdb63adc39fa6ff2154fc9bdaeffb54877a1c6f16c8f8b71301db12e3663da0",
+      "body_sha256": "235fce5155f324bbae8997f121648d11f6345e910a580cbfe569cf1bb19a0e50",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CODE-80-NATIVE-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's code answer draws on a real terminal at 80 columns in native mode and in colour, in ascii glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_code_80_native_ascii",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "380ac2e4cbd7a05044cc3741ede0ed0ac0509cdc42fb1b4904ccfb149cd30984",
       "platforms": [
         "linux"
       ]
@@ -1219,7 +1267,7 @@
     {
       "id": "CASE-TRANSCRIPT-HEADINGS-80-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's headings answer draws on a real terminal at 80 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's headings answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1227,7 +1275,7 @@
       },
       "case": "transcript_headings_80_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "15458f803ae662e518b0fd3cd01856bbedd2d9c092f3fdcd8e2bd13133564071",
+      "body_sha256": "9dce9b5454c1ff541a2225165b0bb77debad48060d075557edd47ea53eae7152",
       "platforms": [
         "linux"
       ]
@@ -1251,7 +1299,7 @@
     {
       "id": "CASE-TRANSCRIPT-ALERTS-80-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's alerts answer draws on a real terminal at 80 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's alerts answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1259,7 +1307,7 @@
       },
       "case": "transcript_alerts_80_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "f4f69ffb2b977df9110a917ad51a2084f48e02d8d317ac02a279a6377b479900",
+      "body_sha256": "5f5c4914a510aaffa4652afe37a73c4b2a688eb73ba991fa283d433de005c8fb",
       "platforms": [
         "linux"
       ]
@@ -1283,7 +1331,7 @@
     {
       "id": "CASE-TRANSCRIPT-IMAGES-80-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's images answer draws on a real terminal at 80 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's images answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1291,7 +1339,7 @@
       },
       "case": "transcript_images_80_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "74a8a899ef78fb1f1afc228cab888033359fc87787e5d91089e7faedb3717bdc",
+      "body_sha256": "14bca783f1c86821ed9599d06c0c2b67e01b0859e7a74ae64cc2f6c4128349e6",
       "platforms": [
         "linux"
       ]
@@ -1315,7 +1363,7 @@
     {
       "id": "CASE-TRANSCRIPT-NOTES-80-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's notes answer draws on a real terminal at 80 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's notes answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1323,7 +1371,7 @@
       },
       "case": "transcript_notes_80_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "641d8ea5cdf0c1bc6776730cf068e5bf113491676863724118cdea4578ab4772",
+      "body_sha256": "30d2a36e0e3b4286b7f23a859d3165b7416cc0ea82a228b5898da84819f66373",
       "platforms": [
         "linux"
       ]
@@ -1347,7 +1395,7 @@
     {
       "id": "CASE-TRANSCRIPT-LINKS-80-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's links answer draws on a real terminal at 80 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's links answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1355,7 +1403,7 @@
       },
       "case": "transcript_links_80_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "416cd33f6106e3e57b27bf7c5e7b1053abf1d5b51468b7f44ff7b3be8e5ff28f",
+      "body_sha256": "8b5e05690fc1df68fc5e616f51d0cfaaf5c91b059c9a4b5a4b7e496d1a9d3880",
       "platforms": [
         "linux"
       ]
@@ -1379,7 +1427,7 @@
     {
       "id": "CASE-TRANSCRIPT-INLINE-80-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's inline answer draws on a real terminal at 80 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's inline answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1387,7 +1435,7 @@
       },
       "case": "transcript_inline_80_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "2be5924dec4d200e7013b46e9b0024f4a285ffd34ef976525045637de69c8a76",
+      "body_sha256": "12a1588135b3d5b4e2f59edb50a960f514aee7c1d83bcdbcc74a24983c9fc392",
       "platforms": [
         "linux"
       ]
@@ -1411,7 +1459,7 @@
     {
       "id": "CASE-TRANSCRIPT-MATH-40-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's math answer draws on a real terminal at 40 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's math answer draws on a real terminal at 40 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1419,7 +1467,7 @@
       },
       "case": "transcript_math_40_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "3a65b3f2a9f8e5c0f53e41d73bd5ea4527e713cfbd8e064d0a3ffc71664cd700",
+      "body_sha256": "0aaf351727d2ca9da9a31bffd6632d084988e8fa1a31de667c57f8ed4cb9e244",
       "platforms": [
         "linux"
       ]
@@ -1443,7 +1491,7 @@
     {
       "id": "CASE-TRANSCRIPT-MATH-80-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's math answer draws on a real terminal at 80 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's math answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1451,7 +1499,7 @@
       },
       "case": "transcript_math_80_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "ea38fd28fbad651f8b4ecc85a7c02bee7cfecf4238cae8512e4290fa8b4e028c",
+      "body_sha256": "acad0d82e581baff7cb5e62682164d178d3f56d74585a8aea3e8a4cd0ba431f1",
       "platforms": [
         "linux"
       ]
@@ -1475,7 +1523,7 @@
     {
       "id": "CASE-TRANSCRIPT-MATH-120-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's math answer draws on a real terminal at 120 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's math answer draws on a real terminal at 120 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1483,7 +1531,7 @@
       },
       "case": "transcript_math_120_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "143d3757fd21068771b86747f2f70930189c7884ce80c2ee94ec3d2be060d372",
+      "body_sha256": "ddf132d6080f46a93c5747e267135b8a4c4ce464e63eb685fd674eb491ae005a",
       "platforms": [
         "linux"
       ]
@@ -1507,7 +1555,7 @@
     {
       "id": "CASE-TRANSCRIPT-MERMAID-GRAPHS-40-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's mermaid graphs answer draws on a real terminal at 40 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's mermaid graphs answer draws on a real terminal at 40 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1515,7 +1563,7 @@
       },
       "case": "transcript_mermaid_graphs_40_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "6845bd4b3f88b1026306f069ca31f56edf48e3ce6883fccf1404324b73236e42",
+      "body_sha256": "db8b842e8f308d99d35bb654a89604d35f17fe582d0688532a41326db8ad35ff",
       "platforms": [
         "linux"
       ]
@@ -1539,7 +1587,7 @@
     {
       "id": "CASE-TRANSCRIPT-MERMAID-GRAPHS-80-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's mermaid graphs answer draws on a real terminal at 80 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's mermaid graphs answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1547,7 +1595,7 @@
       },
       "case": "transcript_mermaid_graphs_80_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "3e3d8347d961461f6835b0ccce80b0508ba97bbbb78c7a4c6e6cb70383d81754",
+      "body_sha256": "e6219c99662d28bda929d82d64670105478acb5f7bdbe628abbccab225f2b116",
       "platforms": [
         "linux"
       ]
@@ -1571,7 +1619,7 @@
     {
       "id": "CASE-TRANSCRIPT-MERMAID-GRAPHS-120-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's mermaid graphs answer draws on a real terminal at 120 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's mermaid graphs answer draws on a real terminal at 120 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1579,7 +1627,7 @@
       },
       "case": "transcript_mermaid_graphs_120_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "3c4c3f0c1f00c05901930cc0b1700c4cfea6f72efcb063b1a60ce44a45a3b932",
+      "body_sha256": "222e5d9f03facb149cdf91c279fcda69b123ba37002eff5d64d2115d1a854726",
       "platforms": [
         "linux"
       ]
@@ -1603,7 +1651,7 @@
     {
       "id": "CASE-TRANSCRIPT-MERMAID-TIMELINES-40-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's mermaid timelines answer draws on a real terminal at 40 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's mermaid timelines answer draws on a real terminal at 40 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1611,7 +1659,7 @@
       },
       "case": "transcript_mermaid_timelines_40_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "df143155dda425cc310124c0268b37a9cccce2fd8ec131a19f36a2655c205a6f",
+      "body_sha256": "ad286bd7e154c62bd4188c2a02ff0fd21fa8da47ee451512fd6584d484f41966",
       "platforms": [
         "linux"
       ]
@@ -1635,7 +1683,7 @@
     {
       "id": "CASE-TRANSCRIPT-MERMAID-TIMELINES-80-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's mermaid timelines answer draws on a real terminal at 80 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's mermaid timelines answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1643,7 +1691,7 @@
       },
       "case": "transcript_mermaid_timelines_80_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "13c54ef644c0e74290001c079aa9e69bbc3e38726819e83e0f1c4999f7eb31a5",
+      "body_sha256": "07e9640c957dba600b90dafdeed0c142012b35731f75940ca05bb53cb321be6e",
       "platforms": [
         "linux"
       ]
@@ -1667,7 +1715,7 @@
     {
       "id": "CASE-TRANSCRIPT-MERMAID-TIMELINES-120-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's mermaid timelines answer draws on a real terminal at 120 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's mermaid timelines answer draws on a real terminal at 120 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1675,7 +1723,7 @@
       },
       "case": "transcript_mermaid_timelines_120_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "f2ed8ef405f46bc431aa21696d694e63f8451a80cb8e3bd365eb1aee5268efbb",
+      "body_sha256": "33043cd675c1407df545115a9bd2c79247429893ab961a236ccd64f97185f63d",
       "platforms": [
         "linux"
       ]
@@ -1699,7 +1747,7 @@
     {
       "id": "CASE-TRANSCRIPT-DIFF-80-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's diff answer draws on a real terminal at 80 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's diff answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1707,7 +1755,7 @@
       },
       "case": "transcript_diff_80_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "4133d2971a40a46757da3c8beca7e1c7313b1051796a413ab4644f38d66eceb3",
+      "body_sha256": "8b27a1473015669b91ac0945dd02d2c52c66f774400c0ed01aa74b9b32b0d9f2",
       "platforms": [
         "linux"
       ]
@@ -1731,7 +1779,7 @@
     {
       "id": "CASE-TRANSCRIPT-HOSTILE-80-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's hostile answer draws on a real terminal at 80 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's hostile answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1739,7 +1787,7 @@
       },
       "case": "transcript_hostile_80_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "7f8e9061b07f4208fa40fa7e40de35e09209b6b5567942cf84e8b92c2b23a26a",
+      "body_sha256": "be84e2989a042acb62fc8932e81e6db0fa585f5061651be0e1055a88c523bb19",
       "platforms": [
         "linux"
       ]
@@ -1763,7 +1811,7 @@
     {
       "id": "CASE-TRANSCRIPT-TOOL-EDIT-80-NATIVE",
       "family": "transcript-corpus",
-      "obligation": "The corpus's tool edit answer draws on a real terminal at 80 columns in native mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "obligation": "The corpus's tool edit answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
       "package": "crucible-code",
       "target": {
         "kind": "test",
@@ -1771,7 +1819,7 @@
       },
       "case": "transcript_tool_edit_80_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "7378f632dbca311ca4b4ba18ab0ce9c05feb0cb9b5e7b3a4b82b17dfae7dbbec",
+      "body_sha256": "21133d375250de12967761e4879727f0e2f64abb9ff0a743a34896aabfbf26b8",
       "platforms": [
         "linux"
       ]

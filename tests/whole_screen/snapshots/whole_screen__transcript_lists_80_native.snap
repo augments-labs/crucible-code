@@ -22,13 +22,13 @@ expression: window.picture()
 |                                                                                |
 |Things still to do:                                                             |
 |                                                                                |
-|- a bullet item long enough that it has to wrap onto another row of the window  |
-|- [ ] a task nobody has finished yet                                            |
-|- [x] a task somebody has finished                                              |
+|• a bullet item long enough that it has to wrap onto another row of the window  |
+|□ a task nobody has finished yet                                                |
+|✓ a task somebody has finished                                                  |
 |                                                                                |
 |1. a numbered item long enough that it wraps as well                            |
 |2. two                                                                          |
-|   - a nested bullet                                                            |
+|   • a nested bullet                                                            |
 |3. three                                                                        |
 |                                                                                |
 |The corpus ends here.                                                           |

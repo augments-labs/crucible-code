@@ -22,15 +22,15 @@ expression: window.picture()
 |                                                                                |
 |A rule parts what is above it from what is below.                               |
 |                                                                                |
-|---                                                                             |
+|────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |The rule above is three hyphens in the source.                                  |
 |                                                                                |
-|***                                                                             |
+|────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |The rule above is three stars in the source.                                    |
 |                                                                                |
-|___                                                                             |
+|────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |And this one is three underscores, which is also a rule.                        |
 |                                                                                |

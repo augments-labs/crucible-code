@@ -20,20 +20,20 @@ expression: window.picture()
 |                                                                                |
 |› show me the corpus                                                            |
 |                                                                                |
-|> [!NOTE]                                                                       |
-|> Useful information.                                                           |
+|│ [!NOTE]                                                                       |
+|│ Useful information.                                                           |
 |                                                                                |
-|> [!TIP]                                                                        |
-|> A shortcut worth taking.                                                      |
+|│ [!TIP]                                                                        |
+|│ A shortcut worth taking.                                                      |
 |                                                                                |
-|> [!IMPORTANT]                                                                  |
-|> Something that must not be missed.                                            |
+|│ [!IMPORTANT]                                                                  |
+|│ Something that must not be missed.                                            |
 |                                                                                |
-|> [!WARNING]                                                                    |
-|> Something that could go wrong.                                                |
+|│ [!WARNING]                                                                    |
+|│ Something that could go wrong.                                                |
 |                                                                                |
-|> [!CAUTION]                                                                    |
-|> Something that could go wrong badly.                                          |
+|│ [!CAUTION]                                                                    |
+|│ Something that could go wrong badly.                                          |
 |                                                                                |
 |The corpus ends here.                                                           |
 |                                                                                |

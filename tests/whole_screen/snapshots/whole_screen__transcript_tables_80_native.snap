@@ -2,7 +2,7 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x66 cursor 49,4 scrollback 0
+80x66 cursor 61,4 scrollback 0
 |╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
 |│                                  │ Recent sessions                           │|
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
@@ -22,11 +22,11 @@ expression: window.picture()
 |                                                                                |
 |Here is what the release carries:                                               |
 |                                                                                |
-|| name | what it does | since |                                                 |
-|| --- | --- | --- |                                                             |
-|| alpha | reads the markdown out of a stream | 0.1 |                            |
-|| beta | lays a table against the window | 0.2 |                                |
-|| gamma | keeps the source of a drawn block | 0.3 |                             |
+|name  │ what it does                       │ since                              |
+|──────┼────────────────────────────────────┼──────                              |
+|alpha │ reads the markdown out of a stream │ 0.1                                |
+|beta  │ lays a table against the window    │ 0.2                                |
+|gamma │ keeps the source of a drawn block  │ 0.3                                |
 |                                                                                |
 |A table may be written without its outer bars:                                  |
 |                                                                                |
@@ -37,14 +37,26 @@ expression: window.picture()
 |                                                                                |
 |And one with more columns than a window can hold:                               |
 |                                                                                |
-|| region | owner | window | rows | scrollback | theme | glyphs | notes |        |
-|| --- | --- | --- | --- | --- | --- | --- | --- |                               |
-|| north | the drawing thread | eighty columns of prose that has to wrap         |
-|somewhere | twenty-four | two rows | dark | unicode | a note long enough to be  |
-|split across rows again |                                                       |
-|| south | the reading thread | one hundred and twenty columns of prose that also|
-|wraps | forty | none | light | ascii | another note, just as long, so the split |
-|is not a special case |                                                         |
+|region │ owner     │ window   │ rows     │ scrollba │ theme │ glyphs  │ notes   |
+|       │           │          │          │ ck       │       │         │         |
+|───────┼───────────┼──────────┼──────────┼──────────┼───────┼─────────┼─────────|
+|north  │ the       │ eighty   │ twenty-f │ two rows │ dark  │ unicode │ a note  |
+|       │ drawing   │ columns  │ our      │          │       │         │ long    |
+|       │ thread    │ of prose │          │          │       │         │ enough  |
+|       │           │ that has │          │          │       │         │ to be   |
+|       │           │ to wrap  │          │          │       │         │ split   |
+|       │           │ somewher │          │          │       │         │ across  |
+|       │           │ e        │          │          │       │         │ rows    |
+|       │           │          │          │          │       │         │ again   |
+|south  │ the       │ one      │ forty    │ none     │ light │ ascii   │ another |
+|       │ reading   │ hundred  │          │          │       │         │ note,   |
+|       │ thread    │ and      │          │          │       │         │ just as |
+|       │           │ twenty   │          │          │       │         │ long, so|
+|       │           │ columns  │          │          │       │         │ the     |
+|       │           │ of prose │          │          │       │         │ split is|
+|       │           │ that     │          │          │       │         │ not a   |
+|       │           │ also     │          │          │       │         │ special |
+|       │           │ wraps    │          │          │       │         │ case    |
 |                                                                                |
 |The corpus ends here.                                                           |
 |                                                                                |
@@ -55,17 +67,5 @@ expression: window.picture()
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
-|                                                                                |
 |                                                                                |
 |                                                                                |
