@@ -1287,13 +1287,13 @@ impl Markdown {
     }
 
     /// Whether the line being said may yet be taken back with a
-    /// [`Said::Retract`]: it is the header of a table written without outer
-    /// bars, and the delimiter row under it has not arrived to say so.
+    /// [`Said::Retract`]: it may be the header of a table written without
+    /// outer bars, and the delimiter row under it has not arrived to say so.
     ///
     /// What a caller that puts what it is told out for good, and cannot take
     /// it back, asks after each delta, and holds the line until it is false.
-    /// It is false for a line of more than 128 bytes, and for one
-    /// with a single cell once its break has come.
+    /// It is false for a line of more than 128 bytes, and for one with a
+    /// single cell once its break has come.
     #[must_use]
     pub fn in_doubt(&self) -> bool {
         self.table.as_ref().is_some_and(Table::pending)

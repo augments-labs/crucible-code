@@ -3295,6 +3295,54 @@ fn a_component_presented_while_a_header_is_in_doubt_ends_it_as_the_prose_it_was(
 }
 
 #[test]
+fn a_line_written_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // Every call that writes under the line an answer left open ends a header
+    // that is still only a guess first, as presenting rows does: what is
+    // written is under the prose, and the delimiter row that comes later has
+    // no header left to turn into a table or to take back.
+    let calls: [(&str, fn(&mut Renderer<Recording>)); 2] = [
+        ("commit", |render| render.commit("note").unwrap()),
+        ("prompt", |render| {
+            render.prompt(Slot::Plain, "note").unwrap();
+        }),
+    ];
+    for (name, call) in calls {
+        for cut in [
+            "name | what it does\n",
+            "name | what",
+            "name | what it does\n--",
+        ] {
+            let run = |cut: &str| {
+                let mut drawn = reading(40, 12);
+                drawn.render.stream(&format!("before\n\n{cut}")).unwrap();
+                call(&mut drawn.render);
+                drawn
+                    .render
+                    .stream("\n--|--\nalpha | 0.1\n\nafter\n")
+                    .unwrap();
+                drawn.render.settle().unwrap();
+                kept(&drawn).1
+            };
+            let doubtful = run(cut);
+            let plain: Vec<String> = run(&cut.replace('|', "-"))
+                .iter()
+                .map(|row| row.replace(" - ", " | "))
+                .collect();
+
+            assert!(
+                doubtful
+                    .iter()
+                    .filter(|row| row.contains("name | what"))
+                    .count()
+                    == 1,
+                "{name} {cut:?}: {doubtful:#?}"
+            );
+            assert_eq!(doubtful, plain, "{name} {cut:?}");
+        }
+    }
+}
+
+#[test]
 fn a_table_written_without_outer_bars_narrowed_is_the_table_a_window_that_narrow_draws() {
     let mut fresh = reading(30, 20);
     fresh.answer(BARE_TABLE);

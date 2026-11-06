@@ -1475,10 +1475,15 @@ impl<T: Terminal> Renderer<T> {
     /// taken: the divider is already the row that parts what follows, and a
     /// blank one under it would part the new session from its own start.
     ///
+    /// A line of an answer that may still be the header of a table written
+    /// without outer bars is ended as the prose it was said to be first, as
+    /// [`Renderer::present`] does: what is committed is under it.
+    ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn commit(&mut self, line: &str) -> Result<(), TerminalError> {
+        self.undoubted()?;
         if line.is_empty() && self.record.divided() {
             return Ok(());
         }
@@ -2065,10 +2070,15 @@ impl<T: Terminal> Renderer<T> {
     /// the question before it can answer, and the record only lets go of a line
     /// once that line can no longer change.
     ///
+    /// A line of an answer that may still be the header of a table written
+    /// without outer bars is ended as the prose it was said to be first, as
+    /// [`Renderer::present`] does.
+    ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn prompt(&mut self, slot: Slot, text: &str) -> Result<(), TerminalError> {
+        self.undoubted()?;
         self.take(slot, text)?;
         self.draw()
     }

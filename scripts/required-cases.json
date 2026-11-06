@@ -5365,6 +5365,42 @@
       ]
     },
     {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-PRESENT-IN-DOUBT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "On a native screen, presenting rows, committing a line or writing a prompt while a line may still be the header of a table written without outer bars ends it as the prose it was, said once, as if it had never been in doubt.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_call_that_writes_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "c4b9f9475e185d77893aede0a0450351ee926faa29030027799da8c1cce2e994",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-COMMIT-IN-DOUBT",
+      "family": "transcript-blocks",
+      "obligation": "Committing a line or writing a prompt while a line may still be the header of a table written without outer bars ends it as the prose it was, said once, as if it had never been in doubt.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_line_written_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "661c464e619ddc018fa0c2ee3b5b36f8751f057a9b79e9413b77899f31f8aa8d",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
       "id": "CASE-TRANSCRIPT-BARE-TABLE-REDIRECTED",
       "family": "transcript-blocks",
       "obligation": "A run whose output is a file is written a table without outer bars as the table, once, and never its header as prose, however the answer is cut into deltas.",

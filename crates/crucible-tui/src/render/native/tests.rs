@@ -2146,6 +2146,68 @@ fn a_native_frame_drawn_while_a_header_is_in_doubt_leaves_what_drawing_the_whole
     }
 }
 
+/// What a native screen is left holding when `call` writes under an answer
+/// cut at `cut`, then the rest of the answer arrives.
+fn written_under_the_cut(cut: &str, call: fn(&mut Renderer<Window>)) -> Vec<String> {
+    let window = Window::new(40, 12);
+    let mut render = native(&window);
+    render.wears(colourful());
+    stands(&mut render);
+    render.stream(&format!("before\n\n{cut}")).unwrap();
+    call(&mut render);
+    render.stream("\n--|--\nalpha | 0.1\n\nafter\n").unwrap();
+    render.settle().unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+    let (boxed, _) = boxed();
+    let boxed: Vec<String> = boxed.iter().map(Row::text).collect();
+    window
+        .all()
+        .into_iter()
+        .filter(|row| !row.trim().is_empty() && !boxed.contains(row))
+        .collect()
+}
+
+#[test]
+fn a_native_call_that_writes_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // Presenting rows, committing a line and writing a prompt each end the
+    // line an answer left open, and a header that is still only a guess is
+    // the prose it looked like when they do: said once in the scrollback,
+    // with the same rows for the same words that could not have been a header.
+    let calls: [(&str, fn(&mut Renderer<Window>)); 3] = [
+        ("present", |render| {
+            render.present(&[row("component")]).unwrap();
+        }),
+        ("commit", |render| render.commit("note").unwrap()),
+        ("prompt", |render| {
+            render.prompt(Slot::Plain, "note").unwrap();
+        }),
+    ];
+    for (name, call) in calls {
+        for cut in [
+            "name | what it does\n",
+            "name | what",
+            "name | what it does\n--",
+        ] {
+            let doubtful = written_under_the_cut(cut, call);
+            let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+                .iter()
+                .map(|row| row.replace(" - ", " | "))
+                .collect();
+
+            assert_eq!(
+                doubtful
+                    .iter()
+                    .filter(|row| row.contains("name | what"))
+                    .count(),
+                1,
+                "{name} {cut:?}: {doubtful:#?}"
+            );
+            assert_eq!(doubtful, plain, "{name} {cut:?}");
+        }
+    }
+}
+
 #[test]
 fn a_native_line_still_arriving_is_on_screen_whatever_it_could_turn_out_to_be() {
     let window = Window::new(40, 8);
