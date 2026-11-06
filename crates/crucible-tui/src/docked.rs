@@ -43,8 +43,11 @@
 //! question names becomes *question 2 of 3 · 1 answered* where it will not fit
 //! whole, and every sentence folds.
 
-use crate::asked::{AROUND, CHOSEN, GAP, MOST, NOTED, NOTHING, PAYLOAD, SAID, Spacing};
-use crate::asked::{framed, last, said, slid};
+use std::collections::BTreeSet;
+use std::fmt;
+
+use crate::asked::{AROUND, CHOSEN, GAP, NOTED, PAYLOAD, SAID, Spacing};
+use crate::asked::{framed, last, said, slid, under};
 use crate::color::Slot;
 use crate::glyphs::Glyphs;
 use crate::render::Caret;
@@ -58,13 +61,54 @@ use crate::width::{clip, columns as wide, fold, spoken};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dock<K> {
     /// The batches, oldest first.
+    ///
+    /// Every question listed here is counted as waiting, so a batch belongs
+    /// here only while it is still to be settled.
     pub batches: Vec<Batched<K>>,
-    /// Which batch is in front.
+    /// Which batch is in front: see [`Dock::front`].
     pub current: usize,
     /// Where the reader is in it.
     pub focus: Focus,
     /// What the dock is doing.
     pub phase: Phase,
+}
+
+impl<K> Dock<K> {
+    /// The batch in front, and where it stands: the one [`Dock::current`]
+    /// names, or the last where it names none, so a batch taken away under it
+    /// leaves the dock showing what is still waiting rather than nothing.
+    #[must_use]
+    pub fn front(&self) -> Option<(usize, &Batched<K>)> {
+        let at = self.current.min(self.batches.len().checked_sub(1)?);
+        self.batches.get(at).map(|batch| (at, batch))
+    }
+
+    /// The question open in the batch in front, and where it stands: the one
+    /// [`Focus::member`] names, or the last where it names none.
+    ///
+    /// What the dock draws and what the caller changes are both read through
+    /// this, so the question on screen is the one a key goes to.
+    #[must_use]
+    pub fn open(&self) -> Option<(usize, &Member)> {
+        let (_, batch) = self.front()?;
+        let at = self.focus.member.min(batch.members.len().checked_sub(1)?);
+        batch.members.get(at).map(|member| (at, member))
+    }
+
+    /// The action the mark stands on: the one [`Focus::marked`] counts to among
+    /// [`Phase::actions`], or the last where it counts past them, and `None`
+    /// where the phase offers none.
+    #[must_use]
+    pub fn marked_action(&self) -> Option<Action> {
+        let actions = self.phase.actions();
+        let at = self.focus.marked.min(actions.len().checked_sub(1)?);
+        actions.get(at).copied()
+    }
+
+    /// How many questions wait, in every batch.
+    fn waiting(&self) -> usize {
+        self.batches.iter().map(|batch| batch.members.len()).sum()
+    }
 }
 
 /// The questions of one call that went on without waiting for its answer.
@@ -77,22 +121,33 @@ pub struct Batched<K> {
 }
 
 /// One question of a batch, and the reader's draft of its answer.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Its `Debug` counts what it holds and prints none of it: every string here
+/// is somebody's own words, which the domain they came from redacts too.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Member {
     /// The few words it is called by.
     pub heading: String,
     /// The question, in the words it was asked in.
     pub question: String,
-    /// Whether it takes several answers rather than one.
-    pub several: bool,
     /// The answers it offers, in the order they are numbered.
     pub answers: Vec<Offer>,
-    /// What the reader has made of it so far.
+    /// What the reader has made of it so far, which also says whether it
+    /// takes several answers.
     pub draft: Drafted,
 }
 
+impl fmt::Debug for Member {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Member")
+            .field("answers", &self.answers)
+            .field("draft", &self.draft)
+            .finish_non_exhaustive()
+    }
+}
+
 /// One answer a question offers.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Offer {
     /// What the answer is called.
     pub answer: String,
@@ -107,11 +162,20 @@ pub struct Offer {
     pub recommended: bool,
 }
 
+impl fmt::Debug for Offer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Offer")
+            .field("shows", &self.shows.len())
+            .field("recommended", &self.recommended)
+            .finish_non_exhaustive()
+    }
+}
+
 /// The reader's draft of one answer.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Drafted {
-    /// The offered answers taken, as places among them.
-    pub chosen: Vec<usize>,
+    /// The offered answers taken.
+    pub chosen: Chosen,
     /// An answer of the reader's own, or empty.
     pub written: String,
     /// The reader's own line about the question, or empty.
@@ -121,11 +185,68 @@ pub struct Drafted {
 }
 
 impl Drafted {
-    /// Whether the draft gives an answer at all: an offered one, one of the
-    /// reader's own, or a decline.
+    /// A draft with nothing in it yet, of a question taking what `chosen`
+    /// says it takes.
     #[must_use]
-    pub fn settles(&self) -> bool {
-        self.declined || !self.chosen.is_empty() || !self.written.is_empty()
+    pub fn new(chosen: Chosen) -> Self {
+        Self {
+            chosen,
+            written: String::new(),
+            note: String::new(),
+            declined: false,
+        }
+    }
+}
+
+impl fmt::Debug for Drafted {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Drafted")
+            .field("chosen", &self.chosen)
+            .field("written", &!self.written.is_empty())
+            .field("note", &!self.note.is_empty())
+            .field("declined", &self.declined)
+            .finish()
+    }
+}
+
+/// Which offered answers a draft takes, as places among them, and so whether
+/// its question takes one or several.
+///
+/// The two cannot disagree: a question taking one answer holds one place or
+/// none, and one taking several holds each place once, in the order they were
+/// offered. A place no answer stands at is held but never drawn or counted,
+/// as [`Member::settles`] says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Chosen {
+    /// A question taking one answer, and the one taken, if any.
+    One(Option<usize>),
+    /// A question taking several, and every one taken.
+    Several(BTreeSet<usize>),
+}
+
+impl Chosen {
+    /// Whether the question takes several answers rather than one.
+    #[must_use]
+    pub fn several(&self) -> bool {
+        matches!(self, Self::Several(_))
+    }
+
+    /// Every place taken, in the order the answers were offered.
+    pub fn taken(&self) -> impl Iterator<Item = usize> + '_ {
+        let (one, several) = match self {
+            Self::One(one) => (*one, None),
+            Self::Several(several) => (None, Some(several.iter().copied())),
+        };
+        one.into_iter().chain(several.into_iter().flatten())
+    }
+
+    /// Whether the place `at` is taken.
+    #[must_use]
+    pub fn takes(&self, at: usize) -> bool {
+        match self {
+            Self::One(one) => *one == Some(at),
+            Self::Several(several) => several.contains(&at),
+        }
     }
 }
 
@@ -228,6 +349,16 @@ impl Phase {
 }
 
 impl Member {
+    /// Whether the draft gives an answer at all: an offered one this question
+    /// has, one of the reader's own, or a decline.
+    #[must_use]
+    pub fn settles(&self) -> bool {
+        let draft = &self.draft;
+        draft.declined
+            || !draft.written.is_empty()
+            || draft.chosen.taken().any(|at| at < self.answers.len())
+    }
+
     /// Where the answer of the reader's own stands among the rows
     /// [`Focus::marked`] counts: after every offered answer.
     #[must_use]
@@ -276,17 +407,15 @@ impl<K> Docked<'_, K> {
     /// The dock in `room` rows: the open dock where it fits, the closed row
     /// where it does not, and nothing where nothing waits or no row is left.
     ///
-    /// The batch in front is the one [`Dock::current`] names, or the last
-    /// where it names none, so a batch taken away under it leaves the dock
-    /// showing what is still waiting rather than nothing. The caret is where a
-    /// line is being written, and `None` everywhere else.
+    /// The batch in front is [`Dock::front`] and the question open in it
+    /// [`Dock::open`]. The caret is where a line is being written, and `None`
+    /// everywhere else.
     #[must_use]
     pub fn within(&self, columns: usize, room: usize, glyphs: Glyphs) -> (Vec<Row>, Option<Caret>) {
-        let batches = &self.dock.batches;
-        let Some(batch) = batches.get(self.dock.current).or_else(|| batches.last()) else {
+        let Some((_, batch)) = self.dock.front() else {
             return (Vec::new(), None);
         };
-        if room == 0 || columns == 0 {
+        if room == 0 || columns == 0 || self.dock.waiting() == 0 {
             return (Vec::new(), None);
         }
 
@@ -300,17 +429,12 @@ impl<K> Docked<'_, K> {
             }
         }
 
-        (vec![self.closed(batch, columns, glyphs)], None)
+        (vec![self.closed(columns, glyphs)], None)
     }
 
-    /// How many questions wait, in every batch.
+    /// How many questions wait, in every batch, in words.
     fn waiting(&self) -> String {
-        let count: usize = self
-            .dock
-            .batches
-            .iter()
-            .map(|batch| batch.members.len())
-            .sum();
+        let count = self.dock.waiting();
         if count == 1 {
             "1 question waiting".to_owned()
         } else {
@@ -355,15 +479,14 @@ impl<K> Docked<'_, K> {
     ///
     /// What it is about goes first where the row is short, then the hint, and
     /// the state is cut only where nothing else is left.
-    fn closed(&self, batch: &Batched<K>, columns: usize, glyphs: Glyphs) -> Row {
+    fn closed(&self, columns: usize, glyphs: Glyphs) -> Row {
         let detail = match &self.dock.phase {
             Phase::Refused(reason) => spoken(reason),
             Phase::Submitting | Phase::Accepted => String::new(),
-            Phase::Collapsed | Phase::Answering | Phase::Reviewing => batch
-                .members
-                .get(self.dock.focus.member)
-                .or_else(|| batch.members.first())
-                .map(|member| spoken(&member.heading))
+            Phase::Collapsed | Phase::Answering | Phase::Reviewing => self
+                .dock
+                .open()
+                .map(|(_, member)| spoken(&member.heading))
                 .unwrap_or_default(),
         };
         let apart = format!(" {} ", glyphs.dot());
@@ -411,11 +534,7 @@ impl<K> Docked<'_, K> {
     ) -> (Vec<Row>, Option<Caret>) {
         let inner = columns.saturating_sub(AROUND);
         let across = inner.saturating_sub(SAID);
-        let Some(member) = batch
-            .members
-            .get(self.dock.focus.member)
-            .or_else(|| batch.members.last())
-        else {
+        let Some((_, member)) = self.dock.open() else {
             return (Vec::new(), None);
         };
         let least = front(member).max(PAYLOAD + wide(NOTED) + SAID) + 1;
@@ -434,11 +553,7 @@ impl<K> Docked<'_, K> {
 
         let mut rows = vec![Row::new().then(Slot::Accent, format!("{open}{bar}{opened}"))];
         let mut header = self.stated(glyphs);
-        if self.dock.batches.len() > 1 {
-            let at = self
-                .dock
-                .current
-                .min(self.dock.batches.len().saturating_sub(1));
+        if let Some((at, _)) = self.dock.front().filter(|_| self.dock.batches.len() > 1) {
             header.push(Slot::Quiet, format!(" {} ", glyphs.dot()));
             header.push(
                 Slot::Quiet,
@@ -518,7 +633,7 @@ impl<K> Docked<'_, K> {
         let mut row = opening(member, own, marked, glyphs);
         boxed_mark(
             &mut row,
-            member.several,
+            draft.chosen.several(),
             !draft.declined && !draft.written.is_empty(),
             glyphs,
         );
@@ -587,7 +702,12 @@ impl<K> Docked<'_, K> {
             }
         }
 
-        rows.extend(shown(member, focus.marked, laid));
+        let shows: Vec<&[String]> = member
+            .answers
+            .iter()
+            .map(|offer| offer.shows.as_slice())
+            .collect();
+        rows.extend(under(&shows, focus.marked, inner, glyphs, spacing.opening));
 
         blank(rows);
         let ruled = glyphs.horizontal().repeat(across.saturating_sub(SAID));
@@ -607,11 +727,7 @@ impl<K> Docked<'_, K> {
     /// The row naming every question of the batch, with the open one marked,
     /// or counting them where the names will not fit whole.
     fn stepped(&self, batch: &Batched<K>, across: usize, glyphs: Glyphs) -> Row {
-        let here = self
-            .dock
-            .focus
-            .member
-            .min(batch.members.len().saturating_sub(1));
+        let here = self.dock.open().map_or(0, |(at, _)| at);
         let mut named = Row::new().then(Slot::Plain, " ".repeat(SAID));
         for (at, member) in batch.members.iter().enumerate() {
             if at > 0 {
@@ -620,7 +736,7 @@ impl<K> Docked<'_, K> {
             let open = at == here;
             named.push(Slot::Accent, if open { glyphs.caret() } else { " " });
             named.push(Slot::Plain, " ");
-            if member.draft.settles() {
+            if member.settles() {
                 named.push(Slot::DoneMark, glyphs.done());
             } else {
                 named.push(Slot::Quiet, glyphs.open());
@@ -638,7 +754,7 @@ impl<K> Docked<'_, K> {
         let answered = batch
             .members
             .iter()
-            .filter(|member| member.draft.settles())
+            .filter(|member| member.settles())
             .count();
         let counted = format!(
             "question {} of {} {} {answered} answered",
@@ -662,10 +778,11 @@ impl<K> Docked<'_, K> {
         let front = front(member);
         let room = inner.saturating_sub(front);
         let slot = if marked { Slot::Bold } else { Slot::Plain };
-        let chosen = !member.draft.declined && member.draft.chosen.contains(&at);
+        let draft = &member.draft;
+        let chosen = !draft.declined && draft.chosen.takes(at);
 
         let mut first = opening(member, at, marked, glyphs);
-        boxed_mark(&mut first, member.several, chosen, glyphs);
+        boxed_mark(&mut first, draft.chosen.several(), chosen, glyphs);
 
         let name = spoken(&offer.answer);
         let mut rows: Vec<Row> = fold(&name, room)
@@ -741,7 +858,7 @@ impl<K> Docked<'_, K> {
         for member in &batch.members {
             blank(rows);
             let draft = &member.draft;
-            let (slot, mark) = if draft.settles() {
+            let (slot, mark) = if member.settles() {
                 (Slot::DoneMark, glyphs.done())
             } else {
                 (Slot::Quiet, glyphs.open())
@@ -760,7 +877,7 @@ impl<K> Docked<'_, K> {
                     inner,
                     glyphs,
                 ));
-            } else if !draft.settles() {
+            } else if !member.settles() {
                 rows.push(framed(
                     said(PAYLOAD, Slot::Quiet, clip("No answer yet", under)),
                     inner,
@@ -769,8 +886,8 @@ impl<K> Docked<'_, K> {
             } else {
                 let chosen = draft
                     .chosen
-                    .iter()
-                    .filter_map(|at| member.answers.get(*at))
+                    .taken()
+                    .filter_map(|at| member.answers.get(at))
                     .map(|offer| spoken(&offer.answer));
                 let written = Some(spoken(&draft.written)).filter(|text| !text.is_empty());
                 for answer in chosen.chain(written) {
@@ -805,8 +922,9 @@ impl<K> Docked<'_, K> {
         blank(rows);
         let ruled = glyphs.horizontal().repeat(across.saturating_sub(SAID));
         rows.push(framed(said(SAID, Slot::Quiet, &ruled), inner, glyphs));
-        for (at, action) in actions.iter().enumerate() {
-            let marked = self.dock.focus.marked == at;
+        let on = self.dock.marked_action();
+        for action in actions {
+            let marked = on == Some(*action);
             let row = Row::new()
                 .then(Slot::Plain, " ".repeat(SAID))
                 .then(Slot::Accent, if marked { glyphs.caret() } else { " " })
@@ -867,101 +985,6 @@ fn boxed_mark(row: &mut Row, several: bool, chosen: bool, glyphs: Glyphs) {
     row.push(Slot::Plain, " ");
 }
 
-/// The specimen of the marked answer, in one box sized for every answer of the
-/// question, so the dock stays one height as the mark walks down them; nothing
-/// where none of them shows anything.
-fn shown(member: &Member, marked: usize, laid: Laid) -> Vec<Row> {
-    let Laid {
-        inner,
-        glyphs,
-        spacing,
-    } = laid;
-    if member.answers.iter().all(|offer| offer.shows.is_empty()) {
-        return Vec::new();
-    }
-    let Some(room) = inner.checked_sub(PAYLOAD + 4) else {
-        return Vec::new();
-    };
-
-    let lines = |offer: &Offer| -> Vec<(Slot, String)> {
-        if offer.shows.is_empty() {
-            return vec![(Slot::Quiet, clip(NOTHING, room).to_owned())];
-        }
-        if offer.shows.len() > MOST {
-            let left = offer.shows.len() - (MOST - 1);
-            let counted = format!("{} {left} more rows", glyphs.dot());
-            return offer
-                .shows
-                .iter()
-                .take(MOST - 1)
-                .map(|line| (Slot::Plain, clip(&spoken(line), room).to_owned()))
-                .chain(std::iter::once((
-                    Slot::Quiet,
-                    clip(&counted, room).to_owned(),
-                )))
-                .collect();
-        }
-        offer
-            .shows
-            .iter()
-            .map(|line| (Slot::Plain, clip(&spoken(line), room).to_owned()))
-            .collect()
-    };
-
-    let every: Vec<Vec<(Slot, String)>> = member.answers.iter().map(lines).collect();
-    let width = every
-        .iter()
-        .flatten()
-        .map(|(_, line)| wide(line))
-        .max()
-        .unwrap_or_default();
-    let tall = every.iter().map(Vec::len).max().unwrap_or(1);
-    let showing = every.get(marked);
-
-    let bar = glyphs.horizontal();
-    let mut rows = Vec::new();
-    if spacing.opening {
-        rows.push(framed(Row::new(), inner, glyphs));
-    }
-    rows.push(framed(
-        said(
-            PAYLOAD,
-            Slot::Quiet,
-            &format!("┌{}┐", bar.repeat(width + 2)),
-        ),
-        inner,
-        glyphs,
-    ));
-    for at in 0..tall {
-        let (slot, line) = showing
-            .and_then(|lines| lines.get(at))
-            .cloned()
-            .unwrap_or((Slot::Plain, String::new()));
-        let mut row = Row::new()
-            .then(Slot::Plain, " ".repeat(PAYLOAD))
-            .then(Slot::Quiet, glyphs.vertical())
-            .then(Slot::Plain, " ")
-            .then(slot, line);
-        row.pad(PAYLOAD + 3 + width);
-        rows.push(framed(
-            row.then(Slot::Quiet, glyphs.vertical()),
-            inner,
-            glyphs,
-        ));
-    }
-    rows.push(framed(
-        said(
-            PAYLOAD,
-            Slot::Quiet,
-            &format!("└{}┘", bar.repeat(width + 2)),
-        ),
-        inner,
-        glyphs,
-    ));
-
-    rows
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -982,7 +1005,6 @@ mod tests {
         Member {
             heading: "Format".to_owned(),
             question: "Which wire format should the exporter use first?".to_owned(),
-            several: false,
             answers: vec![
                 Offer {
                     says: "one object a line".to_owned(),
@@ -992,7 +1014,7 @@ mod tests {
                 offer("CSV"),
                 offer("Parquet"),
             ],
-            draft: Drafted::default(),
+            draft: Drafted::new(Chosen::One(None)),
         }
     }
 
@@ -1001,9 +1023,8 @@ mod tests {
         Member {
             heading: "Scope".to_owned(),
             question: "Which tables go in the first export?".to_owned(),
-            several: true,
             answers: vec![offer("Orders"), offer("Customers"), offer("Invoices")],
-            draft: Drafted::default(),
+            draft: Drafted::new(Chosen::Several(BTreeSet::new())),
         }
     }
 
@@ -1021,9 +1042,9 @@ mod tests {
     /// `Orders` had been taken.
     fn drafted(phase: Phase) -> Dock<u32> {
         let mut format = format();
-        format.draft.chosen = vec![1];
+        format.draft.chosen = Chosen::One(Some(1));
         let mut scope = scope();
-        scope.draft.chosen = vec![0];
+        scope.draft.chosen = Chosen::Several(BTreeSet::from([0]));
         scope.draft.declined = true;
         dock(vec![format, scope], phase)
     }
@@ -1127,7 +1148,7 @@ mod tests {
     fn a_question_taking_several_shows_each_choice_the_written_answer_and_the_note() {
         let mut several = scope();
         several.draft = Drafted {
-            chosen: vec![0, 2],
+            chosen: Chosen::Several(BTreeSet::from([0, 2])),
             written: "Payments".to_owned(),
             note: "only the last quarter".to_owned(),
             declined: false,
@@ -1375,11 +1396,136 @@ mod tests {
     }
 
     #[test]
+    fn a_focus_past_the_end_names_the_last_question_at_every_height() {
+        let mut open = dock(vec![format(), scope()], Phase::Answering);
+        open.focus.member = 5;
+
+        let tall = said(&open, 80, 40);
+        assert!(
+            tall.contains("Which tables go in the first export?"),
+            "{tall}"
+        );
+
+        let short = art(&open, 80, 3);
+        assert_eq!(short.len(), 1, "{short:#?}");
+        let only = short.join("");
+        assert!(only.contains("Scope"), "{only}");
+        assert!(!only.contains("Format"), "{only}");
+    }
+
+    #[test]
+    fn a_mark_past_the_actions_stands_on_the_last_one() {
+        let caret = Glyphs::Unicode.caret();
+        for phase in phases() {
+            if phase.actions().is_empty() {
+                continue;
+            }
+            let mut past = drafted(phase.clone());
+            past.focus.marked = 4;
+            let rows = art(&past, 80, 40);
+            assert!(row(&rows, "Close").contains(caret), "{phase:?}: {rows:#?}");
+        }
+    }
+
+    #[test]
+    fn a_choice_the_question_does_not_offer_is_no_answer() {
+        let mut dangling = format();
+        dangling.draft.chosen = Chosen::One(Some(99));
+        assert!(!dangling.settles());
+
+        let rows = art(&dock(vec![dangling], Phase::Reviewing), 80, 40);
+        assert!(
+            rows.iter().any(|row| row.contains("No answer yet")),
+            "{rows:#?}"
+        );
+        assert!(
+            !rows.iter().any(|row| row.contains(Glyphs::Unicode.done())),
+            "{rows:#?}"
+        );
+    }
+
+    #[test]
+    fn choices_are_read_in_the_order_they_were_offered_and_each_once() {
+        let one = Chosen::One(Some(2));
+        assert_eq!(one.taken().collect::<Vec<_>>(), [2]);
+        assert_eq!(Chosen::One(None).taken().count(), 0);
+
+        let several = Chosen::Several([2, 0, 2, 1].into_iter().collect::<BTreeSet<_>>());
+        assert_eq!(several.taken().collect::<Vec<_>>(), [0, 1, 2]);
+        assert!(several.several() && !one.several());
+    }
+
+    #[test]
+    fn the_dock_resolves_what_is_in_front_the_way_it_draws_it() {
+        let mut past = dock(vec![format(), scope()], Phase::Answering);
+        past.batches.push(Batched {
+            key: 8,
+            members: vec![format()],
+        });
+        past.current = 3;
+        past.focus.member = 5;
+        assert_eq!(
+            past.front().map(|(at, batch)| (at, batch.key)),
+            Some((1, 8))
+        );
+        assert_eq!(
+            past.open()
+                .map(|(at, member)| (at, member.heading.as_str())),
+            Some((0, "Format"))
+        );
+
+        past.current = 0;
+        assert_eq!(
+            past.open()
+                .map(|(at, member)| (at, member.heading.as_str())),
+            Some((1, "Scope"))
+        );
+        assert_eq!(past.marked_action(), None);
+
+        past.phase = Phase::Reviewing;
+        past.focus.marked = 9;
+        assert_eq!(past.marked_action(), Some(Action::Close));
+        past.focus.marked = 0;
+        assert_eq!(past.marked_action(), Some(Action::Submit));
+    }
+
+    #[test]
+    fn a_batch_with_no_questions_draws_nothing() {
+        for phase in phases() {
+            let empty = dock(Vec::new(), phase.clone());
+            assert!(art(&empty, 80, 40).is_empty(), "{phase:?}");
+        }
+    }
+
+    #[test]
+    fn debugging_the_dock_prints_nobody_s_words() {
+        let mut member = format();
+        if let Some(first) = member.answers.first_mut() {
+            first.shows = vec!["{\"id\": 1}".to_owned()];
+        }
+        member.draft.written = "my own answer".to_owned();
+        member.draft.note = "a note of mine".to_owned();
+        let printed = format!("{:?}", dock(vec![member], Phase::Answering));
+
+        for words in [
+            "Format",
+            "Which wire format",
+            "JSON lines",
+            "one object a line",
+            "\"id\"",
+            "my own answer",
+            "a note of mine",
+        ] {
+            assert!(!printed.contains(words), "{words:?} in {printed}");
+        }
+    }
+
+    #[test]
     fn the_models_words_are_cleaned_and_never_drawn_in_the_docks_own_voice() {
         let mut hostile = format();
         hostile.heading = "Submit batch".to_owned();
         hostile.question = "Pick \u{1b}[31mone\u{1b}[0m\u{7} now".to_owned();
-        hostile.draft.chosen = vec![0];
+        hostile.draft.chosen = Chosen::One(Some(0));
         let mut review = dock(vec![hostile.clone()], Phase::Reviewing);
         review.focus.marked = 0;
         let open = dock(vec![hostile], Phase::Answering);
@@ -1432,7 +1578,6 @@ mod tests {
                 Member {
                     heading: format!("{text} {at}"),
                     question: format!("{PROSE} {text} {ESCAPED}"),
-                    several: at % 2 == 1,
                     answers: (0..8)
                         .map(|answer| Offer {
                             answer: format!("{text} {answer}"),
@@ -1444,7 +1589,11 @@ mod tests {
                         })
                         .collect(),
                     draft: Drafted {
-                        chosen: vec![0, 3, 7],
+                        chosen: if at % 2 == 1 {
+                            Chosen::Several(BTreeSet::from([0, 3, 7]))
+                        } else {
+                            Chosen::One(Some(7))
+                        },
                         written: format!("{WIDE} {LONG} {ESCAPED}"),
                         note: format!("{PROSE} {MARKED} {WIDE} {ESCAPED}").repeat(8),
                         declined: at == 3,

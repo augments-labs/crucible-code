@@ -26,6 +26,7 @@
 //! sentence is the defect this catches, and a fixture of short words never
 //! reaches it.
 
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use crate::asked::{Asked, Choice, Given, Stop, Writing};
@@ -33,7 +34,7 @@ use crate::asking::Question;
 use crate::bar::{Bar, Fill, Part};
 use crate::chrome::{Frame, Label, Undrawn};
 use crate::color::Slot;
-use crate::docked::{Batched, Dock, Docked, Drafted, Editing, Focus, Member, Offer, Phase};
+use crate::docked::{Batched, Chosen, Dock, Docked, Drafted, Editing, Focus, Member, Offer, Phase};
 use crate::expanded::{Expanded, Shown};
 use crate::glyphs::Glyphs;
 use crate::key_panel::KeyPanel;
@@ -625,7 +626,6 @@ fn a_dock_fits_the_window_its_questions_wait_in() {
     let member = |at: usize, text: &str| Member {
         heading: format!("{text} {at}"),
         question: format!("{PROSE} {text}"),
-        several: at % 2 == 1,
         answers: (0..8)
             .map(|answer| Offer {
                 answer: format!("{text} {answer}"),
@@ -637,7 +637,11 @@ fn a_dock_fits_the_window_its_questions_wait_in() {
             })
             .collect(),
         draft: Drafted {
-            chosen: vec![0, 7],
+            chosen: if at % 2 == 1 {
+                Chosen::Several(BTreeSet::from([0, 7]))
+            } else {
+                Chosen::One(Some(7))
+            },
             written: WIDE.to_owned(),
             note: PROSE.to_owned(),
             declined: at == 3,

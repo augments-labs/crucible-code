@@ -85,7 +85,7 @@ const APART: usize = 2;
 /// hands back and says when it cut it, and a block that could be any height
 /// would be the one thing on screen deciding how tall this panel is — decided
 /// by whatever wrote the call rather than by the panel drawing it.
-pub(crate) const MOST: usize = 10;
+const MOST: usize = 10;
 
 /// What opens the reader's own line about a question.
 pub(crate) const NOTED: &str = "Note: ";
@@ -94,7 +94,7 @@ pub(crate) const NOTED: &str = "Note: ";
 ///
 /// The box is drawn anyway. One that vanished would move every row under it as
 /// the mark walked past, which is the same defect as the panel changing height.
-pub(crate) const NOTHING: &str = "nothing to show for this one";
+const NOTHING: &str = "nothing to show for this one";
 
 /// One question, as the row across the top draws it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -322,7 +322,13 @@ impl Asked<'_> {
         }
 
         if beside.is_none() {
-            rows.extend(self.shown(laid));
+            rows.extend(under(
+                &self.shows(),
+                self.marked,
+                inner,
+                glyphs,
+                spacing.opening,
+            ));
         }
 
         if !self.leaves.is_empty() {
@@ -387,55 +393,9 @@ impl Asked<'_> {
         Some(framed(row, laid.inner, laid.glyphs))
     }
 
-    /// The one box every answer in this question is drawn in, and `None` where
-    /// none of them shows anything.
-    ///
-    /// Read off every answer rather than off the marked one, which is the whole
-    /// of what keeps the panel one height as the mark walks down them.
-    fn boxed(&self, room: usize) -> Option<(usize, usize)> {
-        if self.answers.iter().all(|answer| answer.shows.is_empty()) {
-            return None;
-        }
-
-        // Measured on the rows that will be drawn: past the bound the last row
-        // counts what was left out instead, and a box sized to rows nobody
-        // sees would cut the count that replaced them. The dot is measured by
-        // a one-column stand-in, which is what it is in every glyph set.
-        let wide = self
-            .answers
-            .iter()
-            .flat_map(|answer| {
-                if answer.shows.is_empty() {
-                    vec![NOTHING.to_owned()]
-                } else if answer.shows.len() > MOST {
-                    let counted = answer.shows.len() - (MOST - 1);
-                    answer
-                        .shows
-                        .get(..MOST - 1)
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|line| (*line).to_owned())
-                        .chain(std::iter::once(format!("· {counted} more rows")))
-                        .collect()
-                } else {
-                    answer.shows.iter().map(|line| (*line).to_owned()).collect()
-                }
-            })
-            .map(|line| {
-                let line = spoken(&line);
-                wide(clip(&line, room))
-            })
-            .max()
-            .unwrap_or_default();
-
-        let tall = self
-            .answers
-            .iter()
-            .map(|answer| answer.shows.len().clamp(1, MOST))
-            .max()
-            .unwrap_or(1);
-
-        Some((wide, tall))
+    /// Every answer's specimen rows, in the order the answers are numbered.
+    fn shows(&self) -> Vec<&[&str]> {
+        self.answers.iter().map(|answer| answer.shows).collect()
     }
 
     /// The box standing beside the answers, or `None` where the window cannot
@@ -452,7 +412,7 @@ impl Asked<'_> {
             .map(|answer| wide(&spoken(answer.answer)))
             .max()
             .unwrap_or_default();
-        let (wide, tall) = self.boxed(inner)?;
+        let (wide, tall) = boxed(&self.shows(), inner)?;
         let left = inner.checked_sub(wide + 4 + APART)?;
 
         (left >= self.gutter() + names).then_some(Beside { left, wide, tall })
@@ -464,8 +424,10 @@ impl Asked<'_> {
         let bar = glyphs.horizontal();
         let mut rows = vec![Row::new().then(Slot::Quiet, format!("┌{}┐", bar.repeat(wide + 2)))];
 
+        let shows = self.shows();
+        let marked = shows.get(self.marked).copied();
         for at in 0..tall {
-            let (slot, line) = self.showing(at, wide, glyphs);
+            let (slot, line) = showing(marked, at, wide, glyphs);
             let mut row = Row::new()
                 .then(Slot::Quiet, glyphs.vertical())
                 .then(Slot::Plain, " ")
@@ -477,96 +439,6 @@ impl Asked<'_> {
         rows.push(Row::new().then(Slot::Quiet, format!("└{}┘", bar.repeat(wide + 2))));
 
         rows
-    }
-
-    /// The specimen of the marked answer, in the box the whole question shares.
-    fn shown(&self, laid: Laid) -> Vec<Row> {
-        let Laid {
-            inner,
-            glyphs,
-            spacing,
-        } = laid;
-
-        // Two columns for the box's own edges, and one more for the space that
-        // parts a specimen from the left one.
-        let Some(room) = inner.checked_sub(PAYLOAD + 4) else {
-            return Vec::new();
-        };
-        let Some((wide, tall)) = self.boxed(room) else {
-            return Vec::new();
-        };
-
-        let bar = glyphs.horizontal();
-        let mut rows = Vec::new();
-        if spacing.opening {
-            rows.push(framed(Row::new(), inner, glyphs));
-        }
-        rows.push(framed(
-            said(PAYLOAD, Slot::Quiet, &format!("┌{}┐", bar.repeat(wide + 2))),
-            inner,
-            glyphs,
-        ));
-
-        for at in 0..tall {
-            let (slot, line) = self.showing(at, room, glyphs);
-            let mut row = Row::new()
-                .then(Slot::Plain, " ".repeat(PAYLOAD))
-                .then(Slot::Quiet, glyphs.vertical())
-                .then(Slot::Plain, " ")
-                .then(slot, line);
-            // A column of air on each side, so the widest specimen in the
-            // question does not read as one the box grew too tight for.
-            row.pad(PAYLOAD + 3 + wide);
-            rows.push(framed(
-                row.then(Slot::Quiet, glyphs.vertical()),
-                inner,
-                glyphs,
-            ));
-        }
-
-        rows.push(framed(
-            said(PAYLOAD, Slot::Quiet, &format!("└{}┘", bar.repeat(wide + 2))),
-            inner,
-            glyphs,
-        ));
-
-        rows
-    }
-
-    /// What row `at` of the box says for the answer the mark is on.
-    ///
-    /// A specimen is clipped rather than folded: a folded specimen is a picture
-    /// of something else, where a cut one is at least a picture of the first
-    /// columns of the right thing.
-    fn showing(&self, at: usize, room: usize, glyphs: Glyphs) -> (Slot, String) {
-        let Some(answer) = self.answers.get(self.marked) else {
-            return (Slot::Plain, String::new());
-        };
-
-        if answer.shows.is_empty() {
-            return if at == 0 {
-                // Clipped, because `boxed` measured this line clipped when it
-                // decided how wide the box is. Drawn whole it would reach past
-                // the edge that measurement drew, on the one window narrow
-                // enough for the sentence not to fit.
-                (Slot::Quiet, clip(NOTHING, room).to_owned())
-            } else {
-                (Slot::Plain, String::new())
-            };
-        }
-
-        // The last row the bound allows is spent saying how much was left out,
-        // because a block cut with nothing said reads as the whole specimen.
-        if answer.shows.len() > MOST && at == MOST - 1 {
-            let left = answer.shows.len() - (MOST - 1);
-            let counted = format!("{} {left} more rows", glyphs.dot());
-            return (Slot::Quiet, clip(&counted, room).to_owned());
-        }
-
-        answer.shows.get(at).map_or_else(
-            || (Slot::Plain, String::new()),
-            |line| (Slot::Plain, clip(&spoken(line), room).to_owned()),
-        )
     }
 
     /// The widest gutter an answer opens after: the caret, the number, and the
@@ -869,6 +741,153 @@ impl Spacing {
             opening: false,
         },
     ];
+}
+
+/// The one box every answer's specimen is drawn in, `wide` columns inside its
+/// edges and `tall` rows, and `None` where none of them shows anything.
+///
+/// Read off every answer rather than off the marked one, which is the whole
+/// of what keeps a panel one height as the mark walks down them.
+pub(crate) fn boxed<S: AsRef<str>>(every: &[&[S]], room: usize) -> Option<(usize, usize)> {
+    if every.iter().all(|shows| shows.is_empty()) {
+        return None;
+    }
+
+    // Measured on the rows that will be drawn: past the bound the last row
+    // counts what was left out instead, and a box sized to rows nobody sees
+    // would cut the count that replaced them. The dot is measured by a
+    // one-column stand-in, which is what it is in every glyph set.
+    let wide = every
+        .iter()
+        .flat_map(|shows| {
+            if shows.is_empty() {
+                vec![NOTHING.to_owned()]
+            } else if shows.len() > MOST {
+                let counted = shows.len() - (MOST - 1);
+                shows
+                    .get(..MOST - 1)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|line| line.as_ref().to_owned())
+                    .chain(std::iter::once(format!("· {counted} more rows")))
+                    .collect()
+            } else {
+                shows.iter().map(|line| line.as_ref().to_owned()).collect()
+            }
+        })
+        .map(|line| {
+            let line = spoken(&line);
+            wide(clip(&line, room))
+        })
+        .max()
+        .unwrap_or_default();
+
+    let tall = every
+        .iter()
+        .map(|shows| shows.len().clamp(1, MOST))
+        .max()
+        .unwrap_or(1);
+
+    Some((wide, tall))
+}
+
+/// The specimen of the marked answer, in the box every answer of its question
+/// shares, standing under the answers `PAYLOAD` columns in; nothing where none
+/// of them shows anything or the window cannot hold the box's edges.
+pub(crate) fn under<S: AsRef<str>>(
+    every: &[&[S]],
+    marked: usize,
+    inner: usize,
+    glyphs: Glyphs,
+    opening: bool,
+) -> Vec<Row> {
+    // Two columns for the box's own edges, and one more for the space that
+    // parts a specimen from the left one.
+    let Some(room) = inner.checked_sub(PAYLOAD + 4) else {
+        return Vec::new();
+    };
+    let Some((wide, tall)) = boxed(every, room) else {
+        return Vec::new();
+    };
+    let marked = every.get(marked).copied();
+
+    let bar = glyphs.horizontal();
+    let mut rows = Vec::new();
+    if opening {
+        rows.push(framed(Row::new(), inner, glyphs));
+    }
+    rows.push(framed(
+        said(PAYLOAD, Slot::Quiet, &format!("┌{}┐", bar.repeat(wide + 2))),
+        inner,
+        glyphs,
+    ));
+
+    for at in 0..tall {
+        let (slot, line) = showing(marked, at, room, glyphs);
+        let mut row = Row::new()
+            .then(Slot::Plain, " ".repeat(PAYLOAD))
+            .then(Slot::Quiet, glyphs.vertical())
+            .then(Slot::Plain, " ")
+            .then(slot, line);
+        // A column of air on each side, so the widest specimen in the
+        // question does not read as one the box grew too tight for.
+        row.pad(PAYLOAD + 3 + wide);
+        rows.push(framed(
+            row.then(Slot::Quiet, glyphs.vertical()),
+            inner,
+            glyphs,
+        ));
+    }
+
+    rows.push(framed(
+        said(PAYLOAD, Slot::Quiet, &format!("└{}┘", bar.repeat(wide + 2))),
+        inner,
+        glyphs,
+    ));
+
+    rows
+}
+
+/// What row `at` of the box says for the marked answer's specimen `shows`,
+/// and nothing where no answer is marked.
+///
+/// A specimen is clipped rather than folded: a folded specimen is a picture
+/// of something else, where a cut one is at least a picture of the first
+/// columns of the right thing.
+fn showing<S: AsRef<str>>(
+    shows: Option<&[S]>,
+    at: usize,
+    room: usize,
+    glyphs: Glyphs,
+) -> (Slot, String) {
+    let Some(shows) = shows else {
+        return (Slot::Plain, String::new());
+    };
+
+    if shows.is_empty() {
+        return if at == 0 {
+            // Clipped, because `boxed` measured this line clipped when it
+            // decided how wide the box is. Drawn whole it would reach past
+            // the edge that measurement drew, on the one window narrow
+            // enough for the sentence not to fit.
+            (Slot::Quiet, clip(NOTHING, room).to_owned())
+        } else {
+            (Slot::Plain, String::new())
+        };
+    }
+
+    // The last row the bound allows is spent saying how much was left out,
+    // because a block cut with nothing said reads as the whole specimen.
+    if shows.len() > MOST && at == MOST - 1 {
+        let left = shows.len() - (MOST - 1);
+        let counted = format!("{} {left} more rows", glyphs.dot());
+        return (Slot::Quiet, clip(&counted, room).to_owned());
+    }
+
+    shows.get(at).map_or_else(
+        || (Slot::Plain, String::new()),
+        |line| (Slot::Plain, clip(&spoken(line.as_ref()), room).to_owned()),
+    )
 }
 
 /// One column of edge running down.
