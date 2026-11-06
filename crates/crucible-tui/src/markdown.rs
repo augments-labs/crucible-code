@@ -928,8 +928,11 @@ enum Retract {
     /// The line is to be taken back before anything else is said.
     Owed,
     /// It may not: what is said goes out for good, so a header is not told
-    /// apart from the prose it may be. Where output is written straight to a
-    /// file.
+    /// apart from the prose it may be. For a renderer built over a terminal
+    /// that is not one, whose palette still reads the markdown into slots. The
+    /// shipped app builds none: it gives output that is not a terminal no
+    /// colour, and the renderer then reads no markdown at all. So this is a
+    /// guard for a caller of this crate, not a state a user meets.
     Refused,
 }
 
@@ -1291,7 +1294,9 @@ impl Markdown {
     /// Sets whether what this reader says goes out for good.
     ///
     /// Where it does, a line is never taken back, and so a table written
-    /// without outer bars is read as the prose a file of markdown keeps it as.
+    /// without outer bars is read as the prose it may be and stays so. Only a
+    /// renderer over a terminal that is not one, wearing a palette that reads
+    /// slots, says so: see `Retract::Refused`.
     pub fn commits(&mut self, commits: bool) {
         if self.retract != Retract::Owed {
             self.retract = if commits {

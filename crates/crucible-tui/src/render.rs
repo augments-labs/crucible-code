@@ -1350,8 +1350,10 @@ impl<T: Terminal> Renderer<T> {
         let columns = self.folds();
         let redirected = !self.terminal.is_terminal();
         let theme = self.palette.theme();
-        // What a redirected run is written cannot be taken back, so the reader
-        // keeps a header it cannot tell from prose as the prose it may be.
+        // What is written to a terminal that is not one cannot be taken back,
+        // so the reader keeps a header it cannot tell from prose as the prose
+        // it may be. Only a caller of this crate gets here: the app gives such
+        // output no colour, and the early return above reads no markdown.
         self.markdown.commits(redirected);
         let Self {
             markdown,

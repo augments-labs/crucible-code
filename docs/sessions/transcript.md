@@ -130,9 +130,8 @@ Some text is drawn exactly as the model wrote it, rather than as a block:
   every line is shown as it arrives, as the prose it may be, and is replaced by
   the table once the delimiter row has. Only the line break after a line of two
   or more cells, and the start of the line under it, wait for what follows;
-  a header longer than 128 bytes is prose. A run whose output is a file, with
-  colour on, cannot take a line back, so there a table written this way stays
-  as it was written.
+  a header longer than 128 bytes is prose. Output that is not a terminal keeps
+  every table, like the rest of the model's markdown, as it was written.
 - **Lines with bars and no delimiter row.** They are drawn as written.
 - **A `$` in prose.** A price such as `$5`, or `$$` after other words on a
   line, opens no formula.

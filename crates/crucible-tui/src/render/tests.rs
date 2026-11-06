@@ -3169,6 +3169,42 @@ fn a_header_stalled_part_way_is_drawn_as_the_prose_it_is_until_the_delimiter_row
 }
 
 #[test]
+fn a_frame_drawn_while_a_header_is_in_doubt_leaves_what_drawing_the_whole_answer_leaves() {
+    // The app draws a frame between deltas, with its own rows under the
+    // transcript. Whichever byte the answer is cut at, so that one falls
+    // inside the header, between it and the delimiter row, or inside the
+    // delimiter row, the screen and the record end up what one delta gives.
+    let answer = "before\n\nname | what it does\n--|--\nalpha | first\n\nafter\n";
+    let mut fresh = reading(40, 10);
+    fresh.answer(answer);
+    fresh.under(&[], None, colourful()).unwrap();
+
+    for cut in 0..=answer.len() {
+        let (first, second) = answer.split_at(cut);
+        let mut drawn = reading(40, 10);
+        drawn.render.stream(first).unwrap();
+        drawn.under(&standing(), None, colourful()).unwrap();
+        drawn.render.stream(second).unwrap();
+        drawn.render.settle().unwrap();
+        drawn.under(&[], None, colourful()).unwrap();
+
+        assert_eq!(drawn.rows(), fresh.rows(), "cut at {cut}");
+        assert_eq!(kept(&drawn), kept(&fresh), "cut at {cut}");
+    }
+
+    // The oracle is the same build, so say what it is: a table, and no line of
+    // the header or of the delimiter row left over as prose.
+    let rows = fresh.rows();
+    assert!(rows.iter().any(|row| row.contains('│')), "{rows:#?}");
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row.contains("name | what") || row.contains("--|--")),
+        "{rows:#?}"
+    );
+}
+
+#[test]
 fn a_table_written_without_outer_bars_narrowed_is_the_table_a_window_that_narrow_draws() {
     let mut fresh = reading(30, 20);
     fresh.answer(BARE_TABLE);

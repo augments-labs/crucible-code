@@ -5275,6 +5275,42 @@
       ]
     },
     {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-FRAME",
+      "family": "transcript-blocks",
+      "obligation": "A frame drawn between two deltas while a possible header is in doubt, wherever the answer is cut, leaves the screen and the record that drawing the whole answer leaves.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_frame_drawn_while_a_header_is_in_doubt_leaves_what_drawing_the_whole_answer_leaves",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "d15f0c2702c87ea22dba8b855c8bf952695b849ef397ee6cda61d8b7d8e9fe61",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-FRAME-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode a frame drawn between two deltas while a possible header is in doubt, wherever the answer is cut, leaves the scrollback that drawing the whole answer leaves.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_frame_drawn_while_a_header_is_in_doubt_leaves_what_drawing_the_whole_answer_leaves",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "a9b63e05f98d5832cefc293f947b42c3dcf575454141632acef5f112719492c2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
       "id": "CASE-TRANSCRIPT-BARE-TABLE-RETRACT",
       "family": "transcript-blocks",
       "obligation": "The reader says a header as prose as it arrives, takes it back exactly once before handing on the table, and never takes back a line that stops looking like a header.",

@@ -2107,6 +2107,46 @@ fn a_native_table_written_without_outer_bars_is_drawn_as_a_table() {
 }
 
 #[test]
+fn a_native_frame_drawn_while_a_header_is_in_doubt_leaves_what_drawing_the_whole_answer_leaves() {
+    // A frame between two deltas, wherever the answer is cut: inside the
+    // header, between it and the delimiter row, or inside that row. What
+    // reached the scrollback is what one delta gives, so no header was sent
+    // out as prose that the table then repeated.
+    let answer = "before\n\nname | what it does\n--|--\nalpha | first\n\nafter\n";
+    let fresh = answered_natively(&Window::new(40, 10), answer, None);
+    assert!(fresh.iter().any(|row| row.contains('│')), "{fresh:#?}");
+    assert!(
+        !fresh
+            .iter()
+            .any(|row| row.contains("name | what") || row.contains("--|--")),
+        "{fresh:#?}"
+    );
+
+    for cut in 0..=answer.len() {
+        let (first, second) = answer.split_at(cut);
+        let window = Window::new(40, 10);
+        let mut render = native(&window);
+        render.wears(colourful());
+        stands(&mut render);
+        render.stream(first).unwrap();
+        stands(&mut render);
+        render.stream(second).unwrap();
+        render.settle().unwrap();
+        stands(&mut render);
+        render.seal().unwrap();
+
+        let (boxed, _) = boxed();
+        let boxed: Vec<String> = boxed.iter().map(Row::text).collect();
+        let rows: Vec<String> = window
+            .all()
+            .into_iter()
+            .filter(|row| !row.trim().is_empty() && !boxed.contains(row))
+            .collect();
+        assert_eq!(rows, fresh, "cut at {cut}");
+    }
+}
+
+#[test]
 fn a_native_line_still_arriving_is_on_screen_whatever_it_could_turn_out_to_be() {
     let window = Window::new(40, 8);
     let mut render = native(&window);
