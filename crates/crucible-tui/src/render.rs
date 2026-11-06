@@ -765,10 +765,10 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the frame could not be written.
     fn steered(&mut self, arrived: &Pressed, bands: &Bands) -> Result<bool, TerminalError> {
-        // The band's height is what the record seeks against; the rail's,
-        // which is the band's and the running turn's under it, is what a row
-        // of the rail is counted in.
-        let rows = bands.transcript.len();
+        // The rows the record is shown in are what it seeks against; the
+        // rail's, which is the band's and the running turn's under it, is what
+        // a row of the rail is counted in.
+        let rows = self.record_rows(bands);
         let railed = self.railed_rows(bands);
         let height = railed.len();
         match *arrived {
@@ -891,6 +891,23 @@ impl<T: Terminal> Renderer<T> {
         self.standing.running.len().min(bands.turn.len())
     }
 
+    /// Whether the row that tells of a held block stands at the foot of the
+    /// transcript band: while a block is held, for as long as the reader is at
+    /// the foot to see it, in a band with a row to put it in.
+    fn holds_row(&self, bands: &Bands) -> bool {
+        self.markdown.holding().is_some() && self.record.following() && !bands.transcript.is_empty()
+    }
+
+    /// How many of the transcript band's rows the record is shown in: the
+    /// band's, less the row a held block stands in.
+    ///
+    /// The one count the record is drawn, pointed at, scrolled, selected in
+    /// and railed against, so a press, a hover and the rail all name the rows
+    /// drawn rather than a view one row taller than what is on screen.
+    fn record_rows(&self, bands: &Bands) -> usize {
+        bands.transcript.len() - usize::from(self.holds_row(bands))
+    }
+
     /// The window rows the rail stands beside: the transcript band, and the
     /// running turn's rows directly under it.
     fn railed_rows(&self, bands: &Bands) -> Range<usize> {
@@ -899,12 +916,16 @@ impl<T: Terminal> Renderer<T> {
 
     /// The rail as the transcript band, and the running turn under it, stand
     /// now, where one is drawn.
+    ///
+    /// A held block's row reads as the record's last, as a running turn's rows
+    /// do, so the rail stands beside the whole band either way.
     fn rail(&self, bands: &Bands) -> Option<ScrollRail> {
         self.rail_column()?;
+        let rows = self.record_rows(bands);
         let place = self
             .record
-            .place(bands.transcript.len())
-            .under_turn(self.turn_tail(bands));
+            .place(rows)
+            .under_turn(bands.transcript.len() - rows + self.turn_tail(bands));
         Some(ScrollRail::new(
             place,
             self.record.prompts(),
@@ -929,7 +950,7 @@ impl<T: Terminal> Renderer<T> {
     fn view(&self, bands: &Bands) -> View {
         View {
             band: bands.transcript.clone(),
-            top: self.record.top_row(bands.transcript.len()),
+            top: self.record.top_row(self.record_rows(bands)),
         }
     }
 
@@ -976,7 +997,7 @@ impl<T: Terminal> Renderer<T> {
             self.creeps = None;
             return Ok(false);
         };
-        if !self.record.scroll(by, bands.transcript.len()) {
+        if !self.record.scroll(by, self.record_rows(&bands)) {
             self.creeps = None;
             return Ok(false);
         }
@@ -1064,7 +1085,7 @@ impl<T: Terminal> Renderer<T> {
             return nothing;
         }
 
-        let rows = bands.transcript.len();
+        let rows = self.record_rows(&bands);
         let Some(line) = self.record.at(row - bands.transcript.start, rows) else {
             return nothing;
         };
@@ -1997,7 +2018,8 @@ impl<T: Terminal> Renderer<T> {
             return Ok(false);
         }
 
-        let rows = self.bands().transcript.len();
+        let bands = self.bands();
+        let rows = self.record_rows(&bands);
         if !self.record.scroll(by, rows) {
             return Ok(false);
         }
@@ -2223,7 +2245,7 @@ impl<T: Terminal> Renderer<T> {
             let into = at - bands.transcript.start;
             return self
                 .record
-                .at(into, bands.transcript.len())
+                .at(into, self.record_rows(&bands))
                 .map(|line| Aimed::Line(self.record.heads(line)));
         }
 
@@ -2280,7 +2302,7 @@ impl<T: Terminal> Renderer<T> {
             return 0..0;
         }
 
-        let top = self.record.top_row(bands.transcript.len());
+        let top = self.record.top_row(self.record_rows(&bands));
         self.record
             .row_at(top + (at - bands.transcript.start))
             .map_or(0..0, |row| drawn(&row, self.folds()))
@@ -2381,11 +2403,8 @@ impl<T: Terminal> Renderer<T> {
         let mut rail = rail.into_iter();
         // A block being held stands at the foot as one row saying so, under
         // what is above it, for as long as the reader is at the foot to see it.
-        let held = self
-            .holding(folds)
-            .filter(|_| self.record.following() && !bands.transcript.is_empty());
-        let shown = bands.transcript.len() - usize::from(held.is_some());
-        let mut showing = self.record.view(shown);
+        let held = self.holding(folds).filter(|_| self.holds_row(&bands));
+        let mut showing = self.record.view(self.record_rows(&bands));
         showing.extend(held);
         let mut showing = showing.into_iter();
         for at in bands.transcript.start..bands.transcript.end {

@@ -3256,3 +3256,92 @@ fn a_table_and_a_formula_held_mid_stream_unicode() {
 fn a_table_and_a_formula_held_mid_stream_ascii() {
     insta::assert_snapshot!(held_picture(Glyphs::Ascii));
 }
+
+// While a block is held, the record is shown in one row fewer than the band,
+// and the row under it is the held block's. What answers the pointer and what
+// the rail stands for are counted in the rows the record is shown in.
+
+/// A renderer thirty numbered lines into a window forty columns wide and ten
+/// tall, holding a formula: `line 21` to `line 29` over the held block's row.
+fn holding_under_thirty_lines() -> (Drawn, Vec<(String, usize)>) {
+    let mut drawn = reading(40, 10);
+    let mut numbered = Vec::new();
+    for k in 0..30 {
+        drawn.commit(&format!("line {k}")).unwrap();
+        numbered.push((format!("line {k}"), drawn.lines() - 1));
+    }
+    drawn.render.stream("$$\nx\n").unwrap();
+    (drawn, numbered)
+}
+
+#[test]
+fn a_click_while_a_block_is_held_names_the_line_drawn_under_it() {
+    let (drawn, numbered) = holding_under_thirty_lines();
+    let rows = drawn.rows();
+    assert_eq!(
+        rows.last().map(|row| row.trim_end()),
+        Some("◇ drawing a formula · 2 lines so far"),
+        "{rows:#?}"
+    );
+    let mut checked = 0;
+    for (at, row) in rows.iter().enumerate() {
+        if let Some((_, line)) = numbered.iter().find(|(text, _)| row.trim_end() == text) {
+            assert_eq!(
+                drawn.aimed(at),
+                Some(Aimed::Line(*line)),
+                "row {at}: {row:?}"
+            );
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, 9, "{rows:#?}");
+}
+
+#[test]
+fn a_pointer_while_a_block_is_held_lights_the_result_drawn_under_it() {
+    let mut drawn = reading(40, 6);
+    for k in 0..10 {
+        drawn.commit(&format!("line {k}")).unwrap();
+    }
+    drawn.present(&[cut("alpha")]).unwrap();
+    drawn.render.stream("$$\nx\n").unwrap();
+    let rows = drawn.rows();
+    let at = rows
+        .iter()
+        .position(|row| row.trim_end() == "alpha")
+        .unwrap();
+    assert!(
+        rows.get(at + 1)
+            .is_some_and(|row| row.contains("drawing a")),
+        "{rows:#?}"
+    );
+    drawn.take();
+
+    drawn.took(Pressed::Hovered { row: at, column: 0 }).unwrap();
+    assert!(
+        lit(&mut drawn, "alpha"),
+        "the result under the pointer did not light"
+    );
+}
+
+#[test]
+fn the_rail_while_a_block_is_held_stands_for_the_rows_drawn() {
+    // Twelve lines on a rail of ten. Held, the band shows `line 3` to
+    // `line 11` and the held block's row under them, which reads as the
+    // record's last, the way a running turn's rows do: thirteen rows, the
+    // band's first three rows in, so the thumb starts on rail row two. A rail
+    // laid for the band's whole height over the record alone starts it on
+    // row one, for a `line 2` the band does not show.
+    let mut drawn = reading(60, 10);
+    drawn.rails(true);
+    for line in 0..12 {
+        drawn.commit(&format!("line {line}")).unwrap();
+    }
+    drawn.render.stream("$$\nx\n").unwrap();
+    let rows = drawn.rows();
+    assert!(
+        rows.first().is_some_and(|row| row.starts_with("line 3")),
+        "{rows:#?}"
+    );
+    assert_eq!(rail_of(&drawn), "││┃┃┃┃┃┃┃┃");
+}
