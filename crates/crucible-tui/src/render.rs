@@ -1022,7 +1022,7 @@ impl<T: Terminal> Renderer<T> {
                 (Some(row), _) => self
                     .painted
                     .said(row, &covered)
-                    .map(|said| (said, self.painted.continues(row))),
+                    .map(|said| (said, self.painted.joins(row))),
                 (None, Place::Said(at)) => {
                     let row = self.record.row_at(at)?;
                     painted.clear();
@@ -1030,12 +1030,12 @@ impl<T: Terminal> Renderer<T> {
                     let structural = row.structural();
                     Some((
                         select::said(&painted, &covered, &structural),
-                        select::continues(&painted, &structural),
+                        select::joins(&painted, &structural),
                     ))
                 }
                 (None, Place::Stood(_)) => None,
             })
-            .map(|(line, continued)| (line.trim_end().to_owned(), continued));
+            .map(|(line, join)| (line.trim_end().to_owned(), join));
         select::joined(lines)
     }
 

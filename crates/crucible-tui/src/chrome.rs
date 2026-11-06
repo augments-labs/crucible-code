@@ -110,13 +110,17 @@ impl Frame {
     /// `inner` in its frame: the top edge, each row behind the gutter, and the
     /// bottom edge, none of them wider than `columns`.
     ///
-    /// The gutter is structural, so a drag over the block takes what is inside
-    /// it and not the frame's bars. `inner` is laid out already, and for the
+    /// The gutter and both edges are structural, so a drag over the block takes
+    /// what is inside it and not the frame. `inner` is laid out already, and for the
     /// room the two columns of the gutter leave.
     #[must_use]
     pub fn rows(&self, columns: usize, inner: &[Row]) -> Vec<Row> {
         let glyphs = self.label.glyphs;
-        let edge = |text: &str| Row::new().then(Slot::Quiet, text).clipped(columns);
+        let edge = |text: &str| {
+            Row::new()
+                .then_structural(Slot::Quiet, text)
+                .clipped(columns)
+        };
 
         let mut rows = Vec::with_capacity(inner.len() + 2);
         rows.push(edge(&self.top()));
@@ -153,6 +157,21 @@ pub(crate) const fn bottom(glyphs: Glyphs) -> &'static str {
     }
 }
 
+/// Whether `text` is the top or the bottom edge of a frame in either set, as
+/// [`Frame::top`] and [`bottom`] spell them.
+///
+/// Read off the words, so that a row from the record and one drawn afresh are
+/// asked the same way, as [`gutter`]'s is.
+pub(crate) fn is_edge(text: &str) -> bool {
+    [Glyphs::Unicode, Glyphs::Ascii].into_iter().any(|glyphs| {
+        let top = format!("{}{}", glyphs.square().0, glyphs.horizontal());
+        text == bottom(glyphs)
+            || text
+                .strip_prefix(top.as_str())
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(' '))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,6 +192,21 @@ mod tests {
         for glyphs in BOTH {
             assert_eq!(gutter(glyphs), format!("{} ", glyphs.vertical()));
             assert_eq!(width::columns(gutter(glyphs)), GUTTER);
+        }
+    }
+
+    #[test]
+    fn an_edge_is_known_by_its_words_in_either_set() {
+        for glyphs in BOTH {
+            for name in ["", "rust", "a name with spaces"] {
+                let top = frame(name, None, glyphs).top();
+                assert!(is_edge(&top), "{top:?}");
+            }
+            assert!(is_edge(bottom(glyphs)));
+            assert!(!is_edge(gutter(glyphs)));
+        }
+        for text in ["", "text", "┌─rust", "│ ┌─ rust", "└─ rust", "- item"] {
+            assert!(!is_edge(text), "{text:?}");
         }
     }
 

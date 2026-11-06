@@ -74,11 +74,11 @@ glyph set the corners are `+`, the rule `-` and the bar `|`.
 A line of code longer than the window is never folded at a space: it is cut
 where the room runs out, and each row after the first starts with `┆` (`:` in
 the ASCII glyph set) where the bar would be. In the full screen, crucible's own
-selection copies the code without the frame, and a line that wrapped copies as
-the one line it was written as, with no line break where it wrapped. In the
-native screen, or with <kbd>Shift</kbd> held while you drag, your terminal
-copies what it shows. When the window changes width the rows are cut again from
-the line.
+selection copies the code without the frame (its bars and both edges), and a
+line that wrapped copies as the one line it was written as, with no line break
+where it wrapped. In the native screen, or with <kbd>Shift</kbd> held while you
+drag, your terminal copies what it shows. When the window changes width the
+rows are cut again from the line.
 
 ## Lists and quotes that wrap
 

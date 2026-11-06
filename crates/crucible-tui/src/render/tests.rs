@@ -3257,6 +3257,9 @@ fn every_cut_of_an_answer_draws_what_the_whole_answer_draws() {
         "- a bullet item long enough that it has to wrap onto another row\n  - a nested one long enough to wrap onto another row too\n1. a numbered item long enough that it has to wrap as well\n> a quote long enough that it has to wrap onto another row too\n",
         "| a | b |\n|:--|--:|\n| `x` | **y** |\n\nafter\n",
         "```rust\nfn main() { let x = 1; }\n```\n\n---\n\nend\n",
+        // A line of code that wraps at fifty columns, under a label cut short
+        // and beside an empty fence.
+        "```rust-with-a-label-longer-than-a-label-may-be-cut\nlet total = first_value + second_value + third_value + fourth_value;\n```\n```\n```\nend\n",
         "see #12 and owner/repo#3 at https://example.com/a_b.\n",
         "~~gone~~ and \\*kept\\* and a_b_c\n",
         // Every kind the reader holds whole, and the lines that only look
@@ -3764,6 +3767,29 @@ fn copying_a_wrapped_code_row_gives_the_line_as_written() {
         wrote.contains(&onto_the_clipboard(CODE_LINE)),
         "{wrote:?} is not {CODE_LINE:?} on the clipboard"
     );
+}
+
+#[test]
+fn a_drag_over_a_whole_fenced_block_copies_the_code_and_not_its_edges() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let mut drawn = reading(30, 12);
+        drawn.draws(glyphs);
+        drawn.answer("```rust\nlet x = 1;\nlet y = 2;\n```\n");
+        let rows = drawn.rows();
+        let top = row_starting(&rows, glyphs.square().0);
+        let bottom = rows
+            .iter()
+            .rposition(|row| row.starts_with(glyphs.square().1))
+            .expect("a bottom edge");
+        drawn.take();
+
+        let wrote = drag(&mut drawn, (top, 0), (bottom, 29));
+
+        assert!(
+            wrote.contains(&onto_the_clipboard("let x = 1;\nlet y = 2;")),
+            "{rows:#?} gave {wrote:?}"
+        );
+    }
 }
 
 #[test]

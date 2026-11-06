@@ -29,7 +29,7 @@ use crate::color::Palette;
 use std::ops::Range;
 
 use crate::row::Row;
-use crate::select::{self, Taken, View};
+use crate::select::{self, Join, Taken, View};
 
 use super::frame::Frame;
 
@@ -100,14 +100,13 @@ impl Painted {
         Some(select::said(was, covered, structural))
     }
 
-    /// Whether screen row `at` opens with the mark of a row of code that
-    /// carries on the one above it.
-    pub(crate) fn continues(&self, at: usize) -> bool {
+    /// How screen row `at` stands to the row above it in what is copied.
+    pub(crate) fn joins(&self, at: usize) -> Join {
         let Some(was) = self.was.get(at).and_then(Option::as_deref) else {
-            return false;
+            return Join::Line;
         };
         let structural = self.structural.get(at).map_or(&[][..], Vec::as_slice);
-        select::continues(was, structural)
+        select::joins(was, structural)
     }
 
     /// Forgets what is on screen, so the next frame writes every row of it.

@@ -473,6 +473,14 @@ fn gutters(row: &Row) -> Option<(Glyphs, usize)> {
         .map(|glyphs| (glyphs, text.len()))
 }
 
+/// A frame's edge, as the structure it is: drawn, never copied.
+///
+/// Only a row of nothing but quiet words is read as one, which is how the
+/// reader says an edge and no running text is said.
+fn edged(row: &Row) -> bool {
+    row.spans().all(|(slot, _)| slot == Slot::Quiet) && chrome::is_edge(&row.text())
+}
+
 /// Where `code` breaks to fit `room` columns, as byte ranges that partition it.
 ///
 /// A line of code is broken wherever the room runs out, never at a space: it
@@ -481,6 +489,10 @@ fn gutters(row: &Row) -> Option<(Glyphs, usize)> {
 /// row begins the next one instead, so that the rows read back off the screen
 /// (which has no way to tell a space from the blank after it) join into the
 /// line. A row of nothing but whitespace keeps it, and may lose it on a copy.
+///
+/// The one thing that is dropped: a character wider than `room` itself, which
+/// no row could draw (a double-width character where one column is left), is
+/// left out with the marks on it, so a copy of that line lacks it.
 fn cuts(code: &str, room: usize) -> Vec<Range<usize>> {
     let mut parts = Vec::new();
     let mut base = 0;
@@ -540,9 +552,15 @@ fn broken(row: &Row, columns: usize) -> Option<(Glyphs, usize, Vec<Range<usize>>
 /// the bar. A line that wraps carries on under a mark of its own where the
 /// gutter stood, also structural, and breaks wherever the room runs out. What
 /// the code says comes back whole and in order, which is what a copy of the
-/// wrapped line is made from.
+/// wrapped line is made from. The frame's two edges are structural too, and
+/// are clipped to the window as the frame is, never folded, so that every row
+/// of one is known as an edge and a drag over a block takes its code alone.
 #[must_use]
 pub(crate) fn framed(row: &Row, columns: usize) -> Option<Vec<Row>> {
+    if edged(row) {
+        let edge = Row::new().then_structural(Slot::Quiet, row.text());
+        return Some(vec![edge.clipped(columns)]);
+    }
     let (glyphs, lead, parts) = broken(row, columns)?;
     let code = row.between(lead, usize::MAX);
 
@@ -567,6 +585,9 @@ pub(crate) fn framed(row: &Row, columns: usize) -> Option<Vec<Row>> {
 /// How many display rows [`framed`] gives `row`, without building them.
 #[must_use]
 pub(crate) fn framed_height(row: &Row, columns: usize) -> Option<usize> {
+    if edged(row) {
+        return Some(1);
+    }
     broken(row, columns).map(|(_, _, parts)| parts.len())
 }
 

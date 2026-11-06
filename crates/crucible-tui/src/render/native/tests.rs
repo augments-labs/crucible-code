@@ -2256,8 +2256,9 @@ fn a_native_held_block_shows_one_status_row_and_none_of_its_source() {
 /// A line of code that cannot fit thirty columns beside its gutter.
 const CODE_LINE: &str = "let total = first_value + second_value + third_value + fourth_value;";
 
-/// The rows `answer` comes to natively in `glyphs`, once as written at
-/// `columns` and, with `narrowed`, once after a window of sixty narrowed to it.
+/// The rows `answer` comes to natively in `glyphs`: once as written in a
+/// window `columns` wide, and once as written in a window of eleven hundred
+/// columns and then narrowed to `columns`, which must come to the same rows.
 fn fenced_natively(glyphs: Glyphs, columns: usize, answer: &str) -> [Vec<String>; 2] {
     [None, Some((columns, 40))].map(|resized| {
         let width = if resized.is_some() { 1100 } else { columns };
@@ -2293,6 +2294,52 @@ fn a_native_fence_naming_no_language_is_a_frame_with_no_label() {
 fn a_native_empty_fence_is_its_frame_and_no_refusal() {
     for rows in fenced_natively(Glyphs::Unicode, 64, "```rust\n```\n") {
         assert_eq!(rows, ["┌─ rust", "└─"]);
+    }
+}
+
+#[test]
+fn a_native_blank_line_of_code_keeps_its_place_in_the_frame() {
+    for rows in fenced_natively(Glyphs::Unicode, 64, "```\none\n\ntwo\n```\n") {
+        assert_eq!(rows, ["┌─", "│ one", "│", "│ two", "└─"]);
+    }
+}
+
+#[test]
+fn a_native_fence_label_longer_than_a_label_may_be_is_cut_short() {
+    let long = "x".repeat(200);
+    for rows in fenced_natively(Glyphs::Unicode, 64, &format!("```{long}\ncode\n```\n")) {
+        let top = rows.first().expect("a frame");
+        assert!(top.starts_with("┌─ xxx"), "{top:?}");
+        assert!(top.ends_with('…'), "{top:?}");
+        assert!(crate::width::columns(top) < 64, "{top:?}");
+    }
+}
+
+#[test]
+fn a_native_held_block_that_fits_its_cap_carries_no_refusal() {
+    for rows in fenced_natively(
+        Glyphs::Unicode,
+        64,
+        "```mermaid\ngraph TD\n  A --> B\n```\n",
+    ) {
+        assert!(
+            !rows
+                .iter()
+                .any(|row| row.contains("longer than this can hold")),
+            "{rows:#?}"
+        );
+    }
+}
+
+#[test]
+fn a_native_wrapped_code_row_marks_itself_with_the_glyph_of_its_set() {
+    let answer = format!("```\n{CODE_LINE}\n```\n");
+    for rows in fenced_natively(Glyphs::Unicode, 30, &answer) {
+        assert!(rows.iter().any(|row| row.starts_with("┆ ")), "{rows:#?}");
+    }
+    for rows in fenced_natively(Glyphs::Ascii, 30, &answer) {
+        assert!(rows.iter().any(|row| row.starts_with(": ")), "{rows:#?}");
+        assert!(!rows.iter().any(|row| row.contains(['┌', '│', '└', '┆'])));
     }
 }
 
@@ -2372,6 +2419,7 @@ fn a_native_hostile_fence_label_reaches_the_terminal_as_nothing_but_its_name() {
         ("\u{1b}_Gi=1;AAAA\u{1b}\\rust", "Gi=1;AAAArust"),
         ("\u{10eeee}\u{305}\u{305}rust", "rust"),
         ("\u{2066}rust\u{2069}", "rust"),
+        ("\u{202e}tsur\u{202c}", "tsur"),
     ] {
         let window = Window::new(64, 12);
         let rows = answered_natively(&window, &format!("```{label}\ncode\n```\n"), None);
@@ -2388,7 +2436,7 @@ fn a_native_hostile_fence_label_reaches_the_terminal_as_nothing_but_its_name() {
                 "{hostile:?} reached the terminal for {label:?}"
             );
         }
-        for hostile in ['\u{2066}', '\u{2069}', '\u{10eeee}'] {
+        for hostile in ['\u{2066}', '\u{2069}', '\u{202e}', '\u{202c}', '\u{10eeee}'] {
             assert!(
                 !written.contains(hostile),
                 "{hostile:?} reached the terminal for {label:?}"
