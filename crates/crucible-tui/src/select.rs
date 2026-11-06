@@ -342,8 +342,9 @@ pub(crate) enum Join {
 /// screen and one folded again from the record are asked the same way. What
 /// the reader selected across two rows of code, the second opening with the
 /// mark of a wrapped line, is one line of code, and no break was written where
-/// it wrapped. A frame's edge is all structure, and a blank line of code is
-/// not: it keeps its break.
+/// it wrapped. A frame's edge is structure from the first column, followed by
+/// nothing but more structure (the scroll rail's cell at the window's edge),
+/// and a blank line of code is not an edge: it keeps its break.
 pub(crate) fn joins(painted: &str, structural: &[Range<usize>]) -> Join {
     let mark = said(painted, &(0..GUTTER), &[]);
     if structural
@@ -356,9 +357,14 @@ pub(crate) fn joins(painted: &str, structural: &[Range<usize>]) -> Join {
         return Join::Carries;
     }
 
-    let all = said(painted, &(0..usize::MAX), &[]);
+    // The edge is the structure the row opens with, and nothing but more
+    // structure (the scroll rail's cell, at the window's edge) follows it.
+    let edge = structural
+        .iter()
+        .find(|range| range.start == 0)
+        .map(|range| said(painted, range, &[]));
     let text = said(painted, &(0..usize::MAX), structural);
-    if text.trim().is_empty() && chrome::is_edge(all.trim_end()) {
+    if text.trim().is_empty() && edge.is_some_and(|edge| chrome::is_edge(&edge)) {
         return Join::Edge;
     }
     Join::Line

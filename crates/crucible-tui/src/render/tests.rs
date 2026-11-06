@@ -3792,6 +3792,123 @@ fn a_drag_over_a_whole_fenced_block_copies_the_code_and_not_its_edges() {
     }
 }
 
+/// A short window with the scroll rail on, holding a fenced block and the line
+/// after it, at the foot of a transcript taller than the window: so every row
+/// ends in a rail glyph, as it does by default once there is something to
+/// scroll.
+fn railed_block(glyphs: Glyphs, tail: usize) -> Drawn {
+    let mut drawn = Drawn::new(30, 6);
+    drawn.rails(true);
+    drawn.wears(colourful());
+    drawn.draws(glyphs);
+    for line in 0..20 {
+        drawn.commit(&format!("line {line}")).unwrap();
+    }
+    drawn.answer("```rust\nlet x = 1;\nlet y = 2;\n```\nafter\n");
+    for line in 0..tail {
+        drawn.commit(&format!("tail {line}")).unwrap();
+    }
+    drawn
+}
+
+/// The window row that starts with `needle`, last one first.
+fn last_row_starting(rows: &[String], needle: &str) -> usize {
+    rows.iter()
+        .rposition(|row| row.starts_with(needle))
+        .unwrap_or_else(|| panic!("no row starts {needle:?}: {rows:#?}"))
+}
+
+#[test]
+fn with_the_rail_drawn_a_drag_over_a_whole_fenced_block_copies_the_code_alone() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let mut drawn = railed_block(glyphs, 0);
+        let rows = drawn.rows();
+        let top = row_starting(&rows, glyphs.square().0);
+        let bottom = last_row_starting(&rows, glyphs.square().1);
+        assert!(bottom > top + 2, "{rows:#?}");
+        drawn.take();
+
+        let wrote = drag(&mut drawn, (top, 0), (bottom, 29));
+
+        assert!(
+            wrote.contains(&onto_the_clipboard("let x = 1;\nlet y = 2;")),
+            "{rows:#?} gave {wrote:?}"
+        );
+    }
+}
+
+#[test]
+fn with_the_rail_drawn_the_line_after_a_fenced_block_follows_its_code_without_a_gap() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let mut drawn = railed_block(glyphs, 0);
+        let rows = drawn.rows();
+        let last = row_starting(&rows, &format!("{} let y", glyphs.vertical()));
+        let after = row_starting(&rows, "after");
+        drawn.take();
+
+        let wrote = drag(&mut drawn, (last, 0), (after, 29));
+
+        assert!(
+            wrote.contains(&onto_the_clipboard("let y = 2;\nafter")),
+            "{rows:#?} gave {wrote:?}"
+        );
+    }
+}
+
+#[test]
+fn with_the_rail_drawn_a_drag_from_the_bottom_edge_takes_the_next_line_alone() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let mut drawn = railed_block(glyphs, 0);
+        let rows = drawn.rows();
+        let bottom = last_row_starting(&rows, glyphs.square().1);
+        let after = row_starting(&rows, "after");
+        drawn.take();
+
+        let wrote = drag(&mut drawn, (bottom, 0), (after, 29));
+
+        assert!(
+            wrote.contains(&onto_the_clipboard("after")),
+            "{rows:#?} gave {wrote:?}"
+        );
+    }
+}
+
+#[test]
+fn with_the_rail_drawn_a_drag_that_scrolled_off_the_window_still_copies_the_code_alone() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let mut drawn = railed_block(glyphs, 8);
+        assert!(drawn.scrolled(-8).unwrap());
+        let rows = drawn.rows();
+        let top = row_starting(&rows, glyphs.square().0);
+        // The button goes down on the top edge, and the band is carried on
+        // until that row and the code beside it are above the window.
+        drawn.take();
+        drawn
+            .took(Pressed::Clicked {
+                row: top,
+                column: 0,
+            })
+            .unwrap();
+        drawn.took(Pressed::Dragged { row: 5, column: 6 }).unwrap();
+        assert!(drawn.scrolled(8).unwrap());
+        let foot = drawn.rows();
+        assert!(
+            !foot.iter().any(|row| row.starts_with(glyphs.square().0)),
+            "{foot:#?}"
+        );
+        drawn.took(Pressed::Dragged { row: 0, column: 6 }).unwrap();
+        drawn.take();
+        drawn.took(Pressed::Released { row: 0, column: 6 }).unwrap();
+
+        let wrote = drawn.take();
+        let expected = "let x = 1;\nlet y = 2;\nafter\ntail 0\ntail 1\ntail 2";
+        assert!(
+            wrote.contains(&onto_the_clipboard(expected)),
+            "{rows:#?} {foot:#?} gave {wrote:?}"
+        );
+    }
+}
+
 #[test]
 fn copying_across_two_wrapped_lines_keeps_the_break_between_them() {
     let second = "let other = fourth_value * fifth_value * sixth_value;";

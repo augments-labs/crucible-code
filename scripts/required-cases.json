@@ -4561,6 +4561,78 @@
       ]
     },
     {
+      "id": "CASE-TRANSCRIPT-FENCE-EDGES-RAIL-WHOLE",
+      "family": "transcript-blocks",
+      "obligation": "With the scroll rail drawn, a drag over a whole fenced block copies its code alone.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::with_the_rail_drawn_a_drag_over_a_whole_fenced_block_copies_the_code_alone",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "f6f8d8657795ceb38efba55e35f669cc644c676bfd1f79a2ea692f08f719fb36",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FENCE-EDGES-RAIL-AFTER",
+      "family": "transcript-blocks",
+      "obligation": "With the scroll rail drawn, the line after a fenced block follows its code without a gap.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::with_the_rail_drawn_the_line_after_a_fenced_block_follows_its_code_without_a_gap",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "76d7ad4ceb7ba8f3e6c48385c3c6a16a7beee90c458709f98e3232ff3fee40a5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FENCE-EDGES-RAIL-BOTTOM",
+      "family": "transcript-blocks",
+      "obligation": "With the scroll rail drawn, a drag from the bottom edge takes the next line alone.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::with_the_rail_drawn_a_drag_from_the_bottom_edge_takes_the_next_line_alone",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "46513f40041a23b61dcffe5092ad6be252feefcf851c612bea9565296160282a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FENCE-EDGES-RAIL-SCROLLED",
+      "family": "transcript-blocks",
+      "obligation": "With the scroll rail drawn, a drag that scrolled off the window still copies the code alone.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::with_the_rail_drawn_a_drag_that_scrolled_off_the_window_still_copies_the_code_alone",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "3e63f1e3f8583e81227f94248f3b9b9d342b2f6771b287199a623a0ed56005ae",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
       "id": "CASE-TRANSCRIPT-CODE-BLANK-LINE",
       "family": "transcript-blocks",
       "obligation": "A blank line of code keeps its place in the frame.",
