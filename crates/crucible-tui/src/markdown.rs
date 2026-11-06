@@ -223,6 +223,21 @@ pub enum Kind {
     Image,
 }
 
+impl Kind {
+    /// The word the reader knows this block by, where it has a source worth
+    /// reading whole: a rule and an image have none.
+    #[must_use]
+    pub fn named(self) -> Option<&'static str> {
+        match self {
+            Self::Table => Some("table"),
+            Self::DisplayMath => Some("math"),
+            Self::Mermaid => Some("mermaid diagram"),
+            Self::Diff => Some("diff"),
+            Self::Rule | Self::Image => None,
+        }
+    }
+}
+
 /// A block, with the source it was written as.
 ///
 /// The source rather than what it was drawn as, because what it is drawn as

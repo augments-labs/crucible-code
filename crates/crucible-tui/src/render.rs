@@ -1008,6 +1008,10 @@ impl<T: Terminal> Renderer<T> {
     /// a reader who dragged past them took them. Each row is trimmed of the
     /// blank it was padded out with, because that padding is screen and not
     /// text.
+    ///
+    /// A row of a drawn block comes as the block's whole source, once however
+    /// many of its rows the drag touched: what is drawn is not what the model
+    /// wrote, and the reader who selects a table or a formula wants the latter.
     fn selected(&self) -> String {
         let Some(taken) = self.taken else {
             return String::new();
@@ -1015,27 +1019,44 @@ impl<T: Terminal> Renderer<T> {
         let bands = self.bands();
         let view = self.view(&bands);
         let mut painted = String::new();
+        // The source of the drawn block the rows just before this one showed,
+        // so a block several of whose rows were touched is copied once: two
+        // blocks never lend the same text, and no other row follows one.
+        let mut sourced: Option<&str> = None;
         let lines = taken
             .places(self.size.columns, &view, self.record.last_row())
             .into_iter()
-            .filter_map(|(place, covered)| match (view.row(place), place) {
-                (Some(row), _) => self
-                    .painted
-                    .said(row, &covered)
-                    .map(|said| (said, self.painted.joins(row))),
-                (None, Place::Said(at)) => {
-                    let row = self.record.row_at(at)?;
-                    painted.clear();
-                    row.paint_into(&self.palette, &mut painted);
-                    let structural = row.structural();
-                    Some((
-                        select::said(&painted, &covered, &structural),
-                        select::joins(&painted, &structural),
-                    ))
+            .filter_map(|(place, covered)| {
+                let block = match place {
+                    Place::Said(at) => self.record.source_of(at),
+                    Place::Stood(_) => None,
+                };
+                if let Some(source) = block {
+                    let again = sourced
+                        .replace(source)
+                        .is_some_and(|before| std::ptr::eq(before, source));
+                    return (!again).then(|| (source.to_owned(), select::Join::Whole));
                 }
-                (None, Place::Stood(_)) => None,
-            })
-            .map(|(line, join)| (line.trim_end().to_owned(), join));
+                sourced = None;
+                let (line, join) = match (view.row(place), place) {
+                    (Some(row), _) => self
+                        .painted
+                        .said(row, &covered)
+                        .map(|said| (said, self.painted.joins(row)))?,
+                    (None, Place::Said(at)) => {
+                        let row = self.record.row_at(at)?;
+                        painted.clear();
+                        row.paint_into(&self.palette, &mut painted);
+                        let structural = row.structural();
+                        (
+                            select::said(&painted, &covered, &structural),
+                            select::joins(&painted, &structural),
+                        )
+                    }
+                    (None, Place::Stood(_)) => return None,
+                };
+                Some((line.trim_end().to_owned(), join))
+            });
         select::joined(lines)
     }
 
