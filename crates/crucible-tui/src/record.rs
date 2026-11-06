@@ -21,14 +21,19 @@
 //! reflows. Only the lines the viewport covers are folded and painted, and that
 //! is what keeps a frame proportional to the window rather than to the session.
 //!
-//! Three kinds of line, because three kinds of thing arrive here. Prose
+//! Four kinds of line, because four kinds of thing arrive here. Prose
 //! *flows*: the model's answer and a tool's output were written as text and a
 //! wrap is the only thing deciding where a row ends, so the width they are
 //! folded at is whatever the window is now. A component whose source is still
 //! held is *responsive*: a prompt, a diff, or a command's answer drawn from
-//! figures it still holds is laid out again at the new width. Everything else
-//! is *set*: a table or a box laid out by something that is gone is clipped
-//! rather than pretending it can be rebuilt.
+//! figures it still holds is laid out again at the new width. A block of an
+//! answer is *drawn*: a table or a rule arrives as the source it was written
+//! as, which is kept beside what it was laid out as, and laid out again for a
+//! new width or a new glyph set; a new theme only paints the same rows in
+//! other colours. Both forms count against the ceiling, and a drawn block that
+//! falls off the top takes its source with it. Everything else is *set*: a box
+//! laid out by something that is gone is clipped rather than pretending it can
+//! be rebuilt.
 //!
 //! The opening is responsive for the same reason. It is drawn from facts read
 //! once at launch and kept for the whole session, so what laid it is still here
@@ -41,8 +46,9 @@ use std::fmt;
 use std::collections::VecDeque;
 use std::ops::Range;
 
-use crate::color::Slot;
+use crate::color::{Slot, Theme};
 use crate::glyphs::Glyphs;
+use crate::markdown::{self, Block, Links};
 use crate::row::Row;
 use crate::scroll_rail::Place;
 
@@ -88,8 +94,66 @@ enum Line {
         /// What lays the whole block out at a width.
         lay: Box<dyn Fn(usize) -> Vec<Row>>,
     },
+    /// A block of an answer, kept with its source.
+    Drawn(Drawn),
     /// Rows a component laid out against a width. Clipped, never re-folded.
     Set(Row),
+}
+
+/// A block of an answer, the source it was written as and the rows it was
+/// laid out as.
+///
+/// Laid out for one width, glyph set and theme at a time, and laid out again
+/// when the first two change; the theme is part of what it was laid for only
+/// so that what is on screen can be told from what is wanted, since rows carry
+/// slots and a theme is the colours a slot is painted in.
+pub(crate) struct Drawn {
+    block: Block,
+    /// The display rows at [`Self::laid`].
+    rows: Vec<Row>,
+    /// A prefix applied to each row after every layout.
+    prefix: Option<Subordinate>,
+    /// How many ordinary record lines the source and the rows cost together.
+    weight: usize,
+    /// The width, glyph set and theme the rows were laid out for.
+    laid: (usize, Glyphs, Theme),
+    /// Edits made to the rows since, applied again at every layout.
+    edits: Vec<fn(&mut [Row])>,
+}
+
+impl Drawn {
+    /// `block` laid out for `columns` in `glyphs` and `theme`, linking by
+    /// `links`.
+    fn new(block: Block, columns: usize, glyphs: Glyphs, theme: Theme, links: &Links) -> Self {
+        let mut drawn = Self {
+            block,
+            rows: Vec::new(),
+            prefix: None,
+            weight: 0,
+            laid: (columns, glyphs, theme),
+            edits: Vec::new(),
+        };
+        drawn.lay(columns, glyphs, links);
+        drawn
+    }
+
+    /// Lays the block out again for `columns` in `glyphs`, linking by
+    /// `links`, with every edit and the prefix it was given since.
+    fn lay(&mut self, columns: usize, glyphs: Glyphs, links: &Links) {
+        let laid = markdown::lay(&self.block, columns, glyphs, links);
+        let mut rows = responsive_rows(laid.iter().flat_map(|row| row.fold(columns)).collect());
+        for edit in &self.edits {
+            edit(&mut rows);
+        }
+        if let Some(prefix) = &self.prefix {
+            prefix.prefix(&mut rows);
+        }
+        let bytes = self.block.source.len() + rows.iter().map(Row::bytes).sum::<usize>();
+        self.weight = rows.len().max(bytes.div_ceil(RETAINED_ROW_BYTES)).max(1);
+        self.rows = rows;
+        self.laid.0 = columns;
+        self.laid.1 = glyphs;
+    }
 }
 
 /// A subordinate block's structural mark and text-column width.
@@ -116,6 +180,16 @@ impl Subordinate {
         row.push(Slot::Plain, " ");
         row
     }
+
+    /// Hangs `rows`, a block laid out afresh, under this prefix again.
+    fn prefix(&self, rows: &mut [Row]) {
+        let mut first = self.marks_first;
+        for (at, row) in rows.iter_mut().enumerate() {
+            if !(self.keeps_first && at == 0) {
+                row.prepend(self.row(&mut first));
+            }
+        }
+    }
 }
 
 /// A mark hung on what is written from a line on, before it is written.
@@ -139,7 +213,7 @@ impl Line {
     /// Its share of the record's retained-memory ceiling.
     fn weight(&self) -> usize {
         match self {
-            Self::Responsive { weight, .. } => *weight,
+            Self::Responsive { weight, .. } | Self::Drawn(Drawn { weight, .. }) => *weight,
             Self::Flowed(_) | Self::Set(_) => 1,
         }
     }
@@ -153,6 +227,12 @@ impl fmt::Debug for Line {
                 .debug_struct("Responsive")
                 .field("rows", &rows.len())
                 .field("weight", weight)
+                .finish_non_exhaustive(),
+            Self::Drawn(drawn) => out
+                .debug_struct("Drawn")
+                .field("block", &drawn.block)
+                .field("rows", &drawn.rows.len())
+                .field("weight", &drawn.weight)
                 .finish_non_exhaustive(),
             Self::Set(row) => out.debug_tuple("Set").field(row).finish(),
         }
@@ -293,6 +373,11 @@ pub(crate) struct Record {
     /// Only the ceiling drops a line otherwise, so where [`Self::gone`] has
     /// moved past this, what [`Self::kept`] gives back is not all there was.
     began: usize,
+    /// What the text of an answer links to: kept here rather than by the
+    /// reader alone because the reader is made again for every message, and
+    /// a drawn block is read again at every width and glyph set it is laid
+    /// out for.
+    links: Links,
 }
 
 /// Where in the record a display row is: a line, and how far into it.
@@ -335,7 +420,21 @@ impl Record {
             hanging: None,
             sent: 0,
             began: 0,
+            links: Links::default(),
         }
+    }
+
+    /// What the text of an answer links to, here and in every reader of one.
+    pub(crate) fn links(&self) -> &Links {
+        &self.links
+    }
+
+    /// What the text of an answer links to, to be changed.
+    ///
+    /// Said at startup, before the first answer. A block already drawn takes
+    /// the new links the next time it is laid out.
+    pub(crate) fn links_mut(&mut self) -> &mut Links {
+        &mut self.links
     }
 
     /// Append streamed text, which flows.
@@ -403,6 +502,58 @@ impl Record {
         }
     }
 
+    /// Lay down a block of an answer, laid out for the width there is now in
+    /// `glyphs` and `theme`, keeping the source it was written as.
+    ///
+    /// One logical line however many rows it draws, as a responsive block is.
+    /// A block that lays out as nothing is not kept.
+    pub(crate) fn drawn(&mut self, block: Block, glyphs: Glyphs, theme: Theme) {
+        self.end();
+        let drawn = Drawn::new(block, self.columns, glyphs, theme, &self.links);
+        if !drawn.rows.is_empty() {
+            self.put(Line::Drawn(drawn));
+        }
+    }
+
+    /// Lays the record out for `columns`, `glyphs` and `theme`.
+    ///
+    /// A block of an answer is laid out again where the width or the glyph
+    /// set it was laid for has changed; the theme changes only the colours
+    /// its rows are painted in, which is the drawing's business. A new width
+    /// is everything [`Self::resized`] does as well.
+    pub(crate) fn relay(&mut self, columns: usize, glyphs: Glyphs, theme: Theme) {
+        if columns != self.columns {
+            self.resized(columns, glyphs);
+        } else if self.relay_drawn(columns, glyphs) {
+            self.remeasure_all();
+            self.spill();
+        }
+        for line in &mut self.lines {
+            if let Line::Drawn(drawn) = line {
+                drawn.laid.2 = theme;
+            }
+        }
+    }
+
+    /// Lays out again each drawn block not laid for `columns` in `glyphs`, and
+    /// answers whether any was.
+    fn relay_drawn(&mut self, columns: usize, glyphs: Glyphs) -> bool {
+        let mut any = false;
+        for line in &mut self.lines {
+            let Line::Drawn(drawn) = line else {
+                continue;
+            };
+            if (drawn.laid.0, drawn.laid.1) == (columns, glyphs) {
+                continue;
+            }
+            let was = drawn.weight;
+            drawn.lay(columns, glyphs, &self.links);
+            self.weight = self.weight.saturating_sub(was).saturating_add(drawn.weight);
+            any = true;
+        }
+        any
+    }
+
     /// Lay down the opening in `glyphs`, keeping what laid it.
     ///
     /// The one block a resize draws again — see the prose at the top of this
@@ -421,7 +572,7 @@ impl Record {
     ///
     /// Before the heights are worked out again rather than after: this changes
     /// which lines there are, and [`Self::resized`] is what measures them.
-    fn relay(&mut self, columns: usize, glyphs: Glyphs) {
+    fn relay_opening(&mut self, columns: usize, glyphs: Glyphs) {
         let Some(opening) = self.opening.take() else {
             return;
         };
@@ -591,7 +742,9 @@ impl Record {
     fn measure(line: &Line, columns: usize) -> u16 {
         match line {
             Line::Flowed(row) => u16::try_from(row.folds(columns)).unwrap_or(u16::MAX),
-            Line::Responsive { rows, .. } => u16::try_from(rows.len()).unwrap_or(u16::MAX),
+            Line::Responsive { rows, .. } | Line::Drawn(Drawn { rows, .. }) => {
+                u16::try_from(rows.len()).unwrap_or(u16::MAX)
+            }
             Line::Set(_) => 1,
         }
     }
@@ -646,7 +799,7 @@ impl Record {
     fn blank(line: &Line) -> bool {
         match line {
             Line::Flowed(row) | Line::Set(row) => row.text().trim().is_empty(),
-            Line::Responsive { rows, .. } => {
+            Line::Responsive { rows, .. } | Line::Drawn(Drawn { rows, .. }) => {
                 rows.last().is_none_or(|row| row.text().trim().is_empty())
             }
         }
@@ -812,7 +965,7 @@ impl Record {
                         row.prepend(subordinate.row(first));
                     }
                 }
-                Line::Responsive { rows, prefix, .. } => {
+                Line::Responsive { rows, prefix, .. } | Line::Drawn(Drawn { rows, prefix, .. }) => {
                     if *first && rows.first().is_some_and(Row::starts_structural) {
                         *first = false;
                         let mut retained = subordinate.clone();
@@ -865,6 +1018,10 @@ impl Record {
                     edit(&mut laid);
                     laid
                 });
+            }
+            Line::Drawn(drawn) => {
+                edit(&mut drawn.rows);
+                drawn.edits.push(edit);
             }
         }
 
@@ -1128,7 +1285,7 @@ impl Record {
 
         match line {
             Line::Flowed(row) | Line::Set(row) => row.kinds().any(|kind| kind == slot),
-            Line::Responsive { rows, .. } => {
+            Line::Responsive { rows, .. } | Line::Drawn(Drawn { rows, .. }) => {
                 rows.iter().any(|row| row.kinds().any(|kind| kind == slot))
             }
         }
@@ -1154,13 +1311,18 @@ impl Record {
         first
     }
 
-    /// Move the band `by` display rows, and say whether it moved.
+    /// Move the band `by` display rows, and say whether it moved or began or
+    /// stopped following the foot.
     ///
     /// Negative is towards the head of the session. A band that was following
     /// the foot starts from where the foot put it, so the first turn of a wheel
     /// moves from what the reader is looking at rather than from a spot left
-    /// over from the last time anybody scrolled.
+    /// over from the last time anybody scrolled. Following counts as a move
+    /// because what the band holds can turn on it: a band the reader left at
+    /// the foot of `rows` rows comes back to following one under it, which is
+    /// the same top and a different picture.
     pub(crate) fn scroll(&mut self, by: i32, rows: usize) -> bool {
+        let followed = self.following;
         let foot = self.foot(rows);
         let was = if self.following { foot } else { self.top };
         let far = usize::try_from(by.unsigned_abs()).unwrap_or(usize::MAX);
@@ -1171,7 +1333,7 @@ impl Record {
         };
         self.following = now == foot;
         self.top = now;
-        now != was
+        now != was || self.following != followed
     }
 
     /// The absolute display row shown on the first row of a band `rows` tall.
@@ -1269,7 +1431,8 @@ impl Record {
     }
 
     /// Moves the band's top to display row `row` of what is retained, and
-    /// says whether it moved.
+    /// says whether it moved or began or stopped following the foot, as
+    /// [`Self::scroll`] does.
     ///
     /// Never past the foot: a row the band cannot start on and still be full
     /// is the foot, and the band follows the record again from there, as the
@@ -1277,12 +1440,13 @@ impl Record {
     /// same cumulative ends [`Self::place`] reads, plus a walk bounded by the
     /// band's height to find the foot.
     pub(crate) fn seek(&mut self, row: usize, rows: usize) -> bool {
+        let followed = self.following;
         let foot = self.foot(rows);
         let now = self.spot_at(self.before.saturating_add(row)).min(foot);
         let was = if self.following { foot } else { self.top };
         self.top = now;
         self.following = now == foot;
-        now != was
+        now != was || self.following != followed
     }
 
     /// The display-row position of `spot` in this width epoch.
@@ -1338,11 +1502,10 @@ impl Record {
 
     /// Whether the band is showing the foot of the record.
     ///
-    /// Nothing outside this file asks: what the renderer does about a viewport
-    /// that has been scrolled away from the foot is put it back, and that is
-    /// [`Self::follow`]. Here to be asserted about, since the flag is what
-    /// decides whether arriving text moves somebody who is reading back.
-    #[cfg(test)]
+    /// What the renderer asks before standing the row that tells of a held
+    /// block at the foot: a reader who has scrolled back is not at the foot to
+    /// see it. Asserted about as well, since the flag is what decides whether
+    /// arriving text moves somebody who is reading back.
     pub(crate) fn following(&self) -> bool {
         self.following
     }
@@ -1363,8 +1526,9 @@ impl Record {
             return;
         }
         self.columns = columns;
-        self.relay(columns, glyphs);
+        self.relay_opening(columns, glyphs);
         self.relay_responsive(columns);
+        self.relay_drawn(columns, glyphs);
         self.rows = 0;
         self.before = 0;
         self.tall.clear();
@@ -1464,12 +1628,7 @@ impl Record {
             {
                 *rows = responsive_rows(lay(columns));
                 if let Some(prefix) = prefix {
-                    let mut first = prefix.marks_first;
-                    for (at, row) in rows.iter_mut().enumerate() {
-                        if !(prefix.keeps_first && at == 0) {
-                            row.prepend(prefix.row(&mut first));
-                        }
-                    }
+                    prefix.prefix(rows);
                 }
             }
         }
@@ -1479,7 +1638,7 @@ impl Record {
     fn fold(&self, line: &Line) -> Vec<Row> {
         match line {
             Line::Flowed(row) => row.fold(self.columns),
-            Line::Responsive { rows, .. } => rows.clone(),
+            Line::Responsive { rows, .. } | Line::Drawn(Drawn { rows, .. }) => rows.clone(),
             Line::Set(row) => vec![row.clipped(self.columns)],
         }
     }
@@ -1834,7 +1993,9 @@ mod tests {
     fn measured(line: &Line) -> String {
         match line {
             Line::Flowed(row) | Line::Set(row) => row.text(),
-            Line::Responsive { rows, .. } => rows.iter().map(Row::text).collect(),
+            Line::Responsive { rows, .. } | Line::Drawn(Drawn { rows, .. }) => {
+                rows.iter().map(Row::text).collect()
+            }
         }
     }
 
@@ -2109,6 +2270,103 @@ mod tests {
         assert!(record.top.line < record.gone);
 
         assert_eq!(record.at(0, 3), Some(record.gone));
+    }
+
+    /// A closed table whose only body row says `name`.
+    fn table(name: &str) -> Block {
+        Block {
+            kind: markdown::Kind::Table,
+            source: format!(
+                "| name | what it does |\n|---|---|\n| {name} | lays a table out again |\n"
+            ),
+            closed: true,
+        }
+    }
+
+    /// Every row the record holds, as plain text.
+    fn all(record: &Record) -> Vec<String> {
+        (0..record.lines())
+            .flat_map(|line| record.folded(line))
+            .map(|row| row.text())
+            .collect()
+    }
+
+    #[test]
+    fn a_drawn_table_is_laid_out_again_for_a_new_width_and_a_new_glyph_set() {
+        let fresh = |columns, glyphs| {
+            let mut record = Record::new(columns);
+            record.drawn(table("alpha"), glyphs, Theme::Dark);
+            all(&record)
+        };
+        let mut record = Record::new(60);
+        record.drawn(table("alpha"), Glyphs::Unicode, Theme::Dark);
+        assert_eq!(all(&record), fresh(60, Glyphs::Unicode));
+
+        record.relay(20, Glyphs::Unicode, Theme::Dark);
+        assert_eq!(all(&record), fresh(20, Glyphs::Unicode));
+        assert_ne!(fresh(20, Glyphs::Unicode), fresh(60, Glyphs::Unicode));
+
+        record.relay(20, Glyphs::Ascii, Theme::Dark);
+        assert_eq!(all(&record), fresh(20, Glyphs::Ascii));
+        assert_ne!(fresh(20, Glyphs::Ascii), fresh(20, Glyphs::Unicode));
+        assert_eq!(record.rows, counted(&record));
+    }
+
+    #[test]
+    fn a_new_theme_paints_a_drawn_block_without_laying_it_out_again() {
+        let mut record = Record::new(40);
+        record.drawn(table("alpha"), Glyphs::Unicode, Theme::Dark);
+        let Some(Line::Drawn(before)) = record.lines.back() else {
+            panic!("the table is not a drawn block: {:?}", record.lines);
+        };
+        let rows = before.rows.clone();
+
+        record.relay(40, Glyphs::Unicode, Theme::Light);
+
+        let Some(Line::Drawn(after)) = record.lines.back() else {
+            panic!("the table is not a drawn block: {:?}", record.lines);
+        };
+        assert_eq!(after.rows, rows);
+        assert_eq!(after.laid, (40, Glyphs::Unicode, Theme::Light));
+    }
+
+    #[test]
+    fn the_oldest_block_leaves_under_the_ceiling_with_its_source() {
+        // Laid-out forms count against the ceiling as much as their source,
+        // so a record filled with nothing but tables lets the first one go
+        // well before it holds MOST of them.
+        let mut record = Record::new(80);
+        let mut written = 0;
+        while record.gone == 0 {
+            record.drawn(
+                table(&format!("table {written}")),
+                Glyphs::Unicode,
+                Theme::Dark,
+            );
+            written += 1;
+            assert!(written <= MOST, "{MOST} tables were kept whole");
+        }
+
+        assert!(record.weight <= MOST, "{}", record.weight);
+        assert_eq!(
+            record.weight,
+            record.lines.iter().map(Line::weight).sum::<usize>()
+        );
+        let sources: Vec<&str> = record
+            .lines
+            .iter()
+            .filter_map(|line| match line {
+                Line::Drawn(drawn) => Some(drawn.block.source.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sources.len(), record.lines.len());
+        assert!(!sources.iter().any(|source| source.contains("| table 0 |")));
+        assert!(
+            sources
+                .first()
+                .is_some_and(|source| source.contains("| table 1 |"))
+        );
     }
 
     /// A row of `text`, laid out rather than flowed.

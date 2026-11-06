@@ -2037,3 +2037,95 @@ fn a_native_mark_waiting_when_the_transcript_empties_is_dropped() {
         "{all:#?}"
     );
 }
+
+/// What a native session on `window` keeps of `answer` once it has settled
+/// at `columns` by `rows`: every row but the box's and the blank ones.
+fn answered_natively(
+    window: &Window,
+    answer: &str,
+    resized: Option<(usize, usize)>,
+) -> Vec<String> {
+    let mut render = native(window);
+    render.wears(colourful());
+    stands(&mut render);
+    render.stream(answer).unwrap();
+    render.settle().unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+    if let Some((columns, rows)) = resized {
+        settles_at(window, &mut render, columns, rows);
+    }
+    let (boxed, _) = boxed();
+    let boxed: Vec<String> = boxed.iter().map(Row::text).collect();
+    window
+        .all()
+        .into_iter()
+        .filter(|row| !row.trim().is_empty() && !boxed.contains(row))
+        .collect()
+}
+
+#[test]
+fn a_native_table_narrowed_is_the_table_a_window_that_narrow_draws() {
+    let table = "| name | what it does | since |\n|---|---|---|\n\
+         | alpha | reads the markdown out of a stream | 0.1 |\n\
+         | beta | lays a table against the window | 0.2 |\n";
+    let fresh = answered_natively(&Window::new(30, 20), table, None);
+    let narrowed = answered_natively(&Window::new(60, 20), table, Some((30, 20)));
+
+    assert_eq!(narrowed, fresh);
+}
+
+#[test]
+fn a_native_rule_narrowed_is_still_one_row() {
+    let rows = answered_natively(
+        &Window::new(40, 10),
+        "above\n\n---\n\nbelow\n",
+        Some((25, 10)),
+    );
+
+    let ruled: Vec<&String> = rows.iter().filter(|row| row.contains('─')).collect();
+    assert_eq!(
+        ruled
+            .iter()
+            .map(|row| crate::width::columns(row))
+            .collect::<Vec<_>>(),
+        [25],
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_native_held_block_shows_one_status_row_and_none_of_its_source() {
+    let window = Window::new(64, 12);
+    let mut render = native(&window);
+    render.wears(colourful());
+    stands(&mut render);
+    render.stream("before\n\n$$\nx^2 + y^2\n").unwrap();
+
+    let rows = window.all();
+    let status: Vec<&String> = rows
+        .iter()
+        .filter(|row| row.contains("drawing a"))
+        .collect();
+    assert_eq!(
+        status.iter().map(|row| row.trim_end()).collect::<Vec<_>>(),
+        ["◇ drawing a formula · 2 lines so far"],
+        "{rows:#?}"
+    );
+    assert!(!rows.iter().any(|row| row.contains("x^2")), "{rows:#?}");
+
+    render.stream("$$\nafter\n").unwrap();
+    render.settle().unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    let rows = window.all();
+    assert!(
+        !rows.iter().any(|row| row.contains("drawing a")),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| row.contains("x^2 + y^2")),
+        "{rows:#?}"
+    );
+}

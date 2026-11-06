@@ -34,12 +34,12 @@
 
 use crate::bands::{Bands, Wants};
 use crate::clipboard;
-use crate::color::{Palette, Slot};
+use crate::color::{Palette, Slot, Theme};
 use crate::escape::Escapes;
 use crate::files::Files;
 use crate::forge::Forge;
 use crate::glyphs::Glyphs;
-use crate::markdown::Markdown;
+use crate::markdown::{self, Block, Markdown, Said};
 use crate::record::Record;
 use crate::row::Row;
 use crate::scroll_rail::{self, ScrollRail};
@@ -388,15 +388,6 @@ pub struct Renderer<T: Terminal> {
     /// Held here rather than made fresh per delta, for the reason the escapes
     /// above are: a fence arrives split across two deltas as often as not.
     markdown: Markdown,
-    /// The repository the transcript's bare numbers are counted against.
-    ///
-    /// Held here rather than in the reader alone because the reader is thrown
-    /// away and made again between messages, and which checkout this is does
-    /// not change while the session runs.
-    forge: Option<Forge>,
-    /// The checkout the transcript's links to paths are read against, held
-    /// here for the reason the forge is.
-    files: Option<Files>,
     /// Whether an answer is still arriving.
     ///
     /// Set by the first piece of one and put down by [`Renderer::settle`],
@@ -517,8 +508,6 @@ impl<T: Terminal> Renderer<T> {
             free: String::new(),
             escapes: Escapes::default(),
             markdown: Markdown::default(),
-            forge: None,
-            files: None,
             arriving: Arriving::Nothing,
             palette: Palette::plain(),
             glyphs: Glyphs::default(),
@@ -765,10 +754,10 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the frame could not be written.
     fn steered(&mut self, arrived: &Pressed, bands: &Bands) -> Result<bool, TerminalError> {
-        // The band's height is what the record seeks against; the rail's,
-        // which is the band's and the running turn's under it, is what a row
-        // of the rail is counted in.
-        let rows = bands.transcript.len();
+        // The rows the record is shown in are what it seeks against; the
+        // rail's, which is the band's and the running turn's under it, is what
+        // a row of the rail is counted in.
+        let rows = self.record_rows(bands);
         let railed = self.railed_rows(bands);
         let height = railed.len();
         match *arrived {
@@ -891,6 +880,23 @@ impl<T: Terminal> Renderer<T> {
         self.standing.running.len().min(bands.turn.len())
     }
 
+    /// Whether the row that tells of a held block stands at the foot of the
+    /// transcript band: while a block is held, for as long as the reader is at
+    /// the foot to see it, in a band with a row to put it in.
+    fn holds_row(&self, bands: &Bands) -> bool {
+        self.markdown.holding().is_some() && self.record.following() && !bands.transcript.is_empty()
+    }
+
+    /// How many of the transcript band's rows the record is shown in: the
+    /// band's, less the row a held block stands in.
+    ///
+    /// The one count the record is drawn, pointed at, scrolled, selected in
+    /// and railed against, so a press, a hover and the rail all name the rows
+    /// drawn rather than a view one row taller than what is on screen.
+    fn record_rows(&self, bands: &Bands) -> usize {
+        bands.transcript.len() - usize::from(self.holds_row(bands))
+    }
+
     /// The window rows the rail stands beside: the transcript band, and the
     /// running turn's rows directly under it.
     fn railed_rows(&self, bands: &Bands) -> Range<usize> {
@@ -899,12 +905,16 @@ impl<T: Terminal> Renderer<T> {
 
     /// The rail as the transcript band, and the running turn under it, stand
     /// now, where one is drawn.
+    ///
+    /// A held block's row reads as the record's last, as a running turn's rows
+    /// do, so the rail stands beside the whole band either way.
     fn rail(&self, bands: &Bands) -> Option<ScrollRail> {
         self.rail_column()?;
+        let rows = self.record_rows(bands);
         let place = self
             .record
-            .place(bands.transcript.len())
-            .under_turn(self.turn_tail(bands));
+            .place(rows)
+            .under_turn(bands.transcript.len() - rows + self.turn_tail(bands));
         Some(ScrollRail::new(
             place,
             self.record.prompts(),
@@ -926,10 +936,14 @@ impl<T: Terminal> Renderer<T> {
     }
 
     /// The transcript band as it stands, for placing a drag's ends.
+    ///
+    /// The rows the record is drawn in: a held block's row under them is no
+    /// row of the record, and stands as a row outside the band does.
     fn view(&self, bands: &Bands) -> View {
+        let rows = self.record_rows(bands);
         View {
-            band: bands.transcript.clone(),
-            top: self.record.top_row(bands.transcript.len()),
+            band: bands.transcript.start..bands.transcript.start + rows,
+            top: self.record.top_row(rows),
         }
     }
 
@@ -976,7 +990,7 @@ impl<T: Terminal> Renderer<T> {
             self.creeps = None;
             return Ok(false);
         };
-        if !self.record.scroll(by, bands.transcript.len()) {
+        if !self.record.scroll(by, self.record_rows(&bands)) {
             self.creeps = None;
             return Ok(false);
         }
@@ -1064,7 +1078,7 @@ impl<T: Terminal> Renderer<T> {
             return nothing;
         }
 
-        let rows = bands.transcript.len();
+        let rows = self.record_rows(&bands);
         let Some(line) = self.record.at(row - bands.transcript.start, rows) else {
             return nothing;
         };
@@ -1134,6 +1148,8 @@ impl<T: Terminal> Renderer<T> {
     /// place.
     pub fn wears(&mut self, palette: Palette) {
         self.palette = palette;
+        self.record
+            .relay(self.folds(), self.glyphs, self.palette.theme());
         self.painted.forget();
     }
 
@@ -1144,11 +1160,15 @@ impl<T: Terminal> Renderer<T> {
     /// thing here that puts a character of its own in place of one the model
     /// wrote. The reader is told rather than replaced, since a change can
     /// arrive between two deltas of one answer and the scan has to go on where
-    /// it was; rows already written keep the characters they were drawn with,
-    /// except the opening, which the next resize lays out again in this set.
+    /// it was. A table or a rule already written is laid out again in this
+    /// set now, since the record keeps the source it was written as; other
+    /// rows already written keep the characters they were drawn with, except
+    /// the opening, which the next resize lays out again in this set.
     pub fn draws(&mut self, glyphs: Glyphs) {
         self.glyphs = glyphs;
         self.markdown.draws(glyphs);
+        self.record
+            .relay(self.folds(), glyphs, self.palette.theme());
         self.painted.forget();
     }
 
@@ -1160,7 +1180,7 @@ impl<T: Terminal> Renderer<T> {
     /// there is no forge behind it, which leaves a number the plain text it
     /// has always been.
     pub fn counts(&mut self, forge: Option<Forge>) {
-        self.forge = forge;
+        self.record.links_mut().forge = forge;
         self.markdown = self.reader();
     }
 
@@ -1170,16 +1190,14 @@ impl<T: Terminal> Renderer<T> {
     /// Said once, at startup, for the reason [`Renderer::counts`] is. `None`
     /// hands a path on as it was written.
     pub fn reads_paths(&mut self, files: Option<Files>) {
-        self.files = files;
+        self.record.links_mut().files = files;
         self.markdown = self.reader();
     }
 
     /// A reader for the next message, drawing, counting and opening the way
     /// this renderer was told to.
     fn reader(&self) -> Markdown {
-        Markdown::new(self.glyphs)
-            .counting(self.forge.clone())
-            .opening(self.files.clone())
+        Markdown::new(self.glyphs).linking(self.record.links())
     }
 
     /// Marks the next record line as the start of a prompt.
@@ -1246,7 +1264,8 @@ impl<T: Terminal> Renderer<T> {
         // scrollbar is the rail.
         self.rails = on && self.native.is_none();
         self.grip = None;
-        self.record.resized(self.folds(), self.glyphs);
+        self.record
+            .relay(self.folds(), self.glyphs, self.palette.theme());
         self.unselects();
         self.painted.forget();
     }
@@ -1282,12 +1301,14 @@ impl<T: Terminal> Renderer<T> {
 
         let columns = self.folds();
         let redirected = !self.terminal.is_terminal();
+        let theme = self.palette.theme();
         let Self {
             markdown,
             record,
             escapes,
             free,
             terminal,
+            glyphs,
             ..
         } = self;
 
@@ -1296,14 +1317,17 @@ impl<T: Terminal> Renderer<T> {
             escapes,
             free,
             out: redirected.then_some(terminal),
+            columns,
+            glyphs: *glyphs,
+            theme,
         };
 
         // The first failure is kept and the rest of the delta is still read:
         // the markdown state has to walk every byte of it either way, or the
         // next delta is read against a state that skipped part of one.
         let mut wrote = Ok(());
-        markdown.read(delta, columns, &mut |slot, text, link| {
-            let said = taking.take(slot, text, link);
+        markdown.read(delta, columns, &mut |said| {
+            let said = taking.said(said);
             if wrote.is_ok() {
                 wrote = said;
             }
@@ -1690,12 +1714,14 @@ impl<T: Terminal> Renderer<T> {
         // dropped, and with it anything it was still holding.
         let columns = self.folds();
         let redirected = !self.terminal.is_terminal();
+        let theme = self.palette.theme();
         let Self {
             markdown,
             record,
             escapes,
             free,
             terminal,
+            glyphs,
             ..
         } = self;
 
@@ -1704,11 +1730,14 @@ impl<T: Terminal> Renderer<T> {
             escapes,
             free,
             out: redirected.then_some(terminal),
+            columns,
+            glyphs: *glyphs,
+            theme,
         };
 
         let mut wrote = Ok(());
-        markdown.finish(columns, &mut |slot, text, link| {
-            let said = taking.take(slot, text, link);
+        markdown.finish(columns, &mut |said| {
+            let said = taking.said(said);
             if wrote.is_ok() {
                 wrote = said;
             }
@@ -1818,7 +1847,8 @@ impl<T: Terminal> Renderer<T> {
 
         self.native_resize(size);
         self.size = size;
-        self.record.resized(self.folds(), self.glyphs);
+        self.record
+            .relay(self.folds(), self.glyphs, self.palette.theme());
         self.standing.repaint(self.folds(), size.columns);
         self.prompt_target = None;
         self.pointed_changed = false;
@@ -1965,7 +1995,8 @@ impl<T: Terminal> Renderer<T> {
     }
 
     /// Moves the transcript's viewport by `by` display rows, and says whether
-    /// it moved.
+    /// that changed what it shows, which a band brought back to following the
+    /// foot can do with its top where it was.
     ///
     /// Negative is towards the top of the session. Nothing moves where output
     /// is redirected: a file has no viewport, and a reader of one scrolls it
@@ -1979,7 +2010,8 @@ impl<T: Terminal> Renderer<T> {
             return Ok(false);
         }
 
-        let rows = self.bands().transcript.len();
+        let bands = self.bands();
+        let rows = self.record_rows(&bands);
         if !self.record.scroll(by, rows) {
             return Ok(false);
         }
@@ -2205,7 +2237,7 @@ impl<T: Terminal> Renderer<T> {
             let into = at - bands.transcript.start;
             return self
                 .record
-                .at(into, bands.transcript.len())
+                .at(into, self.record_rows(&bands))
                 .map(|line| Aimed::Line(self.record.heads(line)));
         }
 
@@ -2262,7 +2294,7 @@ impl<T: Terminal> Renderer<T> {
             return 0..0;
         }
 
-        let top = self.record.top_row(bands.transcript.len());
+        let top = self.record.top_row(self.record_rows(&bands));
         self.record
             .row_at(top + (at - bands.transcript.start))
             .map_or(0..0, |row| drawn(&row, self.folds()))
@@ -2282,11 +2314,14 @@ impl<T: Terminal> Renderer<T> {
     /// Add `text` to the record, and to a redirected run's output.
     fn take(&mut self, slot: Slot, text: &str) -> Result<(), TerminalError> {
         let redirected = !self.terminal.is_terminal();
+        let columns = self.folds();
+        let theme = self.palette.theme();
         let Self {
             record,
             escapes,
             free,
             terminal,
+            glyphs,
             ..
         } = self;
 
@@ -2295,8 +2330,22 @@ impl<T: Terminal> Renderer<T> {
             escapes,
             free,
             out: redirected.then_some(terminal),
+            columns,
+            glyphs: *glyphs,
+            theme,
         }
         .take(slot, text, None)
+    }
+
+    /// The row that tells of a block the reader is holding, drawn `columns`
+    /// wide; `None` while nothing is held.
+    ///
+    /// Shown in place of the block until it closes, in both screen modes: the
+    /// block itself is not drawn until it can be drawn whole.
+    fn holding(&self, columns: usize) -> Option<Row> {
+        self.markdown
+            .holding()
+            .map(|holding| holding.row(columns, self.glyphs))
     }
 
     /// One frame.
@@ -2344,7 +2393,12 @@ impl<T: Terminal> Renderer<T> {
             .map(|rail| rail.rows(self.size.columns, self.glyphs, railed))
             .unwrap_or_default();
         let mut rail = rail.into_iter();
-        let mut showing = self.record.view(bands.transcript.len()).into_iter();
+        // A block being held stands at the foot as one row saying so, under
+        // what is above it, for as long as the reader is at the foot to see it.
+        let held = self.holding(folds).filter(|_| self.holds_row(&bands));
+        let mut showing = self.record.view(self.record_rows(&bands));
+        showing.extend(held);
+        let mut showing = showing.into_iter();
         for at in bands.transcript.start..bands.transcript.end {
             let row = match (showing.next(), rail.next()) {
                 (row, Some(cell)) => {
@@ -2451,9 +2505,47 @@ struct Taking<'a, T: Terminal> {
     free: &'a mut String,
     /// `None` on a screen, where a frame decides when a row is written.
     out: Option<&'a mut T>,
+    /// The width a block is laid out for, where it is written out.
+    columns: usize,
+    /// The glyph set and theme a block is laid out in.
+    glyphs: Glyphs,
+    theme: Theme,
 }
 
 impl<T: Terminal> Taking<'_, T> {
+    /// Add what the reader said: a run of text, or a whole block.
+    fn said(&mut self, said: Said<'_>) -> Result<(), TerminalError> {
+        match said {
+            Said::Run { slot, text, link } => self.take(slot, text, link),
+            Said::Block(block) => self.block(block),
+        }
+    }
+
+    /// Add one block, kept with its source.
+    ///
+    /// Its source loses its escape bytes as a run does, before it is kept:
+    /// what lays it out again later is reading what the model wrote, and the
+    /// record keeps nothing a terminal would act on.
+    fn block(&mut self, mut block: Block) -> Result<(), TerminalError> {
+        let escapes = &mut *self.escapes;
+        block.source = block
+            .source
+            .chars()
+            .filter(|character| !escapes.holds(*character) && !width::unshown(*character))
+            .collect();
+
+        // A redirected run is written the block as it is laid out now, row by
+        // row: a file has one width, and it is this one.
+        if let Some(out) = &mut self.out {
+            for row in markdown::lay(&block, self.columns, self.glyphs, self.record.links()) {
+                out.write(&row.text())?;
+                out.write("\n")?;
+            }
+        }
+        self.record.drawn(block, self.glyphs, self.theme);
+        Ok(())
+    }
+
     /// Add one run of text wearing `slot`.
     ///
     /// The escape bytes go here and nowhere else, and the format characters

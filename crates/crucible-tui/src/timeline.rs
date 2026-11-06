@@ -11,7 +11,7 @@ use std::fmt::Write as _;
 use crate::color::Slot;
 use crate::forge::Forge;
 use crate::glyphs::Glyphs;
-use crate::markdown::Markdown;
+use crate::markdown::{self, Links, Markdown, Said};
 use crate::row::Row;
 use crate::width::{columns as wide, cut, folds};
 
@@ -355,9 +355,32 @@ fn read(segment: &str, room: usize, glyphs: Glyphs, forge: Option<&Forge>, rows:
             lines.push(line);
         }
     };
-    let mut markdown = Markdown::new(glyphs).counting(forge.cloned());
-    markdown.read(segment, room, &mut say);
-    markdown.finish(room, &mut say);
+    // A block is told in the runs the record lays one out of, at this width
+    // and linking what the runs around it link, and they follow the runs
+    // before it: a page printed once has no later width to keep its source
+    // for. Its last line is ended where its runs leave it open.
+    let linking = Links {
+        forge: forge.cloned(),
+        files: None,
+    };
+    let mut said = |said: Said<'_>| match said {
+        Said::Run { slot, text, link } => say(slot, text, link),
+        Said::Block(block) => {
+            let mut open = false;
+            markdown::tell(&block, room, glyphs, &linking, &mut |slot, text, link| {
+                if let Some(last) = text.chars().last() {
+                    open = last != '\n';
+                }
+                say(slot, text, link);
+            });
+            if open {
+                say(Slot::Plain, "\n", None);
+            }
+        }
+    };
+    let mut markdown = Markdown::new(glyphs).linking(&linking);
+    markdown.read(segment, room, &mut said);
+    markdown.finish(room, &mut said);
 
     while lines.last().is_some_and(Spans::is_empty) {
         lines.pop();

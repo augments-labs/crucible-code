@@ -14,11 +14,21 @@
 //! the single character that ends a run of markers — an answer that stopped
 //! mid-sentence has already been drawn up to where it stopped.
 //!
-//! Two things are held back, and both are bounded and both are given up on. A
+//! Two runs are held back, and both are bounded and both are given up on. A
 //! line inside a fence is held because a highlighter reads whole lines, and a
 //! link's words are held because nothing says they were a link's words until
 //! the `](` after them. Either one that runs past its bound, or past the line
 //! it is on, is handed out as the text it turned out to be.
+//!
+//! Whole blocks are held too, and handed on as a [`Block`] rather than as
+//! runs, in order with the runs around them: a table, display math, a mermaid
+//! fence and a diff fence ([`Held`]) are gathered until they close, and a rule
+//! is one the moment its line ends. A block keeps the source it was written
+//! as, so whoever keeps it can lay it out again at another width or in
+//! another glyph set with `lay`, where runs once written stay as they were
+//! folded. Each hold has a cap of its own, and a block past it is handed on as
+//! the runs it would have been had nothing held it. A reader made
+//! [`Markdown::as_written`] holds no block at all, which is what lays one out.
 //!
 //! On the way out, each settled run is told by the kind of thing it is, which
 //! is what a design colours: a span of code that names a file is a path, and a
@@ -30,6 +40,7 @@ use crate::color::Slot;
 use crate::files::Files;
 use crate::forge::Forge;
 use crate::glyphs::Glyphs;
+use crate::row::Row;
 
 mod kind;
 mod table;
@@ -58,10 +69,433 @@ const PLUSES: &str = "++++++";
 const ANGLES: &str = ">>>>>>";
 const TILDES: &str = "~~~~~~";
 
+/// The most of a table held before it is written out as itself.
+///
+/// A table is drawn only once the last of it has arrived, so this is the reader
+/// with nothing to show — enough for any table an answer sensibly contains, and
+/// an end to a wall of bars that is never going to stop.
+pub(crate) const TABLE_CAP: usize = 8 * 1024;
+
+/// The most of a block of display math held before it is shown as written.
+///
+/// Smaller than the others because a formula is a line or two, and one that
+/// runs on for pages is prose with dollars in it.
+pub(crate) const MATH_CAP: usize = 4 * 1024;
+
+/// The most of a mermaid fence held before it is shown as written.
+pub(crate) const MERMAID_CAP: usize = 16 * 1024;
+
+/// The most of a diff fence held before it is shown as written.
+pub(crate) const DIFF_CAP: usize = 16 * 1024;
+
+/// A kind of block the reader holds back until it closes.
+///
+/// Everything else streams: an ordinary fence is drawn a line at a time, and a
+/// rule is a block of one line that is never held at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Held {
+    /// Lines that open with a bar, until one that does not.
+    Table,
+    /// `$$`, `\[` or `\begin{…}` of an equation environment, until the
+    /// marker that closes it, or a fence named for math.
+    DisplayMath,
+    /// A fence named `mermaid`.
+    Mermaid,
+    /// A fence named `diff` or `patch`.
+    Diff,
+}
+
+impl Held {
+    /// The block it turns into once it closes.
+    #[must_use]
+    pub fn kind(self) -> Kind {
+        match self {
+            Self::Table => Kind::Table,
+            Self::DisplayMath => Kind::DisplayMath,
+            Self::Mermaid => Kind::Mermaid,
+            Self::Diff => Kind::Diff,
+        }
+    }
+
+    /// What the reader is told is being drawn while it waits.
+    #[must_use]
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Table => "table",
+            Self::DisplayMath => "formula",
+            Self::Mermaid => "mermaid diagram",
+            Self::Diff => "diff",
+        }
+    }
+
+    /// The most of it held before it is shown as written.
+    fn cap(self) -> usize {
+        match self {
+            Self::Table => TABLE_CAP,
+            Self::DisplayMath => MATH_CAP,
+            Self::Mermaid => MERMAID_CAP,
+            Self::Diff => DIFF_CAP,
+        }
+    }
+
+    /// The held kind a fence's language names, where it names one.
+    fn fenced(language: &str) -> Option<Self> {
+        let named = language.split_whitespace().next()?.to_ascii_lowercase();
+        match named.as_str() {
+            "mermaid" => Some(Self::Mermaid),
+            "diff" | "patch" => Some(Self::Diff),
+            "math" | "latex" | "tex" | "katex" => Some(Self::DisplayMath),
+            _ => None,
+        }
+    }
+}
+
+/// A held block still arriving, as the live foot tells of it.
+///
+/// One quiet row and never the block itself: what is held is not drawn until
+/// it closes, and a reader watching nothing arrive is owed a word about why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Holding {
+    /// What is being held.
+    pub held: Held,
+    /// How many of its lines have begun, the one arriving included.
+    pub lines: usize,
+}
+
+impl Holding {
+    /// The row, drawn for a window `columns` wide and never wider.
+    ///
+    /// Structural, as a component's marks are: it says what the reader is
+    /// waiting for and is none of the answer, so a drag over it lights none of
+    /// it and copies none of it.
+    #[must_use]
+    pub fn row(&self, columns: usize, glyphs: Glyphs) -> Row {
+        let lines = match self.lines {
+            1 => "1 line".to_owned(),
+            lines => format!("{lines} lines"),
+        };
+        let said = format!(
+            "{} drawing a {} {} {lines} so far",
+            glyphs.summed(),
+            self.held.word(),
+            glyphs.dot(),
+        );
+        Row::new()
+            .then_structural(Slot::Quiet, said)
+            .clipped(columns)
+    }
+}
+
+/// Every kind of block the reader hands on whole.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// A table, laid out against the width it is given.
+    Table,
+    /// A rule across the width it is given.
+    Rule,
+    /// Display math, shown as written.
+    DisplayMath,
+    /// A mermaid fence, shown as written.
+    Mermaid,
+    /// A diff fence, shown as written.
+    Diff,
+    /// An image. Nothing hands one on yet.
+    Image,
+}
+
+/// A block, with the source it was written as.
+///
+/// The source rather than what it was drawn as, because what it is drawn as
+/// depends on the width and the glyph set, and both can change after it has
+/// arrived. Laid out by `lay`.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Block {
+    /// What kind of block it is.
+    pub kind: Kind,
+    /// The lines it was written as, markers and breaks included.
+    pub source: String,
+    /// Whether it closed before the message ended. A fence or display math
+    /// that never closed is shown as written; a table the message ended in is
+    /// still drawn as a table.
+    pub closed: bool,
+}
+
+impl std::fmt::Debug for Block {
+    /// The kind and the size, not the source: an answer's text has no place
+    /// in a log line.
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.debug_struct("Block")
+            .field("kind", &self.kind)
+            .field("source", &self.source.len())
+            .field("closed", &self.closed)
+            .finish()
+    }
+}
+
+/// What the reader hands on: a run of text under its slot, or a whole block.
+#[derive(Debug)]
+pub enum Said<'a> {
+    /// Text wearing `slot`, going to `link` when clicked where it has one.
+    Run {
+        /// What the text is drawn as.
+        slot: Slot,
+        /// The text, with its markers gone.
+        text: &'a str,
+        /// Where a click on it goes.
+        link: Option<&'a str>,
+    },
+    /// A block, handed on once it is whole.
+    Block(Block),
+}
+
+/// What a reader links its text to: the repository a bare number counts
+/// against and the checkout a path to a file is read against.
+///
+/// Given to every reader of an answer, and kept by the record as well, since a
+/// block is read again each time it is laid out and has to link what the same
+/// text linked as it streamed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Links {
+    /// The repository bare numbers count against; `None` leaves a number the
+    /// plain text it was written as.
+    pub(crate) forge: Option<Forge>,
+    /// The checkout a link to a path opens in; `None` hands the path on as it
+    /// was written.
+    pub(crate) files: Option<Files>,
+}
+
+/// `block` laid out as the lines it draws `room` columns wide, in `glyphs`.
+///
+/// What the record keeps a block as, and what it lays it out with again at
+/// every width and glyph set it is asked for.
+///
+/// Lines rather than rows: one put back as it was written can be wider than
+/// the room, and is folded where it is drawn, as streamed text is.
+#[must_use]
+pub(crate) fn lay(block: &Block, room: usize, glyphs: Glyphs, links: &Links) -> Vec<Row> {
+    let mut rows = vec![Row::new()];
+    tell(block, room, glyphs, links, &mut |slot, text, link| {
+        let mut pieces = text.split('\n');
+        if let Some(piece) = pieces.next() {
+            push(&mut rows, slot, piece, link);
+        }
+        for piece in pieces {
+            rows.push(Row::new());
+            push(&mut rows, slot, piece, link);
+        }
+    });
+
+    // The break that ends the last line ends the block, and is no row of it.
+    if rows.last().is_some_and(Row::is_empty) {
+        rows.pop();
+    }
+    rows
+}
+
+/// `block` as the runs [`lay`] makes its lines of, each with where it links,
+/// handed to `put` in order, a line's end as a break in the text.
+///
+/// A table is drawn against the room, or put back as it was written where it
+/// cannot be; a rule is drawn across the room; anything else is read again by
+/// a reader that holds nothing and links by `links`, so it is shown the way it
+/// would have streamed. Runs rather than lines for a page printed once, which
+/// keeps each address beside its words as a run streamed past it would.
+pub(crate) fn tell(
+    block: &Block,
+    room: usize,
+    glyphs: Glyphs,
+    links: &Links,
+    put: &mut dyn FnMut(Slot, &str, Option<&str>),
+) {
+    match block.kind {
+        Kind::Table => {
+            let mut kinds = kind::Kinds::default();
+            Table::of(&block.source).laid(glyphs, room, &mut |slot, text, link| {
+                kinds.tell(slot, text, link, &mut *put);
+            });
+            kinds.flush(&mut *put);
+        }
+        // A character at a time, as the rule streamed before it was a block.
+        Kind::Rule => {
+            for _ in 0..room {
+                put(Slot::Quiet, glyphs.horizontal(), None);
+            }
+        }
+        Kind::DisplayMath | Kind::Mermaid | Kind::Diff | Kind::Image => {
+            let mut markdown = Markdown::new(glyphs).linking(links).as_written();
+            let mut said = |said: Said<'_>| {
+                if let Said::Run { slot, text, link } = said {
+                    put(slot, text, link);
+                }
+            };
+            markdown.read(&block.source, room, &mut said);
+            markdown.finish(room, &mut said);
+        }
+    }
+}
+
+/// One run onto the last of `rows`.
+fn push(rows: &mut [Row], slot: Slot, text: &str, link: Option<&str>) {
+    if text.is_empty() {
+        return;
+    }
+    if let Some(row) = rows.last_mut() {
+        match link {
+            Some(link) => row.push_linked(slot, text, link),
+            None => row.push(slot, text),
+        }
+    }
+}
+
+/// A held block being gathered.
+#[derive(Debug)]
+struct Gathering {
+    held: Held,
+    /// Everything written so far, the opening marker included.
+    source: String,
+    /// What ends it.
+    closer: Closer,
+    /// Where the line a closer is looked for in begins.
+    line: usize,
+}
+
+/// What ends a held block other than a table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Closer {
+    /// A line opening, after its spaces, with three or more of this mark.
+    Fence(char),
+    /// A line holding this, anywhere on it.
+    Within(String),
+}
+
+impl Closer {
+    /// Whether `line` is the one that ends the block.
+    fn closes(&self, line: &str) -> bool {
+        match self {
+            Self::Fence(mark) => {
+                line.trim_start_matches(' ')
+                    .chars()
+                    .take_while(|character| character == mark)
+                    .count()
+                    >= 3
+            }
+            Self::Within(closer) => line.contains(closer.as_str()),
+        }
+    }
+}
+
+/// Display math being shown as written past its cap, until the line that
+/// holds its closer ends.
+///
+/// Watched so the closer is not read as a block opening: `$$` closes a block
+/// and opens one, and which it does depends on what came before it.
+#[derive(Debug)]
+struct Passing {
+    closer: String,
+    /// The end of the line being read, as long as the closer at most.
+    tail: String,
+    /// Whether this line holds the closer.
+    seen: bool,
+}
+
+impl Passing {
+    /// Takes `character`; `true` once the line holding the closer has ended.
+    fn passes(&mut self, character: char) -> bool {
+        if character == '\n' {
+            if self.seen {
+                return true;
+            }
+            self.tail.clear();
+            return false;
+        }
+        self.tail.push(character);
+        while self.tail.len() > self.closer.len() {
+            self.tail.remove(0);
+        }
+        self.seen |= self.tail.ends_with(self.closer.as_str());
+        false
+    }
+}
+
+/// Whether a line opening with display math is one, so far.
+#[derive(Debug, Default, PartialEq, Eq)]
+enum Probe {
+    /// Nothing looked at yet on this line.
+    #[default]
+    Ready,
+    /// What the line opened with, held while it could still be an opening.
+    Probing(String),
+    /// Looked at and given up on for the rest of the line.
+    Done,
+}
+
+/// What the start of a line spells, as display math.
+#[derive(Debug, PartialEq, Eq)]
+enum Opener {
+    /// Could still be the opening of a block.
+    Partly,
+    /// The opening of a block, ended by this.
+    Whole(String),
+    /// Not the opening of one.
+    Not,
+}
+
+/// The environments a `\begin` opens display math with, starred or not.
+const ENVIRONMENTS: [&str; 12] = [
+    "equation",
+    "align",
+    "gather",
+    "multline",
+    "cases",
+    "matrix",
+    "pmatrix",
+    "bmatrix",
+    "Bmatrix",
+    "vmatrix",
+    "Vmatrix",
+    "smallmatrix",
+];
+
+/// What `written`, at the start of a line, spells as display math.
+fn opener(written: &str) -> Opener {
+    const BEGIN: &str = "\\begin{";
+    let written = written.trim_start_matches(' ');
+    match written {
+        "$$" => return Opener::Whole("$$".to_owned()),
+        "\\[" => return Opener::Whole("\\]".to_owned()),
+        _ => {}
+    }
+    if "$$".starts_with(written) || "\\[".starts_with(written) || BEGIN.starts_with(written) {
+        return Opener::Partly;
+    }
+    let Some(named) = written.strip_prefix(BEGIN) else {
+        return Opener::Not;
+    };
+    match named.strip_suffix('}') {
+        Some(name) if ENVIRONMENTS.contains(&name.strip_suffix('*').unwrap_or(name)) => {
+            Opener::Whole(format!("\\end{{{name}}}"))
+        }
+        None if named.len() <= "smallmatrix*".len()
+            && named
+                .chars()
+                .all(|character| character.is_ascii_alphabetic() || character == '*') =>
+        {
+            Opener::Partly
+        }
+        _ => Opener::Not,
+    }
+}
+
+/// How many lines of `source` have begun, the one still arriving included.
+fn begun(source: &str) -> usize {
+    let breaks = source.matches('\n').count();
+    breaks + usize::from(!source.is_empty() && !source.ends_with('\n'))
+}
+
 /// A run of one marker character, waiting for the character that says what it
 /// was.
 #[derive(Debug, Clone, Copy)]
-struct Held {
+struct HeldMarks {
     mark: char,
     count: usize,
     /// Whether the run began before anything else on the line.
@@ -305,7 +739,7 @@ fn spelled(text: &str) -> Spelled {
 #[derive(Debug, Default)]
 pub struct Markdown {
     /// A run of markers whose meaning the next character decides.
-    held: Option<Held>,
+    held: Option<HeldMarks>,
     /// Something other than a space has arrived on this line.
     ///
     /// A heading is only one at the start of a line; anywhere else it is a hash.
@@ -404,6 +838,22 @@ pub struct Markdown {
     /// and the scan's state is reset at every line while a word of prose held
     /// at the end of a delta belongs to no line yet.
     kinds: kind::Kinds,
+    /// Whether this reader draws every block the way it streams, holding none.
+    ///
+    /// What lays a block out, and what reads a table's cell: both are reading
+    /// something already held, and holding it again would never end.
+    unheld: bool,
+    /// A block that has just closed, waiting to be handed on in its place.
+    ready: Option<Block>,
+    /// A held block other than a table, being gathered.
+    gathering: Option<Gathering>,
+    /// Display math past its cap, being shown as written until it ends.
+    passing: Option<Passing>,
+    /// Whether this line opens with display math, as far as it has arrived.
+    probe: Probe,
+    /// Whether the fence on this line opened it, and how many marks it took,
+    /// for the end of the line to rebuild it from where the block is held.
+    fence: Option<(bool, usize)>,
 }
 
 /// The most of one line of code that is held back to be read.
@@ -447,7 +897,45 @@ impl Markdown {
         self
     }
 
-    /// Reads `delta`, handing each run of text to `say` under its slot.
+    /// The same reader, counting and opening by `links`.
+    #[must_use]
+    pub(crate) fn linking(self, links: &Links) -> Self {
+        self.counting(links.forge.clone())
+            .opening(links.files.clone())
+    }
+
+    /// The same reader, holding no block: every one is drawn the way it
+    /// streams, as runs.
+    ///
+    /// What `lay` reads a block's source with, and what a table reads its
+    /// cells with.
+    #[must_use]
+    pub fn as_written(mut self) -> Self {
+        self.unheld = true;
+        self
+    }
+
+    /// The held block being gathered, and how many of its lines have begun.
+    ///
+    /// What the live foot says while one is: the block is not drawn until it
+    /// closes, and a reader waiting on nothing visible is owed a word about
+    /// why.
+    #[must_use]
+    pub fn holding(&self) -> Option<Holding> {
+        if let Some(table) = self.table.as_ref().filter(|_| self.holds()) {
+            return Some(Holding {
+                held: Held::Table,
+                lines: table.begun(),
+            });
+        }
+        self.gathering.as_ref().map(|gathering| Holding {
+            held: gathering.held,
+            lines: begun(&gathering.source),
+        })
+    }
+
+    /// Reads `delta`, handing each run of text to `say` under its slot, and
+    /// each block whole once it closes.
     ///
     /// Runs rather than characters: the text between two markers is one call,
     /// so a delta with no markers in it is one call for the whole delta.
@@ -458,32 +946,92 @@ impl Markdown {
     /// changes without a delta arriving: a window resized between two of them
     /// would leave a field stale, and the caller knows the size at every call
     /// anyway.
-    pub fn read(
-        &mut self,
-        delta: &str,
-        room: usize,
-        say: &mut dyn FnMut(Slot, &str, Option<&str>),
-    ) {
+    pub fn read(&mut self, delta: &str, room: usize, say: &mut dyn FnMut(Said<'_>)) {
         let mut kinds = std::mem::take(&mut self.kinds);
-        self.scan(delta, room, &mut |slot, text, address| {
-            kinds.tell(slot, text, address, say);
-        });
+        let mut rest = delta;
+        loop {
+            let resume = self.scan(rest, room, &mut |slot, text, link| {
+                kinds.tell(slot, text, link, &mut |slot, text, link| {
+                    say(Said::Run { slot, text, link });
+                });
+            });
+            self.hand_on(&mut kinds, say);
+            match resume {
+                Some(at) => rest = rest.get(at..).unwrap_or_default(),
+                None => break,
+            }
+        }
         self.kinds = kinds;
+    }
+
+    /// Hands on the block that has just closed, after every run before it.
+    fn hand_on(&mut self, kinds: &mut kind::Kinds, say: &mut dyn FnMut(Said<'_>)) {
+        if let Some(block) = self.ready.take() {
+            kinds.flush(&mut |slot, text, link| say(Said::Run { slot, text, link }));
+            say(Said::Block(block));
+        }
+    }
+
+    /// Whether a block arriving now is held rather than drawn as it streams.
+    fn holds(&self) -> bool {
+        !self.unheld && self.passing.is_none()
     }
 
     /// Reads `delta` into runs, each under the slot its markers gave it; what
     /// kind of thing a run of prose or code is gets told on the way out.
-    fn scan(&mut self, delta: &str, room: usize, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+    ///
+    /// Stops where a block has closed, having said every run before it, and
+    /// answers where in `delta` to go on from once the block is handed on.
+    fn scan(
+        &mut self,
+        delta: &str,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) -> Option<usize> {
         // Where the text not yet handed on begins.
         let mut run = 0;
 
         for (at, character) in delta.char_indices() {
             let next = at.saturating_add(character.len_utf8());
 
+            // A block closed on the character before this one, and goes out
+            // before anything after it does.
+            if self.ready.is_some() {
+                self.say(delta.get(run..at).unwrap_or_default(), say);
+                return Some(at);
+            }
+
             // A block of bars takes every character in it, so nothing below
             // runs while one is open and the run stays empty until it closes.
             if self.table.is_some() {
                 if self.tabled(character, room, say) {
+                    run = next;
+                    continue;
+                }
+                if self.ready.is_some() {
+                    return Some(at);
+                }
+                run = at;
+            }
+
+            // So does any other block being held.
+            if self.gathering.is_some() {
+                self.gathers(character, room, say);
+                run = next;
+                continue;
+            }
+
+            if let Some(passing) = self.passing.as_mut()
+                && passing.passes(character)
+            {
+                self.passing = None;
+            }
+
+            // The start of a line that could be display math is held until
+            // it is or it is not.
+            if self.probes(character) {
+                let pending = delta.get(run..at).unwrap_or_default();
+                if self.probed(pending, character, room, say) {
                     run = next;
                     continue;
                 }
@@ -493,7 +1041,7 @@ impl Markdown {
             match self.held {
                 // More of the run being held. Not text, and not decided yet.
                 Some(held) if held.mark == character => {
-                    self.held = Some(Held {
+                    self.held = Some(HeldMarks {
                         count: held.count.saturating_add(1).min(RUN),
                         ..held
                     });
@@ -618,7 +1166,7 @@ impl Markdown {
                 } else {
                     self.indent += delta.get(run..at).map_or(0, str::len);
                 }
-                self.held = Some(Held {
+                self.held = Some(HeldMarks {
                     mark: character,
                     count: 1,
                     opened: !self.started,
@@ -640,6 +1188,127 @@ impl Markdown {
         }
 
         self.say(delta.get(run..).unwrap_or_default(), say);
+        self.ready.is_some().then_some(delta.len())
+    }
+
+    /// Whether `character` may open display math, or carry on one that may.
+    fn probes(&self, character: char) -> bool {
+        match self.probe {
+            Probe::Probing(_) => true,
+            Probe::Done => false,
+            Probe::Ready => {
+                matches!(character, '$' | '\\')
+                    && self.holds()
+                    && self.inside == Inside::Prose
+                    && !self.started
+                    && !self.line.code
+                    && self.indent == 0
+                    && self.held.is_none()
+                    && self.link.is_none()
+                    && self.address.is_none()
+                    && self.reference.is_none()
+                    && !self.escaped
+            }
+        }
+    }
+
+    /// Reads `character` into what the line opened with, `pending` being the
+    /// spaces in front of it not yet said. Answers whether it was taken.
+    ///
+    /// `false` says the line is not display math after all: what was held
+    /// has been read again as it would have been, and `character` is the
+    /// caller's.
+    fn probed(
+        &mut self,
+        pending: &str,
+        character: char,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) -> bool {
+        let mut written = match std::mem::take(&mut self.probe) {
+            Probe::Probing(written) => written,
+            Probe::Ready | Probe::Done => pending.to_owned(),
+        };
+        let held = written.len();
+        written.push(character);
+        match opener(&written) {
+            Opener::Partly => {
+                self.probe = Probe::Probing(written);
+                true
+            }
+            Opener::Whole(closer) => {
+                self.probe = Probe::Done;
+                self.gathering = Some(Gathering {
+                    held: Held::DisplayMath,
+                    line: written.len(),
+                    source: written,
+                    closer: Closer::Within(closer),
+                });
+                true
+            }
+            Opener::Not => {
+                self.probe = Probe::Done;
+                written.truncate(held);
+                self.scan(&written, room, say);
+                false
+            }
+        }
+    }
+
+    /// Reads `character` into the held block being gathered.
+    fn gathers(
+        &mut self,
+        character: char,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) {
+        let Some(mut gathering) = self.gathering.take() else {
+            return;
+        };
+        gathering.source.push(character);
+
+        // Held longer than the block is worth waiting for. What was gathered
+        // is read again as it would have been had nothing held it, and the
+        // rest of it follows the same way.
+        if gathering.source.len() > gathering.held.cap() {
+            let unheld = std::mem::replace(&mut self.unheld, true);
+            self.scan(&gathering.source, room, say);
+            self.unheld = unheld;
+
+            // A fence's own state says where it ends. Display math has none,
+            // so its closer is watched for until the line holding it ends.
+            if let Closer::Within(closer) = gathering.closer {
+                let mut passing = Passing {
+                    closer,
+                    tail: String::new(),
+                    seen: false,
+                };
+                let line = gathering.source.get(gathering.line..).unwrap_or_default();
+                // Every character is fed, since what it has seen is kept.
+                let mut ended = false;
+                for character in line.chars() {
+                    ended |= passing.passes(character);
+                }
+                if !ended {
+                    self.passing = Some(passing);
+                }
+            }
+            return;
+        }
+
+        if character == '\n' {
+            let line = gathering.source.get(gathering.line..).unwrap_or_default();
+            if gathering.closer.closes(line) {
+                self.ready = Some(Block {
+                    kind: gathering.held.kind(),
+                    source: gathering.source,
+                    closed: true,
+                });
+                return;
+            }
+            gathering.line = gathering.source.len();
+        }
+        self.gathering = Some(gathering);
     }
 
     /// Whether `character` starts a run of markers where the scan stands.
@@ -696,7 +1365,7 @@ impl Markdown {
     /// ended it. Answers whether that character was part of the marker.
     fn settle(
         &mut self,
-        held: Held,
+        held: HeldMarks,
         next: char,
         room: usize,
         say: &mut dyn FnMut(Slot, &str, Option<&str>),
@@ -713,8 +1382,20 @@ impl Markdown {
             // as a stray. This stands above every arm below it: a line that is
             // nothing but markers cannot also be emphasis, a bullet, or the
             // start of anything.
+            //
+            // Handed on as a block where blocks are held, so whoever keeps it
+            // can draw it across the room there is later rather than the room
+            // there was.
             '-' | '*' | '_' if held.opened && held.count >= 3 && next == '\n' => {
                 self.indent = 0;
+                if self.holds() {
+                    self.ready = Some(Block {
+                        kind: Kind::Rule,
+                        source: written(held).to_owned(),
+                        closed: true,
+                    });
+                    return false;
+                }
                 for _ in 0..room {
                     say(Slot::Quiet, self.glyphs.horizontal(), None);
                 }
@@ -742,6 +1423,7 @@ impl Markdown {
                     Inside::Closing
                 } else {
                     self.fenced = held.mark;
+                    self.fence = Some((held.opened, held.count));
                     Inside::Opening
                 };
                 false
@@ -829,7 +1511,7 @@ impl Markdown {
     }
 
     /// Whether a run of markers followed by `next` turns emphasis on or off.
-    fn emphasises(&self, held: Held, next: char) -> bool {
+    fn emphasises(&self, held: HeldMarks, next: char) -> bool {
         // Whichever of the two this run would close, since what a marker may do
         // depends on whether its own is already open.
         let open = if held.count >= 2 {
@@ -891,7 +1573,7 @@ impl Markdown {
         // A line that does not open with a bar is not the table's, and the
         // table ended above it.
         if table.fresh() && character != '|' {
-            table.laid(self.glyphs, room, say);
+            self.lays(&table, room, say);
             self.line = Line::default();
             self.started = false;
             return false;
@@ -913,6 +1595,21 @@ impl Markdown {
 
         self.table = Some(table);
         true
+    }
+
+    /// Lets go of a table that has ended: as a block where blocks are held
+    /// and it has the delimiter row that makes it one, and drawn as it stands
+    /// otherwise.
+    fn lays(&mut self, table: &Table, room: usize, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        if self.holds() && table.delimited() {
+            self.ready = Some(Block {
+                kind: Kind::Table,
+                source: table.source(),
+                closed: true,
+            });
+        } else {
+            table.laid(self.glyphs, room, say);
+        }
     }
 
     /// Draws the bullet's own mark, where one is owed.
@@ -1214,12 +1911,28 @@ impl Markdown {
     ///
     /// The last moment there is: the reader is dropped between messages, and
     /// text still held when that happens is text the reader never sees.
-    pub fn finish(&mut self, room: usize, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+    pub fn finish(&mut self, room: usize, say: &mut dyn FnMut(Said<'_>)) {
         let mut kinds = std::mem::take(&mut self.kinds);
-        self.close(room, &mut |slot, text, address| {
-            kinds.tell(slot, text, address, say);
+        self.close(room, &mut |slot, text, link| {
+            kinds.tell(slot, text, link, &mut |slot, text, link| {
+                say(Said::Run { slot, text, link });
+            });
         });
-        kinds.flush(say);
+
+        // A block that never closed is handed on as it stands: the end of the
+        // message is the last thing that could have closed it. A table is
+        // drawn from what arrived; anything else is shown as written.
+        if let Some(gathering) = self.gathering.take() {
+            self.hand_on(&mut kinds, say);
+            self.ready = Some(Block {
+                kind: gathering.held.kind(),
+                source: gathering.source,
+                closed: false,
+            });
+        }
+        self.passing = None;
+        self.hand_on(&mut kinds, say);
+        kinds.flush(&mut |slot, text, link| say(Said::Run { slot, text, link }));
         self.kinds = kinds;
     }
 
@@ -1264,7 +1977,13 @@ impl Markdown {
             spill(&link, say);
         }
         if let Some(table) = self.table.take() {
-            table.laid(self.glyphs, room, say);
+            self.lays(&table, room, say);
+        }
+
+        // A line that could have opened display math and never said more.
+        if let Probe::Probing(written) = std::mem::take(&mut self.probe) {
+            self.probe = Probe::Done;
+            self.scan(&written, room, say);
         }
     }
 
@@ -1296,21 +2015,58 @@ impl Markdown {
             Emphasis::default()
         };
 
+        // A fence named for a block that is held, opened at the start of its
+        // line, is gathered from here rather than read: what opened it is
+        // rebuilt as the first line of what is kept, so the block can be read
+        // again from its source alone.
+        let held = match (ended, self.fence) {
+            (Inside::Opening, Some((true, count))) if self.holds() => Held::fenced(&self.language)
+                .map(|held| {
+                    let mut source: String = std::iter::repeat_n(self.fenced, count).collect();
+                    source.push_str(&self.language);
+                    source.push('\n');
+                    Gathering {
+                        held,
+                        line: source.len(),
+                        source,
+                        closer: Closer::Fence(self.fenced),
+                    }
+                }),
+            _ => None,
+        };
+        let inside = if held.is_some() {
+            Inside::Prose
+        } else {
+            inside
+        };
+
         let syntax = match ended {
+            _ if held.is_some() => None,
             Inside::Opening => Syntax::of(&self.language),
             Inside::Closing => None,
             _ => self.syntax.take(),
         };
 
+        // A block that closed on this line stands in for the line, break and
+        // all.
+        let ready = self.ready.take();
+        let blocked = ready.is_some();
+
         *self = Self {
             // The fence is the one thing carried over, and a fence's own line
             // is where its effect begins or ends. The glyphs are not carried
             // over so much as never given up: they are what the terminal can
-            // draw, which no line of an answer changes.
+            // draw, which no line of an answer changes. Nor is whether blocks
+            // are held, or a block that has just closed and not yet gone out,
+            // or display math past its cap.
             inside,
             fenced: self.fenced,
             syntax,
             glyphs: self.glyphs,
+            unheld: self.unheld,
+            ready,
+            gathering: held,
+            passing: self.passing.take(),
             ..Self::default()
         };
 
@@ -1318,7 +2074,7 @@ impl Markdown {
         // break with it, or every block would arrive with a blank line stitched
         // to each end of it. After the reset otherwise, so the row that ends
         // carries no slot into the row that follows it.
-        if !matches!(ended, Inside::Opening | Inside::Closing) {
+        if !matches!(ended, Inside::Opening | Inside::Closing) && !blocked {
             say(self.slot(), "\n", None);
         }
 
@@ -1465,7 +2221,7 @@ fn target(between: &str) -> &str {
 }
 
 /// The text a run is put back as, where it meant nothing.
-fn written(held: Held) -> &'static str {
+fn written(held: HeldMarks) -> &'static str {
     let whole = match held.mark {
         '#' => HASHES,
         '*' => STARS,
@@ -1483,7 +2239,7 @@ fn written(held: Held) -> &'static str {
 /// The answers every drawing of an answer is compared with, and the line a
 /// case watching them waits for.
 #[cfg(test)]
-mod corpus;
+pub(crate) mod corpus;
 #[cfg(test)]
 mod corpus_pictures;
 #[cfg(test)]
