@@ -3114,6 +3114,11 @@ fn drawn_at_thirty(answer: &str, glyphs: Glyphs) -> Vec<String> {
         .collect()
 }
 
+/// The first of `rows`, or nothing where there is none.
+fn first_of(rows: &[String]) -> &str {
+    rows.first().map_or("", String::as_str)
+}
+
 /// How many columns of blank stand in front of `row`'s first word.
 fn indent(row: &str) -> usize {
     row.len() - row.trim_start().len()
@@ -3124,8 +3129,8 @@ fn a_wrapped_bullet_hangs_under_its_words() {
     let rows = drawn_at_thirty(&format!("- a bullet item {LONG}\n"), Glyphs::Unicode);
 
     assert!(rows.len() > 2, "{rows:#?}");
-    assert!(rows[0].starts_with("• a bullet"), "{rows:#?}");
-    for row in &rows[1..] {
+    assert!(first_of(&rows).starts_with("• a bullet"), "{rows:#?}");
+    for row in rows.iter().skip(1) {
         assert_eq!(indent(row), 2, "{row:?} does not hang under the words");
     }
 }
@@ -3138,8 +3143,8 @@ fn a_wrapped_task_hangs_under_its_words() {
     ] {
         let rows = drawn_at_thirty(&answer, Glyphs::Unicode);
 
-        assert!(rows[0].starts_with(first), "{rows:#?}");
-        for row in &rows[1..] {
+        assert!(first_of(&rows).starts_with(first), "{rows:#?}");
+        for row in rows.iter().skip(1) {
             assert_eq!(indent(row), 2, "{row:?} does not hang under the words");
         }
     }
@@ -3157,10 +3162,10 @@ fn a_wrapped_numbered_item_hangs_under_its_own_number() {
         .position(|row| row.starts_with("10. "))
         .unwrap_or_default();
     assert!(tenth > 2, "{rows:#?}");
-    for row in &rows[1..tenth] {
+    for row in rows.iter().take(tenth).skip(1) {
         assert_eq!(indent(row), 3, "{row:?} does not hang under the words");
     }
-    for row in &rows[tenth + 1..] {
+    for row in rows.iter().skip(tenth + 1) {
         assert_eq!(indent(row), 4, "{row:?} does not hang under the words");
     }
 }
@@ -3172,9 +3177,13 @@ fn a_wrapped_nested_item_hangs_under_its_words_not_its_parents() {
         Glyphs::Unicode,
     );
 
-    assert_eq!(rows[0], "• an outer item", "{rows:#?}");
-    assert!(rows[1].starts_with("  • a nested item"), "{rows:#?}");
-    for row in &rows[2..] {
+    assert_eq!(first_of(&rows), "• an outer item", "{rows:#?}");
+    assert!(
+        rows.get(1)
+            .is_some_and(|row| row.starts_with("  • a nested item")),
+        "{rows:#?}"
+    );
+    for row in rows.iter().skip(2) {
         assert_eq!(indent(row), 4, "{row:?} does not hang under the words");
     }
 }
@@ -3183,8 +3192,8 @@ fn a_wrapped_nested_item_hangs_under_its_words_not_its_parents() {
 fn a_wrapped_item_hangs_under_its_words_in_ascii_too() {
     let rows = drawn_at_thirty(&format!("- a bullet item {LONG}\n"), Glyphs::Ascii);
 
-    assert!(rows[0].starts_with("- a bullet"), "{rows:#?}");
-    for row in &rows[1..] {
+    assert!(first_of(&rows).starts_with("- a bullet"), "{rows:#?}");
+    for row in rows.iter().skip(1) {
         assert_eq!(indent(row), 2, "{row:?} does not hang under the words");
     }
 }

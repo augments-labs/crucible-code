@@ -31,7 +31,7 @@
 //! [`Markdown::as_written`] holds no block at all, which is what lays one out.
 //!
 //! A quote's bar and an item's mark are drawn in slots of their own, and
-//! [`hang`] reads them back off a line to say what a row that line wraps onto
+//! `hang` reads them back off a line to say what a row that line wraps onto
 //! stands in front of its words with. The reader decides where a line ends and
 //! nothing about where it wraps; the record that folds it asks.
 //!

@@ -2106,7 +2106,7 @@ fn a_native_wrapped_item_hangs_under_its_words() {
             let rows = answered_natively(&Window::new(columns, 12), &answer, resized);
 
             assert!(rows.len() > 2, "{rows:#?}");
-            for row in &rows[1..] {
+            for row in rows.iter().skip(1) {
                 let indent = row.len() - row.trim_start().len();
                 assert_eq!(indent, hang, "{row:?} does not hang under the words");
             }
