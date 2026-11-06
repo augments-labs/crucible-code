@@ -1066,7 +1066,7 @@ impl Record {
 /// A drawn block's source, borrowed from the record that keeps it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Source<'a> {
-    /// The line it is held as, numbered as [`Record::lines`] numbers them.
+    /// The line it is held as, numbered as the record numbers its lines.
     pub line: usize,
     /// What the block is called: `table`, `math`, `mermaid diagram`, `diff`.
     pub word: &'static str,
