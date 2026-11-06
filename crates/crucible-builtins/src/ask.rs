@@ -3,12 +3,21 @@
 //! Most of what a model does not know it can find out by reading. What it
 //! cannot read is which of several shapes somebody wants, and guessing there is
 //! how a turn's whole output turns out to be about the wrong thing. So this
-//! tool stops and asks, and the answer comes back inside the same call rather
-//! than as a paragraph the person has to reply to in prose.
+//! tool stops and asks, and by default the answer comes back inside the same
+//! call rather than as a paragraph the person has to reply to in prose.
+//!
+//! **A call may choose not to wait.** With `mode` set to deferred the questions
+//! are held by [`crucible_tools::Deferred`], and the call returns at once with
+//! the id they are held as; the answer reaches the model later, as a message
+//! from the person. Nowhere to hold them, or no room left, is a refusal the
+//! model can correct and never a quiet fall back to waiting: a model that chose
+//! not to wait has work lined up behind the call, and blocking would stall the
+//! very turn that asked not to be.
 //!
 //! **It changes nothing and reaches nothing.** No file is touched, no process
-//! is started and nothing leaves the machine, so there is no target to name and
-//! nothing a rule could usefully be written about. It carries a read-only
+//! is started and nothing leaves the machine; a call that does not wait leaves
+//! its questions only in the session's own registry. So there is no target to
+//! name and nothing a rule could usefully be written about. It carries a read-only
 //! sensitivity over a target that resolves to nothing, which is the answer
 //! [`crate::ToolSearch`] carries for the same reason.
 //!
@@ -33,8 +42,8 @@ use std::sync::{Arc, LazyLock};
 
 use crucible_runtime::BoxFuture;
 use crucible_tools::{
-    Approved, DescribeTool, Put, Sensitivity, Summary, Target, Tool, ToolContext, ToolError,
-    ToolOutput,
+    Approved, Deferred, DescribeTool, FEWEST_ANSWERS, MOST_ANSWERS, MOST_QUESTIONS, MOST_SHOWS,
+    Put, Sensitivity, Summary, Target, Tool, ToolContext, ToolError, ToolOutput,
 };
 use crucible_types::{Answer, Answered, Question, ToolArgs};
 
@@ -58,23 +67,29 @@ const ANSWER: &str = "answer";
 const SAYS: &str = "says";
 const SHOWS: &str = "shows";
 const RECOMMENDED: &str = "recommended";
+const MODE: &str = "mode";
 
-/// How many questions one call may put.
-///
-/// Four is already more than anybody wants to answer in a row before the work
-/// carries on. Past it the call has stopped being a question and become a form,
-/// which is a thing to write in the prompt rather than to put on a panel.
-const MOST_QUESTIONS: usize = 4;
+/// The two ways a call can wait for its answer, spelled as the model sends them.
+const BLOCKING: &str = "blocking";
+const DEFERRED: &str = "deferred";
+/// Both, as the schema offers them and the parse accepts them.
+const MODES: &[&str] = &[BLOCKING, DEFERRED];
 
-/// How many answers one question may offer, and how few.
-///
-/// Eight is where a numbered list stops being read and starts being scanned.
-/// Two is the floor because a question offering one answer is not a question —
-/// it is a statement with a key to press, and the model wanting that should say
-/// it in its reply. The two this program adds are not counted: they are the way
-/// out rather than answers to what was asked.
-const MOST_ANSWERS: usize = 8;
-const FEWEST_ANSWERS: usize = 2;
+// How many questions one call may put, how many answers each may offer and how
+// many rows a specimen may show are `crucible_tools`'s: a question that waits
+// for its answer is held there to the same bounds, so what this accepts is what
+// may wait.
+//
+// Four questions is already more than anybody wants to answer in a row before
+// the work carries on. Past it the call has stopped being a question and become
+// a form, which is a thing to write in the prompt rather than to put on a
+// panel. Eight answers is where a numbered list stops being read and starts
+// being scanned. Two is the floor because a question offering one answer is
+// not a question — it is a statement with a key to press, and the model wanting
+// that should say it in its reply. The two this program adds are not counted:
+// they are the way out rather than answers to what was asked. And the panel
+// draws ten rows of a specimen and no more, so a call that sent more would be
+// writing rows nobody will ever see.
 
 /// How long a heading may be, in bytes.
 ///
@@ -84,12 +99,6 @@ const FEWEST_ANSWERS: usize = 2;
 /// Past this the row gives way to a count, and a heading nobody ever sees is a
 /// heading the model spent tokens on for nothing.
 const HEADING_SHORT: usize = 24;
-
-/// How many rows of a specimen one answer may carry.
-///
-/// The panel draws this many and no more, so a call that sent more would be
-/// writing rows nobody will ever see.
-const MOST_SHOWS: usize = 10;
 
 /// How long an answer, its one-line meaning or a row of a specimen may be, in
 /// bytes.
@@ -108,11 +117,13 @@ const LONG: usize = 500;
 /// so the sentence the model reads cannot drift from the refusal it meets.
 static SCHEMA: LazyLock<String> = LazyLock::new(|| {
     Schema {
-        about: "Asks the person at the keyboard to choose, and waits. Use it when the work forks \
-                on what only they can settle and a wrong guess would waste the turn; not for what \
-                reading the workspace would show or to confirm what they said. Ask once, with \
-                every question the fork needs."
-            .into(),
+        about: format!(
+            "Asks the person at the keyboard to choose, and waits. Use it when the work forks \
+             on what only they can settle and a wrong guess would waste the turn; not for what \
+             reading the workspace would show or to confirm what they said. Ask once, with every \
+             question the fork needs. Set {MODE} to {DEFERRED} when the answer is needed later \
+             and there is work to do that does not depend on it."
+        ),
         fields: vec![Field {
             name: QUESTIONS,
             about: format!(
@@ -204,6 +215,14 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
                 fewest: Some(1),
                 most: Some(MOST_QUESTIONS),
             },
+        }, Field {
+            name: MODE,
+            about: format!(
+                "{DEFERRED} returns an id at once, and the answer arrives later as a message \
+                 from the person. Defaults to {BLOCKING}."
+            ),
+            needed: false,
+            shape: Shape::Choice(MODES),
         }],
     }
     .text()
@@ -212,21 +231,56 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
 /// Puts questions to whoever is at the keyboard.
 pub struct AskUser {
     put: Arc<dyn Put>,
+    /// Where a call that does not wait leaves its questions, where anything
+    /// was given to hold them.
+    held: Option<Deferred>,
 }
 
 impl AskUser {
-    /// A tool that asks through `put`.
+    /// A tool that asks through `put`, and refuses a call that will not wait.
     #[must_use]
     pub fn new(put: Arc<dyn Put>) -> Self {
-        Self { put }
+        Self { put, held: None }
     }
+
+    /// The same tool, holding a call that will not wait in `held` until it is
+    /// answered.
+    #[must_use]
+    pub fn deferring(self, held: Deferred) -> Self {
+        Self {
+            held: Some(held),
+            ..self
+        }
+    }
+
+    /// How the call waits for its answer, refused where it asks not to and
+    /// there is nowhere to hold the questions.
+    fn mode<'a>(&'a self, args: &Args) -> Result<Mode<'a>, ToolError> {
+        match args.choice(MODE, BLOCKING, MODES)? {
+            DEFERRED => self.held.as_ref().map(Mode::Deferred).ok_or_else(|| {
+                args.wrong(format!(
+                    "nothing in this session can hold a question for later, so {MODE} {DEFERRED} \
+                     is not available; ask with {MODE} {BLOCKING}, or in your reply"
+                ))
+            }),
+            _ => Ok(Mode::Blocking),
+        }
+    }
+}
+
+/// How one call waits for its answer.
+enum Mode<'a> {
+    /// In the call, through [`Put`].
+    Blocking,
+    /// Later: the questions wait here, and the call returns at once.
+    Deferred(&'a Deferred),
 }
 
 impl std::fmt::Debug for AskUser {
     /// Written by hand because what it holds is a trait object this crate does
     /// not own, the way `crucible-tools` writes one for `dyn Tool`. There is
-    /// nothing to redact: the questions arrive with the call and are never held
-    /// here.
+    /// nothing to redact: the questions arrive with the call, and the ones that
+    /// wait are held by the registry rather than here.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("AskUser")
     }
@@ -245,12 +299,14 @@ impl DescribeTool for AskUser {
 impl Tool for AskUser {
     fn validate(&self, args: &ToolArgs) -> Result<(), ToolError> {
         let args = Args::parse(NAME, args)?;
-        questions(&args).map(drop)
+        questions(&args)?;
+        self.mode(&args).map(drop)
     }
 
     /// Reads nothing and reaches nothing. It puts words on the screen and waits
-    /// for a key, so there is no target to name and nothing a rule could
-    /// usefully be written about.
+    /// for a key, or leaves them in the session's registry to be answered later,
+    /// so there is no target to name and nothing a rule could usefully be
+    /// written about.
     fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
         Sensitivity::ReadOnly {
             target: Target::pathless(),
@@ -284,13 +340,28 @@ impl Tool for AskUser {
             let args = Args::parse(NAME, approved.args())?;
             let asked = questions(&args)?;
 
-            let Some(given) = self.put.put(&asked).await else {
-                return Ok(ToolOutput::ok(
-                    "Nobody answered. Ask in the prompt instead, in your own words.",
-                ));
-            };
+            match self.mode(&args)? {
+                Mode::Blocking => {
+                    let Some(given) = self.put.put(&asked).await else {
+                        return Ok(ToolOutput::ok(
+                            "Nobody answered. Ask in the prompt instead, in your own words.",
+                        ));
+                    };
 
-            Ok(ToolOutput::ok(said(&asked, &given)))
+                    Ok(ToolOutput::ok(said(&asked, &given)))
+                }
+                Mode::Deferred(held) => {
+                    let id = held.register(asked).map_err(|full| {
+                        args.wrong(format!("{full}; ask with {MODE} {BLOCKING} instead"))
+                    })?;
+
+                    Ok(ToolOutput::ok(format!(
+                        "Asked as {id}, without waiting. The answer will come later, as a \
+                         message from the person. Until then carry on only with work that does \
+                         not depend on it, and do not ask the same thing again."
+                    )))
+                }
+            }
         })
     }
 }
@@ -298,7 +369,7 @@ impl Tool for AskUser {
 /// Every question a call asked for, refused where it asked for something this
 /// cannot draw.
 fn questions(args: &Args) -> Result<Vec<Question>, ToolError> {
-    args.only(&[QUESTIONS])?;
+    args.only(&[QUESTIONS, MODE])?;
 
     let Some(written) = args.list(QUESTIONS)? else {
         return Err(args.wrong(format!("{QUESTIONS} is required and must be a list")));

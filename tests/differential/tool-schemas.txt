@@ -6,7 +6,7 @@ result      None
 provenance  Provenance { kind: Builtin, id: "crucible:ask_user", label: "[redacted]" }
 schema
 {
-  "description": "Asks the person at the keyboard to choose, and waits. Use it when the work forks on what only they can settle and a wrong guess would waste the turn; not for what reading the workspace would show or to confirm what they said. Ask once, with every question the fork needs.",
+  "description": "Asks the person at the keyboard to choose, and waits. Use it when the work forks on what only they can settle and a wrong guess would waste the turn; not for what reading the workspace would show or to confirm what they said. Ask once, with every question the fork needs. Set mode to deferred when the answer is needed later and there is work to do that does not depend on it.",
   "type": "object",
   "properties": {
     "questions": {
@@ -64,6 +64,11 @@ schema
         "required": ["heading", "question", "answers"]
       },
       "description": "In answering order, no two the same; more than 4 is a form for your reply."
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["blocking", "deferred"],
+      "description": "deferred returns an id at once, and the answer arrives later as a message from the person. Defaults to blocking."
     }
   },
   "required": ["questions"]
