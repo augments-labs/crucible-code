@@ -4203,7 +4203,7 @@
     {
       "id": "CASE-TRANSCRIPT-LIST-RELAID",
       "family": "transcript-blocks",
-      "obligation": "A wrapped item is drawn again under its words when the window changes width.",
+      "obligation": "A wrapped item is drawn again under its words, and a wrapped quote with its bar on every row, when the window changes width.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
@@ -4211,7 +4211,7 @@
       },
       "case": "render::tests::a_wrapped_item_is_drawn_again_under_its_words_at_a_new_width",
       "source": "crates/crucible-tui/src/render/tests.rs",
-      "body_sha256": "228f17c009cbc7088ca3e2eb28c08af3c5085348fe00585cd3b1c669f0fd94c9",
+      "body_sha256": "af5193f315f34c3987258d0ff338ee712d8c9215e96cc2c7384738f13a40834c",
       "platforms": [
         "linux",
         "macos",
@@ -4248,6 +4248,78 @@
       "case": "render::native::tests::a_native_wrapped_quote_keeps_its_bar_on_every_row",
       "source": "crates/crucible-tui/src/render/native/tests.rs",
       "body_sha256": "e31c405992a63f790fa2a780a6674d7d29a547b9630f73ca3131455074c75b16",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-TASK-HANG-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode, a wrapped task, done or not, continues under the first column of its words, at the width written and after a resize.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_wrapped_task_hangs_under_its_words",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "225aaa2fdae4351088c1ba3e7d3de9114da3a5b86c15b341510c1604b60e3ae0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-NESTED-HANG-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode, a wrapped nested item hangs under its own words and not its parent's, at the width written and after a resize.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_wrapped_nested_item_hangs_under_its_words_not_its_parents",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "44141dfa07c16a6cc05d9550c91bd33cc1ef511cff7d58809e9fdee696825d45",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-LIST-HANG-ASCII-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode with the ascii glyphs, a wrapped bullet continues under its words, at the width written and after a resize.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_wrapped_item_hangs_under_its_words_in_ascii_too",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "f2e9ba3f399dfff64c53f31e60c82d55f26ac865448d2a4bda87fe26d41e05ec",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-QUOTE-BAR-ASCII-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode with the ascii glyphs, a wrapped quote shows its bar on every row it takes, at the width written and after a resize.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_wrapped_quote_keeps_its_bar_in_ascii_too",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "f52e26d8b555ea22940c6b2949a7e1537303543dd73d75370a8565c75eacf482",
       "platforms": [
         "linux",
         "macos",

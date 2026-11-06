@@ -2045,7 +2045,18 @@ fn answered_natively(
     answer: &str,
     resized: Option<(usize, usize)>,
 ) -> Vec<String> {
+    answered_natively_in(window, Glyphs::Unicode, answer, resized)
+}
+
+/// [`answered_natively`], drawing with `glyphs`.
+fn answered_natively_in(
+    window: &Window,
+    glyphs: Glyphs,
+    answer: &str,
+    resized: Option<(usize, usize)>,
+) -> Vec<String> {
     let mut render = native(window);
+    render.draws(glyphs);
     render.wears(colourful());
     stands(&mut render);
     render.stream(answer).unwrap();
@@ -2124,6 +2135,80 @@ fn a_native_wrapped_quote_keeps_its_bar_on_every_row() {
         assert!(rows.len() > 2, "{rows:#?}");
         for row in &rows {
             assert!(row.starts_with("│ "), "{row:?} lost the quote bar");
+        }
+    }
+}
+
+/// How many columns of blank stand in front of `row`'s first word.
+fn indent_of(row: &str) -> usize {
+    row.len() - row.trim_start().len()
+}
+
+/// The rows `answer` comes to natively, drawn at thirty columns, once as
+/// written there and once after a window of sixty narrowed to it.
+fn at_thirty_and_narrowed(glyphs: Glyphs, answer: &str) -> [Vec<String>; 2] {
+    [None, Some((30, 12))].map(|resized| {
+        let columns = if resized.is_some() { 60 } else { 30 };
+        answered_natively_in(&Window::new(columns, 12), glyphs, answer, resized)
+    })
+}
+
+#[test]
+fn a_native_wrapped_task_hangs_under_its_words() {
+    for (marker, first) in [("- [ ]", "□ a task"), ("- [x]", "✓ a task")] {
+        let answer = format!("{marker} a task {LONG_ITEM}\n");
+        for rows in at_thirty_and_narrowed(Glyphs::Unicode, &answer) {
+            assert!(rows.len() > 2, "{rows:#?}");
+            assert!(
+                rows.first().is_some_and(|row| row.starts_with(first)),
+                "{rows:#?}"
+            );
+            for row in rows.iter().skip(1) {
+                assert_eq!(indent_of(row), 2, "{row:?} does not hang under the words");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_native_wrapped_nested_item_hangs_under_its_words_not_its_parents() {
+    let answer = format!("- an outer item\n  - a nested item {LONG_ITEM}\n");
+    for rows in at_thirty_and_narrowed(Glyphs::Unicode, &answer) {
+        assert_eq!(rows.first().map(String::as_str), Some("• an outer item"));
+        assert!(
+            rows.get(1)
+                .is_some_and(|row| row.starts_with("  • a nested item")),
+            "{rows:#?}"
+        );
+        for row in rows.iter().skip(2) {
+            assert_eq!(indent_of(row), 4, "{row:?} does not hang under the words");
+        }
+    }
+}
+
+#[test]
+fn a_native_wrapped_item_hangs_under_its_words_in_ascii_too() {
+    let answer = format!("- a bullet item {LONG_ITEM}\n");
+    for rows in at_thirty_and_narrowed(Glyphs::Ascii, &answer) {
+        assert!(rows.len() > 2, "{rows:#?}");
+        assert!(
+            rows.first()
+                .is_some_and(|row| row.starts_with("- a bullet")),
+            "{rows:#?}"
+        );
+        for row in rows.iter().skip(1) {
+            assert_eq!(indent_of(row), 2, "{row:?} does not hang under the words");
+        }
+    }
+}
+
+#[test]
+fn a_native_wrapped_quote_keeps_its_bar_in_ascii_too() {
+    let answer = format!("> a quote {LONG_ITEM}\n");
+    for rows in at_thirty_and_narrowed(Glyphs::Ascii, &answer) {
+        assert!(rows.len() > 2, "{rows:#?}");
+        for row in &rows {
+            assert!(row.starts_with("| "), "{row:?} lost the quote bar");
         }
     }
 }

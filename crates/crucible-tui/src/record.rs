@@ -53,7 +53,6 @@ use crate::glyphs::Glyphs;
 use crate::markdown::{self, Block, Links};
 use crate::row::Row;
 use crate::scroll_rail::Place;
-use crate::width;
 
 /// The most retained units the record keeps.
 ///
@@ -1659,24 +1658,16 @@ fn flowed(row: &Row, columns: usize) -> Vec<Row> {
         return row.fold(columns);
     };
 
-    let text = row.text();
-    let words = text.get(hang.lead..).unwrap_or_default();
-    let mut rows: Vec<Row> = width::folds(words, room)
+    let lead = row.between(0, hang.lead);
+    words(row, &hang)
+        .fold(room)
         .into_iter()
         .enumerate()
         .map(|(at, part)| {
-            let part = row.between(hang.lead + part.start, hang.lead + part.end);
-            if at == 0 {
-                row.between(0, hang.lead).join(part)
-            } else {
-                hang.prefix.clone().join(part)
-            }
+            let front = if at == 0 { &lead } else { &hang.prefix };
+            front.clone().join(part)
         })
-        .collect();
-    if rows.is_empty() {
-        rows.push(row.between(0, hang.lead));
-    }
-    rows
+        .collect()
 }
 
 /// How many display rows [`flowed`] gives `row`, without building them.
@@ -1684,10 +1675,13 @@ fn flowed_height(row: &Row, columns: usize) -> usize {
     let Some((hang, room)) = hung(row, columns) else {
         return row.folds(columns);
     };
+    words(row, &hang).folds(room)
+}
 
-    let text = row.text();
-    let words = text.get(hang.lead..).unwrap_or_default();
-    width::folds(words, room).len().max(1)
+/// What follows `hang`'s lead in `row`: the words that fold beside the hang,
+/// folded by [`Row::fold`] and [`Row::folds`] like any other row.
+fn words(row: &Row, hang: &markdown::Hang) -> Row {
+    row.between(hang.lead, usize::MAX)
 }
 
 /// The hang `row` folds under at `columns` and the columns left beside it, for

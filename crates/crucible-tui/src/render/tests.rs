@@ -3228,6 +3228,24 @@ fn a_wrapped_item_is_drawn_again_under_its_words_at_a_new_width() {
     let mut fresh = reading(30, 12);
     fresh.answer(&answer);
     assert_eq!(drawn.rows(), fresh.rows());
+
+    let rows: Vec<String> = drawn
+        .rows()
+        .into_iter()
+        .map(|row| row.trim_end().to_owned())
+        .filter(|row| !row.is_empty())
+        .collect();
+    let quoted = rows
+        .iter()
+        .position(|row| row.starts_with('│'))
+        .unwrap_or_default();
+    assert!(quoted > 2, "{rows:#?}");
+    for row in rows.iter().take(quoted).skip(1) {
+        assert_eq!(indent(row), 2, "{row:?} does not hang under the words");
+    }
+    for row in rows.iter().skip(quoted) {
+        assert!(row.starts_with("│ "), "{row:?} lost the quote bar");
+    }
 }
 
 #[test]
