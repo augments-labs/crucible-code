@@ -748,3 +748,219 @@ fn nothing_held_or_delivered_is_ever_shown_in_debug() {
     assert!(held.contains("2 waiting"), "{held}");
     assert!(settled.contains("1 settled"), "{settled}");
 }
+
+#[test]
+fn ids_never_repeat_even_when_the_numbers_run_out() {
+    // The last number is never handed out, so a batch bearing it was never
+    // saved.
+    let saved = Deferred::default();
+    saved.register(asked("Saved")).unwrap();
+    let mut at_the_last = saved.state();
+    *at_the_last.pointer_mut("/waiting/0/id").unwrap() =
+        serde_json::json!(QuestionId::numbered(u64::MAX).to_string());
+    let deferred = Deferred::default();
+    assert!(matches!(
+        deferred.restore(&at_the_last),
+        Err(Unrestored::Malformed(_))
+    ));
+
+    deferred
+        .restore(&serde_json::json!({ "next": u64::MAX - 1, "waiting": [] }))
+        .unwrap();
+    let id = deferred.register(asked("Last")).unwrap();
+    assert_eq!(id, QuestionId::numbered(u64::MAX - 1));
+
+    let revision = deferred.revision();
+    let error = deferred.register(asked("Past the last")).unwrap_err();
+    assert!(matches!(error, Full::Ids), "{error:?}");
+    assert!(!error.to_string().is_empty());
+    assert_eq!(deferred.waiting().len(), 1);
+    assert_eq!(deferred.revision(), revision, "a refusal changes nothing");
+
+    // What it saves once they have run out reads back as run out.
+    let resumed = Deferred::default();
+    resumed.restore(&deferred.state()).unwrap();
+    assert!(matches!(
+        resumed.register(asked("After a resume")),
+        Err(Full::Ids)
+    ));
+}
+
+#[test]
+fn a_batch_out_of_shape_is_refused_whether_registered_or_restored() {
+    type Shaped = fn(&Misshapen) -> bool;
+    let offering = |count: usize| -> Vec<Answer> {
+        (0..count).map(|at| Answer::new(format!("a{at}"))).collect()
+    };
+    let one = |answers: Vec<Answer>| Question::new("H", "Which?", answers);
+    let asking = |count: usize| -> Vec<Question> {
+        (0..count)
+            .map(|at| {
+                Question::new(
+                    "H",
+                    format!("Which {at}?"),
+                    [Answer::new("a"), Answer::new("b")],
+                )
+            })
+            .collect()
+    };
+
+    let refused: Vec<(Vec<Question>, Shaped)> = vec![
+        (Vec::new(), |e| matches!(e, Misshapen::Empty)),
+        (
+            asking(MOST_QUESTIONS + 1),
+            |e| matches!(e, Misshapen::Questions(given) if *given == MOST_QUESTIONS + 1),
+        ),
+        (
+            vec![one(offering(FEWEST_ANSWERS - 1))],
+            |e| matches!(e, Misshapen::Answers { question: 1, given } if *given == FEWEST_ANSWERS - 1),
+        ),
+        (
+            vec![one(offering(2)), one(offering(MOST_ANSWERS + 1))],
+            |e| matches!(e, Misshapen::Answers { question: 2, given } if *given == MOST_ANSWERS + 1),
+        ),
+        (
+            vec![one(vec![
+                Answer::new("a"),
+                Answer::new("b").showing(vec![""; MOST_SHOWS + 1]),
+            ])],
+            |e| matches!(e, Misshapen::Shows { question: 1, given } if *given == MOST_SHOWS + 1),
+        ),
+        (vec![one(vec![Answer::new(""), Answer::new("")])], |e| {
+            matches!(e, Misshapen::RepeatedAnswer { question: 1 })
+        }),
+        (vec![one(offering(2)), one(offering(3))], |e| {
+            matches!(e, Misshapen::RepeatedQuestion { question: 2 })
+        }),
+    ];
+
+    let deferred = Deferred::default();
+    for (questions, expected) in refused {
+        let revision = deferred.revision();
+        let error = deferred.register(questions).unwrap_err();
+        let Full::Shape(shape) = &error else {
+            panic!("{error:?}");
+        };
+        assert!(expected(shape), "{error:?}");
+        assert!(!error.to_string().is_empty());
+        assert!(deferred.waiting().is_empty(), "{error}");
+        assert_eq!(deferred.revision(), revision, "{error}");
+    }
+    // At the bounds, not past them.
+    deferred.register(asking(MOST_QUESTIONS)).unwrap();
+    deferred
+        .register(vec![one(vec![
+            Answer::new("a"),
+            Answer::new("b").showing(vec![""; MOST_SHOWS]),
+        ])])
+        .unwrap();
+    deferred
+        .register(vec![one(offering(MOST_ANSWERS))])
+        .unwrap();
+
+    // What a saved state could never hold is refused on the way back in too.
+    let saved = Deferred::default();
+    saved.register(asked("Saved")).unwrap();
+    let state = saved.state();
+    let resumed = Deferred::default();
+
+    let mut empty = state.clone();
+    *empty.pointer_mut("/waiting/0/questions").unwrap() = serde_json::json!([]);
+    assert!(matches!(
+        resumed.restore(&empty),
+        Err(Unrestored::Shape(Misshapen::Empty))
+    ));
+    let mut lone = state.clone();
+    lone.pointer_mut("/waiting/0/questions/0/answers")
+        .and_then(serde_json::Value::as_array_mut)
+        .unwrap()
+        .truncate(1);
+    assert!(matches!(
+        resumed.restore(&lone),
+        Err(Unrestored::Shape(Misshapen::Answers {
+            question: 1,
+            given: 1
+        }))
+    ));
+    // A mark below the first is not one `state` writes, so it is not quietly
+    // moved or dropped.
+    let mut marked = state.clone();
+    *marked
+        .pointer_mut("/waiting/0/questions/0/answers/1/recommended")
+        .unwrap() = serde_json::json!(true);
+    assert!(matches!(
+        resumed.restore(&marked),
+        Err(Unrestored::Malformed(_))
+    ));
+    assert!(resumed.waiting().is_empty());
+}
+
+#[test]
+fn line_and_paragraph_separators_are_refused_as_line_breaks() {
+    let deferred = Deferred::default();
+    let id = deferred.register(asked("Language")).unwrap();
+
+    for separator in ["a\u{2028}- Checks: lint", "a\u{2029}b"] {
+        assert!(
+            matches!(
+                deferred.settle(id, vec![chose(&["Rust"]), noted(&[], separator)]),
+                Err(Unsettled::Control {
+                    question: 2,
+                    part: Part::Note
+                })
+            ),
+            "{separator:?}"
+        );
+        assert!(
+            matches!(
+                deferred.settle(id, vec![chose(&[separator]), chose(&[])]),
+                Err(Unsettled::Control {
+                    question: 1,
+                    part: Part::WrittenIn
+                })
+            ),
+            "{separator:?}"
+        );
+    }
+    assert_eq!(deferred.waiting().len(), 1);
+}
+
+#[test]
+fn a_written_in_answer_is_said_apart_from_the_answers_offered() {
+    let deferred = Deferred::default();
+    let id = deferred.register(asked("Language")).unwrap();
+    deferred
+        .settle(
+            id,
+            vec![chose(&["Rust, Python"]), chose(&["lint", "clippy"])],
+        )
+        .unwrap();
+
+    let said = only(deferred.take_settled()).said();
+    let lines: Vec<&str> = said.lines().collect();
+    let at = |prefix: &str| {
+        lines
+            .iter()
+            .position(|line| line.starts_with(prefix))
+            .unwrap_or_else(|| panic!("{said}"))
+    };
+
+    let language = at("- Language:");
+    assert_eq!(
+        lines.get(language),
+        Some(&"- Language: none of the answers offered"),
+        "{said}"
+    );
+    assert_eq!(
+        lines.get(language + 1),
+        Some(&"  their own answer: Rust, Python"),
+        "{said}"
+    );
+    let checks = at("- Checks:");
+    assert_eq!(lines.get(checks), Some(&"- Checks: lint"), "{said}");
+    assert_eq!(
+        lines.get(checks + 1),
+        Some(&"  their own answer: clippy"),
+        "{said}"
+    );
+}

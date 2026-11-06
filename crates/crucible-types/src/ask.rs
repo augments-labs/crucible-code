@@ -9,8 +9,8 @@
 //! `Deferred` beside it.
 //!
 //! Every string here is somebody's own words: the questions are the model's and
-//! the answers are the reader's. So all three values write `Debug` by hand and
-//! redact.
+//! the answers are the reader's. So the values holding them write `Debug` by
+//! hand and redact, and those built from them derive it from those.
 
 use std::fmt;
 

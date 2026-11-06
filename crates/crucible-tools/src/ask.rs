@@ -50,6 +50,22 @@ pub const MOST_HELD_BYTES: usize = 64 * 1024;
 /// The most bytes one note, or one written-in answer, may be.
 pub const MOST_REPLY_BYTES: usize = 4 * 1024;
 
+/// The most questions one batch asks.
+///
+/// This and the three bounds below are the shape of a batch a person can be
+/// asked. A tool that parses questions holds its caller to these same values,
+/// so that what it accepts is what may be held.
+pub const MOST_QUESTIONS: usize = 4;
+
+/// The fewest answers one question offers.
+pub const FEWEST_ANSWERS: usize = 2;
+
+/// The most answers one question offers.
+pub const MOST_ANSWERS: usize = 8;
+
+/// The most rows one answer shows.
+pub const MOST_SHOWS: usize = 10;
+
 /// Questions asked without waiting for the answer, held until it is delivered.
 ///
 /// One concrete handle rather than a trait beside [`Put`]: there is one way to
@@ -93,14 +109,14 @@ pub struct Delivered {
 pub enum Full {
     /// As many batches are held as may be.
     #[error(
-        "{MOST_HELD} question batches are already waiting for an answer; one must be answered \
-         before another can wait"
+        "{MOST_HELD} question batches are already held, waiting for an answer or for it to be \
+         delivered; one must be answered and delivered before another can wait"
     )]
     Batches,
     /// The batch would carry the held question text past its bound.
     #[error(
-        "the questions are {bytes} bytes, and with the {held} already waiting that is {} bytes \
-         over the {MOST_HELD_BYTES} that may wait",
+        "the questions are {bytes} bytes, and with the {held} already held that is {} bytes \
+         over the {MOST_HELD_BYTES} that may be held",
         (.bytes + .held).saturating_sub(MOST_HELD_BYTES)
     )]
     Bytes {
@@ -108,6 +124,59 @@ pub enum Full {
         bytes: usize,
         /// The bytes of question text already held.
         held: usize,
+    },
+    /// Every id has been handed out, and handing one out again could make
+    /// an old answer settle a batch it was never meant for.
+    #[error("every question batch id has been handed out; no more questions can wait")]
+    Ids,
+    /// The batch is not one a person can be asked.
+    #[error(transparent)]
+    Shape(Misshapen),
+}
+
+/// Why a batch is not one a person can be asked.
+///
+/// Questions are counted from one, and no refusal repeats what was asked.
+#[derive(Debug, thiserror::Error)]
+pub enum Misshapen {
+    /// It asks nothing.
+    #[error("a batch asks at least one question")]
+    Empty,
+    /// It asks more than one batch may.
+    #[error("{0} questions is more than the {MOST_QUESTIONS} one batch may ask")]
+    Questions(usize),
+    /// A question offers too few answers, or too many.
+    #[error(
+        "question {question} offers {given} answers, and a question offers {FEWEST_ANSWERS} to \
+         {MOST_ANSWERS}"
+    )]
+    Answers {
+        /// The question, counted from one.
+        question: usize,
+        /// How many it offers.
+        given: usize,
+    },
+    /// An answer shows more rows than one may.
+    #[error(
+        "an answer to question {question} shows {given} rows, more than the {MOST_SHOWS} one may"
+    )]
+    Shows {
+        /// The question, counted from one.
+        question: usize,
+        /// How many rows the answer shows.
+        given: usize,
+    },
+    /// A question offers one answer twice.
+    #[error("question {question} offers the same answer twice")]
+    RepeatedAnswer {
+        /// The question, counted from one.
+        question: usize,
+    },
+    /// A question is asked twice.
+    #[error("question {question} asks what an earlier question asks")]
+    RepeatedQuestion {
+        /// The second time it is asked, counted from one.
+        question: usize,
     },
 }
 
@@ -196,6 +265,9 @@ pub enum Unrestored {
     /// The state holds more than may wait.
     #[error(transparent)]
     Full(#[from] Full),
+    /// A batch is not one a person can be asked.
+    #[error(transparent)]
+    Shape(Misshapen),
 }
 
 impl Deferred {
@@ -204,13 +276,17 @@ impl Deferred {
     /// # Errors
     ///
     /// [`Full`] where the batch would hold one batch more, or more question
-    /// text, than may wait; nothing is stored then.
+    /// text, than may wait, where every id has been handed out, or where the
+    /// batch is not one a person can be asked; nothing is stored then.
     pub fn register(&self, questions: Vec<Question>) -> Result<QuestionId, Full> {
+        shape(&questions).map_err(Full::Shape)?;
         let mut held = self.held();
+        // The last number is never handed out: the one after it is not there.
+        let after = held.next.checked_add(1).ok_or(Full::Ids)?;
         held.admit(1, text_bytes(&questions))?;
 
         let id = QuestionId::numbered(held.next);
-        held.next = held.next.saturating_add(1);
+        held.next = after;
         held.waiting.push(Batch::new(id, questions));
         held.changed();
         Ok(id)
@@ -289,9 +365,10 @@ impl Deferred {
 
     /// Replaces the waiting batches with those `state` saved.
     ///
-    /// Taken whole or not at all: a batch it cannot read, an id it repeats, or
-    /// more than may wait refuses the lot, and nothing changes. An id restored
-    /// is never handed out again.
+    /// Taken whole or not at all: a batch it cannot read, an id it repeats or
+    /// could never have handed out, a batch no person can be asked, or more
+    /// than may wait refuses the lot, and nothing changes. An id restored is
+    /// never handed out again.
     ///
     /// # Errors
     ///
@@ -313,6 +390,14 @@ impl Deferred {
             .ok_or(Unrestored::Malformed(
                 "a waiting batch is not one that was saved",
             ))?;
+        if restored.iter().any(|batch| batch.id().number() == u64::MAX) {
+            return Err(Unrestored::Malformed(
+                "a waiting batch has an id that is never handed out",
+            ));
+        }
+        for batch in &restored {
+            shape(batch.questions()).map_err(Unrestored::Shape)?;
+        }
 
         let mut held = self.held();
         let mut ids: Vec<QuestionId> = restored
@@ -337,6 +422,7 @@ impl Deferred {
             .sum();
         fits(held.settled.len(), settled_bytes, restored.len(), bytes)?;
 
+        // Below the last number, as checked above, so one more is there.
         let after = restored
             .iter()
             .map(|batch| batch.id().number().saturating_add(1));
@@ -422,6 +508,62 @@ fn text_bytes(questions: &[Question]) -> usize {
         .sum()
 }
 
+/// Whether `questions` are a batch a person can be asked, naming the first way
+/// they are not.
+///
+/// The text is bounded in bytes where it is held; this bounds the rest, so that
+/// a batch of empty strings is no cheaper to hold than it is to show.
+fn shape(questions: &[Question]) -> Result<(), Misshapen> {
+    if questions.is_empty() {
+        return Err(Misshapen::Empty);
+    }
+    if questions.len() > MOST_QUESTIONS {
+        return Err(Misshapen::Questions(questions.len()));
+    }
+
+    for (at, question) in questions.iter().enumerate() {
+        let at = at + 1;
+        let given = question.answers().len();
+        if !(FEWEST_ANSWERS..=MOST_ANSWERS).contains(&given) {
+            return Err(Misshapen::Answers {
+                question: at,
+                given,
+            });
+        }
+        if let Some(given) = question
+            .answers()
+            .map(|answer| answer.shows().len())
+            .find(|rows| *rows > MOST_SHOWS)
+        {
+            return Err(Misshapen::Shows {
+                question: at,
+                given,
+            });
+        }
+        let names: Vec<&str> = question.answers().map(Answer::answer).collect();
+        if repeats(&names) {
+            return Err(Misshapen::RepeatedAnswer { question: at });
+        }
+    }
+
+    let asked: Vec<&str> = questions.iter().map(Question::question).collect();
+    if let Some(at) = (1..asked.len()).find(|at| {
+        let (earlier, rest) = asked.split_at(*at);
+        rest.first().is_some_and(|this| earlier.contains(this))
+    }) {
+        return Err(Misshapen::RepeatedQuestion { question: at + 1 });
+    }
+    Ok(())
+}
+
+/// Whether any of `texts` appears twice.
+fn repeats(texts: &[&str]) -> bool {
+    texts
+        .iter()
+        .enumerate()
+        .any(|(index, one)| texts.iter().skip(index + 1).any(|other| other == one))
+}
+
 /// Whether `replies` are ones `questions` can take, naming the first that is
 /// not.
 fn check(questions: &[Question], replies: &[Reply]) -> Result<(), Unsettled> {
@@ -445,11 +587,7 @@ fn check(questions: &[Question], replies: &[Reply]) -> Result<(), Unsettled> {
                 given: chosen.len(),
             });
         }
-        if chosen
-            .iter()
-            .enumerate()
-            .any(|(index, one)| chosen.iter().skip(index + 1).any(|other| other == one))
-        {
+        if repeats(&chosen) {
             return Err(Unsettled::Repeated { question: at });
         }
 
@@ -468,7 +606,8 @@ fn check(questions: &[Question], replies: &[Reply]) -> Result<(), Unsettled> {
 }
 
 /// Whether the reader's own `text` is within its bound and holds no control
-/// character.
+/// character, nor the line and paragraph separators that break a line as one
+/// does without being one.
 fn words(question: usize, part: Part, text: &str) -> Result<(), Unsettled> {
     if text.len() > MOST_REPLY_BYTES {
         return Err(Unsettled::TooLong {
@@ -477,7 +616,10 @@ fn words(question: usize, part: Part, text: &str) -> Result<(), Unsettled> {
             bytes: text.len(),
         });
     }
-    if text.chars().any(char::is_control) {
+    if text
+        .chars()
+        .any(|one| one.is_control() || matches!(one, '\u{2028}' | '\u{2029}'))
+    {
         return Err(Unsettled::Control { question, part });
     }
     Ok(())
@@ -532,6 +674,11 @@ fn read_question(saved: &Value) -> Option<Question> {
         .iter()
         .map(read_answer)
         .collect::<Option<Vec<_>>>()?;
+    // `Question::new` would clear a mark below the first; one `saved_batch`
+    // wrote is never there, so it is refused rather than quietly dropped.
+    if answers.iter().skip(1).any(Answer::is_recommended) {
+        return None;
+    }
 
     let question = Question::new(text("heading")?, text("question")?, answers);
     Some(if saved.get("several")?.as_bool()? {
@@ -571,7 +718,9 @@ impl Delivered {
     /// It names the batch, then each question by its heading with its reply.
     /// A declined question reads as unresolved and names none of the answers
     /// it offered — not even the one the asker recommended — so that declining
-    /// is never read as agreeing to the default.
+    /// is never read as agreeing to the default. A written-in answer goes on a
+    /// line of its own, apart from the answers offered, so that one holding a
+    /// comma never reads as two of them.
     #[must_use]
     pub fn said(&self) -> String {
         let mut text = format!(
@@ -583,13 +732,20 @@ impl Delivered {
             let heading = question.heading();
             match reply {
                 Reply::Answered(answered) => {
-                    let chosen: Vec<&str> = answered.chosen().collect();
-                    let chosen = if chosen.is_empty() {
+                    let (offered, own): (Vec<&str>, Vec<&str>) = answered
+                        .chosen()
+                        .partition(|one| question.answers().any(|it| it.answer() == *one));
+                    let offered = if !offered.is_empty() {
+                        offered.join(", ")
+                    } else if own.is_empty() {
                         "nothing chosen".to_owned()
                     } else {
-                        chosen.join(", ")
+                        "none of the answers offered".to_owned()
                     };
-                    let _ = writeln!(text, "- {heading}: {chosen}");
+                    let _ = writeln!(text, "- {heading}: {offered}");
+                    for own in own {
+                        let _ = writeln!(text, "  their own answer: {own}");
+                    }
                     if !answered.note().is_empty() {
                         let _ = writeln!(text, "  they added: {}", answered.note());
                     }

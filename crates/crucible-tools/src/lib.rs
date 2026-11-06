@@ -14,8 +14,8 @@ mod toolset;
 mod worker;
 
 pub use ask::{
-    Deferred, Delivered, Full, MOST_HELD, MOST_HELD_BYTES, MOST_REPLY_BYTES, Part, Put, Unrestored,
-    Unsettled,
+    Deferred, Delivered, FEWEST_ANSWERS, Full, MOST_ANSWERS, MOST_HELD, MOST_HELD_BYTES,
+    MOST_QUESTIONS, MOST_REPLY_BYTES, MOST_SHOWS, Misshapen, Part, Put, Unrestored, Unsettled,
 };
 // Public because this crate's public surface is written in them:
 // `CallResultAcceptance::accept` takes a `CallResultReceipt`,
