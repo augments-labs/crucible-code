@@ -107,24 +107,9 @@ pub struct Delivered {
 /// Why a batch was not registered.
 #[derive(Debug, thiserror::Error)]
 pub enum Full {
-    /// As many batches are held as may be.
-    #[error(
-        "{MOST_HELD} question batches are already held, waiting for an answer or for it to be \
-         delivered; one must be answered and delivered before another can wait"
-    )]
-    Batches,
-    /// The batch would carry the held question text past its bound.
-    #[error(
-        "the questions are {bytes} bytes, and with the {held} already held that is {} bytes \
-         over the {MOST_HELD_BYTES} that may be held",
-        (.bytes + .held).saturating_sub(MOST_HELD_BYTES)
-    )]
-    Bytes {
-        /// The bytes of question text the batch carries.
-        bytes: usize,
-        /// The bytes of question text already held.
-        held: usize,
-    },
+    /// There is no room for it.
+    #[error(transparent)]
+    Room(#[from] Room),
     /// Every id has been handed out, and handing one out again could make
     /// an old answer settle a batch it was never meant for.
     #[error("every question batch id has been handed out; no more questions can wait")]
@@ -132,6 +117,30 @@ pub enum Full {
     /// The batch is not one a person can be asked.
     #[error(transparent)]
     Shape(Misshapen),
+}
+
+/// Why there is no room for more batches: the one refusal registering a
+/// batch and restoring a saved state both meet.
+#[derive(Debug, thiserror::Error)]
+pub enum Room {
+    /// As many batches are held as may be.
+    #[error(
+        "{MOST_HELD} question batches are already held, waiting for an answer or for it to be \
+         delivered; one must be answered and delivered before another can wait"
+    )]
+    Batches,
+    /// The batches would carry the held question text past its bound.
+    #[error(
+        "the questions are {bytes} bytes, and with the {held} already held that is {} bytes \
+         over the {MOST_HELD_BYTES} that may be held",
+        (.bytes + .held).saturating_sub(MOST_HELD_BYTES)
+    )]
+    Bytes {
+        /// The bytes of question text the batches carry.
+        bytes: usize,
+        /// The bytes of question text already held.
+        held: usize,
+    },
 }
 
 /// Why a batch is not one a person can be asked.
@@ -264,7 +273,7 @@ pub enum Unrestored {
     Malformed(&'static str),
     /// The state holds more than may wait.
     #[error(transparent)]
-    Full(#[from] Full),
+    Room(#[from] Room),
     /// A batch is not one a person can be asked.
     #[error(transparent)]
     Shape(Misshapen),
@@ -353,9 +362,12 @@ impl Deferred {
     ///
     /// The questions only: a settled batch is being delivered, and its replies
     /// are the reader's words, which a saved state does not carry. The number
-    /// the next batch would be given goes with them, so that no id handed out
-    /// before a resume is handed out again after it, to a batch an old answer
-    /// naming that id was never meant for.
+    /// the next batch would be given goes with them, so that no id this session
+    /// handed out before a resume is handed out again after it, to a batch an
+    /// old answer naming that id was never meant for. That holds for the
+    /// session the state was taken from: another session's state restored after
+    /// [`Deferred::clear`] brings ids of its own, and an answer held from before
+    /// the clear is for whoever holds it to check against what it was shown.
     #[must_use]
     pub fn state(&self) -> Value {
         let held = self.held();
@@ -453,7 +465,7 @@ impl Deferred {
 impl Held {
     /// Whether `count` more batches carrying `bytes` of question text fit
     /// beside everything already held.
-    fn admit(&self, count: usize, bytes: usize) -> Result<(), Full> {
+    fn admit(&self, count: usize, bytes: usize) -> Result<(), Room> {
         let held_bytes = self
             .waiting
             .iter()
@@ -476,12 +488,12 @@ impl Held {
 
 /// Whether `count` batches carrying `bytes` fit beside `held` carrying
 /// `held_bytes`: the one place both bounds are applied.
-fn fits(held: usize, held_bytes: usize, count: usize, bytes: usize) -> Result<(), Full> {
+fn fits(held: usize, held_bytes: usize, count: usize, bytes: usize) -> Result<(), Room> {
     if held.saturating_add(count) > MOST_HELD {
-        return Err(Full::Batches);
+        return Err(Room::Batches);
     }
     if held_bytes.saturating_add(bytes) > MOST_HELD_BYTES {
-        return Err(Full::Bytes {
+        return Err(Room::Bytes {
             bytes,
             held: held_bytes,
         });
