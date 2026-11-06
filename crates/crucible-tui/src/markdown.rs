@@ -25,7 +25,7 @@
 //! fence and a diff fence ([`Held`]) are gathered until they close, and a rule
 //! is one the moment its line ends. A block keeps the source it was written
 //! as, so whoever keeps it can lay it out again at another width or in
-//! another glyph set with [`lay`], where runs once written stay as they were
+//! another glyph set with `lay`, where runs once written stay as they were
 //! folded. Each hold has a cap of its own, and a block past it is handed on as
 //! the runs it would have been had nothing held it. A reader made
 //! [`Markdown::as_written`] holds no block at all, which is what lays one out.
@@ -201,7 +201,7 @@ pub enum Kind {
 ///
 /// The source rather than what it was drawn as, because what it is drawn as
 /// depends on the width and the glyph set, and both can change after it has
-/// arrived. Laid out by [`lay`].
+/// arrived. Laid out by `lay`.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Block {
     /// What kind of block it is.
@@ -864,7 +864,7 @@ impl Markdown {
     /// The same reader, holding no block: every one is drawn the way it
     /// streams, as runs.
     ///
-    /// What [`lay`] reads a block's source with, and what a table reads its
+    /// What `lay` reads a block's source with, and what a table reads its
     /// cells with.
     #[must_use]
     pub fn as_written(mut self) -> Self {
