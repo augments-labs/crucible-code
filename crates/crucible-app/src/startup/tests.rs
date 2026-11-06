@@ -1584,6 +1584,24 @@ fn a_handle_on_the_questions_is_held_by_one_conversation_and_a_second_start_with
         refused.as_ref().err()
     );
     assert_eq!(other.waiting().0, beside, "the refused handle was moved");
+
+    // The refusal dropped `first`, and with it the claim: a handle whose
+    // holder is gone, and a handle that was refused, can each be held again.
+    let again = assemble(&startup);
+    assert!(
+        again.is_ok(),
+        "a handle whose holder was dropped stays claimed: {:?}",
+        again.as_ref().err()
+    );
+    let refused = assemble(&Startup {
+        questions: Some(other.clone()),
+        ..startup
+    });
+    assert!(
+        refused.is_ok(),
+        "a refused handle cannot be held: {:?}",
+        refused.as_ref().err()
+    );
 }
 
 #[test]

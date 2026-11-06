@@ -4,9 +4,12 @@
 //! the front end supplied at startup and keeps a clone of, as it keeps the
 //! turn's `Cancel`. The front end reads what waits through it and answers
 //! through the doors here; it can register, settle, take, clear or restore
-//! nothing itself. One conversation holds a handle: a second start handed
-//! the same one is refused, since two holders would share one era and one
-//! registry. [`answer`] settles a batch there and nothing else, so it
+//! nothing itself, and wires it to nothing: startup gives the registry to
+//! the question tool and the conversation, and nothing outside this crate can
+//! but a test built with the `proof` feature. One conversation holds a handle
+//! at a time: a second start handed one already held is refused, since two
+//! holders would share one era and one registry, and the claim ends when the
+//! holding conversation is dropped. [`answer`] settles a batch there and nothing else, so it
 //! needs no conversation: it is the door for an answer while a turn has the
 //! conversation, and the running turn delivers it. While no turn runs,
 //! [`turn`](super::turn) takes the same command and starts the turn that
@@ -61,7 +64,8 @@ struct Shared {
     era: Mutex<Era>,
     /// The batches. Its own lock is taken per call and inside `era`'s.
     held: Deferred,
-    /// Whether a conversation holds the handle. Set once, by the first.
+    /// Whether a conversation holds the handle: set by the [`Hold`] it keeps,
+    /// and cleared when that is dropped.
     claimed: AtomicBool,
 }
 
@@ -80,18 +84,25 @@ impl Questions {
     /// The question tool `tool`, holding the questions it is asked not to
     /// wait on here. Given to the conversation too, by
     /// [`Conversation::holding`](crate::Conversation::holding), whose runner
-    /// delivers what is settled. The tool registers a batch only when it is
-    /// run, which takes the permission engine's `Approved`, so a front end
-    /// handed it registers nothing itself.
-    #[must_use]
-    pub fn asking(&self, tool: AskUser) -> AskUser {
+    /// delivers what is settled. Crate-private: a tool holding the registry
+    /// registers into it, so only startup builds one.
+    pub(crate) fn asking(&self, tool: AskUser) -> AskUser {
         tool.deferring(self.0.held.clone())
     }
 
-    /// Whether this is the first claim on the handle, which the one
-    /// conversation holding it makes; every later claim is refused.
-    pub(crate) fn claim(&self) -> bool {
-        !self.0.claimed.swap(true, Ordering::SeqCst)
+    /// [`Self::asking`], for a test outside this crate that wires a handle
+    /// as startup does. Compiled only with the `proof` feature, which
+    /// nothing that ships turns on.
+    #[cfg(feature = "proof")]
+    #[must_use]
+    pub fn asking_for_proof(&self, tool: AskUser) -> AskUser {
+        self.asking(tool)
+    }
+
+    /// The claim of the one conversation holding the handle, or `None` while
+    /// another holds it. The claim lasts as long as the [`Hold`].
+    pub(crate) fn claim(self) -> Option<Hold> {
+        (!self.0.claimed.swap(true, Ordering::SeqCst)).then_some(Hold(self))
     }
 
     /// The registry itself, for what the application wires to it: the
@@ -153,6 +164,24 @@ impl fmt::Debug for Questions {
         out.debug_struct("Questions")
             .field("era", &*self.era())
             .finish_non_exhaustive()
+    }
+}
+
+/// A conversation's claim on a [`Questions`] handle, which it keeps while it
+/// holds the handle; dropping it leaves the handle free to be held again.
+#[derive(Debug)]
+pub(crate) struct Hold(Questions);
+
+impl Hold {
+    /// The handle held.
+    pub(crate) fn questions(&self) -> &Questions {
+        &self.0
+    }
+}
+
+impl Drop for Hold {
+    fn drop(&mut self) {
+        self.0.0.claimed.store(false, Ordering::SeqCst);
     }
 }
 

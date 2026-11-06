@@ -170,8 +170,9 @@ pub struct Startup<'a> {
     /// the model no such questions, and the question tool refuses one.
     ///
     /// The conversation built here is the handle's one holder: a handle
-    /// another conversation already holds fails the start with
-    /// [`AppError::QuestionsHeld`]. Holding it empties it onto the session
+    /// another conversation still holds fails the start with
+    /// [`AppError::QuestionsHeld`], and one whose holder was dropped, or
+    /// whose start failed, can be given to the next. Holding it empties it onto the session
     /// the conversation opens, and a session resumed at start brings its own
     /// waiting questions back into it.
     pub questions: Option<crate::client::Questions>,

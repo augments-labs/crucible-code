@@ -50,6 +50,7 @@ mod agents;
 mod client;
 #[path = "headless/crossing.rs"]
 mod crossing;
+#[cfg(feature = "proof")]
 #[path = "headless/deferring.rs"]
 mod deferring;
 #[path = "headless/external.rs"]
@@ -163,7 +164,9 @@ impl Script {
     }
 
     /// This, with `meanwhile` run as each request is made, before it is
-    /// answered and after what it carries was read.
+    /// answered and after what it carries was read. Only the deferred
+    /// questions' cases, which take the `proof` feature, use it.
+    #[cfg(feature = "proof")]
     fn meanwhile(self, meanwhile: impl Fn(usize) + Send + Sync + 'static) -> Self {
         Self {
             meanwhile: Some(Meanwhile(Arc::new(meanwhile))),

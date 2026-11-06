@@ -52,6 +52,7 @@ use super::{Failed, Nobody, Script, Tree, saying};
 mod catalog_hold;
 #[path = "external/choosing.rs"]
 mod choosing;
+#[cfg(feature = "proof")]
 #[path = "external/deferring.rs"]
 mod deferring;
 #[path = "external/refusing.rs"]

@@ -88,7 +88,7 @@ fn holding(
 ) -> Result<Conversation, Failed> {
     let asking = AskUser::new(Arc::new(Unseen));
     tools.add_builtin(match held {
-        Some(held) => held.asking(asking),
+        Some(held) => held.asking_for_proof(asking),
         None => asking,
     })?;
     let session = Arc::new(Session::start(&tree.sessions(), &tree.workspace()?, None)?);
@@ -115,7 +115,7 @@ fn holding(
         .permitting(Permission::with(crucible_tools::Mode::Ask, Rules::new()))
     });
     Ok(match held {
-        Some(held) => conversation.holding(held.clone())?,
+        Some(held) => conversation.holding_for_proof(held.clone())?,
         None => conversation,
     })
 }
