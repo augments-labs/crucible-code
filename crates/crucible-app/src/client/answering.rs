@@ -90,7 +90,7 @@ impl Questions {
         tool.deferring(self.0.held.clone())
     }
 
-    /// [`Self::asking`], for a test outside this crate that wires a handle
+    /// `Self::asking`, for a test outside this crate that wires a handle
     /// as startup does. Compiled only with the `proof` feature, which
     /// nothing that ships turns on.
     #[cfg(feature = "proof")]
@@ -100,9 +100,10 @@ impl Questions {
     }
 
     /// The claim of the one conversation holding the handle, or `None` while
-    /// another holds it. The claim lasts as long as the [`Hold`].
+    /// another holds it. The claim lasts as long as the [`Hold`], so a
+    /// refused claim builds none: dropping one would end the holder's.
     pub(crate) fn claim(self) -> Option<Hold> {
-        (!self.0.claimed.swap(true, Ordering::SeqCst)).then_some(Hold(self))
+        (!self.0.claimed.swap(true, Ordering::SeqCst)).then(|| Hold(self))
     }
 
     /// The registry itself, for what the application wires to it: the

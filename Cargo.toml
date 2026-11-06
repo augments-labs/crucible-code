@@ -625,8 +625,9 @@ crucible-session = { workspace = true, features = ["proof"] }
 # drive one by hand.
 crucible-runtime = { workspace = true, features = ["proof"] }
 # The application, with the accessor a test reads the runner behind a
-# conversation through for what no front end reads off it, and that chooses
-# the agents the binary can start from an environment variable. Dev-only for
+# conversation through for what no front end reads off it, that chooses the
+# agents the binary can start from an environment variable, and that wires a
+# questions handle as startup does. Dev-only for
 # the same reason as the two above.
 crucible-app = { workspace = true, features = ["proof"] }
 # The scripted stand-in for an installed agent, which the whole-screen captures

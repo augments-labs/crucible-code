@@ -1574,6 +1574,15 @@ fn a_handle_on_the_questions_is_held_by_one_conversation_and_a_second_start_with
         "the refused start moved the era"
     );
 
+    // A refusal leaves the claim with `first`, which still holds the handle,
+    // so a third start is refused as the second was.
+    let third = assemble(&startup);
+    assert!(
+        matches!(third, Err(AppError::QuestionsHeld)),
+        "a third start held the handle while the first holder lives: {:?}",
+        third.as_ref().err()
+    );
+
     // Nor is a conversation that holds a handle given another.
     let other = crate::client::Questions::new();
     let (beside, _) = other.waiting();

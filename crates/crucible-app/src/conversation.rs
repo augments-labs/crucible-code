@@ -195,13 +195,13 @@ impl Conversation {
         })
     }
 
-    /// [`Self::holding`], for a test outside this crate that wires a handle
+    /// `Self::holding`, for a test outside this crate that wires a handle
     /// as startup does. Compiled only with the `proof` feature, which
     /// nothing that ships turns on.
     ///
     /// # Errors
     ///
-    /// As [`Self::holding`].
+    /// As `Self::holding`.
     #[cfg(feature = "proof")]
     pub fn holding_for_proof(self, questions: crate::client::Questions) -> Result<Self, AppError> {
         self.holding(questions)
