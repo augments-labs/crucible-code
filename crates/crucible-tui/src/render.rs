@@ -40,7 +40,7 @@ use crate::files::Files;
 use crate::forge::Forge;
 use crate::glyphs::Glyphs;
 use crate::markdown::{self, Block, Markdown, Said};
-use crate::record::Record;
+use crate::record::{Record, Source};
 use crate::row::Row;
 use crate::scroll_rail::{self, ScrollRail};
 use crate::select::{self, Place, Taken, View};
@@ -1008,6 +1008,10 @@ impl<T: Terminal> Renderer<T> {
     /// a reader who dragged past them took them. Each row is trimmed of the
     /// blank it was padded out with, because that padding is screen and not
     /// text.
+    ///
+    /// A row of a drawn block comes as the block's whole source, once however
+    /// many of its rows the drag touched: what is drawn is not what the model
+    /// wrote, and the reader who selects a table or a formula wants the latter.
     fn selected(&self) -> String {
         let Some(taken) = self.taken else {
             return String::new();
@@ -1015,27 +1019,44 @@ impl<T: Terminal> Renderer<T> {
         let bands = self.bands();
         let view = self.view(&bands);
         let mut painted = String::new();
+        // The source of the drawn block the rows just before this one showed,
+        // so a block several of whose rows were touched is copied once: two
+        // blocks never lend the same text, and no other row follows one.
+        let mut sourced: Option<&str> = None;
         let lines = taken
             .places(self.size.columns, &view, self.record.last_row())
             .into_iter()
-            .filter_map(|(place, covered)| match (view.row(place), place) {
-                (Some(row), _) => self
-                    .painted
-                    .said(row, &covered)
-                    .map(|said| (said, self.painted.joins(row))),
-                (None, Place::Said(at)) => {
-                    let row = self.record.row_at(at)?;
-                    painted.clear();
-                    row.paint_into(&self.palette, &mut painted);
-                    let structural = row.structural();
-                    Some((
-                        select::said(&painted, &covered, &structural),
-                        select::joins(&painted, &structural),
-                    ))
+            .filter_map(|(place, covered)| {
+                let block = match place {
+                    Place::Said(at) => self.record.source_of(at),
+                    Place::Stood(_) => None,
+                };
+                if let Some(source) = block {
+                    let again = sourced
+                        .replace(source)
+                        .is_some_and(|before| std::ptr::eq(before, source));
+                    return (!again).then(|| (source.to_owned(), select::Join::Whole));
                 }
-                (None, Place::Stood(_)) => None,
-            })
-            .map(|(line, join)| (line.trim_end().to_owned(), join));
+                sourced = None;
+                let (line, join) = match (view.row(place), place) {
+                    (Some(row), _) => self
+                        .painted
+                        .said(row, &covered)
+                        .map(|said| (said, self.painted.joins(row)))?,
+                    (None, Place::Said(at)) => {
+                        let row = self.record.row_at(at)?;
+                        painted.clear();
+                        row.paint_into(&self.palette, &mut painted);
+                        let structural = row.structural();
+                        (
+                            select::said(&painted, &covered, &structural),
+                            select::joins(&painted, &structural),
+                        )
+                    }
+                    (None, Place::Stood(_)) => return None,
+                };
+                Some((line.trim_end().to_owned(), join))
+            });
         select::joined(lines)
     }
 
@@ -1248,6 +1269,27 @@ impl<T: Terminal> Renderer<T> {
     /// worth is the reader's, and this is where their answer lands.
     pub fn rolls(&mut self, rows: i32) {
         self.notch = rows;
+    }
+
+    /// The source of every block drawn in the transcript that has one to read
+    /// whole, newest first, lent from the record that holds it.
+    ///
+    /// A table, display math, a diagram or a diff; not a rule, which draws all
+    /// there is of it. The record is the only copy, so what lists these reads
+    /// it where it stands.
+    pub fn sources(&self) -> impl Iterator<Item = Source<'_>> + '_ {
+        self.record.sources()
+    }
+
+    /// One past the line of the newest of [`Renderer::sources`], and zero
+    /// where there is none: a bound a list taken now can be held to later,
+    /// so that blocks drawn after it do not slide in under a reader.
+    #[must_use]
+    pub fn sourced(&self) -> usize {
+        self.record
+            .sources()
+            .next()
+            .map_or(0, |source| source.line.saturating_add(1))
     }
 
     /// How many rows one wheel notch moves in any scrollable view.

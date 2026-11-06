@@ -1,0 +1,25 @@
+---
+source: tests/whole_screen/main.rs
+expression: first
+---
+80x20 cursor 19,0 scrollback 46
+|       │ reading   │ hundred  │          │          │       │         │ note,   |
+|       │ thread    │ and      │          │          │       │         │ just as |
+|       │           │ twenty   │          │          │       │         │ long, so|
+|       │           │ columns  │          │          │       │         │ the     |
+|       │           │ of prose │          │          │       │         │ split is|
+|       │           │ that     │          │          │       │         │ not a   |
+|       │           │ also     │          │          │       │         │ special |
+|       │           │ wraps    │          │          │       │         │ case    |
+|                                                                                |
+|The corpus ends here.                                                           |
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|table                                                                           |
+|                                                                                |
+|| name | what it does | since |                                                 |
+|| --- | --- | --- |                                                             |
+|| alpha | reads the markdown out of a stream | 0.1 |                            |
+|| beta | lays a table against the window | 0.2 |                                |
+|                                                                                |
+|esc to close · ↑↓ pgup pgdn to see more · ←→ source 2 of 2                      |

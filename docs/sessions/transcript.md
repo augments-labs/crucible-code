@@ -37,6 +37,18 @@ it as it does any other text.
 A rule, a line of `---`, `***` or `___` on its own, is never held. It is drawn
 across the window at once.
 
+## The source of a table, formula, diagram or diff
+
+A table, a formula, a mermaid diagram and a diff are drawn from the text the
+model wrote, and that text can be had whole. In the full screen, a selection
+that touches any row of one of them copies the whole of its source, once however
+many of its rows or times it is touched, in order with the prose around it.
+Two blocks in one selection give both. A rule copies as it is drawn. In the
+native screen, or with <kbd>Shift</kbd> held while you drag, your terminal
+copies what it shows. In both screens <kbd>Ctrl+O</kbd> lists the source of
+each drawn block, newest first, after any cut results: see
+[Results cut short](../reference/keys.md#results-cut-short).
+
 ## Drawn again at every width
 
 A table and a rule are kept as the text the model wrote, beside the rows they

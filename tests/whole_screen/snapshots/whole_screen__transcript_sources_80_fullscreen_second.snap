@@ -1,0 +1,17 @@
+---
+source: tests/whole_screen/main.rs
+expression: first
+---
+80x12 cursor 11,0 scrolled 0
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|                                                                                |
+|table                                                                           |
+|                                                                                |
+|| name | what it does | since |                                                 |
+|| --- | --- | --- |                                                             |
+|| alpha | reads the markdown out of a stream | 0.1 |                            |
+|| beta | lays a table against the window | 0.2 |                                |
+|| gamma | keeps the source of a drawn block | 0.3 |                             |
+|                                                                                |
+|esc to close · ↑↓ pgup pgdn to see more · ←→ source 2 of 2                      |

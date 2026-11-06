@@ -333,6 +333,10 @@ pub(crate) enum Join {
     /// Drawn as the edge of a frame, which is none of the text: nothing of it
     /// is copied, and no break for it either.
     Edge,
+    /// The whole source of a drawn block, on a line of its own like
+    /// [`Join::Line`]. A source written with its closing break keeps it, and
+    /// the row after it adds none, so the text reads as it was written.
+    Whole,
 }
 
 /// How `painted` stands to the row above it, from what is painted and which
@@ -375,13 +379,16 @@ pub(crate) fn joins(painted: &str, structural: &[Range<usize>]) -> Join {
 pub(crate) fn joined(rows: impl IntoIterator<Item = (String, Join)>) -> String {
     let mut text = String::new();
     let mut began = false;
+    // Whether the text so far ends on a break a source was written with.
+    let mut broken = false;
     for (row, join) in rows {
         match join {
             Join::Edge => continue,
-            Join::Line if began => text.push('\n'),
-            Join::Line | Join::Carries => {}
+            Join::Line | Join::Whole if began && !broken => text.push('\n'),
+            Join::Line | Join::Whole | Join::Carries => {}
         }
         began = true;
+        broken = join == Join::Whole && row.ends_with('\n');
         text.push_str(&row);
     }
     text
@@ -703,5 +710,43 @@ mod tests {
         // back; selected by its second it does not come back twice.
         assert_eq!(said("日本", &(0..2), &[]), "日");
         assert_eq!(said("日本", &(0..4), &[]), "日本");
+    }
+
+    /// `rows` as `(text, join)` pairs.
+    fn rows(rows: &[(&str, Join)]) -> Vec<(String, Join)> {
+        rows.iter()
+            .map(|(text, join)| ((*text).to_owned(), *join))
+            .collect()
+    }
+
+    #[test]
+    fn a_source_is_parted_from_the_rows_around_it_by_one_break_each() {
+        let text = joined(rows(&[
+            ("before", Join::Line),
+            ("| a |\n|---|", Join::Whole),
+            ("after", Join::Line),
+        ]));
+
+        assert_eq!(text, "before\n| a |\n|---|\nafter");
+    }
+
+    #[test]
+    fn a_source_written_with_its_closing_break_keeps_it_and_adds_none_after() {
+        let alone = joined(rows(&[("$$\nx\n$$\n", Join::Whole)]));
+        let followed = joined(rows(&[("$$\nx\n$$\n", Join::Whole), ("after", Join::Line)]));
+
+        assert_eq!(alone, "$$\nx\n$$\n");
+        assert_eq!(followed, "$$\nx\n$$\nafter");
+    }
+
+    #[test]
+    fn a_blank_row_after_a_source_keeps_its_break() {
+        let text = joined(rows(&[
+            ("$$\nx\n$$\n", Join::Whole),
+            ("", Join::Line),
+            ("after", Join::Line),
+        ]));
+
+        assert_eq!(text, "$$\nx\n$$\n\nafter");
     }
 }
