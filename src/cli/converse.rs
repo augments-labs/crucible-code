@@ -90,6 +90,7 @@ mod answering;
 mod asking;
 mod attaching;
 pub(crate) mod command;
+mod docking;
 mod expanding;
 mod finding;
 mod first;
