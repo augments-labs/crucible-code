@@ -59,21 +59,21 @@ use crate::row::Row;
 use crate::width::{clip, columns as wide, cut, fold, spoken};
 
 /// What a row spends on the frame: one column of edge on each side.
-const AROUND: usize = 2;
+pub(crate) const AROUND: usize = 2;
 
 /// Columns before the subject, a sentence, and an answer's mark.
-const SAID: usize = 2;
+pub(crate) const SAID: usize = 2;
 
 /// Columns before a block: the note, and the answer read back under the
 /// question it answers.
-const PAYLOAD: usize = 4;
+pub(crate) const PAYLOAD: usize = 4;
 
 /// Blank columns between one stop on the questions row and the next.
-const GAP: usize = 3;
+pub(crate) const GAP: usize = 3;
 
 /// What a chosen mark costs an answer: the brackets, the mark, and the space
 /// after it.
-const CHOSEN: usize = 4;
+pub(crate) const CHOSEN: usize = 4;
 
 /// Blank columns between the answers and a box standing beside them.
 const APART: usize = 2;
@@ -85,16 +85,16 @@ const APART: usize = 2;
 /// hands back and says when it cut it, and a block that could be any height
 /// would be the one thing on screen deciding how tall this panel is — decided
 /// by whatever wrote the call rather than by the panel drawing it.
-const MOST: usize = 10;
+pub(crate) const MOST: usize = 10;
 
 /// What opens the reader's own line about a question.
-const NOTED: &str = "Note: ";
+pub(crate) const NOTED: &str = "Note: ";
 
 /// What the box says where an answer has nothing to show.
 ///
 /// The box is drawn anyway. One that vanished would move every row under it as
 /// the mark walked past, which is the same defect as the panel changing height.
-const NOTHING: &str = "nothing to show for this one";
+pub(crate) const NOTHING: &str = "nothing to show for this one";
 
 /// One question, as the row across the top draws it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -836,18 +836,18 @@ struct Laid {
 /// the only place an answer may explain what choosing it means. Descriptions go
 /// only after the air around them has gone.
 #[derive(Debug, Clone, Copy)]
-struct Spacing {
+pub(crate) struct Spacing {
     /// The quiet row of keys under the frame.
-    footer: bool,
+    pub(crate) footer: bool,
     /// The quiet row under each answer.
-    says: bool,
+    pub(crate) says: bool,
     /// The blanks that part one block from the next.
-    opening: bool,
+    pub(crate) opening: bool,
 }
 
 impl Spacing {
     /// The rungs, in the order they are given up.
-    const LADDER: [Self; 4] = [
+    pub(crate) const LADDER: [Self; 4] = [
         Self {
             footer: true,
             says: true,
@@ -878,7 +878,7 @@ fn edge(glyphs: Glyphs) -> Row {
 
 /// `row`, out to the full inner width, so the edge on its right lands where
 /// every other row put one.
-fn framed(mut row: Row, inner: usize, glyphs: Glyphs) -> Row {
+pub(crate) fn framed(mut row: Row, inner: usize, glyphs: Glyphs) -> Row {
     row.pad(inner);
     edge(glyphs).join(row).join(edge(glyphs))
 }
@@ -890,7 +890,7 @@ fn framed(mut row: Row, inner: usize, glyphs: Glyphs) -> Row {
 /// they type, so what the row keeps is the columns just behind the cursor —
 /// everything earlier goes off the left edge, and the cursor itself never
 /// leaves the frame. Until the line outgrows the room this is [`clip`].
-fn slid(text: &str, column: usize, room: usize) -> &str {
+pub(crate) fn slid(text: &str, column: usize, room: usize) -> &str {
     let behind = column.saturating_sub(last(room));
     let ahead = match cut(text, behind) {
         Some(at) => text.get(at..).unwrap_or_default(),
@@ -901,12 +901,12 @@ fn slid(text: &str, column: usize, room: usize) -> &str {
 }
 
 /// The last column a cursor may stand on in a row of `room` columns.
-fn last(room: usize) -> usize {
+pub(crate) fn last(room: usize) -> usize {
     room.saturating_sub(1)
 }
 
 /// A row of `text` in `slot`, opening `indent` columns in.
-fn said(indent: usize, slot: Slot, text: &str) -> Row {
+pub(crate) fn said(indent: usize, slot: Slot, text: &str) -> Row {
     Row::new()
         .then(Slot::Plain, " ".repeat(indent))
         .then(slot, text)

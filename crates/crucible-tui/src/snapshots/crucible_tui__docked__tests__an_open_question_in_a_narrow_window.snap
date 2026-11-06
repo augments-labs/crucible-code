@@ -1,0 +1,23 @@
+---
+source: crates/crucible-tui/src/docked.rs
+expression: "dump(&rows, 36)"
+---
+<Accent>╭──────────────────────────────────╮</>
+<Accent>│</>  <Quiet>□</> <Strong>2 questions waiting</>           <Accent>│</>
+<Accent>│</>                                  <Accent>│</>
+<Accent>│</>  <Quiet>question 1 of 2 · 0 answered</>    <Accent>│</>
+<Accent>│</>                                  <Accent>│</>
+<Accent>│</>  Which wire format should the    <Accent>│</>
+<Accent>│</>  exporter use first?             <Accent>│</>
+<Accent>│</>                                  <Accent>│</>
+<Accent>│</>  <Accent>›</><Strong> 1. </><Quiet>(</> <Quiet>)</> <Bold>JSON lines</>             <Accent>│</>
+<Accent>│</>           <Quiet>recommended</>            <Accent>│</>
+<Accent>│</>           <Quiet>one object a line</>      <Accent>│</>
+<Accent>│</>  <Accent> </> 2. <Quiet>(</> <Quiet>)</> CSV                    <Accent>│</>
+<Accent>│</>  <Accent> </> 3. <Quiet>(</> <Quiet>)</> Parquet                <Accent>│</>
+<Accent>│</>  <Accent> </> 4. <Quiet>(</> <Quiet>)</> <Quiet>Write your own answer</>  <Accent>│</>
+<Accent>│</>                                  <Accent>│</>
+<Accent>│</>  <Quiet>──────────────────────────────</>  <Accent>│</>
+<Accent>│</>  <Accent> </> 5. <Quiet>(</> <Quiet>)</> <Strong>Decline question</>       <Accent>│</>
+<Accent>╰──────────────────────────────────╯</>
+  <Quiet>enter review · esc close</>
