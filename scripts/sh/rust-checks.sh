@@ -46,30 +46,37 @@ named() {
 only=()
 skip=()
 partition=()
+# Every option takes an argument. macOS's /bin/bash is 3.2 and has no `;;&`,
+# so the count check they share and the option's own act are a nested case
+# rather than a fallthrough.
 while (($#)); do
     case $1 in
-    --only | --skip | --partition) (($# > 1)) || usage ;;&
-    --only) IFS=, read -ra only <<<"$2" && named "${only[@]}" ;;
-    --skip) IFS=, read -ra skip <<<"$2" && named "${skip[@]}" ;;
-    --partition) partition=(--partition "$2") ;;
+    --only | --skip | --partition)
+        (($# > 1)) || usage
+        case $1 in
+        --only) IFS=, read -ra only <<<"$2" && named ${only[@]+"${only[@]}"} ;;
+        --skip) IFS=, read -ra skip <<<"$2" && named ${skip[@]+"${skip[@]}"} ;;
+        --partition) partition=(--partition "$2") ;;
+        esac
+        ;;
     *) usage ;;
     esac
     shift 2
 done
 ((${#only[@]} == 0 || ${#skip[@]} == 0)) || usage
 # A part of the suite says nothing about any other section, so it runs alone.
-if ((${#partition[@]})) && [[ "${only[*]}" != tests ]]; then
+if ((${#partition[@]})) && [[ ${only[*]+"${only[*]}"} != tests ]]; then
     printf 'rust-checks: --partition runs part of the suite, so it needs --only tests\n' >&2
     exit 2
 fi
 
 wanted() {
     local one
-    for one in "${skip[@]}"; do
+    for one in ${skip[@]+"${skip[@]}"}; do
         [[ $one == "$1" ]] && return 1
     done
     ((${#only[@]} == 0)) && return 0
-    for one in "${only[@]}"; do
+    for one in ${only[@]+"${only[@]}"}; do
         [[ $one == "$1" ]] && return 0
     done
     return 1
@@ -180,7 +187,7 @@ check_tests() {
     if ! cargo nextest --version >/dev/null 2>&1; then
         printf '    FAIL cargo-nextest is not installed; CONTRIBUTING.md says how to install it\n'
         failed=1
-    elif ! cargo nextest run "${TEST_SELECTION[@]}" "${partition[@]}" --no-fail-fast; then
+    elif ! cargo nextest run "${TEST_SELECTION[@]}" ${partition[@]+"${partition[@]}"} --no-fail-fast; then
         printf '    FAIL read the assertion, not the count\n'
         failed=1
     fi
@@ -194,8 +201,22 @@ check_examples() {
     fi
 }
 
+# A native program on Windows reads a Windows path. Git Bash's own `/tmp` is
+# not one: guessed at, it would read the current drive's root instead.
+native_path() {
+    if command -v cygpath >/dev/null 2>&1; then
+        cygpath -w "$1"
+    else
+        printf '%s\n' "$1"
+    fi
+}
+
 check_required() {
     section "required cases"
+    # Git Bash on Windows has `python`; its Linux and macOS peers have
+    # `python3`, and either reads the same manifest.
+    local python=python3
+    command -v python3 >/dev/null 2>&1 || python=python
     artifacts=$(mktemp)
     examples=$(mktemp)
     silenced=$(mktemp)
@@ -209,7 +230,8 @@ check_required() {
         ! cargo test "${TEST_SELECTION[@]}" --doc -- --list --ignored >"$silenced"; then
         printf '    FAIL the documentation examples did not list; the required cases were not checked\n'
         failed=1
-    elif ! python3 scripts/python/required-cases.py "$artifacts" "$examples" "$silenced" "${TEST_SELECTION[@]}"; then
+    elif ! "$python" scripts/python/required-cases.py "$(native_path "$artifacts")" \
+        "$(native_path "$examples")" "$(native_path "$silenced")" "${TEST_SELECTION[@]}"; then
         printf '    FAIL a named obligation in scripts/required-cases.json is missing, silenced or changed\n'
         failed=1
     fi
