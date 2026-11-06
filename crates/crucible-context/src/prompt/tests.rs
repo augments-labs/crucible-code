@@ -6,14 +6,17 @@ use serde_json::{Value, json};
 
 use crucible_models::Effort;
 use crucible_tools::{
-    Ask, Permission, Remember, Sensitivity, Settled, Target, ToolSnapshot, Verdict,
+    Ask, Deferred, Permission, Remember, Sensitivity, Settled, Target, ToolSnapshot, Verdict,
 };
-use crucible_types::{ContextSnapshot, Seen, Tone, ToolArgs, ToolCall, ToolId};
+use crucible_types::{
+    Answer, Answered, ContextSnapshot, Question, Reply, Seen, Tone, ToolArgs, ToolCall, ToolId,
+};
 use crucible_workspace::Workspace;
 
 use super::{
     APPROVAL_SCOPE, APPROVALS, EnvironmentSection, Identity, ModelSection, PermissionsSection,
-    SAID, SKILLS, Skill, SkillsSection, SystemPrompt, ToolsSection, WorkspaceSection, spoken,
+    Questions, QuestionsSection, SAID, SKILLS, Skill, SkillsSection, SystemPrompt, ToolsSection,
+    WorkspaceSection, spoken,
 };
 use crate::{ContextSection, capture};
 
@@ -797,4 +800,204 @@ fn every_heading_in_the_session_half_stands_over_what_it_names() {
     assert!(at("## Where you are working") < at("## What you have"));
     assert!(at("## What you have") < at("## Skills you can open"));
     assert!(at("## Skills you can open") < at("## What is answering"));
+}
+
+/// A registry holding one waiting batch asking which database to use.
+fn one_waiting() -> Deferred {
+    let held = Deferred::default();
+    held.register(vec![Question::new(
+        "Storage",
+        "Which database should the cache use?",
+        [Answer::new("SQLite"), Answer::new("Postgres")],
+    )])
+    .expect("one batch fits");
+    held
+}
+
+/// The section for `held`, against no recorded state.
+fn holding(held: &Deferred) -> QuestionsSection<'_> {
+    QuestionsSection::new(Questions::Held(held), None)
+}
+
+#[test]
+fn the_questions_section_lists_every_waiting_batch_and_how_its_answer_arrives() {
+    let held = one_waiting();
+    let said = holding(&held)
+        .render(Seen::Fresh)
+        .expect("a waiting batch is stated");
+    let text = said.text();
+
+    assert_eq!(said.section(), "questions");
+    assert!(text.contains("q0"), "{text}");
+    assert!(text.contains("Storage"), "{text}");
+    assert!(
+        text.contains("Which database should the cache use?"),
+        "{text}"
+    );
+    assert!(text.contains("message from the person"), "{text}");
+    // The answers offered are the person's to read, not the model's to
+    // reread on every pass.
+    assert!(!text.contains("Postgres"), "{text}");
+}
+
+#[test]
+fn the_questions_section_says_nothing_while_no_questions_are_waiting() {
+    let empty = Deferred::default();
+    let quiet = holding(&empty).snapshot();
+    let held = QuestionsSection::new(Questions::Held(&empty), Some(&quiet));
+    let none = QuestionsSection::new(Questions::Unheld, Some(&quiet));
+    let never = QuestionsSection::new(Questions::Unheld, None);
+
+    for seen in [Seen::Fresh, Seen::Stale, Seen::Unknown, Seen::Known(&quiet)] {
+        assert!(held.render(seen).is_none(), "{seen:?}");
+        assert!(none.render(seen).is_none(), "{seen:?}");
+        assert!(never.render(seen).is_none(), "{seen:?}");
+    }
+}
+
+#[test]
+fn the_questions_section_snapshot_is_what_a_resume_restores_the_waiting_questions_from() {
+    let held = one_waiting();
+    let saved = holding(&held).snapshot();
+
+    let resumed = Deferred::default();
+    resumed.restore(&saved).expect("a saved snapshot restores");
+    assert_eq!(resumed.state(), held.state());
+    assert_eq!(saved.get("told"), Some(&json!(["q0"])), "{saved}");
+    // With nothing to hold them, nothing waits, and the next id is kept.
+    let nowhere = QuestionsSection::new(Questions::Unheld, Some(&saved)).snapshot();
+    let later = Deferred::default();
+    later.restore(&nowhere).expect("an empty state restores");
+    assert!(later.waiting().is_empty());
+    assert_eq!(later.state().get("next"), held.state().get("next"));
+}
+
+#[test]
+fn the_questions_section_says_once_that_none_wait_when_the_last_is_answered() {
+    let held = one_waiting();
+    let before = holding(&held).snapshot();
+    let id = held.waiting().first().expect("one waiting").id();
+    held.settle(id, vec![Reply::Answered(Answered::new(["SQLite"]))])
+        .expect("settled");
+
+    let now = QuestionsSection::new(Questions::Held(&held), Some(&before));
+    let said = now
+        .render(Seen::Known(&before))
+        .expect("the model is told the list emptied");
+    assert!(said.text().contains("No questions"), "{}", said.text());
+    assert!(!said.text().contains("Storage"), "{}", said.text());
+    let after = now.snapshot();
+    let again = QuestionsSection::new(Questions::Held(&held), Some(&after));
+    assert!(again.render(Seen::Known(&after)).is_none());
+}
+
+#[test]
+fn the_questions_section_says_once_that_waiting_questions_lapsed_where_none_can_be_held() {
+    let before = holding(&one_waiting()).snapshot();
+
+    for seen in [Seen::Known(&before), Seen::Stale] {
+        let nowhere = QuestionsSection::new(Questions::Unheld, Some(&before));
+        let said = nowhere
+            .render(seen)
+            .expect("the model is told its questions lapsed");
+        assert!(said.text().contains("no answer"), "{}", said.text());
+        let after = nowhere.snapshot();
+        let again = QuestionsSection::new(Questions::Unheld, Some(&after));
+        assert!(again.render(Seen::Known(&after)).is_none(), "{seen:?}");
+    }
+}
+
+#[test]
+fn the_questions_section_tells_a_batch_recorded_as_waiting_before_it_was_told() {
+    let held = one_waiting();
+    let told = holding(&held).snapshot();
+    held.register(vec![Question::new(
+        "Naming",
+        "What should the flag be called?",
+        [Answer::new("--cache"), Answer::new("--store")],
+    )])
+    .expect("a second batch fits");
+    // What a tool pass records for the batch it asked: waiting, not told.
+    let mut prior = ContextSnapshot::new();
+    prior
+        .record(QuestionsSection::ID, told)
+        .expect("the recorded state");
+    let recorded = crate::asked(Some(&prior), &held)
+        .expect("recordable")
+        .expect("a batch was asked since")
+        .apply(&prior)
+        .expect("the patch applies");
+    let asked = recorded
+        .get(QuestionsSection::ID)
+        .expect("still recorded")
+        .clone();
+
+    let said = QuestionsSection::new(Questions::Held(&held), Some(&asked))
+        .render(Seen::Known(&asked))
+        .expect("the batch asked was never told");
+    assert!(said.text().contains("q1"), "{}", said.text());
+}
+
+#[test]
+fn the_questions_section_beneath_the_holder_tells_nothing_and_keeps_what_was_recorded() {
+    let held = one_waiting();
+    let recorded = holding(&held).snapshot();
+    let beneath = QuestionsSection::new(Questions::Beneath, Some(&recorded));
+
+    for seen in [
+        Seen::Fresh,
+        Seen::Stale,
+        Seen::Unknown,
+        Seen::Known(&recorded),
+    ] {
+        assert!(beneath.render(seen).is_none(), "{seen:?}");
+    }
+    assert_eq!(beneath.snapshot(), recorded);
+}
+
+#[test]
+fn the_questions_section_is_silent_when_known_and_restated_when_compacted_or_unknown() {
+    let held = one_waiting();
+    let same = holding(&held).snapshot();
+    let section = QuestionsSection::new(Questions::Held(&held), Some(&same));
+
+    assert!(section.render(Seen::Known(&same)).is_none());
+    let stale = section
+        .render(Seen::Stale)
+        .expect("restated after compaction");
+    assert!(stale.text().contains("q0"), "{}", stale.text());
+    let unknown = holding(&held)
+        .render(Seen::Unknown)
+        .expect("restated whole");
+    assert!(
+        unknown.text().starts_with(
+            "This questions context supersedes every earlier questions context fragment."
+        ),
+        "{}",
+        unknown.text()
+    );
+    assert!(unknown.text().contains("q0"), "{}", unknown.text());
+
+    // A second batch is told with the first, so one fragment always holds
+    // the whole list.
+    held.register(vec![Question::new(
+        "Naming",
+        "What should the flag be called?",
+        [Answer::new("--cache"), Answer::new("--store")],
+    )])
+    .expect("a second batch fits");
+    let grown = QuestionsSection::new(Questions::Held(&held), Some(&same))
+        .render(Seen::Known(&same))
+        .expect("the list changed");
+    assert!(grown.text().contains("q0"), "{}", grown.text());
+    assert!(grown.text().contains("q1"), "{}", grown.text());
+}
+
+#[test]
+fn the_questions_section_debug_names_no_question() {
+    let held = one_waiting();
+    let shown = format!("{:?}", holding(&held));
+
+    assert!(!shown.contains("database"), "{shown}");
+    assert!(shown.contains("redacted"), "{shown}");
 }

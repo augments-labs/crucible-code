@@ -16,12 +16,14 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crucible_models::Effort;
-use crucible_tools::{Permission, ToolSnapshot};
+use crucible_tools::{Deferred, Permission, ToolSnapshot};
 use crucible_types::{ContextError, ContextPatch, ContextSnapshot, Fragment, Seen, Transcript};
+use serde_json::Value;
 
+use crate::prompt::{recorded_next, saved, telling, told_ids};
 use crate::{
-    ContextSection, EnvironmentSection, ModelSection, PermissionsSection, Skill, SkillsSection,
-    ToolsSection, WorkspaceSection, capture, seen,
+    ContextSection, EnvironmentSection, ModelSection, PermissionsSection, Questions,
+    QuestionsSection, Skill, SkillsSection, ToolsSection, WorkspaceSection, capture, seen,
 };
 
 /// Stable inputs one run's composition root knows and the runner does not.
@@ -102,6 +104,8 @@ pub struct Live<'a> {
     pub tools: &'a ToolSnapshot,
     /// What the permission engine currently allows.
     pub permission: &'a Permission,
+    /// How this run stands to the questions asked without waiting.
+    pub questions: Questions<'a>,
 }
 
 impl fmt::Debug for Live<'_> {
@@ -109,6 +113,7 @@ impl fmt::Debug for Live<'_> {
         f.debug_struct("Live")
             .field("model", &self.model)
             .field("effort", &self.effort)
+            .field("questions", &self.questions)
             .finish_non_exhaustive()
     }
 }
@@ -146,9 +151,10 @@ pub fn assemble(
         fragments: Vec::new(),
     };
 
-    // Stable sections first. The three live/mid-turn sections follow, with
-    // permissions last because an approval can change inside the tool pass
-    // immediately preceding this request.
+    // Stable sections first. The live/mid-turn sections follow, with
+    // permissions and then the waiting questions last, because an approval can
+    // change inside the tool pass immediately preceding this request and a
+    // question can be asked or answered inside it too.
     assembly.resolve(&WorkspaceSection::new(&inputs.workspace))?;
     assembly.resolve(&SkillsSection::new(&inputs.skills))?;
     assembly.resolve(&EnvironmentSection::new(
@@ -159,12 +165,111 @@ pub fn assemble(
     assembly.resolve(&ModelSection::new(live.model, live.effort))?;
     assembly.resolve(&ToolsSection::new(live.tools))?;
     assembly.resolve(&PermissionsSection::new(live.permission))?;
+    let recorded = assembly.prior.get(QuestionsSection::ID);
+    assembly.resolve(&QuestionsSection::new(live.questions, recorded))?;
 
     let patch = assembly.current.patch_from(assembly.prior);
     Ok(Assembled {
         fragments: assembly.fragments,
         patch,
     })
+}
+
+/// The merge patch that records the question batches `held` still lists as
+/// waiting, with the number the next batch is given, where a batch was asked
+/// since the state `prior` holds.
+///
+/// Taken where a batch can have been asked since the last assembly, before
+/// the words that name its id are recorded: a session picked up from a log
+/// that holds those words then has each batch they name waiting again, and
+/// never hands its id out a second time. The ids the model was told stay as
+/// `prior` recorded them, so the next assembly tells the batches asked since.
+///
+/// A batch `prior` records that `held` no longer lists as waiting stays
+/// recorded while `held` holds an answer no assembly has taken yet: the answer
+/// may be that batch's, and until it is delivered a log that ends has to bring
+/// the batch back rather than lose the answer. With no such answer, every one
+/// of them was delivered, and is dropped. A list the registry would refuse to
+/// read back brings none of its batches back, so where keeping them all makes
+/// one, the oldest `held` no longer lists go first until it reads.
+///
+/// This records only what `held` listed as waiting or `prior` recorded, so a
+/// batch asked and settled since `prior` is in neither: that relies on a batch
+/// being settled only by whoever was told its id, which the runner tells after
+/// this is recorded. `None` where no batch was asked since.
+///
+/// # Errors
+///
+/// [`ContextError`] when the state cannot be recorded.
+pub fn asked(
+    prior: Option<&ContextSnapshot>,
+    held: &Deferred,
+) -> Result<Option<ContextPatch>, ContextError> {
+    let empty = ContextSnapshot::new();
+    let prior = prior.unwrap_or(&empty);
+    let state = held.state();
+    let Some(next) = recorded_next(&state) else {
+        return Ok(None);
+    };
+    let Value::Object(mut now) = state else {
+        return Ok(None);
+    };
+    // Read after the state, never before: an answer settled between the two
+    // leaves its batch out of that state, and this is what keeps it recorded.
+    let undelivered = held.any_settled();
+    let recorded = prior.get(QuestionsSection::ID);
+    if recorded.and_then(recorded_next) == Some(next) {
+        return Ok(None);
+    }
+    // A registry that never numbered anything has nothing for a log to keep.
+    if recorded.is_none() && next == 0 {
+        return Ok(None);
+    }
+
+    let still = match now.remove("waiting") {
+        Some(Value::Array(still)) => still,
+        _ => Vec::new(),
+    };
+    let listed: Vec<Option<Value>> = still.iter().map(|batch| batch.get("id").cloned()).collect();
+    let mut waiting: Vec<Value> = recorded
+        .and_then(|state| state.get("waiting"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|kept| undelivered || still.iter().any(|batch| batch.get("id") == kept.get("id")))
+        .cloned()
+        .collect();
+    let new: Vec<Value> = still
+        .into_iter()
+        .filter(|batch| {
+            let id = batch.get("id");
+            !waiting.iter().any(|kept| kept.get("id") == id)
+        })
+        .collect();
+    waiting.extend(new);
+    // Kept only while the registry can read it back: a list it would refuse
+    // brings back none of its batches. The oldest kept that the registry no
+    // longer lists goes first, as the one most likely already delivered.
+    while Deferred::default().restore(&saved(next, &waiting)).is_err() {
+        let Some(at) = waiting.iter().position(|kept| {
+            let id = kept.get("id");
+            !listed.iter().any(|listed| listed.as_ref() == id)
+        }) else {
+            break;
+        };
+        waiting.remove(at);
+    }
+    let told = recorded.map(told_ids).unwrap_or_default();
+
+    let mut numbered = prior.clone();
+    numbered.record(
+        QuestionsSection::ID,
+        telling(
+            saved(next, &waiting),
+            told.into_iter().map(Value::from).collect(),
+        ),
+    )?;
+    Ok(numbered.patch_from(prior))
 }
 
 struct Assembly<'a> {
@@ -220,7 +325,177 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
 mod tests {
     use std::time::Duration;
 
+    use crucible_tools::MOST_HELD;
+    use crucible_types::{Answer, Batch, Question, QuestionId, Reply};
+    use serde_json::json;
+
     use super::*;
+
+    fn asking(held: &Deferred, heading: &str) -> u64 {
+        held.register(vec![Question::new(
+            heading,
+            "Which one?",
+            [Answer::new("This"), Answer::new("That")],
+        )])
+        .expect("a batch fits")
+        .number()
+    }
+
+    /// Settles the oldest batch `held` lists as waiting, declining it.
+    fn settle_oldest(held: &Deferred) {
+        let oldest = held
+            .waiting()
+            .first()
+            .map(Batch::id)
+            .expect("a batch waits");
+        held.settle(oldest, vec![Reply::Declined]).expect("settled");
+    }
+
+    /// The ids of the batches a recorded questions state holds, in order.
+    fn ids(state: &Value) -> Vec<&str> {
+        state
+            .get("waiting")
+            .and_then(Value::as_array)
+            .map(|waiting| {
+                waiting
+                    .iter()
+                    .filter_map(|batch| batch.get("id").and_then(Value::as_str))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn questions_asked_records_each_new_batch_and_keeps_every_one_recorded_before() {
+        let held = Deferred::default();
+        let first = asking(&held, "First");
+        let mut prior = ContextSnapshot::new();
+        prior
+            .record(
+                QuestionsSection::ID,
+                QuestionsSection::new(Questions::Held(&held), None).snapshot(),
+            )
+            .expect("the recorded state");
+        // Answered but not yet delivered: a log that ends now still has to
+        // bring it back.
+        held.settle(QuestionId::numbered(first), vec![Reply::Declined])
+            .expect("settled");
+        asking(&held, "Second");
+
+        let patch = asked(Some(&prior), &held)
+            .expect("recordable")
+            .expect("a batch was asked since");
+        let recorded = patch.apply(&prior).expect("the patch applies");
+        let state = recorded.get(QuestionsSection::ID).expect("still recorded");
+
+        assert_eq!(state.get("next"), Some(&json!(2)));
+        assert_eq!(ids(state), ["q0", "q1"]);
+        assert_eq!(recorded.sections().len(), 1, "only the questions changed");
+        assert_eq!(
+            state.get("told"),
+            prior
+                .get(QuestionsSection::ID)
+                .and_then(|state| state.get("told")),
+            "what was told is the assembly's to change"
+        );
+    }
+
+    #[test]
+    fn questions_asked_with_nothing_recorded_saves_a_state_restore_reads() {
+        let held = Deferred::default();
+        asking(&held, "First");
+
+        let patch = asked(None, &held)
+            .expect("recordable")
+            .expect("a batch was asked");
+        let recorded = patch
+            .apply(&ContextSnapshot::new())
+            .expect("the patch applies");
+        let state = recorded.get(QuestionsSection::ID).expect("recorded");
+        assert_eq!(state.get("waiting"), held.state().get("waiting"));
+        assert_eq!(state.get("told"), Some(&json!([])), "nothing was told yet");
+
+        let resumed = Deferred::default();
+        resumed.restore(state).expect("restore reads it");
+        assert_eq!(resumed.waiting().len(), 1, "the batch asked was lost");
+        assert_eq!(asking(&resumed, "Later"), 1, "an id handed out came back");
+    }
+
+    #[test]
+    fn questions_asked_drops_a_batch_recorded_before_once_its_answer_was_taken() {
+        let held = Deferred::default();
+        let first = asking(&held, "First");
+        let mut prior = ContextSnapshot::new();
+        prior
+            .record(QuestionsSection::ID, held.state())
+            .expect("the recorded state");
+        held.settle(QuestionId::numbered(first), vec![Reply::Declined])
+            .expect("settled");
+        assert_eq!(held.take_settled().len(), 1, "the answer was delivered");
+        asking(&held, "Second");
+
+        let patch = asked(Some(&prior), &held)
+            .expect("recordable")
+            .expect("a batch was asked since");
+        let recorded = patch.apply(&prior).expect("the patch applies");
+        let state = recorded.get(QuestionsSection::ID).expect("still recorded");
+
+        assert_eq!(ids(state), ["q1"], "a delivered batch would come back");
+    }
+
+    #[test]
+    fn questions_asked_keeps_its_record_one_the_registry_can_read_back() {
+        let held = Deferred::default();
+        let first = asking(&held, "Early");
+        for _ in 1..MOST_HELD {
+            asking(&held, "Early");
+        }
+        let mut prior = ContextSnapshot::new();
+        prior
+            .record(QuestionsSection::ID, held.state())
+            .expect("the recorded state");
+        held.settle(QuestionId::numbered(first), vec![Reply::Declined])
+            .expect("settled");
+        assert_eq!(held.take_settled().len(), 1, "the oldest was delivered");
+        asking(&held, "Later");
+        settle_oldest(&held);
+
+        let patch = asked(Some(&prior), &held)
+            .expect("recordable")
+            .expect("a batch was asked since");
+        let recorded = patch.apply(&prior).expect("the patch applies");
+        let state = recorded.get(QuestionsSection::ID).expect("still recorded");
+
+        assert!(
+            Deferred::default().restore(state).is_ok(),
+            "a resume would read every recorded batch as lapsed: {:?}",
+            ids(state)
+        );
+        assert_eq!(
+            ids(state),
+            ["q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8"],
+            "the batch whose answer is not yet delivered has to stay recorded"
+        );
+    }
+
+    #[test]
+    fn questions_asked_is_nothing_where_no_batch_was_asked_since() {
+        let held = Deferred::default();
+        let first = asking(&held, "First");
+        let mut prior = ContextSnapshot::new();
+        prior
+            .record(QuestionsSection::ID, held.state())
+            .expect("the recorded state");
+        held.settle(QuestionId::numbered(first), vec![Reply::Declined])
+            .expect("settled");
+
+        assert_eq!(asked(Some(&prior), &held).expect("recordable"), None);
+        assert_eq!(
+            asked(None, &Deferred::default()).expect("recordable"),
+            None,
+            "a registry that never asked anything records nothing"
+        );
+    }
 
     #[test]
     fn utc_calendar_conversion_covers_epoch_and_leap_day() {

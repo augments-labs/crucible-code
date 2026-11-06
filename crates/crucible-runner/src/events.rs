@@ -11,8 +11,8 @@
 use crucible_models::ProviderError;
 use crucible_tools::{Looking, Summary, ToolError, ToolOutput, ToolReceipt, ToolsetError, Wrote};
 use crucible_types::{
-    Ancestry, Attachment, ContextError, RecordedToolOutput, RunId, StopReason, ToolCall, ToolId,
-    TurnId,
+    Ancestry, Attachment, Batch, ContextError, RecordedToolOutput, RunId, StopReason, ToolCall,
+    ToolId, TurnId,
 };
 use crucible_types::{Diff, PlanWindows, Spend, Utc, Window};
 use std::time::SystemTime;
@@ -599,11 +599,24 @@ pub enum Event {
         /// The line, whole.
         line: String,
     },
+
+    /// The questions asked without waiting that still wait for the person,
+    /// whenever that list changed: a batch was asked, answered, declined or
+    /// delivered, or a resumed session brought its batches back.
+    ///
+    /// The whole list rather than what changed, so a screen that missed one
+    /// report is put right by the next. Posted by the root run alone; a run
+    /// it started holds no questions of its own.
+    Waiting {
+        /// Every waiting batch, oldest first.
+        batches: Vec<Batch>,
+    },
 }
 
-/// By hand, because two variants carry conversation text of their own and they
-/// go opposite ways: a steered line is the reader's, redacted the way
-/// [`crucible_types::Message::User`] redacts the same words, while a delta's prose is
+/// By hand, because three variants carry conversation text of their own and
+/// they go opposite ways: a steered line is the reader's, redacted the way
+/// [`crucible_types::Message::User`] redacts the same words, and waiting
+/// questions are told by how many there are, while a delta's prose is
 /// deliberately shown — it is the model's own prose on its way to the screen.
 /// Everything else delegates, and what needs redacting redacts itself.
 impl std::fmt::Debug for Event {
@@ -720,6 +733,10 @@ impl std::fmt::Debug for Event {
             Self::Steered { line: _ } => f
                 .debug_struct("Steered")
                 .field("line", &"[redacted]")
+                .finish(),
+            Self::Waiting { batches } => f
+                .debug_struct("Waiting")
+                .field("batches", &batches.len())
                 .finish(),
         }
     }

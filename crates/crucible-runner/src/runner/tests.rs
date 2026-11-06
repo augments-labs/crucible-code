@@ -94,6 +94,7 @@ mod cache_operations;
 mod compaction;
 mod context;
 mod continuation;
+mod deferring;
 mod fast;
 mod guardrails;
 mod instructions;
@@ -398,6 +399,7 @@ impl Scripted {
                 | Event::Reported { .. }
                 | Event::FastRefused { .. }
                 | Event::Steered { .. }
+                | Event::Waiting { .. }
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
                 | Event::Failed { .. } => None,
@@ -432,6 +434,7 @@ impl Scripted {
                 | Event::Reported { .. }
                 | Event::FastRefused { .. }
                 | Event::Steered { .. }
+                | Event::Waiting { .. }
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
                 | Event::Failed { .. } => None,
@@ -464,6 +467,7 @@ impl Scripted {
                 | Event::Used { .. }
                 | Event::PlanLimits { .. }
                 | Event::Steered { .. }
+                | Event::Waiting { .. }
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
                 | Event::Failed { .. } => None,
@@ -508,6 +512,7 @@ impl Scripted {
                 | Event::Used { .. }
                 | Event::PlanLimits { .. }
                 | Event::Steered { .. }
+                | Event::Waiting { .. }
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
                 | Event::Failed { .. } => None,
@@ -542,6 +547,7 @@ impl Scripted {
                 | Event::Used { .. }
                 | Event::PlanLimits { .. }
                 | Event::Steered { .. }
+                | Event::Waiting { .. }
                 | Event::Spent { .. }
                 | Event::Failed { .. } => None,
             })
@@ -575,6 +581,7 @@ impl Scripted {
                 | Event::Used { .. }
                 | Event::PlanLimits { .. }
                 | Event::Steered { .. }
+                | Event::Waiting { .. }
                 | Event::TurnFinished { .. }
                 | Event::Failed { .. } => None,
             })

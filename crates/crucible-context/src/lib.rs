@@ -2,10 +2,11 @@
 //!
 //! A turn is sent under a system prompt and a set of context fragments that say
 //! what is true of the session: its workspace, the skills it found, the
-//! environment, the model, the tools and the permissions. This crate owns how
-//! those facts become words — [`ContextSection`], the order a pass assembles
-//! them in, the prompt around them — and what a compaction asks the model for
-//! in place of the history it replaces.
+//! environment, the model, the tools, the permissions and the questions still
+//! waiting for the person. This crate owns how those facts become words —
+//! [`ContextSection`], the order a pass assembles them in, the prompt around
+//! them — and what a compaction asks the model for in place of the history it
+//! replaces.
 //!
 //! What it does not own is as deliberate. The persisted half of a context —
 //! [`Fragment`](crucible_types::Fragment), [`ContextSnapshot`](crucible_types::ContextSnapshot)
@@ -15,7 +16,7 @@
 //! words as data without naming this crate.
 //!
 //! ```
-//! use crucible_context::{ContextInputs, Live, assemble};
+//! use crucible_context::{ContextInputs, Live, Questions, assemble};
 //! use crucible_tools::{Permission, ToolSnapshot};
 //! use crucible_types::Transcript;
 //! use std::time::{Duration, UNIX_EPOCH};
@@ -28,6 +29,7 @@
 //!     effort: None,
 //!     tools: &tools,
 //!     permission: &permission,
+//!     questions: Questions::Unheld,
 //! };
 //!
 //! // A session with no recorded state states every section.
@@ -42,10 +44,10 @@ pub mod compaction;
 mod prompt;
 mod sections;
 
-pub use assembly::{Assembled, ContextInputs, Live, assemble};
+pub use assembly::{Assembled, ContextInputs, Live, asked, assemble};
 pub use compaction::Room;
 pub use prompt::{
-    EnvironmentSection, Identity, ModelSection, PermissionsSection, Skill, SkillsSection,
-    SystemPrompt, ToolsSection, WorkspaceSection,
+    EnvironmentSection, Identity, ModelSection, PermissionsSection, Questions, QuestionsSection,
+    Skill, SkillsSection, SystemPrompt, ToolsSection, WorkspaceSection, continue_numbering,
 };
 pub use sections::{ContextSection, capture, seen};

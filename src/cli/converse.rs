@@ -2103,6 +2103,7 @@ fn breaks(one: &Seen) -> bool {
             | Event::Sandbox { .. }
             | Event::Used { .. }
             | Event::PlanLimits { .. }
+            | Event::Waiting { .. }
             | Event::Retrying => false,
 
             // Everything else is a row, or is about to be one. The model

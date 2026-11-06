@@ -719,6 +719,7 @@ impl Turning {
             | Event::Used { .. }
             | Event::PlanLimits { .. }
             | Event::Reported { .. }
+            | Event::Waiting { .. }
             | Event::Retrying => Vec::new(),
         };
 
@@ -785,6 +786,7 @@ impl Turning {
             | Event::PlanLimits { .. }
             | Event::Reported { .. }
             | Event::TurnFinished { .. }
+            | Event::Waiting { .. }
             | Event::Failed { .. } => self.doing,
         };
 

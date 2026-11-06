@@ -25,7 +25,7 @@ use crucible_agents::{GuardrailError, Rejection};
 use crucible_models::ProviderError;
 use crucible_tools::{Ask, ToolsetContext};
 use crucible_types::{
-    Compacting, Message, ProviderContinuation, RunId, Spend, StopReason, ToolCall,
+    Compacting, Message, ProviderContinuation, RunId, Spend, StopReason, ToolCall, ToolResult,
 };
 
 use crate::context::RunContext;
@@ -65,6 +65,31 @@ pub(super) enum Ending {
 }
 
 impl Ending {
+    /// Whether a turn whose last pass ended this way takes one more pass for
+    /// an answer accepted while that pass ran.
+    ///
+    /// Only an answer that finished does. Every other ending already tells
+    /// the person something a further pass would replace: an answer reported
+    /// cut short would be followed by one that reads complete, and a cancel, a
+    /// refusal or a request too big for the window is not the model's to talk
+    /// past. The answer then waits for the next turn's first pass, which
+    /// delivers it.
+    const fn carries_on(&self) -> bool {
+        match self {
+            Self::Stopped(stop) => match stop {
+                StopReason::Yielded => true,
+                StopReason::WantsTools
+                | StopReason::OutOfTokens
+                | StopReason::WindowExceeded
+                | StopReason::Filtered
+                | StopReason::Paused
+                | StopReason::Cancelled
+                | StopReason::Unknown => false,
+            },
+            Self::Rejected { .. } | Self::Undecided { .. } => false,
+        }
+    }
+
     /// The same ending, as the value a caller of a turn is handed.
     pub(super) fn turned(self, run: RunId, spent: Spend) -> Turned {
         match self {
@@ -128,6 +153,11 @@ impl<'a> AgentLoop<'a> {
     /// goes with it — the reader did not type it, and an event saying they did
     /// would put a sentence in the panel that nobody wrote. The line above it
     /// is already on their screen.
+    ///
+    /// An answer to a question the model asked without waiting comes after
+    /// these, from [`Runner::assemble_context`], because when it is taken
+    /// against the state the log records is what keeps a crash from losing
+    /// it. It is the person's, and no `Steered` goes with it either.
     async fn interjected(&mut self, counting: &Counting) -> Result<(), TurnError> {
         let run = self.run;
         let events = run.reporting();
@@ -156,6 +186,49 @@ impl<'a> AgentLoop<'a> {
                     .breakdown(counting.window, counting.reserve),
             });
         }
+        Ok(())
+    }
+
+    /// The context this pass is sent under, and the answers that arrived
+    /// since the last one, recorded; then what waits, if that changed.
+    async fn assembled(&mut self, counting: &Counting) -> Result<(), TurnError> {
+        let run = self.run;
+        let delivered = self.runner.assemble_context(run.ancestry()).await?;
+        if delivered > 0 {
+            run.reporting().post(Event::Carried {
+                breakdown: self
+                    .runner
+                    .state
+                    .load
+                    .breakdown(counting.window, counting.reserve),
+            });
+        }
+        self.runner.report_waiting(run);
+        Ok(())
+    }
+
+    /// A tool pass's results recorded, with what they asked; then what
+    /// waits, if that changed.
+    async fn resulted(
+        &mut self,
+        results: Vec<ToolResult>,
+        counting: &Counting,
+    ) -> Result<(), TurnError> {
+        let run = self.run;
+        // Before the results, which are what name a batch asked in this
+        // pass: a log holding the name holds the batch.
+        self.runner.asked_since(run.ancestry()).await?;
+        self.runner
+            .record(run.ancestry(), Message::ToolResults(results))
+            .await?;
+        run.reporting().post(Event::Carried {
+            breakdown: self
+                .runner
+                .state
+                .load
+                .breakdown(counting.window, counting.reserve),
+        });
+        self.runner.report_waiting(run);
         Ok(())
     }
 
@@ -312,7 +385,7 @@ impl<'a> AgentLoop<'a> {
             // compaction from the preceding loop iteration rewrote history.
             // Recording the fragments updates `runner.load` before it is read
             // below, so reserve and fullness see exactly what will be sent.
-            self.runner.assemble_context(run.ancestry()).await?;
+            self.assembled(counting).await?;
 
             // Recording is what measures the transcript, and it happens on the
             // runner rather than here; reading it back at the top of each pass
@@ -450,7 +523,16 @@ impl<'a> AgentLoop<'a> {
             let (text, calls) = answer.finish();
 
             if let Some(stop) = Runner::over(said, &calls) {
-                return self.ending(text, continuation, &calls, stop).await;
+                let ending = self.ending(text, continuation, &calls, stop).await?;
+                // An answer accepted while this pass ran has not reached the
+                // model. After an answer that finished, the next pass is where
+                // it does. After any other ending it stays settled in the
+                // registry, which says so through `any_settled`, and the next
+                // turn's first pass delivers it.
+                if ending.carries_on() && self.runner.undelivered(run.ancestry()) {
+                    continue;
+                }
+                return Ok(ending);
             }
 
             for call in &calls {
@@ -521,16 +603,7 @@ impl<'a> AgentLoop<'a> {
                 });
             }
 
-            self.runner
-                .record(run.ancestry(), Message::ToolResults(results))
-                .await?;
-            events.post(Event::Carried {
-                breakdown: self
-                    .runner
-                    .state
-                    .load
-                    .breakdown(counting.window, counting.reserve),
-            });
+            self.resulted(results, counting).await?;
 
             match went {
                 Went::On => {}
