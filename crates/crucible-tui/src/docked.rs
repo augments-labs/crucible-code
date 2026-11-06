@@ -45,9 +45,9 @@
 //! than the window, the dock becomes a window onto it, as the transcript's
 //! [`crate::Expanded`] does: the row saying what state it is in and the actions
 //! stay where they are, the rest scrolls, and the row under the frame says
-//! `pgup pgdn to see more`, which it says nowhere else. [`Dock::scrolled`] is
-//! how far down the window opens, and [`Docked::end`] how far it may go at this
-//! size, which the caller clamps its offset to.
+//! `pgup pgdn to see more`, which it says nowhere else. [`Docked::opens_at`]
+//! is how far down the window opens, and [`Docked::end`] how far it may go at
+//! this size, which the caller clamps the scroll it sets to.
 //!
 //! **The window keeps what the keys act on in view.** A scroll is set with
 //! [`Dock::scroll_to`], which records the batch, the question or review, the
@@ -98,9 +98,11 @@ pub struct Dock<K> {
     pub phase: Phase,
 }
 
-/// How far down the window opens, and the view, mark and cursor it was set
-/// on; [`Dock::scroll_to`] is the only way to set one, and the default is the
-/// top of whatever is in front.
+/// How far down the window was scrolled, and the view, mark and cursor it was
+/// set on; [`Dock::scroll_to`] is the only way to set one. The default is no
+/// scroll: the window opens at the top, moved only as far as it takes to show
+/// the mark or the cursor, so a view opens at its top where the mark stands on
+/// a row of its first window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Scrolled<K> {
     /// Rows down the body of the view.
@@ -507,10 +509,9 @@ impl<K: PartialEq> Docked<'_, K> {
     /// window fits, and nothing where nothing waits or no row is left.
     ///
     /// The batch in front is [`Dock::front`] and the question open in it
-    /// [`Dock::open`]; the window opens [`Dock::scrolled`] rows down, or at
-    /// [`Docked::end`] where that is further. The caret is where a line is
-    /// being written, and `None` everywhere else, including where that line is
-    /// outside the window.
+    /// [`Dock::open`]; the window opens where [`Docked::opens_at`] says. The
+    /// caret is where a line is being written, and `None` everywhere else,
+    /// including where that line is outside the window.
     #[must_use]
     pub fn within(&self, columns: usize, room: usize, glyphs: Glyphs) -> (Vec<Row>, Option<Caret>) {
         match self.drawn(columns, room, glyphs) {
