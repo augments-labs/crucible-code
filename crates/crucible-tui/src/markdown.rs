@@ -1292,7 +1292,7 @@ impl Markdown {
     ///
     /// What a caller that puts what it is told out for good, and cannot take
     /// it back, asks after each delta, and holds the line until it is false.
-    /// It is false for a line of more than [`HEADER_CAP`] bytes, and for one
+    /// It is false for a line of more than 128 bytes, and for one
     /// with a single cell once its break has come.
     #[must_use]
     pub fn in_doubt(&self) -> bool {
