@@ -31,7 +31,7 @@ const LIMIT: f64 = 20.0;
 ///
 /// The same as the no-colour native frame's, because it is the same startup and
 /// the same stalls: across twenty CI runs the two read 28.6 and 29.1 ms in the
-/// worst run, and 150 ms clears that by a third.
+/// worst run, and 150 ms is about five times that.
 const SHARED_RUNNER_LIMIT: f64 = 150.0;
 
 /// The first output of a run that got as far as drawing.

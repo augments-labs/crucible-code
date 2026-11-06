@@ -1129,8 +1129,8 @@ mod tests {
     use super::chosen;
 
     use super::{
-        AT_LIBERTY, Answering, Answers, CONFIG, PER_WINDOW, RUNS, Readings, Scratch, TITLE, UNSENT,
-        USABLE, WINDOWS, attributes_reply, best, configuration,
+        AT_LIBERTY, CONFIG, PER_WINDOW, RUNS, Readings, Scratch, TITLE, USABLE, WINDOWS, best,
+        configuration,
     };
 
     /// A full set of readings, stalled from end to end of the first `windows`
@@ -1336,94 +1336,101 @@ mod tests {
         assert_eq!(named, plain);
     }
 
-    #[test]
-    fn a_cursor_position_query_split_across_two_reads_is_answered_once() {
-        // What a real terminal receives is one write, but the master's read
-        // side is free to hand it over one byte at a time. A response lost to
-        // that split would make the probe stall for a query the terminal
-        // answered, which is a startup budget measuring the probe instead.
-        let mut answers = Answers::new(Answering::AtOnce);
+    /// The fake terminal exists only where the probes can spawn a pseudo
+    /// terminal, so its tests are built only there.
+    #[cfg(target_os = "linux")]
+    mod fake_terminal {
+        use super::super::{Answering, Answers, UNSENT, attributes_reply};
 
-        assert!(answers.feed(b"\x1b").is_empty());
-        assert_eq!(answers.feed(b"[6n"), b"\x1b[1;1R".to_vec());
-        assert!(answers.feed(b"more text").is_empty());
-    }
-
-    #[test]
-    fn device_attributes_are_answered_with_sixel_among_the_parameters() {
-        let mut answers = Answers::new(Answering::AtOnce);
-
-        let said = answers.feed(b"\x1b[c");
-        assert_eq!(said, attributes_reply());
-        assert!(said.windows(3).any(|window| window == b";4;"), "{said:?}");
-    }
-
-    #[test]
-    fn a_kitty_graphic_query_is_answered_with_its_own_image_id() {
-        let mut answers = Answers::new(Answering::AtOnce);
-        let query = b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\";
-
-        assert_eq!(
-            answers.feed(query),
-            b"\x1b_Gi=31;OK\x1b\\".to_vec(),
-            "a query is answered with the id it asked about"
-        );
-    }
-
-    #[test]
-    fn a_kitty_transmission_is_not_a_question_and_is_not_answered() {
-        // Only `a=q` asks. Answering a picture being sent would put bytes into
-        // the child's input that it never asked for, in the middle of a draw.
-        let mut answers = Answers::new(Answering::AtOnce);
-
-        assert!(
-            answers
-                .feed(b"\x1b_Ga=t,f=24,s=1,v=1;AAAA\x1b\\")
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn iterm2_cell_size_is_answered_when_the_osc_ends_with_bel_or_st() {
-        for terminator in [&b"\x07"[..], &b"\x1b\\"[..]] {
+        #[test]
+        fn a_cursor_position_query_split_across_two_reads_is_answered_once() {
+            // What a real terminal receives is one write, but the master's read
+            // side is free to hand it over one byte at a time. A response lost to
+            // that split would make the probe stall for a query the terminal
+            // answered, which is a startup budget measuring the probe instead.
             let mut answers = Answers::new(Answering::AtOnce);
-            let mut query = b"\x1b]1337;ReportCellSize".to_vec();
-            query.extend_from_slice(terminator);
+
+            assert!(answers.feed(b"\x1b").is_empty());
+            assert_eq!(answers.feed(b"[6n"), b"\x1b[1;1R".to_vec());
+            assert!(answers.feed(b"more text").is_empty());
+        }
+
+        #[test]
+        fn device_attributes_are_answered_with_sixel_among_the_parameters() {
+            let mut answers = Answers::new(Answering::AtOnce);
+
+            let said = answers.feed(b"\x1b[c");
+            assert_eq!(said, attributes_reply());
+            assert!(said.windows(3).any(|window| window == b";4;"), "{said:?}");
+        }
+
+        #[test]
+        fn a_kitty_graphic_query_is_answered_with_its_own_image_id() {
+            let mut answers = Answers::new(Answering::AtOnce);
+            let query = b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\";
 
             assert_eq!(
-                answers.feed(&query),
-                b"\x1b]1337;ReportCellSize=16;8\x07".to_vec()
+                answers.feed(query),
+                b"\x1b_Gi=31;OK\x1b\\".to_vec(),
+                "a query is answered with the id it asked about"
             );
         }
-    }
 
-    #[test]
-    fn a_terminal_that_never_answers_says_nothing_to_any_query() {
-        let mut answers = Answers::new(Answering::Never);
+        #[test]
+        fn a_kitty_transmission_is_not_a_question_and_is_not_answered() {
+            // Only `a=q` asks. Answering a picture being sent would put bytes into
+            // the child's input that it never asked for, in the middle of a draw.
+            let mut answers = Answers::new(Answering::AtOnce);
 
-        assert!(answers.feed(b"\x1b[6n\x1b[c").is_empty());
-        assert!(answers.feed(b"\x1b_Gi=31,a=q;AAAA\x1b\\").is_empty());
-    }
+            assert!(
+                answers
+                    .feed(b"\x1b_Ga=t,f=24,s=1,v=1;AAAA\x1b\\")
+                    .is_empty()
+            );
+        }
 
-    #[test]
-    fn an_unterminated_query_is_bounded_rather_than_collected() {
-        // A child that never closes a query is a probe that must keep reading.
-        // The held bytes are a tail, not a copy of everything the child wrote.
-        let mut answers = Answers::new(Answering::AtOnce);
-        let flood = vec![b'x'; UNSENT * 4];
+        #[test]
+        fn iterm2_cell_size_is_answered_when_the_osc_ends_with_bel_or_st() {
+            for terminator in [&b"\x07"[..], &b"\x1b\\"[..]] {
+                let mut answers = Answers::new(Answering::AtOnce);
+                let mut query = b"\x1b]1337;ReportCellSize".to_vec();
+                query.extend_from_slice(terminator);
 
-        assert!(answers.feed(b"\x1b_G").is_empty());
-        assert!(answers.feed(&flood).is_empty());
-        assert!(answers.pending.len() <= UNSENT);
-    }
+                assert_eq!(
+                    answers.feed(&query),
+                    b"\x1b]1337;ReportCellSize=16;8\x07".to_vec()
+                );
+            }
+        }
 
-    #[test]
-    fn two_queries_in_one_read_are_both_answered_in_order() {
-        let mut answers = Answers::new(Answering::AtOnce);
+        #[test]
+        fn a_terminal_that_never_answers_says_nothing_to_any_query() {
+            let mut answers = Answers::new(Answering::Never);
 
-        assert_eq!(
-            answers.feed(b"\x1b[6n\x1b[6n"),
-            b"\x1b[1;1R\x1b[1;1R".to_vec()
-        );
+            assert!(answers.feed(b"\x1b[6n\x1b[c").is_empty());
+            assert!(answers.feed(b"\x1b_Gi=31,a=q;AAAA\x1b\\").is_empty());
+        }
+
+        #[test]
+        fn an_unterminated_query_is_bounded_rather_than_collected() {
+            // A child that never closes a query is a probe that must keep reading.
+            // The held bytes are a tail, not a copy of everything the child wrote.
+            let mut answers = Answers::new(Answering::AtOnce);
+            let flood = vec![b'x'; UNSENT * 4];
+
+            assert!(answers.feed(b"\x1b_G").is_empty());
+            assert!(answers.feed(&flood).is_empty());
+            assert!(answers.pending.len() <= UNSENT);
+        }
+
+        #[test]
+        fn two_queries_in_one_read_are_both_answered_in_order() {
+            let mut answers = Answers::new(Answering::AtOnce);
+
+            assert_eq!(
+                answers.feed(b"\x1b[6n\x1b[6n"),
+                b"\x1b[1;1R\x1b[1;1R".to_vec()
+            );
+        }
     }
 }
