@@ -1413,7 +1413,7 @@ pub(super) fn during<T: Terminal>(
             // under the tail, which is the one part of the screen a turn
             // writing above it does not reach.
             Meant::Expand => {
-                opened.open(kept);
+                opened.open(kept, renderer.sourced());
                 moved |= opened.is_open();
             }
 

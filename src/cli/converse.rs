@@ -802,7 +802,7 @@ fn conversing<T: Terminal>(
         // Answered by the state that holds what it stands over, because the loop
         // that read the key holds neither. The box comes back either way, with the
         // line still in it.
-        if held.opened.asked(&asked, &held.kept) {
+        if held.opened.asked(&asked, &held.kept, renderer.sourced()) {
             continue;
         }
 

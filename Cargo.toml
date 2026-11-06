@@ -605,6 +605,9 @@ thiserror.workspace = true
 jiff.workspace = true
 
 [dev-dependencies]
+# Reads back what a drag over the window put on the clipboard, which the
+# terminal is sent as base64 text; std has no decoder for it.
+base64.workspace = true
 # Named by the integration tests alone, which drive the seams these two own from
 # outside: what an extension sweep finds, and what hosting a server comes to.
 # The shipped command line reaches both through the application crate and names

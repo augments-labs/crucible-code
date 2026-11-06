@@ -33,9 +33,11 @@
 //! as, which is kept beside what it was laid out as, and laid out again for a
 //! new width or a new glyph set; a new theme only paints the same rows in
 //! other colours. Both forms count against the ceiling, and a drawn block that
-//! falls off the top takes its source with it. Everything else is *set*: a box
-//! laid out by something that is gone is clipped rather than pretending it can
-//! be rebuilt.
+//! falls off the top takes its source with it. The source is lent, not copied:
+//! [`Record::source_of`] answers for a row and [`Record::sources`] walks the
+//! blocks, so what copies a block and what lists it read the record itself.
+//! Everything else is *set*: a box laid out by something that is gone is
+//! clipped rather than pretending it can be rebuilt.
 //!
 //! The opening is responsive for the same reason. It is drawn from facts read
 //! once at launch and kept for the whole session, so what laid it is still here
@@ -159,6 +161,15 @@ impl Drawn {
         self.rows = rows;
         self.laid.0 = columns;
         self.laid.1 = glyphs;
+    }
+
+    /// The block's source as line `line`, where its kind has one to read.
+    fn source(&self, line: usize) -> Option<Source<'_>> {
+        Some(Source {
+            line,
+            word: self.block.kind.named()?,
+            text: &self.block.source,
+        })
     }
 }
 
@@ -1052,6 +1063,17 @@ impl Record {
     }
 }
 
+/// A drawn block's source, borrowed from the record that keeps it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Source<'a> {
+    /// The line it is held as, numbered as the record numbers its lines.
+    pub line: usize,
+    /// What the block is called: `table`, `math`, `mermaid diagram`, `diff`.
+    pub word: &'static str,
+    /// The text it was written as.
+    pub text: &'a str,
+}
+
 /// What native mode hands over to the terminal's own scrollback.
 ///
 /// A line written into the reader's buffer is shown by the terminal from then
@@ -1059,6 +1081,34 @@ impl Record {
 /// under the one ceiling, because the terminal cannot be trusted to put what it
 /// holds at a new width, and a resize is answered by giving it all again.
 impl Record {
+    /// The source of the drawn block that shows at absolute display row
+    /// `row`, lent from the record.
+    ///
+    /// None for a row of anything else, for a block of a kind with no source
+    /// worth reading whole, and for a row the record no longer holds.
+    pub(crate) fn source_of(&self, row: usize) -> Option<&str> {
+        if row < self.before || self.last_row().is_none_or(|last| row > last) {
+            return None;
+        }
+        let line = self.spot_at(row).line;
+        match self.lines.get(line.checked_sub(self.gone)?)? {
+            Line::Drawn(drawn) => drawn.source(line).map(|source| source.text),
+            _ => None,
+        }
+    }
+
+    /// Every drawn block held that has a source to read, newest first.
+    pub(crate) fn sources(&self) -> impl Iterator<Item = Source<'_>> + '_ {
+        self.lines
+            .iter()
+            .enumerate()
+            .rev()
+            .filter_map(|(held, line)| match line {
+                Line::Drawn(drawn) => drawn.source(self.gone + held),
+                _ => None,
+            })
+    }
+
     /// The first line held that has not gone out, numbered as
     /// [`Self::lines`] numbers them.
     pub(crate) fn first(&self) -> usize {
@@ -2346,6 +2396,87 @@ mod tests {
             ),
             closed: true,
         }
+    }
+
+    /// A block of `kind` written as `source`.
+    fn block(kind: markdown::Kind, source: &str) -> Block {
+        Block {
+            kind,
+            source: source.to_owned(),
+            closed: true,
+        }
+    }
+
+    /// The absolute display rows of the record's `line`.
+    fn rows_of(record: &Record, line: usize) -> Range<usize> {
+        let start: usize = (0..line).map(|before| record.folded(before).len()).sum();
+        start..start + record.folded(line).len()
+    }
+
+    #[test]
+    fn every_row_of_a_drawn_block_gives_its_source_and_prose_rows_give_none() {
+        let mut record = Record::new(60);
+        record.write(Slot::Plain, "before\n", None);
+        record.drawn(table("alpha"), Glyphs::Unicode, Theme::Dark);
+        record.write(Slot::Plain, "after\n", None);
+
+        let rows = rows_of(&record, 1);
+        assert!(rows.len() > 1, "a table draws more than a row: {rows:?}");
+        for row in rows {
+            assert_eq!(
+                record.source_of(row),
+                Some(table("alpha").source.as_str()),
+                "row {row}"
+            );
+        }
+        assert_eq!(record.source_of(0), None);
+        assert_eq!(record.source_of(rows_of(&record, 2).start), None);
+        assert_eq!(record.source_of(9_999), None);
+    }
+
+    #[test]
+    fn a_rule_has_no_source_to_give() {
+        let mut record = Record::new(40);
+        record.drawn(
+            block(markdown::Kind::Rule, "---\n"),
+            Glyphs::Unicode,
+            Theme::Dark,
+        );
+
+        assert_eq!(record.lines(), 1);
+        assert_eq!(record.source_of(0), None);
+        assert_eq!(record.sources().count(), 0);
+    }
+
+    #[test]
+    fn the_sources_are_walked_newest_first_by_the_word_they_are_called() {
+        let mut record = Record::new(60);
+        record.drawn(table("alpha"), Glyphs::Unicode, Theme::Dark);
+        record.write(Slot::Plain, "between\n", None);
+        record.drawn(
+            block(markdown::Kind::DisplayMath, "$$\nx^2\n$$\n"),
+            Glyphs::Unicode,
+            Theme::Dark,
+        );
+        record.drawn(
+            block(markdown::Kind::Diff, "```diff\n-a\n+b\n```\n"),
+            Glyphs::Unicode,
+            Theme::Dark,
+        );
+
+        let walked: Vec<(usize, &str, &str)> = record
+            .sources()
+            .map(|source| (source.line, source.word, source.text))
+            .collect();
+
+        assert_eq!(
+            walked,
+            [
+                (3, "diff", "```diff\n-a\n+b\n```\n"),
+                (2, "math", "$$\nx^2\n$$\n"),
+                (0, "table", table("alpha").source.as_str()),
+            ]
+        );
     }
 
     /// Every row the record holds, as plain text.

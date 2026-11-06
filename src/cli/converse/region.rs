@@ -123,6 +123,36 @@ pub(super) fn stand<T: Terminal, S>(
     stand_while(renderer, style, state, laid, keys, |_| Ok(()))
 }
 
+/// [`stand`], for a component that reads the renderer as it is laid out.
+///
+/// `laid` is given the renderer beside the state, to borrow from what it
+/// holds for as long as the rows are being made: the view of the blocks the
+/// transcript drew reads their sources where the record keeps them, and the
+/// loop owns the renderer, so a closure that captured it could not be given
+/// it again to draw with. What `laid` lends from it ends when it answers.
+///
+/// # Errors
+///
+/// [`Fatal::Terminal`] if the terminal could not be drawn on or read from.
+pub(super) fn stand_reading<T: Terminal, S>(
+    renderer: &mut Renderer<T>,
+    style: impl Fn(&S) -> Style,
+    state: &mut S,
+    laid: impl FnMut(&Renderer<T>, &mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
+    keys: impl Fn(Pressed, &mut S) -> Moved,
+) -> Result<Ended, Fatal> {
+    standing(
+        renderer,
+        Room::Share,
+        style,
+        state,
+        laid,
+        keys,
+        |_| Ok(()),
+        None::<(Duration, fn(&mut S) -> Moved)>,
+    )
+}
+
 /// [`stand`], with something to do on each pass before a key is waited on.
 ///
 /// Between turns there is nothing to do — nothing moves while nobody types —
@@ -141,7 +171,7 @@ pub(super) fn stand_while<T: Terminal, S>(
     renderer: &mut Renderer<T>,
     style: impl Fn(&S) -> Style,
     state: &mut S,
-    laid: impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
+    mut laid: impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
     keys: impl Fn(Pressed, &mut S) -> Moved,
     while_waiting: impl FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<Ended, Fatal> {
@@ -150,7 +180,7 @@ pub(super) fn stand_while<T: Terminal, S>(
         Room::Share,
         style,
         state,
-        laid,
+        |_, state, columns, rows| laid(state, columns, rows),
         keys,
         while_waiting,
         None::<(Duration, fn(&mut S) -> Moved)>,
@@ -167,7 +197,7 @@ pub(super) fn stand_in<T: Terminal, S>(
     room: Room,
     style: impl Fn(&S) -> Style,
     state: &mut S,
-    laid: impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
+    mut laid: impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
     keys: impl Fn(Pressed, &mut S) -> Moved,
 ) -> Result<Ended, Fatal> {
     standing(
@@ -175,7 +205,7 @@ pub(super) fn stand_in<T: Terminal, S>(
         room,
         style,
         state,
-        laid,
+        |_, state, columns, rows| laid(state, columns, rows),
         keys,
         |_| Ok(()),
         None::<(Duration, fn(&mut S) -> Moved)>,
@@ -196,7 +226,7 @@ pub(super) fn stand_watching<T: Terminal, S>(
     renderer: &mut Renderer<T>,
     style: impl Fn(&S) -> Style,
     state: &mut S,
-    laid: impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
+    mut laid: impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
     keys: impl Fn(Pressed, &mut S) -> Moved,
     beat: Duration,
     watch: impl FnMut(&mut S) -> Moved,
@@ -206,7 +236,7 @@ pub(super) fn stand_watching<T: Terminal, S>(
         Room::Share,
         style,
         state,
-        laid,
+        |_, state, columns, rows| laid(state, columns, rows),
         keys,
         |_| Ok(()),
         Some((beat, watch)),
@@ -229,7 +259,8 @@ pub(super) fn unheard<T: Terminal>(renderer: &mut Renderer<T>) -> Result<(), Fat
     Ok(())
 }
 
-/// The loop behind [`stand_while`], [`stand_in`] and [`stand_watching`].
+/// The loop behind [`stand_while`], [`stand_in`], [`stand_watching`] and
+/// [`stand_reading`].
 #[allow(clippy::too_many_arguments)]
 // Eight for the reason `stand_while` gives its six, and the two more are the
 // room `stand_in` lays a component out in and the watch a component that
@@ -239,7 +270,7 @@ fn standing<T: Terminal, S>(
     room: Room,
     style: impl Fn(&S) -> Style,
     state: &mut S,
-    mut laid: impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
+    mut laid: impl FnMut(&Renderer<T>, &mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
     keys: impl Fn(Pressed, &mut S) -> Moved,
     while_waiting: impl FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
     mut watching: Option<(Duration, impl FnMut(&mut S) -> Moved)>,
@@ -396,18 +427,18 @@ fn stood<T: Terminal>(renderer: &Renderer<T>, row: usize, column: usize) -> Opti
 /// out again a row taller each time until it stands — the smallest height it
 /// draws itself at, found without the component naming it. Where the room is
 /// the window the second layout never runs.
-fn fitted<S>(
-    renderer: &Renderer<impl Terminal>,
+fn fitted<T: Terminal, S>(
+    renderer: &Renderer<T>,
     room: Room,
     state: &mut S,
-    laid: &mut impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
+    laid: &mut impl FnMut(&Renderer<T>, &mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
 ) -> (Vec<Row>, Option<Caret>) {
     let columns = renderer.columns();
     let mut rows = room.rows(renderer);
-    let mut drawn = laid(state, columns, rows);
+    let mut drawn = laid(renderer, state, columns, rows);
     while drawn.0.is_empty() && rows < renderer.rows() {
         rows += 1;
-        drawn = laid(state, columns, rows);
+        drawn = laid(renderer, state, columns, rows);
     }
     drawn
 }

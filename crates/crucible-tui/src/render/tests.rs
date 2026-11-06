@@ -4062,3 +4062,200 @@ fn a_held_block_past_its_cap_names_its_refusal_in_ascii_with_the_ascii_dot() {
         "{rows:#?}"
     );
 }
+
+// A drag over a drawn block takes the block as it was written.
+
+/// A table, as a model wrote it.
+const WRITTEN_TABLE: &str = "| name | job |\n|---|---|\n| alpha | first |\n| beta | second |\n";
+
+/// Display math, as a model wrote it.
+const WRITTEN_MATH: &str = "$$\nx^2 + y^2\n$$\n";
+
+/// Every row of a window `height` tall, blank ones included, so a row's index
+/// is the window row a pointer names.
+fn window(drawn: &Drawn, height: usize) -> Vec<String> {
+    (0..height)
+        .map(|row| drawn.screen().row(row).to_owned())
+        .collect()
+}
+
+/// The window row of `rows` whose text contains `needle`, first one first.
+fn row_containing(rows: &[String], needle: &str) -> usize {
+    rows.iter()
+        .position(|row| row.contains(needle))
+        .unwrap_or_else(|| panic!("no row contains {needle:?}: {rows:#?}"))
+}
+
+#[test]
+fn a_drag_touching_one_row_of_a_drawn_table_copies_the_whole_source() {
+    let mut drawn = reading(60, 20);
+    drawn.answer(WRITTEN_TABLE);
+    let rows = window(&drawn, 20);
+    let row = row_containing(&rows, "alpha");
+    drawn.take();
+
+    let wrote = drag(&mut drawn, (row, 0), (row, 8));
+
+    assert!(
+        wrote.contains(&onto_the_clipboard(WRITTEN_TABLE)),
+        "{rows:#?} gave {wrote:?}"
+    );
+}
+
+#[test]
+fn a_drag_over_a_whole_drawn_block_copies_its_source_once() {
+    let mut drawn = reading(60, 20);
+    drawn.answer(WRITTEN_TABLE);
+    let rows = window(&drawn, 20);
+    let first = row_containing(&rows, "name");
+    let last = row_containing(&rows, "beta");
+    assert!(last > first + 1, "the table drew few rows: {rows:#?}");
+    drawn.take();
+
+    let wrote = drag(&mut drawn, (first, 0), (last, 59));
+
+    assert!(
+        wrote.contains(&onto_the_clipboard(WRITTEN_TABLE)),
+        "{rows:#?} gave {wrote:?}"
+    );
+}
+
+#[test]
+fn a_drag_from_prose_into_a_drawn_block_copies_the_prose_and_then_the_source() {
+    let mut drawn = reading(60, 20);
+    drawn.answer(&format!("before\n\n{WRITTEN_TABLE}\nafter\n"));
+    let rows = window(&drawn, 20);
+    let from = row_containing(&rows, "before");
+    let into = row_containing(&rows, "alpha");
+    drawn.take();
+
+    let wrote = drag(&mut drawn, (from, 0), (into, 3));
+
+    assert!(
+        wrote.contains(&onto_the_clipboard(&format!("before\n\n{WRITTEN_TABLE}"))),
+        "{rows:#?} gave {wrote:?}"
+    );
+}
+
+#[test]
+fn a_drag_across_two_drawn_blocks_copies_both_sources_in_order_with_the_prose_between() {
+    let mut drawn = reading(60, 30);
+    drawn.answer(&format!(
+        "{WRITTEN_TABLE}\nbetween\n\n{WRITTEN_MATH}\nafter\n"
+    ));
+    let rows = window(&drawn, 30);
+    let from = row_containing(&rows, "alpha");
+    let to = row_containing(&rows, "after");
+    drawn.take();
+
+    let wrote = drag(&mut drawn, (from, 2), (to, 3));
+
+    assert!(
+        wrote.contains(&onto_the_clipboard(&format!(
+            "{WRITTEN_TABLE}\nbetween\n\n{WRITTEN_MATH}\nafte"
+        ))),
+        "{rows:#?} gave {wrote:?}"
+    );
+}
+
+#[test]
+fn a_drag_over_display_math_copies_the_source_with_its_closing_break() {
+    let mut drawn = reading(60, 20);
+    drawn.answer(WRITTEN_MATH);
+    let rows = window(&drawn, 20);
+    let last = rows.iter().rposition(|row| !row.trim().is_empty()).unwrap();
+    drawn.take();
+
+    let wrote = drag(&mut drawn, (0, 0), (last, 59));
+
+    assert!(
+        wrote.contains(&onto_the_clipboard(WRITTEN_MATH)),
+        "{rows:#?} gave {wrote:?}"
+    );
+}
+
+#[test]
+fn a_drag_over_a_rule_copies_what_is_drawn_and_no_source() {
+    let mut drawn = reading(30, 12);
+    drawn.answer("above\n\n---\n\nbelow\n");
+    let rows = window(&drawn, 12);
+    let above = row_containing(&rows, "above");
+    let below = row_containing(&rows, "below");
+    drawn.take();
+
+    let wrote = drag(&mut drawn, (above, 0), (below, 29));
+
+    let rule = "─".repeat(30);
+    assert!(
+        wrote.contains(&onto_the_clipboard(&format!("above\n\n{rule}\n\nbelow"))),
+        "{rows:#?} gave {wrote:?}"
+    );
+}
+
+#[test]
+fn a_drag_over_a_drawn_block_that_scrolled_off_the_window_still_copies_its_source_once() {
+    let mut drawn = reading(60, 8);
+    drawn.answer(WRITTEN_TABLE);
+    for line in 0..10 {
+        drawn.commit(&format!("line {line}")).unwrap();
+    }
+    assert!(drawn.render.scrolled(-100).unwrap());
+    let rows = window(&drawn, 8);
+    let beta = row_containing(&rows, "beta");
+    drawn.take();
+
+    drawn
+        .took(Pressed::Clicked {
+            row: beta,
+            column: 0,
+        })
+        .unwrap();
+    drawn.took(Pressed::Dragged { row: 7, column: 5 }).unwrap();
+    assert!(drawn.render.scrolled(5).unwrap());
+    drawn.took(Pressed::Dragged { row: 7, column: 5 }).unwrap();
+    drawn.take();
+    drawn.took(Pressed::Released { row: 7, column: 5 }).unwrap();
+    let wrote = drawn.take();
+
+    let lines: Vec<String> = (0..=9).map(|line| format!("line {line}")).collect();
+    assert!(
+        wrote.contains(&onto_the_clipboard(&format!(
+            "{WRITTEN_TABLE}{}",
+            lines.join("\n")
+        ))),
+        "{rows:#?} gave {wrote:?}"
+    );
+}
+
+#[test]
+fn the_drawn_blocks_are_listed_newest_first_each_with_the_source_it_was_written_as() {
+    let mut drawn = reading(60, 20);
+    drawn.answer(&format!(
+        "before\n\n{WRITTEN_TABLE}\nbetween\n\n{WRITTEN_MATH}\nafter\n"
+    ));
+
+    let listed: Vec<(&str, &str)> = drawn
+        .sources()
+        .map(|source| (source.word, source.text))
+        .collect();
+    assert_eq!(listed, [("math", WRITTEN_MATH), ("table", WRITTEN_TABLE)]);
+
+    // A bound a later list can be held to: past the newest of them, and none
+    // of theirs past it.
+    let bound = drawn.sourced();
+    assert!(bound > 0);
+    assert!(drawn.sources().all(|source| source.line < bound));
+    assert_eq!(
+        drawn.sources().next().map(|source| source.line + 1),
+        Some(bound)
+    );
+}
+
+#[test]
+fn prose_and_a_rule_list_no_source_and_bound_nothing() {
+    let mut drawn = Drawn::new(60, 20);
+    drawn.answer("just prose\n\n---\n\nand a rule above it\n");
+
+    assert_eq!(drawn.sources().count(), 0);
+    assert_eq!(drawn.sourced(), 0);
+}

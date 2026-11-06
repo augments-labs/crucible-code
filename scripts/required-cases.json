@@ -4811,6 +4811,214 @@
         "macos",
         "windows"
       ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SOURCE-COPY",
+      "family": "transcript-sources",
+      "obligation": "A drag that touches one row of a drawn table puts the whole source of that table on the clipboard, as it was written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_drag_touching_one_row_of_a_drawn_table_copies_the_whole_source",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "a1499d5dff46e3ef816df0216f82e7af058088af6a6cd1a28aedd0bb37bc9048",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SOURCE-COPY-TWO-BLOCKS",
+      "family": "transcript-sources",
+      "obligation": "A drag across two drawn blocks copies both sources, in order with the prose between them.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_drag_across_two_drawn_blocks_copies_both_sources_in_order_with_the_prose_between",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "d72649879f10268f9d344ea933d8fae3df8e1882c946ae1722a6c4c640ce0477",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SOURCE-COPY-RULE",
+      "family": "transcript-sources",
+      "obligation": "A drag over a rule copies what is drawn, because a rule has no source apart from its drawing.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_drag_over_a_rule_copies_what_is_drawn_and_no_source",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "12494ee7e854498887534a1fbc95d91b1f3820e24633da2cdaa2e0f1c2460cb8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SOURCE-LIST",
+      "family": "transcript-sources",
+      "obligation": "The renderer lends every drawn block's source, newest first, under the word the block is drawn as.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::the_drawn_blocks_are_listed_newest_first_each_with_the_source_it_was_written_as",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "54d083cab18efacfa05d65eeb604cd93e832d083228e5c7c09374ca971161ec5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SOURCE-LIST-NATIVE",
+      "family": "transcript-sources",
+      "obligation": "A native session keeps and lends the same sources as a fullscreen one.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_session_lists_the_drawn_blocks_newest_first_each_with_its_written_source",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "7ccb8f7966f808719b6dc0f518f1abde9827dd2abeddf1bef61e2e9246e726f4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SOURCE-FOOTER",
+      "family": "transcript-sources",
+      "obligation": "The Ctrl+O footer counts results among the results and sources among the sources, and keeps its words for results.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "expanded::tests::the_footer_counts_the_results_among_the_results_and_the_sources_among_the_sources",
+      "source": "crates/crucible-tui/src/expanded/tests.rs",
+      "body_sha256": "c42047385201678a74f109a43059526b4a3b9d7f26ff6a6568c2e3b68ca6e6d2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SOURCE-VIEW",
+      "family": "transcript-sources",
+      "obligation": "The Ctrl+O view stands the sources after the cut results, newest first, each under its word.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::expanding::tests::the_sources_stand_after_the_results_newest_first_each_under_its_word",
+      "source": "src/cli/converse/expanding/tests.rs",
+      "body_sha256": "42657d6503ae5013efc35d7c4ecbec31b99a5c9f2e1161d9a64d3317a22984aa",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SOURCE-VIEW-BOUND",
+      "family": "transcript-sources",
+      "obligation": "A block drawn after the Ctrl+O view opened is not let in under the reader.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::expanding::tests::a_block_drawn_after_the_view_opened_is_not_let_in_underneath_the_reader",
+      "source": "src/cli/converse/expanding/tests.rs",
+      "body_sha256": "4ecb636f875e766b57037a7bcd811aae855e0f4a0d954a4db39fae14bf7cb254",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SOURCE-SELECTION-80-FULLSCREEN",
+      "family": "transcript-sources",
+      "obligation": "A drag over one row of the corpus's drawn table puts the corpus's table source on a real terminal's clipboard, byte for byte, in fullscreen mode.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_tables_selection_80_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "640170d90aefb5d6a40a9446cb36bd3932720336b9188f1c7ac717993171b638",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SOURCES-80-FULLSCREEN",
+      "family": "transcript-sources",
+      "obligation": "Ctrl+O on a real terminal in fullscreen mode lists the corpus's tables as they were written, newest first, and steps between them.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_sources_80_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "f48e4d35960f1400e2fc255d6483a5b6722826cc688d9e5d49aa2940bb347923",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SOURCES-80-NATIVE",
+      "family": "transcript-sources",
+      "obligation": "Ctrl+O on a real terminal in native mode lists the corpus's tables as they were written, newest first, and leaves no row of the view behind.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_sources_80_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "0c3afa06d4d3426a1f33d0b757da86336c74555513b2368674b6106d0862a0c5",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CLIPBOARD-READ",
+      "family": "transcript-sources",
+      "obligation": "The whole-screen window keeps a request to copy to the clipboard as written and refuses a request to read it back.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "screen::tests::a_request_to_put_text_on_the_clipboard_is_kept_and_no_refusal",
+      "source": "tests/whole_screen/screen.rs",
+      "body_sha256": "69a9be967ef5e4036a256e01a1bac9a6f43e8e578dd52db01e6310d860af4e2a",
+      "platforms": [
+        "linux"
+      ]
     }
   ]
 }

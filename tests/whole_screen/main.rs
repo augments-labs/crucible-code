@@ -7463,3 +7463,110 @@ fn transcript_code_80_native_ascii() {
     window.assert_never_alternate();
     insta::assert_snapshot!(window.picture());
 }
+
+#[test]
+fn transcript_tables_selection_80_fullscreen() {
+    // A drag that touches one row of a drawn table puts the whole table, as the
+    // model wrote it, on the clipboard: the bars, the delimiter row and the
+    // newline that ends it, not the cells the window shows. It is fullscreen
+    // only because a native window's drag is the terminal's own, which copies
+    // the cells it was drawn in and sends crucible nothing to answer.
+    let vendor = Vendor::answering(transcript::said("tables"));
+    let mut window = Watched::in_default_colours(
+        "transcript-tables-selection-80-fullscreen",
+        (80, 66),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    let picture = window.picture();
+    let alpha = picture
+        .lines()
+        .skip(1)
+        .position(|row| row.contains("alpha"))
+        .expect("the first table's alpha row is on screen");
+    window.drags((alpha, 4), (alpha, 12));
+
+    let table = transcript::block_of("tables", "| name | what it does | since |");
+    assert!(table.contains("| --- | --- | --- |\n"), "{table:?}");
+    assert_eq!(
+        transcript::copied(window.commands()),
+        [table],
+        "{}",
+        window.picture()
+    );
+}
+
+#[test]
+fn transcript_sources_80_fullscreen() {
+    // Ctrl+O lists the source of every table the answer drew, the newest first,
+    // each as it was written: the delimiter row the window never shows is the
+    // proof that the view reads the source and not the drawing.
+    let vendor = Vendor::answering(transcript::said("tables"));
+    let mut window = Watched::in_default_colours(
+        "transcript-sources-80-fullscreen",
+        (80, 12),
+        Some(&vendor),
+        None,
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.types_until("\x0f", "source 1 of 2");
+    let opened = window.picture();
+    assert!(
+        opened.contains("| region | owner | window | rows | scrollback | theme | glyphs | notes |"),
+        "{opened}"
+    );
+    assert!(!opened.contains("alpha"), "{opened}");
+    insta::assert_snapshot!("transcript_sources_80_fullscreen", opened);
+
+    window.types_until("\x1b[C", "source 2 of 2");
+    let first = window.picture();
+    assert!(first.contains("| --- | --- | --- |"), "{first}");
+    assert!(
+        first.contains("| alpha | reads the markdown out of a stream | 0.1 |"),
+        "{first}"
+    );
+    insta::assert_snapshot!("transcript_sources_80_fullscreen_second", first);
+
+    window.types("\x1b");
+    let closed = window.picture();
+    assert!(!closed.contains("source 2 of 2"), "{closed}");
+    assert!(closed.contains(transcript::END), "{closed}");
+}
+
+#[test]
+fn transcript_sources_80_native() {
+    // The same view where the terminal keeps the scrollback: the way to a
+    // drawn block's source in native mode, where nothing in the transcript can
+    // be selected or clicked by crucible, and standing it leaves no row of it
+    // behind when it closes.
+    let vendor = Vendor::answering(transcript::said("tables"));
+    let mut window = Watched::drawn_in_colour(
+        "transcript-sources-80-native",
+        (80, 20),
+        &vendor,
+        None,
+        ("unicode", "native", Profile::default()),
+    );
+    window.types_until(transcript::ASK, transcript::END);
+
+    window.types_until("\x0f", "source 1 of 2");
+    let opened = window.picture();
+    assert!(
+        opened.contains("| region | owner | window | rows | scrollback | theme | glyphs | notes |"),
+        "{opened}"
+    );
+    insta::assert_snapshot!("transcript_sources_80_native", opened);
+
+    window.types_until("\x1b[C", "source 2 of 2");
+    let first = window.picture();
+    assert!(first.contains("| --- | --- | --- |"), "{first}");
+    insta::assert_snapshot!("transcript_sources_80_native_second", first);
+
+    window.types("\x1b");
+    let closed = window.picture();
+    assert!(!closed.contains("source 2 of 2"), "{closed}");
+    window.assert_never_alternate();
+}
