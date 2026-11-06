@@ -1066,3 +1066,61 @@ fn a_recorded_state_this_build_refuses_never_lets_an_id_the_log_names_out_again(
         "an id the log names was handed out again"
     );
 }
+
+#[test]
+fn an_answer_accepted_during_a_pass_cut_short_leaves_the_cut_short_ending_standing() {
+    for cut in [
+        StopReason::OutOfTokens,
+        StopReason::Filtered,
+        StopReason::Paused,
+        StopReason::Unknown,
+    ] {
+        let held = Deferred::default();
+        let scripted = deferring(
+            vec![
+                calling("c1", "ask", "{}"),
+                vec![Delta::Text("as I was say".into()), Delta::Stopped(cut)],
+                saying("with the answer in hand"),
+            ],
+            &held,
+            Recording::nowhere(),
+        );
+        let mut runner = scripted.runner;
+        let settling = Settling {
+            watching: scripted.events,
+            held: held.clone(),
+        };
+        let run = runner.starting(
+            &settling,
+            &scripted.cancel,
+            &scripted.steer,
+            &scripted.aside,
+        );
+        let mut says = scripted.says;
+
+        let turned = runner
+            .turn("plan it", Box::new([]), &mut says, &run)
+            .awaited()
+            .map(ran);
+
+        assert_eq!(
+            turned.expect("a turn"),
+            cut,
+            "a further pass replaced the cut-short ending"
+        );
+        assert_eq!(scripted.sent.lock().unwrap().len(), 2, "{cut:?}");
+        assert!(answers(runner.transcript()).is_empty(), "{cut:?}");
+        assert!(held.any_settled(), "the answer was lost: {cut:?}");
+
+        runner
+            .turn("go on", Box::new([]), &mut says, &run)
+            .awaited()
+            .map(ran)
+            .expect("the next turn");
+        assert_eq!(
+            answers(runner.transcript()).len(),
+            1,
+            "the next turn's first pass delivers it: {cut:?}"
+        );
+    }
+}

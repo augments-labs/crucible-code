@@ -525,9 +525,10 @@ impl<'a> AgentLoop<'a> {
             if let Some(stop) = Runner::over(said, &calls) {
                 let ending = self.ending(text, continuation, &calls, stop).await?;
                 // An answer accepted while this pass ran has not reached the
-                // model, and the next pass is where it does: the turn goes on
-                // rather than leaving the person's answer for a prompt they
-                // may never type.
+                // model. After an answer that finished, the next pass is where
+                // it does. After any other ending it stays settled in the
+                // registry, which says so through `any_settled`, and the next
+                // turn's first pass delivers it.
                 if ending.carries_on() && self.runner.undelivered(run.ancestry()) {
                     continue;
                 }
