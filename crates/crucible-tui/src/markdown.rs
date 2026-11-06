@@ -164,6 +164,10 @@ pub struct Holding {
 
 impl Holding {
     /// The row, drawn for a window `columns` wide and never wider.
+    ///
+    /// Structural, as a component's marks are: it says what the reader is
+    /// waiting for and is none of the answer, so a drag over it lights none of
+    /// it and copies none of it.
     #[must_use]
     pub fn row(&self, columns: usize, glyphs: Glyphs) -> Row {
         let lines = match self.lines {
@@ -176,7 +180,9 @@ impl Holding {
             self.held.word(),
             glyphs.dot(),
         );
-        Row::new().then(Slot::Quiet, said).clipped(columns)
+        Row::new()
+            .then_structural(Slot::Quiet, said)
+            .clipped(columns)
     }
 }
 

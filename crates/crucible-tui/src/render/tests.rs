@@ -3390,7 +3390,7 @@ fn display_math_counts_and_opens_what_it_streamed_with() {
 }
 
 // A move that brings a held band back to its foot owes the frame that shows
-// the held row again.
+// the held row again, and a drag reaching that row takes none of its words.
 
 /// The held picture's last row.
 const HELD_ROW: &str = "◇ drawing a formula · 2 lines so far";
@@ -3437,5 +3437,22 @@ fn a_thumb_held_back_to_the_foot_while_a_block_is_held_draws_it_held_again() {
         rows.last().map(|row| row.trim_end_matches([' ', '│', '┃'])),
         Some(HELD_ROW.trim_end()),
         "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_drag_reaching_the_held_row_copies_none_of_its_words() {
+    let (mut drawn, _) = holding_under_thirty_lines();
+    drawn.take();
+    let wrote = drag(&mut drawn, (0, 0), (9, 39));
+    let shown = (21..30)
+        .map(|line| format!("line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    // The held row comes as a row with no words on it, as a blank row under
+    // the last line would.
+    assert!(
+        wrote.contains(&onto_the_clipboard(&format!("{shown}\n"))),
+        "{wrote:?}"
     );
 }

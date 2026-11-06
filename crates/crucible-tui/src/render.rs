@@ -936,10 +936,14 @@ impl<T: Terminal> Renderer<T> {
     }
 
     /// The transcript band as it stands, for placing a drag's ends.
+    ///
+    /// The rows the record is drawn in: a held block's row under them is no
+    /// row of the record, and stands as a row outside the band does.
     fn view(&self, bands: &Bands) -> View {
+        let rows = self.record_rows(bands);
         View {
-            band: bands.transcript.clone(),
-            top: self.record.top_row(self.record_rows(bands)),
+            band: bands.transcript.start..bands.transcript.start + rows,
+            top: self.record.top_row(rows),
         }
     }
 

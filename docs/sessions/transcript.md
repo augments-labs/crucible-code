@@ -29,7 +29,8 @@ With the ASCII glyph set the row reads `o drawing a table - 4 lines so far`.
 The row names a formula, a mermaid diagram or a diff the same way. It shows in
 both [`output.screen`](../configuration/configuration.md#output) modes, in the
 full screen while you are reading at the foot of the transcript, and the block
-takes its place once the block closes.
+takes its place once the block closes. A selection dragged over the row
+neither highlights nor copies its words.
 
 A rule, a line of `---`, `***` or `___` on its own, is never held. It is drawn
 across the window at once.
