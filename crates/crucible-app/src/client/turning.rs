@@ -66,14 +66,16 @@ pub enum Ended {
 ///
 /// An answer to questions the model asked without waiting is taken here while
 /// no turn runs. One from a client that did not claim the questions, or to a
-/// batch not waiting, is refused before anything else. It is then held as a
+/// batch not waiting, a batch of a session the conversation has left
+/// included, is refused before anything else. It is then held as a
 /// prompt is, by what is missing and by the content-use question, since the
 /// turn it starts sends what the answer says; then the batch is settled, and
 /// a turn with no words of its own delivers it
 /// ([`Conversation::answering`]), whose ending is the answer. An answer that
 /// was not taken is [`Ended::Answered`], and nothing ran. On an installed
-/// agent's route the batch is settled and no turn starts: the registry is the
-/// conversation's own runner's, whose next turn delivers it.
+/// agent's route nothing waits, since moving onto it left the session's
+/// questions behind, so an answer there is refused as stale and starts no
+/// turn.
 ///
 /// A prompt turn that ends cut short with an answer settled during it and not
 /// delivered, which its last answer could not make room for, is followed at
@@ -95,12 +97,15 @@ pub async fn turn(
     // written for it. A batch settled by someone else meanwhile is the
     // settling's to refuse, below.
     let answering = match request.command() {
-        Command::Answer { id, .. } => {
-            match super::answering::taking(request.capabilities(), *id, conversation.deferred()) {
-                Ok(held) => Some(held),
-                Err(refusal) => return Ended::Refused(refusal),
-            }
-        }
+        Command::Answer { era, id, .. } => match super::answering::taking(
+            request.capabilities(),
+            era,
+            *id,
+            conversation.questions(),
+        ) {
+            Ok(held) => Some(held),
+            Err(refusal) => return Ended::Refused(refusal),
+        },
         _ => None,
     };
     // Before anything else, and at this door so that every client is answered

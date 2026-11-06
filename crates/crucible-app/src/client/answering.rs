@@ -1,28 +1,160 @@
 //! The command that answers questions the model asked without waiting.
 //!
-//! The model's questions wait in a [`Deferred`] registry the front end
-//! supplied at startup and keeps a clone of, as it keeps the turn's `Cancel`.
-//! [`answer`] settles a batch there and nothing else, so it needs no
-//! conversation: it is the door for an answer while a turn has the
+//! The model's questions wait in a registry held by [`Questions`], a handle
+//! the front end supplied at startup and keeps a clone of, as it keeps the
+//! turn's `Cancel`. The front end reads what waits through it and answers
+//! through the doors here; it can register, settle, take, clear or restore
+//! nothing itself. [`answer`] settles a batch there and nothing else, so it
+//! needs no conversation: it is the door for an answer while a turn has the
 //! conversation, and the running turn delivers it. While no turn runs,
 //! [`turn`](super::turn) takes the same command and starts the turn that
 //! delivers it.
+//!
+//! A batch's id is unique within its session, not across sessions, so the
+//! handle keeps beside the registry the [`Era`] the batches belong to: the
+//! session's identity where it records, otherwise a stint number minted here.
+//! Each time the conversation replaces its session it sets the era to the
+//! incoming session's and empties the registry, under the handle's one lock,
+//! before the swap; the session picked up brings its own waiting batches back
+//! at its first turn's first assembly. An answer is settled only under that
+//! same lock and only where its era is the handle's, so an answer shown in
+//! one session never settles a batch of another, though both may be `q0`.
+//! The same session resumed is the same era: it never hands one id to two
+//! batches, so the batch its log brings back is the one the answer was shown.
+//!
+//! What waits is read the same way, the era and the set together under the
+//! lock, so a report converted after the conversation has moved on shows a
+//! pair that held at one moment and never one session's batches under
+//! another's era. The lock is taken before the registry's own, which the
+//! registry takes per call and never holds while the runner posts.
 //!
 //! An answer settles questions. It is no ruling on a pending action and no yes
 //! to a route whose vendor uses what is sent: nothing here reaches the
 //! permission engine or the content-use hold.
 
+use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
+use crucible_builtins::AskUser;
 use crucible_client_api::{
-    AnswerOutcome, Capabilities, Capability, Command, ErrorCode, Outcome, Picked, Refusal, Replied,
-    Request, Said, Text,
+    AnswerOutcome, Capabilities, Capability, Command, Era, ErrorCode, Outcome, Picked, Refusal,
+    Replied, Request, Said, Text,
 };
 use crucible_tools::{Deferred, Unsettled};
-use crucible_types::{Answered, QuestionId, Reply};
+use crucible_types::{Answered, Batch, QuestionId, Reply, SessionId};
+
+/// The front end's hold on the model's questions asked without waiting, and
+/// on which session they belong to, as the module says.
+///
+/// Cloned to share: every clone is the same registry and the same era.
+#[derive(Clone)]
+pub struct Questions(Arc<Shared>);
+
+/// What every clone of one [`Questions`] shares.
+struct Shared {
+    /// The session the registry's batches belong to. Locked around every
+    /// change of era, every settling and every read of what waits, so each
+    /// sees the era and the registry as they stood together.
+    era: Mutex<Era>,
+    /// The batches. Its own lock is taken per call and inside `era`'s.
+    held: Deferred,
+}
+
+impl Questions {
+    /// A handle on an empty registry, in a stint of its own until the
+    /// conversation it is given to names its session.
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Arc::new(Shared {
+            era: Mutex::new(stint()),
+            held: Deferred::default(),
+        }))
+    }
+
+    /// The question tool `tool`, holding the questions it is asked not to
+    /// wait on here. Given to the conversation too, by
+    /// [`Conversation::holding`](crate::Conversation::holding), whose runner
+    /// delivers what is settled.
+    #[must_use]
+    pub fn asking(&self, tool: AskUser) -> AskUser {
+        tool.deferring(self.0.held.clone())
+    }
+
+    /// The registry itself, for what the application wires to it: the
+    /// runner that restores and delivers, and the conversation's look at
+    /// whether anything settled waits to be delivered.
+    pub(crate) fn held(&self) -> &Deferred {
+        &self.0.held
+    }
+
+    /// The era and every batch waiting, oldest first, as they stood together.
+    #[must_use]
+    pub fn waiting(&self) -> (Era, Vec<Batch>) {
+        let era = self.era();
+        (Era::clone(&era), self.0.held.waiting())
+    }
+
+    /// Moves the questions to the session `incoming` names, or to a stint of
+    /// its own where it records nothing: the era becomes the incoming
+    /// session's and every batch, waiting or settled, is forgotten, together.
+    pub(crate) fn moved(&self, incoming: Option<&SessionId>) {
+        let mut era = self.era();
+        *era = incoming.map_or_else(stint, |session| Era::Session(session.clone()));
+        self.0.held.clear();
+    }
+
+    /// Whether a batch of `era` numbered `id` waits.
+    pub(crate) fn waits(&self, era: &Era, id: QuestionId) -> bool {
+        let current = self.era();
+        *current == *era && self.0.held.waiting().iter().any(|batch| batch.id() == id)
+    }
+
+    /// Settles the batch of `era` numbered `id` with `replies`, as the
+    /// registry settles one; a batch of another era is
+    /// [`Unsettled::Stale`], and nothing changes.
+    fn settle(&self, era: &Era, id: QuestionId, replies: Vec<Reply>) -> Result<(), Unsettled> {
+        let current = self.era();
+        if *current != *era {
+            return Err(Unsettled::Stale(id));
+        }
+        self.0.held.settle(id, replies)
+    }
+
+    /// The era, whether or not a thread came apart while holding it: an era
+    /// is set whole, so there is no half of one to find.
+    fn era(&self) -> MutexGuard<'_, Era> {
+        self.0.era.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl Default for Questions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Debug for Questions {
+    /// The era only: what waits is the model's words and the person's.
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.debug_struct("Questions")
+            .field("era", &*self.era())
+            .finish_non_exhaustive()
+    }
+}
+
+/// A stint number no other stint has had while this host runs, counted from
+/// one.
+fn stint() -> Era {
+    static MINTED: AtomicU64 = AtomicU64::new(0);
+    Era::Stint(MINTED.fetch_add(1, Ordering::Relaxed).saturating_add(1))
+}
 
 /// Settles the batch `request` answers in `held`, and says what came of it.
 ///
-/// The batch is settled whole or not at all. A batch not waiting is refused
-/// as [`ErrorCode::StaleQuestions`]; replies the batch cannot take are
+/// The batch is settled whole or not at all. A batch not waiting, or one of
+/// an era that is not the handle's, is refused as
+/// [`ErrorCode::StaleQuestions`]; replies the batch cannot take are
 /// [`AnswerOutcome::Invalid`], naming the first that does not fit. Either way
 /// the batch is as it was, still waiting if it was.
 ///
@@ -31,7 +163,7 @@ use crucible_types::{Answered, QuestionId, Reply};
 /// cannot be answering it. Any other command is refused as
 /// [`ErrorCode::Busy`]; it is not this door's.
 #[must_use]
-pub fn answer(request: &Request, held: &Deferred) -> Outcome {
+pub fn answer(request: &Request, held: &Questions) -> Outcome {
     match settle(request, held) {
         Ok(settling) => settled(settling.as_ref().map(|&()| ())),
         Err(refusal) => Outcome::Refused(refusal),
@@ -40,33 +172,38 @@ pub fn answer(request: &Request, held: &Deferred) -> Outcome {
 
 /// [`answer`], in the application's own values: the registry's word on the
 /// batch, or the refusal of a request that never reached it.
-pub(super) fn settle(request: &Request, held: &Deferred) -> Result<Result<(), Unsettled>, Refusal> {
-    let Command::Answer { id, replies } = request.command() else {
+pub(super) fn settle(
+    request: &Request,
+    held: &Questions,
+) -> Result<Result<(), Unsettled>, Refusal> {
+    let Command::Answer { era, id, replies } = request.command() else {
         return Err(ErrorCode::Busy.into());
     };
     if !request.capabilities().has(Capability::Questions) {
         return Err(ErrorCode::NeedsCapability.into());
     }
-    Ok(held.settle(*id, replies.iter().map(reply).collect()))
+    Ok(held.settle(era, *id, replies.iter().map(reply).collect()))
 }
 
-/// The registry an answer to batch `id` from a client claiming `claims`
-/// would settle in, where it could settle anything there: the turn door's
-/// check before it asks anybody anything.
+/// The handle an answer to the batch of `era` numbered `id`, from a client
+/// claiming `claims`, would settle in, where it could settle anything there:
+/// the turn door's check before it asks anybody anything.
 ///
 /// Refused as [`answer`] refuses: [`ErrorCode::NeedsCapability`] for a
 /// client that did not claim [`Capability::Questions`], then
-/// [`ErrorCode::StaleQuestions`] where there is no registry or no batch by
-/// that id waits. Whether the replies fit is the settling's to say.
+/// [`ErrorCode::StaleQuestions`] where there is no handle, the era is not
+/// its, or no batch by that id waits. Whether the replies fit is the
+/// settling's to say, which checks the era again under the same lock.
 pub(super) fn taking(
     claims: Capabilities,
+    era: &Era,
     id: QuestionId,
-    held: Option<&Deferred>,
-) -> Result<Deferred, Refusal> {
+    held: Option<&Questions>,
+) -> Result<Questions, Refusal> {
     if !claims.has(Capability::Questions) {
         return Err(ErrorCode::NeedsCapability.into());
     }
-    held.filter(|held| held.waiting().iter().any(|batch| batch.id() == id))
+    held.filter(|held| held.waits(era, id))
         .cloned()
         .ok_or_else(|| ErrorCode::StaleQuestions.into())
 }

@@ -1371,7 +1371,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // next reader to see, not for a runner already built.
     let catalogue = terms.providers.snapshot();
     let conversation = assemble(&Startup {
-        deferred: None,
+        questions: None,
         services,
         leaving,
         providers: &catalogue,

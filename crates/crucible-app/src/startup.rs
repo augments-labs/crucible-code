@@ -37,9 +37,7 @@ use crucible_runner::{Agent, AgentBuilder, Bounds, Compaction, Model, RunPolicy,
 use crucible_sandbox::SandboxPolicy;
 use crucible_sandbox_local::LocalSandbox;
 use crucible_session::{RouteBinding, Session};
-use crucible_tools::{
-    Deferred, DescribeTool, Fetch, Mode, Put, Revealed, Search, Tool, ToolsetError,
-};
+use crucible_tools::{DescribeTool, Fetch, Mode, Put, Revealed, Search, Tool, ToolsetError};
 use crucible_types::{AgentId, Message, Modalities, SessionId, Transcript};
 use crucible_workspace::Workspace;
 
@@ -165,15 +163,16 @@ pub struct Startup<'a> {
     /// plan is: whoever answers holds the other end, and nothing here has to
     /// know whether that is a terminal.
     pub asking: Arc<dyn Put>,
-    /// Where the model's questions asked without waiting are held, where the
-    /// front end can show them and settle them: it keeps a clone, as it keeps
-    /// a turn's `Cancel`, and answers through [`crate::client::answer`]. `None`
-    /// offers the model no such questions, and the question tool refuses one.
+    /// The handle on the model's questions asked without waiting, through
+    /// which the front end reads what waits and answers it: it keeps a clone,
+    /// as it keeps a turn's `Cancel`, and answers through
+    /// [`crate::client::answer`] and [`crate::client::turn`]. `None` offers
+    /// the model no such questions, and the question tool refuses one.
     ///
-    /// A registry nothing has used yet: the conversation built here is its
-    /// only holder, and a session resumed at start brings its own waiting
+    /// A handle nothing has used yet: the conversation built here is its only
+    /// holder, and a session resumed at start brings its own waiting
     /// questions back into it.
-    pub deferred: Option<Deferred>,
+    pub questions: Option<crate::client::Questions>,
     /// Which MCP servers written down under `mcp.servers` this run hosts, by
     /// name and in the order the command line gave them. Empty is the ordinary
     /// run: a configuration file lists servers somebody could start, and this
@@ -390,12 +389,6 @@ fn assembled(startup: &Startup<'_>, agents: &'static Registry) -> Result<Convers
         .permitting(permission)
         .under(run_policy)
         .lending(worker);
-        // The root runner delivers what the front end settles; one it starts
-        // asks through the root's tool.
-        let runner = match startup.deferred.clone() {
-            Some(held) => runner.deferring(held),
-            None => runner,
-        };
         match earlier {
             Some(transcript) => {
                 planned(startup.plan, &transcript);
@@ -404,6 +397,12 @@ fn assembled(startup: &Startup<'_>, agents: &'static Registry) -> Result<Convers
             None => runner,
         }
     });
+    // The root runner delivers what the front end settles; one it starts
+    // asks through the root's tool. Before the route below is opened, so the
+    // era moves onto that route's session with everything else.
+    if let Some(questions) = startup.questions.clone() {
+        conversation = conversation.holding(questions);
+    }
     recorded(&mut conversation, &runtime);
     // The runs of the route the conversation opens on, and the steps on every
     // other agent, are made together: a step on an agent the conversation is
@@ -1905,8 +1904,8 @@ fn tools(
     // Holding questions for later is no keyboard: a question that waits for
     // its answer is answered there as it is wherever nobody can be asked.
     let asker = AskUser::new(Arc::clone(asking));
-    match startup.deferred.clone() {
-        Some(held) => tools.add_builtin(asker.deferring(held))?,
+    match &startup.questions {
+        Some(questions) => tools.add_builtin(questions.asking(asker))?,
         None if terminal => tools.add_builtin(asker)?,
         None => {}
     }

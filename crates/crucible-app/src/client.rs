@@ -25,8 +25,8 @@
 //! the reviewed catalog offers, with no conversation at all, and asks a
 //! [`Front`] before anything is fetched or changed; every other door refuses
 //! those commands. [`answer`] settles questions the model asked without
-//! waiting, in the registry the front end supplied at startup, while a turn
-//! has the conversation; [`turn`] takes the same command while none does, and
+//! waiting, through the [`Questions`] handle the front end supplied at
+//! startup, while a turn has the conversation; [`turn`] takes the same command while none does, and
 //! runs the turn that delivers it. The other doors refuse it.
 //!
 //! What comes back is the application's own value — [`Performed`], [`Ended`] —
@@ -54,7 +54,7 @@ mod tests;
 mod turning;
 
 pub use accounts::{Account, account};
-pub use answering::answer;
+pub use answering::{Questions, answer};
 pub use asking::{Answered, Asking, FLOOR, KEPT, asked, asking};
 pub use deciding::{
     Acting, Asker, Confirmation, Deciding, Front, Leave, Shown, TRIES, confirmed, questions, warned,

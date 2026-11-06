@@ -21,6 +21,7 @@ use crucible_types::{
     Window,
 };
 
+use super::answering::Questions;
 use crate::providers::CredentialSource;
 use crate::switching::Retained;
 use crate::{Conversation, providers};
@@ -141,18 +142,27 @@ pub fn billing(conversation: &Conversation) -> api::Billing {
 /// unput. A restored batch is bounded by the registry's total alone, and one
 /// left out would wait where no client could answer or decline it; a cut
 /// name is one the client cannot choose, and the rest of the batch it can.
+///
+/// The report is read as a signal and not for what it carries: the era and
+/// the set are read together from `questions`, the handle the front end
+/// supplied, so a report posted in one session and converted after the
+/// conversation has moved to another shows the other's era with the other's
+/// batches, never the first's batches under the second's era. With no handle
+/// nothing is reported, since nothing could be answered.
 #[must_use]
 pub fn progress(
     capabilities: Capabilities,
     event: &Event,
     serving: Option<&str>,
+    questions: Option<&Questions>,
 ) -> Option<Progress> {
-    if let Event::Waiting { batches } = event {
-        return capabilities
-            .has(Capability::Questions)
-            .then(|| Progress::Waiting {
-                batches: batches.iter().map(waiting).collect(),
-            });
+    if let Event::Waiting { .. } = event {
+        let questions = questions.filter(|_| capabilities.has(Capability::Questions))?;
+        let (era, batches) = questions.waiting();
+        return Some(Progress::Waiting {
+            era,
+            batches: batches.iter().map(waiting).collect(),
+        });
     }
     if !capabilities.has(Capability::Progress) {
         return None;

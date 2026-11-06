@@ -99,7 +99,7 @@ pub use outcome::{
     SettingOutcome, SpeedOutcome, Standing, Stop, ThemeOutcome, TurnOutcome,
 };
 pub use pending::{Asked, Choice, Decision, Effect, Lasting, Pending, PendingId, Picked, Ruling};
-pub use progress::{InstallProgress, Progress, SummaryKind, Waiting};
+pub use progress::{Era, InstallProgress, Progress, SummaryKind, Waiting};
 pub use request::{Capabilities, Capability, Correlation, Refused, Request, Version};
 pub use snapshot::{Agents, Billing, Execution, Model, Percent, Snapshot};
 pub use usage::{Cost, Limit, LimitGroup, Limits, Reading, Usage, Used, Window};

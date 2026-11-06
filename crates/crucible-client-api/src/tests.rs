@@ -107,7 +107,9 @@ const KEYS: [&str; 81] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 61] = [
+const MORE_KEYS: [&str; 63] = [
+    "era",
+    "stint",
     "answer",
     "added",
     "done",
@@ -306,9 +308,20 @@ fn questions() -> Pending {
     }
 }
 
+/// The era [`answer`] names, as it crosses.
+fn stint() -> Value {
+    json!({"kind": "stint", "stint": 2})
+}
+
+/// A session identity as it crosses.
+fn session_word() -> String {
+    SessionId::new().as_str().to_owned()
+}
+
 /// An answer to waiting questions: one reply chosen with a note, one declined.
 fn answer() -> Command {
     Command::Answer {
+        era: Era::Stint(2),
         id: QuestionId::numbered(3),
         replies: vec![
             Replied::Answered(Picked {
@@ -1073,12 +1086,16 @@ fn progress() -> Vec<Progress> {
         },
         Progress::Failed(problem()),
         Progress::Waiting {
+            era: Era::Stint(3),
             batches: vec![Waiting {
                 id: QuestionId::numbered(3),
                 questions: vec![asked()],
             }],
         },
-        Progress::Waiting { batches: vec![] },
+        Progress::Waiting {
+            era: Era::Session(SessionId::new()),
+            batches: vec![],
+        },
     ]
 }
 
@@ -1285,6 +1302,13 @@ const fn turn_arm(one: &TurnOutcome) -> (usize, usize) {
         TurnOutcome::Undecided { stop: None, .. } => (4, 7),
         TurnOutcome::Failed(_) => (5, 7),
         TurnOutcome::Warned { .. } => (6, 7),
+    }
+}
+
+const fn era_arm(one: &Era) -> (usize, usize) {
+    match one {
+        Era::Session(_) => (0, 2),
+        Era::Stint(_) => (1, 2),
     }
 }
 
@@ -1731,6 +1755,12 @@ fn every_arm_that_crosses_has_a_specimen() {
     for decision in decisions() {
         let (arm, of) = decision_arm(&decision);
         seen.insert(("decision".to_owned(), arm, of));
+    }
+    for progress in progress() {
+        if let Progress::Waiting { era, .. } = &progress {
+            let (arm, of) = era_arm(era);
+            seen.insert(("era".to_owned(), arm, of));
+        }
     }
     inspection_arms(&mut seen);
     doctor_arms(&mut seen);
@@ -2665,7 +2695,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // alone moves that number and this digest, and leaves the revision.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (6, 17_679_402_665_312_189_363),
+        (6, 7_357_029_864_839_572_299),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );
@@ -3497,15 +3527,67 @@ fn an_install_report_cannot_be_read_as_anything_else_nor_anything_else_as_it() {
 
 #[test]
 fn an_answer_names_its_batch_as_the_model_does_and_carries_one_reply_a_question() {
-    let frame = asking(&json!({"kind": "answer", "id": "q3", "replies": [
-        {"kind": "answered", "chosen": [MARKER], "note": MARKER},
-        {"kind": "declined"},
-    ]}));
+    let frame = asking(
+        &json!({"kind": "answer", "era": stint(), "id": "q3", "replies": [
+            {"kind": "answered", "chosen": [MARKER], "note": MARKER},
+            {"kind": "declined"},
+        ]}),
+    );
     let request = Request::decode(&framed(&frame)).unwrap();
     assert_eq!(request.command(), &answer());
     assert_eq!(
         Request::decode(&request.encode().unwrap()).unwrap(),
         request
+    );
+    let written: Value = serde_json::from_slice(&request.encode().unwrap()).unwrap();
+    assert_eq!(written.pointer("/command/era"), Some(&stint()));
+
+    // The era names a session by its identity, and crosses back as it came.
+    let session = SessionId::new();
+    let frame = asking(
+        &json!({"kind": "answer", "era": {"kind": "session", "session": session.as_str()}, "id": "q3", "replies": []}),
+    );
+    let request = Request::decode(&framed(&frame)).unwrap();
+    assert_eq!(
+        request.command(),
+        &Command::Answer {
+            era: Era::Session(session),
+            id: QuestionId::numbered(3),
+            replies: vec![],
+        }
+    );
+    assert_eq!(
+        Request::decode(&request.encode().unwrap()).unwrap(),
+        request
+    );
+
+    // An answer that does not say which session it belongs to could settle a
+    // batch of another, so it is refused; so is an era of no known kind or
+    // shape.
+    for era in [
+        None,
+        Some(json!({"kind": "turn", "turn": 2})),
+        Some(json!({"kind": "stint", "stint": "2"})),
+        Some(json!({"kind": "stint"})),
+        Some(json!({"kind": "stint", "stint": 2, "session": session_word()})),
+        Some(json!(2)),
+    ] {
+        let mut body = json!({"kind": "answer", "id": "q3", "replies": []});
+        if let Some(era) = &era {
+            body["era"] = era.clone();
+        }
+        assert_eq!(
+            refused(&framed(&asking(&body))),
+            (Some(41), ErrorCode::Malformed),
+            "{era:?}"
+        );
+    }
+    let frame = asking(
+        &json!({"kind": "answer", "era": {"kind": "session", "session": "../../etc/passwd"}, "id": "q3", "replies": []}),
+    );
+    assert_eq!(
+        refused(&framed(&frame)),
+        (Some(41), ErrorCode::InvalidArgument)
     );
 
     // The batch is named only as the model was told it, so a client cannot
@@ -3518,7 +3600,7 @@ fn an_answer_names_its_batch_as_the_model_does_and_carries_one_reply_a_question(
         json!(3),
         json!(""),
     ] {
-        let frame = asking(&json!({"kind": "answer", "id": id, "replies": []}));
+        let frame = asking(&json!({"kind": "answer", "era": stint(), "id": id, "replies": []}));
         assert_eq!(
             refused(&framed(&frame)),
             (Some(41), ErrorCode::Malformed),
@@ -3527,30 +3609,38 @@ fn an_answer_names_its_batch_as_the_model_does_and_carries_one_reply_a_question(
     }
 
     // A reply is chosen or declined, and nothing in between.
-    let frame = asking(&json!({"kind": "answer", "id": "q3", "replies": [{"kind": "maybe"}]}));
+    let frame = asking(
+        &json!({"kind": "answer", "era": stint(), "id": "q3", "replies": [{"kind": "maybe"}]}),
+    );
     assert_eq!(
         refused(&framed(&frame)),
         (Some(41), ErrorCode::InvalidArgument)
     );
-    let frame = asking(&json!({"kind": "answer", "id": "q3", "replies": [
-        {"kind": "declined", "note": "why"},
-    ]}));
+    let frame = asking(
+        &json!({"kind": "answer", "era": stint(), "id": "q3", "replies": [
+            {"kind": "declined", "note": "why"},
+        ]}),
+    );
     assert_eq!(refused(&framed(&frame)), (Some(41), ErrorCode::Malformed));
-    let frame = asking(&json!({"kind": "answer", "id": "q3", "replies": [
-        {"kind": "answered", "chosen": []},
-    ]}));
+    let frame = asking(
+        &json!({"kind": "answer", "era": stint(), "id": "q3", "replies": [
+            {"kind": "answered", "chosen": []},
+        ]}),
+    );
     assert_eq!(refused(&framed(&frame)), (Some(41), ErrorCode::Malformed));
 
     // The sizes are the contract's, judged before the application sees any
     // of it: more replies than a list carries, refused while the frame is read
     // and so before its correlation is, and a note over its ceiling.
     let many = vec![json!({"kind": "declined"}); ITEMS + 1];
-    let frame = asking(&json!({"kind": "answer", "id": "q3", "replies": many}));
+    let frame = asking(&json!({"kind": "answer", "era": stint(), "id": "q3", "replies": many}));
     assert_eq!(refused(&framed(&frame)), (None, ErrorCode::TooLarge));
     let long = "n".repeat(SAID_BYTES + 1);
-    let frame = asking(&json!({"kind": "answer", "id": "q3", "replies": [
-        {"kind": "answered", "chosen": [], "note": long},
-    ]}));
+    let frame = asking(
+        &json!({"kind": "answer", "era": stint(), "id": "q3", "replies": [
+            {"kind": "answered", "chosen": [], "note": long},
+        ]}),
+    );
     assert_eq!(refused(&framed(&frame)), (Some(41), ErrorCode::TooLarge));
 }
 
@@ -3563,7 +3653,7 @@ fn answering_waiting_questions_needs_the_capability_that_is_told_what_waits() {
     // Claimed or not, the command is read the same way: whether it is served
     // is the application's to decide, by what the request claimed.
     let claimed = with(
-        asking(&json!({"kind": "answer", "id": "q0", "replies": []})),
+        asking(&json!({"kind": "answer", "era": stint(), "id": "q0", "replies": []})),
         "capabilities",
         json!(["questions"]),
     );
@@ -3574,7 +3664,9 @@ fn answering_waiting_questions_needs_the_capability_that_is_told_what_waits() {
 
 #[test]
 fn the_waiting_report_carries_the_whole_set_each_time_and_says_when_none_waits() {
+    let session = SessionId::new();
     let waiting = Progress::Waiting {
+        era: Era::Session(session.clone()),
         batches: vec![
             Waiting {
                 id: QuestionId::numbered(1),
@@ -3590,6 +3682,10 @@ fn the_waiting_report_carries_the_whole_set_each_time_and_says_when_none_waits()
     assert_eq!(Progress::decode(&frame).unwrap(), waiting);
     let value: Value = serde_json::from_slice(&frame).unwrap();
     assert_eq!(value.pointer("/progress"), Some(&json!("waiting")));
+    assert_eq!(
+        value.pointer("/era"),
+        Some(&json!({"kind": "session", "session": session.as_str()}))
+    );
     assert_eq!(value.pointer("/batches/0/id"), Some(&json!("q1")));
     assert_eq!(value.pointer("/batches/1/id"), Some(&json!("q4")));
     // Each question in the shape a question a turn stops on crosses in.
@@ -3598,9 +3694,26 @@ fn the_waiting_report_carries_the_whole_set_each_time_and_says_when_none_waits()
         questions().written().pointer("/questions/0")
     );
 
-    let none = Progress::Waiting { batches: vec![] };
+    let none = Progress::Waiting {
+        era: Era::Stint(7),
+        batches: vec![],
+    };
     let value: Value = serde_json::from_slice(&none.encode().unwrap()).unwrap();
     assert_eq!(value.pointer("/batches"), Some(&json!([])));
+    assert_eq!(
+        value.pointer("/era"),
+        Some(&json!({"kind": "stint", "stint": 7}))
+    );
+    assert_eq!(Progress::decode(&none.encode().unwrap()).unwrap(), none);
+
+    // A report that does not say which session the set is of is refused: a
+    // client could not tell its batches from another session's.
+    let mut eraless: Value = serde_json::from_slice(&frame).unwrap();
+    eraless.as_object_mut().unwrap().remove("era");
+    assert_eq!(
+        Progress::decode(&framed(&eraless)).unwrap_err().code(),
+        ErrorCode::Malformed
+    );
 
     // A batch is named as the model names it, or the report is refused.
     let mut misnamed: Value = serde_json::from_slice(&frame).unwrap();

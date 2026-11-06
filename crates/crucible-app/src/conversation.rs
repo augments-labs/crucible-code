@@ -56,7 +56,7 @@ use crucible_runner::{
 };
 use crucible_runtime::{Aside, Cancel, Steer};
 use crucible_session::{FilePromptCacheResourceStore, Session, SessionError};
-use crucible_tools::{Deferred, Looking, Mode, Summary};
+use crucible_tools::{Looking, Mode, Summary};
 use crucible_types::{
     Attachment, Compacting, Modalities, Modality, PlanWindows, PromptCachePolicy,
     PromptCacheResourceError, PromptCacheResourceRecord, SessionId, Spend, ToolCall, Transcript,
@@ -121,6 +121,11 @@ pub struct Conversation {
     /// When the plan behind each credential was last asked how much of its
     /// limits is used, and which credentials are not to be asked again.
     pub(crate) asks: crate::client::asking::Asks,
+    /// The model's questions asked without waiting, and the session they
+    /// belong to, where the front end supplied a handle on them. Every
+    /// replacement of [`Self::session`] goes through [`Self::replaced`],
+    /// which moves the handle's era with it.
+    questions: Option<crate::client::Questions>,
 }
 
 impl Conversation {
@@ -151,6 +156,23 @@ impl Conversation {
             steps: None,
             web: crate::following::Following::default(),
             asks: crate::client::asking::Asks::default(),
+            questions: None,
+        }
+    }
+
+    /// The same conversation, holding the model's questions asked without
+    /// waiting in `questions`: its runner restores and delivers through the
+    /// handle's registry, and the handle's era is this conversation's
+    /// session from here on. The question tool is given the same handle by
+    /// [`Questions::asking`](crate::client::Questions::asking); that much is
+    /// trusted, as [`Conversation::recording`] trusts its `build`.
+    #[must_use]
+    pub fn holding(self, questions: crate::client::Questions) -> Self {
+        questions.moved(self.session.id());
+        Self {
+            runner: self.runner.deferring(questions.held().clone()),
+            questions: Some(questions),
+            ..self
         }
     }
 
@@ -370,10 +392,11 @@ impl Conversation {
         mode: Mode,
     ) -> Arc<Session> {
         let named = session.external_ref().cloned();
+        let left = self.replaced(session);
         self.runner
             .pick_up(Arc::new(Session::nowhere()), Transcript::new());
         self.outside = Some(Box::new(Outside::new(installed, transcript, mode, named)));
-        std::mem::replace(&mut self.session, session)
+        left
     }
 
     /// Moves the conversation back onto this program's own models, closing
@@ -670,9 +693,9 @@ impl Conversation {
     ///
     /// `None` where nothing runs: with nothing settled, since there is no
     /// answer to deliver and no turn is said to have run, and on an installed
-    /// agent's route, since the registry is this conversation's own runner's,
-    /// which the agent's turns do not deliver from, and that runner's next
-    /// turn delivers what is settled.
+    /// agent's route, whose turns are not this conversation's own runner's
+    /// and deliver nothing; moving there left the session's questions
+    /// behind, so nothing is settled there to deliver.
     ///
     /// # Errors
     ///
@@ -691,25 +714,34 @@ impl Conversation {
         Some(turned)
     }
 
-    /// The registry the model's questions asked without waiting are held in,
-    /// which the front end supplied at startup; none where it supplied none.
+    /// The handle on the model's questions asked without waiting, which the
+    /// front end supplied at startup; none where it supplied none.
     #[must_use]
-    pub fn deferred(&self) -> Option<&Deferred> {
-        self.runner.deferred()
+    pub fn questions(&self) -> Option<&crate::client::Questions> {
+        self.questions.as_ref()
     }
 
     /// Whether an answer is settled that no turn on this conversation's own
     /// runner has delivered yet.
     fn undelivered(&self) -> bool {
-        self.outside.is_none() && self.deferred().is_some_and(Deferred::any_settled)
+        self.outside.is_none()
+            && self
+                .questions
+                .as_ref()
+                .is_some_and(|questions| questions.held().any_settled())
     }
 
-    /// Empties the registry of questions asked without waiting: they belonged
-    /// to the session just left.
-    fn forget_questions(&self) {
-        if let Some(held) = self.deferred() {
-            held.clear();
+    /// Records into `session` from here on and returns the one left, moving
+    /// the questions to it first: the era becomes `session`'s and what waits
+    /// is emptied, together, so nothing of the session left can be answered
+    /// in the one picked up. What the one picked up kept waiting comes back
+    /// at its first turn's first assembly. Every replacement of the session
+    /// goes through here.
+    fn replaced(&mut self, session: Arc<Session>) -> Arc<Session> {
+        if let Some(questions) = &self.questions {
+            questions.moved(session.id());
         }
+        std::mem::replace(&mut self.session, session)
     }
 
     /// Starts a new session and records into it from here on, with nothing
@@ -741,8 +773,7 @@ impl Conversation {
                 outside.route(),
             )?);
             outside.restart(Transcript::new(), None).await;
-            self.forget_questions();
-            return Ok(std::mem::replace(&mut self.session, session));
+            return Ok(self.replaced(session));
         }
         let session = Arc::new(Session::start(sessions, workspace, branch)?);
         Ok(self.pick_up(session, Transcript::new()).await)
@@ -778,7 +809,7 @@ impl Conversation {
             .is_some_and(|(on, opened)| on.same_route(opened));
         // Whichever it goes on on, the questions waiting were the session
         // left's; the one picked up brings its own back at its first turn.
-        let resumed = match (opened, on.is_some()) {
+        match (opened, on.is_some()) {
             (Some(opened), true) if same => {
                 let (session, transcript) =
                     Session::reopen_routed(sessions, workspace, id, &opened)?;
@@ -786,7 +817,7 @@ impl Conversation {
                 if let Some(outside) = self.outside.as_deref_mut() {
                     outside.restart(transcript, named).await;
                 }
-                Ok(std::mem::replace(&mut self.session, Arc::new(session)))
+                Ok(self.replaced(Arc::new(session)))
             }
             (Some(opened), _) => {
                 let instance: Box<str> = opened.instance().into();
@@ -829,11 +860,7 @@ impl Conversation {
                 Ok(self.inside(Arc::new(session), transcript).await)
             }
             (None, true) => Err(Unpicked::NextLaunch),
-        };
-        if resumed.is_ok() {
-            self.forget_questions();
         }
-        resumed
     }
 
     /// Moves the conversation onto the installed agent `entry`, from a
@@ -880,7 +907,7 @@ impl Conversation {
     /// so that nothing the runner writes in between lands in a log that has
     /// been left.
     async fn pick_up(&mut self, session: Arc<Session>, transcript: Transcript) -> Arc<Session> {
-        let left = std::mem::replace(&mut self.session, Arc::clone(&session));
+        let left = self.replaced(Arc::clone(&session));
         self.runner.pick_up(session, transcript);
         self.clearings_recorded().await;
         left

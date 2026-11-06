@@ -318,7 +318,12 @@ fn turned(
     let serving = conversation.serving();
     for envelope in reported.try_iter() {
         let event = envelope.into_event();
-        if let Some(progress) = client::progress(request.capabilities(), &event, serving) {
+        if let Some(progress) = client::progress(
+            request.capabilities(),
+            &event,
+            serving,
+            conversation.questions(),
+        ) {
             streamed.push(Progress::decode(&progress.encode()?)?);
         }
     }

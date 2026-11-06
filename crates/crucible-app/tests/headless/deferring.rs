@@ -1,30 +1,37 @@
 //! Questions the model asks without waiting, answered by a client that has no
 //! terminal.
 //!
-//! The front end here supplies the registry and keeps a clone of it, as a
-//! front end with no terminal does, and every answer it sends is a request
-//! read back off the bytes it would travel as. What the tests read is what a
+//! The front end here supplies a `Questions` handle and keeps a clone of it,
+//! as a front end with no terminal does, and every answer it sends is a
+//! request read back off the bytes it would travel as. A batch waits only
+//! because the scripted model called `ask_user` without waiting; the handle is
+//! read for what waits and answered through the client door, and nothing here
+//! registers or settles a batch any other way. What the tests read is what a
 //! client is handed — a response, and the progress streamed beside it — and,
 //! beside those, what each request to the scripted provider carried.
+//!
+//! A conversation started twice on one tree stands in for a host started
+//! again: each has a handle of its own, numbering batches afresh, so a
+//! session picked up brings back ids another session also handed out.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 
 use crucible_agents::{AgentBuilder, Model};
 use crucible_app::Conversation;
-use crucible_app::client::{self, Front, Shown};
+use crucible_app::client::{self, Front, Questions, Shown};
 use crucible_builtins::{AskUser, Ledger, Read};
 use crucible_client_api::{
-    AnswerOutcome, Capabilities, Capability, Command, Correlation, Decision, ErrorCode, Outcome,
-    Pending, Picked, Progress, Prompt, Refusal, Replied, Request, Response, Said, Stop,
+    AnswerOutcome, Capabilities, Capability, Command, Correlation, Decision, Era, ErrorCode,
+    Outcome, Pending, Picked, Progress, Prompt, Refusal, Replied, Request, Response, Said, Stop,
     TurnOutcome,
 };
 use crucible_models::Delta;
-use crucible_runner::{EventEnvelope, Tools};
+use crucible_runner::{Event, EventEnvelope, Post, Tools};
 use crucible_runtime::{Aside, BoxFuture, Cancel, Steer};
 use crucible_session::Session;
-use crucible_tools::{Deferred, Permission, Put, Rules};
-use crucible_types::{AgentId, Answer, Answered, Question, QuestionId, StopReason, ToolId};
+use crucible_tools::{Permission, Put, Rules};
+use crucible_types::{AgentId, Answered, Question, QuestionId, StopReason, ToolId};
 
 use super::client::{Counting, calling};
 use super::{Failed, Script, Tree, saying};
@@ -43,7 +50,7 @@ impl Put for Unseen {
 
 /// A call to `ask_user`, numbered `call`, asking which `heading` without
 /// waiting for the answer.
-fn deferring(call: &str, heading: &str) -> Vec<Delta> {
+pub(super) fn deferring(call: &str, heading: &str) -> Vec<Delta> {
     let args = format!(
         r#"{{"mode":"deferred","questions":[{{"heading":"{heading}","question":"Which {heading}?","answers":[{{"answer":"Rust"}},{{"answer":"Python"}}]}}]}}"#
     );
@@ -70,18 +77,18 @@ fn reading() -> Vec<Delta> {
 }
 
 /// A conversation over `script` with nobody at a keyboard, whose front end
-/// holds the model's questions in `held` where it supplied a registry, and
+/// holds the model's questions in `held` where it supplied a handle, and
 /// which offers `tools` beside the question tool.
 fn holding(
     tree: &Tree,
     script: Script,
-    held: Option<&Deferred>,
+    held: Option<&Questions>,
     serving: Option<&'static str>,
     mut tools: Tools,
 ) -> Result<Conversation, Failed> {
     let asking = AskUser::new(Arc::new(Unseen));
     tools.add_builtin(match held {
-        Some(held) => asking.deferring(held.clone()),
+        Some(held) => held.asking(asking),
         None => asking,
     })?;
     let session = Arc::new(Session::start(&tree.sessions(), &tree.workspace()?, None)?);
@@ -96,27 +103,26 @@ fn holding(
         },
     );
     let work = tree.0.join("work");
-    let held = held.cloned();
 
-    Ok(Conversation::recording(session, serving, move |session| {
-        let runner = crucible_runner::Runner::new(
+    let conversation = Conversation::recording(session, serving, move |session| {
+        crucible_runner::Runner::new(
             Box::new(script),
             tools,
             agent.build(),
             crucible_context::ContextInputs::new(work),
             session,
         )
-        .permitting(Permission::with(crucible_tools::Mode::Ask, Rules::new()));
-        match held {
-            Some(held) => runner.deferring(held),
-            None => runner,
-        }
-    }))
+        .permitting(Permission::with(crucible_tools::Mode::Ask, Rules::new()))
+    });
+    Ok(match held {
+        Some(held) => conversation.holding(held.clone()),
+        None => conversation,
+    })
 }
 
-/// [`holding`], with the registry and nothing offered beside the question
+/// [`holding`], with the handle and nothing offered beside the question
 /// tool.
-pub(super) fn held(tree: &Tree, script: Script, held: &Deferred) -> Result<Conversation, Failed> {
+pub(super) fn held(tree: &Tree, script: Script, held: &Questions) -> Result<Conversation, Failed> {
     holding(tree, script, Some(held), None, Tools::new())
 }
 
@@ -126,9 +132,11 @@ fn sent(claims: Capabilities, command: Command) -> Result<Request, Failed> {
     Request::decode(&request.encode()?).map_err(|refused| refused.refusal.into())
 }
 
-/// An answer to batch `id`, choosing `chosen` for its one question.
-fn choosing(id: QuestionId, chosen: &[&str]) -> Result<Command, Failed> {
+/// An answer to the batch of `era` numbered `id`, choosing `chosen` for its
+/// one question.
+fn choosing(era: &Era, id: QuestionId, chosen: &[&str]) -> Result<Command, Failed> {
     Ok(Command::Answer {
+        era: era.clone(),
         id,
         replies: vec![Replied::Answered(Picked {
             chosen: chosen
@@ -141,27 +149,60 @@ fn choosing(id: QuestionId, chosen: &[&str]) -> Result<Command, Failed> {
 }
 
 /// [`choosing`] `Rust`, sent by a client that claims everything.
-pub(super) fn rust(id: QuestionId) -> Result<Request, Failed> {
-    sent(Capabilities::every(), choosing(id, &["Rust"])?)
+pub(super) fn rust(era: &Era, id: QuestionId) -> Result<Request, Failed> {
+    sent(Capabilities::every(), choosing(era, id, &["Rust"])?)
 }
 
-/// The oldest batch waiting in `held`.
-fn oldest(held: &Deferred) -> Result<QuestionId, Failed> {
-    Ok(held.waiting().first().ok_or("nothing waits")?.id())
+/// The era of what waits in `held`, and the oldest batch waiting there.
+pub(super) fn oldest(held: &Questions) -> Result<(Era, QuestionId), Failed> {
+    let (era, waiting) = held.waiting();
+    Ok((era, waiting.first().ok_or("nothing waits")?.id()))
+}
+
+/// The era of `held`, which must have nothing waiting.
+pub(super) fn emptied(held: &Questions) -> Result<Era, Failed> {
+    let (era, waiting) = held.waiting();
+    if waiting.is_empty() {
+        Ok(era)
+    } else {
+        Err(format!("{} batches wait in {era:?}", waiting.len()).into())
+    }
+}
+
+/// [`rust`] to the oldest batch waiting in `held`, where one waits.
+fn rust_to_oldest(held: &Questions) -> Option<Request> {
+    let (era, id) = oldest(held).ok()?;
+    rust(&era, id).ok()
+}
+
+/// The era of the last waiting set a client was streamed, and the oldest
+/// batch in it.
+fn last_shown(streamed: &[Progress]) -> Result<(Era, QuestionId), Failed> {
+    streamed
+        .iter()
+        .rev()
+        .find_map(|progress| match progress {
+            Progress::Waiting { era, batches } => {
+                Some(batches.first().map(|batch| (era.clone(), batch.id)))
+            }
+            _ => None,
+        })
+        .flatten()
+        .ok_or_else(|| format!("no batch was shown: {streamed:?}").into())
 }
 
 /// A client with no terminal. It goes back from a warned route, and while
 /// anything else is pending it answers the questions waiting instead, and
 /// says nothing about what is pending.
 struct Client {
-    held: Deferred,
+    held: Questions,
     put: Vec<Pending>,
     answered: Vec<Outcome>,
     refused: Vec<Refusal>,
 }
 
 impl Client {
-    fn new(held: &Deferred) -> Self {
+    fn new(held: &Questions) -> Self {
         Self {
             held: held.clone(),
             put: Vec::new(),
@@ -182,8 +223,9 @@ impl Front for Client {
             if let Pending::Warning { .. } = pending {
                 return Some(Decision::Declined { id: pending.id() });
             }
-            for batch in self.held.waiting() {
-                if let Ok(request) = rust(batch.id()) {
+            let (era, waiting) = self.held.waiting();
+            for batch in waiting {
+                if let Ok(request) = rust(&era, batch.id()) {
                     self.answered.push(client::answer(&request, &self.held));
                 }
             }
@@ -205,10 +247,65 @@ fn turning(
     front: &mut dyn Front,
     cancel: &Cancel,
 ) -> Result<(Response, Vec<Progress>), Failed> {
-    let (events, reported) = mpsc::channel::<EventEnvelope>();
+    let (response, streaming) = reporting(conversation, request, front, cancel)?;
+    let streamed = streaming
+        .streamed
+        .into_inner()
+        .map_err(|_| "poisoned")?
+        .into_iter()
+        .collect::<Result<_, _>>()?;
+    Ok((response, streamed))
+}
+
+/// Where a turn's events go: each is converted as it is posted, reading what
+/// waits then, as a client streamed it would be shown it, and kept as it was
+/// posted beside that.
+struct Streaming {
+    claims: Capabilities,
+    serving: Option<&'static str>,
+    held: Option<Questions>,
+    streamed: Mutex<Vec<Result<Progress, String>>>,
+    posted: Mutex<Vec<Event>>,
+}
+
+impl Post for Streaming {
+    fn post(&self, reported: EventEnvelope) {
+        let event = reported.into_event();
+        if let Some(progress) =
+            client::progress(self.claims, &event, self.serving, self.held.as_ref())
+        {
+            let read = progress
+                .encode()
+                .map_err(|error| error.to_string())
+                .and_then(|bytes| Progress::decode(&bytes).map_err(|error| error.to_string()));
+            if let Ok(mut streamed) = self.streamed.lock() {
+                streamed.push(read);
+            }
+        }
+        if let Ok(mut posted) = self.posted.lock() {
+            posted.push(event);
+        }
+    }
+}
+
+/// [`turning`], handing back where the turn's events went: what a client was
+/// streamed, and the events themselves as they were posted.
+fn reporting(
+    conversation: &mut Conversation,
+    request: &Request,
+    front: &mut dyn Front,
+    cancel: &Cancel,
+) -> Result<(Response, Streaming), Failed> {
+    let streaming = Streaming {
+        claims: request.capabilities(),
+        serving: conversation.serving(),
+        held: conversation.questions().cloned(),
+        streamed: Mutex::new(Vec::new()),
+        posted: Mutex::new(Vec::new()),
+    };
     let (steer, aside) = (Steer::new(), Aside::new());
     let ended = {
-        let run = conversation.starting(&events, cancel, &steer, &aside);
+        let run = conversation.starting(&streaming, cancel, &steer, &aside);
         super::runtime()?.block_on(client::turn(
             conversation,
             request,
@@ -217,19 +314,9 @@ fn turning(
             &run,
         ))
     };
-    drop(events);
-
-    let mut streamed = Vec::new();
-    let serving = conversation.serving();
-    for envelope in reported.try_iter() {
-        let event = envelope.into_event();
-        if let Some(progress) = client::progress(request.capabilities(), &event, serving) {
-            streamed.push(Progress::decode(&progress.encode()?)?);
-        }
-    }
     let response = ended.response(request);
 
-    Ok((Response::decode(&response.encode()?)?, streamed))
+    Ok((Response::decode(&response.encode()?)?, streaming))
 }
 
 /// [`turning`], with a cancel nobody asks for and a client that answers
@@ -237,7 +324,7 @@ fn turning(
 pub(super) fn turned(
     conversation: &mut Conversation,
     request: &Request,
-    held: &Deferred,
+    held: &Questions,
 ) -> Result<(Response, Vec<Progress>), Failed> {
     turning(
         conversation,
@@ -248,7 +335,7 @@ pub(super) fn turned(
 }
 
 /// A prompt of `words`, sent by a client that claims everything.
-fn prompt(words: &str) -> Result<Request, Failed> {
+pub(super) fn prompt(words: &str) -> Result<Request, Failed> {
     sent(Capabilities::every(), Command::Prompt(Prompt::new(words)?))
 }
 
@@ -258,7 +345,7 @@ fn waits(streamed: &[Progress]) -> Vec<Vec<String>> {
     streamed
         .iter()
         .filter_map(|progress| match progress {
-            Progress::Waiting { batches } => Some(
+            Progress::Waiting { batches, .. } => Some(
                 batches
                     .iter()
                     .flat_map(|batch| &batch.questions)
@@ -320,7 +407,7 @@ fn a_client_with_no_terminal_answers_while_the_turn_works_and_it_arrives_once() 
 {
     let tree = Tree::new("deferring-acceptance")?;
     std::fs::write(tree.0.join("work").join("notes.txt"), "a note\n")?;
-    let held = Deferred::default();
+    let held = Questions::new();
     let answered = Arc::new(Mutex::new(Vec::new()));
     let script = Script::new(vec![
         deferring("c1", "Language"),
@@ -334,8 +421,7 @@ fn a_client_with_no_terminal_answers_while_the_turn_works_and_it_arrives_once() 
             // The second pass is the other work: the batch is settled while
             // it runs, by the door a running turn leaves open.
             if before == 1
-                && let Some(batch) = held.waiting().first()
-                && let Ok(request) = rust(batch.id())
+                && let Some(request) = rust_to_oldest(&held)
                 && let Ok(mut answered) = answered.lock()
             {
                 answered.push(client::answer(&request, &held));
@@ -388,7 +474,7 @@ fn a_client_with_no_terminal_answers_while_the_turn_works_and_it_arrives_once() 
 fn an_answer_settled_while_idle_starts_a_turn_whose_first_request_carries_it() -> Result<(), Failed>
 {
     let tree = Tree::new("deferring-idle")?;
-    let held = Deferred::default();
+    let held = Questions::new();
     let script = Script::new(vec![
         deferring("c1", "Language"),
         saying("carrying on"),
@@ -403,8 +489,9 @@ fn an_answer_settled_while_idle_starts_a_turn_whose_first_request_carries_it() -
         "the turn ended with its question waiting"
     );
     assert_eq!(asked.load(Ordering::Relaxed), 2);
+    let (era, id) = last_shown(&streamed)?;
 
-    let (response, streamed) = turned(&mut conversation, &rust(oldest(&held)?)?, &held)?;
+    let (response, streamed) = turned(&mut conversation, &rust(&era, id)?, &held)?;
 
     assert!(ran(&response, Stop::Yielded), "{:?}", response.outcome);
     assert_eq!(asked.load(Ordering::Relaxed), 3, "one request delivered it");
@@ -415,7 +502,11 @@ fn an_answer_settled_while_idle_starts_a_turn_whose_first_request_carries_it() -
         "{first:?}"
     );
     assert_eq!(waits(&streamed), [Vec::<String>::new()]);
-    assert!(!held.any_settled(), "the answer was taken");
+    assert_eq!(
+        client::answer(&rust(&era, id)?, &held),
+        Outcome::Refused(ErrorCode::StaleQuestions.into()),
+        "the answer was taken, and cannot be given twice"
+    );
     Ok(())
 }
 
@@ -426,7 +517,7 @@ fn an_answer_settled_while_idle_starts_a_turn_whose_first_request_carries_it() -
 fn a_cut_short_answer_ends_its_turn_and_one_that_delivers_starts_right_after() -> Result<(), Failed>
 {
     let tree = Tree::new("deferring-cut-short")?;
-    let held = Deferred::default();
+    let held = Questions::new();
     let script = Script::new(vec![
         deferring("c1", "Language"),
         vec![
@@ -439,8 +530,7 @@ fn a_cut_short_answer_ends_its_turn_and_one_that_delivers_starts_right_after() -
         let held = held.clone();
         move |before| {
             if before == 1
-                && let Some(batch) = held.waiting().first()
-                && let Ok(request) = rust(batch.id())
+                && let Some(request) = rust_to_oldest(&held)
             {
                 drop(client::answer(&request, &held));
             }
@@ -471,25 +561,26 @@ fn a_cut_short_answer_ends_its_turn_and_one_that_delivers_starts_right_after() -
 #[test]
 fn a_stale_or_unfitting_answer_is_refused_whole_and_the_batch_still_waits() -> Result<(), Failed> {
     let tree = Tree::new("deferring-refused")?;
-    let held = Deferred::default();
+    let held = Questions::new();
     let script = Script::new(vec![deferring("c1", "Language"), saying("carrying on")]);
     let asked = Arc::clone(&script.asked);
     let mut conversation = self::held(&tree, script, &held)?;
     turned(&mut conversation, &prompt("plan it")?, &held)?;
-    let waiting = oldest(&held)?;
+    let (era, waiting) = oldest(&held)?;
     let stale = Outcome::Refused(ErrorCode::StaleQuestions.into());
 
-    let nobody = rust(QuestionId::numbered(waiting.number() + 40))?;
+    let nobody = rust(&era, QuestionId::numbered(waiting.number() + 40))?;
     assert_eq!(client::answer(&nobody, &held), stale);
     assert_eq!(turned(&mut conversation, &nobody, &held)?.0.outcome, stale);
 
     let one_of = sent(
         Capabilities::every(),
-        choosing(waiting, &["Rust", "Python"])?,
+        choosing(&era, waiting, &["Rust", "Python"])?,
     )?;
     let twice = sent(
         Capabilities::every(),
         Command::Answer {
+            era: era.clone(),
             id: waiting,
             replies: vec![Replied::Declined, Replied::Declined],
         },
@@ -506,8 +597,7 @@ fn a_stale_or_unfitting_answer_is_refused_whole_and_the_batch_still_waits() -> R
         }
     }
 
-    assert_eq!(held.waiting().len(), 1);
-    assert!(!held.any_settled());
+    assert_eq!(held.waiting().1.len(), 1, "a refused answer settled it");
     assert_eq!(asked.load(Ordering::Relaxed), 2, "no turn was started");
     Ok(())
 }
@@ -520,13 +610,12 @@ fn an_oversized_answer_is_refused_on_the_wire_and_one_of_many_settles() -> Resul
     use crucible_client_api::bounds::{ITEMS, SAID_BYTES};
 
     let tree = Tree::new("deferring-oversized")?;
-    let held = Deferred::default();
+    let held = Questions::new();
     let script = Script::new(vec![deferring("c1", "Language"), saying("carrying on")]);
     let mut conversation = self::held(&tree, script, &held)?;
     turned(&mut conversation, &prompt("plan it")?, &held)?;
-    let waiting = oldest(&held)?;
-    let revision = held.revision();
-    let frame: serde_json::Value = serde_json::from_slice(&rust(waiting)?.encode()?)?;
+    let (era, waiting) = oldest(&held)?;
+    let frame: serde_json::Value = serde_json::from_slice(&rust(&era, waiting)?.encode()?)?;
     let reply = frame
         .pointer("/command/replies/0")
         .cloned()
@@ -550,9 +639,9 @@ fn an_oversized_answer_is_refused_on_the_wire_and_one_of_many_settles() -> Resul
             .ok_or("an oversized answer was read")?;
         assert_eq!(refused.refusal.code(), ErrorCode::TooLarge);
     }
-    assert_eq!(held.revision(), revision, "the registry was reached");
+    assert_eq!(held.waiting().1.len(), 1, "the registry was reached");
 
-    let request = rust(waiting)?;
+    let request = rust(&era, waiting)?;
     let outcomes: Vec<Outcome> = std::thread::scope(|scope| {
         let answering: Vec<_> = (0..4)
             .map(|_| scope.spawn(|| client::answer(&request, &held)))
@@ -580,7 +669,7 @@ fn an_oversized_answer_is_refused_on_the_wire_and_one_of_many_settles() -> Resul
 fn a_client_that_did_not_claim_questions_is_shown_none_and_refused_its_answer() -> Result<(), Failed>
 {
     let tree = Tree::new("deferring-unclaimed")?;
-    let held = Deferred::default();
+    let held = Questions::new();
     let script = Script::new(vec![deferring("c1", "Language"), saying("carrying on")]);
     let mut conversation = self::held(&tree, script, &held)?;
     let claims = Capabilities::every().without(Capability::Questions);
@@ -589,26 +678,23 @@ fn a_client_that_did_not_claim_questions_is_shown_none_and_refused_its_answer() 
     let (_, streamed) = turned(&mut conversation, &request, &held)?;
 
     assert!(waits(&streamed).is_empty(), "{streamed:?}");
-    let answer = Request::new(
-        claims,
-        Correlation::new(8),
-        choosing(oldest(&held)?, &["Rust"])?,
-    );
+    let (era, id) = oldest(&held)?;
+    let answer = Request::new(claims, Correlation::new(8), choosing(&era, id, &["Rust"])?);
     let needs = Outcome::Refused(ErrorCode::NeedsCapability.into());
     assert_eq!(client::answer(&answer, &held), needs);
     assert_eq!(turned(&mut conversation, &answer, &held)?.0.outcome, needs);
-    assert!(!held.any_settled());
+    assert_eq!(held.waiting().1.len(), 1, "a refused answer settled it");
     Ok(())
 }
 
-/// With no registry from the front end, a question held for later is refused
+/// With no handle from the front end, a question held for later is refused
 /// to the model, and nothing waits for a client to answer.
 #[test]
 fn a_front_end_with_no_registry_holds_no_question_for_later() -> Result<(), Failed> {
     let tree = Tree::new("deferring-unheld")?;
     let script = Script::new(vec![deferring("c1", "Language"), saying("asked in words")]);
     let mut conversation = holding(&tree, script, None, None, Tools::new())?;
-    let nowhere = Deferred::default();
+    let nowhere = Questions::new();
 
     let (_, streamed) = turned(&mut conversation, &prompt("plan it")?, &nowhere)?;
 
@@ -619,7 +705,12 @@ fn a_front_end_with_no_registry_holds_no_question_for_later() -> Result<(), Fail
         "{streamed:?}"
     );
     assert!(waits(&streamed).is_empty(), "{streamed:?}");
-    let (response, _) = turned(&mut conversation, &rust(QuestionId::numbered(1))?, &nowhere)?;
+    let (era, _) = nowhere.waiting();
+    let (response, _) = turned(
+        &mut conversation,
+        &rust(&era, QuestionId::numbered(1))?,
+        &nowhere,
+    )?;
     assert_eq!(
         response.outcome,
         Outcome::Refused(ErrorCode::StaleQuestions.into())
@@ -635,7 +726,7 @@ fn an_answer_leaves_a_pending_permission_and_a_warned_route_unanswered() -> Resu
     use crucible_app::content_use::{Consent, Routes, Serving};
 
     let tree = Tree::new("deferring-permission")?;
-    let held = Deferred::default();
+    let held = Questions::new();
     let ran = Arc::new(AtomicUsize::new(0));
     let mut tools = Tools::new();
     tools.add_builtin(Counting(Arc::clone(&ran)))?;
@@ -666,11 +757,19 @@ fn an_answer_leaves_a_pending_permission_and_a_warned_route_unanswered() -> Resu
         "the answer let the tool run"
     );
 
+    // The batch is asked before the route warns, so the answer is one that
+    // could be taken.
     let tree = Tree::new("deferring-warned")?;
-    let held = Deferred::default();
-    let script = Script::new(vec![saying("answered")]);
+    let held = Questions::new();
+    let script = Script::new(vec![
+        deferring("c1", "Language"),
+        saying("asked"),
+        saying("answered"),
+    ]);
     let asked = Arc::clone(&script.asked);
-    let conversation = holding(&tree, script, Some(&held), Some("google"), Tools::new())?;
+    let mut conversation = holding(&tree, script, Some(&held), Some("google"), Tools::new())?;
+    turned(&mut conversation, &prompt("plan it")?, &held)?;
+    let (era, id) = oldest(&held)?;
     let consent = Consent::new(Routes::production());
     let file = tree.0.join("config.json");
     consent.keeps_in(file.clone());
@@ -682,14 +781,14 @@ fn an_answer_leaves_a_pending_permission_and_a_warned_route_unanswered() -> Resu
             at: None,
         }),
     );
-    let id = held.register(vec![Question::new(
-        "Language",
-        "Which language?",
-        [Answer::new("Rust"), Answer::new("Python")],
-    )])?;
     let mut client = Client::new(&held);
 
-    let (response, _) = turning(&mut conversation, &rust(id)?, &mut client, &Cancel::new())?;
+    let (response, _) = turning(
+        &mut conversation,
+        &rust(&era, id)?,
+        &mut client,
+        &Cancel::new(),
+    )?;
 
     assert!(
         matches!(&response.outcome, Outcome::Turn(TurnOutcome::Warned { route, .. }) if route.as_str() == "key:google"),
@@ -701,9 +800,12 @@ fn an_answer_leaves_a_pending_permission_and_a_warned_route_unanswered() -> Resu
         "{:?}",
         client.put
     );
-    assert_eq!(asked.load(Ordering::Relaxed), 0, "something was sent");
-    assert!(!held.any_settled(), "settled without a yes to the route");
-    assert_eq!(held.waiting().len(), 1);
+    assert_eq!(asked.load(Ordering::Relaxed), 2, "something was sent");
+    assert_eq!(
+        held.waiting().1.len(),
+        1,
+        "settled without a yes to the route"
+    );
     let written = std::fs::read_to_string(&file).unwrap_or_default();
     assert!(!written.contains("key:google"), "{written}");
     Ok(())
@@ -714,7 +816,7 @@ fn an_answer_leaves_a_pending_permission_and_a_warned_route_unanswered() -> Resu
 #[test]
 fn delivering_with_nothing_settled_runs_no_turn_and_says_none_ran() -> Result<(), Failed> {
     let tree = Tree::new("deferring-nothing")?;
-    let held = Deferred::default();
+    let held = Questions::new();
     let script = Script::new(vec![saying("never asked")]);
     let asked = Arc::clone(&script.asked);
     let mut conversation = self::held(&tree, script, &held)?;
@@ -741,10 +843,12 @@ fn an_answer_that_cannot_be_taken_is_refused_before_a_warned_route_is_put() -> R
     use crucible_app::content_use::{Consent, Routes, Serving};
 
     let tree = Tree::new("deferring-warned-first")?;
-    let held = Deferred::default();
-    let script = Script::new(vec![saying("answered")]);
+    let held = Questions::new();
+    let script = Script::new(vec![deferring("c1", "Language"), saying("asked")]);
     let asked = Arc::clone(&script.asked);
-    let conversation = holding(&tree, script, Some(&held), Some("google"), Tools::new())?;
+    let mut conversation = holding(&tree, script, Some(&held), Some("google"), Tools::new())?;
+    turned(&mut conversation, &prompt("plan it")?, &held)?;
+    let (era, id) = oldest(&held)?;
     let consent = Consent::new(Routes::production());
     consent.keeps_in(tree.0.join("config.json"));
     let mut conversation = conversation.consenting(consent.clone());
@@ -755,16 +859,11 @@ fn an_answer_that_cannot_be_taken_is_refused_before_a_warned_route_is_put() -> R
             at: None,
         }),
     );
-    let id = held.register(vec![Question::new(
-        "Language",
-        "Which language?",
-        [Answer::new("Rust"), Answer::new("Python")],
-    )])?;
     let unclaimed = sent(
         Capabilities::every().without(Capability::Questions),
-        choosing(id, &["Rust"])?,
+        choosing(&era, id, &["Rust"])?,
     )?;
-    let stale = rust(QuestionId::numbered(5))?;
+    let stale = rust(&era, QuestionId::numbered(id.number() + 5))?;
 
     for (request, refused) in [
         (unclaimed, ErrorCode::NeedsCapability),
@@ -776,8 +875,8 @@ fn an_answer_that_cannot_be_taken_is_refused_before_a_warned_route_is_put() -> R
         assert_eq!(response.outcome, Outcome::Refused(refused.into()));
         assert!(client.put.is_empty(), "{:?}", client.put);
     }
-    assert_eq!(asked.load(Ordering::Relaxed), 0);
-    assert_eq!(held.waiting().len(), 1);
+    assert_eq!(asked.load(Ordering::Relaxed), 2);
+    assert_eq!(held.waiting().1.len(), 1);
     Ok(())
 }
 
@@ -787,27 +886,26 @@ fn an_answer_that_cannot_be_taken_is_refused_before_a_warned_route_is_put() -> R
 #[test]
 fn cancelling_a_turn_keeps_its_questions_and_clearing_empties_them() -> Result<(), Failed> {
     let tree = Tree::new("deferring-cancel")?;
-    let held = Deferred::default();
+    let held = Questions::new();
     let cancel = Cancel::new();
     let script = Script::new(vec![
         deferring("c1", "Language"),
         deferring("c2", "Storage"),
         saying("stopped mid-way"),
-        saying("never asked"),
+        saying("with the answer kept"),
     ])
     .meanwhile({
         let (held, cancel) = (held.clone(), cancel.clone());
         move |before| {
             if before == 2
-                && let Some(batch) = held.waiting().first()
-                && let Ok(request) = rust(batch.id())
+                && let Some(request) = rust_to_oldest(&held)
             {
                 drop(client::answer(&request, &held));
                 cancel.request();
             }
         }
     });
-    let asked = Arc::clone(&script.asked);
+    let (asked, sent_to) = (Arc::clone(&script.asked), Arc::clone(&script.sent));
     let mut conversation = self::held(&tree, script, &held)?;
 
     let (response, streamed) = turning(
@@ -820,47 +918,230 @@ fn cancelling_a_turn_keeps_its_questions_and_clearing_empties_them() -> Result<(
     assert!(ran(&response, Stop::Cancelled), "{:?}", response.outcome);
     assert_eq!(stops(&streamed), [Stop::Cancelled], "a turn was started");
     assert_eq!(asked.load(Ordering::Relaxed), 3, "a request was made");
-    assert!(held.any_settled(), "the settled answer was dropped");
-    assert_eq!(held.waiting().len(), 1, "the waiting batch was dropped");
+    assert_eq!(delivered(&sent_to)?, [0, 0, 0]);
+    assert_eq!(held.waiting().1.len(), 1, "the waiting batch was dropped");
+    let (left, storage) = oldest(&held)?;
+
+    turned(&mut conversation, &prompt("and then?")?, &held)?;
+    assert_eq!(
+        delivered(&sent_to)?,
+        [0, 0, 0, 1],
+        "the settled answer was dropped"
+    );
 
     super::runtime()?.block_on(conversation.clear(&tree.sessions(), &tree.workspace()?, None))?;
 
-    assert!(held.waiting().is_empty());
-    assert!(!held.any_settled());
+    let (era, waiting) = held.waiting();
+    assert!(waiting.is_empty(), "{waiting:?}");
+    assert_ne!(era, left);
+    let (response, _) = turned(&mut conversation, &rust(&left, storage)?, &held)?;
+    assert_eq!(
+        response.outcome,
+        Outcome::Refused(ErrorCode::StaleQuestions.into())
+    );
+    assert_eq!(asked.load(Ordering::Relaxed), 4, "a turn was started");
     Ok(())
 }
 
-/// Picking another session up leaves the questions of the one left with it:
-/// none of them is answered, or delivered, in the session resumed.
+/// Two sessions number their batches alike, so a batch of one can share its
+/// id with a batch of the other: the era tells them apart. Session B is left
+/// by a host with a batch waiting; a host started again asks its own first
+/// batch in a new session A and shows it, then `/clear`s and resumes B, whose
+/// batch comes back under the same id. A's answer settles nothing of B's, and
+/// the same replies under B's era do.
 #[test]
-fn resuming_another_session_leaves_the_questions_behind() -> Result<(), Failed> {
-    let tree = Tree::new("deferring-resume")?;
-    let held = Deferred::default();
-    let script = Script::new(vec![saying("one"), saying("never asked")]);
+fn an_answer_shown_in_one_session_settles_nothing_of_another_with_the_same_id() -> Result<(), Failed>
+{
+    let tree = Tree::new("deferring-two-sessions")?;
+    let (sessions, workspace) = (tree.sessions(), tree.workspace()?);
+    let before = Questions::new();
+    let script = Script::new(vec![deferring("c1", "Language"), saying("left waiting")]);
+    let mut left = self::held(&tree, script, &before)?;
+    turned(&mut left, &prompt("plan B")?, &before)?;
+    let b = left.session().id().cloned().ok_or("an id")?;
+    drop(left);
+
+    let held = Questions::new();
+    let script = Script::new(vec![
+        deferring("c2", "Storage"),
+        saying("asked in A"),
+        saying("back in B"),
+        saying("with B's answer"),
+    ]);
     let asked = Arc::clone(&script.asked);
     let mut conversation = self::held(&tree, script, &held)?;
-    turned(&mut conversation, &prompt("one")?, &held)?;
-    let first = conversation.session().id().cloned().ok_or("an id")?;
+    let (_, streamed) = turned(&mut conversation, &prompt("plan A")?, &held)?;
+    let (in_a, shown) = last_shown(&streamed)?;
+    super::runtime()?.block_on(conversation.clear(&sessions, &workspace, None))?;
+    let _left = super::runtime()?.block_on(conversation.resume(&sessions, &workspace, &b, &[]))?;
+    let (_, streamed) = turned(&mut conversation, &prompt("in B again")?, &held)?;
+    assert_eq!(waits(&streamed).last(), Some(&vec!["Language".to_owned()]));
+    let (in_b, restored) = last_shown(&streamed)?;
+    assert_eq!(restored, shown, "the two sessions' batches share no id");
+    assert_eq!(in_b, Era::Session(b));
+    assert_ne!(in_a, in_b);
+    let counted = asked.load(Ordering::Relaxed);
+
+    let stale = Outcome::Refused(ErrorCode::StaleQuestions.into());
+    assert_eq!(client::answer(&rust(&in_a, shown)?, &held), stale);
+    assert_eq!(
+        turned(&mut conversation, &rust(&in_a, shown)?, &held)?
+            .0
+            .outcome,
+        stale
+    );
+    assert_eq!(asked.load(Ordering::Relaxed), counted, "a turn was started");
+    assert_eq!(oldest(&held)?, (in_b.clone(), restored), "B's batch moved");
+
+    assert_eq!(
+        client::answer(&rust(&in_b, restored)?, &held),
+        Outcome::Answer(AnswerOutcome::Settled)
+    );
+    Ok(())
+}
+
+/// The same session left and picked up again is the same era: an answer it
+/// was shown is refused while its batch has not come back, starting nothing,
+/// and is taken once the session's first turn has brought it back, to be
+/// delivered once.
+#[test]
+fn an_answer_to_a_session_picked_up_again_is_taken_once_its_batch_is_back() -> Result<(), Failed> {
+    let tree = Tree::new("deferring-same-session")?;
     let (sessions, workspace) = (tree.sessions(), tree.workspace()?);
-    drop(super::runtime()?.block_on(conversation.clear(&sessions, &workspace, None))?);
-    let asking = || {
-        held.register(vec![Question::new(
-            "Language",
-            "Which language?",
-            [Answer::new("Rust"), Answer::new("Python")],
-        )])
-    };
-    asking()?;
-    let settled = asking()?;
-    drop(client::answer(&rust(settled)?, &held));
-    assert!(held.any_settled());
+    let held = Questions::new();
+    let script = Script::new(vec![
+        deferring("c1", "Language"),
+        saying("asked in A"),
+        saying("in B"),
+        saying("back in A"),
+        saying("with the answer in hand"),
+    ]);
+    let (asked, sent_to) = (Arc::clone(&script.asked), Arc::clone(&script.sent));
+    let mut conversation = self::held(&tree, script, &held)?;
+    let a = conversation.session().id().cloned().ok_or("an id")?;
+    let (_, streamed) = turned(&mut conversation, &prompt("plan A")?, &held)?;
+    let (era, shown) = last_shown(&streamed)?;
+    assert_eq!(era, Era::Session(a.clone()));
+    super::runtime()?.block_on(conversation.clear(&sessions, &workspace, None))?;
+    turned(&mut conversation, &prompt("in B")?, &held)?;
+    let _left = super::runtime()?.block_on(conversation.resume(&sessions, &workspace, &a, &[]))?;
+    assert_eq!(emptied(&held)?, era);
 
-    let _left =
-        super::runtime()?.block_on(conversation.resume(&sessions, &workspace, &first, &[]))?;
+    let (response, _) = turned(&mut conversation, &rust(&era, shown)?, &held)?;
 
-    assert!(held.waiting().is_empty(), "{:?}", held.waiting());
-    assert!(!held.any_settled());
-    assert_eq!(asked.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        response.outcome,
+        Outcome::Refused(ErrorCode::StaleQuestions.into())
+    );
+    assert_eq!(asked.load(Ordering::Relaxed), 3, "a turn was started");
+
+    let (_, streamed) = turned(&mut conversation, &prompt("back")?, &held)?;
+    assert_eq!(last_shown(&streamed)?, (era.clone(), shown));
+
+    let (response, _) = turned(&mut conversation, &rust(&era, shown)?, &held)?;
+
+    assert!(ran(&response, Stop::Yielded), "{:?}", response.outcome);
+    assert_eq!(delivered(&sent_to)?, [0, 0, 0, 0, 1], "delivered once");
+    Ok(())
+}
+
+/// A batch delivered before its session was left does not come back with
+/// it: an answer to it is refused in the session picked up again, before and
+/// after its first turn, and a batch the session asks next takes a new id,
+/// even from a host started again. The session's log lists a delivered batch
+/// as waiting until its next request records it gone, so the session here
+/// makes one more before it is left.
+#[test]
+fn a_batch_delivered_before_its_session_was_left_stays_answered() -> Result<(), Failed> {
+    let tree = Tree::new("deferring-delivered")?;
+    let (sessions, workspace) = (tree.sessions(), tree.workspace()?);
+    let before = Questions::new();
+    let script = Script::new(vec![
+        deferring("c1", "Language"),
+        saying("asked"),
+        saying("with the answer in hand"),
+        saying("and after"),
+    ]);
+    let mut left = self::held(&tree, script, &before)?;
+    let a = left.session().id().cloned().ok_or("an id")?;
+    let (_, streamed) = turned(&mut left, &prompt("plan A")?, &before)?;
+    let (era, shown) = last_shown(&streamed)?;
+    let (response, _) = turned(&mut left, &rust(&era, shown)?, &before)?;
+    assert!(ran(&response, Stop::Yielded), "{:?}", response.outcome);
+    turned(&mut left, &prompt("and then?")?, &before)?;
+    drop(left);
+
+    let held = Questions::new();
+    let script = Script::new(vec![deferring("c2", "Storage"), saying("asked again")]);
+    let asked = Arc::clone(&script.asked);
+    let mut conversation = self::held(&tree, script, &held)?;
+    let _left = super::runtime()?.block_on(conversation.resume(&sessions, &workspace, &a, &[]))?;
+    let stale = Outcome::Refused(ErrorCode::StaleQuestions.into());
+
+    assert_eq!(
+        turned(&mut conversation, &rust(&era, shown)?, &held)?
+            .0
+            .outcome,
+        stale
+    );
+    assert_eq!(asked.load(Ordering::Relaxed), 0, "a turn was started");
+    let (_, streamed) = turned(&mut conversation, &prompt("again")?, &held)?;
+    let (again, asked_next) = last_shown(&streamed)?;
+    assert_eq!(again, era);
+    assert_ne!(asked_next, shown, "an id was handed out twice");
+    assert_eq!(waits(&streamed).last(), Some(&vec!["Storage".to_owned()]));
+    assert_eq!(client::answer(&rust(&era, shown)?, &held), stale);
+    Ok(())
+}
+
+/// What waits is read when it is shown, not when it was reported: a report
+/// posted in session A and converted after `/clear` and a resume of B shows
+/// B's era with B's batches, and an answer built from it settles only B's.
+#[test]
+fn a_report_converted_after_the_session_moved_shows_the_session_it_moved_to() -> Result<(), Failed>
+{
+    let tree = Tree::new("deferring-late-report")?;
+    let (sessions, workspace) = (tree.sessions(), tree.workspace()?);
+    let held = Questions::new();
+    let script = Script::new(vec![
+        deferring("c1", "Storage"),
+        saying("asked in B"),
+        deferring("c2", "Language"),
+        saying("asked in A"),
+        saying("back in B"),
+    ]);
+    let mut conversation = self::held(&tree, script, &held)?;
+    let b = conversation.session().id().cloned().ok_or("an id")?;
+    turned(&mut conversation, &prompt("plan B")?, &held)?;
+    super::runtime()?.block_on(conversation.clear(&sessions, &workspace, None))?;
+    let request = prompt("plan A")?;
+    let (_, streaming) = reporting(
+        &mut conversation,
+        &request,
+        &mut Client::new(&held),
+        &Cancel::new(),
+    )?;
+    let posted = streaming.posted.into_inner().map_err(|_| "poisoned")?;
+    let late = posted
+        .iter()
+        .rev()
+        .find(|event| matches!(event, Event::Waiting { .. }))
+        .ok_or("nothing waited in A")?;
+    let _left = super::runtime()?.block_on(conversation.resume(&sessions, &workspace, &b, &[]))?;
+    turned(&mut conversation, &prompt("in B again")?, &held)?;
+
+    let shown = client::progress(Capabilities::every(), late, None, Some(&held))
+        .ok_or("the report was not shown")?;
+
+    let shown = Progress::decode(&shown.encode()?)?;
+    assert_eq!(waits(&[shown.clone()]), [vec!["Storage".to_owned()]]);
+    let (era, id) = last_shown(&[shown])?;
+    assert_eq!(era, Era::Session(b));
+    assert_eq!(
+        client::answer(&rust(&era, id)?, &held),
+        Outcome::Answer(AnswerOutcome::Settled)
+    );
+    assert!(held.waiting().1.is_empty(), "{:?}", held.waiting());
     Ok(())
 }
 
@@ -869,11 +1150,12 @@ fn resuming_another_session_leaves_the_questions_behind() -> Result<(), Failed> 
 #[test]
 fn an_answer_at_a_door_that_cannot_deliver_it_is_refused_as_stale() -> Result<(), Failed> {
     let tree = Tree::new("deferring-doors")?;
-    let held = Deferred::default();
+    let held = Questions::new();
     let script = Script::new(vec![deferring("c1", "Language"), saying("carrying on")]);
     let mut conversation = self::held(&tree, script, &held)?;
     turned(&mut conversation, &prompt("plan it")?, &held)?;
-    let request = rust(oldest(&held)?)?;
+    let (era, id) = oldest(&held)?;
+    let request = rust(&era, id)?;
     let standing = super::Desk::new(&tree, &[])?;
     let (workspace, sessions) = (tree.workspace()?, tree.sessions());
     let desk = client::Desk {
@@ -896,7 +1178,6 @@ fn an_answer_at_a_door_that_cannot_deliver_it_is_refused_as_stale() -> Result<()
     assert_eq!(client::interrupt(&request, &cancel), stale);
     assert!(!cancel.requested());
 
-    assert_eq!(held.waiting().len(), 1);
-    assert!(!held.any_settled());
+    assert_eq!(held.waiting().1.len(), 1);
     Ok(())
 }

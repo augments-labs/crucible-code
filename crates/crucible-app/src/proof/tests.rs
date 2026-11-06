@@ -209,7 +209,7 @@ fn the_start_a_catalog_named_in_the_environment_refuses() {
     let (logs, workspace) = (sample.logs(), sample.workspace());
 
     let started = assemble(&Startup {
-        deferred: None,
+        questions: None,
         providers: &crate::providers::providers()
             .expect("the built-in providers register")
             .snapshot(),

@@ -109,7 +109,7 @@ fn an_assembled_conversation_s_search_waits_for_room_on_the_run_s_tool_worker() 
     let settings = Settings::default();
     let services = Services::new();
     let mut conversation = assemble(&Startup {
-        deferred: None,
+        questions: None,
         providers: &catalogue(),
         provider: None,
         unasked: NOTHING_TO_ASK,

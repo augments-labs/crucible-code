@@ -24,8 +24,9 @@
 //!
 //! Answering the questions a turn left waiting is served only to a client that
 //! claimed [`Capability::Questions`], the one that is told what waits. The
-//! command names the batch by the id it was reported under and carries one
-//! reply per question; whether the replies fit is the registry's to decide.
+//! command names the batch by the era and the id it was reported under and
+//! carries one reply per question; whether the replies fit is the registry's
+//! to decide.
 
 use std::fmt;
 use std::str::FromStr;
@@ -36,6 +37,7 @@ use serde_json::Value;
 use crate::bounds::{Name, PROMPT_BYTES};
 use crate::error::{ErrorCode, Refusal};
 use crate::pending::{Decision, Picked};
+use crate::progress::Era;
 use crate::request::Capability;
 use crate::wire::{Fields, Writing};
 
@@ -58,16 +60,20 @@ pub enum Command {
     Decide(Decision),
     /// Answer a batch of questions a turn left waiting, without stopping.
     ///
-    /// The batch is named by the id
+    /// The batch is named by the era and the id
     /// [`Progress::Waiting`](crate::Progress::Waiting) reported it under, and
     /// takes one reply for each of its questions, in order. A batch that is
-    /// not waiting is refused as
+    /// not waiting, or one of a session the conversation has left, is refused
+    /// as
     /// [`StaleQuestions`](crate::ErrorCode::StaleQuestions), and replies it
     /// cannot take as [`InvalidAnswer`](crate::ErrorCode::InvalidAnswer); either
     /// way nothing is settled and the batch still waits. An answer settles
     /// questions and nothing else: it is never a ruling on a pending action
     /// nor a yes to sending anything.
     Answer {
+        /// The session the batch belongs to, as
+        /// [`Progress::Waiting`](crate::Progress::Waiting) reported it.
+        era: Era,
         /// The batch answered.
         id: QuestionId,
         /// One reply per question, in the order they were asked.
@@ -396,10 +402,13 @@ impl Command {
         match self {
             Self::Prompt(prompt) => object.with("text", prompt.as_str()),
             Self::Decide(decision) => object.with("decision", decision.written()),
-            Self::Answer { id, replies } => object.with("id", id.to_string()).with(
-                "replies",
-                replies.iter().map(Replied::written).collect::<Vec<_>>(),
-            ),
+            Self::Answer { era, id, replies } => object
+                .with("era", era.written())
+                .with("id", id.to_string())
+                .with(
+                    "replies",
+                    replies.iter().map(Replied::written).collect::<Vec<_>>(),
+                ),
             Self::Resume(session) => object.with("session", session.as_str()),
             Self::SelectModel {
                 provider,
@@ -464,6 +473,7 @@ impl Command {
             "cancel" => Self::Cancel,
             "decide" => Self::Decide(Decision::read(fields.take("decision")?)?),
             "answer" => Self::Answer {
+                era: Era::read(fields.take("era")?)?,
                 id: QuestionId::parse(&fields.string("id")?).ok_or(ErrorCode::Malformed)?,
                 replies: fields
                     .list("replies")?
@@ -560,7 +570,7 @@ impl Command {
 }
 
 /// The session `word` names.
-fn session(word: &str) -> Result<SessionId, Refusal> {
+pub(crate) fn session(word: &str) -> Result<SessionId, Refusal> {
     if word.len() > crate::bounds::NAME_BYTES {
         return Err(ErrorCode::TooLarge.into());
     }
