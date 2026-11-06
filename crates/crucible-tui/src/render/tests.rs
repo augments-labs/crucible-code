@@ -3223,3 +3223,36 @@ fn every_corpus_answer_resized_to_a_width_is_what_that_width_draws_fresh() {
         }
     }
 }
+
+/// What the transcript band holds mid-stream, as a picture: every row the
+/// record keeps, then the row a held block stands as at the foot.
+fn held_picture(glyphs: Glyphs) -> String {
+    const COLUMNS: usize = 64;
+    let mut drawn = reading(COLUMNS, 24);
+    drawn.render.draws(glyphs);
+    let mut picture = String::new();
+    for delta in [
+        "The probes and their budgets:\n\n| probe | budget | measured |\n|---|---:|---:|\n| render burst | 30/s | 412/s |\n",
+        "| session rss | 35 MB | 21 MB |\n\nThe sum they come to:\n\n$$\n\\sum_{i=1}^{n} x_i\n",
+    ] {
+        drawn.render.stream(delta).unwrap();
+        let record = &drawn.render.record;
+        let mut rows: Vec<Row> = (0..record.lines())
+            .flat_map(|line| record.folded(line))
+            .collect();
+        rows.extend(drawn.render.holding(COLUMNS));
+        picture.push_str(&crate::dump::dump(&rows, COLUMNS));
+        picture.push_str("\n\n");
+    }
+    picture
+}
+
+#[test]
+fn a_table_and_a_formula_held_mid_stream_unicode() {
+    insta::assert_snapshot!(held_picture(Glyphs::Unicode));
+}
+
+#[test]
+fn a_table_and_a_formula_held_mid_stream_ascii() {
+    insta::assert_snapshot!(held_picture(Glyphs::Ascii));
+}

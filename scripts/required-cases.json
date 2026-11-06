@@ -3965,6 +3965,150 @@
         "macos",
         "windows"
       ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-TABLE-NARROWED",
+      "family": "transcript-blocks",
+      "obligation": "A table drawn at 60 columns and narrowed to 30 draws exactly the rows the same answer draws at 30 columns from the start.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_table_narrowed_is_the_table_a_window_that_narrow_draws",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "f8d9521b7cd0418dcde17e260da7baecf4b252f8998d89ed40a6857d97d0c994",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-TABLE-NARROWED-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode, a table narrowed once the window settles is written again as the rows the same answer draws at the new width from the start.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_table_narrowed_is_the_table_a_window_that_narrow_draws",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "12fa8f1f3962864f1a84d8e819a25852fabbf7e375b7c3843ed4cdecbb3daadc",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-WIDTH-SWEEP",
+      "family": "transcript-blocks",
+      "obligation": "Every corpus answer resized to each width from 8 to 160 columns, from 160 and from 8, keeps the rows it draws fresh at that width, and none is wider than the width it is folded at.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::every_corpus_answer_resized_to_a_width_is_what_that_width_draws_fresh",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "1b3f95605c938ed96b37d77c00019688baed7640f6da4aceb81deb496395a917",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-HELD-STATUS-ROW",
+      "family": "transcript-blocks",
+      "obligation": "While a formula is held the window shows the one row `\u25c7 drawing a formula \u00b7 2 lines so far` and none of its source, and once it closes that row is gone and the formula is drawn.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_held_block_shows_one_status_row_and_none_of_its_source",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "18619f4d67f6a2e76631d6b3ff7dae8af16444475d90ec27f51fd990a84428ec",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-HELD-STATUS-ROW-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode a held formula shows the same one status row and none of its source, and once it closes and is sealed the row is gone and the formula is in the scrollback.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_held_block_shows_one_status_row_and_none_of_its_source",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "b9420b7e3c016be08ba04e6eb2e3e546388fa444b6cd3761abdef6ff7245a00a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-HELD-PAST-CAP",
+      "family": "transcript-blocks",
+      "obligation": "Display math, a mermaid fence and a diff fence each held past its cap are handed on as no block, and what is drawn is exactly the answer as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_held_block_past_its_cap_is_shown_as_written_and_never_handed_on",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "077ae637e991cd3e19f02e8fc3bbc48b91c74a946b31891115a827aaf238eca1",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BLOCK-CEILING",
+      "family": "transcript-blocks",
+      "obligation": "A record filled with tables lets the oldest go with its source before it holds the ceiling's count of them, stays within the ceiling, and charges exactly what each kept line weighs.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "record::tests::the_oldest_block_leaves_under_the_ceiling_with_its_source",
+      "source": "crates/crucible-tui/src/record.rs",
+      "body_sha256": "a460b8b492b3a9b9dbacbb9d21033ac2c50af96c51a8fff7a0659a81454f10c9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CUT-ANSWER",
+      "family": "transcript-blocks",
+      "obligation": "Every answer in the cut fixtures, held kinds included, draws the same rows however its text is cut into deltas.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::every_cut_of_an_answer_draws_what_the_whole_answer_draws",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "7307617a72532ea1ebfdccdc66dc0b5307249809b363ce58ef418ecd2ac9b7c3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
     }
   ]
 }
