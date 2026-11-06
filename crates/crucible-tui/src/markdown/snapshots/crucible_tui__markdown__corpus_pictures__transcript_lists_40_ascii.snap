@@ -5,12 +5,12 @@ expression: "pictured(\"lists\", 40, Glyphs::Ascii)"
 Things still to do:                     
                                         
 <Bullet>-</><Quiet> </>a bullet item long enough that it has 
-to wrap onto another row of the window  
+  to wrap onto another row of the window
 <Quiet>-</><Quiet> </>a task nobody has finished yet        
 <DoneMark>x</><Quiet> </><Done>a task somebody </><Done>ha</><Done>s finished</>          
                                         
 <Ordinal>1.</> a numbered item long enough that it  
-wraps as well                           
+   wraps as well                        
 <Ordinal>2.</> two                                  
    <Bullet>-</><Quiet> </>a nested bullet                    
 <Ordinal>3.</> three                                

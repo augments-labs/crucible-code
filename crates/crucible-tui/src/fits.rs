@@ -36,6 +36,7 @@ use crate::expanded::{Expanded, Shown};
 use crate::glyphs::Glyphs;
 use crate::key_panel::KeyPanel;
 use crate::ladder::Ladder;
+use crate::markdown::{Held, Holding};
 use crate::menu::{Listed, Menu};
 use crate::notice::Notice;
 use crate::panel::{Heading, Offered, Panel};
@@ -340,6 +341,17 @@ fn a_notice_fits_the_window_it_is_read_in() {
             named: Some(LONG),
         };
         across("a notice", |columns, glyphs| notice.rows(columns, glyphs));
+    }
+}
+
+#[test]
+fn the_row_a_held_block_shows_fits_the_live_foot_it_stands_in() {
+    for held in [Held::Table, Held::DisplayMath, Held::Mermaid, Held::Diff] {
+        for lines in [1, 12, usize::MAX] {
+            across("held block", |columns, glyphs| {
+                vec![Holding { held, lines }.row(columns, glyphs)]
+            });
+        }
     }
 }
 

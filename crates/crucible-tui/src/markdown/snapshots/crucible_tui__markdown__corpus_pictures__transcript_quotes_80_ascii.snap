@@ -5,7 +5,7 @@ expression: "pictured(\"quotes\", 80, Glyphs::Ascii)"
 The reply quoted somebody else:                                                 
                                                                                 
 <Quiet>|</><Quiet> </><Quote>a quote long enough that it </><Quote>ha</><Quote>s to wrap onto another row, and then onto one</>   
-<Quote>more</>                                                                            
+<Quiet>|</><Quiet> </><Quote>more</>                                                                          
 >                                                                               
 <Quiet>|</><Quiet> </><Quote>and a second paragraph inside the same quote</>                                  
                                                                                 

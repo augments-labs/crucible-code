@@ -162,17 +162,17 @@ fn read_as_code(line: &str) -> Vec<(Slot, String)> {
     const ROOM: usize = 80;
 
     let mut runs = Vec::new();
-    let mut markdown = crucible_tui::Markdown::default();
+    // As written, so the fenced line reaches here as runs and is never held
+    // back as a whole block.
+    let mut markdown = crucible_tui::Markdown::default().as_written();
 
-    markdown.read(
-        &format!("```rust\n{line}\n```\n"),
-        ROOM,
-        &mut |slot, text, _| {
-            if text != "\n" {
-                runs.push((slot, text.to_owned()));
-            }
-        },
-    );
+    markdown.read(&format!("```rust\n{line}\n```\n"), ROOM, &mut |said| {
+        if let crucible_tui::markdown::Said::Run { slot, text, .. } = said
+            && text != "\n"
+        {
+            runs.push((slot, text.to_owned()));
+        }
+    });
     runs
 }
 

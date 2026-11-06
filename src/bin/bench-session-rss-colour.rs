@@ -15,7 +15,10 @@
 //! leave the machine and no production-only seam is involved.
 //!
 //! Each turn asks the real read tool to read a planted file, then receives a
-//! streamed answer. RSS and proportional set size come from `smaps_rollup` at
+//! streamed answer that ends in a table. A table is kept as the source it was
+//! written as beside the rows it was laid out as, so a session of them holds
+//! more than a session of prose the same length, and the fill below rolls
+//! every one of them out past the ceiling with its source. RSS and proportional set size come from `smaps_rollup` at
 //! startup and after turns one, five and twenty; `VmHWM` supplies the child's
 //! peak, including spikes between samples. Thread, descriptor and process-tree
 //! counts are emitted beside the budget so a flat total cannot hide a growing
@@ -91,6 +94,10 @@ const PLANTED: usize = 2_000;
 /// Text deltas in every completed answer of a measured turn.
 #[cfg(target_os = "linux")]
 const DELTAS: usize = 400;
+
+/// Rows of the table that ends every measured answer, a row a delta.
+#[cfg(target_os = "linux")]
+const TABLE_ROWS: usize = 24;
 
 /// Turns after the sampled twenty, each of them all line endings.
 #[cfg(target_os = "linux")]
@@ -583,14 +590,20 @@ fn tool() -> &'static str {
 /// wraps, and prose that wraps is one line of the record however many rows it
 /// takes; a fill turn ends every delta, so every delta is a line. Lines are what
 /// the record bounds, so filling it is a question of how many endings arrive
-/// rather than of how much text does.
+/// rather than of how much text does. A measured turn's prose is followed by a
+/// table, streamed a row at a time, which the blank line after it closes.
 #[cfg(target_os = "linux")]
 fn answer(turn: usize, deltas: usize, lines: bool) -> String {
     // Two bytes into the JSON, where they are the escape a line ending is
     // written as -- not a line ending in this file, which would end the data
     // line and truncate the event.
     let ending = if lines { "\\n" } else { "" };
-    let mut body = String::with_capacity(deltas.saturating_mul(112).saturating_add(512));
+    let mut body = String::with_capacity(
+        deltas
+            .saturating_add(TABLE_ROWS + 2)
+            .saturating_mul(112)
+            .saturating_add(512),
+    );
     body.push_str(
         "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_answer\"}}\n\n\
          event: content_block_start\ndata: {\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
@@ -599,6 +612,21 @@ fn answer(turn: usize, deltas: usize, lines: bool) -> String {
         let _ = write!(
             body,
             "event: content_block_delta\ndata: {{\"index\":0,\"delta\":{{\"type\":\"text_delta\",\"text\":\"field {word} {ending}\"}}}}\n\n"
+        );
+    }
+    if !lines {
+        let _ = write!(
+            body,
+            "event: content_block_delta\ndata: {{\"index\":0,\"delta\":{{\"type\":\"text_delta\",\"text\":\"\\n\\n| turn | field | read |\\n| --- | --- | ---: |\\n\"}}}}\n\n"
+        );
+        for row in 0..TABLE_ROWS {
+            let _ = write!(
+                body,
+                "event: content_block_delta\ndata: {{\"index\":0,\"delta\":{{\"type\":\"text_delta\",\"text\":\"| {turn} | field {row} | {row} |\\n\"}}}}\n\n"
+            );
+        }
+        body.push_str(
+            "event: content_block_delta\ndata: {\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"\\n\"}}\n\n",
         );
     }
     let _ = write!(

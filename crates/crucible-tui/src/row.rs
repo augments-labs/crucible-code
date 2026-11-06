@@ -329,7 +329,7 @@ impl Row {
     /// the slot the span it came from was written in — which is the whole
     /// reason folding happens here rather than on the painted string, where a
     /// break would land in the middle of an escape sequence.
-    fn between(&self, from: usize, to: usize) -> Self {
+    pub(crate) fn between(&self, from: usize, to: usize) -> Self {
         let mut cut = Self::new();
         let mut at = 0;
 
