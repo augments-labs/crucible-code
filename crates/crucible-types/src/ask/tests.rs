@@ -146,3 +146,63 @@ fn a_question_moved_on_from_with_nothing_chosen_is_answered_rather_than_unanswer
     assert_eq!(answered.chosen().len(), 0);
     assert_eq!(answered.note(), "");
 }
+
+#[test]
+fn a_question_id_reads_back_from_the_text_it_is_written_as() {
+    for number in [0, 1, 7, 42, u64::MAX] {
+        let id = QuestionId::numbered(number);
+
+        assert_eq!(id.number(), number);
+        assert_eq!(QuestionId::parse(&id.to_string()), Some(id));
+    }
+    assert_eq!(QuestionId::numbered(3).to_string(), "q3");
+}
+
+#[test]
+fn a_question_id_is_only_the_form_it_is_written_in() {
+    for not_one in [
+        "",
+        "q",
+        "3",
+        "Q3",
+        "q+3",
+        "q-3",
+        "q03",
+        "q 3",
+        " q3",
+        "q3 ",
+        "q3a",
+        "q١",
+        "q18446744073709551616",
+    ] {
+        assert_eq!(QuestionId::parse(not_one), None, "{not_one:?}");
+    }
+    assert_eq!(QuestionId::parse("q0"), Some(QuestionId::numbered(0)));
+}
+
+#[test]
+fn a_batch_and_a_reply_never_show_what_was_asked_or_answered() {
+    let batch = Batch::new(
+        QuestionId::numbered(1),
+        [Question::new(
+            "heading-canary",
+            "question-canary",
+            [Answer::new("answer-canary").saying("says-canary")],
+        )],
+    );
+    let reply = Reply::Answered(Answered::new(["chosen-canary"]).noting("note-canary"));
+
+    let shown = format!("{batch:?} {reply:?} {:?}", Reply::Declined);
+    for canary in [
+        "heading-canary",
+        "question-canary",
+        "answer-canary",
+        "says-canary",
+        "chosen-canary",
+        "note-canary",
+    ] {
+        assert!(!shown.contains(canary), "{shown}");
+    }
+    assert_eq!(batch.id(), QuestionId::numbered(1));
+    assert_eq!(batch.questions().len(), 1);
+}
