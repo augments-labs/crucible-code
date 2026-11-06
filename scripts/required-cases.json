@@ -4103,7 +4103,223 @@
       },
       "case": "render::tests::every_cut_of_an_answer_draws_what_the_whole_answer_draws",
       "source": "crates/crucible-tui/src/render/tests.rs",
-      "body_sha256": "7307617a72532ea1ebfdccdc66dc0b5307249809b363ce58ef418ecd2ac9b7c3",
+      "body_sha256": "2737c6272b31cf605e6ed4c459ca04b761c7836b5599b63416b58b30b08c7e6a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-LIST-BULLET-HANG",
+      "family": "transcript-blocks",
+      "obligation": "A bullet that wraps continues under the first column of its words.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_wrapped_bullet_hangs_under_its_words",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "1a77983af4caec36f6d2d055aa2b99c1c16dda308d8e648f22366b7371d5b309",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-LIST-NUMBER-HANG",
+      "family": "transcript-blocks",
+      "obligation": "A numbered item that wraps continues under the first column of its words, at the width of its own number.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_wrapped_numbered_item_hangs_under_its_own_number",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "cf3007feb6b65125e85162f2d51224034c700985143c64b053c110c5043efc3a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-LIST-TASK-HANG",
+      "family": "transcript-blocks",
+      "obligation": "A task, done or not, that wraps continues under the first column of its words.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_wrapped_task_hangs_under_its_words",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "6fa023a87b74123c105c5c2938760e50250105873fa46f376c868ddab893b4c2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-LIST-NESTED-HANG",
+      "family": "transcript-blocks",
+      "obligation": "A nested item that wraps hangs under its own words, and not under its parent's.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_wrapped_nested_item_hangs_under_its_words_not_its_parents",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "0985f54f037b82dd61d6cfd088e6827ccad44575f275ed24f1469bf43c24dc6a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-QUOTE-BAR",
+      "family": "transcript-blocks",
+      "obligation": "A quote that wraps shows its bar on every row it takes.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_wrapped_quote_keeps_its_bar_on_every_row",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "519b8cdb1313346dbd249a7da79bdf82dff0506d5c871352e8d43b153a140b34",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-LIST-RELAID",
+      "family": "transcript-blocks",
+      "obligation": "A wrapped item is drawn again under its words, and a wrapped quote with its bar on every row, when the window changes width.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_wrapped_item_is_drawn_again_under_its_words_at_a_new_width",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "af5193f315f34c3987258d0ff338ee712d8c9215e96cc2c7384738f13a40834c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-LIST-HANG-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode, a wrapped bullet and numbered item continue under their words, at the width written and after a resize.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_wrapped_item_hangs_under_its_words",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "8060745d271b5087c4e3f95a9b81de087ec2d1b936a54ed027316f288f0ab37e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-QUOTE-BAR-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode, a wrapped quote shows its bar on every row it takes.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_wrapped_quote_keeps_its_bar_on_every_row",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "e31c405992a63f790fa2a780a6674d7d29a547b9630f73ca3131455074c75b16",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-TASK-HANG-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode, a wrapped task, done or not, continues under the first column of its words, at the width written and after a resize.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_wrapped_task_hangs_under_its_words",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "225aaa2fdae4351088c1ba3e7d3de9114da3a5b86c15b341510c1604b60e3ae0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-NESTED-HANG-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode, a wrapped nested item hangs under its own words and not its parent's, at the width written and after a resize.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_wrapped_nested_item_hangs_under_its_words_not_its_parents",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "44141dfa07c16a6cc05d9550c91bd33cc1ef511cff7d58809e9fdee696825d45",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-LIST-HANG-ASCII-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode with the ascii glyphs, a wrapped bullet continues under its words, at the width written and after a resize.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_wrapped_item_hangs_under_its_words_in_ascii_too",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "f2e9ba3f399dfff64c53f31e60c82d55f26ac865448d2a4bda87fe26d41e05ec",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-QUOTE-BAR-ASCII-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode with the ascii glyphs, a wrapped quote shows its bar on every row it takes, at the width written and after a resize.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_wrapped_quote_keeps_its_bar_in_ascii_too",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "f52e26d8b555ea22940c6b2949a7e1537303543dd73d75370a8565c75eacf482",
       "platforms": [
         "linux",
         "macos",

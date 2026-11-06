@@ -2080,3 +2080,131 @@ fn a_held_block_laid_out_is_what_it_would_have_streamed_as() {
         assert_eq!(laid, as_written(answer), "{answer:?}");
     }
 }
+
+/// The first line of `answer`, as the row the reader drew it as.
+fn row_of(answer: &str, glyphs: Glyphs) -> Row {
+    let said = read(&mut Markdown::new(glyphs), answer);
+    let mut row = Row::new();
+    for (slot, text) in said {
+        if text.contains('\n') {
+            break;
+        }
+        row.push(slot, text);
+    }
+    row
+}
+
+/// What a row after the first stands in front of its words with.
+fn hung_under(answer: &str, glyphs: Glyphs) -> Option<(usize, usize, String)> {
+    hang(&row_of(answer, glyphs)).map(|hang| (hang.lead, hang.columns, hang.prefix.text()))
+}
+
+#[test]
+fn a_bullet_hangs_under_the_column_its_words_begin_in() {
+    // The mark is one column and the space after it another, in both sets.
+    assert_eq!(
+        hung_under("- an item that wraps\n", Glyphs::Unicode),
+        Some(("• ".len(), 2, "  ".to_owned()))
+    );
+    assert_eq!(
+        hung_under("- an item that wraps\n", Glyphs::Ascii),
+        Some((2, 2, "  ".to_owned()))
+    );
+}
+
+#[test]
+fn a_task_hangs_under_its_words_whether_it_is_done_or_not() {
+    for (answer, lead) in [
+        ("- [ ] a task\n", "□ ".len()),
+        ("- [x] a task\n", "✓ ".len()),
+    ] {
+        assert_eq!(
+            hung_under(answer, Glyphs::Unicode),
+            Some((lead, 2, "  ".to_owned())),
+            "{answer:?}"
+        );
+    }
+    for answer in ["- [ ] a task\n", "- [x] a task\n"] {
+        assert_eq!(
+            hung_under(answer, Glyphs::Ascii),
+            Some((2, 2, "  ".to_owned())),
+            "{answer:?}"
+        );
+    }
+}
+
+#[test]
+fn a_numbered_item_hangs_at_the_width_of_its_own_number() {
+    // Three columns for `1. ` and four for `10. `: what the words are hung
+    // under is where they began, not a column the list agreed on.
+    assert_eq!(
+        hung_under("1. first\n", Glyphs::Unicode),
+        Some((3, 3, "   ".to_owned()))
+    );
+    assert_eq!(
+        hung_under("10. tenth\n", Glyphs::Unicode),
+        Some((4, 4, "    ".to_owned()))
+    );
+}
+
+#[test]
+fn the_indentation_that_nests_an_item_is_kept_in_its_hang() {
+    assert_eq!(
+        hung_under("  - nested\n", Glyphs::Unicode),
+        Some(("  • ".len(), 4, "    ".to_owned()))
+    );
+    assert_eq!(
+        hung_under("   1. nested\n", Glyphs::Unicode),
+        Some((6, 6, "      ".to_owned()))
+    );
+}
+
+#[test]
+fn a_quote_stands_its_bar_again_in_front_of_every_row_it_wraps_onto() {
+    let hang = hang(&row_of("> somebody else\n", Glyphs::Unicode)).expect("a quote hangs");
+
+    assert_eq!((hang.lead, hang.columns), ("│ ".len(), 2));
+    assert_eq!(
+        hang.prefix.spans().collect::<Vec<_>>(),
+        vec![(Slot::Quiet, "│"), (Slot::Quiet, " ")],
+        "the bar is as quiet on the rows after the first as on the first"
+    );
+    assert_eq!(
+        hung_under("> somebody else\n", Glyphs::Ascii),
+        Some((2, 2, "| ".to_owned()))
+    );
+}
+
+#[test]
+fn a_bar_and_a_mark_in_one_row_hang_by_both() {
+    // The reader does not yet read an item inside a quote, so the row is built
+    // as the pieces it would be drawn from: the hang must compose them.
+    let mut row = Row::new();
+    row.push(Slot::Quiet, "│");
+    row.push(Slot::Quiet, " ");
+    row.push(Slot::Bullet, "•");
+    row.push(Slot::Quiet, " ");
+    row.push(Slot::Plain, "an item");
+
+    let hang = hang(&row).expect("a quoted item hangs");
+
+    assert_eq!((hang.lead, hang.columns), ("│ • ".len(), 4));
+    assert_eq!(hang.prefix.text(), "│   ");
+}
+
+#[test]
+fn prose_and_things_that_only_look_like_marks_hang_under_nothing() {
+    // The same lines the reader leaves alone: arithmetic, a figure, and a
+    // number in the middle of a sentence.
+    for answer in [
+        "plain words that wrap\n",
+        "  indented prose\n",
+        "5 - 3 = 2\n",
+        "1.5 is a figure\n",
+        "word 1. later\n",
+    ] {
+        let row = row_of(answer, Glyphs::Unicode);
+
+        assert_eq!(hang(&row), None, "{answer:?} draws {row:?}");
+    }
+}

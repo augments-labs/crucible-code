@@ -30,6 +30,11 @@
 //! the runs it would have been had nothing held it. A reader made
 //! [`Markdown::as_written`] holds no block at all, which is what lays one out.
 //!
+//! A quote's bar and an item's mark are drawn in slots of their own, and
+//! `hang` reads them back off a line to say what a row that line wraps onto
+//! stands in front of its words with. The reader decides where a line ends and
+//! nothing about where it wraps; the record that folds it asks.
+//!
 //! On the way out, each settled run is told by the kind of thing it is, which
 //! is what a design colours: a span of code that names a file is a path, and a
 //! word of prose can be a version, a hash, a figure or a list's number. That
@@ -345,6 +350,90 @@ fn push(rows: &mut [Row], slot: Slot, text: &str, link: Option<&str>) {
             None => row.push(slot, text),
         }
     }
+}
+
+/// What a line of an answer stands in front of its words with, and so what
+/// every row it wraps onto stands in front of theirs.
+///
+/// Read off the line as it was drawn rather than kept beside it: the marks are
+/// drawn in the slots this reader gives them, and the line is the one place a
+/// record that folds it again at another width has them all. See [`hang`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Hang {
+    /// How many bytes of the line's text stand in front of its words.
+    pub(crate) lead: usize,
+    /// What stands in front of the words of each row after the first: the bar
+    /// of a quote again, and the blanks that leave the words where they began.
+    pub(crate) prefix: Row,
+    /// The columns of `prefix`, which are the columns the first row spends on
+    /// what stands in front of its words.
+    pub(crate) columns: usize,
+}
+
+/// How the line `row` hangs when it wraps, where it opens with a quote's bar
+/// or an item's mark.
+///
+/// The bar of a quote, the mark of a bullet or a task and the number of a
+/// numbered item are what this reader draws in front of an item's words, each
+/// followed by the space that parts it from them. Rows after the first stand
+/// the bar again where there was one and leave the columns of the rest blank,
+/// so a number of two digits hangs two columns further than one of one, and
+/// the indentation that nested the item is kept with it.
+///
+/// `None` for a line that opens with none of them: it wraps flush, as prose
+/// does. A mark with no space after it is not one.
+#[must_use]
+pub(crate) fn hang(row: &Row) -> Option<Hang> {
+    let (mut lead, mut columns, mut hung) = (0, 0, false);
+    let mut prefix = Row::new();
+    let mut spans = row.spans().peekable();
+
+    while let Some(&(slot, text)) = spans.peek() {
+        if text.bytes().all(|byte| byte == b' ') {
+            prefix.push(Slot::Plain, text);
+            lead += text.len();
+            columns += text.len();
+        } else if slot == Slot::Quiet
+            && [Glyphs::Unicode, Glyphs::Ascii]
+                .map(Glyphs::vertical)
+                .contains(&text)
+        {
+            spans.next();
+            if spans.next_if(|&(_, next)| next == " ").is_none() {
+                break;
+            }
+            prefix.push(Slot::Quiet, text);
+            prefix.push(Slot::Quiet, " ");
+            lead += text.len() + 1;
+            columns += crate::width::columns(text) + 1;
+            hung = true;
+            continue;
+        } else {
+            let marks = match slot {
+                Slot::Bullet | Slot::DoneMark | Slot::Ordinal => true,
+                Slot::Quiet => [Glyphs::Unicode, Glyphs::Ascii]
+                    .map(Glyphs::open)
+                    .contains(&text),
+                _ => false,
+            };
+            spans.next();
+            if marks && spans.next_if(|&(_, next)| next.starts_with(' ')).is_some() {
+                let width = crate::width::columns(text) + 1;
+                prefix.push(Slot::Plain, " ".repeat(width));
+                lead += text.len() + 1;
+                columns += width;
+                hung = true;
+            }
+            break;
+        }
+        spans.next();
+    }
+
+    hung.then_some(Hang {
+        lead,
+        prefix,
+        columns,
+    })
 }
 
 /// A held block being gathered.

@@ -52,6 +52,20 @@ both its text and its rows. When the oldest of the transcript is dropped, a
 table goes with its text. The [session log](sessions.md) still holds every
 answer.
 
+## Lists and quotes that wrap
+
+A bullet, a task or a numbered item that is longer than the window continues
+under the first column of its words, not under its mark. A numbered item hangs
+after its own number, so `1. ` hangs three columns and `10. ` hangs four, and
+an item nested under another keeps the indentation that nested it. A quote
+that wraps shows its bar on every row it takes. It is the same in both
+[`output.screen`](../configuration/configuration.md#output) modes and in both
+glyph sets, and when the window changes width the rows are folded again from
+the line, so a narrower window hangs them at its own width.
+
+A dash or a number that opens a line inside a quote is shown as written, not as
+an item, so a wrapped one keeps the quote's bar and nothing more.
+
 ## What is shown as written
 
 Some text is drawn exactly as the model wrote it, rather than as a block:

@@ -3098,11 +3098,163 @@ fn a_rule_narrowed_is_still_one_row() {
     );
 }
 
+/// The words of an item that wraps at thirty columns, three rows or more.
+const LONG: &str = "long enough that it has to wrap onto another row, and then one more";
+
+/// The rows of `answer` at thirty columns that are not blank.
+fn drawn_at_thirty(answer: &str, glyphs: Glyphs) -> Vec<String> {
+    let mut drawn = reading(30, 12);
+    drawn.render.draws(glyphs);
+    drawn.answer(answer);
+    drawn
+        .rows()
+        .into_iter()
+        .map(|row| row.trim_end().to_owned())
+        .filter(|row| !row.is_empty())
+        .collect()
+}
+
+/// The first of `rows`, or nothing where there is none.
+fn first_of(rows: &[String]) -> &str {
+    rows.first().map_or("", String::as_str)
+}
+
+/// How many columns of blank stand in front of `row`'s first word.
+fn indent(row: &str) -> usize {
+    row.len() - row.trim_start().len()
+}
+
+#[test]
+fn a_wrapped_bullet_hangs_under_its_words() {
+    let rows = drawn_at_thirty(&format!("- a bullet item {LONG}\n"), Glyphs::Unicode);
+
+    assert!(rows.len() > 2, "{rows:#?}");
+    assert!(first_of(&rows).starts_with("• a bullet"), "{rows:#?}");
+    for row in rows.iter().skip(1) {
+        assert_eq!(indent(row), 2, "{row:?} does not hang under the words");
+    }
+}
+
+#[test]
+fn a_wrapped_task_hangs_under_its_words() {
+    for (answer, first) in [
+        (format!("- [ ] a task {LONG}\n"), "□ a task"),
+        (format!("- [x] a task {LONG}\n"), "✓ a task"),
+    ] {
+        let rows = drawn_at_thirty(&answer, Glyphs::Unicode);
+
+        assert!(first_of(&rows).starts_with(first), "{rows:#?}");
+        for row in rows.iter().skip(1) {
+            assert_eq!(indent(row), 2, "{row:?} does not hang under the words");
+        }
+    }
+}
+
+#[test]
+fn a_wrapped_numbered_item_hangs_under_its_own_number() {
+    let rows = drawn_at_thirty(
+        &format!("1. a numbered item {LONG}\n\n10. a longer number {LONG}\n"),
+        Glyphs::Unicode,
+    );
+
+    let tenth = rows
+        .iter()
+        .position(|row| row.starts_with("10. "))
+        .unwrap_or_default();
+    assert!(tenth > 2, "{rows:#?}");
+    for row in rows.iter().take(tenth).skip(1) {
+        assert_eq!(indent(row), 3, "{row:?} does not hang under the words");
+    }
+    for row in rows.iter().skip(tenth + 1) {
+        assert_eq!(indent(row), 4, "{row:?} does not hang under the words");
+    }
+}
+
+#[test]
+fn a_wrapped_nested_item_hangs_under_its_words_not_its_parents() {
+    let rows = drawn_at_thirty(
+        &format!("- an outer item\n  - a nested item {LONG}\n"),
+        Glyphs::Unicode,
+    );
+
+    assert_eq!(first_of(&rows), "• an outer item", "{rows:#?}");
+    assert!(
+        rows.get(1)
+            .is_some_and(|row| row.starts_with("  • a nested item")),
+        "{rows:#?}"
+    );
+    for row in rows.iter().skip(2) {
+        assert_eq!(indent(row), 4, "{row:?} does not hang under the words");
+    }
+}
+
+#[test]
+fn a_wrapped_item_hangs_under_its_words_in_ascii_too() {
+    let rows = drawn_at_thirty(&format!("- a bullet item {LONG}\n"), Glyphs::Ascii);
+
+    assert!(first_of(&rows).starts_with("- a bullet"), "{rows:#?}");
+    for row in rows.iter().skip(1) {
+        assert_eq!(indent(row), 2, "{row:?} does not hang under the words");
+    }
+}
+
+#[test]
+fn a_wrapped_quote_keeps_its_bar_on_every_row() {
+    let rows = drawn_at_thirty(&format!("> a quote {LONG}\n"), Glyphs::Unicode);
+
+    assert!(rows.len() > 2, "{rows:#?}");
+    for row in &rows {
+        assert!(row.starts_with("│ "), "{row:?} lost the quote bar");
+    }
+}
+
+#[test]
+fn a_wrapped_quote_keeps_its_bar_in_ascii_too() {
+    let rows = drawn_at_thirty(&format!("> a quote {LONG}\n"), Glyphs::Ascii);
+
+    assert!(rows.len() > 2, "{rows:#?}");
+    for row in &rows {
+        assert!(row.starts_with("| "), "{row:?} lost the quote bar");
+    }
+}
+
+#[test]
+fn a_wrapped_item_is_drawn_again_under_its_words_at_a_new_width() {
+    let answer = format!("- a bullet item {LONG}\n\n> a quote {LONG}\n");
+    let mut drawn = reading(60, 12);
+    drawn.answer(&answer);
+    drawn.resize(30, 12);
+
+    let mut fresh = reading(30, 12);
+    fresh.answer(&answer);
+    assert_eq!(drawn.rows(), fresh.rows());
+
+    let rows: Vec<String> = drawn
+        .rows()
+        .into_iter()
+        .map(|row| row.trim_end().to_owned())
+        .filter(|row| !row.is_empty())
+        .collect();
+    let quoted = rows
+        .iter()
+        .position(|row| row.starts_with('│'))
+        .unwrap_or_default();
+    assert!(quoted > 2, "{rows:#?}");
+    for row in rows.iter().take(quoted).skip(1) {
+        assert_eq!(indent(row), 2, "{row:?} does not hang under the words");
+    }
+    for row in rows.iter().skip(quoted) {
+        assert!(row.starts_with("│ "), "{row:?} lost the quote bar");
+    }
+}
+
 #[test]
 fn every_cut_of_an_answer_draws_what_the_whole_answer_draws() {
     let corpus = [
         "a **loud** and *leant* phrase with `code` and a [link](https://example.com)\n",
         "- one\n- [x] done\n  - nested\n1. first\n> quoted *words*\n",
+        // Items and a quote that wrap at fifty columns, as one delta or many.
+        "- a bullet item long enough that it has to wrap onto another row\n  - a nested one long enough to wrap onto another row too\n1. a numbered item long enough that it has to wrap as well\n> a quote long enough that it has to wrap onto another row too\n",
         "| a | b |\n|:--|--:|\n| `x` | **y** |\n\nafter\n",
         "```rust\nfn main() { let x = 1; }\n```\n\n---\n\nend\n",
         "see #12 and owner/repo#3 at https://example.com/a_b.\n",
