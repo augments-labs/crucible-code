@@ -644,6 +644,32 @@ impl Record {
         self.opening = Some(Opening { lines, ..opening });
     }
 
+    /// Takes the open line back, as if none of it had been written.
+    ///
+    /// For a line that turned out to be the first of a block laid out from its
+    /// source instead. Only the open line can go: a line that has ended may
+    /// already be in the terminal's own scrollback, and nothing takes it out,
+    /// which is why a line in doubt is kept open until it is settled.
+    pub(crate) fn retract(&mut self) {
+        if !self.open || !matches!(self.lines.back(), Some(Line::Flowed(_))) {
+            return;
+        }
+
+        self.open = false;
+        if let Some(line) = self.lines.pop_back() {
+            self.weight = self.weight.saturating_sub(line.weight());
+        }
+        let tall = self.tall.pop_back().unwrap_or(0);
+        self.ends.pop_back();
+        self.rows = self.rows.saturating_sub(usize::from(tall));
+        if self.top.line >= self.lines() {
+            self.top = Spot {
+                line: self.lines(),
+                into: 0,
+            };
+        }
+    }
+
     /// Add `text` to the open line, opening one if none is.
     fn extend(&mut self, slot: Slot, text: &str, link: Option<&str>) {
         if let (true, Some(Line::Flowed(row))) = (self.open, self.lines.back_mut()) {

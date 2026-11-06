@@ -70,6 +70,7 @@ pub(crate) fn laid(answer: &str, columns: usize, glyphs: Glyphs) -> Vec<Row> {
                 .collect();
             record.drawn(block, glyphs, Theme::Dark);
         }
+        Said::Retract => record.retract(),
     };
 
     markdown.read(answer, columns, &mut write);

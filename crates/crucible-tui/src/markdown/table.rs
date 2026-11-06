@@ -15,13 +15,23 @@
 //!
 //! A table that closes is handed on by its source, and laid out from it again
 //! by [`Table::of`] whenever the width it has to fit changes.
+//!
+//! A table is written with its outer bars or without them. With them, the
+//! first bar of a line says a table may be here. Without them nothing says so
+//! until the delimiter row has arrived, so the caller reads the first line as
+//! the prose it may be and a table only watches a copy of it: a bare table is
+//! a header with at least two cells and a delimiter row with the same number
+//! of them, each line watched for no more than [`HEADER_CAP`]. The break of the
+//! header and what is written of the line under it are all that is held back,
+//! and they are given back to the caller to read as the prose they are whenever
+//! the second line stops being a delimiter row.
 
 use crate::color::Slot;
 use crate::glyphs::Glyphs;
 use crate::row::Row;
 use crate::width;
 
-use super::TABLE_CAP;
+use super::{HEADER_CAP, TABLE_CAP};
 
 /// What stands between one column and the next: a space, a bar, a space.
 const BETWEEN: usize = 3;
@@ -67,7 +77,22 @@ impl Sided {
 /// One cell, with its own markers already read.
 type Cell = Vec<(Slot, String)>;
 
-/// The lines of a block that opened with a bar, until one that does not.
+/// What a table written without outer bars makes of the next character.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Sight {
+    /// It belongs to the block, which goes on.
+    Keep,
+    /// It does not: the block is a table, and the blank line ended it.
+    Over,
+    /// It is not a table after all, and what was held back is the caller's to
+    /// read ([`Table::held`]). The character is not in it.
+    Release,
+    /// The block has grown past [`TABLE_CAP`] and goes out as it was written.
+    Spill,
+}
+
+/// The lines of a block that opened with a bar, or that are a header and a
+/// delimiter row without one, until a line that is not its own.
 #[derive(Debug)]
 pub(super) struct Table {
     /// Every line so far, the bars included and the break not.
@@ -80,6 +105,9 @@ pub(super) struct Table {
     /// How much has been held, so [`TABLE_CAP`] is an answer rather than a
     /// hope.
     held: usize,
+    /// Whether it opened without a bar, on a line that has to prove itself a
+    /// header.
+    bare: bool,
 }
 
 impl Table {
@@ -90,6 +118,16 @@ impl Table {
             line: String::new(),
             fresh: false,
             held: 0,
+            bare: false,
+        }
+    }
+
+    /// One opened by a first character that is not a bar, which the caller is
+    /// still holding.
+    pub(super) fn bare() -> Self {
+        Self {
+            bare: true,
+            ..Self::opening()
         }
     }
 
@@ -102,6 +140,7 @@ impl Table {
             line,
             fresh: source.ends_with('\n'),
             held: source.len(),
+            bare: false,
         }
     }
 
@@ -114,6 +153,35 @@ impl Table {
         }
         source.push_str(&self.line);
         source
+    }
+
+    /// Whether it opened without a bar.
+    pub(super) fn is_bare(&self) -> bool {
+        self.bare
+    }
+
+    /// Whether it is a header still waiting for the delimiter row that would
+    /// make it a table, which is a line of prose until it arrives.
+    pub(super) fn pending(&self) -> bool {
+        self.bare && self.lines.len() < 2
+    }
+
+    /// Whether it is still reading its first line, which the caller reads as
+    /// prose all the same and this only watches.
+    pub(super) fn mirrors(&self) -> bool {
+        self.bare && self.lines.is_empty()
+    }
+
+    /// How many lines of it are whole.
+    pub(super) fn lined(&self) -> usize {
+        self.lines.len()
+    }
+
+    /// What a header that did not turn out to be one held back: its break and
+    /// the start of the line under it, to be read as written. `None` while the
+    /// header is still arriving, which is all in the caller's hands.
+    pub(super) fn held(&self) -> Option<String> {
+        (!self.lines.is_empty()).then(|| format!("\n{}", self.line))
     }
 
     /// How many of its lines have begun, the one still arriving included.
@@ -146,6 +214,50 @@ impl Table {
 
         self.held = self.held.saturating_add(character.len_utf8());
         self.held <= TABLE_CAP
+    }
+
+    /// Takes `character` into a block that opened without a bar, and says what
+    /// became of it.
+    ///
+    /// The header is a line with at least two cells and the delimiter row under
+    /// it has as many; a line that is neither, or that is longer than
+    /// [`HEADER_CAP`], is somebody's prose. Both are decided as the line ends,
+    /// except that the delimiter row is also refused the moment it holds a
+    /// character no delimiter has. The body is every line after them, up to the
+    /// first blank one. The header's own characters are also the caller's to
+    /// read: this only watches them, and a `Keep` for them says nothing about
+    /// whether they were taken.
+    pub(super) fn sees(&mut self, character: char) -> Sight {
+        if self.lines.len() >= 2 {
+            if self.fresh && character == '\n' {
+                return Sight::Over;
+            }
+            return if self.takes(character) {
+                Sight::Keep
+            } else {
+                Sight::Spill
+            };
+        }
+
+        let in_header = self.lines.is_empty();
+        let ends = character == '\n';
+        let kept = if ends {
+            match self.lines.first() {
+                None => celled(&self.line).len() >= 2,
+                Some(header) => {
+                    delimits(&self.line) && celled(&self.line).len() == celled(header).len()
+                }
+            }
+        } else {
+            self.line.len() < HEADER_CAP
+                && (in_header || matches!(character, '-' | ':' | '|' | ' ' | '\t'))
+        };
+        if !kept {
+            return Sight::Release;
+        }
+
+        self.takes(character);
+        Sight::Keep
     }
 
     /// Whether what has arrived can still turn out to be a table.

@@ -2567,7 +2567,16 @@
         "Vendor::answering(transcript::said(\"tables\"))",
         "Watched::in_default_colours( \"transcript-sources-80-fullscreen\", (80, 12), Some(&vendor), None, )"
       ],
-      "sha256": "d840cdedd687c7b0b6cb05e020c472d33ab4df05b68b7c3d8142e07d7578e650"
+      "sha256": "33ffd4e8edb9f68f7e3a5640421e01c632389b5cc5cdf9bc874a123dd6114ede"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__transcript_sources_80_fullscreen_bare.snap",
+      "case": "transcript_sources_80_fullscreen",
+      "opened": [
+        "Vendor::answering(transcript::said(\"tables\"))",
+        "Watched::in_default_colours( \"transcript-sources-80-fullscreen\", (80, 12), Some(&vendor), None, )"
+      ],
+      "sha256": "2201061c54b8f1d0dbcc5b9845e0380534647a38a34b9b63eaba5c38ae415176"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_sources_80_fullscreen_second.snap",
@@ -2576,7 +2585,7 @@
         "Vendor::answering(transcript::said(\"tables\"))",
         "Watched::in_default_colours( \"transcript-sources-80-fullscreen\", (80, 12), Some(&vendor), None, )"
       ],
-      "sha256": "74585bee48e2373022d04b2c17436e423f4f20e000ecf666fa75fcc4a2ffaf1f"
+      "sha256": "1120b028c92cae42f35f3325b9d80422c958cca91ee8c8e882495000cf049c56"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_sources_80_native.snap",
@@ -2585,7 +2594,16 @@
         "Vendor::answering(transcript::said(\"tables\"))",
         "Watched::drawn_in_colour( \"transcript-sources-80-native\", (80, 20), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "2aa8a75ee94ec25c007361cdbea92030222f97e51971a0d02bc2f3f4447506e1"
+      "sha256": "e974b7a8cb60ddcc0b39a7b62e45b3e922cf963a495b34fa02657a0772252f21"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__transcript_sources_80_native_bare.snap",
+      "case": "transcript_sources_80_native",
+      "opened": [
+        "Vendor::answering(transcript::said(\"tables\"))",
+        "Watched::drawn_in_colour( \"transcript-sources-80-native\", (80, 20), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
+      ],
+      "sha256": "4564cba85f5925a34ad49f16dd9c7b3eb099d9f84cc9c55fba53d61ac8167f8b"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_sources_80_native_second.snap",
@@ -2594,7 +2612,7 @@
         "Vendor::answering(transcript::said(\"tables\"))",
         "Watched::drawn_in_colour( \"transcript-sources-80-native\", (80, 20), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "e79391b53ea9fad5590cd5dfd92bba460e046b55963b94e54d1e3ce45b0737eb"
+      "sha256": "d53245eefc79cf21f0a8c0b064506bdd8b0108f3a3010be78991b4fc1cb012e6"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_tables_120_fullscreen.snap",
@@ -2603,7 +2621,7 @@
         "Vendor::answering(transcript::said(\"tables\"))",
         "Watched::in_default_colours( \"transcript-tables-120-fullscreen\", (120, 60), Some(&vendor), None, )"
       ],
-      "sha256": "3bbbb79057e74314a56df4b739ec190f8ce7959e86bcf849522a4516956917b8"
+      "sha256": "390c377fc3d0a511daecf733f03130b79e9c8595ac1e62b16afc6685616d6de9"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_tables_120_native.snap",
@@ -2612,7 +2630,7 @@
         "Vendor::answering(transcript::said(\"tables\"))",
         "Watched::drawn_in_colour( \"transcript-tables-120-native\", (120, 60), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "ac9b5f0c896bc2bb0288e33524a88e6e5425948a407f9422282996c3a3f7dfe4"
+      "sha256": "db0c71dd4d9c95aef7c0060d095b9e46b967d8b656be7086ddc209af8525e2fe"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_tables_40_fullscreen.snap",
@@ -2621,7 +2639,7 @@
         "Vendor::answering(transcript::said(\"tables\"))",
         "Watched::in_default_colours( \"transcript-tables-40-fullscreen\", (40, 97), Some(&vendor), None, )"
       ],
-      "sha256": "53c1a4b5041f6c68581c2fa5c4b78cd8dff8e74fe135743d2373ce8bb84aa8d2"
+      "sha256": "4dd3f588fde023dc0ed29d24426d03a34d2de6eb98129135aeeeaadbd4ec0571"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_tables_40_native.snap",
@@ -2630,7 +2648,7 @@
         "Vendor::answering(transcript::said(\"tables\"))",
         "Watched::drawn_in_colour( \"transcript-tables-40-native\", (40, 97), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "47afed7ffa21d4a47a394bc51de199c255f4a687ff7bf932a487e7bab00c58cf"
+      "sha256": "85958ecf902214c0ddb1a03b0dedadbabf8bf60ce717797c22455509f0c55b48"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_tables_80_fullscreen.snap",
@@ -2639,7 +2657,7 @@
         "Vendor::answering(transcript::said(\"tables\"))",
         "Watched::in_default_colours( \"transcript-tables-80-fullscreen\", (80, 66), Some(&vendor), None, )"
       ],
-      "sha256": "54c56e105007236e88b2c747d63d65024c05a328a29a3721e6e8ba81fcf6ef56"
+      "sha256": "90be4051ee7c67b5df04a89c297aa55dcdffe4caa843e58e7671582320e05241"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_tables_80_native.snap",
@@ -2648,7 +2666,7 @@
         "Vendor::answering(transcript::said(\"tables\"))",
         "Watched::drawn_in_colour( \"transcript-tables-80-native\", (80, 66), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "5a402cdcb0f002fd85aefdd97c0d9d3f308b338ab099328c21b27a7b011b5215"
+      "sha256": "f667f61324de7be5870178a17d800a0516548ab09859ee36b7e8bdc64ec415f8"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_tables_80_native_ascii.snap",
@@ -2657,7 +2675,7 @@
         "Vendor::answering(transcript::said(\"tables\"))",
         "Watched::drawn_in_colour( \"transcript-tables-80-native-ascii\", (80, 66), &vendor, None, (\"ascii\", \"native\", Profile::default()), )"
       ],
-      "sha256": "6560f5bb04c6dce720dcf59af5db824789937e091c4329eca6355827ce41c33d"
+      "sha256": "b4e58e56e5ab50d0a4ba502bf98461e2ed2cc4b22e0003305585ee0490920d44"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_tool_edit_80_fullscreen.snap",

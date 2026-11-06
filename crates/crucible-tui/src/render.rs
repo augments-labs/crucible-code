@@ -1350,6 +1350,9 @@ impl<T: Terminal> Renderer<T> {
         let columns = self.folds();
         let redirected = !self.terminal.is_terminal();
         let theme = self.palette.theme();
+        // What a redirected run is written cannot be taken back, so the reader
+        // keeps a header it cannot tell from prose as the prose it may be.
+        self.markdown.commits(redirected);
         let Self {
             markdown,
             record,
@@ -2566,6 +2569,10 @@ impl<T: Terminal> Taking<'_, T> {
         match said {
             Said::Run { slot, text, link } => self.take(slot, text, link),
             Said::Block(block) => self.block(block),
+            Said::Retract => {
+                self.record.retract();
+                Ok(())
+            }
         }
     }
 

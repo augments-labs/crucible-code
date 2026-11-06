@@ -4103,7 +4103,7 @@
       },
       "case": "render::tests::every_cut_of_an_answer_draws_what_the_whole_answer_draws",
       "source": "crates/crucible-tui/src/render/tests.rs",
-      "body_sha256": "6d73b733755f811788f1d6ecf31f7209b3d719e2876a8eb4012d26c8dd9cf40a",
+      "body_sha256": "dce7141c02a14a3e9d1f46c6baafe8e84cfa94fb308b7e702e75b6128b77182d",
       "platforms": [
         "linux",
         "macos",
@@ -4983,7 +4983,7 @@
       },
       "case": "transcript_sources_80_fullscreen",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "f48e4d35960f1400e2fc255d6483a5b6722826cc688d9e5d49aa2940bb347923",
+      "body_sha256": "4645898313dc671f0380884be0c0dc91bbd55539676dca33cb719c71722af3ef",
       "platforms": [
         "linux"
       ]
@@ -4999,9 +4999,333 @@
       },
       "case": "transcript_sources_80_native",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "0c3afa06d4d3426a1f33d0b757da86336c74555513b2368674b6106d0862a0c5",
+      "body_sha256": "139aa993b2b33521c8c4bb29c6ec5b65a4cda8920194fb5c6b07f36ba18faf6e",
       "platforms": [
         "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE",
+      "family": "transcript-blocks",
+      "obligation": "a table written without outer bars (a | b over --|--) is drawn as a table in the window: its structure rows are there and the bare delimiter row is not.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_table_written_without_outer_bars_is_drawn_as_a_table",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "ce47eba7aaa432281219cbc38eea575c20083ecc66339940f4f72775eb57fd84",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode a table written without outer bars is drawn as a table in the scrollback the same way.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_table_written_without_outer_bars_is_drawn_as_a_table",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "055cd7b64d66d3fa913bbcb1a27fe2fa6be757332187e46a5a9e88ae386f375d",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-NARROWED",
+      "family": "transcript-blocks",
+      "obligation": "A table written without outer bars and then narrowed is the table a window that narrow draws, at the same rows.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_table_written_without_outer_bars_narrowed_is_the_table_a_window_that_narrow_draws",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "abb41b2a8fe5700ae74ed19fca18dc6eae86905703ceb62a07a4e4fd655eeee3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-NARROWED-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode a table written without outer bars and then narrowed is the table a window that narrow draws.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_table_written_without_outer_bars_narrowed_is_the_table_a_window_that_narrow_draws",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "1f2077bde0a92dd6ea246cd105471027b5d0562f293f7d7b64847ce3d2e7beaa",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-GLYPHS",
+      "family": "transcript-blocks",
+      "obligation": "With output.glyphs set to ascii a table written without outer bars is drawn with ASCII structure only.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_table_written_without_outer_bars_draws_its_structure_in_the_glyphs_worn",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "fb2a4e87b6727733a0c5c6f146e089ff890b0d01133b473a9e14fffa52c1cf34",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-GLYPHS-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode output.glyphs ascii gives a table written without outer bars ASCII structure only.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_table_written_without_outer_bars_draws_its_structure_in_the_glyphs_worn",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "d3b0dc8097a5220cdae2a900ad34a8dcb9e3b26ec753eea8a81f5a210b45b6f8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-CORPUS",
+      "family": "transcript-blocks",
+      "obligation": "The corpus tables answer draws its table written without outer bars as a table at 40, 80 and 120 columns.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::the_corpus_table_written_without_outer_bars_is_drawn_as_a_table",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "614185d6b67b0555720574ab861dd95426b5b4455a72eaaf1bd66f8a3c30e43e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-CUT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode a table written without outer bars, cut into deltas anywhere including mid-delimiter, draws what the whole answer draws.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_answer_cut_anywhere_draws_the_table_written_without_outer_bars_the_whole_answer_draws",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "ff75715211c3bc82f6ca0325ed685435478262f802ac6caf32eaa748d480c003",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-COPY",
+      "family": "transcript-blocks",
+      "obligation": "A drag over a table written without outer bars copies its source as written and adds no bars.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_drag_over_a_table_written_without_outer_bars_copies_it_as_written_with_no_bars_added",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "8fa39da1c1fec37f16bd401f97507399819d0197ecc40ddc1a8355f9fde3fad5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-NEAR-MISS",
+      "family": "transcript-blocks",
+      "obligation": "A delimiter row with another number of cells, a lone row of dashes, and a delimiter-like line in prose leave their lines as prose, exactly as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::lines_that_only_look_like_a_table_without_outer_bars_stay_as_they_were_written",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "2c3a34efd9179fa0d6d6088208b1ee15aaa1fbb911113a62fd03d1aed8be62cd",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-SOURCE",
+      "family": "transcript-blocks",
+      "obligation": "A table written without outer bars is handed on whole as a block with the source it was written as.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_table_without_outer_bars_is_handed_on_whole_with_the_source_it_was_written_as",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "c0d3de774d53cc97ae1238a09cda9c24d71492caffb6a76009afe27ee5dfa9c5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-ARRIVING",
+      "family": "transcript-blocks",
+      "obligation": "A line still arriving is on screen as it comes, whatever it could turn out to be, so a line that is not a table is never held back for one.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_line_still_arriving_is_on_screen_whatever_it_could_turn_out_to_be",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "9fe683c13a26df2e29a2539acb96ba16ea2e767cca9329a4c5afc4bddc034988",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-ARRIVING-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode a line still arriving is on screen as it comes, whatever it could turn out to be.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_line_still_arriving_is_on_screen_whatever_it_could_turn_out_to_be",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "0b9c3e67e3995508b34689ce0cc207b8ec30c64be49c2159b0b8b456f008aa83",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-IN-DOUBT",
+      "family": "transcript-blocks",
+      "obligation": "A header stalled part way is drawn as the prose it is until the delimiter row decides, and gives way to the table without leaving a row of itself in the record.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_header_stalled_part_way_is_drawn_as_the_prose_it_is_until_the_delimiter_row_decides",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "beb694f4d60cfe1a184ac400e62af23e5d2033c64b72bdb63cc93a89e73a862e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-IN-DOUBT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode a header stalled part way never reaches the terminal's scrollback as prose, because a line in doubt is not finished.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_header_stalled_part_way_never_reaches_the_scrollback_as_prose",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "e3a0dbc0fdcc33fcd40331742249993bfde39442340b3b4f3bb3dfc85f8c8a78",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-RETRACT",
+      "family": "transcript-blocks",
+      "obligation": "The reader says a header as prose as it arrives, takes it back exactly once before handing on the table, and never takes back a line that stops looking like a header.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_header_is_said_as_the_prose_it_is_so_far_and_taken_back_when_the_delimiter_row_decides",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "91cc743a74b04b12933377da08aa3855cfb0794545831e0dcdb1c9e0dbba5d1a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-NEVER-RETRACTED",
+      "family": "transcript-blocks",
+      "obligation": "A line that stops looking like a header is never taken back, and is said exactly as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_line_that_stops_looking_like_a_header_is_never_taken_back",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "14fc18ce13ce0ee208f7f51d23d35883bd35d80af4416d40eff84bd4fff4bde2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-REDIRECTED",
+      "family": "transcript-blocks",
+      "obligation": "A run whose output is a file cannot take a line back, so it keeps a table written without outer bars as it was written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_redirected_run_keeps_a_table_written_without_outer_bars_as_it_was_written",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "81fb4a84e638e034f6d8322215b1626bc7d967a2b8ee73646c736728df13d448",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
       ]
     },
     {

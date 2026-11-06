@@ -2055,11 +2055,23 @@ fn answered_natively_in(
     answer: &str,
     resized: Option<(usize, usize)>,
 ) -> Vec<String> {
+    answered_natively_in_pieces(window, glyphs, &[answer], resized)
+}
+
+/// [`answered_natively_in`], the answer arriving as `pieces`, one delta each.
+fn answered_natively_in_pieces(
+    window: &Window,
+    glyphs: Glyphs,
+    pieces: &[&str],
+    resized: Option<(usize, usize)>,
+) -> Vec<String> {
     let mut render = native(window);
     render.draws(glyphs);
     render.wears(colourful());
     stands(&mut render);
-    render.stream(answer).unwrap();
+    for piece in pieces {
+        render.stream(piece).unwrap();
+    }
     render.settle().unwrap();
     stands(&mut render);
     render.seal().unwrap();
@@ -2084,6 +2096,123 @@ fn a_native_table_narrowed_is_the_table_a_window_that_narrow_draws() {
     let narrowed = answered_natively(&Window::new(60, 20), table, Some((30, 20)));
 
     assert_eq!(narrowed, fresh);
+}
+
+#[test]
+fn a_native_table_written_without_outer_bars_is_drawn_as_a_table() {
+    let rows = answered_natively(&Window::new(40, 8), "a | b\n--|--\n1 | 2\n", None);
+
+    assert!(!rows.iter().any(|row| row.contains("--|--")), "{rows:#?}");
+    assert!(rows.iter().any(|row| row.contains('│')), "{rows:#?}");
+}
+
+#[test]
+fn a_native_line_still_arriving_is_on_screen_whatever_it_could_turn_out_to_be() {
+    let window = Window::new(40, 8);
+    let mut render = native(&window);
+    render.wears(colourful());
+    stands(&mut render);
+    render.stream("It is started. That is all.").unwrap();
+    render.seal().unwrap();
+
+    let rows = window.all();
+    assert!(
+        rows.iter().any(|row| row.contains("That is all.")),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_native_header_stalled_part_way_never_reaches_the_scrollback_as_prose() {
+    // A window this short pushes every finished line out into the terminal's
+    // own buffer, which cannot take one back: so a header that turned out to
+    // be a table's must never have been finished while it was in doubt.
+    let window = Window::new(40, 6);
+    let mut render = native(&window);
+    render.wears(colourful());
+    stands(&mut render);
+    let piece = |render: &mut Renderer<Window>, text: &str| {
+        render.stream(text).unwrap();
+        render
+            .under(&[row("* thinking")], None, Palette::plain())
+            .unwrap();
+        render.seal().unwrap();
+        window.all()
+    };
+    let has = |rows: &[String], needle: &str| rows.iter().any(|row| row.contains(needle));
+
+    let rows = piece(&mut render, "one\ntwo\nthree\nfour\n\nname | wha");
+    assert!(has(&rows, "name | wha"), "{rows:#?}");
+
+    let rows = piece(&mut render, "t it does\n");
+    assert!(has(&rows, "name | what it does"), "{rows:#?}");
+
+    let rows = piece(&mut render, "--|--\n");
+    assert!(!has(&rows, "name | what"), "{rows:#?}");
+    assert!(!has(&rows, "--|--"), "{rows:#?}");
+
+    let rows = piece(&mut render, "alpha | first\nbeta | second\n\n");
+    assert!(has(&rows, "alpha"), "{rows:#?}");
+
+    render.settle().unwrap();
+    render.under(&[], None, Palette::plain()).unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+    let rows = window.all();
+    assert!(!has(&rows, "name | what"), "{rows:#?}");
+    assert!(!has(&rows, "--|--"), "{rows:#?}");
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("name") && row.contains('│')),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_native_table_written_without_outer_bars_narrowed_is_the_table_a_window_that_narrow_draws() {
+    let table = "name | what it does | since\n--|--|--\n\
+         alpha | reads the markdown out of a stream | 0.1\n\
+         beta | lays a table against the window | 0.2\n";
+    let fresh = answered_natively(&Window::new(30, 20), table, None);
+    assert!(
+        fresh.iter().filter(|row| row.contains('│')).count() >= 3,
+        "{fresh:#?}"
+    );
+    let narrowed = answered_natively(&Window::new(60, 20), table, Some((30, 20)));
+
+    assert_eq!(narrowed, fresh);
+}
+
+#[test]
+fn a_native_table_written_without_outer_bars_draws_its_structure_in_the_glyphs_worn() {
+    let rows = answered_natively_in(
+        &Window::new(40, 8),
+        Glyphs::Ascii,
+        "a | b\n--|--\n1 | 2\n",
+        None,
+    );
+
+    let rows: Vec<&str> = rows.iter().map(|row| row.trim_end()).collect();
+    assert_eq!(rows, ["a | b", "--+--", "1 | 2"], "{rows:#?}");
+}
+
+#[test]
+fn a_native_answer_cut_anywhere_draws_the_table_written_without_outer_bars_the_whole_answer_draws()
+{
+    let answer = "before\n\na | b\n--|--\n1 | 2\n\nafter\n";
+    let window = Window::new(40, 12);
+    let whole = answered_natively(&window, answer, None);
+    assert!(whole.iter().any(|row| row.contains('│')), "{whole:#?}");
+
+    for cut in 1..answer.len() {
+        let rows = answered_natively_in_pieces(
+            &Window::new(40, 12),
+            Glyphs::Unicode,
+            &[&answer[..cut], &answer[cut..]],
+            None,
+        );
+        assert_eq!(rows, whole, "cut at {cut}");
+    }
 }
 
 #[test]

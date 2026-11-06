@@ -5,6 +5,10 @@ use crate::width;
 /// A window wide enough that nothing here is laid out against its edge.
 const ROOM: usize = 80;
 
+/// What a run that takes the open line back is written as, where a test reads
+/// the runs as text.
+const RETRACTED: &str = "<retracted>";
+
 /// The reader as runs alone: a block it hands on is laid out at the room it
 /// was read in, and its rows said in its place, each ending its line.
 ///
@@ -54,6 +58,7 @@ fn runs(
                 say(Slot::Plain, "\n", None);
             }
         }
+        Said::Retract => say(Slot::Plain, RETRACTED, None),
     }
 }
 
@@ -79,6 +84,41 @@ fn slots(said: &[(Slot, String)]) -> Vec<Slot> {
         }
         worn
     })
+}
+
+/// What is left of `said` once every taken-back line is gone: the runs since
+/// the last line break, which is where the line being written began.
+fn standing(said: Vec<(Slot, String)>) -> Vec<(Slot, String)> {
+    let mut left: Vec<(Slot, String)> = Vec::new();
+    for (slot, text) in said {
+        if text != RETRACTED {
+            left.push((slot, text));
+            continue;
+        }
+        while let Some((slot, text)) = left.pop() {
+            if let Some(at) = text.rfind('\n') {
+                left.push((slot, text.get(..=at).unwrap_or_default().to_owned()));
+                break;
+            }
+        }
+    }
+    left
+}
+
+/// The same for runs already put together as text.
+fn standing_text(text: &str) -> String {
+    let mut left = String::new();
+    for part in text
+        .split(RETRACTED)
+        .enumerate()
+        .map(|(at, part)| (at > 0, part))
+    {
+        if part.0 {
+            left.truncate(left.rfind('\n').map_or(0, |at| at + 1));
+        }
+        left.push_str(part.1);
+    }
+    left
 }
 
 /// One whole answer, read as one delta.
@@ -1084,8 +1124,16 @@ fn emphasis_around_a_code_span_still_closes_after_it() {
 
 /// One whole answer, read as one delta and then ended.
 fn ended(answer: &str) -> Vec<(Slot, String)> {
+    ended_in(&[answer])
+}
+
+/// An answer read as these deltas, one after another, and then ended.
+fn ended_in(deltas: &[&str]) -> Vec<(Slot, String)> {
     let mut markdown = Markdown::default();
-    let mut said = read(&mut markdown, answer);
+    let mut said = Vec::new();
+    for delta in deltas {
+        said.extend(read(&mut markdown, delta));
+    }
     markdown.finish_runs(ROOM, &mut |slot, text, _| {
         said.push((slot, text.to_owned()));
     });
@@ -1198,10 +1246,13 @@ fn an_address_a_link_names_is_still_the_link_it_names() {
 }
 
 /// Every shape this file reads, as one answer each.
-const SHAPES: [&str; 12] = [
+const SHAPES: [&str; 15] = [
     "**strong** and *leaning* words",
     "a [link](https://example.com) here",
     "| a | b |\n|---|---|\n| 1 | 2 |\n",
+    "a | b\n--|--\n1 | 2\n\nafter\n",
+    "a | b\n--|---|--\n1 | 2\n",
+    "a | b\n---\n1 | 2\n",
     "- [x] done\n- [ ] not\n",
     "```rust\nfn main() {}\n```\n",
     "see https://example.com/a_b for more",
@@ -1802,6 +1853,7 @@ fn blocks(answer: &str) -> (Vec<Block>, String) {
     let mut say = |said: Said<'_>| match said {
         Said::Run { text, .. } => runs.push_str(text),
         Said::Block(block) => blocks.push(block),
+        Said::Retract => runs.push_str(RETRACTED),
     };
     markdown.read(answer, ROOM, &mut say);
     markdown.finish(ROOM, &mut say);
@@ -2015,6 +2067,281 @@ fn a_table_past_its_cap_is_drawn_as_it_always_was() {
     let (blocks, _) = blocks(&format!("{table}\nafter\n"));
 
     assert!(blocks.is_empty(), "{} blocks", blocks.len());
+}
+
+/// A table written without its outer bars.
+const BARE: &str = "name | since\n--|--\nalpha | 0.1\nbeta | 0.2\n";
+
+#[test]
+fn a_table_without_outer_bars_is_handed_on_whole_with_the_source_it_was_written_as() {
+    let (blocks, runs) = blocks(&format!("before\n{BARE}\nafter\n"));
+
+    assert_eq!(
+        blocks,
+        [Block {
+            kind: Kind::Table,
+            source: BARE.to_owned(),
+            closed: true,
+        }]
+    );
+    assert_eq!(standing_text(&runs), "before\n\nafter\n");
+}
+
+#[test]
+fn a_table_without_outer_bars_is_drawn_as_the_table_it_is() {
+    let said = standing(whole(&format!("{BARE}\n")));
+
+    assert_eq!(
+        drawn(&said),
+        "name  │ since\n\
+         ──────┼──────\n\
+         alpha │ 0.1  \n\
+         beta  │ 0.2  \n\n"
+    );
+}
+
+#[test]
+fn a_table_without_outer_bars_is_drawn_as_the_one_with_them_is() {
+    // A body row with fewer or more cells than the header is padded or cut
+    // by the one reader of tables, whichever way the table was written.
+    let bare = "a | b\n:--|--:\n1\n2 | 3 | 4\n`x` | **y**\n\n";
+    let barred = "| a | b |\n|:--|--:|\n| 1 |\n| 2 | 3 | 4 |\n| `x` | **y** |\n\n";
+
+    assert_eq!(standing(whole(bare)), whole(barred));
+    assert!(drawn(&standing(whole(bare))).contains('│'));
+}
+
+#[test]
+fn a_table_without_outer_bars_runs_to_the_first_blank_line() {
+    let table = "a | b\n--|--\n1 | 2\nno bars in this row\n";
+    let (blocks, runs) = blocks(&format!("{table}\nafter | this\n"));
+
+    assert_eq!(
+        blocks,
+        [Block {
+            kind: Kind::Table,
+            source: table.to_owned(),
+            closed: true,
+        }]
+    );
+    assert_eq!(standing_text(&runs), "\nafter | this\n");
+}
+
+#[test]
+fn a_table_without_outer_bars_may_open_in_the_middle_of_a_paragraph() {
+    let (blocks, runs) = blocks("one line of prose\na | b\n--|--\n1 | 2\n");
+
+    assert_eq!(
+        blocks
+            .iter()
+            .map(|block| block.source.as_str())
+            .collect::<Vec<_>>(),
+        ["a | b\n--|--\n1 | 2\n"]
+    );
+    assert_eq!(standing_text(&runs), "one line of prose\n");
+}
+
+#[test]
+fn a_header_is_not_announced_as_a_table_until_its_delimiter_row_has_arrived() {
+    let answer = "name | since\n--|--\nalpha | 0.1\n";
+    let held = holdings(answer);
+    let delimited = "name | since\n--|--\n".len();
+
+    assert!(
+        held.iter().take(delimited - 1).all(Option::is_none),
+        "{held:?}"
+    );
+    assert_eq!(
+        held.get(delimited - 1),
+        Some(&Some(Holding {
+            held: Held::Table,
+            lines: 2,
+        }))
+    );
+    assert_eq!(
+        held.last(),
+        Some(&Some(Holding {
+            held: Held::Table,
+            lines: 3,
+        }))
+    );
+}
+
+#[test]
+fn lines_that_only_look_like_a_table_without_outer_bars_stay_as_they_were_written() {
+    for answer in [
+        // The delimiter row has more cells than the header, or fewer.
+        "a | b\n--|---|--\n1 | 2\n",
+        "a | b | c\n--|--\n1 | 2\n",
+        // A delimiter row whose cells are not dashes, or are only colons.
+        "a | b\n--|x\n1 | 2\n",
+        "a | b\n:|:\n1 | 2\n",
+        // A header with one cell, or one whose bar is escaped.
+        "no bars\n--|--\n1 | 2\n",
+        "a \\| b\n--|--\n1 | 2\n",
+        // A row of dashes in the middle of prose.
+        "a | b\nthen -- | --\n1 | 2\n",
+        // Nothing under the header at all, or the message ending in the
+        // middle of the delimiter row.
+        "a | b\n",
+        "a | b\n--|",
+    ] {
+        let (blocks, _) = blocks(answer);
+        assert!(blocks.is_empty(), "{answer:?}: {blocks:?}");
+        assert_eq!(
+            drawn(&ended(answer)),
+            answer.replace("\\|", "|"),
+            "{answer:?}"
+        );
+    }
+}
+
+#[test]
+fn a_lone_row_of_dashes_under_a_line_is_not_a_table() {
+    for answer in ["a | b\n---\n1 | 2\n", "one cell\n---\n", "one cell\n:-:\n"] {
+        let (blocks, runs) = blocks(answer);
+
+        assert!(
+            blocks.iter().all(|block| block.kind != Kind::Table),
+            "{answer:?}: {blocks:?}"
+        );
+        assert!(runs.starts_with(answer.lines().next().unwrap_or_default()));
+    }
+}
+
+#[test]
+fn a_header_longer_than_a_header_is_held_for_is_read_as_the_prose_it_is() {
+    let header = format!("{} | b", "a".repeat(HEADER_CAP));
+    let answer = format!("{header}\n--|--\n1 | 2\n");
+    let (blocks, _) = blocks(&answer);
+
+    assert!(blocks.is_empty(), "{blocks:?}");
+    assert_eq!(drawn(&ended(&answer)), answer);
+}
+
+#[test]
+fn a_line_past_the_cap_on_a_header_is_said_without_waiting_for_its_end() {
+    let line = "a".repeat(HEADER_CAP + 8);
+    let said = read(&mut Markdown::default(), &line);
+
+    assert_eq!(drawn(&said), line);
+}
+
+#[test]
+fn a_table_without_outer_bars_past_its_cap_is_drawn_as_it_always_was() {
+    let row = "a cell | another cell\n";
+    let table = format!("a | b\n--|--\n{}", row.repeat(TABLE_CAP / row.len() + 1));
+    let (blocks, _) = blocks(&format!("{table}\nafter\n"));
+
+    assert!(blocks.is_empty(), "{} blocks", blocks.len());
+}
+
+#[test]
+fn a_reader_that_holds_nothing_draws_a_table_without_outer_bars_as_written() {
+    assert_eq!(as_written(BARE), BARE);
+}
+
+#[test]
+fn a_message_that_ends_in_a_table_without_outer_bars_draws_it_as_one() {
+    let (blocks, _) = blocks("a | b\n--|--\n1 | 2");
+
+    assert_eq!(
+        blocks
+            .iter()
+            .map(|block| block.source.as_str())
+            .collect::<Vec<_>>(),
+        ["a | b\n--|--\n1 | 2"]
+    );
+}
+
+/// What the reader said while `answer` was read a character at a time and
+/// finished, as one line per thing: `run <text>`, `retract` and `block`.
+fn told(answer: &str, commits: bool) -> Vec<String> {
+    let mut markdown = Markdown::default();
+    markdown.commits(commits);
+    let mut told = Vec::new();
+    let mut say = |said: Said<'_>| match said {
+        Said::Run { text, .. } => told.push(format!("run {text}")),
+        Said::Retract => told.push("retract".to_owned()),
+        Said::Block(_) => told.push("block".to_owned()),
+    };
+    for (at, character) in answer.char_indices() {
+        let piece = answer
+            .get(at..at + character.len_utf8())
+            .unwrap_or_default();
+        markdown.read(piece, ROOM, &mut say);
+    }
+    markdown.finish(ROOM, &mut say);
+    told
+}
+
+/// The text of the runs among `told`.
+fn said_text(told: &[String]) -> String {
+    told.iter()
+        .filter_map(|thing| thing.strip_prefix("run "))
+        .collect()
+}
+
+#[test]
+fn a_header_is_said_as_the_prose_it_is_so_far_and_taken_back_when_the_delimiter_row_decides() {
+    let told = told("before\nname | since\n--|--\nalpha | 0.1\n\nafter", false);
+
+    let retract = told.iter().position(|thing| thing == "retract");
+    let block = told.iter().position(|thing| thing == "block");
+    assert!(retract.is_some() && retract < block, "{told:?}");
+    assert_eq!(told.iter().filter(|thing| *thing == "retract").count(), 1);
+    // The header is on its way out before the line under it has arrived.
+    let header = told.iter().position(|thing| thing == "run e");
+    assert!(header.is_some() && header < retract, "{told:?}");
+}
+
+#[test]
+fn a_line_that_stops_looking_like_a_header_is_never_taken_back() {
+    for answer in [
+        "a | b\nthen -- | --\n1 | 2\n",
+        "a | b\n--|x\n1 | 2\n",
+        "a | b\n--|",
+        "a | b\n",
+        "a | b",
+        "no bars\n--|--\n",
+    ] {
+        let told = told(answer, false);
+
+        assert!(
+            !told.iter().any(|thing| thing == "retract"),
+            "{answer:?}: {told:?}"
+        );
+        assert_eq!(said_text(&told), answer, "{answer:?}");
+    }
+}
+
+#[test]
+fn a_header_is_not_taken_back_by_a_reader_told_what_it_says_is_final() {
+    let answer = "name | since\n--|--\nalpha | 0.1\n\nafter";
+    let told = told(answer, true);
+
+    assert!(
+        !told
+            .iter()
+            .any(|thing| thing == "retract" || thing == "block"),
+        "{told:?}"
+    );
+    assert_eq!(said_text(&told), answer);
+}
+
+#[test]
+fn a_header_is_taken_back_once_however_the_answer_is_cut_into_deltas() {
+    let answer = "name | since\n--|--\nalpha | 0.1\n\nafter\n";
+    let whole = drawn(&standing(ended(answer)));
+
+    for cut in 0..answer.len() {
+        let (first, second) = answer.split_at(cut);
+        assert_eq!(
+            drawn(&standing(ended_in(&[first, second]))),
+            whole,
+            "cut at {cut}"
+        );
+    }
 }
 
 #[test]
