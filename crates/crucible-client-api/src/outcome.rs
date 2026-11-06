@@ -765,16 +765,28 @@ pub enum AnswerOutcome {
     /// The batch is settled, and the turn that has the conversation, or the
     /// next one, delivers it to the model once.
     Settled,
-    /// The replies did not fit the batch, which still waits. The problem's
-    /// code is [`ErrorCode::InvalidAnswer`].
-    Invalid(Problem),
+    /// The replies did not fit the batch, which still waits.
+    ///
+    /// It crosses as a problem whose code is [`ErrorCode::InvalidAnswer`],
+    /// and holds only the reason, so no other code can stand under it.
+    Invalid {
+        /// Which reply did not fit, and why.
+        reason: Text,
+    },
 }
 
 impl AnswerOutcome {
     fn written(&self) -> Value {
         match self {
             Self::Settled => Writing::kind("settled"),
-            Self::Invalid(problem) => Writing::kind("invalid").with("problem", problem.written()),
+            Self::Invalid { reason } => Writing::kind("invalid").with(
+                "problem",
+                Problem {
+                    code: ErrorCode::InvalidAnswer,
+                    message: reason.clone(),
+                }
+                .written(),
+            ),
         }
         .finish()
     }
@@ -783,7 +795,13 @@ impl AnswerOutcome {
         let mut fields = Fields::of(value)?;
         let answer = match fields.kind()?.as_str() {
             "settled" => Self::Settled,
-            "invalid" => Self::Invalid(Problem::read(fields.take("problem")?)?),
+            "invalid" => match Problem::read(fields.take("problem")?)? {
+                Problem {
+                    code: ErrorCode::InvalidAnswer,
+                    message,
+                } => Self::Invalid { reason: message },
+                Problem { .. } => return Err(ErrorCode::Malformed.into()),
+            },
             _ => return Err(ErrorCode::Malformed.into()),
         };
         fields.done()?;

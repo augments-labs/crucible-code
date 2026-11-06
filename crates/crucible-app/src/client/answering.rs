@@ -13,11 +13,11 @@
 //! permission engine or the content-use hold.
 
 use crucible_client_api::{
-    AnswerOutcome, Capability, Command, ErrorCode, Outcome, Picked, Problem, Refusal, Replied,
+    AnswerOutcome, Capabilities, Capability, Command, ErrorCode, Outcome, Picked, Refusal, Replied,
     Request, Said, Text,
 };
 use crucible_tools::{Deferred, Unsettled};
-use crucible_types::{Answered, Reply};
+use crucible_types::{Answered, QuestionId, Reply};
 
 /// Settles the batch `request` answers in `held`, and says what came of it.
 ///
@@ -50,6 +50,27 @@ pub(super) fn settle(request: &Request, held: &Deferred) -> Result<Result<(), Un
     Ok(held.settle(*id, replies.iter().map(reply).collect()))
 }
 
+/// The registry an answer to batch `id` from a client claiming `claims`
+/// would settle in, where it could settle anything there: the turn door's
+/// check before it asks anybody anything.
+///
+/// Refused as [`answer`] refuses: [`ErrorCode::NeedsCapability`] for a
+/// client that did not claim [`Capability::Questions`], then
+/// [`ErrorCode::StaleQuestions`] where there is no registry or no batch by
+/// that id waits. Whether the replies fit is the settling's to say.
+pub(super) fn taking(
+    claims: Capabilities,
+    id: QuestionId,
+    held: Option<&Deferred>,
+) -> Result<Deferred, Refusal> {
+    if !claims.has(Capability::Questions) {
+        return Err(ErrorCode::NeedsCapability.into());
+    }
+    held.filter(|held| held.waiting().iter().any(|batch| batch.id() == id))
+        .cloned()
+        .ok_or_else(|| ErrorCode::StaleQuestions.into())
+}
+
 /// What a client is told of settling a batch, in the contract's words.
 ///
 /// Every refusal is named, so one the registry adds decides here whether it
@@ -65,12 +86,11 @@ pub(super) fn settled(settling: Result<(), &Unsettled>) -> Outcome {
             | Unsettled::WrittenTwice { .. }
             | Unsettled::TooLong { .. }
             | Unsettled::Control { .. }),
-        ) => Outcome::Answer(AnswerOutcome::Invalid(Problem {
-            code: ErrorCode::InvalidAnswer,
+        ) => Outcome::Answer(AnswerOutcome::Invalid {
             // The registry's sentences repeat nothing a reply said, so this
             // carries no word of the person's.
-            message: Text::cut(&unfit.to_string()),
-        })),
+            reason: Text::cut(&unfit.to_string()),
+        }),
     }
 }
 

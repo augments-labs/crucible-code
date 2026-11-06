@@ -500,11 +500,7 @@ fn a_stale_or_unfitting_answer_is_refused_whole_and_the_batch_still_waits() -> R
             turned(&mut conversation, &unfitting, &held)?.0.outcome,
         ] {
             assert!(
-                matches!(
-                    &outcome,
-                    Outcome::Answer(AnswerOutcome::Invalid(problem))
-                        if problem.code == ErrorCode::InvalidAnswer
-                ),
+                matches!(&outcome, Outcome::Answer(AnswerOutcome::Invalid { .. })),
                 "{outcome:?}"
             );
         }
@@ -713,6 +709,78 @@ fn an_answer_leaves_a_pending_permission_and_a_warned_route_unanswered() -> Resu
     Ok(())
 }
 
+/// With nothing settled there is no turn to deliver it, and none is said to
+/// have run.
+#[test]
+fn delivering_with_nothing_settled_runs_no_turn_and_says_none_ran() -> Result<(), Failed> {
+    let tree = Tree::new("deferring-nothing")?;
+    let held = Deferred::default();
+    let script = Script::new(vec![saying("never asked")]);
+    let asked = Arc::clone(&script.asked);
+    let mut conversation = self::held(&tree, script, &held)?;
+    let (events, reported) = mpsc::channel::<EventEnvelope>();
+    let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
+
+    let delivered = {
+        let run = conversation.starting(&events, &cancel, &steer, &aside);
+        super::runtime()?.block_on(conversation.answering(&mut super::Nobody, &run))
+    };
+    drop(events);
+
+    assert!(delivered.is_none(), "{delivered:?}");
+    assert_eq!(asked.load(Ordering::Relaxed), 0);
+    assert_eq!(reported.try_iter().count(), 0, "a turn was reported");
+    Ok(())
+}
+
+/// An answer that could settle nothing is refused before the route is put:
+/// nobody is asked to agree to a send that cannot happen, and no yes is
+/// written for it.
+#[test]
+fn an_answer_that_cannot_be_taken_is_refused_before_a_warned_route_is_put() -> Result<(), Failed> {
+    use crucible_app::content_use::{Consent, Routes, Serving};
+
+    let tree = Tree::new("deferring-warned-first")?;
+    let held = Deferred::default();
+    let script = Script::new(vec![saying("answered")]);
+    let asked = Arc::clone(&script.asked);
+    let conversation = holding(&tree, script, Some(&held), Some("google"), Tools::new())?;
+    let consent = Consent::new(Routes::production());
+    consent.keeps_in(tree.0.join("config.json"));
+    let mut conversation = conversation.consenting(consent.clone());
+    consent.served(
+        "google",
+        Some(Serving {
+            route: Some("key:google".to_owned()),
+            at: None,
+        }),
+    );
+    let id = held.register(vec![Question::new(
+        "Language",
+        "Which language?",
+        [Answer::new("Rust"), Answer::new("Python")],
+    )])?;
+    let unclaimed = sent(
+        Capabilities::every().without(Capability::Questions),
+        choosing(id, &["Rust"])?,
+    )?;
+    let stale = rust(QuestionId::numbered(5))?;
+
+    for (request, refused) in [
+        (unclaimed, ErrorCode::NeedsCapability),
+        (stale, ErrorCode::StaleQuestions),
+    ] {
+        let mut client = Client::new(&held);
+        let (response, _) = turning(&mut conversation, &request, &mut client, &Cancel::new())?;
+
+        assert_eq!(response.outcome, Outcome::Refused(refused.into()));
+        assert!(client.put.is_empty(), "{:?}", client.put);
+    }
+    assert_eq!(asked.load(Ordering::Relaxed), 0);
+    assert_eq!(held.waiting().len(), 1);
+    Ok(())
+}
+
 /// Stopping a turn leaves what waits and what was settled as they were and
 /// starts nothing; `/clear` leaves the session they belonged to, and empties
 /// them.
@@ -742,7 +810,7 @@ fn cancelling_a_turn_keeps_its_questions_and_clearing_empties_them() -> Result<(
     let asked = Arc::clone(&script.asked);
     let mut conversation = self::held(&tree, script, &held)?;
 
-    let (response, _) = turning(
+    let (response, streamed) = turning(
         &mut conversation,
         &prompt("plan it")?,
         &mut Client::new(&held),
@@ -750,7 +818,8 @@ fn cancelling_a_turn_keeps_its_questions_and_clearing_empties_them() -> Result<(
     )?;
 
     assert!(ran(&response, Stop::Cancelled), "{:?}", response.outcome);
-    assert_eq!(asked.load(Ordering::Relaxed), 3, "a turn was started");
+    assert_eq!(stops(&streamed), [Stop::Cancelled], "a turn was started");
+    assert_eq!(asked.load(Ordering::Relaxed), 3, "a request was made");
     assert!(held.any_settled(), "the settled answer was dropped");
     assert_eq!(held.waiting().len(), 1, "the waiting batch was dropped");
 
@@ -758,6 +827,40 @@ fn cancelling_a_turn_keeps_its_questions_and_clearing_empties_them() -> Result<(
 
     assert!(held.waiting().is_empty());
     assert!(!held.any_settled());
+    Ok(())
+}
+
+/// Picking another session up leaves the questions of the one left with it:
+/// none of them is answered, or delivered, in the session resumed.
+#[test]
+fn resuming_another_session_leaves_the_questions_behind() -> Result<(), Failed> {
+    let tree = Tree::new("deferring-resume")?;
+    let held = Deferred::default();
+    let script = Script::new(vec![saying("one"), saying("never asked")]);
+    let asked = Arc::clone(&script.asked);
+    let mut conversation = self::held(&tree, script, &held)?;
+    turned(&mut conversation, &prompt("one")?, &held)?;
+    let first = conversation.session().id().cloned().ok_or("an id")?;
+    let (sessions, workspace) = (tree.sessions(), tree.workspace()?);
+    drop(super::runtime()?.block_on(conversation.clear(&sessions, &workspace, None))?);
+    let asking = || {
+        held.register(vec![Question::new(
+            "Language",
+            "Which language?",
+            [Answer::new("Rust"), Answer::new("Python")],
+        )])
+    };
+    asking()?;
+    let settled = asking()?;
+    drop(client::answer(&rust(settled)?, &held));
+    assert!(held.any_settled());
+
+    let _left =
+        super::runtime()?.block_on(conversation.resume(&sessions, &workspace, &first, &[]))?;
+
+    assert!(held.waiting().is_empty(), "{:?}", held.waiting());
+    assert!(!held.any_settled());
+    assert_eq!(asked.load(Ordering::Relaxed), 1);
     Ok(())
 }
 

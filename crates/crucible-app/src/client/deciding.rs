@@ -719,7 +719,7 @@ pub async fn confirmed(
 /// One question, as it is put to a client, or `None` where it cannot be put
 /// whole: more answers than a list here holds, or an answer's name longer than
 /// the words here carry.
-pub(crate) fn put(question: &Question) -> Option<Asked> {
+fn put(question: &Question) -> Option<Asked> {
     if question.answers().len() > ITEMS {
         return None;
     }
@@ -740,6 +740,26 @@ pub(crate) fn put(question: &Question) -> Option<Asked> {
             })
             .collect::<Option<_>>()?,
     })
+}
+
+/// One question that waits, as a client is shown it: as [`put`] puts it,
+/// with an answer's name too long to carry cut and saying so rather than the
+/// question refused. The registry holds no more answers to a question than a
+/// list here carries.
+pub(super) fn shown(question: &Question) -> Asked {
+    Asked {
+        heading: Text::cut(question.heading()),
+        asks: Text::cut(question.question()),
+        several: question.takes_several(),
+        choices: question
+            .answers()
+            .map(|answer| Choice {
+                name: Text::cut(answer.answer()),
+                says: Text::cut(answer.says()),
+                recommended: answer.is_recommended(),
+            })
+            .collect(),
+    }
 }
 
 /// The kind of thing a call would do, as a client is told it.

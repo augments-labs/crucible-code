@@ -65,9 +65,11 @@ pub enum Ended {
 /// What the turn reports on the way goes to `run`, as it always has.
 ///
 /// An answer to questions the model asked without waiting is taken here while
-/// no turn runs. It is held as a prompt is, by what is missing and by the
-/// content-use question, since the turn it starts sends what the answer says;
-/// then the batch is settled, and a turn with no words of its own delivers it
+/// no turn runs. One from a client that did not claim the questions, or to a
+/// batch not waiting, is refused before anything else. It is then held as a
+/// prompt is, by what is missing and by the content-use question, since the
+/// turn it starts sends what the answer says; then the batch is settled, and
+/// a turn with no words of its own delivers it
 /// ([`Conversation::answering`]), whose ending is the answer. An answer that
 /// was not taken is [`Ended::Answered`], and nothing ran. On an installed
 /// agent's route the batch is settled and no turn starts: the registry is the
@@ -88,6 +90,19 @@ pub async fn turn(
     front: &mut dyn Front,
     run: &RunContext<'_>,
 ) -> Ended {
+    // An answer that could settle nothing is refused before anything else:
+    // nobody is asked to agree to a send it cannot lead to, and no yes is
+    // written for it. A batch settled by someone else meanwhile is the
+    // settling's to refuse, below.
+    let answering = match request.command() {
+        Command::Answer { id, .. } => {
+            match super::answering::taking(request.capabilities(), *id, conversation.deferred()) {
+                Ok(held) => Some(held),
+                Err(refusal) => return Ended::Refused(refusal),
+            }
+        }
+        _ => None,
+    };
     // Before anything else, and at this door so that every client is answered
     // the same way: a prompt or a request for room with no model to ask is
     // not a turn, and is answered with what is missing before the session
@@ -136,7 +151,6 @@ pub async fn turn(
                 .turn(prompt.as_str(), attached, &mut ask, run)
                 .await;
             if delivers_after(&turned)
-                && conversation.undelivered()
                 && let Some(delivered) = conversation.answering(&mut ask, run).await
             {
                 return Ended::Turn(delivered);
@@ -144,8 +158,8 @@ pub async fn turn(
             Ended::Turn(turned)
         }
         Command::Answer { .. } => {
-            // A conversation holding no registry asked nothing that waits.
-            let Some(held) = conversation.deferred().cloned() else {
+            // Taken above, before anybody was asked anything.
+            let Some(held) = answering else {
                 return Ended::Refused(ErrorCode::StaleQuestions.into());
             };
             match super::answering::settle(request, &held) {
@@ -211,16 +225,23 @@ pub async fn turn(
 }
 
 /// Whether a turn that ended as `turned` is followed by one delivering an
-/// answer settled during it: where its last answer ended it short of what the
-/// model would have said, which left no pass for the answer. Each ending is
-/// named, so one the runner adds decides here.
+/// answer settled during it: where it ran to an ending that [`ends_short`]
+/// names.
 fn delivers_after(turned: &Result<Turned, TurnError>) -> bool {
-    let Ok(Turned::Ran(result)) = turned else {
-        // Refused, failed, or stopped while an installed agent acted: nothing
-        // ran on to a last answer, and the next turn delivers it.
-        return false;
-    };
-    match result.stop() {
+    // Refused, failed, or stopped while an installed agent acted: nothing ran
+    // on to a last answer, and the next turn delivers it.
+    matches!(turned, Ok(Turned::Ran(result)) if ends_short(result.stop()))
+}
+
+/// Whether a turn that ran to `stop` ended short of what the model would have
+/// said, which left no pass for an answer settled during it. Each ending is
+/// named, so one the runner adds decides here.
+///
+/// Yielding is among them although the runner delivers what it finds settled
+/// before it yields: an answer settled after that last look, while the turn
+/// was ending, would otherwise wait for a prompt.
+pub(super) const fn ends_short(stop: StopReason) -> bool {
+    match stop {
         // Settled after the turn looked for the last time.
         StopReason::Yielded
         | StopReason::OutOfTokens

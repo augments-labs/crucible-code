@@ -14,10 +14,11 @@ use crucible_client_api::{
     Progress, Refusal, Ruling, Said, SummaryKind, Text,
 };
 use crucible_tools::{Argument, Ask, Remember, Sensitivity, Summary, Target, Verdict};
-use crucible_types::{Answer, Question, ToolArgs, ToolCall, ToolId};
+use crucible_types::{Answer, Batch, Question, QuestionId, ToolArgs, ToolCall, ToolId};
 
 use super::deciding::{Confirmation, Deciding, Front, Shown, confirmed, questions, settle, warned};
 use super::reading::progress;
+use super::turning::ends_short;
 use crate::content_use::WARNED;
 
 /// What a scripted front end says next about whatever it is put.
@@ -661,6 +662,74 @@ fn a_front_end_that_never_fits_its_answer_is_asked_a_few_times_and_then_no_more(
     assert!(given.is_none());
     assert!(asking.puts <= 8, "put {} times", asking.puts);
     assert_eq!(asking.refused.last(), Some(&"abandoned"));
+}
+
+#[test]
+fn a_waiting_batch_whose_answer_is_too_long_to_carry_is_still_shown() {
+    // A restored batch is bounded by the registry's total alone, so an answer
+    // name may be longer than the words a client is handed. The batch is
+    // shown with that name cut and saying so, not left out: a client that
+    // could not see it could neither answer nor decline it.
+    let long = "a".repeat(TEXT_BYTES + 1);
+    let waiting = crucible_runner::Event::Waiting {
+        batches: vec![Batch::new(
+            QuestionId::numbered(0),
+            [Question::new(
+                "Language",
+                "Which language?",
+                [Answer::new(long.as_str()), Answer::new("Rust")],
+            )],
+        )],
+    };
+
+    let Some(Progress::Waiting { batches }) = progress(
+        Capabilities::none().with(Capability::Questions),
+        &waiting,
+        None,
+    ) else {
+        panic!("no waiting set was shown");
+    };
+    let [batch] = batches.as_slice() else {
+        panic!("{batches:?}");
+    };
+    let [question] = batch.questions.as_slice() else {
+        panic!("{batch:?}");
+    };
+    let names: Vec<(bool, &str)> = question
+        .choices
+        .iter()
+        .map(|choice| (choice.name.truncated(), choice.name.as_str()))
+        .collect();
+    assert!(
+        matches!(names.as_slice(), [(true, _), (false, "Rust")]),
+        "{names:?}"
+    );
+}
+
+#[test]
+fn a_turn_cut_short_or_yielding_is_followed_by_one_delivering_and_a_stopped_one_is_not() {
+    use crucible_types::StopReason;
+
+    let ended = ends_short;
+
+    // Yielded: an answer settled after the runner's last look, as the turn
+    // was ending, which no provider script can time.
+    for stop in [
+        StopReason::Yielded,
+        StopReason::OutOfTokens,
+        StopReason::Filtered,
+        StopReason::Paused,
+        StopReason::Unknown,
+    ] {
+        assert!(ended(stop), "{stop:?}");
+    }
+    for stop in [
+        StopReason::Cancelled,
+        StopReason::WindowExceeded,
+        StopReason::WantsTools,
+    ] {
+        assert!(!ended(stop), "{stop:?}");
+    }
 }
 
 #[test]

@@ -135,9 +135,12 @@ pub fn billing(conversation: &Conversation) -> api::Billing {
 /// What waits for the person's answer is the one exception. It goes to a
 /// client that claimed [`Capability::Questions`], whether or not it asked for
 /// progress, because that client is the one answering it, and to no other.
-/// Each question is put as a blocking question is put: a batch holding one
-/// that cannot be put whole is left out, as a blocking question like it is
-/// declined unput, and the question tool refuses such a call before it asks.
+/// Each question is shown in the shape a blocking question is put, with one
+/// difference: an answer whose name is longer than the words a client is
+/// handed is cut, saying so, where a blocking question like it is declined
+/// unput. A restored batch is bounded by the registry's total alone, and one
+/// left out would wait where no client could answer or decline it; a cut
+/// name is one the client cannot choose, and the rest of the batch it can.
 #[must_use]
 pub fn progress(
     capabilities: Capabilities,
@@ -148,7 +151,7 @@ pub fn progress(
         return capabilities
             .has(Capability::Questions)
             .then(|| Progress::Waiting {
-                batches: batches.iter().filter_map(waiting).collect(),
+                batches: batches.iter().map(waiting).collect(),
             });
     }
     if !capabilities.has(Capability::Progress) {
@@ -240,17 +243,16 @@ pub fn progress(
     })
 }
 
-/// One waiting batch, as a client is told it, or `None` where a question in
-/// it cannot be put whole.
-fn waiting(batch: &Batch) -> Option<api::Waiting> {
-    Some(api::Waiting {
+/// One waiting batch, as a client is told it.
+fn waiting(batch: &Batch) -> api::Waiting {
+    api::Waiting {
         id: batch.id(),
         questions: batch
             .questions()
             .iter()
-            .map(super::deciding::put)
-            .collect::<Option<_>>()?,
-    })
+            .map(super::deciding::shown)
+            .collect(),
+    }
 }
 
 /// What kind of thing a call's summary names, in the contract's words.

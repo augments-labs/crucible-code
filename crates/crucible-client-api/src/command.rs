@@ -579,7 +579,9 @@ fn word<T: FromStr<Err = Refusal>>(value: &Value) -> Result<T, Refusal> {
 ///
 /// Declining is a reply of its own, not an empty choice: the person would not
 /// decide that question, and the model must not read it as any of the answers
-/// it offered.
+/// it offered. On a question that takes several answers, choosing none of
+/// them is an answer, and the model is told nothing was chosen; on one that
+/// takes a single answer, exactly one is chosen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Replied {
     /// The answers chosen, and a note beside them.

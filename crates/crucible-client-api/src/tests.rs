@@ -977,10 +977,7 @@ fn outcomes() -> Vec<Outcome> {
         }),
         Outcome::Leaving,
         Outcome::Answer(AnswerOutcome::Settled),
-        Outcome::Answer(AnswerOutcome::Invalid(Problem {
-            code: ErrorCode::InvalidAnswer,
-            message: marked(),
-        })),
+        Outcome::Answer(AnswerOutcome::Invalid { reason: marked() }),
     ];
     outcomes.extend(contexts().into_iter().map(Outcome::Context));
     outcomes.extend(usages().into_iter().map(Outcome::Usage));
@@ -1511,7 +1508,7 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
         },
         Outcome::Answer(answer) => match answer {
             AnswerOutcome::Settled => (0, 2),
-            AnswerOutcome::Invalid(_) => (1, 2),
+            AnswerOutcome::Invalid { .. } => (1, 2),
         },
     }
 }
@@ -3627,10 +3624,9 @@ fn an_answer_is_refused_with_a_code_for_a_batch_not_waiting_and_one_for_replies_
     // reason, the first nothing, and both cross as the answer kind.
     for answer in [
         AnswerOutcome::Settled,
-        AnswerOutcome::Invalid(Problem {
-            code: ErrorCode::InvalidAnswer,
-            message: Text::cut("question 2 takes one answer"),
-        }),
+        AnswerOutcome::Invalid {
+            reason: Text::cut("question 2 takes one answer"),
+        },
     ] {
         let response = Response {
             correlation: Some(Correlation::new(41)),
@@ -3643,10 +3639,9 @@ fn an_answer_is_refused_with_a_code_for_a_batch_not_waiting_and_one_for_replies_
     }
     let invalid = Response {
         correlation: None,
-        outcome: Outcome::Answer(AnswerOutcome::Invalid(Problem {
-            code: ErrorCode::InvalidAnswer,
-            message: Text::cut("question 2 takes one answer"),
-        })),
+        outcome: Outcome::Answer(AnswerOutcome::Invalid {
+            reason: Text::cut("question 2 takes one answer"),
+        }),
     };
     let value: Value = serde_json::from_slice(&invalid.encode().unwrap()).unwrap();
     assert_eq!(
@@ -3656,4 +3651,26 @@ fn an_answer_is_refused_with_a_code_for_a_batch_not_waiting_and_one_for_replies_
             "message": {"text": "question 2 takes one answer", "truncated": false}}})
         )
     );
+}
+
+#[test]
+fn an_invalid_answer_carries_only_its_own_code() {
+    // Any other code under the invalid kind is a frame no host writes.
+    for code in ErrorCode::EVERY
+        .into_iter()
+        .filter(|code| *code != ErrorCode::InvalidAnswer)
+    {
+        let frame = serde_json::to_vec(&json!({
+            "version": Version::CURRENT.number(),
+            "outcome": {"kind": "answer", "answer": {"kind": "invalid", "problem": {
+                "code": code.as_str(),
+                "message": {"text": "question 2 takes one answer", "truncated": false}}}}
+        }))
+        .unwrap();
+        assert_eq!(
+            Response::decode(&frame),
+            Err(ErrorCode::Malformed.into()),
+            "{code:?}"
+        );
+    }
 }

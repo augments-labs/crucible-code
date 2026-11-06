@@ -666,12 +666,13 @@ impl Conversation {
     /// in the registry of questions the model asked without waiting.
     ///
     /// It is [`Conversation::turn`] with no prompt, as [`Runner::answering`]
-    /// says: with nothing settled it takes no pass and says so as a run that
-    /// yielded having spent nothing.
+    /// says.
     ///
-    /// `None` on an installed agent's route, where nothing runs: the registry
-    /// is this conversation's own runner's, which the agent's turns do not
-    /// deliver from, and that runner's next turn delivers what is settled.
+    /// `None` where nothing runs: with nothing settled, since there is no
+    /// answer to deliver and no turn is said to have run, and on an installed
+    /// agent's route, since the registry is this conversation's own runner's,
+    /// which the agent's turns do not deliver from, and that runner's next
+    /// turn delivers what is settled.
     ///
     /// # Errors
     ///
@@ -681,7 +682,7 @@ impl Conversation {
         ask: &mut dyn Asker,
         run: &RunContext<'_>,
     ) -> Option<Result<Turned, TurnError>> {
-        if self.outside.is_some() {
+        if !self.undelivered() {
             return None;
         }
         let asked = self.runner.speed();
@@ -699,7 +700,7 @@ impl Conversation {
 
     /// Whether an answer is settled that no turn on this conversation's own
     /// runner has delivered yet.
-    pub(crate) fn undelivered(&self) -> bool {
+    fn undelivered(&self) -> bool {
         self.outside.is_none() && self.deferred().is_some_and(Deferred::any_settled)
     }
 
