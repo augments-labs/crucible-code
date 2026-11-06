@@ -32,7 +32,12 @@ jobs:
   gate:
     name: gate
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The whole gate runs here on one runner, and its time grows with the
+    # test count rather than with any one slow case: 14 to 17 minutes in
+    # October 2026, 19m48s and 19m32s for 0.49.0, and 0.50.0's first run was
+    # cancelled at 20 minutes in its last validators, its tests having taken
+    # 639 s against 0.49.0's 629 s.
+    timeout-minutes: 35
     outputs:
       version: ${{ steps.version.outputs.version }}
       update-prior: ${{ steps.update.outputs.prior }}
