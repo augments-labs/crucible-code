@@ -22,6 +22,7 @@ use crate::dump::dump;
 use crate::escape::Escapes;
 use crate::glyphs::Glyphs;
 use crate::record::Record;
+use crate::row::Row;
 use crate::width;
 
 use super::corpus;
@@ -35,6 +36,17 @@ use super::{Markdown, Said};
 /// lands one, kept with its source and laid out by the record.
 fn pictured(name: &str, columns: usize, glyphs: Glyphs) -> String {
     let answer = corpus::answer(name).unwrap_or_else(|| panic!("no corpus answer named {name}"));
+    picture(answer, columns, glyphs)
+}
+
+/// What `answer` lays out as, at `columns`, in `glyphs`: the steps
+/// [`pictured`] describes, for an answer that is not in the corpus.
+pub(crate) fn picture(answer: &str, columns: usize, glyphs: Glyphs) -> String {
+    dump(&laid(answer, columns, glyphs), columns)
+}
+
+/// The rows the record holds for `answer` at `columns`, in `glyphs`.
+pub(crate) fn laid(answer: &str, columns: usize, glyphs: Glyphs) -> Vec<Row> {
     let mut record = Record::new(columns);
     let mut markdown = Markdown::new(glyphs);
     let mut escapes = Escapes::default();
@@ -68,7 +80,7 @@ fn pictured(name: &str, columns: usize, glyphs: Glyphs) -> String {
     for line in 0..record.lines() {
         rows.extend(record.folded(line));
     }
-    dump(&rows, columns)
+    rows
 }
 
 /// Every answer is named once, ends with the line a case waits for, and is

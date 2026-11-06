@@ -100,6 +100,16 @@ impl Painted {
         Some(select::said(was, covered, structural))
     }
 
+    /// Whether screen row `at` opens with the mark of a row of code that
+    /// carries on the one above it.
+    pub(crate) fn continues(&self, at: usize) -> bool {
+        let Some(was) = self.was.get(at).and_then(Option::as_deref) else {
+            return false;
+        };
+        let structural = self.structural.get(at).map_or(&[][..], Vec::as_slice);
+        select::continues(was, structural)
+    }
+
     /// Forgets what is on screen, so the next frame writes every row of it.
     pub(crate) fn forget(&mut self) {
         self.was.clear();

@@ -4,15 +4,18 @@ expression: "pictured(\"code\", 40, Glyphs::Unicode)"
 ---
 A fence that names its language:        
                                         
-<Keyword>fn</> <Name>main</>() {                             
-<Keyword>let</> value <Operator>=</>                             
-compute_something_long(argument_one,    
-argument_two);                          
-}                                       
+<Quiet>┌─ rust</>                                 
+<Quiet>│ </><Keyword>fn</> <Name>main</>() {                           
+<Quiet>│ </>    <Keyword>let</> value <Operator>=</> compute_something_long
+<Quiet>┆ </>(argument_one, argument_two);         
+<Quiet>│ </>}                                     
+<Quiet>└─</>                                      
                                         
 A fence that names nothing:             
                                         
-<Quiet>plain block</>                             
+<Quiet>┌─</>                                      
+<Quiet>│ </><Quiet>plain block</>                           
+<Quiet>└─</>                                      
                                         
 And a block indented four spaces, after 
 a blank line:                           

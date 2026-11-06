@@ -2,15 +2,7 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x58 cursor 53,4 scrollback 0
-|╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
-|│                                  │ Recent sessions                           │|
-|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
-|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No earlier session for this workspace     │|
-|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
-|│                                  │ ───────────────────────────────────────── │|
-|│  /…/workspace                    │                                           │|
-|│                                  │ Tips                                      │|
+80x58 cursor 55,4 scrollback 8
 |│                                  │                                           │|
 |│                                  │ · /          opens the command list       │|
 |│                                  │ · \ enter    adds a line without sending  │|
@@ -22,33 +14,43 @@ expression: window.picture()
 |                                                                                |
 |A flow chart:                                                                   |
 |                                                                                |
-|graph TD                                                                        |
-|  A[Start] --> B{Ok?}                                                           |
-|  B -->|yes| C[Done]                                                            |
-|  B -->|no| A                                                                   |
+|┌─ mermaid                                                                      |
+|│ graph TD                                                                      |
+|│   A[Start] --> B{Ok?}                                                         |
+|│   B -->|yes| C[Done]                                                          |
+|│   B -->|no| A                                                                 |
+|└─                                                                              |
 |                                                                                |
 |A state diagram:                                                                |
 |                                                                                |
-|stateDiagram                                                                    |
-|  [*] --> Idle                                                                  |
+|┌─ mermaid                                                                      |
+|│ stateDiagram                                                                  |
+|│   [*] --> Idle                                                                |
+|└─                                                                              |
 |                                                                                |
 |And the versioned spelling:                                                     |
 |                                                                                |
-|stateDiagram-v2                                                                 |
-|  [*] --> Idle                                                                  |
-|  Idle --> Running: start                                                       |
-|  Running --> [*]                                                               |
+|┌─ mermaid                                                                      |
+|│ stateDiagram-v2                                                               |
+|│   [*] --> Idle                                                                |
+|│   Idle --> Running: start                                                     |
+|│   Running --> [*]                                                             |
+|└─                                                                              |
 |                                                                                |
 |A class diagram:                                                                |
 |                                                                                |
-|classDiagram                                                                    |
-|  class Reader                                                                  |
-|  Reader : +read(delta)                                                         |
+|┌─ mermaid                                                                      |
+|│ classDiagram                                                                  |
+|│   class Reader                                                                |
+|│   Reader : +read(delta)                                                       |
+|└─                                                                              |
 |                                                                                |
 |An entity relationship diagram:                                                 |
 |                                                                                |
-|erDiagram                                                                       |
-|  ANSWER ||--o{ BLOCK : draws                                                   |
+|┌─ mermaid                                                                      |
+|│ erDiagram                                                                     |
+|│   ANSWER ||--o{ BLOCK : draws                                                 |
+|└─                                                                              |
 |                                                                                |
 |The corpus ends here.                                                           |
 |                                                                                |
@@ -59,5 +61,3 @@ expression: window.picture()
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|
-|                                                                                |
-|                                                                                |

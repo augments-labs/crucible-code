@@ -4067,7 +4067,7 @@
       },
       "case": "markdown::tests::a_held_block_past_its_cap_is_shown_as_written_and_never_handed_on",
       "source": "crates/crucible-tui/src/markdown/tests.rs",
-      "body_sha256": "077ae637e991cd3e19f02e8fc3bbc48b91c74a946b31891115a827aaf238eca1",
+      "body_sha256": "25ced89230aa14faccac9a69a74f3c2e41739c225d835b3fdd5e1d33895749fd",
       "platforms": [
         "linux",
         "macos",
@@ -4320,6 +4320,222 @@
       "case": "render::native::tests::a_native_wrapped_quote_keeps_its_bar_in_ascii_too",
       "source": "crates/crucible-tui/src/render/native/tests.rs",
       "body_sha256": "f52e26d8b555ea22940c6b2949a7e1537303543dd73d75370a8565c75eacf482",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FENCE-FRAME",
+      "family": "transcript-blocks",
+      "obligation": "The fence is drawn in a frame that names its language.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_fence_is_drawn_in_a_frame_naming_its_language",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "3632f528949d711da009ae9f091ec234fc4f51822e4ea8b5913b246666a21ef8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FENCE-FRAME-ASCII",
+      "family": "transcript-blocks",
+      "obligation": "The ascii frame holds nothing outside the ascii set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_fence_is_drawn_in_the_ascii_frame_too",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "e82de09f48ab6ec5afcacdd17101f3f451105b84b9b84b57522d287251e66e5f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FENCE-FRAME-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The native screen draws the same frame.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_fence_is_drawn_in_a_frame_naming_its_language",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "02d35ce9a2bfb24ca69b0f7c5e61cc5e620c4b8fc8001f5d7336a3976fc560ba",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FENCE-FRAME-ASCII-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The native screen draws the ascii frame too.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_fence_is_drawn_in_the_ascii_frame_too",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "33241576abca0cb48f9f6a4e053957e936fb9c350ad849d58c453699b89f7013",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CODE-CONTINUATION",
+      "family": "transcript-blocks",
+      "obligation": "A wrapped code row is marked where it carries on.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_wrapped_code_row_is_marked_as_a_continuation",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "bf5402421aaa6d3f02f031a479b67ef4bbb7f5adf1ad599d09fa4a156d2f008f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CODE-CONTINUATION-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The native screen marks a wrapped code row too.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_wrapped_code_row_is_marked_as_a_continuation",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "9049bbeadb6059f7c59e029b48fdd31a65d1ced7d7de65c6091b90651bb6b155",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CODE-COPY",
+      "family": "transcript-blocks",
+      "obligation": "Copying a wrapped code row gives the line as written, with no break where it wrapped.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::copying_a_wrapped_code_row_gives_the_line_as_written",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "b39465e65793e02842055bb4118eac0e602b9884c3ab0d1d6ea29a956ba1c885",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CODE-COPY-LINES",
+      "family": "transcript-blocks",
+      "obligation": "Copying across two wrapped lines keeps the break the code has between them.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::copying_across_two_wrapped_lines_keeps_the_break_between_them",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "7d75c441aa564137db679ce78fd03e70f88842eeac9f0381a9c3a775b6e0a5c9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FENCE-LABEL-HOSTILE",
+      "family": "transcript-blocks",
+      "obligation": "A fence label from the model reaches the terminal as its name and nothing else.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_hostile_fence_label_reaches_the_terminal_as_nothing_but_its_name",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "d890a1bc43e09ea726a2238269094d0bc3fee11e073a3b7e2ff1e44586d95cf6",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FENCE-LABEL-HOSTILE-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The native screen draws a hostile label as nothing but its name.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_hostile_fence_label_reaches_the_terminal_as_nothing_but_its_name",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "24338371d7bb9531f3cf438f194e0354518128834e0d4d76cc97e810c1a8c464",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FENCE-PAST-CAP-LABEL",
+      "family": "transcript-blocks",
+      "obligation": "A block past its cap is shown as written under a label that says why.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_held_block_past_its_cap_is_drawn_as_written_with_its_refusal_in_the_label",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "c6e9b6ac1c8f9df139292542f030b397487cba0c0d4ef5da431e55e91c33e456",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FENCE-PAST-CAP-LABEL-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The native screen says why in the label too.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_held_block_past_its_cap_is_drawn_as_written_with_its_refusal_in_the_label",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "ee13541acf9e9fc0871c408f36e9144094c5ba1029ba90292028735409b4e61d",
       "platforms": [
         "linux",
         "macos",

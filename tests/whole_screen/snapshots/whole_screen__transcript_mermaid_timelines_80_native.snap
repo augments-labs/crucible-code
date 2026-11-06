@@ -2,13 +2,7 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x55 cursor 50,4 scrollback 0
-|╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
-|│                                  │ Recent sessions                           │|
-|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
-|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No earlier session for this workspace     │|
-|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
-|│                                  │ ───────────────────────────────────────── │|
+80x55 cursor 52,4 scrollback 6
 |│  /…/workspace                    │                                           │|
 |│                                  │ Tips                                      │|
 |│                                  │                                           │|
@@ -22,30 +16,38 @@ expression: window.picture()
 |                                                                                |
 |A sequence diagram:                                                             |
 |                                                                                |
-|sequenceDiagram                                                                 |
-|  Alice->>Bob: Hello                                                            |
-|  Bob-->>Alice: Hi                                                              |
+|┌─ mermaid                                                                      |
+|│ sequenceDiagram                                                               |
+|│   Alice->>Bob: Hello                                                          |
+|│   Bob-->>Alice: Hi                                                            |
+|└─                                                                              |
 |                                                                                |
 |A gantt chart:                                                                  |
 |                                                                                |
-|gantt                                                                           |
-|  title Release                                                                 |
-|  section Tests                                                                 |
-|  Gate :a1, 2026-11-01, 3d                                                      |
+|┌─ mermaid                                                                      |
+|│ gantt                                                                         |
+|│   title Release                                                               |
+|│   section Tests                                                               |
+|│   Gate :a1, 2026-11-01, 3d                                                    |
+|└─                                                                              |
 |                                                                                |
 |A git graph:                                                                    |
 |                                                                                |
-|gitGraph                                                                        |
-|  commit id: "one"                                                              |
-|  branch feature                                                                |
-|  commit id: "two"                                                              |
-|  checkout main                                                                 |
-|  merge feature                                                                 |
+|┌─ mermaid                                                                      |
+|│ gitGraph                                                                      |
+|│   commit id: "one"                                                            |
+|│   branch feature                                                              |
+|│   commit id: "two"                                                            |
+|│   checkout main                                                               |
+|│   merge feature                                                               |
+|└─                                                                              |
 |                                                                                |
 |A kind with no drawing of its own:                                              |
 |                                                                                |
-|pie                                                                             |
-|  "drawn" : 1                                                                   |
+|┌─ mermaid                                                                      |
+|│ pie                                                                           |
+|│   "drawn" : 1                                                                 |
+|└─                                                                              |
 |                                                                                |
 |The corpus ends here.                                                           |
 |                                                                                |
@@ -56,5 +58,3 @@ expression: window.picture()
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|
-|                                                                                |
-|                                                                                |

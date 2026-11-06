@@ -2248,3 +2248,151 @@ fn a_native_held_block_shows_one_status_row_and_none_of_its_source() {
         "{rows:#?}"
     );
 }
+
+// A fenced block in its frame. Copying a wrapped code row is the fullscreen
+// selection's to answer; in native mode the terminal's own selection and copy
+// take whatever is on screen.
+
+/// A line of code that cannot fit thirty columns beside its gutter.
+const CODE_LINE: &str = "let total = first_value + second_value + third_value + fourth_value;";
+
+/// The rows `answer` comes to natively in `glyphs`, once as written at
+/// `columns` and, with `narrowed`, once after a window of sixty narrowed to it.
+fn fenced_natively(glyphs: Glyphs, columns: usize, answer: &str) -> [Vec<String>; 2] {
+    [None, Some((columns, 40))].map(|resized| {
+        let width = if resized.is_some() { 1100 } else { columns };
+        answered_natively_in(&Window::new(width, 40), glyphs, answer, resized)
+            .into_iter()
+            .map(|row| row.trim_end().to_owned())
+            .collect()
+    })
+}
+
+#[test]
+fn a_native_fence_is_drawn_in_a_frame_naming_its_language() {
+    for rows in fenced_natively(Glyphs::Unicode, 64, "```rust\nlet x = 1;\n```\n") {
+        assert_eq!(rows, ["┌─ rust", "│ let x = 1;", "└─"]);
+    }
+}
+
+#[test]
+fn a_native_fence_is_drawn_in_the_ascii_frame_too() {
+    for rows in fenced_natively(Glyphs::Ascii, 64, "```rust\nlet x = 1;\n```\n") {
+        assert_eq!(rows, ["+- rust", "| let x = 1;", "+-"]);
+    }
+}
+
+#[test]
+fn a_native_fence_naming_no_language_is_a_frame_with_no_label() {
+    for rows in fenced_natively(Glyphs::Unicode, 64, "```\nplain text\n```\n") {
+        assert_eq!(rows, ["┌─", "│ plain text", "└─"]);
+    }
+}
+
+#[test]
+fn a_native_empty_fence_is_its_frame_and_no_refusal() {
+    for rows in fenced_natively(Glyphs::Unicode, 64, "```rust\n```\n") {
+        assert_eq!(rows, ["┌─ rust", "└─"]);
+    }
+}
+
+#[test]
+fn a_native_wrapped_code_row_is_marked_as_a_continuation() {
+    for (glyphs, side, again) in [(Glyphs::Unicode, "│ ", "┆ "), (Glyphs::Ascii, "| ", ": ")] {
+        for rows in fenced_natively(glyphs, 30, &format!("```rust\n{CODE_LINE}\n```\n")) {
+            let code: Vec<&str> = rows
+                .iter()
+                .filter_map(|row| row.strip_prefix(side).or_else(|| row.strip_prefix(again)))
+                .collect();
+            assert!(code.len() > 2, "{rows:#?}");
+            assert!(
+                rows.iter()
+                    .skip(2)
+                    .take(code.len() - 1)
+                    .all(|row| row.starts_with(again)),
+                "{rows:#?}"
+            );
+            assert_eq!(code.concat(), CODE_LINE, "{rows:#?}");
+            for row in &rows {
+                assert!(crate::width::columns(row) <= 30, "{row:?} is too wide");
+            }
+        }
+    }
+}
+
+/// A fence named `mermaid` holding more than the reader will hold back.
+fn mermaid_past_its_cap() -> String {
+    let line = format!("A{} --> B", "a".repeat(990));
+    let mut answer = String::from("```mermaid\n");
+    for _ in 0..20 {
+        answer.push_str(&line);
+        answer.push('\n');
+    }
+    answer.push_str("```\n");
+    answer
+}
+
+#[test]
+fn a_native_held_block_past_its_cap_is_drawn_as_written_with_its_refusal_in_the_label() {
+    for (glyphs, top, bottom) in [
+        (
+            Glyphs::Unicode,
+            "┌─ mermaid · longer than this can hold · shown as written",
+            "└─",
+        ),
+        (
+            Glyphs::Ascii,
+            "+- mermaid - longer than this can hold - shown as written",
+            "+-",
+        ),
+    ] {
+        let rows = answered_natively_in(
+            &Window::new(1100, 40),
+            glyphs,
+            &mermaid_past_its_cap(),
+            None,
+        );
+        let rows: Vec<&str> = rows.iter().map(|row| row.trim_end()).collect();
+        assert_eq!(rows.first(), Some(&top), "{rows:#?}");
+        assert_eq!(rows.last(), Some(&bottom), "{rows:#?}");
+        assert_eq!(rows.iter().filter(|row| row.len() > 990).count(), 20);
+    }
+}
+
+#[test]
+fn a_native_hostile_fence_label_reaches_the_terminal_as_nothing_but_its_name() {
+    // An escape that opens a device control string or an application command
+    // is dropped with its introducer only; what follows it is inert text.
+    for (label, name) in [
+        ("\u{1b}]0;a title it chose\u{7}rust", "rust"),
+        ("\u{1b}]8;;https://example.invalid\u{1b}\\rust", "rust"),
+        ("ru\u{7}st\u{8}", "rust"),
+        ("ru\u{85}st", "rust"),
+        ("\u{1b}P1$r\u{1b}\\rust", "1$rrust"),
+        ("\u{1b}_Gi=1;AAAA\u{1b}\\rust", "Gi=1;AAAArust"),
+        ("\u{10eeee}\u{305}\u{305}rust", "rust"),
+        ("\u{2066}rust\u{2069}", "rust"),
+    ] {
+        let window = Window::new(64, 12);
+        let rows = answered_natively(&window, &format!("```{label}\ncode\n```\n"), None);
+        assert_eq!(
+            rows.iter().map(|row| row.trim_end()).collect::<Vec<_>>(),
+            [format!("┌─ {name}"), "│ code".to_owned(), "└─".to_owned()],
+            "for {label:?}"
+        );
+
+        let written = window.written();
+        for hostile in ["\u{1b}]", "\u{1b}P", "\u{1b}_", "\u{7}", "\u{8}", "\u{85}"] {
+            assert!(
+                !written.contains(hostile),
+                "{hostile:?} reached the terminal for {label:?}"
+            );
+        }
+        for hostile in ['\u{2066}', '\u{2069}', '\u{10eeee}'] {
+            assert!(
+                !written.contains(hostile),
+                "{hostile:?} reached the terminal for {label:?}"
+            );
+        }
+    }
+}

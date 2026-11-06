@@ -2,9 +2,7 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x43 cursor 38,4 scrollback 0
-|╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
-|│                                  │ Recent sessions                           │|
+80x43 cursor 40,4 scrollback 2
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
 |│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No earlier session for this workspace     │|
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
@@ -22,13 +20,17 @@ expression: window.picture()
 |                                                                                |
 |A fence that names its language:                                                |
 |                                                                                |
-|fn main() {                                                                     |
-|    let value = compute_something_long(argument_one, argument_two);             |
-|}                                                                               |
+|┌─ rust                                                                         |
+|│ fn main() {                                                                   |
+|│     let value = compute_something_long(argument_one, argument_two);           |
+|│ }                                                                             |
+|└─                                                                              |
 |                                                                                |
 |A fence that names nothing:                                                     |
 |                                                                                |
-|plain block                                                                     |
+|┌─                                                                              |
+|│ plain block                                                                   |
+|└─                                                                              |
 |                                                                                |
 |And a block indented four spaces, after a blank line:                           |
 |                                                                                |
@@ -44,5 +46,3 @@ expression: window.picture()
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|
-|                                                                                |
-|                                                                                |

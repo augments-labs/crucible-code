@@ -177,6 +177,33 @@ impl Glyphs {
         }
     }
 
+    /// The square corners a block's frame opens and closes with: top, then
+    /// bottom.
+    ///
+    /// Square where [`Glyphs::top`] is round, because the two are not the same
+    /// frame: that one holds a control, and this one only shows where a block
+    /// of the answer begins and ends.
+    #[must_use]
+    pub fn square(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Unicode => ("┌", "└"),
+            Self::Ascii => ("+", "+"),
+        }
+    }
+
+    /// The mark in front of a row of code that carries on the one above it,
+    /// where a line wrapped.
+    ///
+    /// Dotted rather than solid, so it reads as the edge of the frame gone
+    /// faint where the line broke and not as another line of code.
+    #[must_use]
+    pub fn continued(self) -> &'static str {
+        match self {
+            Self::Unicode => "┆",
+            Self::Ascii => ":",
+        }
+    }
+
     /// The small mark that parts one thing on a row from the next.
     #[must_use]
     pub fn dot(self) -> &'static str {
@@ -535,6 +562,28 @@ mod tests {
             assert_eq!(columns(glyphs.caret()), 1, "{glyphs:?}");
             assert_eq!(columns(glyphs.hidden()), 1, "{glyphs:?}");
         }
+    }
+
+    #[test]
+    fn the_frame_marks_are_one_column_and_ascii_in_the_ascii_set() {
+        // A frame is laid out in columns it counts by the gutter's width and
+        // the mark that carries a wrapped row on, so neither may be wider than
+        // one in either set, and the ascii set draws nothing else.
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let (top, bottom) = glyphs.square();
+            for mark in [top, bottom, glyphs.continued()] {
+                assert_eq!(columns(mark), 1, "{glyphs:?} {mark:?}");
+            }
+        }
+        for mark in [
+            Glyphs::Ascii.square().0,
+            Glyphs::Ascii.square().1,
+            Glyphs::Ascii.continued(),
+        ] {
+            assert!(mark.is_ascii(), "{mark:?}");
+        }
+        assert_ne!(Glyphs::Unicode.continued(), Glyphs::Unicode.vertical());
+        assert_ne!(Glyphs::Ascii.continued(), Glyphs::Ascii.vertical());
     }
 
     #[test]

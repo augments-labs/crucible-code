@@ -30,6 +30,15 @@
 //! the runs it would have been had nothing held it. A reader made
 //! [`Markdown::as_written`] holds no block at all, which is what lays one out.
 //!
+//! A fence is drawn in a frame of [`chrome`]'s, and the reader says it as it
+//! streams: the fence's opening line becomes the top edge naming its language,
+//! every line of code starts with the gutter as a run of its own, and the
+//! closing line becomes the bottom edge. A fence a message ends inside is
+//! never given a bottom. The name is the first word of the info string, cleaned
+//! here once because this is where a model's text is read, and a held fence
+//! past its cap says so in its top edge. `framed` reads such a row back by its
+//! gutter, and breaks it where the room runs out rather than at a space.
+//!
 //! A quote's bar and an item's mark are drawn in slots of their own, and
 //! `hang` reads them back off a line to say what a row that line wraps onto
 //! stands in front of its words with. The reader decides where a line ends and
@@ -41,11 +50,17 @@
 //! holds a span until it ends and a word with a digit in it until the word
 //! does, both bounded, and changes a slot and never a character.
 
+use std::borrow::Cow;
+use std::ops::Range;
+
+use crate::chrome::{self, Frame, Label, Undrawn};
 use crate::color::Slot;
+use crate::escape::Escapes;
 use crate::files::Files;
 use crate::forge::Forge;
 use crate::glyphs::Glyphs;
 use crate::row::Row;
+use crate::width;
 
 mod kind;
 mod table;
@@ -436,6 +451,163 @@ pub(crate) fn hang(row: &Row) -> Option<Hang> {
     })
 }
 
+/// What stands in front of a row of code that carries on the one above it,
+/// where a line of code wrapped: a mark and a space, as wide as the gutter.
+#[must_use]
+pub(crate) const fn continuation(glyphs: Glyphs) -> &'static str {
+    match glyphs {
+        Glyphs::Unicode => "┆ ",
+        Glyphs::Ascii => ": ",
+    }
+}
+
+/// The set a row of code in its frame was drawn in, which its gutter says.
+fn gutters(row: &Row) -> Option<(Glyphs, usize)> {
+    let (slot, text) = row.spans().next()?;
+    if slot != Slot::Quiet {
+        return None;
+    }
+    [Glyphs::Unicode, Glyphs::Ascii]
+        .into_iter()
+        .find(|glyphs| chrome::gutter(*glyphs) == text)
+        .map(|glyphs| (glyphs, text.len()))
+}
+
+/// Where `code` breaks to fit `room` columns, as byte ranges that partition it.
+///
+/// A line of code is broken wherever the room runs out, never at a space: it
+/// is cut as written and nothing is dropped at a break, because what a reader
+/// copies off a wrapped line has to be the line. Whitespace that would end a
+/// row begins the next one instead, so that the rows read back off the screen
+/// (which has no way to tell a space from the blank after it) join into the
+/// line. A row of nothing but whitespace keeps it, and may lose it on a copy.
+fn cuts(code: &str, room: usize) -> Vec<Range<usize>> {
+    let mut parts = Vec::new();
+    let mut base = 0;
+
+    while base < code.len() {
+        let rest = code.get(base..).unwrap_or_default();
+        let Some(over) = width::cut(rest, room) else {
+            parts.push(base..code.len());
+            break;
+        };
+
+        // A character wider than the room can be drawn nowhere in it, so it is
+        // left out, with the marks that ride on it.
+        if over == 0 {
+            let mut left = rest.chars();
+            let first = left.next().map_or(rest.len(), char::len_utf8);
+            let marks: usize = left
+                .take_while(|mark| width::advance(*mark) == Some(0))
+                .map(char::len_utf8)
+                .sum();
+            base += first + marks;
+            continue;
+        }
+
+        let row = rest.get(..over).unwrap_or_default();
+        let kept = row.trim_end_matches(char::is_whitespace).len();
+        let at = if kept == 0 { over } else { kept };
+        parts.push(base..base + at);
+        base += at;
+    }
+
+    parts
+}
+
+/// Where a row of code in its frame breaks at `columns`: the set it was drawn
+/// in, the bytes its gutter takes, and the ranges of its code after that.
+///
+/// `None` for a row that is not one, and for a window with no room for code
+/// beside the gutter.
+fn broken(row: &Row, columns: usize) -> Option<(Glyphs, usize, Vec<Range<usize>>)> {
+    let (glyphs, lead) = gutters(row)?;
+    let room = columns
+        .checked_sub(chrome::GUTTER)
+        .filter(|room| *room > 0)?;
+    let code = row.between(lead, usize::MAX).text();
+    let mut parts = cuts(&code, room);
+    if parts.is_empty() {
+        parts.push(0..0);
+    }
+    Some((glyphs, lead, parts))
+}
+
+/// The display rows a row of code in its frame comes to at `columns`, where
+/// `row` is one.
+///
+/// The gutter is the frame's, and structural, so a drag takes the code and not
+/// the bar. A line that wraps carries on under a mark of its own where the
+/// gutter stood, also structural, and breaks wherever the room runs out. What
+/// the code says comes back whole and in order, which is what a copy of the
+/// wrapped line is made from.
+#[must_use]
+pub(crate) fn framed(row: &Row, columns: usize) -> Option<Vec<Row>> {
+    let (glyphs, lead, parts) = broken(row, columns)?;
+    let code = row.between(lead, usize::MAX);
+
+    Some(
+        parts
+            .into_iter()
+            .enumerate()
+            .map(|(at, part)| {
+                let front = if at == 0 {
+                    chrome::gutter(glyphs)
+                } else {
+                    continuation(glyphs)
+                };
+                Row::new()
+                    .then_structural(Slot::Quiet, front)
+                    .join(code.between(part.start, part.end))
+            })
+            .collect(),
+    )
+}
+
+/// How many display rows [`framed`] gives `row`, without building them.
+#[must_use]
+pub(crate) fn framed_height(row: &Row, columns: usize) -> Option<usize> {
+    broken(row, columns).map(|(_, _, parts)| parts.len())
+}
+
+/// What a fence's info string names, as its frame's label is made from it.
+///
+/// Cleaned first and split after: an escape sequence has spaces in it that
+/// are not the end of the name, and a control character in the middle of a
+/// word is one word with the control taken out of it. Cleaned here, once, and
+/// not by whatever draws the label, because this is where the text from a
+/// model is read -- what is dropped is what a terminal would act on or a
+/// reader would be misled by, and the placeholder an image is placed with
+/// along with the marks that give it a row and a column.
+fn fence_name(info: &str) -> String {
+    let mut escapes = Escapes::default();
+    let mut placed = false;
+    let cleaned: String = info
+        .chars()
+        .filter(|character| {
+            if escapes.holds(*character) {
+                return false;
+            }
+            if *character == PLACEHOLDER {
+                placed = true;
+                return false;
+            }
+            let advance = width::advance(*character);
+            let mark = placed && advance == Some(0);
+            placed = placed && mark;
+            advance.is_some() && !mark
+        })
+        .collect();
+    cleaned
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// The character an image is placed with, which no text from a model may use.
+const PLACEHOLDER: char = '\u{10EEEE}';
+
 /// A held block being gathered.
 #[derive(Debug)]
 struct Gathering {
@@ -642,6 +814,19 @@ struct Line {
     /// somebody else's words.
     quoted: bool,
     emphasis: Emphasis,
+    /// Whether the gutter of a line of code has gone out.
+    ///
+    /// Owed until the line has something to put it in front of, or ends: a
+    /// blank line of code still stands in its frame.
+    gutter: Gutter,
+}
+
+/// Whether a line of code has put its gutter out yet.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Gutter {
+    #[default]
+    Owed,
+    Put,
 }
 
 /// The emphasis open on the line being read.
@@ -932,6 +1117,11 @@ pub struct Markdown {
     /// What lays a block out, and what reads a table's cell: both are reading
     /// something already held, and holding it again would never end.
     unheld: bool,
+    /// Why the fence being read was not drawn, where it is a held fence that
+    /// ran past its cap, so the frame it opens says so.
+    ///
+    /// Only until that fence's opening line has been read.
+    refusal: Option<Undrawn>,
     /// A block that has just closed, waiting to be handed on in its place.
     ready: Option<Block>,
     /// A held block other than a table, being gathered.
@@ -1361,8 +1551,13 @@ impl Markdown {
         // rest of it follows the same way.
         if gathering.source.len() > gathering.held.cap() {
             let unheld = std::mem::replace(&mut self.unheld, true);
+            let refusal = std::mem::replace(
+                &mut self.refusal,
+                matches!(gathering.closer, Closer::Fence(_)).then_some(Undrawn::PastCap),
+            );
             self.scan(&gathering.source, room, say);
             self.unheld = unheld;
+            self.refusal = refusal;
 
             // A fence's own state says where it ends. Display math has none,
             // so its closer is watched for until the line holding it ends.
@@ -2002,11 +2197,19 @@ impl Markdown {
     /// text still held when that happens is text the reader never sees.
     pub fn finish(&mut self, room: usize, say: &mut dyn FnMut(Said<'_>)) {
         let mut kinds = std::mem::take(&mut self.kinds);
-        self.close(room, &mut |slot, text, link| {
+        let mut tell = |slot: Slot, text: &str, link: Option<&str>| {
             kinds.tell(slot, text, link, &mut |slot, text, link| {
                 say(Said::Run { slot, text, link });
             });
-        });
+        };
+        self.close(room, &mut tell);
+
+        // A fence's own line that the message ended in the middle of is a line
+        // that ended all the same, so its edge is drawn: a frame is shut by the
+        // line that closes it whether or not a break follows.
+        if matches!(self.inside, Inside::Opening | Inside::Closing) {
+            self.end_line(room, &mut tell);
+        }
 
         // A block that never closed is handed on as it stands: the end of the
         // message is the last thing that could have closed it. A table is
@@ -2084,6 +2287,10 @@ impl Markdown {
         self.close(room, say);
 
         // The line of code is complete, so this is the moment it can be read.
+        // A blank one has said nothing yet and still stands in its frame.
+        if ended == Inside::Fence {
+            self.gutter(say);
+        }
         self.read_code(say);
 
         let inside = match ended {
@@ -2136,6 +2343,23 @@ impl Markdown {
             _ => self.syntax.take(),
         };
 
+        // A fence's own line is where its frame begins and ends. Worked out
+        // before the reset, which forgets the language, and said after it, so
+        // the edge carries no slot into the row that follows it. A fence that
+        // is held is drawn whole when it closes and has no frame of its own.
+        let edge = match ended {
+            Inside::Opening if held.is_none() => {
+                let name = fence_name(&self.language);
+                let frame = Frame {
+                    label: Label::new(&name, self.glyphs),
+                    refusal: self.refusal,
+                };
+                Some(Cow::Owned(frame.top()))
+            }
+            Inside::Closing => Some(Cow::Borrowed(chrome::bottom(self.glyphs))),
+            _ => None,
+        };
+
         // A block that closed on this line stands in for the line, break and
         // all.
         let ready = self.ready.take();
@@ -2153,17 +2377,21 @@ impl Markdown {
             syntax,
             glyphs: self.glyphs,
             unheld: self.unheld,
+            refusal: self.refusal.filter(|_| ended != Inside::Opening),
             ready,
             gathering: held,
             passing: self.passing.take(),
             ..Self::default()
         };
 
-        // A fence's own line is a marker, and no marker is drawn — the line
-        // break with it, or every block would arrive with a blank line stitched
-        // to each end of it. After the reset otherwise, so the row that ends
-        // carries no slot into the row that follows it.
-        if !matches!(ended, Inside::Opening | Inside::Closing) && !blocked {
+        // A fence's own line is a marker, and no marker is drawn: what stands
+        // in its place is the frame's edge, which is a row of its own. After
+        // the reset otherwise, so the row that ends carries no slot into the
+        // row that follows it.
+        if let Some(edge) = edge {
+            say(Slot::Quiet, &edge, None);
+            say(Slot::Quiet, "\n", None);
+        } else if !matches!(ended, Inside::Opening | Inside::Closing) && !blocked {
             say(self.slot(), "\n", None);
         }
 
@@ -2203,9 +2431,21 @@ impl Markdown {
         }
     }
 
+    /// Hands on the gutter of the line of code being read, once.
+    ///
+    /// One run, so that whatever folds the row afterwards can tell it from
+    /// the rest by what it says: see [`framed`].
+    fn gutter(&mut self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        if self.inside == Inside::Fence && self.line.gutter == Gutter::Owed {
+            self.line.gutter = Gutter::Put;
+            say(Slot::Quiet, chrome::gutter(self.glyphs), None);
+        }
+    }
+
     /// Hands on a run under the slot the line is wearing, or into the block
     /// being read where one is open.
     fn wears(&mut self, text: &str, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        self.gutter(say);
         if self.syntax.is_some() && self.inside == Inside::Fence && self.code.len() < MOST {
             self.code.push_str(text);
             return;
@@ -2330,6 +2570,6 @@ fn written(held: HeldMarks) -> &'static str {
 #[cfg(test)]
 pub(crate) mod corpus;
 #[cfg(test)]
-mod corpus_pictures;
+pub(crate) mod corpus_pictures;
 #[cfg(test)]
 mod tests;
