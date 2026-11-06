@@ -3388,3 +3388,54 @@ fn display_math_counts_and_opens_what_it_streamed_with() {
         );
     }
 }
+
+// A move that brings a held band back to its foot owes the frame that shows
+// the held row again.
+
+/// The held picture's last row.
+const HELD_ROW: &str = "◇ drawing a formula · 2 lines so far";
+
+#[test]
+fn a_notch_back_and_one_forward_while_a_block_is_held_draws_it_held_again() {
+    let (mut drawn, _) = holding_under_thirty_lines();
+    assert!(drawn.render.scrolled(-1).unwrap());
+    let rows = drawn.rows();
+    assert_eq!(
+        rows.last().map(|row| row.trim_end()),
+        Some("line 29"),
+        "{rows:#?}"
+    );
+
+    assert!(drawn.render.scrolled(1).unwrap(), "the notch was swallowed");
+    let rows = drawn.rows();
+    assert_eq!(
+        rows.last().map(|row| row.trim_end()),
+        Some(HELD_ROW),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_thumb_held_back_to_the_foot_while_a_block_is_held_draws_it_held_again() {
+    let mut drawn = reading(60, 10);
+    drawn.rails(true);
+    for line in 0..30 {
+        drawn.commit(&format!("line {line}")).unwrap();
+    }
+    drawn.render.stream("$$\nx\n").unwrap();
+    assert!(drawn.render.scrolled(-1).unwrap());
+    let column = drawn.columns() - 1;
+    // The thumb stands on the rail's last row with the band at the foot of
+    // the record alone; pressed there under a resting pointer and moved along
+    // that row, it seeks that foot, where the record follows and the held row
+    // is drawn again.
+    drawn.took(Pressed::Hovered { row: 9, column }).unwrap();
+    assert!(rail_click(&mut drawn, 9).is_none());
+    drawn.took(Pressed::Dragged { row: 9, column }).unwrap();
+    let rows = drawn.rows();
+    assert_eq!(
+        rows.last().map(|row| row.trim_end_matches([' ', '│', '┃'])),
+        Some(HELD_ROW.trim_end()),
+        "{rows:#?}"
+    );
+}

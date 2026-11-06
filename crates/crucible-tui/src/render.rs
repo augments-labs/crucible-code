@@ -1991,7 +1991,8 @@ impl<T: Terminal> Renderer<T> {
     }
 
     /// Moves the transcript's viewport by `by` display rows, and says whether
-    /// it moved.
+    /// that changed what it shows, which a band brought back to following the
+    /// foot can do with its top where it was.
     ///
     /// Negative is towards the top of the session. Nothing moves where output
     /// is redirected: a file has no viewport, and a reader of one scrolls it

@@ -1311,13 +1311,18 @@ impl Record {
         first
     }
 
-    /// Move the band `by` display rows, and say whether it moved.
+    /// Move the band `by` display rows, and say whether it moved or began or
+    /// stopped following the foot.
     ///
     /// Negative is towards the head of the session. A band that was following
     /// the foot starts from where the foot put it, so the first turn of a wheel
     /// moves from what the reader is looking at rather than from a spot left
-    /// over from the last time anybody scrolled.
+    /// over from the last time anybody scrolled. Following counts as a move
+    /// because what the band holds can turn on it: a band the reader left at
+    /// the foot of `rows` rows comes back to following one under it, which is
+    /// the same top and a different picture.
     pub(crate) fn scroll(&mut self, by: i32, rows: usize) -> bool {
+        let followed = self.following;
         let foot = self.foot(rows);
         let was = if self.following { foot } else { self.top };
         let far = usize::try_from(by.unsigned_abs()).unwrap_or(usize::MAX);
@@ -1328,7 +1333,7 @@ impl Record {
         };
         self.following = now == foot;
         self.top = now;
-        now != was
+        now != was || self.following != followed
     }
 
     /// The absolute display row shown on the first row of a band `rows` tall.
@@ -1426,7 +1431,8 @@ impl Record {
     }
 
     /// Moves the band's top to display row `row` of what is retained, and
-    /// says whether it moved.
+    /// says whether it moved or began or stopped following the foot, as
+    /// [`Self::scroll`] does.
     ///
     /// Never past the foot: a row the band cannot start on and still be full
     /// is the foot, and the band follows the record again from there, as the
@@ -1434,12 +1440,13 @@ impl Record {
     /// same cumulative ends [`Self::place`] reads, plus a walk bounded by the
     /// band's height to find the foot.
     pub(crate) fn seek(&mut self, row: usize, rows: usize) -> bool {
+        let followed = self.following;
         let foot = self.foot(rows);
         let now = self.spot_at(self.before.saturating_add(row)).min(foot);
         let was = if self.following { foot } else { self.top };
         self.top = now;
         self.following = now == foot;
-        now != was
+        now != was || self.following != followed
     }
 
     /// The display-row position of `spot` in this width epoch.
