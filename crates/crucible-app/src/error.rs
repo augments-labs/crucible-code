@@ -211,6 +211,15 @@ pub enum AppError {
     #[error(transparent)]
     Unstarted(#[from] crate::runtime::Unstarted),
 
+    /// The handle on the model's questions asked without waiting is already
+    /// held by a conversation. A second holder would share its era and its
+    /// registry, so each would forget the other's questions on a session
+    /// change and deliver the other's answers to its own model.
+    #[error(
+        "the questions handle is already held by a conversation; give each conversation a handle of its own"
+    )]
+    QuestionsHeld,
+
     /// A test build was asked to start agents from a registry it has no
     /// name for. Only a test build has this, as it has [`crate::proof`].
     #[cfg(feature = "proof")]

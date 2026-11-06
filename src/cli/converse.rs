@@ -1861,7 +1861,12 @@ fn sent(
             // Not reached from here: every route holding the send is asked
             // about on the drawing thread before the work is sent, each yes
             // is written down there, and nothing on the worker takes one out.
-            Ended::Warned(_) | Ended::Unrecorded(_) => Did::Unsent(ErrorCode::Abandoned.into()),
+            //
+            // An answer to questions held for later is not reached from here:
+            // the terminal answers the model's questions as they are asked.
+            Ended::Warned(_) | Ended::Unrecorded(_) | Ended::Answered(_) => {
+                Did::Unsent(ErrorCode::Abandoned.into())
+            }
         };
 
         (conversation, did)

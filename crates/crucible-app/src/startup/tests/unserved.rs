@@ -23,6 +23,7 @@ fn a_credential_whose_provider_cannot_be_built_still_leaves_a_provider_to_choose
     let from = |name: &str| (name == "OPENAI_API_KEY").then(|| "an-exported-key".to_owned());
 
     let mut conversation = assemble(&Startup {
+        questions: None,
         providers: &catalogue(),
         provider: None,
         unasked: NO_PROVIDER_CHOSEN,

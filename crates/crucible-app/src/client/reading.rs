@@ -17,9 +17,11 @@ use crucible_models::{Effort, Served, Speed};
 use crucible_runner::{Breakdown, Category, Event, PlanLimitStop, SessionCost, Totals, TurnError};
 use crucible_tools::{Argument, Mode};
 use crucible_types::{
-    CostAmount, LimitGroup, ModelGroup, ModelKey, PlanWindows, Scope, StopReason, Used, Utc, Window,
+    Batch, CostAmount, LimitGroup, ModelGroup, ModelKey, PlanWindows, Scope, StopReason, Used, Utc,
+    Window,
 };
 
+use super::answering::Questions;
 use crate::providers::CredentialSource;
 use crate::switching::Retained;
 use crate::{Conversation, providers};
@@ -130,12 +132,38 @@ pub fn billing(conversation: &Conversation) -> api::Billing {
 /// the one place progress is handed to a client, so it is where that is held.
 /// Called by a consumer with no terminal — today the one the headless tests
 /// drive; the terminal draws a turn from the runner's events as they stand.
+///
+/// What waits for the person's answer is the one exception. It goes to a
+/// client that claimed [`Capability::Questions`], whether or not it asked for
+/// progress, because that client is the one answering it, and to no other.
+/// Each question is shown in the shape a blocking question is put, with one
+/// difference: an answer whose name is longer than the words a client is
+/// handed is cut, saying so, where a blocking question like it is declined
+/// unput. A restored batch is bounded by the registry's total alone, and one
+/// left out would wait where no client could answer or decline it; a cut
+/// name is one the client cannot choose, and the rest of the batch it can.
+///
+/// The report is read as a signal and not for what it carries: the era and
+/// the set are read together from `questions`, the handle the front end
+/// supplied, so a report posted in one session and converted after the
+/// conversation has moved to another shows the other's era with the other's
+/// batches, never the first's batches under the second's era. With no handle
+/// nothing is reported, since nothing could be answered.
 #[must_use]
 pub fn progress(
     capabilities: Capabilities,
     event: &Event,
     serving: Option<&str>,
+    questions: Option<&Questions>,
 ) -> Option<Progress> {
+    if let Event::Waiting { .. } = event {
+        let questions = questions.filter(|_| capabilities.has(Capability::Questions))?;
+        let (era, batches) = questions.waiting();
+        return Some(Progress::Waiting {
+            era,
+            batches: batches.iter().map(waiting).collect(),
+        });
+    }
     if !capabilities.has(Capability::Progress) {
         return None;
     }
@@ -220,8 +248,21 @@ pub fn progress(
         | Event::Aged { .. }
         | Event::Unread { .. }
         | Event::Steered { .. }
+        // Answered above, under the capability that is told it.
         | Event::Waiting { .. } => return None,
     })
+}
+
+/// One waiting batch, as a client is told it.
+fn waiting(batch: &Batch) -> api::Waiting {
+    api::Waiting {
+        id: batch.id(),
+        questions: batch
+            .questions()
+            .iter()
+            .map(super::deciding::shown)
+            .collect(),
+    }
 }
 
 /// What kind of thing a call's summary names, in the contract's words.

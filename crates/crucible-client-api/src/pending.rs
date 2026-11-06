@@ -439,7 +439,9 @@ impl Choice {
 }
 
 impl Asked {
-    fn written(&self) -> Value {
+    /// Shared with the questions a turn left waiting, which cross in the same
+    /// shape as the questions a turn stops on.
+    pub(crate) fn written(&self) -> Value {
         Writing::new()
             .text("heading", &self.heading)
             .text("asks", &self.asks)
@@ -451,7 +453,7 @@ impl Asked {
             .finish()
     }
 
-    fn read(value: Value) -> Result<Self, Refusal> {
+    pub(crate) fn read(value: Value) -> Result<Self, Refusal> {
         let mut fields = Fields::of(value)?;
         let asked = Self {
             heading: fields.text("heading")?,
@@ -580,15 +582,7 @@ impl Decision {
                     "answers",
                     answers
                         .iter()
-                        .map(|picked| {
-                            Writing::new()
-                                .with(
-                                    "chosen",
-                                    picked.chosen.iter().map(Said::as_str).collect::<Vec<_>>(),
-                                )
-                                .with("note", picked.note.as_str())
-                                .finish()
-                        })
+                        .map(|picked| picked.written_into(Writing::new()).finish())
                         .collect::<Vec<_>>(),
                 )
             }
@@ -642,14 +636,32 @@ impl Decision {
 
 fn picked(value: Value) -> Result<Picked, Refusal> {
     let mut fields = Fields::of(value)?;
-    let picked = Picked {
-        chosen: fields
-            .list("chosen")?
-            .into_iter()
-            .map(|value| crate::wire::said(&value))
-            .collect::<Result<_, _>>()?,
-        note: fields.said("note")?,
-    };
+    let picked = Picked::taken(&mut fields)?;
     fields.done()?;
     Ok(picked)
+}
+
+impl Picked {
+    /// Its two fields, beside whatever `object` already holds: shared with an
+    /// answer to questions left waiting, whose replies carry them the same way.
+    pub(crate) fn written_into(&self, object: Writing) -> Writing {
+        object
+            .with(
+                "chosen",
+                self.chosen.iter().map(Said::as_str).collect::<Vec<_>>(),
+            )
+            .with("note", self.note.as_str())
+    }
+
+    /// Its two fields, taken out of `fields`.
+    pub(crate) fn taken(fields: &mut Fields) -> Result<Self, Refusal> {
+        Ok(Self {
+            chosen: fields
+                .list("chosen")?
+                .into_iter()
+                .map(|value| crate::wire::said(&value))
+                .collect::<Result<_, _>>()?,
+            note: fields.said("note")?,
+        })
+    }
 }

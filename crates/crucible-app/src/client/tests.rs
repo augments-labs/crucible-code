@@ -18,6 +18,7 @@ use crucible_types::{Answer, Question, ToolArgs, ToolCall, ToolId};
 
 use super::deciding::{Confirmation, Deciding, Front, Shown, confirmed, questions, settle, warned};
 use super::reading::progress;
+use super::turning::ends_short;
 use crate::content_use::WARNED;
 
 /// What a scripted front end says next about whatever it is put.
@@ -664,19 +665,152 @@ fn a_front_end_that_never_fits_its_answer_is_asked_a_few_times_and_then_no_more(
 }
 
 #[test]
+fn a_waiting_batch_whose_answer_is_too_long_to_carry_is_still_shown() {
+    // A restored batch is bounded by the registry's total alone, so an answer
+    // name may be longer than the words a client is handed. The batch is
+    // shown with that name cut and saying so, not left out: a client that
+    // could not see it could neither answer nor decline it.
+    let long = "a".repeat(TEXT_BYTES + 1);
+    let held = super::Questions::new();
+    held.held()
+        .register(vec![Question::new(
+            "Language",
+            "Which language?",
+            [Answer::new(long.as_str()), Answer::new("Rust")],
+        )])
+        .expect("the registry holds it");
+    let waiting = crucible_runner::Event::Waiting { batches: vec![] };
+
+    let Some(Progress::Waiting { batches, .. }) = progress(
+        Capabilities::none().with(Capability::Questions),
+        &waiting,
+        None,
+        Some(&held),
+    ) else {
+        panic!("no waiting set was shown");
+    };
+    let [batch] = batches.as_slice() else {
+        panic!("{batches:?}");
+    };
+    let [question] = batch.questions.as_slice() else {
+        panic!("{batch:?}");
+    };
+    let names: Vec<(bool, &str)> = question
+        .choices
+        .iter()
+        .map(|choice| (choice.name.truncated(), choice.name.as_str()))
+        .collect();
+    assert!(
+        matches!(names.as_slice(), [(true, _), (false, "Rust")]),
+        "{names:?}"
+    );
+}
+
+#[test]
+fn a_session_that_records_nothing_is_a_stint_equal_to_no_other_itself_after_clear_included() {
+    use crucible_client_api::Era;
+
+    let (held, other) = (super::Questions::new(), super::Questions::new());
+    let (first, _) = held.waiting();
+    let (beside, _) = other.waiting();
+    assert!(matches!(first, Era::Stint(_)), "{first:?}");
+    assert_ne!(first, beside);
+
+    // What `/clear` does to the handle on its way to a session that records
+    // nothing either.
+    held.moved(None);
+
+    let (cleared, _) = held.waiting();
+    assert!(matches!(cleared, Era::Stint(_)), "{cleared:?}");
+    assert_ne!(cleared, first);
+    assert_ne!(cleared, beside);
+}
+
+#[test]
+fn a_refused_claim_leaves_the_holders_claim_set() {
+    // A refusal must not undo the claim it lost to: if it did, the next
+    // claim would succeed while the first holder still holds the handle.
+    let questions = super::Questions::new();
+    let hold = questions.clone().claim().expect("the first claim is taken");
+    for attempt in 1..=3 {
+        assert!(
+            questions.clone().claim().is_none(),
+            "claim {attempt} after the holder's was taken while the holder lives"
+        );
+    }
+    drop(hold);
+    assert!(
+        questions.clone().claim().is_some(),
+        "the handle stayed claimed after its holder let go"
+    );
+}
+
+#[test]
+fn moving_the_questions_empties_what_waits_in_the_step_that_sets_the_era() {
+    use crucible_client_api::Era;
+    use crucible_types::SessionId;
+
+    // The runner empties the registry again when it picks a session up, but
+    // only after the swap; a report read between the two would pair the
+    // session left's batches with the incoming era unless this step emptied
+    // them under the same lock.
+    let held = super::Questions::new();
+    held.held()
+        .register(vec![Question::new(
+            "Language",
+            "Which language?",
+            [Answer::new("Rust"), Answer::new("Python")],
+        )])
+        .expect("the registry holds it");
+    let incoming = SessionId::new();
+
+    held.moved(Some(&incoming));
+
+    let (era, waiting) = held.waiting();
+    assert_eq!(era, Era::Session(incoming));
+    assert!(waiting.is_empty(), "{waiting:?}");
+}
+
+#[test]
+fn a_turn_cut_short_or_yielding_is_followed_by_one_delivering_and_a_stopped_one_is_not() {
+    use crucible_types::StopReason;
+
+    let ended = ends_short;
+
+    // Yielded: an answer settled after the runner's last look, as the turn
+    // was ending, which no provider script can time.
+    for stop in [
+        StopReason::Yielded,
+        StopReason::OutOfTokens,
+        StopReason::Filtered,
+        StopReason::Paused,
+        StopReason::Unknown,
+    ] {
+        assert!(ended(stop), "{stop:?}");
+    }
+    for stop in [
+        StopReason::Cancelled,
+        StopReason::WindowExceeded,
+        StopReason::WantsTools,
+    ] {
+        assert!(!ended(stop), "{stop:?}");
+    }
+}
+
+#[test]
 fn a_client_that_never_asked_for_progress_is_handed_none() {
     let retrying = crucible_runner::Event::Retrying;
 
     assert_eq!(
-        progress(Capabilities::every(), &retrying, None),
+        progress(Capabilities::every(), &retrying, None, None),
         Some(Progress::Retrying)
     );
 
     let without = Capabilities::none()
         .with(Capability::Permissions)
         .with(Capability::Questions);
-    assert_eq!(progress(without, &retrying, None), None);
-    assert_eq!(progress(Capabilities::none(), &retrying, None), None);
+    assert_eq!(progress(without, &retrying, None, None), None);
+    assert_eq!(progress(Capabilities::none(), &retrying, None, None), None);
 }
 
 #[test]
@@ -696,7 +830,7 @@ fn a_requested_call_says_which_of_the_four_kinds_its_argument_is() {
         };
         assert!(
             matches!(
-                progress(Capabilities::every(), &requested, None),
+                progress(Capabilities::every(), &requested, None, None),
                 Some(Progress::ToolRequested { summary_kind, .. }) if summary_kind == kind
             ),
             "{argument:?}"
@@ -852,10 +986,13 @@ fn a_refusal_of_fast_is_retrying_only_where_the_request_went_again() {
     };
 
     assert_eq!(
-        progress(Capabilities::every(), &refused(true), None),
+        progress(Capabilities::every(), &refused(true), None, None),
         Some(Progress::Retrying)
     );
-    assert_eq!(progress(Capabilities::every(), &refused(false), None), None);
+    assert_eq!(
+        progress(Capabilities::every(), &refused(false), None, None),
+        None
+    );
 }
 
 /// A turn ended on a used-up plan, the weekly window's reset `at` where known.
@@ -886,7 +1023,7 @@ fn plan_limit_reaches_a_client_by_its_code_with_the_window_and_the_reset_in_utc(
     };
 
     assert_eq!(
-        progress(Capabilities::every(), &failed, None),
+        progress(Capabilities::every(), &failed, None, None),
         Some(Progress::Failed(crucible_client_api::Problem {
             code: ErrorCode::PlanLimit,
             message: crucible_client_api::Text::cut(
@@ -904,7 +1041,7 @@ fn plan_limit_with_no_reset_says_so_in_crucibles_words_alone() {
     };
 
     assert_eq!(
-        progress(Capabilities::every(), &failed, None),
+        progress(Capabilities::every(), &failed, None, None),
         Some(Progress::Failed(crucible_client_api::Problem {
             code: ErrorCode::PlanLimit,
             message: crucible_client_api::Text::cut(

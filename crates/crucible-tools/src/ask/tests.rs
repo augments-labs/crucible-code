@@ -612,11 +612,14 @@ fn restoring_its_state_round_trips_the_waiting_batches_and_drops_nothing_silentl
     let resumed = Deferred::default();
     resumed.restore(&state).unwrap();
 
+    // A batch settled and not yet taken comes back waiting: its answer was
+    // never delivered, so the person is asked again rather than ignored.
     let waiting = resumed.waiting();
     assert_eq!(
         waiting.iter().map(Batch::id).collect::<Vec<_>>(),
-        [first, second]
+        [first, second, settled]
     );
+    assert!(!resumed.any_settled());
     assert_eq!(resumed.state(), state);
     let questions = waiting.first().unwrap().questions();
     let question = questions.first().unwrap();
@@ -703,6 +706,49 @@ fn restoring_its_state_round_trips_the_waiting_batches_and_drops_nothing_silentl
         "{said}"
     );
     assert_eq!(busy.waiting().len(), 1);
+}
+
+#[test]
+fn a_settled_batch_is_saved_until_it_is_taken_and_stays_settled_where_it_is_held() {
+    let deferred = Deferred::default();
+    let waiting = deferred.register(asked("Waiting")).unwrap();
+    let settled = deferred.register(asked("Settled")).unwrap();
+    deferred
+        .settle(settled, vec![chose(&["Rust"]), chose(&[])])
+        .unwrap();
+
+    // Saved oldest first, whichever of the two each one is.
+    let saved = deferred.state();
+    let ids: Vec<_> = saved
+        .get("waiting")
+        .and_then(serde_json::Value::as_array)
+        .unwrap()
+        .iter()
+        .map(|batch| batch.get("id").unwrap().as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(ids, [waiting.to_string(), settled.to_string()]);
+
+    // Read back into the registry that holds it, the settled batch stays
+    // settled and is not listed as waiting twice.
+    deferred.restore(&saved).unwrap();
+    assert_eq!(
+        deferred.waiting().iter().map(Batch::id).collect::<Vec<_>>(),
+        [waiting]
+    );
+    assert!(deferred.any_settled());
+    assert_eq!(deferred.state(), saved);
+
+    // Once it is taken, it is no longer saved.
+    assert_eq!(only(deferred.take_settled()).id(), settled);
+    let ids: Vec<_> = deferred
+        .state()
+        .get("waiting")
+        .and_then(serde_json::Value::as_array)
+        .unwrap()
+        .iter()
+        .map(|batch| batch.get("id").unwrap().as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(ids, [waiting.to_string()]);
 }
 
 #[test]

@@ -105,6 +105,7 @@ fn registry() -> Result<(crucible_runner::Tools, Fixture), String> {
     let ledger = Ledger::new();
     let sessions = tree.root().join("sessions");
     let startup = Startup {
+        questions: None,
         services: &services,
         providers: &providers,
         provider: None,

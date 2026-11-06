@@ -27,10 +27,13 @@ impl Version {
     /// pending confirmation, the capability to take part in them, the report
     /// of an install under way, the two codes they are refused with, one for a
     /// client without that capability and one for a conversation, and the move
-    /// on an agent a login's connect can end on in their place. A test holds
-    /// the number and what the frames are made of together, so that one
-    /// cannot move without the other being looked at.
-    pub const CURRENT: Self = Self(5);
+    /// on an agent a login's connect can end on in their place, and the sixth
+    /// the words answering questions without stopping brings: the command,
+    /// the report of what waits, the outcome of an answer no turn was run for,
+    /// and the two codes an answer is refused with. A test holds the number
+    /// and what the frames are made of together, so that one cannot move
+    /// without the other being looked at.
+    pub const CURRENT: Self = Self(6);
 
     /// The revision numbered `number`, spoken or not.
     #[must_use]

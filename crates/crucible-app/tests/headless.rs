@@ -50,6 +50,9 @@ mod agents;
 mod client;
 #[path = "headless/crossing.rs"]
 mod crossing;
+#[cfg(feature = "proof")]
+#[path = "headless/deferring.rs"]
+mod deferring;
 #[path = "headless/external.rs"]
 mod external;
 #[path = "headless/native.rs"]
@@ -130,6 +133,19 @@ struct Script {
     answering: Option<fn() -> Asked>,
     /// How many times its plan was asked.
     limits_asked: Arc<AtomicUsize>,
+    /// What happens as each request is made, told how many came before it:
+    /// a client acting while the turn runs.
+    meanwhile: Option<Meanwhile>,
+}
+
+/// What a [`Script`] runs as each request is made.
+#[derive(Clone)]
+struct Meanwhile(Arc<dyn Fn(usize) + Send + Sync>);
+
+impl std::fmt::Debug for Meanwhile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Meanwhile")
+    }
 }
 
 impl Script {
@@ -143,6 +159,18 @@ impl Script {
             limits: None,
             answering: None,
             limits_asked: Arc::default(),
+            meanwhile: None,
+        }
+    }
+
+    /// This, with `meanwhile` run as each request is made, before it is
+    /// answered and after what it carries was read. Only the deferred
+    /// questions' cases, which take the `proof` feature, use it.
+    #[cfg(feature = "proof")]
+    fn meanwhile(self, meanwhile: impl Fn(usize) + Send + Sync + 'static) -> Self {
+        Self {
+            meanwhile: Some(Meanwhile(Arc::new(meanwhile))),
+            ..self
         }
     }
 
@@ -216,9 +244,12 @@ impl Provider for Script {
             })
             .collect();
         Box::pin(async move {
-            self.asked.fetch_add(1, Ordering::Relaxed);
+            let before = self.asked.fetch_add(1, Ordering::Relaxed);
             if let Ok(mut sent) = self.sent.lock() {
                 sent.push(said);
+            }
+            if let Some(meanwhile) = &self.meanwhile {
+                (meanwhile.0)(before);
             }
             let round = self
                 .rounds

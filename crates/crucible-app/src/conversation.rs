@@ -65,6 +65,7 @@ use crucible_workspace::Workspace;
 
 use crate::backends::{REGISTRY, Registry};
 use crate::client::Asker;
+use crate::error::AppError;
 use crate::launching::Unresumable;
 use crate::outside::{self, Installed, Outside};
 
@@ -121,6 +122,14 @@ pub struct Conversation {
     /// When the plan behind each credential was last asked how much of its
     /// limits is used, and which credentials are not to be asked again.
     pub(crate) asks: crate::client::asking::Asks,
+    /// The model's questions asked without waiting, and the session they
+    /// belong to, where the front end supplied a handle on them. Every
+    /// replacement of [`Self::session`] goes through [`Self::replaced`],
+    /// which moves the handle's era with it. The [`Hold`] is this
+    /// conversation's claim on the handle, released when it is dropped.
+    ///
+    /// [`Hold`]: crate::client::answering::Hold
+    questions: Option<crate::client::answering::Hold>,
 }
 
 impl Conversation {
@@ -151,7 +160,51 @@ impl Conversation {
             steps: None,
             web: crate::following::Following::default(),
             asks: crate::client::asking::Asks::default(),
+            questions: None,
         }
+    }
+
+    /// The same conversation, holding the model's questions asked without
+    /// waiting in `questions`: its runner restores and delivers through the
+    /// handle's registry, and the handle's era is this conversation's
+    /// session from here on. The question tool is given the same handle by
+    /// [`Questions::asking`](crate::client::Questions::asking). Both are
+    /// crate-private, so startup is the only wiring.
+    ///
+    /// A conversation holds one handle and a handle one conversation at a
+    /// time: two holders would share one era and one registry, and each
+    /// would forget the other's questions on a session change and deliver
+    /// the other's answers to its own model. The claim ends when this
+    /// conversation is dropped.
+    ///
+    /// # Errors
+    ///
+    /// [`AppError::QuestionsHeld`] where this conversation already holds a
+    /// handle or another conversation holds `questions`. Nothing about the
+    /// handle changes, and the conversation is not kept.
+    pub(crate) fn holding(self, questions: crate::client::Questions) -> Result<Self, AppError> {
+        if self.questions.is_some() {
+            return Err(AppError::QuestionsHeld);
+        }
+        let hold = questions.claim().ok_or(AppError::QuestionsHeld)?;
+        hold.questions().moved(self.session.id());
+        Ok(Self {
+            runner: self.runner.deferring(hold.questions().held().clone()),
+            questions: Some(hold),
+            ..self
+        })
+    }
+
+    /// `Self::holding`, for a test outside this crate that wires a handle
+    /// as startup does. Compiled only with the `proof` feature, which
+    /// nothing that ships turns on.
+    ///
+    /// # Errors
+    ///
+    /// As `Self::holding`.
+    #[cfg(feature = "proof")]
+    pub fn holding_for_proof(self, questions: crate::client::Questions) -> Result<Self, AppError> {
+        self.holding(questions)
     }
 
     /// The same conversation, its web tools answering through `web`, which a
@@ -370,10 +423,11 @@ impl Conversation {
         mode: Mode,
     ) -> Arc<Session> {
         let named = session.external_ref().cloned();
+        let left = self.replaced(session);
         self.runner
             .pick_up(Arc::new(Session::nowhere()), Transcript::new());
         self.outside = Some(Box::new(Outside::new(installed, transcript, mode, named)));
-        std::mem::replace(&mut self.session, session)
+        left
     }
 
     /// Moves the conversation back onto this program's own models, closing
@@ -662,6 +716,66 @@ impl Conversation {
         turned
     }
 
+    /// Takes one turn with no words of its own, to deliver the answers settled
+    /// in the registry of questions the model asked without waiting.
+    ///
+    /// It is [`Conversation::turn`] with no prompt, as [`Runner::answering`]
+    /// says.
+    ///
+    /// `None` where nothing runs: with nothing settled, since there is no
+    /// answer to deliver and no turn is said to have run, and on an installed
+    /// agent's route, whose turns are not this conversation's own runner's
+    /// and deliver nothing; moving there left the session's questions
+    /// behind, so nothing is settled there to deliver.
+    ///
+    /// # Errors
+    ///
+    /// [`TurnError`], as [`Conversation::turn`] says.
+    pub async fn answering(
+        &mut self,
+        ask: &mut dyn Asker,
+        run: &RunContext<'_>,
+    ) -> Option<Result<Turned, TurnError>> {
+        if !self.undelivered() {
+            return None;
+        }
+        let asked = self.runner.speed();
+        let turned = self.runner.answering(ask, run).await;
+        self.refusal_written(asked);
+        Some(turned)
+    }
+
+    /// The handle on the model's questions asked without waiting, which the
+    /// front end supplied at startup; none where it supplied none.
+    #[must_use]
+    pub fn questions(&self) -> Option<&crate::client::Questions> {
+        self.questions
+            .as_ref()
+            .map(crate::client::answering::Hold::questions)
+    }
+
+    /// Whether an answer is settled that no turn on this conversation's own
+    /// runner has delivered yet.
+    fn undelivered(&self) -> bool {
+        self.outside.is_none()
+            && self
+                .questions()
+                .is_some_and(|questions| questions.held().any_settled())
+    }
+
+    /// Records into `session` from here on and returns the one left, moving
+    /// the questions to it first: the era becomes `session`'s and what waits
+    /// is emptied, together, so nothing of the session left can be answered
+    /// in the one picked up. What the one picked up kept waiting comes back
+    /// at its first turn's first assembly. Every replacement of the session
+    /// goes through here.
+    fn replaced(&mut self, session: Arc<Session>) -> Arc<Session> {
+        if let Some(questions) = self.questions() {
+            questions.moved(session.id());
+        }
+        std::mem::replace(&mut self.session, session)
+    }
+
     /// Starts a new session and records into it from here on, with nothing
     /// carried over from the one being left.
     ///
@@ -691,7 +805,7 @@ impl Conversation {
                 outside.route(),
             )?);
             outside.restart(Transcript::new(), None).await;
-            return Ok(std::mem::replace(&mut self.session, session));
+            return Ok(self.replaced(session));
         }
         let session = Arc::new(Session::start(sessions, workspace, branch)?);
         Ok(self.pick_up(session, Transcript::new()).await)
@@ -725,6 +839,8 @@ impl Conversation {
         let same = on
             .zip(opened.as_ref())
             .is_some_and(|(on, opened)| on.same_route(opened));
+        // Whichever it goes on on, the questions waiting were the session
+        // left's; the one picked up brings its own back at its first turn.
         match (opened, on.is_some()) {
             (Some(opened), true) if same => {
                 let (session, transcript) =
@@ -733,7 +849,7 @@ impl Conversation {
                 if let Some(outside) = self.outside.as_deref_mut() {
                     outside.restart(transcript, named).await;
                 }
-                Ok(std::mem::replace(&mut self.session, Arc::new(session)))
+                Ok(self.replaced(Arc::new(session)))
             }
             (Some(opened), _) => {
                 let instance: Box<str> = opened.instance().into();
@@ -823,7 +939,7 @@ impl Conversation {
     /// so that nothing the runner writes in between lands in a log that has
     /// been left.
     async fn pick_up(&mut self, session: Arc<Session>, transcript: Transcript) -> Arc<Session> {
-        let left = std::mem::replace(&mut self.session, Arc::clone(&session));
+        let left = self.replaced(Arc::clone(&session));
         self.runner.pick_up(session, transcript);
         self.clearings_recorded().await;
         left

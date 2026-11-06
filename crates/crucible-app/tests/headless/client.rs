@@ -43,7 +43,7 @@ const WRITE: &str = "write";
 
 /// Changes a file it never names, and counts how often it was let.
 #[derive(Debug)]
-struct Counting(Arc<AtomicUsize>);
+pub(super) struct Counting(pub(super) Arc<AtomicUsize>);
 
 impl DescribeTool for Counting {
     fn name(&self) -> &str {
@@ -83,7 +83,7 @@ impl Tool for Counting {
 }
 
 /// One round in which the model reaches for the counting tool.
-fn calling() -> Vec<Delta> {
+pub(super) fn calling() -> Vec<Delta> {
     vec![
         Delta::ToolStarted {
             id: ToolId::new("a"),
@@ -318,7 +318,12 @@ fn turned(
     let serving = conversation.serving();
     for envelope in reported.try_iter() {
         let event = envelope.into_event();
-        if let Some(progress) = client::progress(request.capabilities(), &event, serving) {
+        if let Some(progress) = client::progress(
+            request.capabilities(),
+            &event,
+            serving,
+            conversation.questions(),
+        ) {
             streamed.push(Progress::decode(&progress.encode()?)?);
         }
     }
