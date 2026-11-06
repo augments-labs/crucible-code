@@ -2093,3 +2093,39 @@ fn a_native_rule_narrowed_is_still_one_row() {
         "{rows:#?}"
     );
 }
+
+#[test]
+fn a_native_held_block_shows_one_status_row_and_none_of_its_source() {
+    let window = Window::new(64, 12);
+    let mut render = native(&window);
+    render.wears(colourful());
+    stands(&mut render);
+    render.stream("before\n\n$$\nx^2 + y^2\n").unwrap();
+
+    let rows = window.all();
+    let status: Vec<&String> = rows
+        .iter()
+        .filter(|row| row.contains("drawing a"))
+        .collect();
+    assert_eq!(
+        status.iter().map(|row| row.trim_end()).collect::<Vec<_>>(),
+        ["◇ drawing a formula · 2 lines so far"],
+        "{rows:#?}"
+    );
+    assert!(!rows.iter().any(|row| row.contains("x^2")), "{rows:#?}");
+
+    render.stream("$$\nafter\n").unwrap();
+    render.settle().unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+
+    let rows = window.all();
+    assert!(
+        !rows.iter().any(|row| row.contains("drawing a")),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| row.contains("x^2 + y^2")),
+        "{rows:#?}"
+    );
+}

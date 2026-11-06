@@ -2195,7 +2195,7 @@ fn written(held: HeldMarks) -> &'static str {
 /// The answers every drawing of an answer is compared with, and the line a
 /// case watching them waits for.
 #[cfg(test)]
-mod corpus;
+pub(crate) mod corpus;
 #[cfg(test)]
 mod corpus_pictures;
 #[cfg(test)]

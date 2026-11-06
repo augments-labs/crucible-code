@@ -3107,6 +3107,13 @@ fn every_cut_of_an_answer_draws_what_the_whole_answer_draws() {
         "```rust\nfn main() { let x = 1; }\n```\n\n---\n\nend\n",
         "see #12 and owner/repo#3 at https://example.com/a_b.\n",
         "~~gone~~ and \\*kept\\* and a_b_c\n",
+        // Every kind the reader holds whole, and the lines that only look
+        // like the start of one.
+        "before\n\n$$\nx^2 + y^2\n$$\n\nafter\n",
+        "\\[\nx = 1\n\\]\n\\begin{align*}\na &= b\n\\end{align*}\nend\n",
+        "```mermaid\ngraph TD\n  A --> B\n```\n```diff\n-old\n+new\n```\nend\n",
+        "```math\nx^2\n```\n$5 a price, $$ in prose\n\\section{not math}\n",
+        "$$\nnever closed\n",
     ];
 
     for answer in corpus {
@@ -3118,6 +3125,101 @@ fn every_cut_of_an_answer_draws_what_the_whole_answer_draws() {
             let mut pieces = reading(50, 30);
             pieces.answer_in_pieces(answer, &[cut]);
             assert_eq!(pieces.rows(), expected, "cut at {cut} of {answer:?}");
+        }
+    }
+}
+
+#[test]
+fn a_held_block_shows_one_status_row_and_none_of_its_source() {
+    let mut drawn = reading(64, 12);
+    drawn.render.stream("before\n\n$$\nx^2 + y^2\n").unwrap();
+
+    let rows = drawn.rows();
+    let status: Vec<&String> = rows
+        .iter()
+        .filter(|row| row.contains("drawing a"))
+        .collect();
+    assert_eq!(
+        status.iter().map(|row| row.trim_end()).collect::<Vec<_>>(),
+        ["◇ drawing a formula · 2 lines so far"],
+        "{rows:#?}"
+    );
+    assert!(!rows.iter().any(|row| row.contains("x^2")), "{rows:#?}");
+    assert!(rows.iter().any(|row| row.contains("before")), "{rows:#?}");
+
+    drawn.render.stream("$$\nafter\n").unwrap();
+    drawn.render.settle().unwrap();
+
+    let rows = drawn.rows();
+    assert!(
+        !rows.iter().any(|row| row.contains("drawing a")),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| row.contains("x^2 + y^2")),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_held_table_is_counted_in_the_glyphs_worn() {
+    let mut drawn = reading(64, 12);
+    drawn.render.draws(Glyphs::Ascii);
+    drawn
+        .render
+        .stream("| a | b |\n|---|---|\n| 1 | 2 |\n")
+        .unwrap();
+
+    let rows = drawn.rows();
+    assert!(
+        rows.iter()
+            .any(|row| row.trim_end() == "o drawing a table - 3 lines so far"),
+        "{rows:#?}"
+    );
+    assert!(!rows.iter().any(|row| row.contains("| 1 |")), "{rows:#?}");
+}
+
+/// Every row the record holds, as words, and the width it holds them at.
+fn kept(drawn: &Drawn) -> (usize, Vec<String>) {
+    let record = &drawn.render.record;
+    let rows = (0..record.lines())
+        .flat_map(|line| record.folded(line))
+        .map(|row| row.text())
+        .collect();
+    (drawn.render.folds(), rows)
+}
+
+#[test]
+fn every_corpus_answer_resized_to_a_width_is_what_that_width_draws_fresh() {
+    // Fresh at a width is the oracle, so whatever layout rule is in force is
+    // the one a resize is held to; from either end of the range, because a
+    // block laid out wide and one laid out narrow lose different things.
+    const WIDTHS: std::ops::RangeInclusive<usize> = 8..=160;
+    for (name, answer) in crate::markdown::corpus::ANSWERS {
+        let drawn_at = |columns| {
+            let mut drawn = reading(columns, 8);
+            drawn.answer(answer);
+            drawn
+        };
+        let mut from = [drawn_at(*WIDTHS.end()), drawn_at(*WIDTHS.start())];
+        for columns in WIDTHS {
+            let (folds, fresh) = kept(&drawn_at(columns));
+            for row in &fresh {
+                assert!(
+                    width::columns(row) <= folds,
+                    "{name} at {columns}: {row:?} is wider than {folds}"
+                );
+            }
+            for resized in &mut from {
+                let was = resized.render.size.columns;
+                resized.resize(columns, 8);
+                assert_eq!(
+                    kept(resized),
+                    (folds, fresh.clone()),
+                    "{name} resized from {was} to {columns}"
+                );
+                resized.resize(was, 8);
+            }
         }
     }
 }

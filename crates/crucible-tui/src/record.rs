@@ -2245,6 +2245,103 @@ mod tests {
         assert_eq!(record.at(0, 3), Some(record.gone));
     }
 
+    /// A closed table whose only body row says `name`.
+    fn table(name: &str) -> Block {
+        Block {
+            kind: markdown::Kind::Table,
+            source: format!(
+                "| name | what it does |\n|---|---|\n| {name} | lays a table out again |\n"
+            ),
+            closed: true,
+        }
+    }
+
+    /// Every row the record holds, as plain text.
+    fn all(record: &Record) -> Vec<String> {
+        (0..record.lines())
+            .flat_map(|line| record.folded(line))
+            .map(|row| row.text())
+            .collect()
+    }
+
+    #[test]
+    fn a_drawn_table_is_laid_out_again_for_a_new_width_and_a_new_glyph_set() {
+        let fresh = |columns, glyphs| {
+            let mut record = Record::new(columns);
+            record.drawn(table("alpha"), glyphs, Theme::Dark);
+            all(&record)
+        };
+        let mut record = Record::new(60);
+        record.drawn(table("alpha"), Glyphs::Unicode, Theme::Dark);
+        assert_eq!(all(&record), fresh(60, Glyphs::Unicode));
+
+        record.relay(20, Glyphs::Unicode, Theme::Dark);
+        assert_eq!(all(&record), fresh(20, Glyphs::Unicode));
+        assert_ne!(fresh(20, Glyphs::Unicode), fresh(60, Glyphs::Unicode));
+
+        record.relay(20, Glyphs::Ascii, Theme::Dark);
+        assert_eq!(all(&record), fresh(20, Glyphs::Ascii));
+        assert_ne!(fresh(20, Glyphs::Ascii), fresh(20, Glyphs::Unicode));
+        assert_eq!(record.rows, counted(&record));
+    }
+
+    #[test]
+    fn a_new_theme_paints_a_drawn_block_without_laying_it_out_again() {
+        let mut record = Record::new(40);
+        record.drawn(table("alpha"), Glyphs::Unicode, Theme::Dark);
+        let Some(Line::Drawn(before)) = record.lines.back() else {
+            panic!("the table is not a drawn block: {:?}", record.lines);
+        };
+        let rows = before.rows.clone();
+
+        record.relay(40, Glyphs::Unicode, Theme::Light);
+
+        let Some(Line::Drawn(after)) = record.lines.back() else {
+            panic!("the table is not a drawn block: {:?}", record.lines);
+        };
+        assert_eq!(after.rows, rows);
+        assert_eq!(after.laid, (40, Glyphs::Unicode, Theme::Light));
+    }
+
+    #[test]
+    fn the_oldest_block_leaves_under_the_ceiling_with_its_source() {
+        // Laid-out forms count against the ceiling as much as their source,
+        // so a record filled with nothing but tables lets the first one go
+        // well before it holds MOST of them.
+        let mut record = Record::new(80);
+        let mut written = 0;
+        while record.gone == 0 {
+            record.drawn(
+                table(&format!("table {written}")),
+                Glyphs::Unicode,
+                Theme::Dark,
+            );
+            written += 1;
+            assert!(written <= MOST, "{MOST} tables were kept whole");
+        }
+
+        assert!(record.weight <= MOST, "{}", record.weight);
+        assert_eq!(
+            record.weight,
+            record.lines.iter().map(Line::weight).sum::<usize>()
+        );
+        let sources: Vec<&str> = record
+            .lines
+            .iter()
+            .filter_map(|line| match line {
+                Line::Drawn(drawn) => Some(drawn.block.source.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sources.len(), record.lines.len());
+        assert!(!sources.iter().any(|source| source.contains("| table 0 |")));
+        assert!(
+            sources
+                .first()
+                .is_some_and(|source| source.contains("| table 1 |"))
+        );
+    }
+
     /// A row of `text`, laid out rather than flowed.
     fn set(text: &str) -> Row {
         let mut row = Row::new();

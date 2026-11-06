@@ -1780,3 +1780,303 @@ fn a_word_that_only_looks_like_a_kind_is_prose() {
         "{said:?}"
     );
 }
+
+/// What the reader said about `answer` read in one delta and finished: the
+/// blocks it handed on, and the text of every run around them.
+fn blocks(answer: &str) -> (Vec<Block>, String) {
+    let mut markdown = Markdown::default();
+    let mut blocks = Vec::new();
+    let mut runs = String::new();
+    let mut say = |said: Said<'_>| match said {
+        Said::Run { text, .. } => runs.push_str(text),
+        Said::Block(block) => blocks.push(block),
+    };
+    markdown.read(answer, ROOM, &mut say);
+    markdown.finish(ROOM, &mut say);
+    (blocks, runs)
+}
+
+/// What a reader that holds nothing draws of `answer`, as text.
+fn as_written(answer: &str) -> String {
+    let mut markdown = Markdown::default().as_written();
+    let mut runs = String::new();
+    let mut say = |said: Said<'_>| {
+        if let Said::Run { text, .. } = said {
+            runs.push_str(text);
+        }
+    };
+    markdown.read(answer, ROOM, &mut say);
+    markdown.finish(ROOM, &mut say);
+    runs
+}
+
+/// What is held while `answer` is read a character at a time, after each.
+fn holdings(answer: &str) -> Vec<Option<Holding>> {
+    let mut markdown = Markdown::default();
+    let mut held = Vec::new();
+    for (at, character) in answer.char_indices() {
+        let piece = answer
+            .get(at..at + character.len_utf8())
+            .unwrap_or_default();
+        markdown.read(piece, ROOM, &mut |_| {});
+        held.push(markdown.holding());
+    }
+    held
+}
+
+#[test]
+fn a_table_is_handed_on_whole_with_the_source_it_was_written_as() {
+    let table = "| a | b |\n|---|---|\n| 1 | 2 |\n";
+    let (blocks, runs) = blocks(&format!("before\n{table}\nafter\n"));
+
+    assert_eq!(
+        blocks,
+        [Block {
+            kind: Kind::Table,
+            source: table.to_owned(),
+            closed: true,
+        }]
+    );
+    assert_eq!(runs, "before\n\nafter\n");
+}
+
+#[test]
+fn lines_with_bars_and_no_delimiter_row_are_not_a_table() {
+    let (blocks, runs) = blocks("| a | b |\n| 1 | 2 |\n\nafter\n");
+
+    assert!(blocks.is_empty(), "{blocks:?}");
+    assert!(runs.contains("| a | b |"), "{runs:?}");
+}
+
+#[test]
+fn a_rule_is_handed_on_as_a_block_of_its_own() {
+    for rule in ["---", "***", "___"] {
+        let (blocks, runs) = blocks(&format!("above\n\n{rule}\n\nbelow\n"));
+
+        assert_eq!(
+            blocks.iter().map(|block| block.kind).collect::<Vec<_>>(),
+            [Kind::Rule],
+            "{rule}"
+        );
+        assert_eq!(runs, "above\n\n\nbelow\n", "{rule}");
+    }
+}
+
+#[test]
+fn display_math_is_held_from_its_opener_to_the_end_of_its_closer_line() {
+    for (math, closer) in [
+        ("$$\nx^2 + y^2\n$$\n", "$$"),
+        ("$$ x = 1 $$\n", "$$ on one line"),
+        ("\\[\nx = \\frac{1}{2}\n\\]\n", "\\]"),
+        (
+            "\\begin{align}\na &= b \\\\\nc &= d\n\\end{align}\n",
+            "\\end{align}",
+        ),
+        ("\\begin{align*}\na &= b\n\\end{align*}\n", "\\end{align*}"),
+    ] {
+        let (blocks, runs) = blocks(&format!("before\n\n{math}after\n"));
+
+        assert_eq!(
+            blocks,
+            [Block {
+                kind: Kind::DisplayMath,
+                source: math.to_owned(),
+                closed: true,
+            }],
+            "{closer}"
+        );
+        assert_eq!(runs, "before\n\nafter\n", "{closer}");
+    }
+}
+
+#[test]
+fn a_dollar_or_a_backslash_that_opens_no_formula_is_read_as_it_always_was() {
+    for answer in [
+        "$5 and more\n",
+        "it costs $$ 5, after a word\n",
+        "  $5 under an indent\n",
+        "\\begin{document}\n",
+        "\\section{one}\n",
+        "\\\\ a break\n",
+    ] {
+        let (blocks, runs) = blocks(answer);
+
+        assert!(blocks.is_empty(), "{answer:?}: {blocks:?}");
+        assert_eq!(runs, as_written(answer), "{answer:?}");
+    }
+}
+
+#[test]
+fn a_mermaid_diff_or_math_fence_is_held_whole() {
+    for (fence, kind) in [
+        ("```mermaid\ngraph TD\n  A --> B\n```\n", Kind::Mermaid),
+        ("~~~mermaid\ngraph TD\n~~~\n", Kind::Mermaid),
+        ("```diff\n-old\n+new\n```\n", Kind::Diff),
+        ("```patch\n@@ -1 +1 @@\n-a\n+b\n```\n", Kind::Diff),
+        ("```math\nx^2\n```\n", Kind::DisplayMath),
+        ("````latex\nx^2\n````\n", Kind::DisplayMath),
+    ] {
+        let (blocks, runs) = blocks(&format!("before\n{fence}after\n"));
+
+        assert_eq!(
+            blocks,
+            [Block {
+                kind,
+                source: fence.to_owned(),
+                closed: true,
+            }],
+            "{fence:?}"
+        );
+        assert_eq!(runs, "before\nafter\n", "{fence:?}");
+    }
+}
+
+#[test]
+fn a_fence_in_another_language_is_not_held() {
+    let (blocks, runs) = blocks("```rust\nfn main() {}\n```\nafter\n");
+
+    assert!(blocks.is_empty(), "{blocks:?}");
+    assert!(runs.contains("fn main() {}"), "{runs:?}");
+}
+
+#[test]
+fn a_held_block_still_open_when_the_message_ends_is_handed_on_unclosed() {
+    for (answer, kind) in [
+        ("$$\nx^2\n", Kind::DisplayMath),
+        ("```mermaid\ngraph TD\n", Kind::Mermaid),
+        ("```diff\n-old\n", Kind::Diff),
+    ] {
+        let (blocks, _) = blocks(answer);
+
+        assert_eq!(
+            blocks,
+            [Block {
+                kind,
+                source: answer.to_owned(),
+                closed: false,
+            }],
+            "{answer:?}"
+        );
+    }
+}
+
+#[test]
+fn a_held_block_past_its_cap_is_shown_as_written_and_never_handed_on() {
+    for (opener, line, closer, cap) in [
+        ("$$\n", "x + ", "$$\n", MATH_CAP),
+        ("```mermaid\n", "A --> B\n", "```\n", MERMAID_CAP),
+        ("```diff\n", "+added\n", "```\n", DIFF_CAP),
+    ] {
+        let body = line.repeat(cap / line.len() + 1);
+        let answer = format!("{opener}{body}\n{closer}after\n");
+        let (blocks, runs) = blocks(&answer);
+
+        assert!(blocks.is_empty(), "{opener:?}: {} blocks", blocks.len());
+        assert_eq!(runs, as_written(&answer), "{opener:?}");
+    }
+}
+
+#[test]
+fn a_table_past_its_cap_is_drawn_as_it_always_was() {
+    let row = "| a cell | another cell |\n";
+    let table = format!(
+        "| a | b |\n|---|---|\n{}",
+        row.repeat(TABLE_CAP / row.len() + 1)
+    );
+    let (blocks, _) = blocks(&format!("{table}\nafter\n"));
+
+    assert!(blocks.is_empty(), "{} blocks", blocks.len());
+}
+
+#[test]
+fn what_is_held_says_its_kind_and_how_many_lines_have_arrived() {
+    let answer = "$$\nx^2\n";
+    let held = holdings(answer);
+
+    assert_eq!(held.first(), Some(&None), "one dollar is not yet a formula");
+    assert_eq!(
+        held.get(2),
+        Some(&Some(Holding {
+            held: Held::DisplayMath,
+            lines: 1,
+        }))
+    );
+    assert_eq!(
+        held.last(),
+        Some(&Some(Holding {
+            held: Held::DisplayMath,
+            lines: 2,
+        }))
+    );
+
+    let table = holdings("| a | b |\n|---|---|\n");
+    assert_eq!(
+        table.last(),
+        Some(&Some(Holding {
+            held: Held::Table,
+            lines: 2,
+        }))
+    );
+}
+
+#[test]
+fn nothing_is_held_once_a_block_closes() {
+    let held = holdings("```mermaid\ngraph TD\n```\nafter");
+
+    assert!(held.iter().any(Option::is_some));
+    assert_eq!(held.last(), Some(&None));
+}
+
+#[test]
+fn the_status_row_names_the_kind_and_counts_lines_in_either_glyph_set() {
+    let row = |held, lines, glyphs| Holding { held, lines }.row(64, glyphs).text();
+
+    assert_eq!(
+        row(Held::Table, 1, Glyphs::Unicode),
+        "◇ drawing a table · 1 line so far"
+    );
+    assert_eq!(
+        row(Held::DisplayMath, 12, Glyphs::Unicode),
+        "◇ drawing a formula · 12 lines so far"
+    );
+    assert_eq!(
+        row(Held::Mermaid, 3, Glyphs::Ascii),
+        "o drawing a mermaid diagram - 3 lines so far"
+    );
+    assert_eq!(
+        row(Held::Diff, 2, Glyphs::Ascii),
+        "o drawing a diff - 2 lines so far"
+    );
+
+    let narrow = Holding {
+        held: Held::Mermaid,
+        lines: 3,
+    }
+    .row(12, Glyphs::Unicode);
+    assert!(width::columns(&narrow.text()) <= 12, "{:?}", narrow.text());
+    assert!(
+        narrow.spans().all(|(slot, _)| slot == Slot::Quiet),
+        "{narrow:?}"
+    );
+}
+
+#[test]
+fn a_held_block_laid_out_is_what_it_would_have_streamed_as() {
+    for answer in [
+        "$$\nx^2 + y^2\n$$\n",
+        "```mermaid\ngraph TD\n  A --> B\n```\n",
+        "```diff\n-old\n+new\n```\n",
+    ] {
+        let (blocks, _) = blocks(answer);
+        let Some(block) = blocks.first() else {
+            panic!("{answer:?} was not held");
+        };
+        let mut laid = String::new();
+        for row in lay(block, ROOM, Glyphs::Unicode) {
+            laid.push_str(&row.text());
+            laid.push('\n');
+        }
+
+        assert_eq!(laid, as_written(answer), "{answer:?}");
+    }
+}
