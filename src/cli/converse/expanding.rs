@@ -174,9 +174,9 @@ impl View {
 ///
 /// Counted once for each width and kept, as a held result is by the store,
 /// because a block's source is lent by the record and so has no place of its
-/// own to keep a count beside. Keyed by the line it is held as and how long it
-/// is, so a block still being written is counted again as it grows; a frame at
-/// another width drops all of it.
+/// own to keep a count beside. Keyed by the line it is held as and how long its
+/// source is, so a count is never reused for a different block that comes to
+/// be held as the same line; a frame at another width drops all of it.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Counted {
     /// The width every count here is for.

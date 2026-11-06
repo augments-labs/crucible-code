@@ -470,8 +470,8 @@ A rule and a fenced block of code are not among them. The source is shown in
 full: one longer than the window is read in pieces the height of the window,
 and the arrows step from the last result onto the first source. Over the
 sources the footer counts `source 1 of 2` where it counts results otherwise.
-A block still arriving grows in the view as it does; a block drawn after the
-view opened is there the next time it is opened. The view opens when a drawn
+A block still arriving is not listed until it is whole, and a block drawn after
+the view opened is there the next time it is opened. The view opens when a drawn
 block is all there is to show. It is the same in both
 [`output.screen`](../configuration/configuration.md#output) modes.
 
