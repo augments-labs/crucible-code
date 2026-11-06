@@ -21,14 +21,19 @@
 //! reflows. Only the lines the viewport covers are folded and painted, and that
 //! is what keeps a frame proportional to the window rather than to the session.
 //!
-//! Three kinds of line, because three kinds of thing arrive here. Prose
+//! Four kinds of line, because four kinds of thing arrive here. Prose
 //! *flows*: the model's answer and a tool's output were written as text and a
 //! wrap is the only thing deciding where a row ends, so the width they are
 //! folded at is whatever the window is now. A component whose source is still
 //! held is *responsive*: a prompt, a diff, or a command's answer drawn from
-//! figures it still holds is laid out again at the new width. Everything else
-//! is *set*: a table or a box laid out by something that is gone is clipped
-//! rather than pretending it can be rebuilt.
+//! figures it still holds is laid out again at the new width. A block of an
+//! answer is *drawn*: a table or a rule arrives as the source it was written
+//! as, which is kept beside what it was laid out as, and laid out again for a
+//! new width or a new glyph set; a new theme only paints the same rows in
+//! other colours. Both forms count against the ceiling, and a drawn block that
+//! falls off the top takes its source with it. Everything else is *set*: a box
+//! laid out by something that is gone is clipped rather than pretending it can
+//! be rebuilt.
 //!
 //! The opening is responsive for the same reason. It is drawn from facts read
 //! once at launch and kept for the whole session, so what laid it is still here
@@ -41,8 +46,9 @@ use std::fmt;
 use std::collections::VecDeque;
 use std::ops::Range;
 
-use crate::color::Slot;
+use crate::color::{Slot, Theme};
 use crate::glyphs::Glyphs;
+use crate::markdown::{self, Block};
 use crate::row::Row;
 use crate::scroll_rail::Place;
 
@@ -88,8 +94,65 @@ enum Line {
         /// What lays the whole block out at a width.
         lay: Box<dyn Fn(usize) -> Vec<Row>>,
     },
+    /// A block of an answer, kept with its source.
+    Drawn(Drawn),
     /// Rows a component laid out against a width. Clipped, never re-folded.
     Set(Row),
+}
+
+/// A block of an answer, the source it was written as and the rows it was
+/// laid out as.
+///
+/// Laid out for one width, glyph set and theme at a time, and laid out again
+/// when the first two change; the theme is part of what it was laid for only
+/// so that what is on screen can be told from what is wanted, since rows carry
+/// slots and a theme is the colours a slot is painted in.
+pub(crate) struct Drawn {
+    block: Block,
+    /// The display rows at [`Self::laid`].
+    rows: Vec<Row>,
+    /// A prefix applied to each row after every layout.
+    prefix: Option<Subordinate>,
+    /// How many ordinary record lines the source and the rows cost together.
+    weight: usize,
+    /// The width, glyph set and theme the rows were laid out for.
+    laid: (usize, Glyphs, Theme),
+    /// Edits made to the rows since, applied again at every layout.
+    edits: Vec<fn(&mut [Row])>,
+}
+
+impl Drawn {
+    /// `block` laid out for `columns` in `glyphs` and `theme`.
+    fn new(block: Block, columns: usize, glyphs: Glyphs, theme: Theme) -> Self {
+        let mut drawn = Self {
+            block,
+            rows: Vec::new(),
+            prefix: None,
+            weight: 0,
+            laid: (columns, glyphs, theme),
+            edits: Vec::new(),
+        };
+        drawn.lay(columns, glyphs);
+        drawn
+    }
+
+    /// Lays the block out again for `columns` in `glyphs`, with every edit and
+    /// the prefix it was given since.
+    fn lay(&mut self, columns: usize, glyphs: Glyphs) {
+        let laid = markdown::lay(&self.block, columns, glyphs);
+        let mut rows = responsive_rows(laid.iter().flat_map(|row| row.fold(columns)).collect());
+        for edit in &self.edits {
+            edit(&mut rows);
+        }
+        if let Some(prefix) = &self.prefix {
+            prefix.prefix(&mut rows);
+        }
+        let bytes = self.block.source.len() + rows.iter().map(Row::bytes).sum::<usize>();
+        self.weight = rows.len().max(bytes.div_ceil(RETAINED_ROW_BYTES)).max(1);
+        self.rows = rows;
+        self.laid.0 = columns;
+        self.laid.1 = glyphs;
+    }
 }
 
 /// A subordinate block's structural mark and text-column width.
@@ -116,6 +179,16 @@ impl Subordinate {
         row.push(Slot::Plain, " ");
         row
     }
+
+    /// Hangs `rows`, a block laid out afresh, under this prefix again.
+    fn prefix(&self, rows: &mut [Row]) {
+        let mut first = self.marks_first;
+        for (at, row) in rows.iter_mut().enumerate() {
+            if !(self.keeps_first && at == 0) {
+                row.prepend(self.row(&mut first));
+            }
+        }
+    }
 }
 
 /// A mark hung on what is written from a line on, before it is written.
@@ -139,7 +212,7 @@ impl Line {
     /// Its share of the record's retained-memory ceiling.
     fn weight(&self) -> usize {
         match self {
-            Self::Responsive { weight, .. } => *weight,
+            Self::Responsive { weight, .. } | Self::Drawn(Drawn { weight, .. }) => *weight,
             Self::Flowed(_) | Self::Set(_) => 1,
         }
     }
@@ -153,6 +226,12 @@ impl fmt::Debug for Line {
                 .debug_struct("Responsive")
                 .field("rows", &rows.len())
                 .field("weight", weight)
+                .finish_non_exhaustive(),
+            Self::Drawn(drawn) => out
+                .debug_struct("Drawn")
+                .field("block", &drawn.block)
+                .field("rows", &drawn.rows.len())
+                .field("weight", &drawn.weight)
                 .finish_non_exhaustive(),
             Self::Set(row) => out.debug_tuple("Set").field(row).finish(),
         }
@@ -403,6 +482,58 @@ impl Record {
         }
     }
 
+    /// Lay down a block of an answer, laid out for the width there is now in
+    /// `glyphs` and `theme`, keeping the source it was written as.
+    ///
+    /// One logical line however many rows it draws, as a responsive block is.
+    /// A block that lays out as nothing is not kept.
+    pub(crate) fn drawn(&mut self, block: Block, glyphs: Glyphs, theme: Theme) {
+        self.end();
+        let drawn = Drawn::new(block, self.columns, glyphs, theme);
+        if !drawn.rows.is_empty() {
+            self.put(Line::Drawn(drawn));
+        }
+    }
+
+    /// Lays the record out for `columns`, `glyphs` and `theme`.
+    ///
+    /// A block of an answer is laid out again where the width or the glyph
+    /// set it was laid for has changed; the theme changes only the colours
+    /// its rows are painted in, which is the drawing's business. A new width
+    /// is everything [`Self::resized`] does as well.
+    pub(crate) fn relay(&mut self, columns: usize, glyphs: Glyphs, theme: Theme) {
+        if columns != self.columns {
+            self.resized(columns, glyphs);
+        } else if self.relay_drawn(columns, glyphs) {
+            self.remeasure_all();
+            self.spill();
+        }
+        for line in &mut self.lines {
+            if let Line::Drawn(drawn) = line {
+                drawn.laid.2 = theme;
+            }
+        }
+    }
+
+    /// Lays out again each drawn block not laid for `columns` in `glyphs`, and
+    /// answers whether any was.
+    fn relay_drawn(&mut self, columns: usize, glyphs: Glyphs) -> bool {
+        let mut any = false;
+        for line in &mut self.lines {
+            let Line::Drawn(drawn) = line else {
+                continue;
+            };
+            if (drawn.laid.0, drawn.laid.1) == (columns, glyphs) {
+                continue;
+            }
+            let was = drawn.weight;
+            drawn.lay(columns, glyphs);
+            self.weight = self.weight.saturating_sub(was).saturating_add(drawn.weight);
+            any = true;
+        }
+        any
+    }
+
     /// Lay down the opening in `glyphs`, keeping what laid it.
     ///
     /// The one block a resize draws again — see the prose at the top of this
@@ -421,7 +552,7 @@ impl Record {
     ///
     /// Before the heights are worked out again rather than after: this changes
     /// which lines there are, and [`Self::resized`] is what measures them.
-    fn relay(&mut self, columns: usize, glyphs: Glyphs) {
+    fn relay_opening(&mut self, columns: usize, glyphs: Glyphs) {
         let Some(opening) = self.opening.take() else {
             return;
         };
@@ -591,7 +722,9 @@ impl Record {
     fn measure(line: &Line, columns: usize) -> u16 {
         match line {
             Line::Flowed(row) => u16::try_from(row.folds(columns)).unwrap_or(u16::MAX),
-            Line::Responsive { rows, .. } => u16::try_from(rows.len()).unwrap_or(u16::MAX),
+            Line::Responsive { rows, .. } | Line::Drawn(Drawn { rows, .. }) => {
+                u16::try_from(rows.len()).unwrap_or(u16::MAX)
+            }
             Line::Set(_) => 1,
         }
     }
@@ -646,7 +779,7 @@ impl Record {
     fn blank(line: &Line) -> bool {
         match line {
             Line::Flowed(row) | Line::Set(row) => row.text().trim().is_empty(),
-            Line::Responsive { rows, .. } => {
+            Line::Responsive { rows, .. } | Line::Drawn(Drawn { rows, .. }) => {
                 rows.last().is_none_or(|row| row.text().trim().is_empty())
             }
         }
@@ -812,7 +945,7 @@ impl Record {
                         row.prepend(subordinate.row(first));
                     }
                 }
-                Line::Responsive { rows, prefix, .. } => {
+                Line::Responsive { rows, prefix, .. } | Line::Drawn(Drawn { rows, prefix, .. }) => {
                     if *first && rows.first().is_some_and(Row::starts_structural) {
                         *first = false;
                         let mut retained = subordinate.clone();
@@ -865,6 +998,10 @@ impl Record {
                     edit(&mut laid);
                     laid
                 });
+            }
+            Line::Drawn(drawn) => {
+                edit(&mut drawn.rows);
+                drawn.edits.push(edit);
             }
         }
 
@@ -1128,7 +1265,7 @@ impl Record {
 
         match line {
             Line::Flowed(row) | Line::Set(row) => row.kinds().any(|kind| kind == slot),
-            Line::Responsive { rows, .. } => {
+            Line::Responsive { rows, .. } | Line::Drawn(Drawn { rows, .. }) => {
                 rows.iter().any(|row| row.kinds().any(|kind| kind == slot))
             }
         }
@@ -1338,11 +1475,10 @@ impl Record {
 
     /// Whether the band is showing the foot of the record.
     ///
-    /// Nothing outside this file asks: what the renderer does about a viewport
-    /// that has been scrolled away from the foot is put it back, and that is
-    /// [`Self::follow`]. Here to be asserted about, since the flag is what
-    /// decides whether arriving text moves somebody who is reading back.
-    #[cfg(test)]
+    /// What the renderer asks before standing the row that tells of a held
+    /// block at the foot: a reader who has scrolled back is not at the foot to
+    /// see it. Asserted about as well, since the flag is what decides whether
+    /// arriving text moves somebody who is reading back.
     pub(crate) fn following(&self) -> bool {
         self.following
     }
@@ -1363,8 +1499,9 @@ impl Record {
             return;
         }
         self.columns = columns;
-        self.relay(columns, glyphs);
+        self.relay_opening(columns, glyphs);
         self.relay_responsive(columns);
+        self.relay_drawn(columns, glyphs);
         self.rows = 0;
         self.before = 0;
         self.tall.clear();
@@ -1464,12 +1601,7 @@ impl Record {
             {
                 *rows = responsive_rows(lay(columns));
                 if let Some(prefix) = prefix {
-                    let mut first = prefix.marks_first;
-                    for (at, row) in rows.iter_mut().enumerate() {
-                        if !(prefix.keeps_first && at == 0) {
-                            row.prepend(prefix.row(&mut first));
-                        }
-                    }
+                    prefix.prefix(rows);
                 }
             }
         }
@@ -1479,7 +1611,7 @@ impl Record {
     fn fold(&self, line: &Line) -> Vec<Row> {
         match line {
             Line::Flowed(row) => row.fold(self.columns),
-            Line::Responsive { rows, .. } => rows.clone(),
+            Line::Responsive { rows, .. } | Line::Drawn(Drawn { rows, .. }) => rows.clone(),
             Line::Set(row) => vec![row.clipped(self.columns)],
         }
     }
@@ -1834,7 +1966,9 @@ mod tests {
     fn measured(line: &Line) -> String {
         match line {
             Line::Flowed(row) | Line::Set(row) => row.text(),
-            Line::Responsive { rows, .. } => rows.iter().map(Row::text).collect(),
+            Line::Responsive { rows, .. } | Line::Drawn(Drawn { rows, .. }) => {
+                rows.iter().map(Row::text).collect()
+            }
         }
     }
 

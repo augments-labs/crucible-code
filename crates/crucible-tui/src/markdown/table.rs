@@ -9,21 +9,19 @@
 //! exists.
 //!
 //! Which makes the cap the point rather than a detail. A block held is a block
-//! not on screen, so what is gathered is bounded by [`MOST`] and by nothing
-//! else: past it the lines go out exactly as the model wrote them, which is what
-//! they would have done had this module never seen them.
+//! not on screen, so what is gathered is bounded by [`TABLE_CAP`] and by
+//! nothing else: past it the lines go out exactly as the model wrote them,
+//! which is what they would have done had this module never seen them.
+//!
+//! A table that closes is handed on by its source, and laid out from it again
+//! by [`Table::of`] whenever the width it has to fit changes.
 
 use crate::color::Slot;
 use crate::glyphs::Glyphs;
 use crate::row::Row;
 use crate::width;
 
-/// How much of a block may be held before it is written out as itself.
-///
-/// A table is drawn only once the last of it has arrived, so this is the reader
-/// with nothing to show — enough for any table an answer sensibly contains, and
-/// an end to a wall of bars that is never going to stop.
-const MOST: usize = 8 * 1024;
+use super::TABLE_CAP;
 
 /// What stands between one column and the next: a space, a bar, a space.
 const BETWEEN: usize = 3;
@@ -79,7 +77,8 @@ pub(super) struct Table {
     /// Whether the scan is at the start of a line, which is where a bar decides
     /// whether the block goes on.
     fresh: bool,
-    /// How much has been held, so [`MOST`] is an answer rather than a hope.
+    /// How much has been held, so [`TABLE_CAP`] is an answer rather than a
+    /// hope.
     held: usize,
 }
 
@@ -94,13 +93,48 @@ impl Table {
         }
     }
 
+    /// The table `source` spells, as it stood once the last of it arrived.
+    pub(super) fn of(source: &str) -> Self {
+        let mut lines: Vec<String> = source.split('\n').map(str::to_owned).collect();
+        let line = lines.pop().unwrap_or_default();
+        Self {
+            lines,
+            line,
+            fresh: source.ends_with('\n'),
+            held: source.len(),
+        }
+    }
+
+    /// The block as it was written, every break included.
+    pub(super) fn source(&self) -> String {
+        let mut source = String::with_capacity(self.held);
+        for line in &self.lines {
+            source.push_str(line);
+            source.push('\n');
+        }
+        source.push_str(&self.line);
+        source
+    }
+
+    /// How many of its lines have begun, the one still arriving included.
+    pub(super) fn begun(&self) -> usize {
+        self.lines.len() + usize::from(!self.line.is_empty())
+    }
+
+    /// Whether it has the delimiter row that makes it a table, rather than
+    /// lines somebody wrote with bars in them.
+    pub(super) fn delimited(&self) -> bool {
+        self.lines.get(1).is_some_and(|line| delimits(line))
+    }
+
     /// Whether the scan stands at the start of a line.
     pub(super) fn fresh(&self) -> bool {
         self.fresh
     }
 
     /// Takes `character` into the block. `false` says the block has grown past
-    /// [`MOST`]: it is not going to be a table, and the caller writes it out.
+    /// [`TABLE_CAP`]: it is not going to be a table, and the caller writes it
+    /// out.
     pub(super) fn takes(&mut self, character: char) -> bool {
         self.fresh = character == '\n';
 
@@ -111,7 +145,7 @@ impl Table {
         }
 
         self.held = self.held.saturating_add(character.len_utf8());
-        self.held <= MOST
+        self.held <= TABLE_CAP
     }
 
     /// Whether what has arrived can still turn out to be a table.
@@ -379,13 +413,19 @@ fn wide(cell: &Cell) -> usize {
 /// reads markdown. It holds nothing across the call — a fence needs two lines
 /// and a cell is one — so the reader is made here, used once and dropped.
 fn read(cell: &str, glyphs: Glyphs) -> Cell {
-    let mut markdown = super::Markdown::new(glyphs);
+    let markdown = super::Markdown::new(glyphs);
     let mut runs = Cell::new();
 
-    markdown.read(cell, 0, &mut |slot, text, _| {
-        runs.push((slot, text.to_owned()));
-    });
-    markdown.finish(0, &mut |slot, text, _| runs.push((slot, text.to_owned())));
+    // As written: a cell holds no block, and one reader holding another's
+    // block back would leave the cell waiting on itself.
+    let mut markdown = markdown.as_written();
+    let mut keep = |said: super::Said<'_>| {
+        if let super::Said::Run { slot, text, .. } = said {
+            runs.push((slot, text.to_owned()));
+        }
+    };
+    markdown.read(cell, 0, &mut keep);
+    markdown.finish(0, &mut keep);
 
     runs
 }

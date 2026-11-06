@@ -439,7 +439,12 @@ impl<T: Terminal> Renderer<T> {
 
         let columns = self.size.columns.max(1);
         let bands = self.bands();
-        let room = bands.transcript.len();
+        // A block being held takes the region's last transcript row for the
+        // row that says so, and what is above it has one row fewer.
+        let held = self
+            .holding(columns)
+            .filter(|_| writes == Writes::Live && !bands.transcript.is_empty());
+        let room = bands.transcript.len() - usize::from(held.is_some());
         if native.replays && writes == Writes::Live {
             // Before what has gone out is worked out, so that a card only
             // partly gone out is given back whole, laid at this width, rather
@@ -532,7 +537,8 @@ impl<T: Terminal> Renderer<T> {
         let mut parked = 0;
         let mut column = 0;
         if writes == Writes::Live {
-            let showing = self.record.view(room);
+            let mut showing = self.record.view(room);
+            showing.extend(held);
             let shown = showing.len();
             let turn = self.standing.turn.iter().take(bands.turn.len());
             let turned = turn.len();

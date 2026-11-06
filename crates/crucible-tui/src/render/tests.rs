@@ -2984,3 +2984,140 @@ fn a_recall_as_a_wait_ends_calls_it_off() {
         "{pressed:?}"
     );
 }
+
+/// A renderer on a window of the given size that reads markdown, as a session
+/// with colour does.
+fn reading(columns: usize, rows: usize) -> Drawn {
+    let mut drawn = Drawn::new(columns, rows);
+    drawn.wears(colourful());
+    drawn
+}
+
+impl Drawn {
+    /// One whole answer, as one delta, then the end of the message.
+    fn answer(&mut self, text: &str) {
+        self.render.stream(text).unwrap();
+        self.render.settle().unwrap();
+    }
+
+    /// One answer cut into deltas at the given byte offsets.
+    fn answer_in_pieces(&mut self, text: &str, cuts: &[usize]) {
+        let mut from = 0;
+        for &cut in cuts {
+            if cut > from && text.is_char_boundary(cut) {
+                self.render.stream(&text[from..cut]).unwrap();
+                from = cut;
+            }
+        }
+        self.render.stream(&text[from..]).unwrap();
+        self.render.settle().unwrap();
+    }
+
+    /// Makes the window this size and tells the renderer.
+    fn resize(&mut self, columns: usize, rows: usize) {
+        self.render.terminal.resize(columns, rows);
+        self.render.resized().unwrap();
+    }
+
+    /// Every row of the window, as words.
+    fn rows(&self) -> Vec<String> {
+        self.screen().said()
+    }
+}
+
+/// The table the narrowing cases draw: about fifty columns at its natural
+/// width.
+const TABLE: &str = "| name | what it does | since |\n|---|---|---|\n\
+     | alpha | reads the markdown out of a stream | 0.1 |\n\
+     | beta | lays a table against the window | 0.2 |\n";
+
+#[test]
+fn a_table_narrowed_is_the_table_a_window_that_narrow_draws() {
+    // The oracle is the same build drawing the same answer at the new width
+    // from the start, so whatever narrowing rule is in force is the rule a
+    // resize follows too.
+    let mut fresh = reading(30, 20);
+    fresh.answer(TABLE);
+
+    let mut drawn = reading(60, 20);
+    drawn.answer(TABLE);
+    drawn.resize(30, 20);
+
+    assert_eq!(drawn.rows(), fresh.rows());
+}
+
+#[test]
+fn a_table_that_fits_keeps_one_window_row_per_table_row() {
+    // Every table row fits one window row at its natural width.
+    let mut drawn = reading(80, 20);
+    drawn.answer(TABLE);
+    drawn.resize(56, 20);
+
+    let rows: Vec<String> = drawn
+        .rows()
+        .into_iter()
+        .filter(|row| !row.trim().is_empty())
+        .collect();
+    assert_eq!(rows.len(), 4, "{rows:#?}");
+    for row in rows
+        .iter()
+        .enumerate()
+        .filter(|(at, _)| *at != 1)
+        .map(|(_, row)| row)
+    {
+        assert_eq!(row.matches('│').count(), 2, "{row:?} lost a column bar");
+    }
+}
+
+#[test]
+fn a_table_narrowed_and_widened_again_is_the_table_it_was() {
+    let mut drawn = reading(60, 20);
+    drawn.answer("| a | b |\n|---|---|\n| one | two |\n");
+    let before = drawn.rows();
+    drawn.resize(12, 20);
+    drawn.resize(60, 20);
+
+    assert_eq!(drawn.rows(), before);
+}
+
+#[test]
+fn a_rule_narrowed_is_still_one_row() {
+    let mut drawn = reading(40, 10);
+    drawn.answer("above\n\n---\n\nbelow\n");
+    drawn.resize(25, 10);
+
+    let rows = drawn.rows();
+    let ruled: Vec<&String> = rows.iter().filter(|row| row.contains('─')).collect();
+    assert_eq!(
+        ruled
+            .iter()
+            .map(|row| crate::width::columns(row))
+            .collect::<Vec<_>>(),
+        [25],
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn every_cut_of_an_answer_draws_what_the_whole_answer_draws() {
+    let corpus = [
+        "a **loud** and *leant* phrase with `code` and a [link](https://example.com)\n",
+        "- one\n- [x] done\n  - nested\n1. first\n> quoted *words*\n",
+        "| a | b |\n|:--|--:|\n| `x` | **y** |\n\nafter\n",
+        "```rust\nfn main() { let x = 1; }\n```\n\n---\n\nend\n",
+        "see #12 and owner/repo#3 at https://example.com/a_b.\n",
+        "~~gone~~ and \\*kept\\* and a_b_c\n",
+    ];
+
+    for answer in corpus {
+        let mut whole = reading(50, 30);
+        whole.answer(answer);
+        let expected = whole.rows();
+
+        for cut in 1..answer.len() {
+            let mut pieces = reading(50, 30);
+            pieces.answer_in_pieces(answer, &[cut]);
+            assert_eq!(pieces.rows(), expected, "cut at {cut} of {answer:?}");
+        }
+    }
+}

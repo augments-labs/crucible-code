@@ -5,10 +5,62 @@ use crate::width;
 /// A window wide enough that nothing here is laid out against its edge.
 const ROOM: usize = 80;
 
+/// The reader as runs alone: a block it hands on is laid out at the room it
+/// was read in, and its rows said in its place, each ending its line.
+///
+/// What the record is handed and lays itself, said the way the runs around
+/// it are, so a test about the runs reads a block as the rows it draws.
+trait Runs {
+    fn read_runs(
+        &mut self,
+        delta: &str,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    );
+    fn finish_runs(&mut self, room: usize, say: &mut dyn FnMut(Slot, &str, Option<&str>));
+}
+
+impl Runs for Markdown {
+    fn read_runs(
+        &mut self,
+        delta: &str,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) {
+        let glyphs = self.glyphs;
+        self.read(delta, room, &mut |said| runs(said, room, glyphs, say));
+    }
+
+    fn finish_runs(&mut self, room: usize, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        let glyphs = self.glyphs;
+        self.finish(room, &mut |said| runs(said, room, glyphs, say));
+    }
+}
+
+/// One thing the reader said, as runs.
+fn runs(
+    said: Said<'_>,
+    room: usize,
+    glyphs: Glyphs,
+    say: &mut dyn FnMut(Slot, &str, Option<&str>),
+) {
+    match said {
+        Said::Run { slot, text, link } => say(slot, text, link),
+        Said::Block(block) => {
+            for row in lay(&block, room, glyphs) {
+                for (slot, text) in row.spans() {
+                    say(slot, text, None);
+                }
+                say(Slot::Plain, "\n", None);
+            }
+        }
+    }
+}
+
 /// Reads one delta and returns every run with the slot it was said under.
 fn read(markdown: &mut Markdown, delta: &str) -> Vec<(Slot, String)> {
     let mut said = Vec::new();
-    markdown.read(delta, ROOM, &mut |slot, text, _| {
+    markdown.read_runs(delta, ROOM, &mut |slot, text, _| {
         said.push((slot, text.to_owned()));
     });
     said
@@ -328,7 +380,7 @@ fn a_block_read_a_character_at_a_time_says_the_same_thing() {
     let mut apart = Vec::new();
     for character in streamed.chars() {
         let mut piece = [0u8; 4];
-        markdown.read(
+        markdown.read_runs(
             character.encode_utf8(&mut piece),
             ROOM,
             &mut |slot, text, _| {
@@ -358,8 +410,8 @@ fn pointing(answer: &str) -> Vec<(Slot, String, Option<String>)> {
     let mut into = |slot, text: &str, link: Option<&str>| {
         said.push((slot, text.to_owned(), link.map(str::to_owned)));
     };
-    markdown.read(answer, ROOM, &mut into);
-    markdown.finish(ROOM, &mut into);
+    markdown.read_runs(answer, ROOM, &mut into);
+    markdown.finish_runs(ROOM, &mut into);
     said
 }
 
@@ -432,7 +484,7 @@ fn a_link_split_across_deltas_is_still_one_link() {
         let mut markdown = Markdown::default();
         let mut said = read(&mut markdown, &whole_link[..at]);
         said.extend(read(&mut markdown, &whole_link[at..]));
-        markdown.finish(ROOM, &mut |slot, text, _| {
+        markdown.finish_runs(ROOM, &mut |slot, text, _| {
             said.push((slot, text.to_owned()));
         });
 
@@ -444,7 +496,7 @@ fn a_link_split_across_deltas_is_still_one_link() {
 fn a_message_that_ended_inside_a_link_keeps_what_it_wrote() {
     let mut markdown = Markdown::default();
     let mut said = read(&mut markdown, "see [the guide");
-    markdown.finish(ROOM, &mut |slot, text, _| {
+    markdown.finish_runs(ROOM, &mut |slot, text, _| {
         said.push((slot, text.to_owned()));
     });
 
@@ -654,10 +706,10 @@ fn nothing_inside_a_fence_is_read_as_a_retraction() {
 fn narrowed(answer: &str, room: usize) -> Vec<(Slot, String)> {
     let mut markdown = Markdown::default();
     let mut said = Vec::new();
-    markdown.read(answer, room, &mut |slot, text, _| {
+    markdown.read_runs(answer, room, &mut |slot, text, _| {
         said.push((slot, text.to_owned()));
     });
-    markdown.finish(room, &mut |slot, text, _| {
+    markdown.finish_runs(room, &mut |slot, text, _| {
         said.push((slot, text.to_owned()));
     });
     said
@@ -710,7 +762,7 @@ fn a_table_split_across_deltas_is_still_one_table() {
     let mut said = Vec::new();
 
     for piece in ["| file |\n| -", "-- |\n| main", ".rs |\n\n"] {
-        markdown.read(piece, ROOM, &mut |slot, text, _| {
+        markdown.read_runs(piece, ROOM, &mut |slot, text, _| {
             said.push((slot, text.to_owned()));
         });
     }
@@ -773,14 +825,14 @@ fn a_table_the_answer_ended_in_the_middle_of_is_still_drawn() {
     let mut markdown = Markdown::default();
     let mut said = Vec::new();
 
-    markdown.read(
+    markdown.read_runs(
         "| file |\n| --- |\n| main.rs |",
         ROOM,
         &mut |slot, text, _| {
             said.push((slot, text.to_owned()));
         },
     );
-    markdown.finish(ROOM, &mut |slot, text, _| {
+    markdown.finish_runs(ROOM, &mut |slot, text, _| {
         said.push((slot, text.to_owned()));
     });
 
@@ -969,8 +1021,10 @@ fn a_message_that_ended_on_a_marker_ends_it_the_way_a_line_break_would() {
         let ended = narrowed(answer, ROOM);
         let broken = narrowed(&format!("{answer}\n"), ROOM);
 
+        // Trimmed on both sides, because a rule is a block, and a block ends
+        // its own line whether or not a break followed it.
         assert_eq!(
-            drawn(&ended),
+            drawn(&ended).trim_end_matches('\n'),
             drawn(&broken).trim_end_matches('\n'),
             "{answer:?} reads the same whether or not a break followed it"
         );
@@ -1020,7 +1074,7 @@ fn emphasis_around_a_code_span_still_closes_after_it() {
 fn ended(answer: &str) -> Vec<(Slot, String)> {
     let mut markdown = Markdown::default();
     let mut said = read(&mut markdown, answer);
-    markdown.finish(ROOM, &mut |slot, text, _| {
+    markdown.finish_runs(ROOM, &mut |slot, text, _| {
         said.push((slot, text.to_owned()));
     });
     said
@@ -1158,7 +1212,7 @@ fn where_a_delta_ends_changes_nothing_about_what_is_drawn() {
             let mut delta = [0; 4];
             said.extend(read(&mut markdown, character.encode_utf8(&mut delta)));
         }
-        markdown.finish(ROOM, &mut |slot, text, _| {
+        markdown.finish_runs(ROOM, &mut |slot, text, _| {
             said.push((slot, text.to_owned()));
         });
 
@@ -1250,8 +1304,8 @@ fn counted(answer: &str) -> Vec<(Slot, String, Option<String>)> {
     let mut into = |slot, text: &str, link: Option<&str>| {
         said.push((slot, text.to_owned(), link.map(str::to_owned)));
     };
-    markdown.read(answer, ROOM, &mut into);
-    markdown.finish(ROOM, &mut into);
+    markdown.read_runs(answer, ROOM, &mut into);
+    markdown.finish_runs(ROOM, &mut into);
     said
 }
 
@@ -1263,8 +1317,8 @@ fn opened(answer: &str) -> Vec<(Slot, String, Option<String>)> {
     let mut into = |slot, text: &str, link: Option<&str>| {
         said.push((slot, text.to_owned(), link.map(str::to_owned)));
     };
-    markdown.read(answer, ROOM, &mut into);
-    markdown.finish(ROOM, &mut into);
+    markdown.read_runs(answer, ROOM, &mut into);
+    markdown.finish_runs(ROOM, &mut into);
     said
 }
 
@@ -1424,9 +1478,9 @@ fn a_number_split_across_two_deltas_is_still_one_number() {
     let mut into = |slot, text: &str, link: Option<&str>| {
         said.push((slot, text.to_owned(), link.map(str::to_owned)));
     };
-    markdown.read("landed in #4", ROOM, &mut into);
-    markdown.read("87 yesterday", ROOM, &mut into);
-    markdown.finish(ROOM, &mut into);
+    markdown.read_runs("landed in #4", ROOM, &mut into);
+    markdown.read_runs("87 yesterday", ROOM, &mut into);
+    markdown.finish_runs(ROOM, &mut into);
 
     assert_eq!(wrote(&said), "landed in #487 yesterday");
     assert_eq!(
@@ -1553,8 +1607,8 @@ fn finished(answer: &str) -> Vec<(Slot, String)> {
     let mut markdown = Markdown::default();
     let mut said = Vec::new();
     let mut into = |slot, text: &str, _: Option<&str>| said.push((slot, text.to_owned()));
-    markdown.read(answer, ROOM, &mut into);
-    markdown.finish(ROOM, &mut into);
+    markdown.read_runs(answer, ROOM, &mut into);
+    markdown.finish_runs(ROOM, &mut into);
     said
 }
 
@@ -1642,7 +1696,7 @@ fn a_version_split_across_deltas_is_still_one_version() {
     let mut markdown = Markdown::default();
     let mut said = read(&mut markdown, "ships in 0.4");
     said.extend(read(&mut markdown, "5.0 today"));
-    markdown.finish(ROOM, &mut |slot, text, _| {
+    markdown.finish_runs(ROOM, &mut |slot, text, _| {
         said.push((slot, text.to_owned()));
     });
 
