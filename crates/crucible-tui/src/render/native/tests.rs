@@ -2094,6 +2094,40 @@ fn a_native_rule_narrowed_is_still_one_row() {
     );
 }
 
+/// An item long enough to wrap at thirty columns onto three rows or more.
+const LONG_ITEM: &str = "long enough that it has to wrap onto another row, and then one more";
+
+#[test]
+fn a_native_wrapped_item_hangs_under_its_words() {
+    for (marker, hang) in [("- a bullet", 2), ("1. a number", 3)] {
+        let answer = format!("{marker} {LONG_ITEM}\n");
+        for resized in [None, Some((30, 12))] {
+            let columns = if resized.is_some() { 60 } else { 30 };
+            let rows = answered_natively(&Window::new(columns, 12), &answer, resized);
+
+            assert!(rows.len() > 2, "{rows:#?}");
+            for row in &rows[1..] {
+                let indent = row.len() - row.trim_start().len();
+                assert_eq!(indent, hang, "{row:?} does not hang under the words");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_native_wrapped_quote_keeps_its_bar_on_every_row() {
+    let answer = format!("> a quote {LONG_ITEM}\n");
+    for resized in [None, Some((30, 12))] {
+        let columns = if resized.is_some() { 60 } else { 30 };
+        let rows = answered_natively(&Window::new(columns, 12), &answer, resized);
+
+        assert!(rows.len() > 2, "{rows:#?}");
+        for row in &rows {
+            assert!(row.starts_with("│ "), "{row:?} lost the quote bar");
+        }
+    }
+}
+
 #[test]
 fn a_native_held_block_shows_one_status_row_and_none_of_its_source() {
     let window = Window::new(64, 12);

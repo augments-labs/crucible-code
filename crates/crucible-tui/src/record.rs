@@ -24,7 +24,9 @@
 //! Four kinds of line, because four kinds of thing arrive here. Prose
 //! *flows*: the model's answer and a tool's output were written as text and a
 //! wrap is the only thing deciding where a row ends, so the width they are
-//! folded at is whatever the window is now. A component whose source is still
+//! folded at is whatever the window is now. A line that opens with a quote's
+//! bar or an item's mark is folded under it: the bar is stood again and the
+//! words hang where the first row's began. A component whose source is still
 //! held is *responsive*: a prompt, a diff, or a command's answer drawn from
 //! figures it still holds is laid out again at the new width. A block of an
 //! answer is *drawn*: a table or a rule arrives as the source it was written
@@ -51,6 +53,7 @@ use crate::glyphs::Glyphs;
 use crate::markdown::{self, Block, Links};
 use crate::row::Row;
 use crate::scroll_rail::Place;
+use crate::width;
 
 /// The most retained units the record keeps.
 ///
@@ -741,7 +744,7 @@ impl Record {
     /// until somebody pastes a megabyte.
     fn measure(line: &Line, columns: usize) -> u16 {
         match line {
-            Line::Flowed(row) => u16::try_from(row.folds(columns)).unwrap_or(u16::MAX),
+            Line::Flowed(row) => u16::try_from(flowed_height(row, columns)).unwrap_or(u16::MAX),
             Line::Responsive { rows, .. } | Line::Drawn(Drawn { rows, .. }) => {
                 u16::try_from(rows.len()).unwrap_or(u16::MAX)
             }
@@ -1637,11 +1640,67 @@ impl Record {
     /// A line as the display rows it comes to at the current width.
     fn fold(&self, line: &Line) -> Vec<Row> {
         match line {
-            Line::Flowed(row) => row.fold(self.columns),
+            Line::Flowed(row) => flowed(row, self.columns),
             Line::Responsive { rows, .. } | Line::Drawn(Drawn { rows, .. }) => rows.clone(),
             Line::Set(row) => vec![row.clipped(self.columns)],
         }
     }
+}
+
+/// The display rows a flowed line comes to at `columns`.
+///
+/// A line that opens with a quote's bar or an item's mark continues under its
+/// words rather than under its mark, which is [`markdown::hang`]'s to say: the
+/// bar is stood again and the mark's columns are left blank. Any other line is
+/// folded flush, as prose is. A hang as wide as the window leaves the words no
+/// room, so it is not kept and the line folds flush instead.
+fn flowed(row: &Row, columns: usize) -> Vec<Row> {
+    let Some((hang, room)) = hung(row, columns) else {
+        return row.fold(columns);
+    };
+
+    let text = row.text();
+    let words = text.get(hang.lead..).unwrap_or_default();
+    let mut rows: Vec<Row> = width::folds(words, room)
+        .into_iter()
+        .enumerate()
+        .map(|(at, part)| {
+            let part = row.between(hang.lead + part.start, hang.lead + part.end);
+            if at == 0 {
+                row.between(0, hang.lead).join(part)
+            } else {
+                hang.prefix.clone().join(part)
+            }
+        })
+        .collect();
+    if rows.is_empty() {
+        rows.push(row.between(0, hang.lead));
+    }
+    rows
+}
+
+/// How many display rows [`flowed`] gives `row`, without building them.
+fn flowed_height(row: &Row, columns: usize) -> usize {
+    let Some((hang, room)) = hung(row, columns) else {
+        return row.folds(columns);
+    };
+
+    let text = row.text();
+    let words = text.get(hang.lead..).unwrap_or_default();
+    width::folds(words, room).len().max(1)
+}
+
+/// The hang `row` folds under at `columns` and the columns left beside it, for
+/// a row that has to fold and has a hang the window has room for.
+fn hung(row: &Row, columns: usize) -> Option<(markdown::Hang, usize)> {
+    if columns == 0 || row.columns() <= columns {
+        return None;
+    }
+    let hang = markdown::hang(row)?;
+    (hang.columns < columns).then(|| {
+        let room = columns - hang.columns;
+        (hang, room)
+    })
 }
 
 /// Caps one responsive layout to the record's existing display-row ceiling.
