@@ -406,10 +406,15 @@ fn a_ninth_batch_and_a_batch_over_the_byte_total_are_refused_before_storing() {
     let revision = deferred.revision();
 
     let error = deferred.register(asked("Ninth")).unwrap_err();
-    assert!(matches!(error, Full::Room(Room::Batches)), "{error:?}");
     assert!(
-        error.to_string().contains(&MOST_HELD.to_string()),
-        "{error}"
+        matches!(error, Full::Crowded(Crowded::Batches { .. })),
+        "{error:?}"
+    );
+    let said = error.to_string();
+    assert!(
+        said.contains(&format!("{} question batches", MOST_HELD + 1))
+            && said.contains(&format!("at most {MOST_HELD}")),
+        "{said}"
     );
     assert_eq!(deferred.waiting().len(), MOST_HELD);
     assert_eq!(deferred.revision(), revision);
@@ -421,7 +426,7 @@ fn a_ninth_batch_and_a_batch_over_the_byte_total_are_refused_before_storing() {
         .unwrap();
     assert!(matches!(
         deferred.register(asked("Ninth")),
-        Err(Full::Room(Room::Batches))
+        Err(Full::Crowded(Crowded::Batches { .. }))
     ));
     assert_eq!(deferred.take_settled().len(), 1);
     deferred.register(asked("Ninth")).unwrap();
@@ -439,7 +444,7 @@ fn a_ninth_batch_and_a_batch_over_the_byte_total_are_refused_before_storing() {
     let revision = deferred.revision();
 
     let error = deferred.register(big(&"b".repeat(half))).unwrap_err();
-    let Full::Room(Room::Bytes { bytes, held }) = error else {
+    let Full::Crowded(Crowded::Bytes { bytes, held }) = error else {
         panic!("{error:?}");
     };
     assert!(bytes > half && held > half, "{bytes} {held}");
@@ -664,20 +669,27 @@ fn restoring_its_state_round_trips_the_waiting_batches_and_drops_nothing_silentl
             })
             .collect::<Vec<_>>()
     });
-    assert!(matches!(
-        crowded.restore(&many),
-        Err(Unrestored::Room(Room::Batches))
-    ));
+    let error = crowded.restore(&many).unwrap_err();
+    assert!(
+        matches!(error, Unrestored::Crowded(Crowded::Batches { .. })),
+        "{error:?}"
+    );
+    // Nothing is held, so the refusal does not say there is.
+    let said = error.to_string();
+    assert!(
+        said.contains(&format!("{} question batches", MOST_HELD + 1)) && !said.contains("already"),
+        "{said}"
+    );
     assert!(crowded.waiting().is_empty());
 
-    // Room is the one refusal both a batch and a restored state meet.
+    // Crowded is the one refusal both a batch and a restored state meet.
     let mut heavy = state.pointer("/waiting/0").unwrap().clone();
     *heavy.pointer_mut("/questions/0/question").unwrap() =
         serde_json::json!("q".repeat(MOST_HELD_BYTES));
     let heavy = serde_json::json!({ "next": 1, "waiting": [heavy] });
     assert!(matches!(
         crowded.restore(&heavy),
-        Err(Unrestored::Room(Room::Bytes { .. }))
+        Err(Unrestored::Crowded(Crowded::Bytes { .. }))
     ));
     assert!(crowded.waiting().is_empty());
 }
