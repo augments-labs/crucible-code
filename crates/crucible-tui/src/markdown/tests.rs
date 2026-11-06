@@ -47,7 +47,7 @@ fn runs(
     match said {
         Said::Run { slot, text, link } => say(slot, text, link),
         Said::Block(block) => {
-            for row in lay(&block, room, glyphs) {
+            for row in lay(&block, room, glyphs, &Links::default()) {
                 for (slot, text) in row.spans() {
                     say(slot, text, None);
                 }
@@ -2072,7 +2072,7 @@ fn a_held_block_laid_out_is_what_it_would_have_streamed_as() {
             panic!("{answer:?} was not held");
         };
         let mut laid = String::new();
-        for row in lay(block, ROOM, Glyphs::Unicode) {
+        for row in lay(block, ROOM, Glyphs::Unicode, &Links::default()) {
             laid.push_str(&row.text());
             laid.push('\n');
         }

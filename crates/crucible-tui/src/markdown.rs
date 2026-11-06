@@ -241,18 +241,35 @@ pub enum Said<'a> {
     Block(Block),
 }
 
+/// What a reader links its text to: the repository a bare number counts
+/// against and the checkout a path to a file is read against.
+///
+/// Given to every reader of an answer, and kept by the record as well, since a
+/// block is read again each time it is laid out and has to link what the same
+/// text linked as it streamed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Links {
+    /// The repository bare numbers count against; `None` leaves a number the
+    /// plain text it was written as.
+    pub(crate) forge: Option<Forge>,
+    /// The checkout a link to a path opens in; `None` hands the path on as it
+    /// was written.
+    pub(crate) files: Option<Files>,
+}
+
 /// `block` laid out as the lines it draws `room` columns wide, in `glyphs`.
 ///
 /// A table is drawn against the room, or put back as it was written where it
 /// cannot be; a rule is drawn across the room; anything else is read again by
-/// a reader that holds nothing, so it is shown the way it would have streamed.
+/// a reader that holds nothing and links by `links`, so it is shown the way it
+/// would have streamed.
 /// What the record keeps a block as, and what it lays it out with again at
 /// every width and glyph set it is asked for.
 ///
 /// Lines rather than rows: one put back as it was written can be wider than
 /// the room, and is folded where it is drawn, as streamed text is.
 #[must_use]
-pub(crate) fn lay(block: &Block, room: usize, glyphs: Glyphs) -> Vec<Row> {
+pub(crate) fn lay(block: &Block, room: usize, glyphs: Glyphs, links: &Links) -> Vec<Row> {
     let mut rows = vec![Row::new()];
     let mut put = |slot: Slot, text: &str, link: Option<&str>| {
         let mut pieces = text.split('\n');
@@ -280,7 +297,7 @@ pub(crate) fn lay(block: &Block, room: usize, glyphs: Glyphs) -> Vec<Row> {
             }
         }
         Kind::DisplayMath | Kind::Mermaid | Kind::Diff | Kind::Image => {
-            let mut markdown = Markdown::new(glyphs).as_written();
+            let mut markdown = Markdown::new(glyphs).linking(links).as_written();
             let mut said = |said: Said<'_>| {
                 if let Said::Run { slot, text, link } = said {
                     put(slot, text, link);
@@ -859,6 +876,13 @@ impl Markdown {
     pub fn opening(mut self, files: Option<Files>) -> Self {
         self.files = files;
         self
+    }
+
+    /// The same reader, counting and opening by `links`.
+    #[must_use]
+    pub(crate) fn linking(self, links: &Links) -> Self {
+        self.counting(links.forge.clone())
+            .opening(links.files.clone())
     }
 
     /// The same reader, holding no block: every one is drawn the way it

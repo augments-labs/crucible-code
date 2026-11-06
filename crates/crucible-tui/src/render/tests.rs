@@ -3345,3 +3345,46 @@ fn the_rail_while_a_block_is_held_stands_for_the_rows_drawn() {
     );
     assert_eq!(rail_of(&drawn), "││┃┃┃┃┃┃┃┃");
 }
+
+#[test]
+fn display_math_counts_and_opens_what_it_streamed_with() {
+    let slots = |answer: &str| {
+        let mut drawn = reading(60, 10);
+        drawn.render.counts(Some(crate::forge::Forge::new(
+            "https://github.com",
+            "augments-labs/crucible-code",
+            "/issues/",
+        )));
+        drawn.render.reads_paths(Some(crate::files::Files::new(
+            std::path::Path::new("/home/me/repo"),
+            crate::files::Line::Fragment,
+        )));
+        drawn.answer(answer);
+        let record = &drawn.render.record;
+        (0..record.lines())
+            .flat_map(|line| record.folded(line))
+            .filter(|row| row.text().contains("#12"))
+            .map(|row| format!("{row:?}"))
+            .collect::<Vec<_>>()
+    };
+    // On the answer's first line, where the stream counts and opens what it
+    // reads, as prose and as a formula held until it closes alike.
+    for answer in [
+        "see #12 in [main](src/main.rs)\n",
+        "$$ see #12 in [main](src/main.rs) $$\n",
+    ] {
+        let rows = slots(answer);
+        assert!(
+            rows.iter().any(|row| row.contains(
+                "slot: Link, structural: [], link: Some(\"https://github.com/augments-labs/crucible-code/issues/12\")"
+            )),
+            "{answer:?}: {rows:#?}"
+        );
+        assert!(
+            rows.iter().any(|row| row.contains(
+                "slot: Link, structural: [], link: Some(\"file:///home/me/repo/src/main.rs\")"
+            )),
+            "{answer:?}: {rows:#?}"
+        );
+    }
+}

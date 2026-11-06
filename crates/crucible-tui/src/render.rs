@@ -388,15 +388,6 @@ pub struct Renderer<T: Terminal> {
     /// Held here rather than made fresh per delta, for the reason the escapes
     /// above are: a fence arrives split across two deltas as often as not.
     markdown: Markdown,
-    /// The repository the transcript's bare numbers are counted against.
-    ///
-    /// Held here rather than in the reader alone because the reader is thrown
-    /// away and made again between messages, and which checkout this is does
-    /// not change while the session runs.
-    forge: Option<Forge>,
-    /// The checkout the transcript's links to paths are read against, held
-    /// here for the reason the forge is.
-    files: Option<Files>,
     /// Whether an answer is still arriving.
     ///
     /// Set by the first piece of one and put down by [`Renderer::settle`],
@@ -517,8 +508,6 @@ impl<T: Terminal> Renderer<T> {
             free: String::new(),
             escapes: Escapes::default(),
             markdown: Markdown::default(),
-            forge: None,
-            files: None,
             arriving: Arriving::Nothing,
             palette: Palette::plain(),
             glyphs: Glyphs::default(),
@@ -1187,7 +1176,7 @@ impl<T: Terminal> Renderer<T> {
     /// there is no forge behind it, which leaves a number the plain text it
     /// has always been.
     pub fn counts(&mut self, forge: Option<Forge>) {
-        self.forge = forge;
+        self.record.links_mut().forge = forge;
         self.markdown = self.reader();
     }
 
@@ -1197,16 +1186,14 @@ impl<T: Terminal> Renderer<T> {
     /// Said once, at startup, for the reason [`Renderer::counts`] is. `None`
     /// hands a path on as it was written.
     pub fn reads_paths(&mut self, files: Option<Files>) {
-        self.files = files;
+        self.record.links_mut().files = files;
         self.markdown = self.reader();
     }
 
     /// A reader for the next message, drawing, counting and opening the way
     /// this renderer was told to.
     fn reader(&self) -> Markdown {
-        Markdown::new(self.glyphs)
-            .counting(self.forge.clone())
-            .opening(self.files.clone())
+        Markdown::new(self.glyphs).linking(self.record.links())
     }
 
     /// Marks the next record line as the start of a prompt.
@@ -2545,7 +2532,7 @@ impl<T: Terminal> Taking<'_, T> {
         // A redirected run is written the block as it is laid out now, row by
         // row: a file has one width, and it is this one.
         if let Some(out) = &mut self.out {
-            for row in markdown::lay(&block, self.columns, self.glyphs) {
+            for row in markdown::lay(&block, self.columns, self.glyphs, self.record.links()) {
                 out.write(&row.text())?;
                 out.write("\n")?;
             }

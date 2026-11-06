@@ -48,7 +48,7 @@ use std::ops::Range;
 
 use crate::color::{Slot, Theme};
 use crate::glyphs::Glyphs;
-use crate::markdown::{self, Block};
+use crate::markdown::{self, Block, Links};
 use crate::row::Row;
 use crate::scroll_rail::Place;
 
@@ -122,8 +122,9 @@ pub(crate) struct Drawn {
 }
 
 impl Drawn {
-    /// `block` laid out for `columns` in `glyphs` and `theme`.
-    fn new(block: Block, columns: usize, glyphs: Glyphs, theme: Theme) -> Self {
+    /// `block` laid out for `columns` in `glyphs` and `theme`, linking by
+    /// `links`.
+    fn new(block: Block, columns: usize, glyphs: Glyphs, theme: Theme, links: &Links) -> Self {
         let mut drawn = Self {
             block,
             rows: Vec::new(),
@@ -132,14 +133,14 @@ impl Drawn {
             laid: (columns, glyphs, theme),
             edits: Vec::new(),
         };
-        drawn.lay(columns, glyphs);
+        drawn.lay(columns, glyphs, links);
         drawn
     }
 
-    /// Lays the block out again for `columns` in `glyphs`, with every edit and
-    /// the prefix it was given since.
-    fn lay(&mut self, columns: usize, glyphs: Glyphs) {
-        let laid = markdown::lay(&self.block, columns, glyphs);
+    /// Lays the block out again for `columns` in `glyphs`, linking by
+    /// `links`, with every edit and the prefix it was given since.
+    fn lay(&mut self, columns: usize, glyphs: Glyphs, links: &Links) {
+        let laid = markdown::lay(&self.block, columns, glyphs, links);
         let mut rows = responsive_rows(laid.iter().flat_map(|row| row.fold(columns)).collect());
         for edit in &self.edits {
             edit(&mut rows);
@@ -372,6 +373,11 @@ pub(crate) struct Record {
     /// Only the ceiling drops a line otherwise, so where [`Self::gone`] has
     /// moved past this, what [`Self::kept`] gives back is not all there was.
     began: usize,
+    /// What the text of an answer links to: kept here rather than by the
+    /// reader alone because the reader is made again for every message, and
+    /// a drawn block is read again at every width and glyph set it is laid
+    /// out for.
+    links: Links,
 }
 
 /// Where in the record a display row is: a line, and how far into it.
@@ -414,7 +420,21 @@ impl Record {
             hanging: None,
             sent: 0,
             began: 0,
+            links: Links::default(),
         }
+    }
+
+    /// What the text of an answer links to, here and in every reader of one.
+    pub(crate) fn links(&self) -> &Links {
+        &self.links
+    }
+
+    /// What the text of an answer links to, to be changed.
+    ///
+    /// Said at startup, before the first answer. A block already drawn takes
+    /// the new links the next time it is laid out.
+    pub(crate) fn links_mut(&mut self) -> &mut Links {
+        &mut self.links
     }
 
     /// Append streamed text, which flows.
@@ -489,7 +509,7 @@ impl Record {
     /// A block that lays out as nothing is not kept.
     pub(crate) fn drawn(&mut self, block: Block, glyphs: Glyphs, theme: Theme) {
         self.end();
-        let drawn = Drawn::new(block, self.columns, glyphs, theme);
+        let drawn = Drawn::new(block, self.columns, glyphs, theme, &self.links);
         if !drawn.rows.is_empty() {
             self.put(Line::Drawn(drawn));
         }
@@ -527,7 +547,7 @@ impl Record {
                 continue;
             }
             let was = drawn.weight;
-            drawn.lay(columns, glyphs);
+            drawn.lay(columns, glyphs, &self.links);
             self.weight = self.weight.saturating_sub(was).saturating_add(drawn.weight);
             any = true;
         }

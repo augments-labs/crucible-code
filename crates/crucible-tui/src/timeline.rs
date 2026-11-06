@@ -11,7 +11,7 @@ use std::fmt::Write as _;
 use crate::color::Slot;
 use crate::forge::Forge;
 use crate::glyphs::Glyphs;
-use crate::markdown::{self, Markdown, Said};
+use crate::markdown::{self, Links, Markdown, Said};
 use crate::row::Row;
 use crate::width::{columns as wide, cut, folds};
 
@@ -355,13 +355,17 @@ fn read(segment: &str, room: usize, glyphs: Glyphs, forge: Option<&Forge>, rows:
             lines.push(line);
         }
     };
-    // A block is laid out as the record lays one, at this width, and its rows
-    // follow the runs before it: a page printed once has no later width to
-    // keep its source for.
+    // A block is laid out as the record lays one, at this width and linking
+    // what the runs around it link, and its rows follow the runs before it: a
+    // page printed once has no later width to keep its source for.
+    let linking = Links {
+        forge: forge.cloned(),
+        files: None,
+    };
     let mut said = |said: Said<'_>| match said {
         Said::Run { slot, text, link } => say(slot, text, link),
         Said::Block(block) => {
-            for row in markdown::lay(&block, room, glyphs) {
+            for row in markdown::lay(&block, room, glyphs, &linking) {
                 for (slot, text) in row.spans() {
                     say(slot, text, None);
                 }
@@ -369,7 +373,7 @@ fn read(segment: &str, room: usize, glyphs: Glyphs, forge: Option<&Forge>, rows:
             }
         }
     };
-    let mut markdown = Markdown::new(glyphs).counting(forge.cloned());
+    let mut markdown = Markdown::new(glyphs).linking(&linking);
     markdown.read(segment, room, &mut said);
     markdown.finish(room, &mut said);
 
