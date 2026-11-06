@@ -132,19 +132,19 @@ pub enum Crowded {
     Batches {
         /// The batches that would be added.
         batches: usize,
-        /// The batches already held.
+        /// The batches that stay held beside them.
         held: usize,
     },
     /// The batches would carry the held question text past its bound.
     #[error(
-        "the questions are {bytes} bytes, and with the {held} already held that is {} bytes \
-         over the {MOST_HELD_BYTES} that may be held",
+        "the questions are {bytes} bytes, and with the {held} that stay held beside them that is \
+         {} bytes over the {MOST_HELD_BYTES} that may be held",
         (.bytes + .held).saturating_sub(MOST_HELD_BYTES)
     )]
     Bytes {
         /// The bytes of question text the batches carry.
         bytes: usize,
-        /// The bytes of question text already held.
+        /// The bytes of question text that stay held beside them.
         held: usize,
     },
 }

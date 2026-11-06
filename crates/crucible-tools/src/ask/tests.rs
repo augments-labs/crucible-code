@@ -692,6 +692,17 @@ fn restoring_its_state_round_trips_the_waiting_batches_and_drops_nothing_silentl
         Err(Unrestored::Crowded(Crowded::Bytes { .. }))
     ));
     assert!(crowded.waiting().is_empty());
+
+    // A batch waiting here is replaced by the restore, so the refusal counts
+    // only what stays held and does not call that everything already held.
+    let busy = Deferred::default();
+    busy.register(asked("Waiting")).unwrap();
+    let said = busy.restore(&heavy).unwrap_err().to_string();
+    assert!(
+        said.contains("stay held") && !said.contains("already"),
+        "{said}"
+    );
+    assert_eq!(busy.waiting().len(), 1);
 }
 
 #[test]
