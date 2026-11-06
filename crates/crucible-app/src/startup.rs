@@ -169,9 +169,11 @@ pub struct Startup<'a> {
     /// [`crate::client::answer`] and [`crate::client::turn`]. `None` offers
     /// the model no such questions, and the question tool refuses one.
     ///
-    /// A handle nothing has used yet: the conversation built here is its only
-    /// holder, and a session resumed at start brings its own waiting
-    /// questions back into it.
+    /// The conversation built here is the handle's one holder: a handle
+    /// another conversation already holds fails the start with
+    /// [`AppError::QuestionsHeld`]. Holding it empties it onto the session
+    /// the conversation opens, and a session resumed at start brings its own
+    /// waiting questions back into it.
     pub questions: Option<crate::client::Questions>,
     /// Which MCP servers written down under `mcp.servers` this run hosts, by
     /// name and in the order the command line gave them. Empty is the ordinary
@@ -401,7 +403,7 @@ fn assembled(startup: &Startup<'_>, agents: &'static Registry) -> Result<Convers
     // asks through the root's tool. Before the route below is opened, so the
     // era moves onto that route's session with everything else.
     if let Some(questions) = startup.questions.clone() {
-        conversation = conversation.holding(questions);
+        conversation = conversation.holding(questions)?;
     }
     recorded(&mut conversation, &runtime);
     // The runs of the route the conversation opens on, and the steps on every

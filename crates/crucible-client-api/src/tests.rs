@@ -3574,7 +3574,7 @@ fn an_answer_names_its_batch_as_the_model_does_and_carries_one_reply_a_question(
     ] {
         let mut body = json!({"kind": "answer", "id": "q3", "replies": []});
         if let Some(era) = &era {
-            body["era"] = era.clone();
+            body = with(body, "era", era.clone());
         }
         assert_eq!(
             refused(&framed(&asking(&body))),

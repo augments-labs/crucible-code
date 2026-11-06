@@ -65,6 +65,7 @@ use crucible_workspace::Workspace;
 
 use crate::backends::{REGISTRY, Registry};
 use crate::client::Asker;
+use crate::error::AppError;
 use crate::launching::Unresumable;
 use crate::outside::{self, Installed, Outside};
 
@@ -166,14 +167,27 @@ impl Conversation {
     /// session from here on. The question tool is given the same handle by
     /// [`Questions::asking`](crate::client::Questions::asking); that much is
     /// trusted, as [`Conversation::recording`] trusts its `build`.
-    #[must_use]
-    pub fn holding(self, questions: crate::client::Questions) -> Self {
+    ///
+    /// A conversation holds one handle and a handle one conversation, as it
+    /// is built: two holders would share one era and one registry, and each
+    /// would forget the other's questions on a session change and deliver
+    /// the other's answers to its own model.
+    ///
+    /// # Errors
+    ///
+    /// [`AppError::QuestionsHeld`] where this conversation already holds a
+    /// handle or another conversation holds `questions`. Nothing about the
+    /// handle changes, and the conversation is not kept.
+    pub fn holding(self, questions: crate::client::Questions) -> Result<Self, AppError> {
+        if self.questions.is_some() || !questions.claim() {
+            return Err(AppError::QuestionsHeld);
+        }
         questions.moved(self.session.id());
-        Self {
+        Ok(Self {
             runner: self.runner.deferring(questions.held().clone()),
             questions: Some(questions),
             ..self
-        }
+        })
     }
 
     /// The same conversation, its web tools answering through `web`, which a

@@ -356,13 +356,6 @@ impl Runner {
         self
     }
 
-    /// The registry [`Runner::deferring`] gave this runner, which a client
-    /// settles the model's questions through; none where it was given none.
-    #[must_use]
-    pub const fn deferred(&self) -> Option<&Deferred> {
-        self.deferred.as_ref()
-    }
-
     /// Supplies the lazy private metadata store for explicitly authorized
     /// persistent prompt-cache resources.
     ///

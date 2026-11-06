@@ -115,7 +115,7 @@ fn holding(
         .permitting(Permission::with(crucible_tools::Mode::Ask, Rules::new()))
     });
     Ok(match held {
-        Some(held) => conversation.holding(held.clone()),
+        Some(held) => conversation.holding(held.clone())?,
         None => conversation,
     })
 }
@@ -1134,7 +1134,10 @@ fn a_report_converted_after_the_session_moved_shows_the_session_it_moved_to() ->
         .ok_or("the report was not shown")?;
 
     let shown = Progress::decode(&shown.encode()?)?;
-    assert_eq!(waits(&[shown.clone()]), [vec!["Storage".to_owned()]]);
+    assert_eq!(
+        waits(std::slice::from_ref(&shown)),
+        [vec!["Storage".to_owned()]]
+    );
     let (era, id) = last_shown(&[shown])?;
     assert_eq!(era, Era::Session(b));
     assert_eq!(

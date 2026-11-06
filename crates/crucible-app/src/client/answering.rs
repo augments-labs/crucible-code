@@ -4,7 +4,9 @@
 //! the front end supplied at startup and keeps a clone of, as it keeps the
 //! turn's `Cancel`. The front end reads what waits through it and answers
 //! through the doors here; it can register, settle, take, clear or restore
-//! nothing itself. [`answer`] settles a batch there and nothing else, so it
+//! nothing itself. One conversation holds a handle: a second start handed
+//! the same one is refused, since two holders would share one era and one
+//! registry. [`answer`] settles a batch there and nothing else, so it
 //! needs no conversation: it is the door for an answer while a turn has the
 //! conversation, and the running turn delivers it. While no turn runs,
 //! [`turn`](super::turn) takes the same command and starts the turn that
@@ -33,7 +35,7 @@
 //! permission engine or the content-use hold.
 
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use crucible_builtins::AskUser;
@@ -59,6 +61,8 @@ struct Shared {
     era: Mutex<Era>,
     /// The batches. Its own lock is taken per call and inside `era`'s.
     held: Deferred,
+    /// Whether a conversation holds the handle. Set once, by the first.
+    claimed: AtomicBool,
 }
 
 impl Questions {
@@ -69,16 +73,25 @@ impl Questions {
         Self(Arc::new(Shared {
             era: Mutex::new(stint()),
             held: Deferred::default(),
+            claimed: AtomicBool::new(false),
         }))
     }
 
     /// The question tool `tool`, holding the questions it is asked not to
     /// wait on here. Given to the conversation too, by
     /// [`Conversation::holding`](crate::Conversation::holding), whose runner
-    /// delivers what is settled.
+    /// delivers what is settled. The tool registers a batch only when it is
+    /// run, which takes the permission engine's `Approved`, so a front end
+    /// handed it registers nothing itself.
     #[must_use]
     pub fn asking(&self, tool: AskUser) -> AskUser {
         tool.deferring(self.0.held.clone())
+    }
+
+    /// Whether this is the first claim on the handle, which the one
+    /// conversation holding it makes; every later claim is refused.
+    pub(crate) fn claim(&self) -> bool {
+        !self.0.claimed.swap(true, Ordering::SeqCst)
     }
 
     /// The registry itself, for what the application wires to it: the

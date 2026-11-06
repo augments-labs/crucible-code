@@ -1525,6 +1525,68 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
 }
 
 #[test]
+fn a_handle_on_the_questions_is_held_by_one_conversation_and_a_second_start_with_it_is_refused() {
+    // Two conversations on one handle would share one era and one registry:
+    // each one's `/clear` would forget the other's questions, and one's
+    // runner would deliver the other's answers to its model.
+    let sample = Sample::new("one-holder");
+    let (logs, workspace, state) = (sample.logs(), sample.workspace(), sample.state());
+    let questions = crate::client::Questions::new();
+    let startup = Startup {
+        questions: Some(questions.clone()),
+        providers: &catalogue(),
+        provider: None,
+        unasked: NOTHING_TO_ASK,
+        model: None,
+        effort: None,
+        resuming: Resuming::No,
+        mode: Mode::Ask,
+        leaving: &crucible_builtins::Background::new(),
+        services: &Services::new(),
+        settings: &Settings::default(),
+        sessions: &logs,
+        state: &state,
+        workspace: &workspace,
+        ledger: &Ledger::new(),
+        revealed: &Revealed::new(),
+        plan: &Plan::new(),
+        asking: Arc::new(Nobody),
+        hosting: &[],
+        terminal: false,
+        from: &|_| None,
+        stored: &StoredCredentials::default(),
+        subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
+    };
+
+    let first = assemble(&startup).expect("the first start holds the handle");
+    let (era, _) = questions.waiting();
+
+    let second = assemble(&startup);
+
+    assert!(
+        matches!(second, Err(AppError::QuestionsHeld)),
+        "{:?}",
+        second.as_ref().err()
+    );
+    assert_eq!(
+        questions.waiting().0,
+        era,
+        "the refused start moved the era"
+    );
+
+    // Nor is a conversation that holds a handle given another.
+    let other = crate::client::Questions::new();
+    let (beside, _) = other.waiting();
+    let refused = first.holding(other.clone());
+    assert!(
+        matches!(refused, Err(AppError::QuestionsHeld)),
+        "{:?}",
+        refused.as_ref().err()
+    );
+    assert_eq!(other.waiting().0, beside, "the refused handle was moved");
+}
+
+#[test]
 fn a_session_with_nothing_chosen_says_whether_a_provider_or_a_credential_is_missing() {
     // The same credentials the welcome's sentence is chosen from decide what a
     // turn is missing, so a client is told what the reader at a screen is.
