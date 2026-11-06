@@ -356,6 +356,13 @@ impl Runner {
         self
     }
 
+    /// The registry [`Runner::deferring`] gave this runner, which a client
+    /// settles the model's questions through; none where it was given none.
+    #[must_use]
+    pub const fn deferred(&self) -> Option<&Deferred> {
+        self.deferred.as_ref()
+    }
+
     /// Supplies the lazy private metadata store for explicitly authorized
     /// persistent prompt-cache resources.
     ///
@@ -1090,7 +1097,7 @@ impl Runner {
         ask: &mut dyn Ask,
         run: &RunContext<'_>,
     ) -> Result<Turned, TurnError> {
-        let turned = self.invoking(prompt, attachments, ask, run).await;
+        let turned = self.invoking(Some((prompt, attachments)), ask, run).await;
 
         // The invocation ends where the caller gets an answer it can act on,
         // and what the input checks made of these words ends with it. A
@@ -1103,15 +1110,52 @@ impl Runner {
         turned
     }
 
-    /// The turn itself, for [`Runner::turn`] to end the invocation around.
+    /// A turn with no words of its own, run to deliver the answers settled in
+    /// this runner's registry of questions asked without waiting (see
+    /// [`Runner::deferring`]) while no turn was running to take them.
+    ///
+    /// It is [`Runner::turn`] without the prompt: no input check runs, since
+    /// there are no words to judge, and nothing the person typed is recorded,
+    /// so the turn's first request carries the delivered answers and the
+    /// model's own words before them. Everything else is as a turn: it is
+    /// announced and finished by the same events, held to the same policy,
+    /// and returns the same answer.
+    ///
+    /// With no answer settled and undelivered, or no registry, there is
+    /// nothing to say: it takes no pass, records nothing and reports nothing,
+    /// and returns a run that yielded having spent nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`TurnError`], exactly as [`Runner::turn`] describes.
+    ///
+    /// # Panics
+    ///
+    /// Where [`Runner::turn`] does.
+    pub async fn answering(
+        &mut self,
+        ask: &mut dyn Ask,
+        run: &RunContext<'_>,
+    ) -> Result<Turned, TurnError> {
+        if !self.undelivered(run.ancestry()) {
+            return Ok(Turned::Ran(RunResult::new(
+                run.run(),
+                StopReason::Yielded,
+                Spend::NONE,
+            )));
+        }
+        self.invoking(None, ask, run).await
+    }
+
+    /// The turn itself, for [`Runner::turn`] to end the invocation around and
+    /// [`Runner::answering`] to run with nothing `said`.
     ///
     /// # Errors
     ///
     /// [`TurnError`], exactly as [`Runner::turn`] describes.
     async fn invoking(
         &mut self,
-        prompt: &str,
-        attachments: Box<[Attachment]>,
+        said: Option<(&str, Box<[Attachment]>)>,
         ask: &mut dyn Ask,
         run: &RunContext<'_>,
     ) -> Result<Turned, TurnError> {
@@ -1157,20 +1201,23 @@ impl Runner {
         // announced. A refusal here is a turn that never happened: nothing is
         // recorded, nothing is sent, and no pair of events tells the reader a
         // turn began. A check reaching no decision is not a refusal and does
-        // not say the prompt was rejected, because it did not say that.
-        match self.checking_input(prompt, run) {
-            Ok(Judged::Allowed) => {}
-            Ok(Judged::Rejected(rejection)) => {
-                return Ok(Turned::Rejected {
-                    rejection,
-                    stop: None,
-                });
-            }
-            Err(problem) => {
-                return Ok(Turned::Undecided {
-                    problem,
-                    stop: None,
-                });
+        // not say the prompt was rejected, because it did not say that. A
+        // turn with nothing said has no words to judge.
+        if let Some((prompt, _)) = &said {
+            match self.checking_input(prompt, run) {
+                Ok(Judged::Allowed) => {}
+                Ok(Judged::Rejected(rejection)) => {
+                    return Ok(Turned::Rejected {
+                        rejection,
+                        stop: None,
+                    });
+                }
+                Err(problem) => {
+                    return Ok(Turned::Undecided {
+                        problem,
+                        stop: None,
+                    });
+                }
             }
         }
 
@@ -1178,14 +1225,16 @@ impl Runner {
         events.post(Event::TurnStarted {
             turn: self.state.turn,
         });
-        self.record(
-            run.ancestry(),
-            Message::User {
-                text: prompt.into(),
-                attachments,
-            },
-        )
-        .await?;
+        if let Some((prompt, attachments)) = said {
+            self.record(
+                run.ancestry(),
+                Message::User {
+                    text: prompt.into(),
+                    attachments,
+                },
+            )
+            .await?;
+        }
 
         // Posted from here rather than from either place the exchange ends, so
         // that a turn cannot acquire a second way to finish without one. The

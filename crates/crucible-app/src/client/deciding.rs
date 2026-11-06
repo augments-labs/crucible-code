@@ -719,7 +719,7 @@ pub async fn confirmed(
 /// One question, as it is put to a client, or `None` where it cannot be put
 /// whole: more answers than a list here holds, or an answer's name longer than
 /// the words here carry.
-fn put(question: &Question) -> Option<Asked> {
+pub(crate) fn put(question: &Question) -> Option<Asked> {
     if question.answers().len() > ITEMS {
         return None;
     }

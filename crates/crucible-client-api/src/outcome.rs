@@ -755,6 +755,42 @@ pub enum NotesOutcome {
     },
 }
 
+/// How answering a waiting batch of questions ended, where no turn was run to
+/// deliver it.
+///
+/// A batch that is not waiting is not one of these: it is refused as
+/// [`ErrorCode::StaleQuestions`], since nothing it named was there to answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AnswerOutcome {
+    /// The batch is settled, and the turn that has the conversation, or the
+    /// next one, delivers it to the model once.
+    Settled,
+    /// The replies did not fit the batch, which still waits. The problem's
+    /// code is [`ErrorCode::InvalidAnswer`].
+    Invalid(Problem),
+}
+
+impl AnswerOutcome {
+    fn written(&self) -> Value {
+        match self {
+            Self::Settled => Writing::kind("settled"),
+            Self::Invalid(problem) => Writing::kind("invalid").with("problem", problem.written()),
+        }
+        .finish()
+    }
+
+    fn read(value: Value) -> Result<Self, Refusal> {
+        let mut fields = Fields::of(value)?;
+        let answer = match fields.kind()?.as_str() {
+            "settled" => Self::Settled,
+            "invalid" => Self::Invalid(Problem::read(fields.take("problem")?)?),
+            _ => return Err(ErrorCode::Malformed.into()),
+        };
+        fields.done()?;
+        Ok(answer)
+    }
+}
+
 /// What came of one command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
@@ -805,6 +841,10 @@ pub enum Outcome {
     Usage(Usage),
     /// The client is leaving; the host closes what it owns.
     Leaving,
+    /// Answering waiting questions ended with no turn run for it: one had the
+    /// conversation and delivers it, or the route has none to run. Where an
+    /// idle conversation runs one, the answer is that turn's outcome.
+    Answer(AnswerOutcome),
 }
 
 /// An [`Outcome`], paired with the request it answers.
@@ -871,7 +911,7 @@ impl Outcome {
     }
 
     /// Every kind of outcome, by the word it crosses as.
-    pub const KINDS: [&'static str; 23] = [
+    pub const KINDS: [&'static str; 24] = [
         "refused",
         "turn",
         "room",
@@ -895,6 +935,7 @@ impl Outcome {
         "context",
         "usage",
         "leaving",
+        "answer",
     ];
 
     /// The word this kind crosses as.
@@ -924,6 +965,7 @@ impl Outcome {
             Self::Context(_) => "context",
             Self::Usage(_) => "usage",
             Self::Leaving => "leaving",
+            Self::Answer(_) => "answer",
         }
     }
 
@@ -955,6 +997,7 @@ impl Outcome {
             Self::Notes(notes) => object.with("notes", notes.written()),
             Self::Context(context) => object.with("context", context.written()),
             Self::Usage(usage) => object.with("usage", usage.written()),
+            Self::Answer(answer) => object.with("answer", answer.written()),
         }
         .finish()
     }
@@ -992,6 +1035,7 @@ impl Outcome {
             "context" => Self::Context(Context::read(fields.take("context")?)?),
             "usage" => Self::Usage(Usage::read(fields.take("usage")?)?),
             "leaving" => Self::Leaving,
+            "answer" => Self::Answer(AnswerOutcome::read(fields.take("answer")?)?),
             _ => return Err(ErrorCode::Malformed.into()),
         };
         fields.done()?;

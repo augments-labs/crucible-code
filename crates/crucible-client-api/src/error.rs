@@ -50,11 +50,19 @@ pub enum ErrorCode {
     /// which no conversation is part of. Nothing was done, and asking that door
     /// is what changes the answer.
     AgentsDoor,
+    /// An answer named a batch of questions that is not waiting: it was never
+    /// asked, or was answered or cleared already. Nothing was settled.
+    StaleQuestions,
+    /// An answer named a waiting batch and did not fit it: the wrong number of
+    /// replies, or one its question cannot take. Nothing was settled, the
+    /// batch still waits, and the sentence beside the code says what did not
+    /// fit without repeating what was sent.
+    InvalidAnswer,
 }
 
 impl ErrorCode {
     /// Every code, in the order they are declared.
-    pub const EVERY: [Self; 15] = [
+    pub const EVERY: [Self; 17] = [
         Self::Malformed,
         Self::TooLarge,
         Self::UnsupportedVersion,
@@ -70,6 +78,8 @@ impl ErrorCode {
         Self::PlanLimit,
         Self::NeedsCapability,
         Self::AgentsDoor,
+        Self::StaleQuestions,
+        Self::InvalidAnswer,
     ];
 
     /// The word this code crosses as.
@@ -91,6 +101,8 @@ impl ErrorCode {
             Self::PlanLimit => "plan_limit",
             Self::NeedsCapability => "needs_capability",
             Self::AgentsDoor => "agents_door",
+            Self::StaleQuestions => "stale_questions",
+            Self::InvalidAnswer => "invalid_answer",
         }
     }
 
@@ -118,6 +130,8 @@ impl ErrorCode {
             Self::PlanLimit => "the plan's usage limit is reached until one of its windows resets",
             Self::NeedsCapability => "the command needs a capability the request did not claim",
             Self::AgentsDoor => "the command is served by the agents door, not by a conversation",
+            Self::StaleQuestions => "the answer names questions that are not waiting",
+            Self::InvalidAnswer => "the answer does not fit the questions it names",
         }
     }
 }

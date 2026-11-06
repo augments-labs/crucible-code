@@ -8,7 +8,7 @@
 
 use std::collections::BTreeSet;
 
-use crucible_types::SessionId;
+use crucible_types::{QuestionId, SessionId};
 use serde_json::{Value, json};
 
 use crate::bounds::{
@@ -22,9 +22,11 @@ const MARKER: &str = "hunter2-marker";
 /// Every field name a frame may hold.
 ///
 /// An allow-list, so a field added to any value is a field somebody read here.
-const KEYS: [&str; 79] = [
+const KEYS: [&str; 81] = [
     "agent",
     "agents",
+    "batches",
+    "replies",
     "ambiguous",
     "billing",
     "execution",
@@ -105,7 +107,8 @@ const KEYS: [&str; 79] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 60] = [
+const MORE_KEYS: [&str; 61] = [
+    "answer",
     "added",
     "done",
     "install",
@@ -283,19 +286,37 @@ fn permissions() -> [Pending; 3] {
     ]
 }
 
+fn asked() -> Asked {
+    Asked {
+        heading: marked(),
+        asks: marked(),
+        several: true,
+        choices: vec![Choice {
+            name: marked(),
+            says: marked(),
+            recommended: true,
+        }],
+    }
+}
+
 fn questions() -> Pending {
     Pending::Questions {
         id: PendingId::new(8),
-        questions: vec![Asked {
-            heading: marked(),
-            asks: marked(),
-            several: true,
-            choices: vec![Choice {
-                name: marked(),
-                says: marked(),
-                recommended: true,
-            }],
-        }],
+        questions: vec![asked()],
+    }
+}
+
+/// An answer to waiting questions: one reply chosen with a note, one declined.
+fn answer() -> Command {
+    Command::Answer {
+        id: QuestionId::numbered(3),
+        replies: vec![
+            Replied::Answered(Picked {
+                chosen: vec![Said::new(MARKER).unwrap()],
+                note: Said::new(MARKER).unwrap(),
+            }),
+            Replied::Declined,
+        ],
     }
 }
 
@@ -517,6 +538,7 @@ fn commands() -> Vec<Command> {
             method: name("oauth"),
         },
         Command::Exit,
+        answer(),
     ];
     commands.extend(decisions().into_iter().map(Command::Decide));
     commands.extend(Rung::EVERY.into_iter().map(Command::SetEffort));
@@ -954,6 +976,11 @@ fn outcomes() -> Vec<Outcome> {
             newest: name("0.43.3"),
         }),
         Outcome::Leaving,
+        Outcome::Answer(AnswerOutcome::Settled),
+        Outcome::Answer(AnswerOutcome::Invalid(Problem {
+            code: ErrorCode::InvalidAnswer,
+            message: marked(),
+        })),
     ];
     outcomes.extend(contexts().into_iter().map(Outcome::Context));
     outcomes.extend(usages().into_iter().map(Outcome::Usage));
@@ -1048,6 +1075,13 @@ fn progress() -> Vec<Progress> {
             stop: Stop::Cancelled,
         },
         Progress::Failed(problem()),
+        Progress::Waiting {
+            batches: vec![Waiting {
+                id: QuestionId::numbered(3),
+                questions: vec![asked()],
+            }],
+        },
+        Progress::Waiting { batches: vec![] },
     ]
 }
 
@@ -1259,49 +1293,50 @@ const fn turn_arm(one: &TurnOutcome) -> (usize, usize) {
 
 const fn command_arm(one: &Command) -> (usize, usize) {
     match one {
-        Command::Prompt(_) => (0, 41),
-        Command::Compact => (1, 41),
-        Command::Cancel => (2, 41),
-        Command::Decide(_) => (3, 41),
-        Command::Clear => (4, 41),
-        Command::Resume(_) => (5, 41),
+        Command::Prompt(_) => (0, 42),
+        Command::Compact => (1, 42),
+        Command::Cancel => (2, 42),
+        Command::Decide(_) => (3, 42),
+        Command::Clear => (4, 42),
+        Command::Resume(_) => (5, 42),
         Command::SelectModel {
             effort: Some(_), ..
-        } => (6, 41),
-        Command::SelectModel { effort: None, .. } => (7, 41),
-        Command::SetEffort(_) => (8, 41),
-        Command::SetMode(_) => (9, 41),
-        Command::CycleMode => (10, 41),
-        Command::Login { .. } => (11, 41),
-        Command::Logout { .. } => (12, 41),
-        Command::InspectCache => (13, 41),
-        Command::CleanCache => (14, 41),
-        Command::Sandbox { enabled: true } => (15, 41),
-        Command::Sandbox { enabled: false } => (16, 41),
-        Command::Theme(Theme::Drawing(_)) => (17, 41),
-        Command::Theme(Theme::Syntax(_)) => (18, 41),
-        Command::Help => (19, 41),
-        Command::ReleaseNotes { version: None } => (20, 41),
-        Command::ReleaseNotes { version: Some(_) } => (21, 41),
-        Command::Exit => (22, 41),
-        Command::SetSpeed(_) => (23, 41),
-        Command::Context => (24, 41),
-        Command::Usage => (25, 41),
-        Command::Setting { .. } => (26, 41),
-        Command::AskLimits => (27, 41),
-        Command::Disconnect { .. } => (28, 41),
-        Command::RemoveIntegration { .. } => (29, 41),
-        Command::SignOut { .. } => (30, 41),
-        Command::Connect { instance: Some(_) } => (31, 41),
-        Command::Connect { instance: None } => (32, 41),
-        Command::AgentCatalog => (33, 41),
-        Command::InstallAgent { .. } => (34, 41),
-        Command::UpdateAgent { .. } => (35, 41),
-        Command::RollbackAgent { .. } => (36, 41),
-        Command::RemoveAgent { .. } => (37, 41),
-        Command::VerifyAgent { .. } => (38, 41),
-        Command::SignInAgent { .. } => (39, 41),
-        Command::AddAgent { .. } => (40, 41),
+        } => (6, 42),
+        Command::SelectModel { effort: None, .. } => (7, 42),
+        Command::SetEffort(_) => (8, 42),
+        Command::SetMode(_) => (9, 42),
+        Command::CycleMode => (10, 42),
+        Command::Login { .. } => (11, 42),
+        Command::Logout { .. } => (12, 42),
+        Command::InspectCache => (13, 42),
+        Command::CleanCache => (14, 42),
+        Command::Sandbox { enabled: true } => (15, 42),
+        Command::Sandbox { enabled: false } => (16, 42),
+        Command::Theme(Theme::Drawing(_)) => (17, 42),
+        Command::Theme(Theme::Syntax(_)) => (18, 42),
+        Command::Help => (19, 42),
+        Command::ReleaseNotes { version: None } => (20, 42),
+        Command::ReleaseNotes { version: Some(_) } => (21, 42),
+        Command::Exit => (22, 42),
+        Command::SetSpeed(_) => (23, 42),
+        Command::Context => (24, 42),
+        Command::Usage => (25, 42),
+        Command::Setting { .. } => (26, 42),
+        Command::AskLimits => (27, 42),
+        Command::Disconnect { .. } => (28, 42),
+        Command::RemoveIntegration { .. } => (29, 42),
+        Command::SignOut { .. } => (30, 42),
+        Command::Connect { instance: Some(_) } => (31, 42),
+        Command::Connect { instance: None } => (32, 42),
+        Command::AgentCatalog => (33, 42),
+        Command::InstallAgent { .. } => (34, 42),
+        Command::UpdateAgent { .. } => (35, 42),
+        Command::RollbackAgent { .. } => (36, 42),
+        Command::RemoveAgent { .. } => (37, 42),
+        Command::VerifyAgent { .. } => (38, 42),
+        Command::SignInAgent { .. } => (39, 42),
+        Command::AddAgent { .. } => (40, 42),
+        Command::Answer { .. } => (41, 42),
     }
 }
 
@@ -1473,6 +1508,10 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
             NotesOutcome::One(_) => (1, 4),
             NotesOutcome::Unknown { .. } => (2, 4),
             NotesOutcome::NotAVersion { .. } => (3, 4),
+        },
+        Outcome::Answer(answer) => match answer {
+            AnswerOutcome::Settled => (0, 2),
+            AnswerOutcome::Invalid(_) => (1, 2),
         },
     }
 }
@@ -1866,7 +1905,7 @@ fn refused(bytes: &[u8]) -> (Option<u64>, ErrorCode) {
 
 #[test]
 fn a_version_this_build_does_not_speak_is_refused_by_name() {
-    for version in [0, 1, 2, 3, 4, 6, 65_535, 65_536, u64::MAX] {
+    for version in [0, 1, 2, 3, 4, 5, 7, 65_535, 65_536, u64::MAX] {
         let frame = with(asking(&json!({"kind": "help"})), "version", json!(version));
         assert_eq!(
             refused(&framed(&frame)),
@@ -1927,9 +1966,9 @@ fn a_frame_that_is_not_one_whole_request_is_malformed() {
         (b"not json".to_vec(), None),
         (b"[1, 2]".to_vec(), None),
         (b"{\"version\": 2".to_vec(), None),
-        (framed(&json!({"version": 5})), None),
+        (framed(&json!({"version": 6})), None),
         (
-            framed(&json!({"version": 5, "capabilities": [], "correlation": -1, "command": {}})),
+            framed(&json!({"version": 6, "capabilities": [], "correlation": -1, "command": {}})),
             None,
         ),
         (
@@ -1952,7 +1991,7 @@ fn a_frame_that_is_not_one_whole_request_is_malformed() {
             Some(41),
         ),
         (
-            framed(&json!({"version": 5, "capabilities": [], "correlation": 41,
+            framed(&json!({"version": 6, "capabilities": [], "correlation": 41,
                 "command": {"kind": "help"}, "also": true})),
             Some(41),
         ),
@@ -2249,10 +2288,10 @@ fn a_field_nobody_asked_for_refuses_the_frame_wherever_it_is_nested() {
 #[test]
 fn a_key_said_twice_is_refused_rather_than_one_of_them_believed() {
     let twice = [
-        r#"{"version":5,"capabilities":[],"correlation":41,"correlation":42,"command":{"kind":"help"}}"#,
-        r#"{"version":5,"capabilities":[],"correlation":41,"command":{"kind":"interrupt","kind":"help"}}"#,
-        r#"{"version":5,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"id":8,"ruling":"allow","lasting":"once"}}}"#,
-        r#"{"version":5,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"ruling":"deny","ruling":"allow","lasting":"once"}}}"#,
+        r#"{"version":6,"capabilities":[],"correlation":41,"correlation":42,"command":{"kind":"help"}}"#,
+        r#"{"version":6,"capabilities":[],"correlation":41,"command":{"kind":"interrupt","kind":"help"}}"#,
+        r#"{"version":6,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"id":8,"ruling":"allow","lasting":"once"}}}"#,
+        r#"{"version":6,"capabilities":[],"correlation":41,"command":{"kind":"decide","decision":{"kind":"ruled","id":7,"ruling":"deny","ruling":"allow","lasting":"once"}}}"#,
     ];
     for frame in twice {
         assert_eq!(
@@ -2262,7 +2301,7 @@ fn a_key_said_twice_is_refused_rather_than_one_of_them_believed() {
         );
     }
 
-    let once = r#"{"version":5,"capabilities":[],"correlation":41,"command":{"kind":"help"}}"#;
+    let once = r#"{"version":6,"capabilities":[],"correlation":41,"command":{"kind":"help"}}"#;
     assert!(Request::decode(once.as_bytes()).is_ok());
 }
 
@@ -2425,7 +2464,7 @@ fn progress_and_a_snapshot_say_their_version_and_another_is_refused_by_name() {
             "{frame}"
         );
 
-        for version in [0, 1, 2, 3, 4, 6, 65_536, u64::MAX] {
+        for version in [0, 1, 2, 3, 4, 5, 7, 65_536, u64::MAX] {
             let other = with(frame.clone(), "version", json!(version));
             assert_eq!(
                 read(&framed(&other)).unwrap_err().code(),
@@ -2629,7 +2668,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // alone moves that number and this digest, and leaves the revision.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (5, 15_958_461_296_867_727_732),
+        (6, 17_679_402_665_312_189_363),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );
@@ -2976,7 +3015,7 @@ fn limit_asking_crosses_as_a_command_of_its_own() {
 fn install_commands() -> Vec<Command> {
     commands()
         .into_iter()
-        .filter(|command| command.needs().is_some())
+        .filter(|command| command.needs() == Some(Capability::Install))
         .collect()
 }
 
@@ -3223,7 +3262,7 @@ fn the_install_commands_name_the_capability_a_client_has_to_have_claimed_and_no_
         assert_eq!(command.needs(), Some(Capability::Install), "{command:?}");
     }
     for command in commands() {
-        if !installs.contains(&command) {
+        if !installs.contains(&command) && command != answer() {
             assert_eq!(command.needs(), None, "{command:?}");
         }
     }
@@ -3380,7 +3419,7 @@ fn an_install_report_says_how_much_is_done_of_how_much_and_never_more() {
 fn an_install_report_is_held_to_the_frame_rules_every_other_report_is() {
     let frame = installs().remove(0).written();
 
-    for version in [0, 1, 2, 3, 4, 6, 65_536, u64::MAX] {
+    for version in [0, 1, 2, 3, 4, 5, 7, 65_536, u64::MAX] {
         let other = with(frame.clone(), "version", json!(version));
         assert_eq!(
             InstallProgress::decode(&framed(&other)).unwrap_err().code(),
@@ -3457,4 +3496,164 @@ fn an_install_report_cannot_be_read_as_anything_else_nor_anything_else_as_it() {
     for snapshot in snapshots() {
         assert!(InstallProgress::decode(&snapshot.encode().unwrap()).is_err());
     }
+}
+
+#[test]
+fn an_answer_names_its_batch_as_the_model_does_and_carries_one_reply_a_question() {
+    let frame = asking(&json!({"kind": "answer", "id": "q3", "replies": [
+        {"kind": "answered", "chosen": [MARKER], "note": MARKER},
+        {"kind": "declined"},
+    ]}));
+    let request = Request::decode(&framed(&frame)).unwrap();
+    assert_eq!(request.command(), &answer());
+    assert_eq!(
+        Request::decode(&request.encode().unwrap()).unwrap(),
+        request
+    );
+
+    // The batch is named only as the model was told it, so a client cannot
+    // name one the registry never handed out by spelling a number another way.
+    for id in [
+        json!("q03"),
+        json!("3"),
+        json!("Q3"),
+        json!("q-3"),
+        json!(3),
+        json!(""),
+    ] {
+        let frame = asking(&json!({"kind": "answer", "id": id, "replies": []}));
+        assert_eq!(
+            refused(&framed(&frame)),
+            (Some(41), ErrorCode::Malformed),
+            "{id}"
+        );
+    }
+
+    // A reply is chosen or declined, and nothing in between.
+    let frame = asking(&json!({"kind": "answer", "id": "q3", "replies": [{"kind": "maybe"}]}));
+    assert_eq!(
+        refused(&framed(&frame)),
+        (Some(41), ErrorCode::InvalidArgument)
+    );
+    let frame = asking(&json!({"kind": "answer", "id": "q3", "replies": [
+        {"kind": "declined", "note": "why"},
+    ]}));
+    assert_eq!(refused(&framed(&frame)), (Some(41), ErrorCode::Malformed));
+    let frame = asking(&json!({"kind": "answer", "id": "q3", "replies": [
+        {"kind": "answered", "chosen": []},
+    ]}));
+    assert_eq!(refused(&framed(&frame)), (Some(41), ErrorCode::Malformed));
+
+    // The sizes are the contract's, judged before the application sees any
+    // of it: more replies than a list carries, refused while the frame is read
+    // and so before its correlation is, and a note over its ceiling.
+    let many = vec![json!({"kind": "declined"}); ITEMS + 1];
+    let frame = asking(&json!({"kind": "answer", "id": "q3", "replies": many}));
+    assert_eq!(refused(&framed(&frame)), (None, ErrorCode::TooLarge));
+    let long = "n".repeat(SAID_BYTES + 1);
+    let frame = asking(&json!({"kind": "answer", "id": "q3", "replies": [
+        {"kind": "answered", "chosen": [], "note": long},
+    ]}));
+    assert_eq!(refused(&framed(&frame)), (Some(41), ErrorCode::TooLarge));
+}
+
+#[test]
+fn answering_waiting_questions_needs_the_capability_that_is_told_what_waits() {
+    assert_eq!(answer().needs(), Some(Capability::Questions));
+    assert_eq!(answer().kind(), "answer");
+    assert!(Command::KINDS.contains(&"answer"));
+
+    // Claimed or not, the command is read the same way: whether it is served
+    // is the application's to decide, by what the request claimed.
+    let claimed = with(
+        asking(&json!({"kind": "answer", "id": "q0", "replies": []})),
+        "capabilities",
+        json!(["questions"]),
+    );
+    let request = Request::decode(&framed(&claimed)).unwrap();
+    assert!(request.capabilities().has(Capability::Questions));
+    assert!(!request.capabilities().has(Capability::Progress));
+}
+
+#[test]
+fn the_waiting_report_carries_the_whole_set_each_time_and_says_when_none_waits() {
+    let waiting = Progress::Waiting {
+        batches: vec![
+            Waiting {
+                id: QuestionId::numbered(1),
+                questions: vec![asked()],
+            },
+            Waiting {
+                id: QuestionId::numbered(4),
+                questions: vec![asked(), asked()],
+            },
+        ],
+    };
+    let frame = waiting.encode().unwrap();
+    assert_eq!(Progress::decode(&frame).unwrap(), waiting);
+    let value: Value = serde_json::from_slice(&frame).unwrap();
+    assert_eq!(value.pointer("/progress"), Some(&json!("waiting")));
+    assert_eq!(value.pointer("/batches/0/id"), Some(&json!("q1")));
+    assert_eq!(value.pointer("/batches/1/id"), Some(&json!("q4")));
+    // Each question in the shape a question a turn stops on crosses in.
+    assert_eq!(
+        value.pointer("/batches/0/questions/0"),
+        questions().written().pointer("/questions/0")
+    );
+
+    let none = Progress::Waiting { batches: vec![] };
+    let value: Value = serde_json::from_slice(&none.encode().unwrap()).unwrap();
+    assert_eq!(value.pointer("/batches"), Some(&json!([])));
+
+    // A batch is named as the model names it, or the report is refused.
+    let mut misnamed: Value = serde_json::from_slice(&frame).unwrap();
+    *misnamed.pointer_mut("/batches/0/id").unwrap() = json!(1);
+    assert_eq!(
+        Progress::decode(&framed(&misnamed)).unwrap_err().code(),
+        ErrorCode::Malformed
+    );
+}
+
+#[test]
+fn an_answer_is_refused_with_a_code_for_a_batch_not_waiting_and_one_for_replies_that_do_not_fit() {
+    assert_eq!(ErrorCode::StaleQuestions.as_str(), "stale_questions");
+    assert_eq!(ErrorCode::InvalidAnswer.as_str(), "invalid_answer");
+    for code in [ErrorCode::StaleQuestions, ErrorCode::InvalidAnswer] {
+        assert!(ErrorCode::EVERY.contains(&code));
+        assert_eq!(ErrorCode::named(code.as_str()), Some(code));
+    }
+
+    // Settled, or not fitting with what did not fit: the second carries the
+    // reason, the first nothing, and both cross as the answer kind.
+    for answer in [
+        AnswerOutcome::Settled,
+        AnswerOutcome::Invalid(Problem {
+            code: ErrorCode::InvalidAnswer,
+            message: Text::cut("question 2 takes one answer"),
+        }),
+    ] {
+        let response = Response {
+            correlation: Some(Correlation::new(41)),
+            outcome: Outcome::Answer(answer),
+        };
+        let frame = response.encode().unwrap();
+        assert_eq!(Response::decode(&frame).unwrap(), response);
+        let value: Value = serde_json::from_slice(&frame).unwrap();
+        assert_eq!(value.pointer("/outcome/kind"), Some(&json!("answer")));
+    }
+    let invalid = Response {
+        correlation: None,
+        outcome: Outcome::Answer(AnswerOutcome::Invalid(Problem {
+            code: ErrorCode::InvalidAnswer,
+            message: Text::cut("question 2 takes one answer"),
+        })),
+    };
+    let value: Value = serde_json::from_slice(&invalid.encode().unwrap()).unwrap();
+    assert_eq!(
+        value.pointer("/outcome/answer"),
+        Some(
+            &json!({"kind": "invalid", "problem": {"code": "invalid_answer",
+            "message": {"text": "question 2 takes one answer", "truncated": false}}})
+        )
+    );
 }

@@ -95,6 +95,7 @@ impl Run {
         revealed.reveal("web_search");
 
         let conversation = assemble(&Startup {
+            deferred: None,
             providers: &catalogue(),
             provider: Some(serving(provider)),
             unasked: NO_MODEL_CHOSEN,

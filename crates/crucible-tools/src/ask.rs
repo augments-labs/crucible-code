@@ -366,8 +366,12 @@ impl Deferred {
 
     /// The waiting batches, as the value they are saved as.
     ///
-    /// The questions only: a settled batch is being delivered, and its replies
-    /// are the reader's words, which a saved state does not carry. The number
+    /// The questions only, oldest first. A batch settled and not yet taken is
+    /// saved as waiting, without its replies, which are the reader's words
+    /// and which a saved state does not carry: until the runner takes it the
+    /// answer is nowhere a log holds, so a process that ends before then
+    /// brings the batch back to be asked again rather than leaving it
+    /// unanswered. The number
     /// the next batch would be given goes with them, so that no id handed out
     /// before this state was taken is handed out again once it is restored, to
     /// a batch an old answer naming that id was never meant for. An id handed
@@ -379,7 +383,13 @@ impl Deferred {
     #[must_use]
     pub fn state(&self) -> Value {
         let held = self.held();
-        let waiting: Vec<Value> = held.waiting.iter().map(saved_batch).collect();
+        let mut batches: Vec<&Batch> = held
+            .waiting
+            .iter()
+            .chain(held.settled.iter().map(|done| &done.batch))
+            .collect();
+        batches.sort_by_key(|batch| batch.id());
+        let waiting: Vec<Value> = batches.into_iter().map(saved_batch).collect();
         json!({ "next": held.next, "waiting": waiting })
     }
 
@@ -388,7 +398,9 @@ impl Deferred {
     /// Taken whole or not at all: a batch it cannot read, an id it repeats or
     /// could never have handed out, a batch no person can be asked, or more
     /// than may wait refuses the lot, and nothing changes. An id restored is
-    /// never handed out again.
+    /// never handed out again. A batch `state` lists that is settled here
+    /// stays settled, as [`Deferred::state`] saves it, rather than waiting
+    /// twice.
     ///
     /// # Errors
     ///
@@ -420,6 +432,10 @@ impl Deferred {
         }
 
         let mut held = self.held();
+        let restored: Vec<Batch> = restored
+            .into_iter()
+            .filter(|batch| !held.settled.iter().any(|done| done.id() == batch.id()))
+            .collect();
         let mut ids: Vec<QuestionId> = restored
             .iter()
             .map(Batch::id)

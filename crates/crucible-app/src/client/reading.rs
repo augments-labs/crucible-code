@@ -17,7 +17,8 @@ use crucible_models::{Effort, Served, Speed};
 use crucible_runner::{Breakdown, Category, Event, PlanLimitStop, SessionCost, Totals, TurnError};
 use crucible_tools::{Argument, Mode};
 use crucible_types::{
-    CostAmount, LimitGroup, ModelGroup, ModelKey, PlanWindows, Scope, StopReason, Used, Utc, Window,
+    Batch, CostAmount, LimitGroup, ModelGroup, ModelKey, PlanWindows, Scope, StopReason, Used, Utc,
+    Window,
 };
 
 use crate::providers::CredentialSource;
@@ -130,12 +131,26 @@ pub fn billing(conversation: &Conversation) -> api::Billing {
 /// the one place progress is handed to a client, so it is where that is held.
 /// Called by a consumer with no terminal — today the one the headless tests
 /// drive; the terminal draws a turn from the runner's events as they stand.
+///
+/// What waits for the person's answer is the one exception. It goes to a
+/// client that claimed [`Capability::Questions`], whether or not it asked for
+/// progress, because that client is the one answering it, and to no other.
+/// Each question is put as a blocking question is put: a batch holding one
+/// that cannot be put whole is left out, as a blocking question like it is
+/// declined unput, and the question tool refuses such a call before it asks.
 #[must_use]
 pub fn progress(
     capabilities: Capabilities,
     event: &Event,
     serving: Option<&str>,
 ) -> Option<Progress> {
+    if let Event::Waiting { batches } = event {
+        return capabilities
+            .has(Capability::Questions)
+            .then(|| Progress::Waiting {
+                batches: batches.iter().filter_map(waiting).collect(),
+            });
+    }
     if !capabilities.has(Capability::Progress) {
         return None;
     }
@@ -220,7 +235,21 @@ pub fn progress(
         | Event::Aged { .. }
         | Event::Unread { .. }
         | Event::Steered { .. }
+        // Answered above, under the capability that is told it.
         | Event::Waiting { .. } => return None,
+    })
+}
+
+/// One waiting batch, as a client is told it, or `None` where a question in
+/// it cannot be put whole.
+fn waiting(batch: &Batch) -> Option<api::Waiting> {
+    Some(api::Waiting {
+        id: batch.id(),
+        questions: batch
+            .questions()
+            .iter()
+            .map(super::deciding::put)
+            .collect::<Option<_>>()?,
     })
 }
 

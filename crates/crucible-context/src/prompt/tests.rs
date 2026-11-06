@@ -880,6 +880,12 @@ fn the_questions_section_says_once_that_none_wait_when_the_last_is_answered() {
     held.settle(id, vec![Reply::Answered(Answered::new(["SQLite"]))])
         .expect("settled");
 
+    // Settled and not yet taken, it is still saved as waiting, so nothing
+    // has changed for the model until its answer is taken to be delivered.
+    let settled = QuestionsSection::new(Questions::Held(&held), Some(&before));
+    assert!(settled.render(Seen::Known(&before)).is_none());
+    assert_eq!(held.take_settled().len(), 1);
+
     let now = QuestionsSection::new(Questions::Held(&held), Some(&before));
     let said = now
         .render(Seen::Known(&before))

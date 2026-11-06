@@ -1194,3 +1194,141 @@ fn a_registry_handed_in_numbering_past_the_log_reports_nothing_changed() {
         "an unchanged list was reported"
     );
 }
+
+#[test]
+fn the_sessions_own_registry_handed_back_unchanged_reports_nothing_changed() {
+    let store = Recording::started("a session asking three times");
+    let held = Deferred::default();
+    let mut first = deferring(
+        vec![
+            calling("c1", "ask", "{}"),
+            calling("c2", "ask", "{}"),
+            calling("c3", "ask", "{}"),
+            saying("three wait"),
+        ],
+        &held,
+        Arc::clone(&store),
+    );
+    first.turn("plan it").expect("a turn");
+    drop(first);
+
+    // This session's own registry as it left it: it numbers exactly as far as
+    // the log recorded, which is the case a front end handing its registry
+    // back produces, so there is nothing to continue and nothing to report.
+    let mut resumed = resumed(&store, vec![saying("nothing new")], Some(&held));
+    resumed.turn("continue").expect("a turn");
+
+    assert_eq!(
+        reported(&resumed.seen),
+        Vec::<usize>::new(),
+        "an unchanged list was reported"
+    );
+    assert_eq!(waiting_ids(&held), ["q0", "q1", "q2"]);
+}
+
+/// A turn with no words of its own, run to deliver what was settled.
+fn answering(scripted: &mut Scripted) -> Result<StopReason, TurnError> {
+    let run = scripted.runner.starting(
+        &scripted.events,
+        &scripted.cancel,
+        &scripted.steer,
+        &scripted.aside,
+    );
+    scripted
+        .runner
+        .answering(&mut scripted.says, &run)
+        .awaited()
+        .map(ran)
+}
+
+#[test]
+fn a_delivering_turn_carries_the_answer_and_no_words_of_its_own() {
+    let held = Deferred::default();
+    let mut scripted = deferring(
+        vec![
+            calling("c1", "ask", "{}"),
+            saying("one waits"),
+            saying("with the answer in hand"),
+        ],
+        &held,
+        Recording::nowhere(),
+    );
+    scripted.turn("plan it").expect("a turn");
+    let before = scripted.runner.transcript().messages().len();
+    scripted.seen.try_iter().for_each(drop);
+
+    // Settled while nothing runs: the person answered between turns.
+    settle_oldest(&held, chose());
+    let stop = answering(&mut scripted).expect("a delivering turn");
+
+    assert_eq!(stop, StopReason::Yielded);
+    let transcript = scripted.runner.transcript();
+    let [(at, text)] = answers(transcript)
+        .try_into()
+        .expect("delivered exactly once");
+    assert!(at >= before, "the answer was delivered before this turn");
+    assert!(text.contains("- Storage: SQLite"), "{text}");
+    let typed = transcript
+        .messages()
+        .iter()
+        .skip(before)
+        .filter(
+            |message| matches!(message, Message::User { text, .. } if !text.starts_with(ANSWERED)),
+        )
+        .count();
+    assert_eq!(typed, 0, "a delivering turn recorded words of its own");
+
+    let sent = scripted.sent.lock().unwrap();
+    assert_eq!(sent.len(), 3, "one request for the delivering turn");
+    assert!(
+        sent.last().is_some_and(|last| last.transcript_len > at),
+        "its first request does not carry the answer"
+    );
+    assert!(!held.any_settled(), "the delivered batch is still held");
+
+    let events: Vec<Event> = scripted.seen.try_iter().collect();
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, Event::TurnStarted { .. })),
+        "the delivering turn was not announced"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            Event::TurnFinished {
+                stop: StopReason::Yielded,
+                ..
+            }
+        )),
+        "the delivering turn did not say how it ended"
+    );
+}
+
+#[test]
+fn a_delivering_turn_with_nothing_settled_takes_no_pass() {
+    let held = Deferred::default();
+    let mut scripted = deferring(
+        vec![calling("c1", "ask", "{}"), saying("one waits")],
+        &held,
+        Recording::nowhere(),
+    );
+    scripted.turn("plan it").expect("a turn");
+    let before = scripted.runner.transcript().messages().len();
+    scripted.seen.try_iter().for_each(drop);
+
+    answering(&mut scripted).expect("nothing to deliver is no failure");
+
+    assert_eq!(scripted.sent.lock().unwrap().len(), 2, "a pass was taken");
+    assert_eq!(
+        scripted.runner.transcript().messages().len(),
+        before,
+        "something was recorded"
+    );
+    assert_eq!(
+        scripted.seen.try_iter().count(),
+        0,
+        "a turn that did not run was reported"
+    );
+    assert_eq!(waiting_ids(&held), ["q0"], "the waiting batch changed");
+}

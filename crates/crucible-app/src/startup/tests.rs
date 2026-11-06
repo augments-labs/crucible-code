@@ -501,6 +501,7 @@ fn on_the_program_over(
     ));
     assembled(
         &Startup {
+            deferred: None,
             providers: &catalogue(),
             provider: Some(serving("anthropic")),
             unasked: NO_MODEL_CHOSEN,
@@ -623,6 +624,7 @@ fn after_logging_in(
     let services = Services::new();
     let next = assembled(
         &Startup {
+            deferred: None,
             providers: &catalogue(),
             provider: Some(serving(provider)),
             unasked: NO_MODEL_CHOSEN,
@@ -833,6 +835,7 @@ fn resuming_over(
     ));
     assembled(
         &Startup {
+            deferred: None,
             providers: &catalogue(),
             provider: Some(serving("anthropic")),
             unasked: NO_MODEL_CHOSEN,
@@ -1383,6 +1386,7 @@ fn a_startup_with_nothing_to_authenticate_with_leaves_no_session_behind() {
     // key — and the lookup says there is none regardless of what the shell
     // running this test happens to export.
     let Err(problem) = assemble(&Startup {
+        deferred: None,
         providers: &catalogue(),
         provider: Some(serving("openai")),
         unasked: NO_MODEL_CHOSEN,
@@ -1436,6 +1440,7 @@ fn a_session_an_agent_ran_is_refused_before_anything_to_run_it_on_is_built() {
 
     for resuming in [Resuming::Newest, Resuming::Exact(id)] {
         let Err(problem) = assemble(&Startup {
+            deferred: None,
             providers: &catalogue(),
             provider: Some(serving("openai")),
             unasked: NO_MODEL_CHOSEN,
@@ -1486,6 +1491,7 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
     let (logs, workspace) = (sample.logs(), sample.workspace());
 
     let conversation = assemble(&Startup {
+        deferred: None,
         providers: &catalogue(),
         provider: None,
         unasked: NOTHING_TO_ASK,
@@ -1534,6 +1540,7 @@ fn a_session_with_nothing_chosen_says_whether_a_provider_or_a_credential_is_miss
         let (logs, workspace) = (sample.logs(), sample.workspace());
 
         let conversation = assemble(&Startup {
+            deferred: None,
             providers: &catalogue(),
             provider: None,
             unasked: missing.sentence(),
@@ -1579,6 +1586,7 @@ fn a_run_s_snapshot_says_who_the_credential_it_started_with_bills() {
         let from = |name: &str| (name == "ANTHROPIC_API_KEY").then(|| "a-key".to_owned());
 
         let conversation = assemble(&Startup {
+            deferred: None,
             providers: &catalogue(),
             provider,
             unasked: NOTHING_TO_ASK,
@@ -1621,6 +1629,7 @@ fn specified(model: &str, effort: Option<Effort>, settings: &Settings, told: &st
     let (logs, workspace) = (sample.logs(), sample.workspace());
     let catalogue = catalogue();
     let startup = Startup {
+        deferred: None,
         providers: &catalogue,
         provider: Some(serving("anthropic")),
         unasked: NOTHING_TO_ASK,
@@ -1691,6 +1700,7 @@ fn reaching_for(named: &str, model: Option<&'static str>) -> Reaching {
 
     web(
         &Startup {
+            deferred: None,
             providers: &catalogue(),
             provider: Some(serving(named)),
             unasked: NO_MODEL_CHOSEN,
@@ -1878,11 +1888,18 @@ fn a_session_with_no_model_chosen_reaches_nothing() {
 
 /// The tools a session with these terms would be given.
 fn offered(terminal: bool) -> crucible_runner::Tools {
+    holding(terminal, None)
+}
+
+/// [`offered`], to a front end holding the model's questions in `deferred`
+/// where it supplied a registry.
+fn holding(terminal: bool, deferred: Option<crucible_tools::Deferred>) -> crucible_runner::Tools {
     let workspace = Workspace::open(std::env::temp_dir().as_path()).expect("a directory");
     let logs = std::env::temp_dir().join(format!("crucible-tools-{}", std::process::id()));
 
     tools(
         &Startup {
+            deferred,
             providers: &catalogue(),
             provider: None,
             unasked: NOTHING_TO_ASK,
@@ -1941,6 +1958,45 @@ fn a_session_with_nobody_there_does_not_carry_a_tool_for_asking_them() {
             .deferred()
             .iter()
             .all(|schema| schema.name() != "ask_user")
+    );
+}
+
+/// A call asking one question without waiting for its answer.
+const DEFERRED: &str = r#"{"mode":"deferred","questions":[{"heading":"Language","question":"Which language?","answers":[{"answer":"Rust"},{"answer":"Python"}]}]}"#;
+
+#[test]
+fn a_front_end_holding_questions_for_later_is_offered_the_question_tool_without_a_terminal() {
+    let held = crucible_tools::Deferred::default();
+    let tools = holding(false, Some(held.clone()));
+
+    assert!(
+        tools
+            .advertised()
+            .iter()
+            .any(|schema| schema.name == "ask_user"),
+        "nobody at a keyboard, but a front end that answers later"
+    );
+    let asking = tools.find("ask_user").expect("offered");
+    assert!(
+        asking
+            .tool()
+            .validate(&crucible_types::ToolArgs::new(DEFERRED))
+            .is_ok(),
+        "the registry the front end supplied is the tool's"
+    );
+}
+
+#[test]
+fn a_front_end_that_holds_no_questions_is_refused_the_mode_that_would_hold_them() {
+    let tools = offered(true);
+
+    let asking = tools.find("ask_user").expect("offered at a keyboard");
+    assert!(
+        asking
+            .tool()
+            .validate(&crucible_types::ToolArgs::new(DEFERRED))
+            .is_err(),
+        "a question held for later with nowhere to hold it"
     );
 }
 
@@ -2117,6 +2173,7 @@ fn a_session_is_assembled_with_stable_instructions_and_workspace_context() {
     let configured = sample.settings(r#"{"compaction":{"spendCeiling":500000}}"#);
 
     let mut conversation = assemble(&Startup {
+        deferred: None,
         providers: &catalogue(),
         provider: None,
         unasked: NOTHING_TO_ASK,
@@ -2255,6 +2312,7 @@ fn naming_a_server_nobody_wrote_down_fails_before_a_session_file_exists() {
     let (logs, workspace) = (sample.logs(), sample.workspace());
 
     let Err(problem) = assemble(&Startup {
+        deferred: None,
         providers: &catalogue(),
         provider: None,
         unasked: NOTHING_TO_ASK,
@@ -2306,6 +2364,7 @@ fn a_run_that_named_a_server_reaches_the_runner_as_a_live_toolset() {
 
     let starting = |hosting: &[String]| {
         assemble(&Startup {
+            deferred: None,
             providers: &catalogue(),
             provider: None,
             unasked: NOTHING_TO_ASK,
@@ -2767,6 +2826,7 @@ fn a_start_holds_a_warned_route_until_the_users_file_says_yes() {
         let settings = sample.user(document);
 
         assemble(&Startup {
+            deferred: None,
             providers: &catalogue(),
             provider: Some(serving("google")),
             unasked: NOTHING_TO_ASK,
@@ -2823,6 +2883,7 @@ fn a_run_starts_at_the_speed_the_users_file_keeps_for_the_model_in_force() {
         services.consent().keeps_in(file);
 
         let conversation = assemble(&Startup {
+            deferred: None,
             providers: &catalogue(),
             provider: Some(serving("openai")),
             unasked: NO_MODEL_CHOSEN,
@@ -2867,6 +2928,7 @@ fn a_search_on_a_warned_model_sends_nothing_until_its_yes() {
 
     let reaching = web(
         &Startup {
+            deferred: None,
             providers: &catalogue(),
             provider: Some(serving("meta")),
             unasked: NO_MODEL_CHOSEN,

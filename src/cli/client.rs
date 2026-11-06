@@ -140,6 +140,7 @@ const fn claimed(command: &Command) -> Capabilities {
         | Command::Compact
         | Command::Cancel
         | Command::Decide(_)
+        | Command::Answer { .. }
         | Command::Clear
         | Command::Resume(_)
         | Command::SelectModel { .. }

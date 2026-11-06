@@ -1747,10 +1747,14 @@ kinds=$(sed -n '/pub const KINDS: \[/,/\];/p' "$request_owner/command.rs" | grep
 # acts as for that agent, so they joined the others too. Adding a catalog
 # agent, the thirty-sixth, installs its program and writes an instance that
 # names it into the user's file, so it changes which program a route may start
-# and joined them as well.
+# and joined them as well. Answering questions the model asked without
+# waiting, the thirty-seventh, settles them where they wait and, when nothing
+# runs, starts the turn that delivers them, as a prompt does: it is no ruling
+# on a pending action and no yes to a route, so it changes nothing a session
+# may do and stayed out.
 # One more is one nobody has asked this of.
-if (($(grep -c . <<<"$kinds") != 36)); then
-    printf '    FAIL the client contract no longer has the 36 commands the seventeen were picked out of; decide whether the new one changes what a session may do, then move the 36 in this check\n'
+if (($(grep -c . <<<"$kinds") != 37)); then
+    printf '    FAIL the client contract no longer has the 37 commands the seventeen were picked out of; decide whether the new one changes what a session may do, then move the 37 in this check\n'
     failed=1
 fi
 while IFS= read -r word; do

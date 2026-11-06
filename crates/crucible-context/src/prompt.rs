@@ -821,8 +821,9 @@ pub(crate) fn recorded_next(state: &Value) -> Option<u64> {
 /// a session recorded, numbers: an answer in the transcript naming an id that
 /// state spent would otherwise settle a new batch. Ids `held` already handed
 /// out are its own and stay as they are. A state that records no readable
-/// number, or one `held` already numbers past, changes nothing, so nothing is
-/// reported as changed.
+/// number, or one `held` already numbers as far as or past, changes nothing,
+/// so nothing is reported as changed. A real raise is a change to `held`, so
+/// the waiting list, though the same batches, is reported once more.
 ///
 /// Nothing may register on `held` while this runs: the list read before it is
 /// put back, without the batch registered in between. A runner calls it from

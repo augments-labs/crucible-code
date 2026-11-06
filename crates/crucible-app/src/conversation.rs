@@ -56,7 +56,7 @@ use crucible_runner::{
 };
 use crucible_runtime::{Aside, Cancel, Steer};
 use crucible_session::{FilePromptCacheResourceStore, Session, SessionError};
-use crucible_tools::{Looking, Mode, Summary};
+use crucible_tools::{Deferred, Looking, Mode, Summary};
 use crucible_types::{
     Attachment, Compacting, Modalities, Modality, PlanWindows, PromptCachePolicy,
     PromptCacheResourceError, PromptCacheResourceRecord, SessionId, Spend, ToolCall, Transcript,
@@ -662,6 +662,55 @@ impl Conversation {
         turned
     }
 
+    /// Takes one turn with no words of its own, to deliver the answers settled
+    /// in the registry of questions the model asked without waiting.
+    ///
+    /// It is [`Conversation::turn`] with no prompt, as [`Runner::answering`]
+    /// says: with nothing settled it takes no pass and says so as a run that
+    /// yielded having spent nothing.
+    ///
+    /// `None` on an installed agent's route, where nothing runs: the registry
+    /// is this conversation's own runner's, which the agent's turns do not
+    /// deliver from, and that runner's next turn delivers what is settled.
+    ///
+    /// # Errors
+    ///
+    /// [`TurnError`], as [`Conversation::turn`] says.
+    pub async fn answering(
+        &mut self,
+        ask: &mut dyn Asker,
+        run: &RunContext<'_>,
+    ) -> Option<Result<Turned, TurnError>> {
+        if self.outside.is_some() {
+            return None;
+        }
+        let asked = self.runner.speed();
+        let turned = self.runner.answering(ask, run).await;
+        self.refusal_written(asked);
+        Some(turned)
+    }
+
+    /// The registry the model's questions asked without waiting are held in,
+    /// which the front end supplied at startup; none where it supplied none.
+    #[must_use]
+    pub fn deferred(&self) -> Option<&Deferred> {
+        self.runner.deferred()
+    }
+
+    /// Whether an answer is settled that no turn on this conversation's own
+    /// runner has delivered yet.
+    pub(crate) fn undelivered(&self) -> bool {
+        self.outside.is_none() && self.deferred().is_some_and(Deferred::any_settled)
+    }
+
+    /// Empties the registry of questions asked without waiting: they belonged
+    /// to the session just left.
+    fn forget_questions(&self) {
+        if let Some(held) = self.deferred() {
+            held.clear();
+        }
+    }
+
     /// Starts a new session and records into it from here on, with nothing
     /// carried over from the one being left.
     ///
@@ -691,6 +740,7 @@ impl Conversation {
                 outside.route(),
             )?);
             outside.restart(Transcript::new(), None).await;
+            self.forget_questions();
             return Ok(std::mem::replace(&mut self.session, session));
         }
         let session = Arc::new(Session::start(sessions, workspace, branch)?);
@@ -725,7 +775,9 @@ impl Conversation {
         let same = on
             .zip(opened.as_ref())
             .is_some_and(|(on, opened)| on.same_route(opened));
-        match (opened, on.is_some()) {
+        // Whichever it goes on on, the questions waiting were the session
+        // left's; the one picked up brings its own back at its first turn.
+        let resumed = match (opened, on.is_some()) {
             (Some(opened), true) if same => {
                 let (session, transcript) =
                     Session::reopen_routed(sessions, workspace, id, &opened)?;
@@ -776,7 +828,11 @@ impl Conversation {
                 Ok(self.inside(Arc::new(session), transcript).await)
             }
             (None, true) => Err(Unpicked::NextLaunch),
+        };
+        if resumed.is_ok() {
+            self.forget_questions();
         }
+        resumed
     }
 
     /// Moves the conversation onto the installed agent `entry`, from a

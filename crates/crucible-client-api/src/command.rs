@@ -21,16 +21,21 @@
 //! and finds `version`, `instance` and `method` by equality against the catalog
 //! or the configuration, before any of them is used, and none is ever read as a
 //! path, an argument or shell text.
+//!
+//! Answering the questions a turn left waiting is served only to a client that
+//! claimed [`Capability::Questions`], the one that is told what waits. The
+//! command names the batch by the id it was reported under and carries one
+//! reply per question; whether the replies fit is the registry's to decide.
 
 use std::fmt;
 use std::str::FromStr;
 
-use crucible_types::SessionId;
+use crucible_types::{QuestionId, SessionId};
 use serde_json::Value;
 
 use crate::bounds::{Name, PROMPT_BYTES};
 use crate::error::{ErrorCode, Refusal};
-use crate::pending::Decision;
+use crate::pending::{Decision, Picked};
 use crate::request::Capability;
 use crate::wire::{Fields, Writing};
 
@@ -51,6 +56,23 @@ pub enum Command {
     /// its own finds no turn stopped and nothing pending, and is refused as
     /// [`StaleDecision`](crate::ErrorCode::StaleDecision).
     Decide(Decision),
+    /// Answer a batch of questions a turn left waiting, without stopping.
+    ///
+    /// The batch is named by the id
+    /// [`Progress::Waiting`](crate::Progress::Waiting) reported it under, and
+    /// takes one reply for each of its questions, in order. A batch that is
+    /// not waiting is refused as
+    /// [`StaleQuestions`](crate::ErrorCode::StaleQuestions), and replies it
+    /// cannot take as [`InvalidAnswer`](crate::ErrorCode::InvalidAnswer); either
+    /// way nothing is settled and the batch still waits. An answer settles
+    /// questions and nothing else: it is never a ruling on a pending action
+    /// nor a yes to sending anything.
+    Answer {
+        /// The batch answered.
+        id: QuestionId,
+        /// One reply per question, in the order they were asked.
+        replies: Vec<Replied>,
+    },
     /// Start a new session, leaving this one where a resume can find it.
     Clear,
     /// Pick a recorded session of this workspace back up.
@@ -233,11 +255,12 @@ pub enum Command {
 
 impl Command {
     /// The word each arm crosses as, in the order the arms are declared.
-    pub const KINDS: [&'static str; 36] = [
+    pub const KINDS: [&'static str; 37] = [
         "prompt",
         "compact",
         "cancel",
         "decide",
+        "answer",
         "clear",
         "resume",
         "select_model",
@@ -280,6 +303,7 @@ impl Command {
             Self::Compact => "compact",
             Self::Cancel => "cancel",
             Self::Decide(_) => "decide",
+            Self::Answer { .. } => "answer",
             Self::Clear => "clear",
             Self::Resume(_) => "resume",
             Self::SelectModel { .. } => "select_model",
@@ -318,8 +342,9 @@ impl Command {
     /// The capability a client has to have claimed for this command to be
     /// taken at all, where it takes one.
     ///
-    /// The install commands do: a client that did not claim
-    /// [`Capability::Install`] is refused them as
+    /// The install commands do, and so does answering waiting questions: a
+    /// client that did not claim [`Capability::Install`], or
+    /// [`Capability::Questions`] for an answer, is refused them as
     /// [`ErrorCode::NeedsCapability`] and nothing changes. Every other command
     /// is taken whatever was claimed, and a capability only decides which
     /// questions and reports that client is put while it runs.
@@ -334,6 +359,7 @@ impl Command {
             | Self::RemoveAgent { .. }
             | Self::VerifyAgent { .. }
             | Self::SignInAgent { .. } => Some(Capability::Install),
+            Self::Answer { .. } => Some(Capability::Questions),
             Self::Prompt(_)
             | Self::Compact
             | Self::Cancel
@@ -370,6 +396,10 @@ impl Command {
         match self {
             Self::Prompt(prompt) => object.with("text", prompt.as_str()),
             Self::Decide(decision) => object.with("decision", decision.written()),
+            Self::Answer { id, replies } => object.with("id", id.to_string()).with(
+                "replies",
+                replies.iter().map(Replied::written).collect::<Vec<_>>(),
+            ),
             Self::Resume(session) => object.with("session", session.as_str()),
             Self::SelectModel {
                 provider,
@@ -433,6 +463,14 @@ impl Command {
             "compact" => Self::Compact,
             "cancel" => Self::Cancel,
             "decide" => Self::Decide(Decision::read(fields.take("decision")?)?),
+            "answer" => Self::Answer {
+                id: QuestionId::parse(&fields.string("id")?).ok_or(ErrorCode::Malformed)?,
+                replies: fields
+                    .list("replies")?
+                    .into_iter()
+                    .map(Replied::read)
+                    .collect::<Result<_, _>>()?,
+            },
             "clear" => Self::Clear,
             "resume" => Self::Resume(session(&fields.string("session")?)?),
             "select_model" => Self::SelectModel {
@@ -535,6 +573,39 @@ fn word<T: FromStr<Err = Refusal>>(value: &Value) -> Result<T, Refusal> {
         .as_str()
         .ok_or_else(|| Refusal::new(ErrorCode::Malformed))?
         .parse()
+}
+
+/// What one question of a waiting batch is answered with.
+///
+/// Declining is a reply of its own, not an empty choice: the person would not
+/// decide that question, and the model must not read it as any of the answers
+/// it offered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Replied {
+    /// The answers chosen, and a note beside them.
+    Answered(Picked),
+    /// The person would not decide it.
+    Declined,
+}
+
+impl Replied {
+    fn written(&self) -> Value {
+        match self {
+            Self::Answered(picked) => picked.written_into(Writing::kind("answered")).finish(),
+            Self::Declined => Writing::kind("declined").finish(),
+        }
+    }
+
+    fn read(value: Value) -> Result<Self, Refusal> {
+        let mut fields = Fields::of(value)?;
+        let replied = match fields.kind()?.as_str() {
+            "answered" => Self::Answered(Picked::taken(&mut fields)?),
+            "declined" => Self::Declined,
+            _ => return Err(ErrorCode::InvalidArgument.into()),
+        };
+        fields.done()?;
+        Ok(replied)
+    }
 }
 
 /// The words of a prompt: never empty, never over [`PROMPT_BYTES`].

@@ -89,17 +89,17 @@ pub mod usage;
 mod wire;
 
 pub use bounds::{Name, Said, Text};
-pub use command::{Command, Mode, Pace, Palette, Prompt, Rung, Theme};
+pub use command::{Command, Mode, Pace, Palette, Prompt, Replied, Rung, Theme};
 pub use context::{Category, Context};
 pub use error::{ErrorCode, Refusal};
 pub use outcome::{
-    AgentAction, CacheOutcome, CleanOutcome, ClearOutcome, EffortOutcome, Forced, Group,
-    LoginOutcome, LogoutOutcome, Missing, ModelOutcome, NotesOutcome, Outcome, Problem, Release,
-    Resource, Response, ResumeOutcome, Retained, RoomOutcome, SandboxOutcome, SettingOutcome,
-    SpeedOutcome, Standing, Stop, ThemeOutcome, TurnOutcome,
+    AgentAction, AnswerOutcome, CacheOutcome, CleanOutcome, ClearOutcome, EffortOutcome, Forced,
+    Group, LoginOutcome, LogoutOutcome, Missing, ModelOutcome, NotesOutcome, Outcome, Problem,
+    Release, Resource, Response, ResumeOutcome, Retained, RoomOutcome, SandboxOutcome,
+    SettingOutcome, SpeedOutcome, Standing, Stop, ThemeOutcome, TurnOutcome,
 };
 pub use pending::{Asked, Choice, Decision, Effect, Lasting, Pending, PendingId, Picked, Ruling};
-pub use progress::{InstallProgress, Progress, SummaryKind};
+pub use progress::{InstallProgress, Progress, SummaryKind, Waiting};
 pub use request::{Capabilities, Capability, Correlation, Refused, Request, Version};
 pub use snapshot::{Agents, Billing, Execution, Model, Percent, Snapshot};
 pub use usage::{Cost, Limit, LimitGroup, Limits, Reading, Usage, Used, Window};

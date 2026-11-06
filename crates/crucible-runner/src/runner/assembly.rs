@@ -17,10 +17,9 @@
 //! asked twice and is never ignored. The one exception is a record the
 //! registry would refuse to read back, too many batches or too many bytes,
 //! from which `asked` drops the oldest it no longer lists so the rest still
-//! come back. A batch asked during a tool pass is
-//! recorded, with the next id, before the result naming it
-//! ([`Runner::asked_since`]), so a log that holds the id brings the batch
-//! back and never hands the id out again.
+//! come back. A batch asked during a tool pass is recorded, with the next id,
+//! before the result naming it ([`Runner::asked_since`]), so a log that holds
+//! the id brings the batch back and never hands the id out again.
 
 use crucible_context::{
     ContextSection, Live, Questions, QuestionsSection, asked, assemble, continue_numbering,
@@ -59,7 +58,7 @@ impl Runner {
             // The first assembly of a session started or picked up: the
             // batches its log recorded as waiting come back. A registry
             // handed in already holding something keeps what it holds, which
-            // is right only for a fresh one or this session's own (see
+            // is right only for this session's own (see
             // [`Runner::deferring`]), and numbers past the ids the log spent;
             // [`Runner::pick_up`] empties the one it holds, so a session
             // picked up always gets its own batches back.

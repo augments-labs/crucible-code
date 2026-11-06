@@ -7,7 +7,8 @@ use crucible_client_api::{
 use crucible_context::Room;
 use crucible_runner::{RunContext, TurnError, Turned};
 use crucible_runtime::Cancel;
-use crucible_types::{Attachment, Compacting, Spend};
+use crucible_tools::Unsettled;
+use crucible_types::{Attachment, Compacting, Spend, StopReason};
 
 use super::deciding::{Deciding, Front};
 use super::reading;
@@ -35,6 +36,10 @@ pub enum Ended {
     Warned(Warned),
     /// Nothing was sent: a yes was given and could not be written down.
     Unrecorded(RememberError),
+    /// An answer to questions asked without waiting, and the registry's word
+    /// on it, where no turn was run for it: it was not taken, or it was
+    /// settled on an installed agent's route, whose turns do not deliver it.
+    Answered(Result<(), Unsettled>),
 }
 
 /// Takes the turn `request` asks for: a prompt, or a compaction somebody asked
@@ -59,6 +64,21 @@ pub enum Ended {
 /// about is not this one — and is refused as stale, as it is at every door.
 /// What the turn reports on the way goes to `run`, as it always has.
 ///
+/// An answer to questions the model asked without waiting is taken here while
+/// no turn runs. It is held as a prompt is, by what is missing and by the
+/// content-use question, since the turn it starts sends what the answer says;
+/// then the batch is settled, and a turn with no words of its own delivers it
+/// ([`Conversation::answering`]), whose ending is the answer. An answer that
+/// was not taken is [`Ended::Answered`], and nothing ran. On an installed
+/// agent's route the batch is settled and no turn starts: the registry is the
+/// conversation's own runner's, whose next turn delivers it.
+///
+/// A prompt turn that ends cut short with an answer settled during it and not
+/// delivered, which its last answer could not make room for, is followed at
+/// once by a turn that delivers it. The answer is that second turn's ending;
+/// the first's reached the client as its own `Finished` progress. A turn
+/// that was cancelled starts nothing after it.
+///
 /// The agent catalog commands are refused as [`ErrorCode::AgentsDoor`]: the
 /// agents door serves them, and no conversation does.
 pub async fn turn(
@@ -73,8 +93,10 @@ pub async fn turn(
     // not a turn, and is answered with what is missing before the session
     // hears of it. Ahead of the question below, which is about a vendor this
     // would never reach.
-    if matches!(request.command(), Command::Prompt(_) | Command::Compact)
-        && let Some(missing) = conversation.missing()
+    if matches!(
+        request.command(),
+        Command::Prompt(_) | Command::Compact | Command::Answer { .. }
+    ) && let Some(missing) = conversation.missing()
     {
         return Ended::Unasked(missing);
     }
@@ -110,11 +132,33 @@ pub async fn turn(
     match request.command() {
         Command::Prompt(prompt) => {
             let mut ask = Deciding::new(front, request.capabilities());
-            Ended::Turn(
-                conversation
-                    .turn(prompt.as_str(), attached, &mut ask, run)
-                    .await,
-            )
+            let turned = conversation
+                .turn(prompt.as_str(), attached, &mut ask, run)
+                .await;
+            if delivers_after(&turned)
+                && conversation.undelivered()
+                && let Some(delivered) = conversation.answering(&mut ask, run).await
+            {
+                return Ended::Turn(delivered);
+            }
+            Ended::Turn(turned)
+        }
+        Command::Answer { .. } => {
+            // A conversation holding no registry asked nothing that waits.
+            let Some(held) = conversation.deferred().cloned() else {
+                return Ended::Refused(ErrorCode::StaleQuestions.into());
+            };
+            match super::answering::settle(request, &held) {
+                Err(refusal) => Ended::Refused(refusal),
+                Ok(Ok(())) => {
+                    let mut ask = Deciding::new(front, request.capabilities());
+                    match conversation.answering(&mut ask, run).await {
+                        Some(delivered) => Ended::Turn(delivered),
+                        None => Ended::Answered(Ok(())),
+                    }
+                }
+                Ok(unsettled) => Ended::Answered(unsettled),
+            }
         }
         Command::Compact => {
             // What the recap cost is on the events `run` carried; a caller
@@ -166,6 +210,29 @@ pub async fn turn(
     }
 }
 
+/// Whether a turn that ended as `turned` is followed by one delivering an
+/// answer settled during it: where its last answer ended it short of what the
+/// model would have said, which left no pass for the answer. Each ending is
+/// named, so one the runner adds decides here.
+fn delivers_after(turned: &Result<Turned, TurnError>) -> bool {
+    let Ok(Turned::Ran(result)) = turned else {
+        // Refused, failed, or stopped while an installed agent acted: nothing
+        // ran on to a last answer, and the next turn delivers it.
+        return false;
+    };
+    match result.stop() {
+        // Settled after the turn looked for the last time.
+        StopReason::Yielded
+        | StopReason::OutOfTokens
+        | StopReason::Filtered
+        | StopReason::Paused
+        | StopReason::Unknown => true,
+        // Asked to stop, which starts nothing; out of room, which the next
+        // turn makes first; and an ending no turn returns.
+        StopReason::Cancelled | StopReason::WindowExceeded | StopReason::WantsTools => false,
+    }
+}
+
 /// The warned route a turn sent to the provider `conversation` serves would
 /// go on with no yes; none on an installed agent's route, which serves none.
 pub(super) fn unanswered(conversation: &Conversation) -> Option<Warned> {
@@ -180,7 +247,7 @@ pub(super) fn unanswered(conversation: &Conversation) -> Option<Warned> {
 fn held(conversation: &Conversation, command: &Command) -> Option<Warned> {
     match command {
         Command::Prompt(_) => unanswered(conversation).or_else(|| conversation.unlaunched()),
-        Command::Compact => unanswered(conversation),
+        Command::Compact | Command::Answer { .. } => unanswered(conversation),
         _ => None,
     }
 }
@@ -193,7 +260,8 @@ fn held(conversation: &Conversation, command: &Command) -> Option<Warned> {
 ///
 /// A decision handed in here is refused as stale rather than as busy: the
 /// turn's pending action is settled through the [`Front`] it was put to, and
-/// this door holds no action for a decision to name.
+/// this door holds no action for a decision to name. An answer is refused as
+/// stale for the same reason: [`answer`](super::answer) settles it.
 ///
 /// The agent catalog commands are refused as [`ErrorCode::AgentsDoor`], as at
 /// every door a conversation has.
@@ -204,6 +272,10 @@ pub fn interrupt(request: &Request, cancel: &Cancel) -> Outcome {
             Outcome::Cancelling
         }
         Command::Decide(_) => Outcome::Refused(ErrorCode::StaleDecision.into()),
+        // Nor does it hold a question for an answer to name: the running turn
+        // delivers what [`answer`](super::answer) settles in the registry the
+        // front end kept, and that door is the one a batch is answered at.
+        Command::Answer { .. } => Outcome::Refused(ErrorCode::StaleQuestions.into()),
         // The agents door serves the install commands and no conversation is
         // part of it, so this door will never serve them: a client is told
         // which door does, not to come back.
@@ -304,6 +376,7 @@ impl Ended {
             Self::Unrecorded(problem) => {
                 Outcome::Turn(TurnOutcome::Failed(Problem::failed(problem)))
             }
+            Self::Answered(settling) => super::answering::settled(settling.as_ref().map(|&()| ())),
             Self::Warned(warned) => Outcome::Turn(TurnOutcome::Warned {
                 route: Text::cut(&warned.route),
                 sentence: Text::cut(&full_sentence(warned)),
