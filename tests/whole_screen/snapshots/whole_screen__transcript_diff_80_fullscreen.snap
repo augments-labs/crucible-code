@@ -3,50 +3,50 @@ source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
 80x50 cursor 47,4 scrolled 0
-|╭─ crucible v###### ──────────────────────────────────────────────────────────╮ |
-|│                                                                             │ |
-|│ CRUCIBLE                                                                    │ |
-|│ /…/workspace                                                                │ |
-|│                                                                             │ |
-|│ Recent sessions                                                             │ |
-|│                                                                             │ |
-|│ No earlier session for this workspace                                       │ |
-|│                                                                             │ |
-|│ ─────────────────────────────────────────────────────────────────────────── │ |
-|│                                                                             │ |
-|│ Tips                                                                        │ |
-|│                                                                             │ |
-|│ · /          opens the command list                                         │ |
-|│ · \ enter    adds a line without sending                                    │ |
-|│ · shift+tab  steps the permission mode                                      │ |
-|│ · ctrl+c     clears the line typed so far                                   │ |
-|╰─────────────────────────────────────────────────────────────────────────────╯ |
-|                                                                                |
-|› show me the corpus                                                            |
-|                                                                                |
-|A change written as a diff fence:                                               |
-|                                                                                |
-|--- a/x.rs                                                                      |
-|+++ b/x.rs                                                                      |
-|@@ -1,2 +1,2 @@                                                                 |
-|-let a = 1;                                                                     |
-|+let a = 2;                                                                     |
-| context                                                                        |
-|                                                                                |
-|The same change written as a patch:                                             |
-|                                                                                |
-|--- a/y.rs                                                                      |
-|+++ b/y.rs                                                                      |
-|@@ -1 +1 @@                                                                     |
-|-old                                                                            |
-|+new                                                                            |
-|                                                                                |
-|A fence named diff that is not a diff at all:                                   |
-|                                                                                |
-|this is not a unified diff                                                      |
-|it has no hunks                                                                 |
-|                                                                                |
-|The corpus ends here.                                                           |
+|│                                                                             ││|
+|│ No earlier session for this workspace                                       ││|
+|│                                                                             ││|
+|│ ─────────────────────────────────────────────────────────────────────────── ││|
+|│                                                                             ││|
+|│ Tips                                                                        │┃|
+|│                                                                             │┃|
+|│ · /          opens the command list                                         │┃|
+|│ · \ enter    adds a line without sending                                    │┃|
+|│ · shift+tab  steps the permission mode                                      │┃|
+|│ · ctrl+c     clears the line typed so far                                   │┃|
+|╰─────────────────────────────────────────────────────────────────────────────╯┃|
+|                                                                               ┃|
+|› show me the corpus                                                           ┃|
+|                                                                               ┃|
+|A change written as a diff fence:                                              ┃|
+|                                                                               ●|
+|┌─ diff                                                                        ┃|
+|│ --- a/x.rs                                                                   ┃|
+|│ +++ b/x.rs                                                                   ┃|
+|│ @@ -1,2 +1,2 @@                                                              ┃|
+|│ -let a = 1;                                                                  ┃|
+|│ +let a = 2;                                                                  ┃|
+|│  context                                                                     ┃|
+|└─                                                                             ┃|
+|                                                                               ┃|
+|The same change written as a patch:                                            ┃|
+|                                                                               ┃|
+|┌─ patch                                                                       ┃|
+|│ --- a/y.rs                                                                   ┃|
+|│ +++ b/y.rs                                                                   ┃|
+|│ @@ -1 +1 @@                                                                  ┃|
+|│ -old                                                                         ┃|
+|│ +new                                                                         ┃|
+|└─                                                                             ┃|
+|                                                                               ┃|
+|A fence named diff that is not a diff at all:                                  ┃|
+|                                                                               ┃|
+|┌─ diff                                                                        ┃|
+|│ this is not a unified diff                                                   ┃|
+|│ it has no hunks                                                              ┃|
+|└─                                                                             ┃|
+|                                                                               ┃|
+|The corpus ends here.                                                          ┃|
 |                                                                                |
 |                                                                 99% window left|
 |╭──────────────────────────────────────────────────────────────────────────────╮|

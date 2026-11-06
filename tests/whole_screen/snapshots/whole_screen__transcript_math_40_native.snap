@@ -2,7 +2,7 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-40x63 cursor 57,4 scrollback 0
+40x63 cursor 59,4 scrollback 0
 |CRUCIBLE                                |
 |/…/workspace                            |
 |                                        |
@@ -52,7 +52,9 @@ expression: window.picture()
 |                                        |
 |A math fence:                           |
 |                                        |
-|x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}  |
+|┌─ math                                 |
+|│ x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}|
+|└─                                      |
 |                                        |
 |The corpus ends here.                   |
 |                                        |
@@ -63,6 +65,4 @@ expression: window.picture()
 |│ ›                                    │|
 |╰──────────────────────────────────────╯|
 |ask mode on    anthropic · claude-test-1|
-|                                        |
-|                                        |
 |                                        |

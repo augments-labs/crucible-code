@@ -3257,6 +3257,9 @@ fn every_cut_of_an_answer_draws_what_the_whole_answer_draws() {
         "- a bullet item long enough that it has to wrap onto another row\n  - a nested one long enough to wrap onto another row too\n1. a numbered item long enough that it has to wrap as well\n> a quote long enough that it has to wrap onto another row too\n",
         "| a | b |\n|:--|--:|\n| `x` | **y** |\n\nafter\n",
         "```rust\nfn main() { let x = 1; }\n```\n\n---\n\nend\n",
+        // A line of code that wraps at fifty columns, under a label cut short
+        // and beside an empty fence.
+        "```rust-with-a-label-longer-than-a-label-may-be-cut\nlet total = first_value + second_value + third_value + fourth_value;\n```\n```\n```\nend\n",
         "see #12 and owner/repo#3 at https://example.com/a_b.\n",
         "~~gone~~ and \\*kept\\* and a_b_c\n",
         // Every kind the reader holds whole, and the lines that only look
@@ -3606,5 +3609,456 @@ fn a_drag_reaching_the_held_row_copies_none_of_its_words() {
     assert!(
         wrote.contains(&onto_the_clipboard(&format!("{shown}\n"))),
         "{wrote:?}"
+    );
+}
+
+// A fenced block in its frame.
+
+/// The rows of `answer` drawn in a window of `columns`, blank ones left out,
+/// each cut of the blank it was padded with.
+fn framed_at(columns: usize, answer: &str, glyphs: Glyphs) -> Vec<String> {
+    let mut drawn = reading(columns, 40);
+    drawn.render.draws(glyphs);
+    drawn.answer(answer);
+    drawn
+        .rows()
+        .into_iter()
+        .map(|row| row.trim_end().to_owned())
+        .filter(|row| !row.is_empty())
+        .collect()
+}
+
+#[test]
+fn a_fence_is_drawn_in_a_frame_naming_its_language() {
+    let rows = framed_at(
+        64,
+        "```rust\nlet x = 1;\nlet y = 2;\n```\n",
+        Glyphs::Unicode,
+    );
+
+    assert_eq!(rows, ["┌─ rust", "│ let x = 1;", "│ let y = 2;", "└─"]);
+}
+
+#[test]
+fn a_fence_is_drawn_in_the_ascii_frame_too() {
+    let rows = framed_at(64, "```rust\nlet x = 1;\n```\n", Glyphs::Ascii);
+
+    assert_eq!(rows, ["+- rust", "| let x = 1;", "+-"]);
+}
+
+#[test]
+fn a_fence_naming_no_language_is_a_frame_with_no_label() {
+    let rows = framed_at(64, "```\nplain text\n```\n", Glyphs::Unicode);
+
+    assert_eq!(rows, ["┌─", "│ plain text", "└─"]);
+}
+
+#[test]
+fn an_empty_fence_is_its_frame_and_no_refusal() {
+    let rows = framed_at(64, "```rust\n```\n", Glyphs::Unicode);
+
+    assert_eq!(rows, ["┌─ rust", "└─"]);
+}
+
+#[test]
+fn a_blank_line_of_code_keeps_its_place_in_the_frame() {
+    let rows = framed_at(64, "```\none\n\ntwo\n```\n", Glyphs::Unicode);
+
+    assert_eq!(rows, ["┌─", "│ one", "│", "│ two", "└─"]);
+}
+
+/// A line of code that cannot fit thirty columns beside its gutter.
+const CODE_LINE: &str = "let total = first_value + second_value + third_value + fourth_value;";
+
+/// What a code row says after its gutter, and whether that gutter marked it as
+/// a continuation.
+fn beyond_the_gutter(row: &str, glyphs: Glyphs) -> Option<(bool, String)> {
+    let side = format!("{} ", glyphs.vertical());
+    let again = format!("{} ", glyphs.continued());
+    row.strip_prefix(side.as_str())
+        .map(|code| (false, code.to_owned()))
+        .or_else(|| {
+            row.strip_prefix(again.as_str())
+                .map(|code| (true, code.to_owned()))
+        })
+}
+
+#[test]
+fn a_wrapped_code_row_is_marked_as_a_continuation() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let rows = framed_at(30, &format!("```rust\n{CODE_LINE}\n```\n"), glyphs);
+
+        let code: Vec<(bool, String)> = rows
+            .iter()
+            .filter_map(|row| beyond_the_gutter(row, glyphs))
+            .collect();
+        assert!(code.len() > 2, "{rows:#?}");
+        assert_eq!(
+            code.iter().map(|(again, _)| *again).collect::<Vec<_>>(),
+            std::iter::once(false)
+                .chain(std::iter::repeat_n(true, code.len() - 1))
+                .collect::<Vec<_>>(),
+            "{rows:#?}"
+        );
+        assert_eq!(
+            code.iter()
+                .map(|(_, code)| code.as_str())
+                .collect::<String>(),
+            CODE_LINE,
+            "wrapping lost or added code: {rows:#?}"
+        );
+        for row in &rows {
+            assert!(crate::width::columns(row) <= 30, "{row:?} is too wide");
+        }
+    }
+}
+
+#[test]
+fn a_wrapped_code_row_marks_itself_with_the_glyph_of_its_set() {
+    let unicode = framed_at(30, &format!("```\n{CODE_LINE}\n```\n"), Glyphs::Unicode);
+    let ascii = framed_at(30, &format!("```\n{CODE_LINE}\n```\n"), Glyphs::Ascii);
+
+    assert!(
+        unicode.iter().any(|row| row.starts_with("┆ ")),
+        "{unicode:#?}"
+    );
+    assert!(ascii.iter().any(|row| row.starts_with(": ")), "{ascii:#?}");
+    assert!(!ascii.iter().any(|row| row.contains(['┌', '│', '└', '┆'])));
+}
+
+#[test]
+fn a_fence_narrowed_wraps_as_a_fence_that_narrow_does() {
+    let answer = format!("```rust\n{CODE_LINE}\n```\n");
+    let fresh = framed_at(30, &answer, Glyphs::Unicode);
+
+    let mut drawn = reading(64, 40);
+    drawn.answer(&answer);
+    drawn.resize(30, 40);
+    let narrowed: Vec<String> = drawn
+        .rows()
+        .into_iter()
+        .map(|row| row.trim_end().to_owned())
+        .filter(|row| !row.is_empty())
+        .collect();
+
+    assert_eq!(narrowed, fresh);
+}
+
+/// The window row `needle` starts, among `rows`.
+fn row_starting(rows: &[String], needle: &str) -> usize {
+    rows.iter()
+        .position(|row| row.starts_with(needle))
+        .unwrap_or_else(|| panic!("no row starts {needle:?}: {rows:#?}"))
+}
+
+#[test]
+fn copying_a_wrapped_code_row_gives_the_line_as_written() {
+    let mut drawn = reading(30, 12);
+    drawn.answer(&format!("```rust\n{CODE_LINE}\n```\n"));
+    let rows = drawn.rows();
+    let first = row_starting(&rows, "│ let total");
+    let last = row_starting(&rows, "└─") - 1;
+    assert!(last > first + 1, "the line did not wrap: {rows:#?}");
+    drawn.take();
+
+    let wrote = drag(&mut drawn, (first, 0), (last, 29));
+
+    assert!(
+        wrote.contains(&onto_the_clipboard(CODE_LINE)),
+        "{wrote:?} is not {CODE_LINE:?} on the clipboard"
+    );
+}
+
+#[test]
+fn a_drag_over_a_whole_fenced_block_copies_the_code_and_not_its_edges() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let mut drawn = reading(30, 12);
+        drawn.draws(glyphs);
+        drawn.answer("```rust\nlet x = 1;\nlet y = 2;\n```\n");
+        let rows = drawn.rows();
+        let top = row_starting(&rows, glyphs.square().0);
+        let bottom = rows
+            .iter()
+            .rposition(|row| row.starts_with(glyphs.square().1))
+            .expect("a bottom edge");
+        drawn.take();
+
+        let wrote = drag(&mut drawn, (top, 0), (bottom, 29));
+
+        assert!(
+            wrote.contains(&onto_the_clipboard("let x = 1;\nlet y = 2;")),
+            "{rows:#?} gave {wrote:?}"
+        );
+    }
+}
+
+/// A short window with the scroll rail on, holding a fenced block and the line
+/// after it, at the foot of a transcript taller than the window: so every row
+/// ends in a rail glyph, as it does by default once there is something to
+/// scroll.
+fn railed_block(glyphs: Glyphs, tail: usize) -> Drawn {
+    let mut drawn = Drawn::new(30, 6);
+    drawn.rails(true);
+    drawn.wears(colourful());
+    drawn.draws(glyphs);
+    for line in 0..20 {
+        drawn.commit(&format!("line {line}")).unwrap();
+    }
+    drawn.answer("```rust\nlet x = 1;\nlet y = 2;\n```\nafter\n");
+    for line in 0..tail {
+        drawn.commit(&format!("tail {line}")).unwrap();
+    }
+    drawn
+}
+
+/// The window row that starts with `needle`, last one first.
+fn last_row_starting(rows: &[String], needle: &str) -> usize {
+    rows.iter()
+        .rposition(|row| row.starts_with(needle))
+        .unwrap_or_else(|| panic!("no row starts {needle:?}: {rows:#?}"))
+}
+
+#[test]
+fn with_the_rail_drawn_a_drag_over_a_whole_fenced_block_copies_the_code_alone() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let mut drawn = railed_block(glyphs, 0);
+        let rows = drawn.rows();
+        let top = row_starting(&rows, glyphs.square().0);
+        let bottom = last_row_starting(&rows, glyphs.square().1);
+        assert!(bottom > top + 2, "{rows:#?}");
+        drawn.take();
+
+        let wrote = drag(&mut drawn, (top, 0), (bottom, 29));
+
+        assert!(
+            wrote.contains(&onto_the_clipboard("let x = 1;\nlet y = 2;")),
+            "{rows:#?} gave {wrote:?}"
+        );
+    }
+}
+
+#[test]
+fn with_the_rail_drawn_the_line_after_a_fenced_block_follows_its_code_without_a_gap() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let mut drawn = railed_block(glyphs, 0);
+        let rows = drawn.rows();
+        let last = row_starting(&rows, &format!("{} let y", glyphs.vertical()));
+        let after = row_starting(&rows, "after");
+        drawn.take();
+
+        let wrote = drag(&mut drawn, (last, 0), (after, 29));
+
+        assert!(
+            wrote.contains(&onto_the_clipboard("let y = 2;\nafter")),
+            "{rows:#?} gave {wrote:?}"
+        );
+    }
+}
+
+#[test]
+fn with_the_rail_drawn_a_drag_from_the_bottom_edge_takes_the_next_line_alone() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let mut drawn = railed_block(glyphs, 0);
+        let rows = drawn.rows();
+        let bottom = last_row_starting(&rows, glyphs.square().1);
+        let after = row_starting(&rows, "after");
+        drawn.take();
+
+        let wrote = drag(&mut drawn, (bottom, 0), (after, 29));
+
+        assert!(
+            wrote.contains(&onto_the_clipboard("after")),
+            "{rows:#?} gave {wrote:?}"
+        );
+    }
+}
+
+#[test]
+fn with_the_rail_drawn_a_drag_that_scrolled_off_the_window_still_copies_the_code_alone() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let mut drawn = railed_block(glyphs, 8);
+        assert!(drawn.scrolled(-8).unwrap());
+        let rows = drawn.rows();
+        let top = row_starting(&rows, glyphs.square().0);
+        // The button goes down on the top edge, and the band is carried on
+        // until that row and the code beside it are above the window.
+        drawn.take();
+        drawn
+            .took(Pressed::Clicked {
+                row: top,
+                column: 0,
+            })
+            .unwrap();
+        drawn.took(Pressed::Dragged { row: 5, column: 6 }).unwrap();
+        assert!(drawn.scrolled(8).unwrap());
+        let foot = drawn.rows();
+        assert!(
+            !foot.iter().any(|row| row.starts_with(glyphs.square().0)),
+            "{foot:#?}"
+        );
+        drawn.took(Pressed::Dragged { row: 0, column: 6 }).unwrap();
+        drawn.take();
+        drawn.took(Pressed::Released { row: 0, column: 6 }).unwrap();
+
+        let wrote = drawn.take();
+        let expected = "let x = 1;\nlet y = 2;\nafter\ntail 0\ntail 1\ntail 2";
+        assert!(
+            wrote.contains(&onto_the_clipboard(expected)),
+            "{rows:#?} {foot:#?} gave {wrote:?}"
+        );
+    }
+}
+
+#[test]
+fn copying_across_two_wrapped_lines_keeps_the_break_between_them() {
+    let second = "let other = fourth_value * fifth_value * sixth_value;";
+    let mut drawn = reading(30, 16);
+    drawn.answer(&format!("```rust\n{CODE_LINE}\n{second}\n```\n"));
+    let rows = drawn.rows();
+    let first = row_starting(&rows, "│ let total");
+    let last = row_starting(&rows, "└─") - 1;
+    drawn.take();
+
+    let wrote = drag(&mut drawn, (first, 0), (last, 29));
+
+    assert!(
+        wrote.contains(&onto_the_clipboard(&format!("{CODE_LINE}\n{second}"))),
+        "{wrote:?}"
+    );
+}
+
+#[test]
+fn copying_the_start_of_a_wrapped_line_gives_the_start_as_written() {
+    let mut drawn = reading(30, 12);
+    drawn.answer(&format!("```rust\n{CODE_LINE}\n```\n"));
+    let rows = drawn.rows();
+    let first = row_starting(&rows, "│ let total");
+    let code_of = |at: usize| {
+        let row = rows.get(at).expect("a row");
+        beyond_the_gutter(row.trim_end(), Glyphs::Unicode).expect("code")
+    };
+    let (_, head) = code_of(first);
+    let (_, tail) = code_of(first + 1);
+    drawn.take();
+
+    let wrote = drag(&mut drawn, (first, 0), (first + 1, 29));
+
+    let expected = format!("{head}{tail}");
+    assert!(CODE_LINE.starts_with(&expected), "{expected:?}");
+    assert!(wrote.contains(&onto_the_clipboard(&expected)), "{wrote:?}");
+}
+
+/// A fence's label as a model might write it to be read as an instruction.
+const HOSTILE_LABELS: [(&str, &str); 9] = [
+    ("\u{1b}]0;a title it chose\u{7}rust", "rust"),
+    ("\u{1b}]8;;https://example.invalid\u{1b}\\rust", "rust"),
+    ("ru\u{7}st\u{8}", "rust"),
+    ("ru\u{85}st", "rust"),
+    ("\u{202e}tsur\u{202c}", "tsur"),
+    ("\u{2066}rust\u{2069}", "rust"),
+    ("\u{10eeee}\u{305}\u{305}rust", "rust"),
+    ("\u{1b}P1$r\u{1b}\\rust", "1$rrust"),
+    ("\u{1b}_Gi=1;AAAA\u{1b}\\rust", "Gi=1;AAAArust"),
+];
+
+#[test]
+fn a_hostile_fence_label_reaches_the_terminal_as_nothing_but_its_name() {
+    for (label, name) in HOSTILE_LABELS {
+        let mut drawn = reading(64, 12);
+        drawn.answer(&format!("```{label}\ncode\n```\n"));
+
+        let rows = drawn.rows();
+        let top = rows
+            .iter()
+            .find(|row| row.starts_with('┌'))
+            .unwrap_or_else(|| panic!("no frame for {label:?}: {rows:#?}"));
+        assert_eq!(top.trim_end(), format!("┌─ {name}"), "for {label:?}");
+
+        let written = drawn.render.terminal.written();
+        for hostile in ["\u{1b}]", "\u{1b}P", "\u{1b}_", "\u{7}", "\u{8}", "\u{85}"] {
+            assert!(
+                !written.contains(hostile),
+                "{hostile:?} reached the terminal for {label:?}"
+            );
+        }
+        for hostile in ['\u{202e}', '\u{2066}', '\u{2069}', '\u{10eeee}'] {
+            assert!(
+                !written.contains(hostile),
+                "{hostile:?} reached the terminal for {label:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_fence_label_longer_than_a_label_may_be_is_cut_short() {
+    let long = "x".repeat(200);
+    let rows = framed_at(64, &format!("```{long}\ncode\n```\n"), Glyphs::Unicode);
+
+    let top = rows.first().expect("a frame");
+    assert!(top.starts_with("┌─ xxx"), "{top:?}");
+    assert!(top.ends_with('…'), "{top:?}");
+    assert!(crate::width::columns(top) < 64, "{top:?}");
+}
+
+/// A fence named `mermaid` holding more than the reader will hold back.
+fn mermaid_past_its_cap() -> String {
+    let line = format!("A{} --> B", "a".repeat(990));
+    let mut answer = String::from("```mermaid\n");
+    for _ in 0..20 {
+        answer.push_str(&line);
+        answer.push('\n');
+    }
+    answer.push_str("```\n");
+    answer
+}
+
+#[test]
+fn a_held_block_past_its_cap_is_drawn_as_written_with_its_refusal_in_the_label() {
+    let mut drawn = reading(1100, 40);
+    drawn.answer(&mermaid_past_its_cap());
+
+    let rows: Vec<String> = drawn
+        .rows()
+        .into_iter()
+        .map(|row| row.trim_end().to_owned())
+        .filter(|row| !row.is_empty())
+        .collect();
+    assert_eq!(
+        rows.first().map(String::as_str),
+        Some("┌─ mermaid · longer than this can hold · shown as written"),
+        "{rows:#?}"
+    );
+    assert_eq!(rows.iter().filter(|row| row.starts_with("│ A")).count(), 20);
+    assert_eq!(rows.last().map(String::as_str), Some("└─"));
+}
+
+#[test]
+fn a_held_block_that_fits_its_cap_carries_no_refusal() {
+    let mut drawn = reading(64, 40);
+    drawn.answer("```mermaid\ngraph TD\n  A --> B\n```\n");
+
+    let rows = drawn.rows();
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row.contains("longer than this can hold")),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_held_block_past_its_cap_names_its_refusal_in_ascii_with_the_ascii_dot() {
+    let mut drawn = reading(1100, 40);
+    drawn.render.draws(Glyphs::Ascii);
+    drawn.answer(&mermaid_past_its_cap());
+
+    let rows = drawn.rows();
+    assert_eq!(
+        rows.iter()
+            .map(|row| row.trim_end())
+            .find(|row| row.starts_with("+-")),
+        Some("+- mermaid - longer than this can hold - shown as written"),
+        "{rows:#?}"
     );
 }

@@ -2,11 +2,7 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x50 cursor 45,4 scrollback 0
-|╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
-|│                                  │ Recent sessions                           │|
-|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
-|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No earlier session for this workspace     │|
+80x50 cursor 47,4 scrollback 4
 |│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
 |│                                  │ ───────────────────────────────────────── │|
 |│  /…/workspace                    │                                           │|
@@ -22,25 +18,31 @@ expression: window.picture()
 |                                                                                |
 |A change written as a diff fence:                                               |
 |                                                                                |
-|--- a/x.rs                                                                      |
-|+++ b/x.rs                                                                      |
-|@@ -1,2 +1,2 @@                                                                 |
-|-let a = 1;                                                                     |
-|+let a = 2;                                                                     |
-| context                                                                        |
+|┌─ diff                                                                         |
+|│ --- a/x.rs                                                                    |
+|│ +++ b/x.rs                                                                    |
+|│ @@ -1,2 +1,2 @@                                                               |
+|│ -let a = 1;                                                                   |
+|│ +let a = 2;                                                                   |
+|│  context                                                                      |
+|└─                                                                              |
 |                                                                                |
 |The same change written as a patch:                                             |
 |                                                                                |
-|--- a/y.rs                                                                      |
-|+++ b/y.rs                                                                      |
-|@@ -1 +1 @@                                                                     |
-|-old                                                                            |
-|+new                                                                            |
+|┌─ patch                                                                        |
+|│ --- a/y.rs                                                                    |
+|│ +++ b/y.rs                                                                    |
+|│ @@ -1 +1 @@                                                                   |
+|│ -old                                                                          |
+|│ +new                                                                          |
+|└─                                                                              |
 |                                                                                |
 |A fence named diff that is not a diff at all:                                   |
 |                                                                                |
-|this is not a unified diff                                                      |
-|it has no hunks                                                                 |
+|┌─ diff                                                                         |
+|│ this is not a unified diff                                                    |
+|│ it has no hunks                                                               |
+|└─                                                                              |
 |                                                                                |
 |The corpus ends here.                                                           |
 |                                                                                |
@@ -51,5 +53,3 @@ expression: window.picture()
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|
-|                                                                                |
-|                                                                                |
