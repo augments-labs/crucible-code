@@ -2467,7 +2467,7 @@ impl<T: Terminal> Renderer<T> {
             glyphs: *glyphs,
             theme,
         }
-        .take(slot, text, None)?;
+        .take(slot, text, None);
         self.written_out(false)
     }
 
@@ -2653,7 +2653,10 @@ impl<T: Terminal> Taking<'_, T> {
     /// Add what the reader said: a run of text, or a whole block.
     fn said(&mut self, said: Said<'_>) -> Result<(), TerminalError> {
         match said {
-            Said::Run { slot, text, link } => self.take(slot, text, link),
+            Said::Run { slot, text, link } => {
+                self.take(slot, text, link);
+                Ok(())
+            }
             Said::Block(block) => self.block(block),
             Said::Retract => {
                 self.record.retract();
@@ -2699,7 +2702,7 @@ impl<T: Terminal> Taking<'_, T> {
     /// there: a row of the record is spans this program painted from a
     /// palette, and a byte of a redirected run's output is one this program
     /// meant to write.
-    fn take(&mut self, slot: Slot, text: &str, link: Option<&str>) -> Result<(), TerminalError> {
+    fn take(&mut self, slot: Slot, text: &str, link: Option<&str>) {
         let escapes = &mut *self.escapes;
         self.free.clear();
         // A format character goes with the escapes: it would reorder or hide
@@ -2717,7 +2720,6 @@ impl<T: Terminal> Taking<'_, T> {
         if self.out.is_some() {
             self.unwritten.push_str(self.free);
         }
-        Ok(())
     }
 }
 
