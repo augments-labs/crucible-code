@@ -174,9 +174,10 @@ impl View {
 ///
 /// Counted once for each width and kept, as a held result is by the store,
 /// because a block's source is lent by the record and so has no place of its
-/// own to keep a count beside. Keyed by the line it is held as and how long its
-/// source is, so a count is never reused for a different block that comes to
-/// be held as the same line; a frame at another width drops all of it.
+/// own to keep a count beside. Keyed by the line it is held as, which names one
+/// block for as long as the view stands: lines are renumbered only when the
+/// width changes, and a frame at another width drops all of it. The length of
+/// the source beside the line in the key does not tell blocks apart.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Counted {
     /// The width every count here is for.
