@@ -1652,6 +1652,8 @@ src/bin/bench-read-back.rs crucible_workspace
 src/bin/bench-render-burst.rs crucible_tui
 src/bin/bench-session-rss.rs crucible_attachments
 src/bin/bench-session-rss.rs crucible_config
+src/bin/bench-session-rss-colour.rs crucible_attachments
+src/bin/bench-session-rss-colour.rs crucible_config
 src/bin/bench-tools.rs crucible_builtins
 src/bin/bench-tools.rs crucible_runtime
 src/bin/bench-tools.rs crucible_sandbox_local
