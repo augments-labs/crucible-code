@@ -163,7 +163,8 @@ pub(crate) fn event<T: Terminal>(
         | Event::Carried { .. }
         | Event::Used { .. }
         | Event::PlanLimits { .. }
-        | Event::Compacting { .. } => Ok(()),
+        | Event::Compacting { .. }
+        | Event::Waiting { .. } => Ok(()),
 
         // A call the agent running this turn made with one of its own tools,
         // over there. Drawn as a call made here is, live in the footing until

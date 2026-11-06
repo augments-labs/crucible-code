@@ -102,6 +102,7 @@ fn static_context_is_assembled_once_in_stable_order_and_charged_before_fullness(
             "environment",
             "model",
             "permissions",
+            "questions",
             "skills",
             "tools",
             "workspace",

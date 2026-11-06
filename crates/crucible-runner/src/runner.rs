@@ -50,8 +50,8 @@ use crucible_runtime::{Aside, Cancel, Steer};
 use crucible_sandbox::SandboxAuditRegistry;
 use crucible_storage::{JournalStore, RunItem};
 use crucible_tools::{
-    Ask, Looking, Mode, Permission, Summary, ToolEntry, ToolError, ToolSnapshot, ToolWorker,
-    Toolset, ToolsetContext,
+    Ask, Deferred, Looking, Mode, Permission, Summary, ToolEntry, ToolError, ToolSnapshot,
+    ToolWorker, Toolset, ToolsetContext,
 };
 use crucible_types::{
     Attachment, Compacting, Message, Modalities, PlanWindows, PromptCacheEncoding, PromptCacheFact,
@@ -197,6 +197,15 @@ pub struct Runner {
     worker: Option<ToolWorker>,
     /// The speed asked for, and the speed the last answer was served at.
     pace: fast::Pace,
+    /// Where the questions the model asked without waiting are held, where
+    /// the wiring gave somewhere. Only the root run reads it.
+    deferred: Option<Deferred>,
+    /// The registry's revision when its waiting list was last reported, so a
+    /// pass that changed nothing reports nothing.
+    told: u64,
+    /// Whether the root run's first assembly has already looked for waiting
+    /// questions the session's log recorded, which happens once.
+    recalled: bool,
 }
 
 struct Tooling {
@@ -282,6 +291,9 @@ impl Runner {
             sandbox_audits: SandboxAuditRegistry::new(),
             worker: None,
             pace: fast::Pace::default(),
+            deferred: None,
+            told: 0,
+            recalled: false,
         };
         runner
             .state
@@ -323,6 +335,19 @@ impl Runner {
     #[must_use]
     pub fn lending(mut self, worker: ToolWorker) -> Self {
         self.worker = Some(worker);
+        self
+    }
+
+    /// Holds the questions the model asks without waiting in `held`, and
+    /// delivers each batch's answer once it is settled.
+    ///
+    /// `held` is the registry the tool registers on and a client settles
+    /// through. A runner given none tells the model once that any questions
+    /// a resumed session recorded as waiting have lapsed.
+    #[must_use]
+    pub fn deferring(mut self, held: Deferred) -> Self {
+        self.told = held.revision();
+        self.deferred = Some(held);
         self
     }
 
@@ -1356,6 +1381,9 @@ impl Runner {
             }
             Err(problem) => Err(problem),
         };
+        // However the turn ended, the reader is not left looking at a
+        // question the turn already answered or missing one it asked.
+        self.report_waiting(run);
 
         let finished = match (ran, self.toolset.dispose(&toolsets).await) {
             (Ok(result), Ok(())) => Ok(result),

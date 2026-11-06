@@ -25,7 +25,7 @@ use crucible_agents::{GuardrailError, Rejection};
 use crucible_models::ProviderError;
 use crucible_tools::{Ask, ToolsetContext};
 use crucible_types::{
-    Compacting, Message, ProviderContinuation, RunId, Spend, StopReason, ToolCall,
+    Compacting, Message, ProviderContinuation, RunId, Spend, StopReason, ToolCall, ToolResult,
 };
 
 use crate::context::RunContext;
@@ -128,6 +128,11 @@ impl<'a> AgentLoop<'a> {
     /// goes with it — the reader did not type it, and an event saying they did
     /// would put a sentence in the panel that nobody wrote. The line above it
     /// is already on their screen.
+    ///
+    /// An answer to a question the model asked without waiting comes after
+    /// these, from [`Runner::assemble_context`], because when it is taken
+    /// against the state the log records is what keeps a crash from losing
+    /// it. It is the person's, and no `Steered` goes with it either.
     async fn interjected(&mut self, counting: &Counting) -> Result<(), TurnError> {
         let run = self.run;
         let events = run.reporting();
@@ -156,6 +161,49 @@ impl<'a> AgentLoop<'a> {
                     .breakdown(counting.window, counting.reserve),
             });
         }
+        Ok(())
+    }
+
+    /// The context this pass is sent under, and the answers that arrived
+    /// since the last one, recorded; then what waits, if that changed.
+    async fn assembled(&mut self, counting: &Counting) -> Result<(), TurnError> {
+        let run = self.run;
+        let delivered = self.runner.assemble_context(run.ancestry()).await?;
+        if delivered > 0 {
+            run.reporting().post(Event::Carried {
+                breakdown: self
+                    .runner
+                    .state
+                    .load
+                    .breakdown(counting.window, counting.reserve),
+            });
+        }
+        self.runner.report_waiting(run);
+        Ok(())
+    }
+
+    /// A tool pass's results recorded, with what they asked; then what
+    /// waits, if that changed.
+    async fn resulted(
+        &mut self,
+        results: Vec<ToolResult>,
+        counting: &Counting,
+    ) -> Result<(), TurnError> {
+        let run = self.run;
+        // Before the results, which are what name a batch asked in this
+        // pass: a log holding the name holds the batch.
+        self.runner.asked_since(run.ancestry()).await?;
+        self.runner
+            .record(run.ancestry(), Message::ToolResults(results))
+            .await?;
+        run.reporting().post(Event::Carried {
+            breakdown: self
+                .runner
+                .state
+                .load
+                .breakdown(counting.window, counting.reserve),
+        });
+        self.runner.report_waiting(run);
         Ok(())
     }
 
@@ -312,7 +360,7 @@ impl<'a> AgentLoop<'a> {
             // compaction from the preceding loop iteration rewrote history.
             // Recording the fragments updates `runner.load` before it is read
             // below, so reserve and fullness see exactly what will be sent.
-            self.runner.assemble_context(run.ancestry()).await?;
+            self.assembled(counting).await?;
 
             // Recording is what measures the transcript, and it happens on the
             // runner rather than here; reading it back at the top of each pass
@@ -450,7 +498,17 @@ impl<'a> AgentLoop<'a> {
             let (text, calls) = answer.finish();
 
             if let Some(stop) = Runner::over(said, &calls) {
-                return self.ending(text, continuation, &calls, stop).await;
+                let ending = self.ending(text, continuation, &calls, stop).await?;
+                // An answer accepted while this pass ran has not reached the
+                // model, and the next pass is where it does: the turn goes on
+                // rather than leaving the person's answer for a prompt they
+                // may never type.
+                if matches!(ending, Ending::Stopped(StopReason::Yielded))
+                    && self.runner.undelivered(run.ancestry())
+                {
+                    continue;
+                }
+                return Ok(ending);
             }
 
             for call in &calls {
@@ -521,16 +579,7 @@ impl<'a> AgentLoop<'a> {
                 });
             }
 
-            self.runner
-                .record(run.ancestry(), Message::ToolResults(results))
-                .await?;
-            events.post(Event::Carried {
-                breakdown: self
-                    .runner
-                    .state
-                    .load
-                    .breakdown(counting.window, counting.reserve),
-            });
+            self.resulted(results, counting).await?;
 
             match went {
                 Went::On => {}

@@ -219,7 +219,8 @@ pub fn progress(
         | Event::Wrote { .. }
         | Event::Aged { .. }
         | Event::Unread { .. }
-        | Event::Steered { .. } => return None,
+        | Event::Steered { .. }
+        | Event::Waiting { .. } => return None,
     })
 }
 

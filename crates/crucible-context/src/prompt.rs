@@ -58,7 +58,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map, Value, json};
 
 use crucible_models::Effort;
-use crucible_tools::{Permission, ToolSnapshot};
+use crucible_tools::{Deferred, Permission, ToolSnapshot};
 use crucible_types::{Fragment, Seen, Tone};
 
 use crate::ContextSection;
@@ -96,6 +96,16 @@ const APPROVAL_SCOPE: usize = 200;
 /// A cut sentence that does not say it was cut can read as a whole one that
 /// means something else, and this is one character against that.
 const CUT: char = '…';
+
+/// What the questions section says once the last waiting batch is answered.
+const NONE_WAITING: &str = "## Waiting questions\n\nNo questions are waiting for the person \
+     now: every answer asked for without waiting has arrived.";
+
+/// What the questions section says once where questions were waiting and this
+/// run can hold none.
+const LAPSED: &str = "## Waiting questions\n\nThe questions asked earlier without waiting \
+     can no longer be answered here, so no answer to them will arrive. Ask again, waiting \
+     for the answer, if one is still needed.";
 
 /// What whoever configured this run wrote, in place of crucible's own words or
 /// beside them.
@@ -616,6 +626,102 @@ impl ContextSection for PermissionsSection<'_> {
     fn recognizes(&self, fragment: &Fragment) -> bool {
         fragment.section() == Self::ID
     }
+}
+
+/// The questions asked without waiting that are still waiting for the person.
+///
+/// Its state is the registry's own saved form, so the snapshot a session
+/// records is what a resumed session restores its waiting batches from. Only
+/// the list says anything: an empty registry says nothing, a list that changed
+/// is told whole, and a list that emptied is told once, either that nothing is
+/// waiting or, where this run can hold no question, that the ones asked lapsed.
+/// Each question is told by its heading and its text alone; the answers offered
+/// are the person's to read.
+pub struct QuestionsSection<'a> {
+    held: Option<&'a Deferred>,
+}
+
+impl fmt::Debug for QuestionsSection<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("QuestionsSection([redacted])")
+    }
+}
+
+impl<'a> QuestionsSection<'a> {
+    /// Reports what `held` holds now, or that nothing in this run can hold a
+    /// question.
+    #[must_use]
+    pub const fn new(held: Option<&'a Deferred>) -> Self {
+        Self { held }
+    }
+}
+
+impl ContextSection for QuestionsSection<'_> {
+    const ID: &'static str = "questions";
+
+    fn snapshot(&self) -> Value {
+        match self.held {
+            Some(held) => held.state(),
+            None => Deferred::default().state(),
+        }
+    }
+
+    fn render(&self, prior: Seen<&Value>) -> Option<Fragment> {
+        let current = self.snapshot();
+        let now = waiting_in(&current);
+        let text = match prior {
+            Seen::Known(old) if waiting_in(old) == now => return None,
+            Seen::Known(_) if now.is_empty() => match self.held {
+                Some(_) => NONE_WAITING.to_owned(),
+                None => LAPSED.to_owned(),
+            },
+            _ if now.is_empty() => return None,
+            Seen::Unknown => format!(
+                "This {id} context supersedes every earlier {id} context fragment.\n\n{}",
+                self.waiting_text(),
+                id = Self::ID,
+            ),
+            Seen::Known(_) | Seen::Stale | Seen::Fresh => self.waiting_text(),
+        };
+        Some(Fragment::new(Self::ID, text))
+    }
+
+    fn recognizes(&self, fragment: &Fragment) -> bool {
+        fragment.section() == Self::ID
+    }
+}
+
+impl QuestionsSection<'_> {
+    /// Every waiting batch by its id, and each question in it by its heading
+    /// and text.
+    fn waiting_text(&self) -> String {
+        let mut said = String::from(
+            "## Waiting questions\n\nThese questions were asked without waiting, and the \
+             person has not answered them yet. Each answer arrives later as a message from the \
+             person that names its batch. Until then, go on with work that does not depend on \
+             it, and do not ask it again.\n",
+        );
+        for batch in self.held.map(Deferred::waiting).unwrap_or_default() {
+            let _ = write!(said, "\n- {}", batch.id());
+            for question in batch.questions() {
+                let _ = write!(
+                    said,
+                    "\n  - {}: {}",
+                    stripped(question.heading(), SAID),
+                    stripped(question.question(), SAID)
+                );
+            }
+        }
+        said
+    }
+}
+
+/// The waiting batches a questions state records, as the registry saved them.
+fn waiting_in(state: &Value) -> &[Value] {
+    state
+        .get("waiting")
+        .and_then(Value::as_array)
+        .map_or(&[], Vec::as_slice)
 }
 
 /// The bounded, unread skill catalogue discovered for this workspace.

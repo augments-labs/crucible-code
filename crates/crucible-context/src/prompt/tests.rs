@@ -6,14 +6,17 @@ use serde_json::{Value, json};
 
 use crucible_models::Effort;
 use crucible_tools::{
-    Ask, Permission, Remember, Sensitivity, Settled, Target, ToolSnapshot, Verdict,
+    Ask, Deferred, Permission, Remember, Sensitivity, Settled, Target, ToolSnapshot, Verdict,
 };
-use crucible_types::{ContextSnapshot, Seen, Tone, ToolArgs, ToolCall, ToolId};
+use crucible_types::{
+    Answer, Answered, ContextSnapshot, Question, Reply, Seen, Tone, ToolArgs, ToolCall, ToolId,
+};
 use crucible_workspace::Workspace;
 
 use super::{
     APPROVAL_SCOPE, APPROVALS, EnvironmentSection, Identity, ModelSection, PermissionsSection,
-    SAID, SKILLS, Skill, SkillsSection, SystemPrompt, ToolsSection, WorkspaceSection, spoken,
+    QuestionsSection, SAID, SKILLS, Skill, SkillsSection, SystemPrompt, ToolsSection,
+    WorkspaceSection, spoken,
 };
 use crate::{ContextSection, capture};
 
@@ -797,4 +800,140 @@ fn every_heading_in_the_session_half_stands_over_what_it_names() {
     assert!(at("## Where you are working") < at("## What you have"));
     assert!(at("## What you have") < at("## Skills you can open"));
     assert!(at("## Skills you can open") < at("## What is answering"));
+}
+
+/// A registry holding one waiting batch asking which database to use.
+fn one_waiting() -> Deferred {
+    let held = Deferred::default();
+    held.register(vec![Question::new(
+        "Storage",
+        "Which database should the cache use?",
+        [Answer::new("SQLite"), Answer::new("Postgres")],
+    )])
+    .expect("one batch fits");
+    held
+}
+
+#[test]
+fn the_questions_section_lists_every_waiting_batch_and_how_its_answer_arrives() {
+    let held = one_waiting();
+    let said = QuestionsSection::new(Some(&held))
+        .render(Seen::Fresh)
+        .expect("a waiting batch is stated");
+    let text = said.text();
+
+    assert_eq!(said.section(), "questions");
+    assert!(text.contains("q0"), "{text}");
+    assert!(text.contains("Storage"), "{text}");
+    assert!(
+        text.contains("Which database should the cache use?"),
+        "{text}"
+    );
+    assert!(text.contains("message from the person"), "{text}");
+    // The answers offered are the person's to read, not the model's to
+    // reread on every pass.
+    assert!(!text.contains("Postgres"), "{text}");
+}
+
+#[test]
+fn the_questions_section_says_nothing_while_no_questions_are_waiting() {
+    let empty = Deferred::default();
+    let held = QuestionsSection::new(Some(&empty));
+    let none = QuestionsSection::new(None);
+    let quiet = held.snapshot();
+
+    for seen in [Seen::Fresh, Seen::Stale, Seen::Unknown, Seen::Known(&quiet)] {
+        assert!(held.render(seen).is_none(), "{seen:?}");
+        assert!(none.render(seen).is_none(), "{seen:?}");
+    }
+}
+
+#[test]
+fn the_questions_section_snapshot_is_what_a_resume_restores_the_waiting_questions_from() {
+    let held = one_waiting();
+    let saved = QuestionsSection::new(Some(&held)).snapshot();
+
+    assert_eq!(saved, held.state());
+    let resumed = Deferred::default();
+    resumed.restore(&saved).expect("a saved snapshot restores");
+    assert_eq!(resumed.state(), held.state());
+    // With nothing to hold them, there is nothing waiting to record.
+    assert_eq!(
+        QuestionsSection::new(None).snapshot(),
+        Deferred::default().state()
+    );
+}
+
+#[test]
+fn the_questions_section_says_once_that_none_wait_when_the_last_is_answered() {
+    let held = one_waiting();
+    let before = QuestionsSection::new(Some(&held)).snapshot();
+    let id = held.waiting().first().expect("one waiting").id();
+    held.settle(id, vec![Reply::Answered(Answered::new(["SQLite"]))])
+        .expect("settled");
+
+    let now = QuestionsSection::new(Some(&held));
+    let said = now
+        .render(Seen::Known(&before))
+        .expect("the model is told the list emptied");
+    assert!(said.text().contains("No questions"), "{}", said.text());
+    assert!(!said.text().contains("Storage"), "{}", said.text());
+    assert!(now.render(Seen::Known(&now.snapshot())).is_none());
+}
+
+#[test]
+fn the_questions_section_says_once_that_waiting_questions_lapsed_where_none_can_be_held() {
+    let before = QuestionsSection::new(Some(&one_waiting())).snapshot();
+    let nowhere = QuestionsSection::new(None);
+
+    let said = nowhere
+        .render(Seen::Known(&before))
+        .expect("the model is told its questions lapsed");
+    assert!(said.text().contains("no answer"), "{}", said.text());
+    assert!(nowhere.render(Seen::Known(&nowhere.snapshot())).is_none());
+}
+
+#[test]
+fn the_questions_section_is_silent_when_known_and_restated_when_compacted_or_unknown() {
+    let held = one_waiting();
+    let section = QuestionsSection::new(Some(&held));
+    let same = section.snapshot();
+
+    assert!(section.render(Seen::Known(&same)).is_none());
+    let stale = section
+        .render(Seen::Stale)
+        .expect("restated after compaction");
+    assert!(stale.text().contains("q0"), "{}", stale.text());
+    let unknown = section.render(Seen::Unknown).expect("restated whole");
+    assert!(
+        unknown.text().starts_with(
+            "This questions context supersedes every earlier questions context fragment."
+        ),
+        "{}",
+        unknown.text()
+    );
+    assert!(unknown.text().contains("q0"), "{}", unknown.text());
+
+    // A second batch is told with the first, so one fragment always holds
+    // the whole list.
+    held.register(vec![Question::new(
+        "Naming",
+        "What should the flag be called?",
+        [Answer::new("--cache"), Answer::new("--store")],
+    )])
+    .expect("a second batch fits");
+    let grown = section
+        .render(Seen::Known(&same))
+        .expect("the list changed");
+    assert!(grown.text().contains("q0"), "{}", grown.text());
+    assert!(grown.text().contains("q1"), "{}", grown.text());
+}
+
+#[test]
+fn the_questions_section_debug_names_no_question() {
+    let held = one_waiting();
+    let shown = format!("{:?}", QuestionsSection::new(Some(&held)));
+
+    assert!(!shown.contains("database"), "{shown}");
+    assert!(shown.contains("redacted"), "{shown}");
 }

@@ -16,12 +16,13 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crucible_models::Effort;
-use crucible_tools::{Permission, ToolSnapshot};
+use crucible_tools::{Deferred, Permission, ToolSnapshot};
 use crucible_types::{ContextError, ContextPatch, ContextSnapshot, Fragment, Seen, Transcript};
+use serde_json::Value;
 
 use crate::{
-    ContextSection, EnvironmentSection, ModelSection, PermissionsSection, Skill, SkillsSection,
-    ToolsSection, WorkspaceSection, capture, seen,
+    ContextSection, EnvironmentSection, ModelSection, PermissionsSection, QuestionsSection, Skill,
+    SkillsSection, ToolsSection, WorkspaceSection, capture, seen,
 };
 
 /// Stable inputs one run's composition root knows and the runner does not.
@@ -102,6 +103,8 @@ pub struct Live<'a> {
     pub tools: &'a ToolSnapshot,
     /// What the permission engine currently allows.
     pub permission: &'a Permission,
+    /// The questions asked without waiting, where this run can hold any.
+    pub deferred: Option<&'a Deferred>,
 }
 
 impl fmt::Debug for Live<'_> {
@@ -146,9 +149,10 @@ pub fn assemble(
         fragments: Vec::new(),
     };
 
-    // Stable sections first. The three live/mid-turn sections follow, with
-    // permissions last because an approval can change inside the tool pass
-    // immediately preceding this request.
+    // Stable sections first. The live/mid-turn sections follow, with
+    // permissions and then the waiting questions last, because an approval can
+    // change inside the tool pass immediately preceding this request and a
+    // question can be asked or answered inside it too.
     assembly.resolve(&WorkspaceSection::new(&inputs.workspace))?;
     assembly.resolve(&SkillsSection::new(&inputs.skills))?;
     assembly.resolve(&EnvironmentSection::new(
@@ -159,12 +163,75 @@ pub fn assemble(
     assembly.resolve(&ModelSection::new(live.model, live.effort))?;
     assembly.resolve(&ToolsSection::new(live.tools))?;
     assembly.resolve(&PermissionsSection::new(live.permission))?;
+    assembly.resolve(&QuestionsSection::new(live.deferred))?;
 
     let patch = assembly.current.patch_from(assembly.prior);
     Ok(Assembled {
         fragments: assembly.fragments,
         patch,
     })
+}
+
+/// The merge patch that records every question batch asked since the state
+/// `prior` holds, with the number the next batch is given.
+///
+/// Taken where a batch can have been asked since the last assembly, before
+/// the words that name its id are recorded: a session picked up from a log
+/// that holds those words then has each batch they name waiting again, and
+/// never hands its id out a second time. Recorded without words, the state is
+/// stale to the next assembly, which tells the waiting batches whole.
+///
+/// Every batch `prior` records stays recorded, even one `held` no longer
+/// lists as waiting: an answer settled since then is delivered at the next
+/// assembly, and until that assembly records its own state, a log that ends
+/// has to bring the batch back rather than lose the answer. `None` where no
+/// batch was asked since.
+///
+/// # Errors
+///
+/// [`ContextError`] when the state cannot be recorded.
+pub fn asked(
+    prior: Option<&ContextSnapshot>,
+    held: &Deferred,
+) -> Result<Option<ContextPatch>, ContextError> {
+    let empty = ContextSnapshot::new();
+    let prior = prior.unwrap_or(&empty);
+    let Value::Object(mut now) = held.state() else {
+        return Ok(None);
+    };
+    let next = now.remove("next").unwrap_or_else(|| Value::from(0_u64));
+    let recorded = prior.get(QuestionsSection::ID);
+    if recorded.and_then(|state| state.get("next")) == Some(&next) {
+        return Ok(None);
+    }
+    // A registry that never numbered anything has nothing for a log to keep.
+    if recorded.is_none() && next == 0_u64 {
+        return Ok(None);
+    }
+
+    let mut waiting = recorded
+        .and_then(|state| state.get("waiting"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let new: Vec<Value> = match now.remove("waiting") {
+        Some(Value::Array(asked)) => asked
+            .into_iter()
+            .filter(|batch| {
+                let id = batch.get("id");
+                !waiting.iter().any(|kept| kept.get("id") == id)
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    waiting.extend(new);
+
+    let mut numbered = prior.clone();
+    numbered.record(
+        QuestionsSection::ID,
+        serde_json::json!({ "next": next, "waiting": waiting }),
+    )?;
+    Ok(numbered.patch_from(prior))
 }
 
 struct Assembly<'a> {
@@ -220,7 +287,98 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
 mod tests {
     use std::time::Duration;
 
+    use crucible_types::{Answer, Question, QuestionId, Reply};
+    use serde_json::json;
+
     use super::*;
+
+    fn asking(held: &Deferred, heading: &str) -> u64 {
+        held.register(vec![Question::new(
+            heading,
+            "Which one?",
+            [Answer::new("This"), Answer::new("That")],
+        )])
+        .expect("a batch fits")
+        .number()
+    }
+
+    /// The ids of the batches a recorded questions state holds, in order.
+    fn ids(state: &Value) -> Vec<&str> {
+        state
+            .get("waiting")
+            .and_then(Value::as_array)
+            .map(|waiting| {
+                waiting
+                    .iter()
+                    .filter_map(|batch| batch.get("id").and_then(Value::as_str))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn questions_asked_records_each_new_batch_and_keeps_every_one_recorded_before() {
+        let held = Deferred::default();
+        let first = asking(&held, "First");
+        let mut prior = ContextSnapshot::new();
+        prior
+            .record(QuestionsSection::ID, held.state())
+            .expect("the recorded state");
+        // Answered but not yet delivered: a log that ends now still has to
+        // bring it back.
+        held.settle(QuestionId::numbered(first), vec![Reply::Declined])
+            .expect("settled");
+        asking(&held, "Second");
+
+        let patch = asked(Some(&prior), &held)
+            .expect("recordable")
+            .expect("a batch was asked since");
+        let recorded = patch.apply(&prior).expect("the patch applies");
+        let state = recorded.get(QuestionsSection::ID).expect("still recorded");
+
+        assert_eq!(state.get("next"), Some(&json!(2)));
+        assert_eq!(ids(state), ["q0", "q1"]);
+        assert_eq!(recorded.sections().len(), 1, "only the questions changed");
+    }
+
+    #[test]
+    fn questions_asked_with_nothing_recorded_saves_a_state_restore_reads() {
+        let held = Deferred::default();
+        asking(&held, "First");
+
+        let patch = asked(None, &held)
+            .expect("recordable")
+            .expect("a batch was asked");
+        let recorded = patch
+            .apply(&ContextSnapshot::new())
+            .expect("the patch applies");
+        let state = recorded.get(QuestionsSection::ID).expect("recorded");
+        assert_eq!(state, &held.state());
+
+        let resumed = Deferred::default();
+        resumed.restore(state).expect("restore reads it");
+        assert_eq!(resumed.waiting().len(), 1, "the batch asked was lost");
+        assert_eq!(asking(&resumed, "Later"), 1, "an id handed out came back");
+    }
+
+    #[test]
+    fn questions_asked_is_nothing_where_no_batch_was_asked_since() {
+        let held = Deferred::default();
+        let first = asking(&held, "First");
+        let mut prior = ContextSnapshot::new();
+        prior
+            .record(QuestionsSection::ID, held.state())
+            .expect("the recorded state");
+        held.settle(QuestionId::numbered(first), vec![Reply::Declined])
+            .expect("settled");
+
+        assert_eq!(asked(Some(&prior), &held).expect("recordable"), None);
+        assert_eq!(
+            asked(None, &Deferred::default()).expect("recordable"),
+            None,
+            "a registry that never asked anything records nothing"
+        );
+    }
 
     #[test]
     fn utc_calendar_conversion_covers_epoch_and_leap_day() {
