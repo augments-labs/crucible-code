@@ -59,7 +59,7 @@ use serde_json::{Map, Value, json};
 
 use crucible_models::Effort;
 use crucible_tools::{Deferred, Permission, ToolSnapshot};
-use crucible_types::{Fragment, Seen, Tone};
+use crucible_types::{Batch, Fragment, Seen, Tone};
 
 use crate::ContextSection;
 
@@ -628,17 +628,56 @@ impl ContextSection for PermissionsSection<'_> {
     }
 }
 
+/// How the run being assembled stands to the registry of questions asked
+/// without waiting.
+///
+/// Closed because each case tells and records something different, and a run
+/// that came to stand to the registry some other way would have to decide
+/// both: the run that holds the registry tells what waits and records its
+/// state; a run that can hold none tells once that what was recorded lapsed,
+/// and records an empty registry that keeps the next id; a run beneath the one
+/// that holds it tells nothing and leaves the recorded state as it was.
+#[derive(Clone, Copy)]
+pub enum Questions<'a> {
+    /// This run holds the registry.
+    Held(&'a Deferred),
+    /// Nothing in this run can hold a question.
+    Unheld,
+    /// A run beneath the one that holds the registry.
+    Beneath,
+}
+
+impl fmt::Debug for Questions<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Held(_) => "Held([redacted])",
+            Self::Unheld => "Unheld",
+            Self::Beneath => "Beneath",
+        })
+    }
+}
+
 /// The questions asked without waiting that are still waiting for the person.
 ///
 /// Its state is the registry's own saved form, so the snapshot a session
-/// records is what a resumed session restores its waiting batches from. Only
-/// the list says anything: an empty registry says nothing, a list that changed
-/// is told whole, and a list that emptied is told once, either that nothing is
-/// waiting or, where this run can hold no question, that the ones asked lapsed.
-/// Each question is told by its heading and its text alone; the answers offered
-/// are the person's to read.
+/// records is what a resumed session restores its waiting batches from, with
+/// one key beside it the registry does not read: the ids the model was last
+/// told are waiting. That list is what a change is measured against, because
+/// a batch asked during a tool pass is recorded as waiting before any words
+/// name it. Only the list says anything: an empty registry says nothing, a
+/// list that changed is told whole, and a list that emptied is told once,
+/// either that nothing is waiting or, where this run can hold no question,
+/// that the ones recorded lapsed. Each question is told by its heading and its
+/// text alone; the answers offered are the person's to read.
+///
+/// The registry is read once, when the section is made, and the words, the
+/// comparison and the state recorded all come from that one reading, so an
+/// answer settling meanwhile cannot make the words disagree with the state.
 pub struct QuestionsSection<'a> {
-    held: Option<&'a Deferred>,
+    questions: Questions<'a>,
+    recorded: Option<&'a Value>,
+    state: Value,
+    waiting: Vec<Batch>,
 }
 
 impl fmt::Debug for QuestionsSection<'_> {
@@ -648,11 +687,47 @@ impl fmt::Debug for QuestionsSection<'_> {
 }
 
 impl<'a> QuestionsSection<'a> {
-    /// Reports what `held` holds now, or that nothing in this run can hold a
-    /// question.
+    /// Reports what `questions` holds now, against `recorded`, the state the
+    /// session last recorded for this section, where it has one.
     #[must_use]
-    pub const fn new(held: Option<&'a Deferred>) -> Self {
-        Self { held }
+    pub fn new(questions: Questions<'a>, recorded: Option<&'a Value>) -> Self {
+        let (state, waiting) = match questions {
+            Questions::Held(held) => {
+                let mut state = held.state();
+                // The words come from this same reading, through the
+                // registry's own reader on a copy; only a state the registry
+                // wrote and cannot read back falls back to asking it again.
+                let copy = Deferred::default();
+                let waiting = match copy.restore(&state) {
+                    Ok(()) => copy.waiting(),
+                    Err(_) => held.waiting(),
+                };
+                let told: Vec<Value> = waiting_ids(&state).into_iter().map(Value::from).collect();
+                if let Value::Object(fields) = &mut state {
+                    fields.insert("told".to_owned(), Value::Array(told));
+                }
+                (state, waiting)
+            }
+            Questions::Unheld => (
+                nothing_waiting(
+                    recorded
+                        .and_then(|state| state.get("next"))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0),
+                ),
+                Vec::new(),
+            ),
+            Questions::Beneath => (
+                recorded.cloned().unwrap_or_else(|| nothing_waiting(0)),
+                Vec::new(),
+            ),
+        };
+        Self {
+            questions,
+            recorded,
+            state,
+            waiting,
+        }
     }
 }
 
@@ -660,28 +735,38 @@ impl ContextSection for QuestionsSection<'_> {
     const ID: &'static str = "questions";
 
     fn snapshot(&self) -> Value {
-        match self.held {
-            Some(held) => held.state(),
-            None => Deferred::default().state(),
-        }
+        self.state.clone()
     }
 
     fn render(&self, prior: Seen<&Value>) -> Option<Fragment> {
-        let current = self.snapshot();
-        let now = waiting_in(&current);
+        let told = self.recorded.map(told_ids).unwrap_or_default();
+        let text = match self.questions {
+            Questions::Beneath => return None,
+            Questions::Unheld => {
+                let recorded = self.recorded.map(waiting_ids).unwrap_or_default();
+                if recorded.is_empty() && told.is_empty() {
+                    return None;
+                }
+                LAPSED.to_owned()
+            }
+            Questions::Held(_) => {
+                let now = waiting_ids(&self.state);
+                match prior {
+                    Seen::Known(_) if now == told => return None,
+                    _ if now.is_empty() && told.is_empty() => return None,
+                    _ if now.is_empty() => NONE_WAITING.to_owned(),
+                    Seen::Known(_) | Seen::Stale | Seen::Fresh | Seen::Unknown => {
+                        self.waiting_text()
+                    }
+                }
+            }
+        };
         let text = match prior {
-            Seen::Known(old) if waiting_in(old) == now => return None,
-            Seen::Known(_) if now.is_empty() => match self.held {
-                Some(_) => NONE_WAITING.to_owned(),
-                None => LAPSED.to_owned(),
-            },
-            _ if now.is_empty() => return None,
             Seen::Unknown => format!(
-                "This {id} context supersedes every earlier {id} context fragment.\n\n{}",
-                self.waiting_text(),
+                "This {id} context supersedes every earlier {id} context fragment.\n\n{text}",
                 id = Self::ID,
             ),
-            Seen::Known(_) | Seen::Stale | Seen::Fresh => self.waiting_text(),
+            Seen::Known(_) | Seen::Stale | Seen::Fresh => text,
         };
         Some(Fragment::new(Self::ID, text))
     }
@@ -701,7 +786,7 @@ impl QuestionsSection<'_> {
              person that names its batch. Until then, go on with work that does not depend on \
              it, and do not ask it again.\n",
         );
-        for batch in self.held.map(Deferred::waiting).unwrap_or_default() {
+        for batch in &self.waiting {
             let _ = write!(said, "\n- {}", batch.id());
             for question in batch.questions() {
                 let _ = write!(
@@ -716,12 +801,33 @@ impl QuestionsSection<'_> {
     }
 }
 
-/// The waiting batches a questions state records, as the registry saved them.
-fn waiting_in(state: &Value) -> &[Value] {
+/// The state of a registry holding nothing that numbers its next batch
+/// `next`.
+fn nothing_waiting(next: u64) -> Value {
+    json!({ "next": next, "waiting": [], "told": [] })
+}
+
+/// The ids of the waiting batches a questions state records, in order.
+fn waiting_ids(state: &Value) -> Vec<&str> {
     state
         .get("waiting")
         .and_then(Value::as_array)
-        .map_or(&[], Vec::as_slice)
+        .map(|waiting| {
+            waiting
+                .iter()
+                .filter_map(|batch| batch.get("id").and_then(Value::as_str))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The ids a questions state records the model was last told are waiting.
+fn told_ids(state: &Value) -> Vec<&str> {
+    state
+        .get("told")
+        .and_then(Value::as_array)
+        .map(|told| told.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default()
 }
 
 /// The bounded, unread skill catalogue discovered for this workspace.

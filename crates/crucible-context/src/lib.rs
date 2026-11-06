@@ -16,7 +16,7 @@
 //! words as data without naming this crate.
 //!
 //! ```
-//! use crucible_context::{ContextInputs, Live, assemble};
+//! use crucible_context::{ContextInputs, Live, Questions, assemble};
 //! use crucible_tools::{Permission, ToolSnapshot};
 //! use crucible_types::Transcript;
 //! use std::time::{Duration, UNIX_EPOCH};
@@ -29,7 +29,7 @@
 //!     effort: None,
 //!     tools: &tools,
 //!     permission: &permission,
-//!     deferred: None,
+//!     questions: Questions::Unheld,
 //! };
 //!
 //! // A session with no recorded state states every section.
@@ -47,7 +47,7 @@ mod sections;
 pub use assembly::{Assembled, ContextInputs, Live, asked, assemble};
 pub use compaction::Room;
 pub use prompt::{
-    EnvironmentSection, Identity, ModelSection, PermissionsSection, QuestionsSection, Skill,
-    SkillsSection, SystemPrompt, ToolsSection, WorkspaceSection,
+    EnvironmentSection, Identity, ModelSection, PermissionsSection, Questions, QuestionsSection,
+    Skill, SkillsSection, SystemPrompt, ToolsSection, WorkspaceSection,
 };
 pub use sections::{ContextSection, capture, seen};

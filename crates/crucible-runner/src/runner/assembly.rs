@@ -19,7 +19,8 @@
 //! ([`Runner::asked_since`]), so a log that holds the id brings the batch
 //! back and never hands the id out again.
 
-use crucible_context::{Live, asked, assemble};
+use crucible_context::{ContextSection, Live, Questions, QuestionsSection, asked, assemble};
+use crucible_tools::Deferred;
 use crucible_types::{Ancestry, Message};
 
 use super::Runner;
@@ -40,25 +41,32 @@ impl Runner {
         // below would be this run reading its own store while it writes to it.
         let snapshot = self.store.context_snapshot();
         let root = ancestry.parent().is_none();
-        let held = self.deferred.clone();
-        let mut reading = held.as_ref();
-        if root && !self.recalled {
+        let held = self.holding(ancestry).cloned();
+        let mut questions = match &held {
+            Some(held) => Questions::Held(held),
+            None if root => Questions::Unheld,
+            None => Questions::Beneath,
+        };
+        if let Some(held) = &held
+            && !self.recalled
+        {
             self.recalled = true;
-            // The first assembly of a resumed session: the batches the log
-            // recorded as waiting come back. A registry already holding
-            // something was not started empty with this session, and is not
-            // overwritten.
-            if let Some(held) = &held
-                && held.waiting().is_empty()
+            // The first assembly of a session started or picked up: the
+            // batches its log recorded as waiting come back. A registry
+            // already holding something was not started empty with this
+            // session, and is not overwritten.
+            if held.waiting().is_empty()
                 && !held.any_settled()
-                && let Some(saved) = snapshot.as_ref().and_then(|saved| saved.get("questions"))
+                && let Some(saved) = snapshot
+                    .as_ref()
+                    .and_then(|saved| saved.get(QuestionsSection::ID))
                 && held.restore(saved).is_err()
             {
                 // A state this build cannot read is told to the model as
                 // lapsed, as it would be to a runner holding none, and the
                 // empty state recorded in its place. Ids it held may then be
                 // handed out again; nothing it held could be asked anyway.
-                reading = None;
+                questions = Questions::Unheld;
             }
         }
 
@@ -71,7 +79,7 @@ impl Runner {
                 effort: self.agent.model().effort,
                 tools: &self.state.tools,
                 permission: &self.permission,
-                deferred: reading,
+                questions,
             },
         )?;
 
@@ -85,11 +93,14 @@ impl Runner {
         }
 
         // Taken after the state above, never before: a batch settled between
-        // the two was still waiting in that state, so the patch keeps it and
-        // the next assembly delivers it. Taken in the other order, it would be
-        // in neither the patch nor the transcript.
+        // the two is still listed as waiting in that state, and is delivered
+        // here all the same; the patch below lists it as waiting until the
+        // next assembly records the state without it, so a log that ends
+        // before then still holds the answer. Taken in the other order, an
+        // answer settled between them would be in neither the patch nor the
+        // transcript.
         let mut delivered = 0;
-        if root && let Some(held) = &held {
+        if let Some(held) = &held {
             for answer in held.take_settled() {
                 self.record(ancestry, Message::said(answer.said())).await?;
                 delivered += 1;
@@ -106,11 +117,7 @@ impl Runner {
     /// Records the batches a root run's registry was asked during the tool
     /// pass that just ran, before the results that name them.
     pub(super) async fn asked_since(&mut self, ancestry: Ancestry) -> Result<(), TurnError> {
-        let Some(held) = self
-            .deferred
-            .as_ref()
-            .filter(|_| ancestry.parent().is_none())
-        else {
+        let Some(held) = self.holding(ancestry) else {
             return Ok(());
         };
         if let Some(patch) = asked(self.store.context_snapshot().as_ref(), held)? {
@@ -122,28 +129,29 @@ impl Runner {
     /// Tells a root run's reader which questions wait, where that changed
     /// since they were last told.
     pub(super) fn report_waiting(&mut self, run: &RunContext<'_>) {
-        if run.ancestry().parent().is_some() {
-            return;
-        }
-        let Some(held) = &self.deferred else {
+        let Some(held) = self.holding(run.ancestry()) else {
             return;
         };
         let revision = held.revision();
         if revision == self.told {
             return;
         }
+        let batches = held.waiting();
         self.told = revision;
-        run.reporting().post(Event::Waiting {
-            batches: held.waiting(),
-        });
+        run.reporting().post(Event::Waiting { batches });
     }
 
     /// Whether a root run's registry holds an answer no pass has delivered.
     pub(super) fn undelivered(&self, ancestry: Ancestry) -> bool {
-        ancestry.parent().is_none()
-            && self
-                .deferred
-                .as_ref()
-                .is_some_and(crucible_tools::Deferred::any_settled)
+        self.holding(ancestry).is_some_and(Deferred::any_settled)
+    }
+
+    /// The registry of questions asked without waiting, where this run holds
+    /// it: only the root does. A run beneath it asks through the root's tool,
+    /// and the answers are the root's to deliver and record.
+    fn holding(&self, ancestry: Ancestry) -> Option<&Deferred> {
+        self.deferred
+            .as_ref()
+            .filter(|_| ancestry.parent().is_none())
     }
 }

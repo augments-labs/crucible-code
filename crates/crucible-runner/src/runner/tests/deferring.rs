@@ -6,6 +6,7 @@
 //! answers, because neither belongs to this crate: the runner is handed a
 //! registry and holds whatever lands in it to the rules below.
 
+use crucible_context::{ContextSection, QuestionsSection};
 use crucible_tools::Deferred;
 use crucible_types::{
     Answer, Answered, Batch, ContextSnapshot, Fragment, Question, QuestionId, Reply, ToolArgs,
@@ -224,7 +225,7 @@ fn told(transcript: &Transcript) -> Vec<Fragment> {
         .messages()
         .iter()
         .filter_map(|message| match message {
-            Message::Context(fragment) if fragment.section() == "questions" => {
+            Message::Context(fragment) if fragment.section() == QuestionsSection::ID => {
                 Some(fragment.clone())
             }
             _ => None,
@@ -237,7 +238,7 @@ fn restored(store: &Recording) -> Vec<Batch> {
     let held = Deferred::default();
     if let Some(saved) = store
         .context_snapshot()
-        .and_then(|snapshot| snapshot.get("questions").cloned())
+        .and_then(|snapshot| snapshot.get(QuestionsSection::ID).cloned())
     {
         held.restore(&saved).expect("the saved state restores");
     }
@@ -247,6 +248,17 @@ fn restored(store: &Recording) -> Vec<Batch> {
 /// The same session picked up from `store`, holding its questions in `held`.
 fn resumed(store: &Recording, script: Vec<Vec<Delta>>, held: Option<&Deferred>) -> Scripted {
     let (picked, transcript) = store.reopened();
+    resumed_from(picked, transcript, script, held)
+}
+
+/// A session picked up as `transcript` in `picked`, holding its questions in
+/// `held`.
+fn resumed_from(
+    picked: Arc<Recording>,
+    transcript: Transcript,
+    script: Vec<Vec<Delta>>,
+    held: Option<&Deferred>,
+) -> Scripted {
     let fresh = Deferred::default();
     let started = Scripted::recording(
         Script::new(script),
@@ -758,4 +770,189 @@ fn an_answer_is_never_lost_to_a_crash_between_its_settling_and_its_delivery() {
             "a crash before record {at} lost the answer"
         );
     }
+}
+
+/// The ids of the batches `held` lists as waiting, in order.
+fn waiting_ids(held: &Deferred) -> Vec<String> {
+    held.waiting()
+        .iter()
+        .map(|batch| batch.id().to_string())
+        .collect()
+}
+
+#[test]
+fn a_batch_asked_after_earlier_ones_were_told_is_told_too() {
+    let held = Deferred::default();
+    let mut scripted = deferring(
+        vec![
+            calling("c1", "ask", "{}"),
+            saying("first"),
+            calling("c2", "ask", "{}"),
+            saying("second"),
+        ],
+        &held,
+        Recording::nowhere(),
+    );
+    scripted.turn("first").expect("a first turn");
+    scripted.turn("second").expect("a second turn");
+
+    let told = told(scripted.runner.transcript());
+    let last = told.last().expect("the questions were told");
+    assert!(last.text().contains("q0"), "{told:?}");
+    assert!(
+        last.text().contains("q1"),
+        "the second batch was never told: {told:?}"
+    );
+}
+
+#[test]
+fn a_child_runs_passes_leave_the_recorded_questions_as_the_root_left_them() {
+    let store = Recording::started("a session with a child");
+    let held = Deferred::default();
+    let mut scripted = deferring(
+        vec![
+            calling("c1", "ask", "{}"),
+            saying("waiting"),
+            saying("a child's answer"),
+        ],
+        &held,
+        Arc::clone(&store),
+    );
+    scripted.turn("plan it").expect("a root turn");
+    // Answered while the child runs, and not yet delivered to the root.
+    settle_oldest(&held, chose());
+    let recorded = || {
+        store
+            .context_snapshot()
+            .and_then(|snapshot| snapshot.get(QuestionsSection::ID).cloned())
+    };
+    let before = recorded();
+
+    let mut root = scripted.runner.starting(
+        &scripted.events,
+        &scripted.cancel,
+        &scripted.steer,
+        &scripted.aside,
+    );
+    let child = root.child(RunPolicy::default());
+    let turned = scripted
+        .runner
+        .turn("a child's task", Box::new([]), &mut scripted.says, &child)
+        .awaited()
+        .map(ran);
+
+    assert_eq!(turned.expect("a child turn"), StopReason::Yielded);
+    assert_eq!(
+        recorded(),
+        before,
+        "a child run rewrote the root's questions"
+    );
+    assert!(
+        restored(&store)
+            .iter()
+            .any(|batch| batch.id().to_string() == "q0"),
+        "a crash now would lose the answer the root has not delivered"
+    );
+}
+
+#[test]
+fn a_runner_with_no_registry_is_told_waiting_questions_lapsed_after_a_compaction_too() {
+    let store = Recording::started("a session asking later");
+    let held = Deferred::default();
+    let mut first = deferring(
+        vec![
+            calling("c1", "ask", "{}"),
+            saying("first"),
+            saying("second"),
+            recap("kept context"),
+        ],
+        &held,
+        Arc::clone(&store),
+    );
+    first.runner.policy.compaction = Compaction {
+        keep_tokens: 1,
+        ..Compaction::default()
+    };
+    first.turn("plan it").expect("a turn");
+    first.turn("go on").expect("another");
+    let room = first.compacting().expect("a compaction");
+    assert!(matches!(room, Room::Made(_)), "{room:?}");
+    assert!(told(first.runner.transcript()).is_empty());
+    drop(first);
+
+    let mut resumed = resumed(&store, vec![saying("after")], None);
+    resumed.turn("continue").expect("the turn after compaction");
+
+    let told = told(resumed.runner.transcript());
+    let [lapsed] = told.as_slice() else {
+        panic!("told {told:?}");
+    };
+    assert!(
+        lapsed.text().contains("can no longer be answered"),
+        "{lapsed:?}"
+    );
+}
+
+#[test]
+fn a_run_with_no_registry_between_two_that_have_one_never_hands_an_id_out_again() {
+    let store = Recording::started("a session asking later");
+    let held = Deferred::default();
+    let mut first = deferring(
+        vec![calling("c1", "ask", "{}"), saying("waiting")],
+        &held,
+        Arc::clone(&store),
+    );
+    first.turn("plan it").expect("a turn");
+    drop(first);
+
+    let (between_store, transcript) = store.reopened();
+    let mut between = resumed_from(
+        Arc::clone(&between_store),
+        transcript,
+        vec![saying("nothing to hold")],
+        None,
+    );
+    between
+        .turn("look around")
+        .expect("a turn holding no registry");
+    drop(between);
+
+    let later = Deferred::default();
+    let mut last = resumed(
+        &between_store,
+        vec![calling("c2", "ask", "{}"), saying("asked")],
+        Some(&later),
+    );
+    last.turn("ask again")
+        .expect("a turn holding a registry again");
+
+    assert_eq!(waiting_ids(&later), ["q1"], "q0 was handed out again");
+}
+
+#[test]
+fn a_runner_that_picks_up_a_session_restores_the_batches_it_left_waiting() {
+    let store = Recording::started("a session asking later");
+    let held = Deferred::default();
+    let mut first = deferring(
+        vec![calling("c1", "ask", "{}"), saying("waiting")],
+        &held,
+        Arc::clone(&store),
+    );
+    first.turn("plan it").expect("a turn");
+    drop(first);
+
+    let later = Deferred::default();
+    let mut other = deferring(
+        vec![saying("another session"), saying("picked up")],
+        &later,
+        Recording::nowhere(),
+    );
+    other
+        .turn("something else")
+        .expect("a turn before the pick-up");
+    let (picked, transcript) = store.reopened();
+    other.runner.pick_up(picked, transcript);
+    other.turn("continue").expect("the picked-up turn");
+
+    assert_eq!(waiting_ids(&later), ["q0"], "the waiting batch was lost");
 }

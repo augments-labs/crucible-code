@@ -65,6 +65,31 @@ pub(super) enum Ending {
 }
 
 impl Ending {
+    /// Whether a turn whose last pass ended this way takes one more pass for
+    /// an answer accepted while that pass ran.
+    ///
+    /// Only an answer that finished does. Every other ending already tells
+    /// the person something a further pass would replace: an answer reported
+    /// cut short would be followed by one that reads complete, and a cancel, a
+    /// refusal or a request too big for the window is not the model's to talk
+    /// past. The answer then waits for the next turn's first pass, which
+    /// delivers it.
+    const fn carries_on(&self) -> bool {
+        match self {
+            Self::Stopped(stop) => match stop {
+                StopReason::Yielded => true,
+                StopReason::WantsTools
+                | StopReason::OutOfTokens
+                | StopReason::WindowExceeded
+                | StopReason::Filtered
+                | StopReason::Paused
+                | StopReason::Cancelled
+                | StopReason::Unknown => false,
+            },
+            Self::Rejected { .. } | Self::Undecided { .. } => false,
+        }
+    }
+
     /// The same ending, as the value a caller of a turn is handed.
     pub(super) fn turned(self, run: RunId, spent: Spend) -> Turned {
         match self {
@@ -503,9 +528,7 @@ impl<'a> AgentLoop<'a> {
                 // model, and the next pass is where it does: the turn goes on
                 // rather than leaving the person's answer for a prompt they
                 // may never type.
-                if matches!(ending, Ending::Stopped(StopReason::Yielded))
-                    && self.runner.undelivered(run.ancestry())
-                {
+                if ending.carries_on() && self.runner.undelivered(run.ancestry()) {
                     continue;
                 }
                 return Ok(ending);

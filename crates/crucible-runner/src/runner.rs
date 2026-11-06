@@ -508,6 +508,9 @@ impl Runner {
         self.store = store;
         let reading = self.admit_restricted();
         self.recount(reading);
+        // The questions the session picked up left waiting come back at its
+        // first assembly, as they do for a session resumed at start.
+        self.recalled = false;
     }
 
     /// The transcript so far.
