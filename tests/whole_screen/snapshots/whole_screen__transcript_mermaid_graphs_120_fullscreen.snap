@@ -22,45 +22,45 @@ expression: window.picture()
 |                                                                                                                        |
 |A flow chart:                                                                                                           |
 |                                                                                                                        |
-|graph TD                                                                                                                |
-|  A[Start] --> B{Ok?}                                                                                                   |
-|  B -->|yes| C[Done]                                                                                                    |
-|  B -->|no| A                                                                                                           |
+|┌─ mermaid                                                                                                              |
+|│ graph TD                                                                                                              |
+|│   A[Start] --> B{Ok?}                                                                                                 |
+|│   B -->|yes| C[Done]                                                                                                  |
+|│   B -->|no| A                                                                                                         |
+|└─                                                                                                                      |
 |                                                                                                                        |
 |A state diagram:                                                                                                        |
 |                                                                                                                        |
-|stateDiagram                                                                                                            |
-|  [*] --> Idle                                                                                                          |
+|┌─ mermaid                                                                                                              |
+|│ stateDiagram                                                                                                          |
+|│   [*] --> Idle                                                                                                        |
+|└─                                                                                                                      |
 |                                                                                                                        |
 |And the versioned spelling:                                                                                             |
 |                                                                                                                        |
-|stateDiagram-v2                                                                                                         |
-|  [*] --> Idle                                                                                                          |
-|  Idle --> Running: start                                                                                               |
-|  Running --> [*]                                                                                                       |
+|┌─ mermaid                                                                                                              |
+|│ stateDiagram-v2                                                                                                       |
+|│   [*] --> Idle                                                                                                        |
+|│   Idle --> Running: start                                                                                             |
+|│   Running --> [*]                                                                                                     |
+|└─                                                                                                                      |
 |                                                                                                                        |
 |A class diagram:                                                                                                        |
 |                                                                                                                        |
-|classDiagram                                                                                                            |
-|  class Reader                                                                                                          |
-|  Reader : +read(delta)                                                                                                 |
+|┌─ mermaid                                                                                                              |
+|│ classDiagram                                                                                                          |
+|│   class Reader                                                                                                        |
+|│   Reader : +read(delta)                                                                                               |
+|└─                                                                                                                      |
 |                                                                                                                        |
 |An entity relationship diagram:                                                                                         |
 |                                                                                                                        |
-|erDiagram                                                                                                               |
-|  ANSWER ||--o{ BLOCK : draws                                                                                           |
+|┌─ mermaid                                                                                                              |
+|│ erDiagram                                                                                                             |
+|│   ANSWER ||--o{ BLOCK : draws                                                                                         |
+|└─                                                                                                                      |
 |                                                                                                                        |
 |The corpus ends here.                                                                                                   |
-|                                                                                                                        |
-|                                                                                                                        |
-|                                                                                                                        |
-|                                                                                                                        |
-|                                                                                                                        |
-|                                                                                                                        |
-|                                                                                                                        |
-|                                                                                                                        |
-|                                                                                                                        |
-|                                                                                                                        |
 |                                                                                                                        |
 |                                                                                                         99% window left|
 |╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮|

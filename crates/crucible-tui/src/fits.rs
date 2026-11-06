@@ -31,11 +31,13 @@ use std::time::Duration;
 use crate::asked::{Asked, Choice, Given, Stop, Writing};
 use crate::asking::Question;
 use crate::bar::{Bar, Fill, Part};
+use crate::chrome::{Frame, Label, Undrawn};
 use crate::color::Slot;
 use crate::expanded::{Expanded, Shown};
 use crate::glyphs::Glyphs;
 use crate::key_panel::KeyPanel;
 use crate::ladder::Ladder;
+use crate::markdown::corpus_pictures::laid;
 use crate::markdown::{Held, Holding};
 use crate::menu::{Listed, Menu};
 use crate::notice::Notice;
@@ -140,6 +142,36 @@ fn within(rows: &[Row], columns: usize, what: &str, glyphs: Glyphs) {
             row.columns(),
             row.text()
         );
+    }
+}
+
+#[test]
+fn a_framed_block_fits_the_window_it_stands_in() {
+    let inner: Vec<Row> = [PROSE, LONG, WIDE, MARKED]
+        .iter()
+        .map(|text| Row::new().then(Slot::Plain, *text))
+        .collect();
+
+    for refusal in [None, Some(Undrawn::PastCap)] {
+        across("a frame", |columns, glyphs| {
+            let frame = Frame {
+                label: Label::new(LONG, glyphs),
+                refusal,
+            };
+            frame.rows(columns, &inner)
+        });
+    }
+}
+
+#[test]
+fn a_fence_in_its_frame_fits_the_window_it_is_drawn_in() {
+    // Code is cut where the room runs out, so every fixture is one line that
+    // is long, wide or marked, and a window of any width has to hold the row
+    // it is cut into -- and the mark that carries it on.
+    for code in [PROSE, LONG, WIDE, MARKED, "    let x = 1;    \t    "] {
+        across("a fence", |columns, glyphs| {
+            laid(&format!("```rust\n{code}\n```\n"), columns, glyphs)
+        });
     }
 }
 

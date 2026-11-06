@@ -1015,22 +1015,28 @@ impl<T: Terminal> Renderer<T> {
         let bands = self.bands();
         let view = self.view(&bands);
         let mut painted = String::new();
-        let lines: Vec<String> = taken
+        let lines = taken
             .places(self.size.columns, &view, self.record.last_row())
             .into_iter()
             .filter_map(|(place, covered)| match (view.row(place), place) {
-                (Some(row), _) => self.painted.said(row, &covered),
+                (Some(row), _) => self
+                    .painted
+                    .said(row, &covered)
+                    .map(|said| (said, self.painted.joins(row))),
                 (None, Place::Said(at)) => {
                     let row = self.record.row_at(at)?;
                     painted.clear();
                     row.paint_into(&self.palette, &mut painted);
-                    Some(select::said(&painted, &covered, &row.structural()))
+                    let structural = row.structural();
+                    Some((
+                        select::said(&painted, &covered, &structural),
+                        select::joins(&painted, &structural),
+                    ))
                 }
                 (None, Place::Stood(_)) => None,
             })
-            .map(|line| line.trim_end().to_owned())
-            .collect();
-        lines.join("\n")
+            .map(|(line, join)| (line.trim_end().to_owned(), join));
+        select::joined(lines)
     }
 
     /// Where the pointer was last reported, as a window row and column.

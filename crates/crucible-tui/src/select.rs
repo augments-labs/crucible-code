@@ -30,7 +30,10 @@
 
 use std::ops::{Range, RangeInclusive};
 
+use crate::chrome::{self, GUTTER};
 use crate::escape::Escapes;
+use crate::glyphs::Glyphs;
+use crate::markdown;
 use crate::width::along;
 
 /// Reverse video on: what a terminal draws where the reader has selected, and
@@ -318,6 +321,70 @@ pub(crate) fn lit(
     if inside {
         into.push_str(DIM);
     }
+}
+
+/// How a selected row stands to the one before it in what is copied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Join {
+    /// On a line of its own: a break comes before it.
+    Line,
+    /// The same line as the row before it, which wrapped here: no break.
+    Carries,
+    /// Drawn as the edge of a frame, which is none of the text: nothing of it
+    /// is copied, and no break for it either.
+    Edge,
+}
+
+/// How `painted` stands to the row above it, from what is painted and which
+/// of it is structure.
+///
+/// Read off what is painted rather than kept beside it, so a row from the
+/// screen and one folded again from the record are asked the same way. What
+/// the reader selected across two rows of code, the second opening with the
+/// mark of a wrapped line, is one line of code, and no break was written where
+/// it wrapped. A frame's edge is structure from the first column, followed by
+/// nothing but more structure (the scroll rail's cell at the window's edge),
+/// and a blank line of code is not an edge: it keeps its break.
+pub(crate) fn joins(painted: &str, structural: &[Range<usize>]) -> Join {
+    let mark = said(painted, &(0..GUTTER), &[]);
+    if structural
+        .iter()
+        .any(|range| range.start == 0 && range.end >= GUTTER)
+        && [Glyphs::Unicode, Glyphs::Ascii]
+            .into_iter()
+            .any(|glyphs| markdown::continuation(glyphs) == mark)
+    {
+        return Join::Carries;
+    }
+
+    // The edge is the structure the row opens with, and nothing but more
+    // structure (the scroll rail's cell, at the window's edge) follows it.
+    let edge = structural
+        .iter()
+        .find(|range| range.start == 0)
+        .map(|range| said(painted, range, &[]));
+    let text = said(painted, &(0..usize::MAX), structural);
+    if text.trim().is_empty() && edge.is_some_and(|edge| chrome::is_edge(&edge)) {
+        return Join::Edge;
+    }
+    Join::Line
+}
+
+/// Selected rows as one text: a break between rows, except where a row
+/// carries on the line above it, and nothing at all for a frame's edge.
+pub(crate) fn joined(rows: impl IntoIterator<Item = (String, Join)>) -> String {
+    let mut text = String::new();
+    let mut began = false;
+    for (row, join) in rows {
+        match join {
+            Join::Edge => continue,
+            Join::Line if began => text.push('\n'),
+            Join::Line | Join::Carries => {}
+        }
+        began = true;
+        text.push_str(&row);
+    }
+    text
 }
 
 /// The characters of `painted` under the columns in `covered`.

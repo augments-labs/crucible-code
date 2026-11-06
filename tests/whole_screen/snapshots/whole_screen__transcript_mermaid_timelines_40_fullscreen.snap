@@ -3,44 +3,44 @@ source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
 40x44 cursor 41,4 scrolled 0
-|CRUCIBLE                                |
-|/…/workspace                            |
-|                                        |
-|› show me the corpus                    |
-|                                        |
-|A sequence diagram:                     |
-|                                        |
-|sequenceDiagram                         |
-|  Alice->>Bob: Hello                    |
-|  Bob-->>Alice: Hi                      |
-|                                        |
-|A gantt chart:                          |
-|                                        |
-|gantt                                   |
-|  title Release                         |
-|  section Tests                         |
-|  Gate :a1, 2026-11-01, 3d              |
-|                                        |
-|A git graph:                            |
-|                                        |
-|gitGraph                                |
-|  commit id: "one"                      |
-|  branch feature                        |
-|  commit id: "two"                      |
-|  checkout main                         |
-|  merge feature                         |
-|                                        |
-|A kind with no drawing of its own:      |
-|                                        |
-|pie                                     |
-|  "drawn" : 1                           |
-|                                        |
-|The corpus ends here.                   |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
+|› show me the corpus                   │|
+|                                       │|
+|A sequence diagram:                    ●|
+|                                       ┃|
+|┌─ mermaid                             ┃|
+|│ sequenceDiagram                      ┃|
+|│   Alice->>Bob: Hello                 ┃|
+|│   Bob-->>Alice: Hi                   ┃|
+|└─                                     ┃|
+|                                       ┃|
+|A gantt chart:                         ┃|
+|                                       ┃|
+|┌─ mermaid                             ┃|
+|│ gantt                                ┃|
+|│   title Release                      ┃|
+|│   section Tests                      ┃|
+|│   Gate :a1, 2026-11-01, 3d           ┃|
+|└─                                     ┃|
+|                                       ┃|
+|A git graph:                           ┃|
+|                                       ┃|
+|┌─ mermaid                             ┃|
+|│ gitGraph                             ┃|
+|│   commit id: "one"                   ┃|
+|│   branch feature                     ┃|
+|│   commit id: "two"                   ┃|
+|│   checkout main                      ┃|
+|│   merge feature                      ┃|
+|└─                                     ┃|
+|                                       ┃|
+|A kind with no drawing of its own:     ┃|
+|                                       ┃|
+|┌─ mermaid                             ┃|
+|│ pie                                  ┃|
+|│   "drawn" : 1                        ┃|
+|└─                                     ┃|
+|                                       ┃|
+|The corpus ends here.                  ┃|
 |                                        |
 |                         99% window left|
 |╭──────────────────────────────────────╮|
