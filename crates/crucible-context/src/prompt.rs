@@ -58,7 +58,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map, Value, json};
 
 use crucible_models::Effort;
-use crucible_tools::{Deferred, Permission, ToolSnapshot};
+use crucible_tools::{Deferred, MOST_HELD, Permission, ToolSnapshot};
 use crucible_types::{Batch, Fragment, Seen, Tone};
 
 use crate::ContextSection;
@@ -818,21 +818,34 @@ pub(crate) fn recorded_next(state: &Value) -> Option<u64> {
 }
 
 /// Has `held` hand out no id below the next one `recorded`, a questions state
-/// a session recorded, numbers, whatever `held` holds: an answer in the
-/// transcript naming an id that state spent would otherwise settle a new
-/// batch. A state that records no readable number changes nothing.
+/// a session recorded, numbers: an answer in the transcript naming an id that
+/// state spent would otherwise settle a new batch. Ids `held` already handed
+/// out are its own and stay as they are. A state that records no readable
+/// number, or one `held` already numbers past, changes nothing, so nothing is
+/// reported as changed.
+///
+/// Nothing may register on `held` while this runs: the list read before it is
+/// put back, without the batch registered in between. A runner calls it from
+/// a pass's assembly, while none of its tools, the only ones that register,
+/// is running. An answer settled in between is read again.
 pub fn continue_numbering(held: &Deferred, recorded: &Value) {
     let Some(next) = recorded_next(recorded) else {
         return;
     };
-    let mut now = held.state();
-    if let Some(fields) = now.as_object_mut() {
-        fields.insert(NEXT.to_owned(), next.into());
+    // Each refusal is an answer settled since the read; there are no more of
+    // those than batches held.
+    for _ in 0..=MOST_HELD {
+        let mut now = held.state();
+        if recorded_next(&now).is_some_and(|numbered| numbered >= next) {
+            return;
+        }
+        if let Some(fields) = now.as_object_mut() {
+            fields.insert(NEXT.to_owned(), next.into());
+        }
+        if held.restore(&now).is_ok() {
+            return;
+        }
     }
-    // The registry's own list with a number it keeps if larger fits whatever
-    // it holds, so this is never refused; were it, nothing better than what
-    // it holds is known.
-    let _ = held.restore(&now);
 }
 
 /// The key beside a registry's saved form that holds the ids the model was

@@ -194,9 +194,9 @@ pub fn assemble(
 /// one, the oldest `held` no longer lists go first until it reads.
 ///
 /// This records only what `held` listed as waiting or `prior` recorded, so a
-/// batch asked and settled since `prior` is in neither: that relies on a batch being settled only by whoever
-/// was told its id, which the runner tells after this is recorded. `None`
-/// where no batch was asked since.
+/// batch asked and settled since `prior` is in neither: that relies on a batch
+/// being settled only by whoever was told its id, which the runner tells after
+/// this is recorded. `None` where no batch was asked since.
 ///
 /// # Errors
 ///
@@ -444,8 +444,7 @@ mod tests {
     }
 
     #[test]
-    fn questions_asked_records_a_state_the_registry_can_read_back_when_keeping_every_batch_would_not()
-     {
+    fn questions_asked_keeps_its_record_one_the_registry_can_read_back() {
         let held = Deferred::default();
         let first = asking(&held, "Early");
         for _ in 1..MOST_HELD {

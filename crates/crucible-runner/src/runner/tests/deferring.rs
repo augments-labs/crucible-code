@@ -1126,7 +1126,7 @@ fn an_answer_accepted_during_a_pass_cut_short_leaves_the_cut_short_ending_standi
 }
 
 #[test]
-fn a_registry_handed_in_already_holding_a_batch_hands_out_no_id_the_log_names() {
+fn a_registry_handed_in_already_holding_a_batch_numbers_past_the_ids_the_log_spent() {
     let store = Recording::started("a session asking three times");
     let held = Deferred::default();
     let mut first = deferring(
@@ -1143,8 +1143,10 @@ fn a_registry_handed_in_already_holding_a_batch_hands_out_no_id_the_log_names() 
     drop(first);
 
     // A registry that already holds a batch of its own keeps it, and the
-    // session's are not restored over it; the ids that session spent stay
-    // spent all the same.
+    // session's are not restored over it; the batches asked from now on are
+    // numbered past every id the log spent. Its own `q0` is one the log
+    // names too, which is why a runner is handed a fresh registry or this
+    // session's own.
     let later = Deferred::default();
     later.register(vec![storage()]).expect("a batch fits");
     let mut resumed = resumed(
@@ -1158,5 +1160,37 @@ fn a_registry_handed_in_already_holding_a_batch_hands_out_no_id_the_log_names() 
         waiting_ids(&later),
         ["q0", "q3"],
         "an id the log names was handed out again"
+    );
+}
+
+#[test]
+fn a_registry_handed_in_numbering_past_the_log_reports_nothing_changed() {
+    let store = Recording::started("a session asking three times");
+    let held = Deferred::default();
+    let mut first = deferring(
+        vec![
+            calling("c1", "ask", "{}"),
+            calling("c2", "ask", "{}"),
+            calling("c3", "ask", "{}"),
+            saying("three wait"),
+        ],
+        &held,
+        Arc::clone(&store),
+    );
+    first.turn("plan it").expect("a turn");
+    drop(first);
+
+    // This session's own registry, which already numbers past what the log
+    // recorded: there is nothing to continue and nothing new to report.
+    for _ in 0..4 {
+        held.register(vec![storage()]).expect("a batch fits");
+    }
+    let mut resumed = resumed(&store, vec![saying("nothing new")], Some(&held));
+    resumed.turn("continue").expect("a turn");
+
+    assert_eq!(
+        reported(&resumed.seen),
+        Vec::<usize>::new(),
+        "an unchanged list was reported"
     );
 }

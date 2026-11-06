@@ -344,6 +344,11 @@ impl Runner {
     /// `held` is the registry the tool registers on and a client settles
     /// through. A runner given none tells the model once that any questions
     /// a resumed session recorded as waiting have lapsed.
+    ///
+    /// `held` is a fresh registry or the one already holding this session's
+    /// batches: a resumed session's recorded batches come back only into an
+    /// empty one, and a registry holding another session's would keep ids
+    /// the log names for different batches.
     #[must_use]
     pub fn deferring(mut self, held: Deferred) -> Self {
         self.told = held.revision();

@@ -14,9 +14,10 @@
 //! recorded as the person's words after the fragments; the patch that stops
 //! listing them is recorded last. A log that ends anywhere in between either
 //! holds the answer or brings its batch back as waiting, so the person may be
-//! asked twice and is never ignored. The one exception is a record that would
-//! list more batches than the registry holds, which `asked` trims oldest
-//! first so the rest still come back. A batch asked during a tool pass is
+//! asked twice and is never ignored. The one exception is a record the
+//! registry would refuse to read back, too many batches or too many bytes,
+//! from which `asked` drops the oldest it no longer lists so the rest still
+//! come back. A batch asked during a tool pass is
 //! recorded, with the next id, before the result naming it
 //! ([`Runner::asked_since`]), so a log that holds the id brings the batch
 //! back and never hands the id out again.
@@ -57,10 +58,11 @@ impl Runner {
             self.recalled = true;
             // The first assembly of a session started or picked up: the
             // batches its log recorded as waiting come back. A registry
-            // handed in already holding something keeps what it holds, and
-            // only the ids the log spent stay spent; [`Runner::pick_up`]
-            // empties the one it holds, so a session picked up always gets
-            // its own batches back.
+            // handed in already holding something keeps what it holds, which
+            // is right only for a fresh one or this session's own (see
+            // [`Runner::deferring`]), and numbers past the ids the log spent;
+            // [`Runner::pick_up`] empties the one it holds, so a session
+            // picked up always gets its own batches back.
             if let Some(saved) = snapshot
                 .as_ref()
                 .and_then(|saved| saved.get(QuestionsSection::ID))
