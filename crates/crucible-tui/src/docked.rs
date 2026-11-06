@@ -36,12 +36,22 @@
 //! strings goes through [`spoken`] before it is measured or drawn, for the
 //! reason the blocking panel gives.
 //!
-//! **Height gives way before sense.** The rungs of [`Spacing::LADDER`] first,
-//! and then, where the window cannot hold the open dock at all, the closed
-//! row: a part of a question drawn as if it were the whole would be read as
-//! the whole. Width gives way the way the blocking panel's does: the row of
-//! question names becomes *question 2 of 3 · 1 answered* where it will not fit
-//! whole, and every sentence folds.
+//! **Height gives way, and the words never do.** Nothing the dock shows is cut
+//! to fit: every answer, description, written answer and note is folded in
+//! full, because what the reader wrote is what is sent, and a draft read back
+//! in part would be read as the whole. The rungs of [`Spacing::LADDER`] that
+//! keep every description go first, giving up the row of keys and then the
+//! air between blocks. Where the open question or the review is still taller
+//! than the window, the dock becomes a window onto it, as the transcript's
+//! [`crate::Expanded`] does: the row saying what state it is in and the actions
+//! stay where they are, the rest scrolls, and the row under the frame says
+//! `pgup pgdn to see more`, which it says nowhere else. [`Dock::scrolled`] is
+//! how far down the window opens, and [`Docked::end`] how far it may go at this
+//! size, which the caller clamps its offset to. Only where the window cannot
+//! hold even the frame, one row and the actions is the dock the closed row.
+//! Width gives way the way the blocking panel's does: the row of question
+//! names becomes *question 2 of 3 · 1 answered* where it will not fit whole,
+//! and every sentence folds.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -69,6 +79,9 @@ pub struct Dock<K> {
     pub current: usize,
     /// Where the reader is in it.
     pub focus: Focus,
+    /// How many rows down the open question or review the window opens, where
+    /// it is taller than the room: see [`Docked::end`].
+    pub scrolled: usize,
     /// What the dock is doing.
     pub phase: Phase,
 }
@@ -382,6 +395,18 @@ const DECLINE: &str = "Decline question";
 /// Where the dock is opened from, named on the closed row.
 const HINT: &str = "/questions";
 
+/// The row under the frame while the open dock is a window onto more than it
+/// shows, naming the keys that move it.
+const MORE: &str = "pgup pgdn to see more";
+
+/// The rung a window is cut from: the tightest that still says everything,
+/// since a window is what is drawn instead of giving up any of the words.
+const WINDOWED: Spacing = Spacing {
+    footer: false,
+    says: true,
+    opening: false,
+};
+
 /// The fewest columns a detail on the closed row is kept for. Narrower than
 /// this and the row drops it, rather than showing a word and a half of it.
 const DETAIL: usize = 8;
@@ -404,32 +429,102 @@ impl<K> Clone for Docked<'_, K> {
 impl<K> Copy for Docked<'_, K> {}
 
 impl<K> Docked<'_, K> {
-    /// The dock in `room` rows: the open dock where it fits, the closed row
-    /// where it does not, and nothing where nothing waits or no row is left.
+    /// The dock in `room` rows: the open dock where it fits, a window of it
+    /// where it is taller than the room, the closed row where not even the
+    /// window fits, and nothing where nothing waits or no row is left.
     ///
     /// The batch in front is [`Dock::front`] and the question open in it
-    /// [`Dock::open`]. The caret is where a line is being written, and `None`
-    /// everywhere else.
+    /// [`Dock::open`]; the window opens [`Dock::scrolled`] rows down, or at
+    /// [`Docked::end`] where that is further. The caret is where a line is
+    /// being written, and `None` everywhere else, including where that line is
+    /// outside the window.
     #[must_use]
     pub fn within(&self, columns: usize, room: usize, glyphs: Glyphs) -> (Vec<Row>, Option<Caret>) {
+        match self.drawn(columns, room, glyphs) {
+            Drawn::Nothing => (Vec::new(), None),
+            Drawn::Closed => (vec![self.closed(columns, glyphs)], None),
+            Drawn::Whole(opened) => {
+                let caret = opened.caret.map(|caret| Caret {
+                    row: opened.head.len() + caret.row,
+                    ..caret
+                });
+                (opened.whole(), caret)
+            }
+            Drawn::Window { opened, held } => {
+                let end = opened.body.len().saturating_sub(held);
+                let from = self.dock.scrolled.min(end);
+                let caret = opened
+                    .caret
+                    .filter(|caret| caret.row >= from && caret.row < from + held)
+                    .map(|caret| Caret {
+                        row: opened.head.len() + caret.row - from,
+                        ..caret
+                    });
+                let Opened {
+                    head,
+                    body,
+                    pinned,
+                    bottom,
+                    ..
+                } = opened;
+                let mut rows = head;
+                rows.extend(body.into_iter().skip(from).take(held));
+                rows.extend(pinned);
+                rows.push(bottom);
+                let room = columns.saturating_sub(SAID);
+                rows.push(said(SAID, Slot::Quiet, clip(MORE, room)));
+                (rows, caret)
+            }
+        }
+    }
+
+    /// How far down [`Dock::scrolled`] may go at this size: zero wherever the
+    /// open dock fits whole or is not drawn open, so a caller clamping its
+    /// offset to this one is left with none to move.
+    ///
+    /// Read off the same layout [`Docked::within`] draws, at the same width
+    /// and room, so the last window the caller can scroll to is the last one
+    /// drawn.
+    #[must_use]
+    pub fn end(&self, columns: usize, room: usize, glyphs: Glyphs) -> usize {
+        match self.drawn(columns, room, glyphs) {
+            Drawn::Window { opened, held } => opened.body.len().saturating_sub(held),
+            Drawn::Nothing | Drawn::Closed | Drawn::Whole(_) => 0,
+        }
+    }
+
+    /// How the dock is drawn in `room` rows: the one choice both
+    /// [`Docked::within`] and [`Docked::end`] are read from.
+    fn drawn(&self, columns: usize, room: usize, glyphs: Glyphs) -> Drawn {
         let Some((_, batch)) = self.dock.front() else {
-            return (Vec::new(), None);
+            return Drawn::Nothing;
         };
         if room == 0 || columns == 0 || self.dock.waiting() == 0 {
-            return (Vec::new(), None);
+            return Drawn::Nothing;
+        }
+        if self.dock.phase == Phase::Collapsed {
+            return Drawn::Closed;
         }
 
-        if self.dock.phase != Phase::Collapsed {
-            for spacing in Spacing::LADDER {
-                let (rows, caret) = self.open(batch, columns, glyphs, spacing);
-                let drawn = rows.len();
-                if drawn > 0 && drawn <= room {
-                    return (rows, caret.filter(|caret| caret.row < drawn));
-                }
+        for spacing in Spacing::LADDER.into_iter().filter(|spacing| spacing.says) {
+            let Some(opened) = self.open(batch, columns, glyphs, spacing) else {
+                return Drawn::Closed;
+            };
+            if opened.height() <= room {
+                return Drawn::Whole(opened);
             }
         }
 
-        (vec![self.closed(columns, glyphs)], None)
+        // The tightest rung that still says everything, with the row under the
+        // frame given to the keys that move the window.
+        let Some(opened) = self.open(batch, columns, glyphs, WINDOWED) else {
+            return Drawn::Closed;
+        };
+        let chrome = opened.head.len() + opened.pinned.len() + 2;
+        match room.checked_sub(chrome).filter(|held| *held > 0) {
+            Some(held) => Drawn::Window { opened, held },
+            None => Drawn::Closed,
+        }
     }
 
     /// How many questions wait, in every batch, in words.
@@ -523,23 +618,21 @@ impl<K> Docked<'_, K> {
         }
     }
 
-    /// The open dock at one rung of the ladder, or nothing where the window is
-    /// too narrow for the column its answers open in.
+    /// The open dock at one rung of the ladder, in its parts, or `None` where
+    /// the window is too narrow for the column its answers open in.
     fn open(
         &self,
         batch: &Batched<K>,
         columns: usize,
         glyphs: Glyphs,
         spacing: Spacing,
-    ) -> (Vec<Row>, Option<Caret>) {
+    ) -> Option<Opened> {
         let inner = columns.saturating_sub(AROUND);
         let across = inner.saturating_sub(SAID);
-        let Some((_, member)) = self.dock.open() else {
-            return (Vec::new(), None);
-        };
+        let (_, member) = self.dock.open()?;
         let least = front(member).max(PAYLOAD + wide(NOTED) + SAID) + 1;
         if inner < least {
-            return (Vec::new(), None);
+            return None;
         }
 
         let laid = Laid {
@@ -551,7 +644,7 @@ impl<K> Docked<'_, K> {
         let (close, closed) = glyphs.bottom();
         let bar = glyphs.horizontal().repeat(inner);
 
-        let mut rows = vec![Row::new().then(Slot::Accent, format!("{open}{bar}{opened}"))];
+        let mut head = vec![Row::new().then(Slot::Accent, format!("{open}{bar}{opened}"))];
         let mut header = self.stated(glyphs);
         if let Some((at, _)) = self.dock.front().filter(|_| self.dock.batches.len() > 1) {
             header.push(Slot::Quiet, format!(" {} ", glyphs.dot()));
@@ -560,7 +653,7 @@ impl<K> Docked<'_, K> {
                 format!("batch {} of {}", at + 1, self.dock.batches.len()),
             );
         }
-        rows.push(framed(
+        head.push(framed(
             Row::new()
                 .then(Slot::Plain, " ".repeat(SAID))
                 .join(header.clipped(across)),
@@ -568,21 +661,26 @@ impl<K> Docked<'_, K> {
             glyphs,
         ));
 
-        let caret = if self.dock.phase == Phase::Answering {
-            self.answering(batch, member, laid, &mut rows)
+        let mut body = Vec::new();
+        let (caret, pinned) = if self.dock.phase == Phase::Answering {
+            (self.answering(batch, member, laid, &mut body), Vec::new())
         } else {
-            self.reviewed(batch, laid, &mut rows);
-            None
+            (None, self.reviewed(batch, laid, &mut body))
         };
 
-        rows.push(Row::new().then(Slot::Accent, format!("{close}{bar}{closed}")));
-        if spacing.footer && !self.footer.is_empty() {
+        let footer = (spacing.footer && !self.footer.is_empty()).then(|| {
             let room = columns.saturating_sub(SAID);
-            let footer = spoken(self.footer);
-            rows.push(said(SAID, Slot::Quiet, clip(&footer, room)));
-        }
+            said(SAID, Slot::Quiet, clip(&spoken(self.footer), room))
+        });
 
-        (rows, caret)
+        Some(Opened {
+            head,
+            body,
+            pinned,
+            bottom: Row::new().then(Slot::Accent, format!("{close}{bar}{closed}")),
+            footer,
+            caret,
+        })
     }
 
     /// The open question's rows: which question of the batch it is, what it
@@ -820,8 +918,9 @@ impl<K> Docked<'_, K> {
     }
 
     /// Every answer of the batch read back, under what the state says about
-    /// them, and the actions the state offers.
-    fn reviewed(&self, batch: &Batched<K>, laid: Laid, rows: &mut Vec<Row>) {
+    /// them; returns the rule and the actions the state offers, which stay in
+    /// view where the rest of it scrolls.
+    fn reviewed(&self, batch: &Batched<K>, laid: Laid, rows: &mut Vec<Row>) -> Vec<Row> {
         let Laid {
             inner,
             glyphs,
@@ -917,11 +1016,11 @@ impl<K> Docked<'_, K> {
 
         let actions = self.dock.phase.actions();
         if actions.is_empty() {
-            return;
+            return Vec::new();
         }
         blank(rows);
         let ruled = glyphs.horizontal().repeat(across.saturating_sub(SAID));
-        rows.push(framed(said(SAID, Slot::Quiet, &ruled), inner, glyphs));
+        let mut pinned = vec![framed(said(SAID, Slot::Quiet, &ruled), inner, glyphs)];
         let on = self.dock.marked_action();
         for action in actions {
             let marked = on == Some(*action);
@@ -933,9 +1032,66 @@ impl<K> Docked<'_, K> {
                     Slot::Strong,
                     clip(action.label(), across.saturating_sub(AROUND)),
                 );
-            rows.push(framed(row, inner, glyphs));
+            pinned.push(framed(row, inner, glyphs));
         }
+        pinned
     }
+}
+
+/// The open dock in the parts a window is cut from: the rows that stay at the
+/// top, the rows that scroll, the rows that stay under them, and the frame's
+/// foot.
+struct Opened {
+    /// The frame's top and the row saying what state the dock is in.
+    head: Vec<Row>,
+    /// The question, or the answers read back: what scrolls.
+    body: Vec<Row>,
+    /// The rule and the actions the state offers, or nothing.
+    pinned: Vec<Row>,
+    /// The frame's foot.
+    bottom: Row,
+    /// The caller's row of keys under the frame, where this rung keeps it.
+    footer: Option<Row>,
+    /// Where the cursor stands, counted in rows of `body`.
+    caret: Option<Caret>,
+}
+
+impl Opened {
+    /// How many rows it is drawn whole.
+    fn height(&self) -> usize {
+        self.head.len()
+            + self.body.len()
+            + self.pinned.len()
+            + 1
+            + usize::from(self.footer.is_some())
+    }
+
+    /// Every row of it, top to bottom.
+    fn whole(self) -> Vec<Row> {
+        let mut rows = self.head;
+        rows.extend(self.body);
+        rows.extend(self.pinned);
+        rows.push(self.bottom);
+        rows.extend(self.footer);
+        rows
+    }
+}
+
+/// How the dock is drawn at one size.
+enum Drawn {
+    /// Nothing waits, or there is no room at all.
+    Nothing,
+    /// The one row.
+    Closed,
+    /// Open, every row of it.
+    Whole(Opened),
+    /// Open, `held` rows of its body at a time.
+    Window {
+        /// The dock, laid out at the rung a window is cut from.
+        opened: Opened,
+        /// How many rows of its body the window shows.
+        held: usize,
+    },
 }
 
 /// How a row is being drawn: the width inside the frame, the characters, and
@@ -1034,6 +1190,7 @@ mod tests {
             batches: vec![Batched { key: 7, members }],
             current: 0,
             focus: Focus::default(),
+            scrolled: 0,
             phase,
         }
     }
@@ -1090,6 +1247,7 @@ mod tests {
                 batches: Vec::new(),
                 current: 0,
                 focus: Focus::default(),
+                scrolled: 0,
                 phase: phase.clone(),
             };
             assert!(art(&empty, 80, 40).is_empty(), "{phase:?}");
@@ -1616,6 +1774,7 @@ mod tests {
                 marked: 7,
                 editing: None,
             },
+            scrolled: 0,
             phase: Phase::Answering,
         }
     }
@@ -1730,5 +1889,184 @@ mod tests {
         .within(36, 40, Glyphs::Unicode)
         .0;
         insta::assert_snapshot!(dump(&rows, 36));
+    }
+
+    /// Words numbered from `tag`, each five bytes with the space after it, to
+    /// `bytes` bytes: every one of them a word nothing else in the dock says.
+    fn numbered(tag: char, bytes: usize) -> (String, Vec<String>) {
+        let words: Vec<String> = (0..bytes / 5).map(|at| format!("{tag}{at:03}")).collect();
+        (words.join(" "), words)
+    }
+
+    /// Every window the dock can be scrolled to at this size, top to bottom.
+    fn windows(dock: &Dock<u32>, columns: usize, room: usize) -> Vec<Vec<String>> {
+        let end = Docked { dock, footer: "" }.end(columns, room, Glyphs::Unicode);
+        (0..=end)
+            .map(|scrolled| {
+                let at = Dock {
+                    scrolled,
+                    ..dock.clone()
+                };
+                art(&at, columns, room)
+            })
+            .collect()
+    }
+
+    /// Whether every one of `words` is on a row of some window, whole.
+    fn reachable(windows: &[Vec<String>], words: &[String]) -> Vec<String> {
+        words
+            .iter()
+            .filter(|word| {
+                !windows.iter().flatten().any(|row| {
+                    row.split(|c: char| !c.is_alphanumeric())
+                        .any(|said| said == word.as_str())
+                })
+            })
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn a_long_note_leaves_the_question_on_screen_and_every_row_of_it_in_reach() {
+        let (note, words) = numbered('n', 4096);
+        let mut format = format();
+        format.draft.note = note;
+        let open = dock(vec![format, scope()], Phase::Answering);
+
+        let rows = art(&open, 80, 60);
+        assert!(rows.len() <= 60, "{rows:#?}");
+        row(&rows, "Which wire format should the exporter use first?");
+        let windows = windows(&open, 80, 60);
+        for window in &windows {
+            assert!(window.len() <= 60, "{window:#?}");
+        }
+        assert_eq!(reachable(&windows, &words), Vec::<String>::new());
+    }
+
+    #[test]
+    fn four_long_notes_scroll_the_review_down_to_submit_batch() {
+        let mut members = Vec::new();
+        let mut every = Vec::new();
+        for tag in ['p', 'q', 'r', 's'] {
+            let (note, words) = numbered(tag, 600);
+            let mut format = format();
+            format.draft.chosen = Chosen::One(Some(1));
+            format.draft.note = note;
+            members.push(format);
+            every.extend(words);
+        }
+        let review = dock(members, Phase::Reviewing);
+
+        // Sixty rows is the room the case was set in; the review's own height
+        // at eighty columns is about that, so the rooms the round-one probe
+        // found it closed in are tried too.
+        for room in [60, 40, 30, 24] {
+            let windows = windows(&review, 80, room);
+            for window in &windows {
+                assert!(window.len() <= room, "{window:#?}");
+            }
+            assert!(
+                windows
+                    .iter()
+                    .flatten()
+                    .any(|row| row.contains("Submit batch")),
+                "{room}: {windows:#?}"
+            );
+            assert_eq!(reachable(&windows, &every), Vec::<String>::new(), "{room}");
+        }
+    }
+
+    #[test]
+    fn the_scroll_keys_are_named_only_where_there_is_more_to_see() {
+        let short = dock(vec![format(), scope()], Phase::Answering);
+        let (note, _) = numbered('n', 4096);
+        let mut long = short.clone();
+        if let Some(member) = long.batches.first_mut().and_then(|b| b.members.first_mut()) {
+            member.draft.note = note;
+        }
+
+        assert!(
+            !said(&short, 80, 60).contains("pgup"),
+            "{}",
+            said(&short, 80, 60)
+        );
+        assert_eq!(
+            Docked {
+                dock: &short,
+                footer: ""
+            }
+            .end(80, 60, Glyphs::Unicode),
+            0
+        );
+        assert!(
+            said(&long, 80, 60).contains("pgup pgdn"),
+            "{}",
+            said(&long, 80, 60)
+        );
+        assert!(
+            Docked {
+                dock: &long,
+                footer: ""
+            }
+            .end(80, 60, Glyphs::Unicode)
+                > 0
+        );
+    }
+
+    #[test]
+    fn a_scroll_past_the_end_draws_the_last_window() {
+        let (note, _) = numbered('n', 4096);
+        let mut long = dock(vec![format(), scope()], Phase::Answering);
+        if let Some(member) = long.batches.first_mut().and_then(|b| b.members.first_mut()) {
+            member.draft.note = note;
+        }
+        let end = Docked {
+            dock: &long,
+            footer: "",
+        }
+        .end(80, 60, Glyphs::Unicode);
+        let last = Dock {
+            scrolled: end,
+            ..long.clone()
+        };
+        let past = Dock {
+            scrolled: usize::MAX,
+            ..long
+        };
+
+        assert_ne!(end, 0);
+        assert_eq!(art(&past, 80, 60), art(&last, 80, 60));
+    }
+
+    #[test]
+    fn a_declined_question_keeps_its_draft_for_when_the_decline_is_undone() {
+        let declined = drafted(Phase::Reviewing);
+        let rows = art(&declined, 80, 40);
+        row(&rows, "Declined");
+        assert!(!rows.iter().any(|row| row.contains("Orders")), "{rows:#?}");
+
+        let mut undone = declined;
+        if let Some(scope) = undone
+            .batches
+            .first_mut()
+            .and_then(|b| b.members.get_mut(1))
+        {
+            scope.draft.declined = false;
+        }
+        let rows = art(&undone, 80, 40);
+        assert!(
+            !rows.iter().any(|row| row.contains("Declined")),
+            "{rows:#?}"
+        );
+        row(&rows, "Orders");
+    }
+
+    #[test]
+    fn a_question_taking_several_with_none_taken_reads_back_as_no_answer_yet() {
+        let mut format = format();
+        format.draft.chosen = Chosen::One(Some(0));
+        let review = dock(vec![format, scope()], Phase::Reviewing);
+        let rows = art(&review, 80, 40);
+        row(&rows, "No answer yet");
     }
 }

@@ -670,6 +670,7 @@ fn a_dock_fits_the_window_its_questions_wait_in() {
                 marked: 8,
                 editing: Some(Editing::Written { column: 2 }),
             },
+            scrolled: 0,
             phase,
         };
         down("a dock", |columns, room, glyphs| {
