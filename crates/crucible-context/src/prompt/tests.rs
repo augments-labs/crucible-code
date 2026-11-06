@@ -918,13 +918,19 @@ fn the_questions_section_tells_a_batch_recorded_as_waiting_before_it_was_told() 
     )])
     .expect("a second batch fits");
     // What a tool pass records for the batch it asked: waiting, not told.
-    let mut asked = held.state();
-    if let Some(fields) = asked.as_object_mut() {
-        fields.insert(
-            "told".to_owned(),
-            told.get("told").cloned().unwrap_or_default(),
-        );
-    }
+    let mut prior = ContextSnapshot::new();
+    prior
+        .record(QuestionsSection::ID, told)
+        .expect("the recorded state");
+    let recorded = crate::asked(Some(&prior), &held)
+        .expect("recordable")
+        .expect("a batch was asked since")
+        .apply(&prior)
+        .expect("the patch applies");
+    let asked = recorded
+        .get(QuestionsSection::ID)
+        .expect("still recorded")
+        .clone();
 
     let said = QuestionsSection::new(Questions::Held(&held), Some(&asked))
         .render(Seen::Known(&asked))

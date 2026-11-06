@@ -956,3 +956,113 @@ fn a_runner_that_picks_up_a_session_restores_the_batches_it_left_waiting() {
 
     assert_eq!(waiting_ids(&later), ["q0"], "the waiting batch was lost");
 }
+
+#[test]
+fn a_runner_still_holding_its_own_batch_picks_up_the_batches_the_session_left_waiting() {
+    let store = Recording::started("a session asking twice");
+    let held = Deferred::default();
+    let mut first = deferring(
+        vec![
+            calling("c1", "ask", "{}"),
+            saying("one waits"),
+            calling("c2", "ask", "{}"),
+            saying("two wait"),
+        ],
+        &held,
+        Arc::clone(&store),
+    );
+    first.turn("plan it").expect("a first turn");
+    first.turn("plan more").expect("a second turn");
+    drop(first);
+
+    let later = Deferred::default();
+    let mut other = deferring(
+        vec![
+            calling("c1", "ask", "{}"),
+            saying("another session asks"),
+            saying("picked up"),
+        ],
+        &later,
+        Recording::nowhere(),
+    );
+    other
+        .turn("something else")
+        .expect("a turn before the pick-up");
+    assert_eq!(waiting_ids(&later), ["q0"], "the other session asked");
+    let (picked, transcript) = store.reopened();
+    other.runner.pick_up(picked.clone(), transcript);
+    other.turn("continue").expect("the picked-up turn");
+
+    assert_eq!(
+        waiting_ids(&later),
+        ["q0", "q1"],
+        "the picked-up session's batches were not restored"
+    );
+    let recorded: Vec<String> = restored(&picked)
+        .iter()
+        .map(|batch| batch.id().to_string())
+        .collect();
+    assert_eq!(
+        recorded,
+        ["q0", "q1"],
+        "the picked-up record was overwritten"
+    );
+}
+
+#[test]
+fn a_recorded_state_this_build_refuses_never_lets_an_id_the_log_names_out_again() {
+    let store = Recording::started("a session asking three times");
+    let held = Deferred::default();
+    let mut first = deferring(
+        vec![
+            calling("c1", "ask", "{}"),
+            calling("c2", "ask", "{}"),
+            calling("c3", "ask", "{}"),
+            saying("three wait"),
+        ],
+        &held,
+        Arc::clone(&store),
+    );
+    first.turn("plan it").expect("a turn");
+    drop(first);
+    // Its next number kept, its waiting list one this build cannot read, as
+    // another build or a damaged log could leave it.
+    let before = store.context_snapshot().expect("a snapshot");
+    let mut unreadable = before
+        .get(QuestionsSection::ID)
+        .cloned()
+        .expect("the questions were recorded");
+    assert_eq!(
+        unreadable.get("next").map(ToString::to_string).as_deref(),
+        Some("3")
+    );
+    unreadable
+        .as_object_mut()
+        .expect("an object")
+        .insert("waiting".to_owned(), "unreadable".into());
+    let mut damaged = before.clone();
+    damaged
+        .record(QuestionsSection::ID, unreadable)
+        .expect("an object");
+    let patch = damaged.patch_from(&before).expect("a patch");
+    store.contextual(&patch).awaited().expect("recorded");
+
+    let later = Deferred::default();
+    let mut resumed = resumed(
+        &store,
+        vec![
+            saying("told they lapsed"),
+            calling("c4", "ask", "{}"),
+            saying("asked"),
+        ],
+        Some(&later),
+    );
+    resumed.turn("continue").expect("a turn after the refusal");
+    resumed.turn("ask again").expect("a turn that asks");
+
+    assert_eq!(
+        waiting_ids(&later),
+        ["q3"],
+        "an id the log names was handed out again"
+    );
+}

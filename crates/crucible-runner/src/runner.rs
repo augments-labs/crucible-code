@@ -496,6 +496,10 @@ impl Runner {
     /// is this process's count of the session it is on, and the one picked up
     /// kept no count of its own. The plan windows stay, since they belong to
     /// the credential, which has not changed.
+    ///
+    /// Questions asked without waiting belong to a session too: the registry
+    /// is emptied, and the session picked up brings back the ones it left
+    /// waiting.
     pub fn pick_up(&mut self, store: Arc<dyn JournalStore>, transcript: Transcript) {
         self.permission.forget();
         self.state.forget_checked();
@@ -509,7 +513,12 @@ impl Runner {
         let reading = self.admit_restricted();
         self.recount(reading);
         // The questions the session picked up left waiting come back at its
-        // first assembly, as they do for a session resumed at start.
+        // first assembly, as they do for a session resumed at start. What the
+        // registry held belonged to the session left, and would otherwise be
+        // recorded as this one's.
+        if let Some(held) = &self.deferred {
+            held.clear();
+        }
         self.recalled = false;
     }
 

@@ -634,14 +634,16 @@ impl ContextSection for PermissionsSection<'_> {
 /// Closed because each case tells and records something different, and a run
 /// that came to stand to the registry some other way would have to decide
 /// both: the run that holds the registry tells what waits and records its
-/// state; a run that can hold none tells once that what was recorded lapsed,
-/// and records an empty registry that keeps the next id; a run beneath the one
-/// that holds it tells nothing and leaves the recorded state as it was.
+/// state; a pass that can hold nothing the session recorded tells once that
+/// what was recorded lapsed, and records an empty registry that keeps the next
+/// id; a run beneath the one that holds it tells nothing and leaves the
+/// recorded state as it was.
 #[derive(Clone, Copy)]
 pub enum Questions<'a> {
     /// This run holds the registry.
     Held(&'a Deferred),
-    /// Nothing in this run can hold a question.
+    /// Nothing recorded can be held in this pass: the run holds no registry,
+    /// or holds one that could not read the state the session recorded.
     Unheld,
     /// A run beneath the one that holds the registry.
     Beneath,
@@ -666,7 +668,7 @@ impl fmt::Debug for Questions<'_> {
 /// a batch asked during a tool pass is recorded as waiting before any words
 /// name it. Only the list says anything: an empty registry says nothing, a
 /// list that changed is told whole, and a list that emptied is told once,
-/// either that nothing is waiting or, where this run can hold no question,
+/// either that nothing is waiting or, where nothing recorded can be held,
 /// that the ones recorded lapsed. Each question is told by its heading and its
 /// text alone; the answers offered are the person's to read.
 ///
@@ -693,7 +695,7 @@ impl<'a> QuestionsSection<'a> {
     pub fn new(questions: Questions<'a>, recorded: Option<&'a Value>) -> Self {
         let (state, waiting) = match questions {
             Questions::Held(held) => {
-                let mut state = held.state();
+                let state = held.state();
                 // The words come from this same reading, through the
                 // registry's own reader on a copy; only a state the registry
                 // wrote and cannot read back falls back to asking it again.
@@ -702,11 +704,8 @@ impl<'a> QuestionsSection<'a> {
                     Ok(()) => copy.waiting(),
                     Err(_) => held.waiting(),
                 };
-                let told: Vec<Value> = waiting_ids(&state).into_iter().map(Value::from).collect();
-                if let Value::Object(fields) = &mut state {
-                    fields.insert("told".to_owned(), Value::Array(told));
-                }
-                (state, waiting)
+                let told = waiting_ids(&state).into_iter().map(Value::from).collect();
+                (telling(state, told), waiting)
             }
             Questions::Unheld => (
                 nothing_waiting(
@@ -804,7 +803,21 @@ impl QuestionsSection<'_> {
 /// The state of a registry holding nothing that numbers its next batch
 /// `next`.
 fn nothing_waiting(next: u64) -> Value {
-    json!({ "next": next, "waiting": [], "told": [] })
+    telling(json!({ "next": next, "waiting": [] }), Vec::new())
+}
+
+/// The key beside a registry's saved form that holds the ids the model was
+/// last told are waiting.
+const TOLD: &str = "told";
+
+/// `state`, a registry's saved form, with `told` beside it as the ids the
+/// model was last told are waiting: the one writer of that key, which
+/// [`told_ids`] reads.
+pub(crate) fn telling(mut state: Value, told: Vec<Value>) -> Value {
+    if let Value::Object(fields) = &mut state {
+        fields.insert(TOLD.to_owned(), Value::Array(told));
+    }
+    state
 }
 
 /// The ids of the waiting batches a questions state records, in order.
@@ -822,9 +835,9 @@ fn waiting_ids(state: &Value) -> Vec<&str> {
 }
 
 /// The ids a questions state records the model was last told are waiting.
-fn told_ids(state: &Value) -> Vec<&str> {
+pub(crate) fn told_ids(state: &Value) -> Vec<&str> {
     state
-        .get("told")
+        .get(TOLD)
         .and_then(Value::as_array)
         .map(|told| told.iter().filter_map(Value::as_str).collect())
         .unwrap_or_default()

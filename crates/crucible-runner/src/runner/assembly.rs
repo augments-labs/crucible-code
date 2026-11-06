@@ -53,8 +53,9 @@ impl Runner {
             self.recalled = true;
             // The first assembly of a session started or picked up: the
             // batches its log recorded as waiting come back. A registry
-            // already holding something was not started empty with this
-            // session, and is not overwritten.
+            // handed in already holding something keeps what it holds;
+            // [`Runner::pick_up`] empties the one it holds, so a session
+            // picked up always gets its own batches back.
             if held.waiting().is_empty()
                 && !held.any_settled()
                 && let Some(saved) = snapshot
@@ -64,9 +65,13 @@ impl Runner {
             {
                 // A state this build cannot read is told to the model as
                 // lapsed, as it would be to a runner holding none, and the
-                // empty state recorded in its place. Ids it held may then be
-                // handed out again; nothing it held could be asked anyway.
+                // empty state recorded in its place.
                 questions = Questions::Unheld;
+                if let Some(next) = saved.get("next")
+                    && let Some(next) = next.as_u64()
+                {
+                    continue_numbering(held, next);
+                }
             }
         }
 
@@ -154,4 +159,17 @@ impl Runner {
             .as_ref()
             .filter(|_| ancestry.parent().is_none())
     }
+}
+
+/// Has `held`, holding nothing, hand out no id below `next`: the numbers a
+/// recorded state names stay spent when its batches could not be read, since
+/// an answer in the transcript naming one would otherwise settle a new batch.
+fn continue_numbering(held: &Deferred, next: u64) {
+    let mut empty = held.state();
+    if let Some(fields) = empty.as_object_mut() {
+        fields.insert("next".to_owned(), next.into());
+    }
+    // An empty list with a number fits whatever the registry holds, so this
+    // is never refused; were it, nothing better than what it holds is known.
+    let _ = held.restore(&empty);
 }

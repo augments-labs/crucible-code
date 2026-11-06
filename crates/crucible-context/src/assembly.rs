@@ -20,6 +20,7 @@ use crucible_tools::{Deferred, Permission, ToolSnapshot};
 use crucible_types::{ContextError, ContextPatch, ContextSnapshot, Fragment, Seen, Transcript};
 use serde_json::Value;
 
+use crate::prompt::{telling, told_ids};
 use crate::{
     ContextSection, EnvironmentSection, ModelSection, PermissionsSection, Questions,
     QuestionsSection, Skill, SkillsSection, ToolsSection, WorkspaceSection, capture, seen,
@@ -239,15 +240,15 @@ pub fn asked(
         })
         .collect();
     waiting.extend(new);
-    let told = recorded
-        .and_then(|state| state.get("told"))
-        .cloned()
-        .unwrap_or_else(|| Value::Array(Vec::new()));
+    let told = recorded.map(told_ids).unwrap_or_default();
 
     let mut numbered = prior.clone();
     numbered.record(
         QuestionsSection::ID,
-        serde_json::json!({ "next": next, "waiting": waiting, "told": told }),
+        telling(
+            serde_json::json!({ "next": next, "waiting": waiting }),
+            told.into_iter().map(Value::from).collect(),
+        ),
     )?;
     Ok(numbered.patch_from(prior))
 }
