@@ -1,0 +1,47 @@
+---
+source: tests/whole_screen/main.rs
+expression: window.picture()
+---
+80x42 cursor 37,4 scrollback 0
+|╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
+|│                                  │ Recent sessions                           │|
+|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
+|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No earlier session for this workspace     │|
+|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
+|│                                  │ ───────────────────────────────────────── │|
+|│  /…/workspace                    │                                           │|
+|│                                  │ Tips                                      │|
+|│                                  │                                           │|
+|│                                  │ · /          opens the command list       │|
+|│                                  │ · \ enter    adds a line without sending  │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|› show me the corpus                                                            |
+|                                                                                |
+|A claim with a source.[^1] Another claim, defined later.[^2]                    |
+|                                                                                |
+|<details><summary>More</summary>                                                |
+|hidden                                                                          |
+|</details>                                                                      |
+|                                                                                |
+|A line broken<br>inside it, a key <kbd>Ctrl</kbd>, and H<sub>2</sub>O with      |
+|x<sup>2</sup>.                                                                  |
+|                                                                                |
+|An <article> tag is not in the subset.                                          |
+|                                                                                |
+|[^1]: the first source                                                          |
+|[^2]: the second source, written after it was used                              |
+|                                                                                |
+|The corpus ends here.                                                           |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                 99% window left|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|
+|                                                                                |
+|                                                                                |

@@ -1,0 +1,66 @@
+---
+source: tests/whole_screen/main.rs
+expression: window.picture()
+---
+120x61 cursor 50,4 scrollback 0
+|╭─ crucible v###### ───────────────────────────────────────────────────────────────────────────────────────────────────╮|
+|│                                  │ Recent sessions                                                                   │|
+|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                                                                   │|
+|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No earlier session for this workspace                                             │|
+|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                                                                   │|
+|│                                  │ ───────────────────────────────────────────────────────────────────────────────── │|
+|│  /…/workspace                    │                                                                                   │|
+|│                                  │ Tips                                                                              │|
+|│                                  │                                                                                   │|
+|│                                  │ · /          opens the command list                                               │|
+|│                                  │ · \ enter    adds a line without sending                                          │|
+|│                                  │ · shift+tab  steps the permission mode                                            │|
+|│                                  │ · ctrl+c     clears the line typed so far                                         │|
+|╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                                                        |
+|› show me the corpus                                                                                                    |
+|                                                                                                                        |
+|A sequence diagram:                                                                                                     |
+|                                                                                                                        |
+|sequenceDiagram                                                                                                         |
+|  Alice->>Bob: Hello                                                                                                    |
+|  Bob-->>Alice: Hi                                                                                                      |
+|                                                                                                                        |
+|A gantt chart:                                                                                                          |
+|                                                                                                                        |
+|gantt                                                                                                                   |
+|  title Release                                                                                                         |
+|  section Tests                                                                                                         |
+|  Gate :a1, 2026-11-01, 3d                                                                                              |
+|                                                                                                                        |
+|A git graph:                                                                                                            |
+|                                                                                                                        |
+|gitGraph                                                                                                                |
+|  commit id: "one"                                                                                                      |
+|  branch feature                                                                                                        |
+|  commit id: "two"                                                                                                      |
+|  checkout main                                                                                                         |
+|  merge feature                                                                                                         |
+|                                                                                                                        |
+|A kind with no drawing of its own:                                                                                      |
+|                                                                                                                        |
+|pie                                                                                                                     |
+|  "drawn" : 1                                                                                                           |
+|                                                                                                                        |
+|The corpus ends here.                                                                                                   |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                         99% window left|
+|╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                                                                    │|
+|╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)                                                               anthropic · claude-test-1|
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                                        |

@@ -1,0 +1,47 @@
+---
+source: tests/whole_screen/main.rs
+expression: window.picture()
+---
+80x42 cursor 39,4 scrolled 0
+|╭─ crucible v###### ──────────────────────────────────────────────────────────╮ |
+|│                                                                             │ |
+|│ CRUCIBLE                                                                    │ |
+|│ /…/workspace                                                                │ |
+|│                                                                             │ |
+|│ Recent sessions                                                             │ |
+|│                                                                             │ |
+|│ No earlier session for this workspace                                       │ |
+|│                                                                             │ |
+|│ ─────────────────────────────────────────────────────────────────────────── │ |
+|│                                                                             │ |
+|│ Tips                                                                        │ |
+|│                                                                             │ |
+|│ · /          opens the command list                                         │ |
+|│ · \ enter    adds a line without sending                                    │ |
+|│ · shift+tab  steps the permission mode                                      │ |
+|│ · ctrl+c     clears the line typed so far                                   │ |
+|╰─────────────────────────────────────────────────────────────────────────────╯ |
+|                                                                                |
+|› show me the corpus                                                            |
+|                                                                                |
+|A rule parts what is above it from what is below.                               |
+|                                                                                |
+|─────────────────────────────────────────────────────────────────────────────── |
+|                                                                                |
+|The rule above is three hyphens in the source.                                  |
+|                                                                                |
+|─────────────────────────────────────────────────────────────────────────────── |
+|                                                                                |
+|The rule above is three stars in the source.                                    |
+|                                                                                |
+|─────────────────────────────────────────────────────────────────────────────── |
+|                                                                                |
+|And this one is three underscores, which is also a rule.                        |
+|                                                                                |
+|The corpus ends here.                                                           |
+|                                                                                |
+|                                                                 99% window left|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|

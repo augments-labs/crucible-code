@@ -975,6 +975,2996 @@
         "macos",
         "windows"
       ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-TABLES-40-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tables answer draws on a real terminal at 40 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_tables_40_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "27f7e0b54c696c1ff58a6a25e8b409e06c709091b05472c70169d0e347f7aed4",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-TABLES-40-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tables answer draws on a real terminal at 40 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_tables_40_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "62b5ffb6741250a7789e8d3bd6e9a17a3bade5ba5bc3f5121c37476571575d20",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-TABLES-80-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tables answer draws on a real terminal at 80 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_tables_80_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "2100df386afc0fdec5741a1cf072a7cedab0722ecc3611ded273c49e64c22a18",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-TABLES-80-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tables answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_tables_80_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "3900494712bcba9c3d17cfbe2111b7d2ab32f7d97804557f10aae5c4de4f440e",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-TABLES-80-NATIVE-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tables answer draws on a real terminal at 80 columns in native mode and in colour, in ascii glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_tables_80_native_ascii",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "1b3f2c2999ebd39a5e86660c5f26def9791f618ac6b2b7a091793a61d02943d8",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-TABLES-120-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tables answer draws on a real terminal at 120 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_tables_120_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "44d462c69c7bdec9cb902add58e40a5561c29d1e1aea8af19f7d92f5991bcb30",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-TABLES-120-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tables answer draws on a real terminal at 120 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_tables_120_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "fd2ea195c7b83482c66a879d2205c930aefb6799eace3c2716762144883340d0",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-RULES-80-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's rules answer draws on a real terminal at 80 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_rules_80_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "9fce9daca243b16dc11ae2ac06bcd41516c085e8d3f5145919a4b891a390d1bc",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-RULES-80-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's rules answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_rules_80_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "7739c7f3e54df7c54e32e279fbbdcaca6e901fcff9ac97cf627384554323cb9d",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-LISTS-80-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's lists answer draws on a real terminal at 80 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_lists_80_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "cd3466ae637a09c8b35a9aa2517dc66778ad9ea076c2ae4b73835ab18b4ee83d",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-LISTS-80-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's lists answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_lists_80_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "09a96730c0beb69032deeb6b9af89e42ade70d6bfb8e70786fb5df78390ecf6b",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-LISTS-80-NATIVE-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's lists answer draws on a real terminal at 80 columns in native mode and in colour, in ascii glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_lists_80_native_ascii",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "98abbd3faf0a6e5c11873ec9e374b7a6a997425dda0273e33dcf5fd585fb1e5e",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-QUOTES-80-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's quotes answer draws on a real terminal at 80 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_quotes_80_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "4dc890efa7c7a1c511f46194831e098aa8fbb1a7d18486566d16b138680544bc",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-QUOTES-80-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's quotes answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_quotes_80_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "a0fadbc03f59b0565e24a07685e4a00eea41d8a5fb42564dbd42ad7d487ffb08",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CODE-80-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's code answer draws on a real terminal at 80 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_code_80_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "860e2f2f8aefec426578ab372b9680dd47f45a247fc35cc259973a354bd811e1",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CODE-80-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's code answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_code_80_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "235fce5155f324bbae8997f121648d11f6345e910a580cbfe569cf1bb19a0e50",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CODE-80-NATIVE-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's code answer draws on a real terminal at 80 columns in native mode and in colour, in ascii glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_code_80_native_ascii",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "380ac2e4cbd7a05044cc3741ede0ed0ac0509cdc42fb1b4904ccfb149cd30984",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-HEADINGS-80-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's headings answer draws on a real terminal at 80 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_headings_80_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "7de4fb7907e0ca8555ffc92734e4079a64e70fcae25535101e99d3ade6a31511",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-HEADINGS-80-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's headings answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_headings_80_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "9dce9b5454c1ff541a2225165b0bb77debad48060d075557edd47ea53eae7152",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERTS-80-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's alerts answer draws on a real terminal at 80 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_alerts_80_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "1308f2c2aa6f98f1d8b269ac49f104c65a619a9e1d583ee1165c9c88f7072bce",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERTS-80-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's alerts answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_alerts_80_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "5f5c4914a510aaffa4652afe37a73c4b2a688eb73ba991fa283d433de005c8fb",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-IMAGES-80-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's images answer draws on a real terminal at 80 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_images_80_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "30bd379c2296ecba0874c3eb8fb6f0dbefb4bdc2fbbd8e28bbc3bbbfedd1e763",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-IMAGES-80-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's images answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_images_80_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "14bca783f1c86821ed9599d06c0c2b67e01b0859e7a74ae64cc2f6c4128349e6",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-NOTES-80-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's notes answer draws on a real terminal at 80 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_notes_80_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "0d12705a9aa93b743c9610d38bd47f9068af4ff95f3b519f878539db6227527d",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-NOTES-80-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's notes answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_notes_80_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "30d2a36e0e3b4286b7f23a859d3165b7416cc0ea82a228b5898da84819f66373",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-LINKS-80-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's links answer draws on a real terminal at 80 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_links_80_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "a9eace188b8e5ce867d6a136b4f3a2efbfef7eb2eb5f4adbafd5b3af2e51cb6e",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-LINKS-80-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's links answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_links_80_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "8b5e05690fc1df68fc5e616f51d0cfaaf5c91b059c9a4b5a4b7e496d1a9d3880",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-INLINE-80-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's inline answer draws on a real terminal at 80 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_inline_80_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "688ecabb8177ec44820313b9b4c6e993fb4b022408446af285efb1c68d7142e7",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-INLINE-80-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's inline answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_inline_80_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "12a1588135b3d5b4e2f59edb50a960f514aee7c1d83bcdbcc74a24983c9fc392",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-40-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's math answer draws on a real terminal at 40 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_math_40_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "d3ba74da5cb58f3e7d8656d07d7d2f3707d9473205aed3ca101de3d31a34a01f",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-40-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's math answer draws on a real terminal at 40 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_math_40_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "0aaf351727d2ca9da9a31bffd6632d084988e8fa1a31de667c57f8ed4cb9e244",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-80-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's math answer draws on a real terminal at 80 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_math_80_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "6c3ba12bf1033116b614b3349efa0ec673e24a244d640813c842f737882850b6",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-80-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's math answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_math_80_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "acad0d82e581baff7cb5e62682164d178d3f56d74585a8aea3e8a4cd0ba431f1",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-120-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's math answer draws on a real terminal at 120 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_math_120_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "68c49214ba2e8f302222bbc28f21aa718f501816caf6d7bcd624cb21cb6b31cb",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MATH-120-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's math answer draws on a real terminal at 120 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_math_120_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "ddf132d6080f46a93c5747e267135b8a4c4ce464e63eb685fd674eb491ae005a",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-GRAPHS-40-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid graphs answer draws on a real terminal at 40 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_mermaid_graphs_40_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "ef186f8a40669d9a084e4394fb0852069bba10d646a7f79f0a96431a7c42a1a4",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-GRAPHS-40-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid graphs answer draws on a real terminal at 40 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_mermaid_graphs_40_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "db8b842e8f308d99d35bb654a89604d35f17fe582d0688532a41326db8ad35ff",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-GRAPHS-80-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid graphs answer draws on a real terminal at 80 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_mermaid_graphs_80_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "80c335c7663640331cff376443e138fbce43774038152d4c7921c4491232e905",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-GRAPHS-80-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid graphs answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_mermaid_graphs_80_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "e6219c99662d28bda929d82d64670105478acb5f7bdbe628abbccab225f2b116",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-GRAPHS-120-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid graphs answer draws on a real terminal at 120 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_mermaid_graphs_120_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "3eec7d34bcdca6078e569070d9fabd33e5baaeec815e82e32c7f7cd11c839a04",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-GRAPHS-120-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid graphs answer draws on a real terminal at 120 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_mermaid_graphs_120_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "222e5d9f03facb149cdf91c279fcda69b123ba37002eff5d64d2115d1a854726",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-TIMELINES-40-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid timelines answer draws on a real terminal at 40 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_mermaid_timelines_40_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "473d168399052d10d244cde0cbaa7c6204df5e0e66a6a309fbefeab0eeaaa44a",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-TIMELINES-40-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid timelines answer draws on a real terminal at 40 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_mermaid_timelines_40_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "ad286bd7e154c62bd4188c2a02ff0fd21fa8da47ee451512fd6584d484f41966",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-TIMELINES-80-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid timelines answer draws on a real terminal at 80 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_mermaid_timelines_80_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "931b9634b44eb17be4c20b4cc3130e46cc2a4d0f1675cda11dc2694df0d28b54",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-TIMELINES-80-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid timelines answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_mermaid_timelines_80_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "07e9640c957dba600b90dafdeed0c142012b35731f75940ca05bb53cb321be6e",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-TIMELINES-120-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid timelines answer draws on a real terminal at 120 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_mermaid_timelines_120_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "5b4ab34a17edfc2f861814fc6ad789a675bd4a20904331ddf950ed4f584416b7",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-MERMAID-TIMELINES-120-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid timelines answer draws on a real terminal at 120 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_mermaid_timelines_120_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "33043cd675c1407df545115a9bd2c79247429893ab961a236ccd64f97185f63d",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIFF-80-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's diff answer draws on a real terminal at 80 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_diff_80_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "64b832c4240e0c5a3ee267008fe088dc5be59d8403d6e713237c12964cb28dc6",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIFF-80-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's diff answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_diff_80_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "8b27a1473015669b91ac0945dd02d2c52c66f774400c0ed01aa74b9b32b0d9f2",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-HOSTILE-80-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's hostile answer draws on a real terminal at 80 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_hostile_80_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "04cc222addbcc7ec1b302293c91faafb08cab3c35b37bdfc88fee1656b5906f4",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-HOSTILE-80-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's hostile answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_hostile_80_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "be84e2989a042acb62fc8932e81e6db0fa585f5061651be0e1055a88c523bb19",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-TOOL-EDIT-80-FULLSCREEN",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tool edit answer draws on a real terminal at 80 columns in fullscreen mode, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_tool_edit_80_fullscreen",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "8422c71a4605d73ea390c7057b8d0704c3c10b2c516d7f2881fcaa7160761729",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-TOOL-EDIT-80-NATIVE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tool edit answer draws on a real terminal at 80 columns in native mode and in colour, in unicode glyphs, as it drew when the corpus was accepted.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "test",
+        "name": "whole_screen"
+      },
+      "case": "transcript_tool_edit_80_native",
+      "source": "tests/whole_screen/main.rs",
+      "body_sha256": "21133d375250de12967761e4879727f0e2f64abb9ff0a743a34896aabfbf26b8",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-TABLES-40-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tables answer lays out at 40 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_tables_40_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "746b288ee48b367d4bf09bd40832b4c28520b76c2d663a8cc1dd289335c7ed60",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-TABLES-40-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tables answer lays out at 40 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_tables_40_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "59e44fd28913975eaad35a0e056cde9c53c519a43fa560392921c383e111904e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-TABLES-60-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tables answer lays out at 60 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_tables_60_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "4ffd13bd3f220cb04528f807a75a2b1db75a89c13bcf938a72717f689a50e16e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-TABLES-60-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tables answer lays out at 60 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_tables_60_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "6e8a70bc5fe2e34e7c5c9ff85e5afe3d4fbd27b10b4ffaebe702e550a783055d",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-TABLES-80-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tables answer lays out at 80 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_tables_80_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "c449f6fe0a56e895e8d421a1418e67b4ab295dee9540b05399f82fa6f30b39dd",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-TABLES-80-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tables answer lays out at 80 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_tables_80_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "7a1025e1e85e9dbe4db44204006f6f0e64a454ea15291215c282f7a25f99bfb4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-TABLES-100-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tables answer lays out at 100 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_tables_100_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "36d73b9959f2c1a7964d757b980a9df88be8f10ff0b4d0fb49f3e2a4dc683ee9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-TABLES-100-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tables answer lays out at 100 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_tables_100_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "4b4bd5057757389fe2ca66639679fe74d8cb6a0043e1dfab98ffa6d59e87eb49",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-TABLES-120-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tables answer lays out at 120 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_tables_120_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "505c2ebe6b5242650867bd1c17bbd3326b72c94775aa1896996d3a9cb37493ec",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-TABLES-120-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tables answer lays out at 120 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_tables_120_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "fd353b9b6c082a4fac42fae998ab110d8e8940e22bb64dd4f04bb6236d4eae97",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-RULES-40-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's rules answer lays out at 40 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_rules_40_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "95a083c61ea8b87d133434507b1cc8beac26b2807e070d5163c49e0563f307ad",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-RULES-40-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's rules answer lays out at 40 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_rules_40_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "6f802622c843bc81f45a70a3b86c5c7aa084db2b421a3762cd4a2c384ebdee9a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-RULES-80-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's rules answer lays out at 80 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_rules_80_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "4e1fb70f455119e29989816257ac10d794c72bd718a253e1c71ac760f6b68ec3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-RULES-80-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's rules answer lays out at 80 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_rules_80_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "e4a69614d0a534e92a2396aad0dac20117b3a668f5c04c0e072b959b00e17a5e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-RULES-120-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's rules answer lays out at 120 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_rules_120_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "bf7f2b7b2d2c9576e43ce7265111cde58f6ae5eff0fcfb64bc28d71636b6348c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-RULES-120-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's rules answer lays out at 120 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_rules_120_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "a1519c1bc0e29d066249f886cd8693e060db1030eb90fcafa682d84aeeb78908",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-LISTS-40-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's lists answer lays out at 40 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_lists_40_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "ec85985fa2d2816994e06ce8363ec3723c120a0db22955669402a386a148a644",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-LISTS-40-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's lists answer lays out at 40 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_lists_40_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "6585803928a6cdbf55e724948db1cd22061609623b8847a3c2172db10eccbadb",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-LISTS-80-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's lists answer lays out at 80 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_lists_80_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "19068fc2e752bf82172081c93bac4c1cb163872d64105798c21841679847bac4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-LISTS-80-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's lists answer lays out at 80 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_lists_80_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "0049b6031d610cd4182868da314296079f4ec8ccda6ad36323f29bce72c8604b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-LISTS-120-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's lists answer lays out at 120 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_lists_120_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "40c6bc2abb712505f951a42ee8bd436bf847b3d459a10ad89e001c9c594204a2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-LISTS-120-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's lists answer lays out at 120 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_lists_120_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "88113c343cee32ab1ad815aa02ee054ccfd03823c981b3478f11830ee26c44a3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-QUOTES-40-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's quotes answer lays out at 40 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_quotes_40_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "4214f08ccd8be5134f9bb8316e0fb0ce93869d42bde293a978579bf4f3565d44",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-QUOTES-40-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's quotes answer lays out at 40 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_quotes_40_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "c2b1d2c5b8e1ad7b36f913e4e592dd63e0fbe51b95a0ad0d82ebd347fb5a980e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-QUOTES-80-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's quotes answer lays out at 80 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_quotes_80_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "f292d212fc7a2c6fb18d529c1c4a9e65218a0226d460e8d934d72e5b17ef1884",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-QUOTES-80-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's quotes answer lays out at 80 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_quotes_80_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "0935c5dc5b63c2230368afef8b5ee6089c4504024eb10fd1360c28bfd4ce78fb",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-QUOTES-120-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's quotes answer lays out at 120 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_quotes_120_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "1664fd6db1444115d40fa7ed95592bf1f9a4e493cd410068b5ab1419b26417b4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-QUOTES-120-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's quotes answer lays out at 120 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_quotes_120_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "0add295e7473a6124a15fe4bb73b034cc9f9afa2f7b97d57c20772a82b7513c2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-CODE-40-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's code answer lays out at 40 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_code_40_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "f8a4fdcda0de66bb85358ed72b5fba20170c6b505d1e83ee48345f4400b43951",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-CODE-40-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's code answer lays out at 40 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_code_40_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "bcc73716abdcf97ec159b15292586d3eeece9878d3b6c854caa6118320b2e074",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-CODE-80-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's code answer lays out at 80 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_code_80_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "fd4ce8c50a9cfe321cf7b93c849fde4b80a7c31880417c969a89c3fe17c939bb",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-CODE-80-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's code answer lays out at 80 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_code_80_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "ca3b103b9aa84ea75c87e01802ffc7635b97571a132c1a57edb2a043d68bdd60",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-CODE-120-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's code answer lays out at 120 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_code_120_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "6eaab99ce021aec0731c39077aedc0f0acf03a5b37958b7523ee7a80c8916ee8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-CODE-120-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's code answer lays out at 120 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_code_120_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "ba5949df0132c59f39f9d4742e891081083b75e27c1619f630de624f90403bf9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-HEADINGS-40-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's headings answer lays out at 40 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_headings_40_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "7108cacddf1759e740e71e839057c7627bef560e71f1cde5d3b470f18e79b390",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-HEADINGS-40-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's headings answer lays out at 40 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_headings_40_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "f5cde46c51f1a5fce3348501aaf8aa05d4ccf00604c480c5fbee041347010315",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-HEADINGS-80-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's headings answer lays out at 80 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_headings_80_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "16f77026e738c031f8486b669196056a643d26a642e2810b5696081a4011494a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-HEADINGS-80-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's headings answer lays out at 80 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_headings_80_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "12a4c4f06cd7def51942d0afc857899120f94b51959497da839f4e91295f7021",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-HEADINGS-120-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's headings answer lays out at 120 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_headings_120_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "ff3b43455879000cb6a7e55546f5b7f1483a52fd7634b623dad6de7bc08500f0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-HEADINGS-120-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's headings answer lays out at 120 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_headings_120_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "70bc36876a663bf5ac4cf52e2dc2ca00ad2182f6d2ebc93f21a828b1ec3644c8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-ALERTS-40-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's alerts answer lays out at 40 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_alerts_40_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "c02ca3b48a41f02eee4261adad0170b8ac0d7d778949d98d3ff71ce56b37e0c0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-ALERTS-40-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's alerts answer lays out at 40 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_alerts_40_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "4be9b8928607ab3fa22513bfbb3c123ed2b132a0aa4bdf6bf7dcf742abb118a5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-ALERTS-80-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's alerts answer lays out at 80 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_alerts_80_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "b57fe4d4795c374c289f7952d6ae01a37efa5bad0e13840ae32ae90911d1e8ff",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-ALERTS-80-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's alerts answer lays out at 80 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_alerts_80_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "31d231be7f04f25ca6885cc871d93926b23b22eb3de681a0e368048cbe668f49",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-ALERTS-120-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's alerts answer lays out at 120 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_alerts_120_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "a485dd11558c19cf0db975bd1c79ef3ff04b65c6f6e32b2fe18a0ceca98947fc",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-ALERTS-120-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's alerts answer lays out at 120 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_alerts_120_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "1987a49230634f0f74d880847593e794afcf224394889e9e407144c0a7d2a1d6",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-IMAGES-40-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's images answer lays out at 40 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_images_40_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "a3c4a5b62808aa705734ab8089789648a3b43c5beefb00e811564e77e06e2fff",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-IMAGES-40-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's images answer lays out at 40 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_images_40_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "c46fc2f7f84d599ece7e975f81dda1e287b0d3b5e7bedde05932540eb6645f5a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-IMAGES-80-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's images answer lays out at 80 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_images_80_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "d450b5477412c575382f9765b3205398a901c507ee27014d602ce93ab9c1ca73",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-IMAGES-80-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's images answer lays out at 80 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_images_80_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "d21537e32142d2db675bff5219ecdb2007a72dbbcb55d4a2205315816d3ba2f9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-IMAGES-120-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's images answer lays out at 120 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_images_120_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "9df1df4309b1707964cca3a9fcde486b0a05861a17f401fe0ee5290f4926a2ff",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-IMAGES-120-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's images answer lays out at 120 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_images_120_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "44f11828e199952b3c6ad49f1995f16396bb6e887af0c1bdb5302219b9442f33",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-NOTES-40-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's notes answer lays out at 40 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_notes_40_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "5f4c30dcd146cadefbaec2e4f927230b8804a5be5296a93aa0e76e0c810ee7d7",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-NOTES-40-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's notes answer lays out at 40 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_notes_40_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "a6febb445e3b82917ae2bc3d6301b675e66056185828aaffdbb3861d3709eb67",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-NOTES-80-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's notes answer lays out at 80 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_notes_80_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "78f6d3816a06e71a8e9c636b5dc0d9737b1ffbf75db2d86b9d809fe2e1949d76",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-NOTES-80-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's notes answer lays out at 80 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_notes_80_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "10c7c4f9fc5d5fad07c328f2f8839fc22b5d6e693ed70a4e867f0b25927fd221",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-NOTES-120-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's notes answer lays out at 120 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_notes_120_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "7ac5cd41b57e8cdd84e47012e1f3f5699d0c8b25274e0c091adff50df59cb18a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-NOTES-120-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's notes answer lays out at 120 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_notes_120_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "063305749996ec58ee02d9915eae0aa4dff2bce98714b3904015ee56464eb613",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-LINKS-40-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's links answer lays out at 40 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_links_40_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "26d54f8c6738b237471a59a9f6372cbf2937ac4b86f351e9fe8a6bce5cdbc5b0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-LINKS-40-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's links answer lays out at 40 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_links_40_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "521780e566b1a6d653c6b6fe5dbfe9060bad4195680ce709adf0df3c2cd384ed",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-LINKS-80-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's links answer lays out at 80 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_links_80_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "19cc592379e2e409624034ffe8ef220e89deba259cc6cf95a092952aad5b166a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-LINKS-80-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's links answer lays out at 80 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_links_80_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "0774bf3eed4df098d4e81b7c3c79fa97e3bb4fbc29f9207289be15bda57875ae",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-LINKS-120-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's links answer lays out at 120 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_links_120_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "fbf8f03b0045f7fe1718f85a6526058ba0c7aabbb00efdce60f6487ddd4eadfb",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-LINKS-120-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's links answer lays out at 120 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_links_120_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "d2b7157552acf158ee49b0fd685c92cc14ac282e290ca8a7b3582a3404d16ad9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-INLINE-40-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's inline answer lays out at 40 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_inline_40_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "1425a06cc5f35251d88024b970d02d5ffbd5c7eb37ae67263ef12b7d7c86fbf4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-INLINE-40-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's inline answer lays out at 40 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_inline_40_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "4f3506b1140d3d97850818be9b938bf9d90f47ff2488523dee1fd98780c5ffb0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-INLINE-80-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's inline answer lays out at 80 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_inline_80_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "1ad68d800ebfa36b8cb44afa466d4405f86a2a3d2bb504bee7d456777748b0d0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-INLINE-80-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's inline answer lays out at 80 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_inline_80_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "5b6a5a747148f1a4ab934a99ac1c95d2d6160a295504ee6d48fe2bb292d9d024",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-INLINE-120-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's inline answer lays out at 120 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_inline_120_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "36d9d210c16267f783ed5b54c7b91882521c49aea3b12047c69a62ad6e36351b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-INLINE-120-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's inline answer lays out at 120 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_inline_120_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "d7da383d7de587e8e84d9435cd9c196f0943d782fda401e8967cab31bdfb01dc",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MATH-40-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's math answer lays out at 40 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_math_40_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "d4bb5a1314c8912585fc538b0c61bfb090916cb575be4f0f9c3c554b31a42738",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MATH-40-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's math answer lays out at 40 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_math_40_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "546f53830b74abb7d4a5451684fc47dea824bf7a29ce89bcc87f56ce9e4dad8c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MATH-50-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's math answer lays out at 50 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_math_50_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "de934bd83c6dc84f39fabe2d1ed57cf3a878b574a904426dfd7af4a6d404cfb9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MATH-50-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's math answer lays out at 50 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_math_50_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "ca23288404c5869793ccd2398738be95b612c015b4fc5df3ae23261f13ec2fae",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MATH-80-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's math answer lays out at 80 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_math_80_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "5bab2ae43529e081ad5a8c62df2ed2992b69f4b95410a8fde36293b69ff5a55b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MATH-80-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's math answer lays out at 80 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_math_80_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "19f346951266fea3112c50281e4a05864e9ec9fd915d37de4dbe5d092199e2d5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MATH-100-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's math answer lays out at 100 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_math_100_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "9fbc27dd0a341cd3297dc5bda42dd0c387fd09dec55916c4c29cc01c07347068",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MATH-100-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's math answer lays out at 100 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_math_100_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "17e043cdde455a4aca529ea7670c3d61434085d149fc296d37ecee7bca459e00",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MATH-120-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's math answer lays out at 120 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_math_120_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "1f324750210c5af94940e95f0d5a8465baf8a16c8894d86735ea405433ba7e9f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MATH-120-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's math answer lays out at 120 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_math_120_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "3277ef840ee794730a6fcd4f80471686aed1db2d86218ecc2241212fe15f1956",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MERMAID-GRAPHS-40-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid graphs answer lays out at 40 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_mermaid_graphs_40_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "96611910697b75886fb678c2dba9986de91ce6ff8006d9eae1a57ad4ba17c13f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MERMAID-GRAPHS-40-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid graphs answer lays out at 40 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_mermaid_graphs_40_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "83bea8ac2a151019a4e763be6b83a79981524f01a499eebd70890fd2630b1a7a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MERMAID-GRAPHS-60-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid graphs answer lays out at 60 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_mermaid_graphs_60_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "56c37e168af75fc803625ff251f1c1e93857594603d2b037749472cb3050306f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MERMAID-GRAPHS-60-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid graphs answer lays out at 60 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_mermaid_graphs_60_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "bd51e6f80ddae6ffc3bd8377cd80dbe5984cf6c6b6b735498c8c0acfcf72b4df",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MERMAID-GRAPHS-80-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid graphs answer lays out at 80 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_mermaid_graphs_80_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "f7b9b94c485b869006f5db76c8e8fa509f33173d2d09b8b625db407c2893ebf4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MERMAID-GRAPHS-80-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid graphs answer lays out at 80 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_mermaid_graphs_80_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "902f3feea78948d7ffebf99e2b90cfc346ad089ae926595ff64a81c90d6969ea",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MERMAID-GRAPHS-100-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid graphs answer lays out at 100 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_mermaid_graphs_100_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "5c25df31f4676c33298fa17d45175c03f917ef2472c60673de2e42e8a3c65412",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MERMAID-GRAPHS-100-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid graphs answer lays out at 100 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_mermaid_graphs_100_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "97ca05d8d81d803919374307f81fbbe93a476c0faac21c513bfaee0c0a7cd904",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MERMAID-GRAPHS-120-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid graphs answer lays out at 120 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_mermaid_graphs_120_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "1f96f2d247791f70dde2f11d2d90bfc28840ae689ada97aaee72d232e3de5854",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MERMAID-GRAPHS-120-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid graphs answer lays out at 120 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_mermaid_graphs_120_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "0cf121058b3dc06f80477be0a66b74fe7a8df458d491224ef2caeed608cfb81d",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MERMAID-TIMELINES-40-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid timelines answer lays out at 40 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_mermaid_timelines_40_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "82e5636844bbcba2a17f57281d134e069c6b9ec98f85764ad045072498cef932",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MERMAID-TIMELINES-40-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid timelines answer lays out at 40 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_mermaid_timelines_40_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "ea00d2c5ad3e2235a3146ae5579564fd1f45893627208f6394b70708392a3ff2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MERMAID-TIMELINES-60-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid timelines answer lays out at 60 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_mermaid_timelines_60_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "5fe3fc76fafdd5e9b13d355b0d8720f69f27b28c0a3f9f0e36c9ef0440202f2c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MERMAID-TIMELINES-60-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid timelines answer lays out at 60 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_mermaid_timelines_60_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "eb527e9cdb0e0a85f469bec58b778479cc88fe65d01b5fc3ae9665c444e1a014",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MERMAID-TIMELINES-80-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid timelines answer lays out at 80 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_mermaid_timelines_80_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "12b339c569cd5d6f77e0bf49cf35c114dab2efffafb93040a37940c373a16a08",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MERMAID-TIMELINES-80-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid timelines answer lays out at 80 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_mermaid_timelines_80_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "16d7fbcb1c0e89ecf72469fb63e0b3d73f3f102d381a60c0c0fc193636afe29f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MERMAID-TIMELINES-100-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid timelines answer lays out at 100 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_mermaid_timelines_100_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "56034a154fe54814317327fc063d6313446c5e26b23989813ea92f57a19d8531",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MERMAID-TIMELINES-100-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid timelines answer lays out at 100 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_mermaid_timelines_100_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "d0c76c9f5c26be1e0543367b3cf0d31cfe4ecf377c35d03b16e8543ba142ac78",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MERMAID-TIMELINES-120-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid timelines answer lays out at 120 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_mermaid_timelines_120_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "c70e292e5c6961bc4312e8dcc44cd416a5fe3f4338e8e678f14d9878d8be6616",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-MERMAID-TIMELINES-120-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's mermaid timelines answer lays out at 120 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_mermaid_timelines_120_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "1acc54c091ffe529a1431fc756f5bcea91e59b875db117cec85ca4c42cd8f9ae",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-DIFF-40-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's diff answer lays out at 40 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_diff_40_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "ef83b128fd259905a8ffbe12183fe795343a86c971ff0cd5e4c4e3c526d2f59e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-DIFF-40-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's diff answer lays out at 40 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_diff_40_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "c3f335fa746561ec344852a2fd8ac3db99c5c445d28fa6d4f4d37c72693a378a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-DIFF-80-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's diff answer lays out at 80 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_diff_80_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "0c938c94d4907bbe40b8275766fcfad0f960d44031543e56584b15297b00f335",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-DIFF-80-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's diff answer lays out at 80 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_diff_80_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "c9b09f548e20ad2f5153af798dd3ce54a586908530661cdf7e2c30c0f2a0b29d",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-DIFF-120-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's diff answer lays out at 120 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_diff_120_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "a97c7f72b1e98dc3ed63bc90366a352d73b59fcc0b3469fffb992273ce8d198a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-DIFF-120-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's diff answer lays out at 120 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_diff_120_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "6059e0b1b25a5c92cf87127f2c3e83c060692726792da172bb6d4853a7b3d7c4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-HOSTILE-40-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's hostile answer lays out at 40 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_hostile_40_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "582ef109cd9d387257db6c64cda8760319989167bf6b81f5e0fb5b103f5bdc39",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-HOSTILE-40-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's hostile answer lays out at 40 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_hostile_40_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "347437415e41d19ba28f3c170f5f35e9f8839d24cd8d5733733e072e5b1039e0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-HOSTILE-80-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's hostile answer lays out at 80 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_hostile_80_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "717c312850ad3fdec7c6573445e330763030ccfa9c3a15cf5323ed9dac8f4dfa",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-HOSTILE-80-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's hostile answer lays out at 80 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_hostile_80_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "6e86559404c9a79c7698bc09a0938ecb651be99f6941ddf1d17a00378bc7f740",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-HOSTILE-120-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's hostile answer lays out at 120 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_hostile_120_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "70029324fabb274a1b7bc98190eef5eea0454bba5380544f1e0e06cb4744da20",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-HOSTILE-120-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's hostile answer lays out at 120 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_hostile_120_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "4e7e78bf2f02c9fd3c11362fe96b7ec6ef72a47c14830fe363291036cbcabd9c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-TOOL-EDIT-40-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tool edit answer lays out at 40 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_tool_edit_40_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "a8ebc76234b3ba411cd86f1413168757907c3c0a1fe3050ef6f6d87b0b6165e4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-TOOL-EDIT-40-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tool edit answer lays out at 40 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_tool_edit_40_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "a3b7664eba0f2a3968cc24aa710c3fef8715056a9e0c1ef9f1e52b7ef3d06a1e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-TOOL-EDIT-80-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tool edit answer lays out at 80 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_tool_edit_80_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "d78989faf25ad2b68cce6586f05263fcbc94b70c0db9b4e228501a37cc020102",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-TOOL-EDIT-80-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tool edit answer lays out at 80 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_tool_edit_80_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "33c8c623aaa498cc44d9ad649c6754e61801bb6c21ce483378802eba7edb5002",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-TOOL-EDIT-120-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tool edit answer lays out at 120 columns in the unicode glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_tool_edit_120_unicode",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "659b4bb5d94d1122337d05a6be0c0f09506a3d076c9c2bc877c6e864e21cefeb",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURE-TOOL-EDIT-120-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "The corpus's tool edit answer lays out at 120 columns in the ascii glyph set as the picture accepted for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::transcript_tool_edit_120_ascii",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "aee304bee8a5e895528d70d0d48a87b50039b23e5174eabde043ed7f9f9c17ee",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CORPUS-INTEGRITY",
+      "family": "transcript-corpus",
+      "obligation": "Every corpus answer is named once, ends with the line a case waits for, and is reachable under its own name.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::corpus_pictures::every_answer_is_named_once_and_ends_with_the_line_a_case_waits_for",
+      "source": "crates/crucible-tui/src/markdown/corpus_pictures.rs",
+      "body_sha256": "da44b67034a0befc2851c904fdfbf99a7ecf194870630f595876a80adf8f3087",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
     }
   ]
 }

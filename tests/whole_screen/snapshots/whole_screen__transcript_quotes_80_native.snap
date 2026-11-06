@@ -1,0 +1,40 @@
+---
+source: tests/whole_screen/main.rs
+expression: window.picture()
+---
+80x35 cursor 30,4 scrollback 0
+|╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
+|│                                  │ Recent sessions                           │|
+|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
+|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No earlier session for this workspace     │|
+|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
+|│                                  │ ───────────────────────────────────────── │|
+|│  /…/workspace                    │                                           │|
+|│                                  │ Tips                                      │|
+|│                                  │                                           │|
+|│                                  │ · /          opens the command list       │|
+|│                                  │ · \ enter    adds a line without sending  │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|› show me the corpus                                                            |
+|                                                                                |
+|The reply quoted somebody else:                                                 |
+|                                                                                |
+|│ a quote long enough that it has to wrap onto another row, and then onto one   |
+|more                                                                            |
+|>                                                                               |
+|│ and a second paragraph inside the same quote                                  |
+|                                                                                |
+|The corpus ends here.                                                           |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                 99% window left|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|
+|                                                                                |
+|                                                                                |

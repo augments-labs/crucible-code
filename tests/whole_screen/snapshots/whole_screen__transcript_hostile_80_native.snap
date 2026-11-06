@@ -1,0 +1,37 @@
+---
+source: tests/whole_screen/main.rs
+expression: window.picture()
+---
+80x32 cursor 29,4 scrollback 0
+|╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
+|│                                  │ Recent sessions                           │|
+|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
+|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No earlier session for this workspace     │|
+|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
+|│                                  │ ───────────────────────────────────────── │|
+|│  /…/workspace                    │                                           │|
+|│                                  │ Tips                                      │|
+|│                                  │                                           │|
+|│                                  │ · /          opens the command list       │|
+|│                                  │ · \ enter    adds a line without sending  │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|› show me the corpus                                                            |
+|                                                                                |
+|A label a model wrote: 􎻮 and a second 􎻮.                                        |
+|                                                                                |
+|A terminal instruction a model wrote:  after it.                                |
+|                                                                                |
+|A right-to-left override a model wrote: txet a after it.                        |
+|                                                                                |
+|The corpus ends here.                                                           |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                 99% window left|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|

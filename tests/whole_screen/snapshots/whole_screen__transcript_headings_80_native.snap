@@ -1,0 +1,48 @@
+---
+source: tests/whole_screen/main.rs
+expression: window.picture()
+---
+80x43 cursor 38,4 scrollback 0
+|╭─ crucible v###### ───────────────────────────────────────────────────────────╮|
+|│                                  │ Recent sessions                           │|
+|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                           │|
+|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No earlier session for this workspace     │|
+|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
+|│                                  │ ───────────────────────────────────────── │|
+|│  /…/workspace                    │                                           │|
+|│                                  │ Tips                                      │|
+|│                                  │                                           │|
+|│                                  │ · /          opens the command list       │|
+|│                                  │ · \ enter    adds a line without sending  │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|› show me the corpus                                                            |
+|                                                                                |
+|One                                                                             |
+|Two                                                                             |
+|Three                                                                           |
+|Four                                                                            |
+|Five                                                                            |
+|Six                                                                             |
+|                                                                                |
+|A heading may also be underlined instead:                                       |
+|                                                                                |
+|Title                                                                           |
+|=====                                                                           |
+|                                                                                |
+|Sub                                                                             |
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|The corpus ends here.                                                           |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                 99% window left|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|
+|                                                                                |
+|                                                                                |

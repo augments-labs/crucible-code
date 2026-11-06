@@ -1,0 +1,69 @@
+---
+source: tests/whole_screen/main.rs
+expression: window.picture()
+---
+120x64 cursor 61,4 scrolled 0
+|╭─ crucible v###### ──────────────────────────────────────────────────────────────────────────────────────────────────╮ |
+|│                                  │ Recent sessions                                                                  │ |
+|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                                                                  │ |
+|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No earlier session for this workspace                                            │ |
+|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                                                                  │ |
+|│                                  │ ──────────────────────────────────────────────────────────────────────────────── │ |
+|│  /…/workspace                    │                                                                                  │ |
+|│                                  │ Tips                                                                             │ |
+|│                                  │                                                                                  │ |
+|│                                  │ · /          opens the command list                                              │ |
+|│                                  │ · \ enter    adds a line without sending                                         │ |
+|│                                  │ · shift+tab  steps the permission mode                                           │ |
+|│                                  │ · ctrl+c     clears the line typed so far                                        │ |
+|╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ |
+|                                                                                                                        |
+|› show me the corpus                                                                                                    |
+|                                                                                                                        |
+|A flow chart:                                                                                                           |
+|                                                                                                                        |
+|graph TD                                                                                                                |
+|  A[Start] --> B{Ok?}                                                                                                   |
+|  B -->|yes| C[Done]                                                                                                    |
+|  B -->|no| A                                                                                                           |
+|                                                                                                                        |
+|A state diagram:                                                                                                        |
+|                                                                                                                        |
+|stateDiagram                                                                                                            |
+|  [*] --> Idle                                                                                                          |
+|                                                                                                                        |
+|And the versioned spelling:                                                                                             |
+|                                                                                                                        |
+|stateDiagram-v2                                                                                                         |
+|  [*] --> Idle                                                                                                          |
+|  Idle --> Running: start                                                                                               |
+|  Running --> [*]                                                                                                       |
+|                                                                                                                        |
+|A class diagram:                                                                                                        |
+|                                                                                                                        |
+|classDiagram                                                                                                            |
+|  class Reader                                                                                                          |
+|  Reader : +read(delta)                                                                                                 |
+|                                                                                                                        |
+|An entity relationship diagram:                                                                                         |
+|                                                                                                                        |
+|erDiagram                                                                                                               |
+|  ANSWER ||--o{ BLOCK : draws                                                                                           |
+|                                                                                                                        |
+|The corpus ends here.                                                                                                   |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                         99% window left|
+|╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                                                                    │|
+|╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)                                                               anthropic · claude-test-1|

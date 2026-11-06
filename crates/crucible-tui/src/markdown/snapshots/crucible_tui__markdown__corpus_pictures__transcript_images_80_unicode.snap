@@ -1,0 +1,13 @@
+---
+source: crates/crucible-tui/src/markdown/corpus_pictures.rs
+expression: "pictured(\"images\", 80, Glyphs::Unicode)"
+---
+A picture from the checkout:                                                    
+                                                                                
+!<Link>the build passing</>                                                              
+                                                                                
+A picture from the network:                                                     
+                                                                                
+!<Link>a diagram of the flow</>                                                          
+                                                                                
+The corpus ends here.

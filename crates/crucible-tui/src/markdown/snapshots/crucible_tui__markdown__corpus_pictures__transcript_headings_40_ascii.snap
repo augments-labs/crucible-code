@@ -1,0 +1,21 @@
+---
+source: crates/crucible-tui/src/markdown/corpus_pictures.rs
+expression: "pictured(\"headings\", 40, Glyphs::Ascii)"
+---
+<Heading>One</>                                     
+<Heading>Two</>                                     
+<Heading>Three</>                                   
+<Heading>Four</>                                    
+<Heading>Five</>                                    
+<Heading>Six</>                                     
+                                        
+A heading may also be underlined        
+instead:                                
+                                        
+Title                                   
+=====                                   
+                                        
+Sub                                     
+<Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</><Quiet>-</>
+                                        
+The corpus ends here.

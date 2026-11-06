@@ -1,0 +1,33 @@
+---
+source: crates/crucible-tui/src/markdown/corpus_pictures.rs
+expression: "pictured(\"links\", 40, Glyphs::Unicode)"
+---
+[docs]: <Link>https://example.com/docs</>        
+                                        
+A reference to [the documentation][docs]
+defined before it.                      
+                                        
+A reference to [the changelog][notes]   
+defined after it.                       
+                                        
+A reference to [nothing][missing] that  
+is defined never.                       
+                                        
+An address in brackets,                 
+<<Link>https://example.com/a></>, and one        
+without, www.example.com.               
+                                        
+An ordinary link to <Link>the issue list</>.     
+                                        
+Forge references:                       
+<Link>https://github.com/augments-labs/crucibl</>
+<Link>e-code/pull/1324</>,                       
+<Link>https://github.com/augments-labs/crucibl</>
+<Link>e-code/issues/1288</> and                  
+<Link>https://github.com/augments-labs/crucibl</>
+<Link>e-code/commit/0a1b2c3d4e5f60718293a4b5c6</>
+<Link>d7e8f901234567</>.                         
+                                        
+[notes]: <Link>https://example.com/changelog</>  
+                                        
+The corpus ends here.

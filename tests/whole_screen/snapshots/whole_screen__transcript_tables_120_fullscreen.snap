@@ -1,0 +1,65 @@
+---
+source: tests/whole_screen/main.rs
+expression: window.picture()
+---
+120x60 cursor 57,4 scrolled 0
+|╭─ crucible v###### ──────────────────────────────────────────────────────────────────────────────────────────────────╮ |
+|│                                  │ Recent sessions                                                                  │ |
+|│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                                                                  │ |
+|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No earlier session for this workspace                                            │ |
+|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                                                                  │ |
+|│                                  │ ──────────────────────────────────────────────────────────────────────────────── │ |
+|│  /…/workspace                    │                                                                                  │ |
+|│                                  │ Tips                                                                             │ |
+|│                                  │                                                                                  │ |
+|│                                  │ · /          opens the command list                                              │ |
+|│                                  │ · \ enter    adds a line without sending                                         │ |
+|│                                  │ · shift+tab  steps the permission mode                                           │ |
+|│                                  │ · ctrl+c     clears the line typed so far                                        │ |
+|╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ |
+|                                                                                                                        |
+|› show me the corpus                                                                                                    |
+|                                                                                                                        |
+|Here is what the release carries:                                                                                       |
+|                                                                                                                        |
+|name  │ what it does                       │ since                                                                      |
+|──────┼────────────────────────────────────┼──────                                                                      |
+|alpha │ reads the markdown out of a stream │ 0.1                                                                        |
+|beta  │ lays a table against the window    │ 0.2                                                                        |
+|gamma │ keeps the source of a drawn block  │ 0.3                                                                        |
+|                                                                                                                        |
+|A table may be written without its outer bars:                                                                          |
+|                                                                                                                        |
+|name | what it does | since                                                                                             |
+|--|--|--                                                                                                                |
+|delta | draws a rule across the window | 0.4                                                                            |
+|epsilon | folds a long cell | 0.5                                                                                       |
+|                                                                                                                        |
+|And one with more columns than a window can hold:                                                                       |
+|                                                                                                                        |
+|region │ owner              │ window                │ rows        │ scrollback │ theme │ glyphs  │ notes                |
+|───────┼────────────────────┼───────────────────────┼─────────────┼────────────┼───────┼─────────┼───────────────────── |
+|north  │ the drawing thread │ eighty columns of     │ twenty-four │ two rows   │ dark  │ unicode │ a note long enough   |
+|       │                    │ prose that has to     │             │            │       │         │ to be split across   |
+|       │                    │ wrap somewhere        │             │            │       │         │ rows again           |
+|south  │ the reading thread │ one hundred and       │ forty       │ none       │ light │ ascii   │ another note, just   |
+|       │                    │ twenty columns of     │             │            │       │         │ as long, so the      |
+|       │                    │ prose that also wraps │             │            │       │         │ split is not a       |
+|       │                    │                       │             │            │       │         │ special case         |
+|                                                                                                                        |
+|The corpus ends here.                                                                                                   |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                                        |
+|                                                                                                         99% window left|
+|╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                                                                    │|
+|╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)                                                               anthropic · claude-test-1|
