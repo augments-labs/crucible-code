@@ -708,12 +708,7 @@ impl<'a> QuestionsSection<'a> {
                 (telling(state, told), waiting)
             }
             Questions::Unheld => (
-                nothing_waiting(
-                    recorded
-                        .and_then(|state| state.get("next"))
-                        .and_then(Value::as_u64)
-                        .unwrap_or(0),
-                ),
+                nothing_waiting(recorded.and_then(recorded_next).unwrap_or(0)),
                 Vec::new(),
             ),
             Questions::Beneath => (
@@ -803,7 +798,41 @@ impl QuestionsSection<'_> {
 /// The state of a registry holding nothing that numbers its next batch
 /// `next`.
 fn nothing_waiting(next: u64) -> Value {
-    telling(json!({ "next": next, "waiting": [] }), Vec::new())
+    telling(saved(next, &[]), Vec::new())
+}
+
+/// The key in a registry's saved form that numbers its next batch.
+const NEXT: &str = "next";
+
+/// A registry's saved form: the number of its next batch and the batches
+/// waiting, as [`Deferred::state`] writes it and [`Deferred::restore`] reads
+/// it.
+pub(crate) fn saved(next: u64, waiting: &[Value]) -> Value {
+    json!({ NEXT: next, "waiting": waiting })
+}
+
+/// The number a questions state records for the next batch, where it records
+/// one this build can read.
+pub(crate) fn recorded_next(state: &Value) -> Option<u64> {
+    state.get(NEXT).and_then(Value::as_u64)
+}
+
+/// Has `held` hand out no id below the next one `recorded`, a questions state
+/// a session recorded, numbers, whatever `held` holds: an answer in the
+/// transcript naming an id that state spent would otherwise settle a new
+/// batch. A state that records no readable number changes nothing.
+pub fn continue_numbering(held: &Deferred, recorded: &Value) {
+    let Some(next) = recorded_next(recorded) else {
+        return;
+    };
+    let mut now = held.state();
+    if let Some(fields) = now.as_object_mut() {
+        fields.insert(NEXT.to_owned(), next.into());
+    }
+    // The registry's own list with a number it keeps if larger fits whatever
+    // it holds, so this is never refused; were it, nothing better than what
+    // it holds is known.
+    let _ = held.restore(&now);
 }
 
 /// The key beside a registry's saved form that holds the ids the model was

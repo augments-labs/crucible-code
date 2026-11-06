@@ -14,12 +14,16 @@
 //! recorded as the person's words after the fragments; the patch that stops
 //! listing them is recorded last. A log that ends anywhere in between either
 //! holds the answer or brings its batch back as waiting, so the person may be
-//! asked twice and is never ignored. A batch asked during a tool pass is
+//! asked twice and is never ignored. The one exception is a record that would
+//! list more batches than the registry holds, which `asked` trims oldest
+//! first so the rest still come back. A batch asked during a tool pass is
 //! recorded, with the next id, before the result naming it
 //! ([`Runner::asked_since`]), so a log that holds the id brings the batch
 //! back and never hands the id out again.
 
-use crucible_context::{ContextSection, Live, Questions, QuestionsSection, asked, assemble};
+use crucible_context::{
+    ContextSection, Live, Questions, QuestionsSection, asked, assemble, continue_numbering,
+};
 use crucible_tools::Deferred;
 use crucible_types::{Ancestry, Message};
 
@@ -53,24 +57,23 @@ impl Runner {
             self.recalled = true;
             // The first assembly of a session started or picked up: the
             // batches its log recorded as waiting come back. A registry
-            // handed in already holding something keeps what it holds;
-            // [`Runner::pick_up`] empties the one it holds, so a session
-            // picked up always gets its own batches back.
-            if held.waiting().is_empty()
-                && !held.any_settled()
-                && let Some(saved) = snapshot
-                    .as_ref()
-                    .and_then(|saved| saved.get(QuestionsSection::ID))
-                && held.restore(saved).is_err()
+            // handed in already holding something keeps what it holds, and
+            // only the ids the log spent stay spent; [`Runner::pick_up`]
+            // empties the one it holds, so a session picked up always gets
+            // its own batches back.
+            if let Some(saved) = snapshot
+                .as_ref()
+                .and_then(|saved| saved.get(QuestionsSection::ID))
             {
-                // A state this build cannot read is told to the model as
-                // lapsed, as it would be to a runner holding none, and the
-                // empty state recorded in its place.
-                questions = Questions::Unheld;
-                if let Some(next) = saved.get("next")
-                    && let Some(next) = next.as_u64()
-                {
-                    continue_numbering(held, next);
+                let empty = held.waiting().is_empty() && !held.any_settled();
+                if !empty {
+                    continue_numbering(held, saved);
+                } else if held.restore(saved).is_err() {
+                    // A state this build cannot read is told to the model as
+                    // lapsed, as it would be to a runner holding none, and
+                    // the empty state recorded in its place.
+                    questions = Questions::Unheld;
+                    continue_numbering(held, saved);
                 }
             }
         }
@@ -159,17 +162,4 @@ impl Runner {
             .as_ref()
             .filter(|_| ancestry.parent().is_none())
     }
-}
-
-/// Has `held`, holding nothing, hand out no id below `next`: the numbers a
-/// recorded state names stay spent when its batches could not be read, since
-/// an answer in the transcript naming one would otherwise settle a new batch.
-fn continue_numbering(held: &Deferred, next: u64) {
-    let mut empty = held.state();
-    if let Some(fields) = empty.as_object_mut() {
-        fields.insert("next".to_owned(), next.into());
-    }
-    // An empty list with a number fits whatever the registry holds, so this
-    // is never refused; were it, nothing better than what it holds is known.
-    let _ = held.restore(&empty);
 }

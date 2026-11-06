@@ -20,7 +20,7 @@ use crucible_tools::{Deferred, Permission, ToolSnapshot};
 use crucible_types::{ContextError, ContextPatch, ContextSnapshot, Fragment, Seen, Transcript};
 use serde_json::Value;
 
-use crate::prompt::{telling, told_ids};
+use crate::prompt::{recorded_next, saved, telling, told_ids};
 use crate::{
     ContextSection, EnvironmentSection, ModelSection, PermissionsSection, Questions,
     QuestionsSection, Skill, SkillsSection, ToolsSection, WorkspaceSection, capture, seen,
@@ -189,9 +189,12 @@ pub fn assemble(
 /// recorded while `held` holds an answer no assembly has taken yet: the answer
 /// may be that batch's, and until it is delivered a log that ends has to bring
 /// the batch back rather than lose the answer. With no such answer, every one
-/// of them was delivered, and is dropped. This records only what `held`
-/// listed as waiting or `prior` recorded, so a batch asked and settled since
-/// `prior` is in neither: that relies on a batch being settled only by whoever
+/// of them was delivered, and is dropped. A list the registry would refuse to
+/// read back brings none of its batches back, so where keeping them all makes
+/// one, the oldest `held` no longer lists go first until it reads.
+///
+/// This records only what `held` listed as waiting or `prior` recorded, so a
+/// batch asked and settled since `prior` is in neither: that relies on a batch being settled only by whoever
 /// was told its id, which the runner tells after this is recorded. `None`
 /// where no batch was asked since.
 ///
@@ -204,19 +207,22 @@ pub fn asked(
 ) -> Result<Option<ContextPatch>, ContextError> {
     let empty = ContextSnapshot::new();
     let prior = prior.unwrap_or(&empty);
-    let Value::Object(mut now) = held.state() else {
+    let state = held.state();
+    let Some(next) = recorded_next(&state) else {
+        return Ok(None);
+    };
+    let Value::Object(mut now) = state else {
         return Ok(None);
     };
     // Read after the state, never before: an answer settled between the two
     // leaves its batch out of that state, and this is what keeps it recorded.
     let undelivered = held.any_settled();
-    let next = now.remove("next").unwrap_or_else(|| Value::from(0_u64));
     let recorded = prior.get(QuestionsSection::ID);
-    if recorded.and_then(|state| state.get("next")) == Some(&next) {
+    if recorded.and_then(recorded_next) == Some(next) {
         return Ok(None);
     }
     // A registry that never numbered anything has nothing for a log to keep.
-    if recorded.is_none() && next == 0_u64 {
+    if recorded.is_none() && next == 0 {
         return Ok(None);
     }
 
@@ -224,6 +230,7 @@ pub fn asked(
         Some(Value::Array(still)) => still,
         _ => Vec::new(),
     };
+    let listed: Vec<Option<Value>> = still.iter().map(|batch| batch.get("id").cloned()).collect();
     let mut waiting: Vec<Value> = recorded
         .and_then(|state| state.get("waiting"))
         .and_then(Value::as_array)
@@ -240,13 +247,25 @@ pub fn asked(
         })
         .collect();
     waiting.extend(new);
+    // Kept only while the registry can read it back: a list it would refuse
+    // brings back none of its batches. The oldest kept that the registry no
+    // longer lists goes first, as the one most likely already delivered.
+    while Deferred::default().restore(&saved(next, &waiting)).is_err() {
+        let Some(at) = waiting.iter().position(|kept| {
+            let id = kept.get("id");
+            !listed.iter().any(|listed| listed.as_ref() == id)
+        }) else {
+            break;
+        };
+        waiting.remove(at);
+    }
     let told = recorded.map(told_ids).unwrap_or_default();
 
     let mut numbered = prior.clone();
     numbered.record(
         QuestionsSection::ID,
         telling(
-            serde_json::json!({ "next": next, "waiting": waiting }),
+            saved(next, &waiting),
             told.into_iter().map(Value::from).collect(),
         ),
     )?;
@@ -306,7 +325,8 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
 mod tests {
     use std::time::Duration;
 
-    use crucible_types::{Answer, Question, QuestionId, Reply};
+    use crucible_tools::MOST_HELD;
+    use crucible_types::{Answer, Batch, Question, QuestionId, Reply};
     use serde_json::json;
 
     use super::*;
@@ -319,6 +339,16 @@ mod tests {
         )])
         .expect("a batch fits")
         .number()
+    }
+
+    /// Settles the oldest batch `held` lists as waiting, declining it.
+    fn settle_oldest(held: &Deferred) {
+        let oldest = held
+            .waiting()
+            .first()
+            .map(Batch::id)
+            .expect("a batch waits");
+        held.settle(oldest, vec![Reply::Declined]).expect("settled");
     }
 
     /// The ids of the batches a recorded questions state holds, in order.
@@ -411,6 +441,42 @@ mod tests {
         let state = recorded.get(QuestionsSection::ID).expect("still recorded");
 
         assert_eq!(ids(state), ["q1"], "a delivered batch would come back");
+    }
+
+    #[test]
+    fn questions_asked_records_a_state_the_registry_can_read_back_when_keeping_every_batch_would_not()
+     {
+        let held = Deferred::default();
+        let first = asking(&held, "Early");
+        for _ in 1..MOST_HELD {
+            asking(&held, "Early");
+        }
+        let mut prior = ContextSnapshot::new();
+        prior
+            .record(QuestionsSection::ID, held.state())
+            .expect("the recorded state");
+        held.settle(QuestionId::numbered(first), vec![Reply::Declined])
+            .expect("settled");
+        assert_eq!(held.take_settled().len(), 1, "the oldest was delivered");
+        asking(&held, "Later");
+        settle_oldest(&held);
+
+        let patch = asked(Some(&prior), &held)
+            .expect("recordable")
+            .expect("a batch was asked since");
+        let recorded = patch.apply(&prior).expect("the patch applies");
+        let state = recorded.get(QuestionsSection::ID).expect("still recorded");
+
+        assert!(
+            Deferred::default().restore(state).is_ok(),
+            "a resume would read every recorded batch as lapsed: {:?}",
+            ids(state)
+        );
+        assert_eq!(
+            ids(state),
+            ["q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8"],
+            "the batch whose answer is not yet delivered has to stay recorded"
+        );
     }
 
     #[test]

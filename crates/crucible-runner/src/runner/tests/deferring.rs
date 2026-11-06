@@ -1010,7 +1010,7 @@ fn a_runner_still_holding_its_own_batch_picks_up_the_batches_the_session_left_wa
 }
 
 #[test]
-fn a_recorded_state_this_build_refuses_never_lets_an_id_the_log_names_out_again() {
+fn a_recorded_state_this_build_refuses_hands_out_no_id_below_the_next_one_it_records() {
     let store = Recording::started("a session asking three times");
     let held = Deferred::default();
     let mut first = deferring(
@@ -1123,4 +1123,40 @@ fn an_answer_accepted_during_a_pass_cut_short_leaves_the_cut_short_ending_standi
             "the next turn's first pass delivers it: {cut:?}"
         );
     }
+}
+
+#[test]
+fn a_registry_handed_in_already_holding_a_batch_hands_out_no_id_the_log_names() {
+    let store = Recording::started("a session asking three times");
+    let held = Deferred::default();
+    let mut first = deferring(
+        vec![
+            calling("c1", "ask", "{}"),
+            calling("c2", "ask", "{}"),
+            calling("c3", "ask", "{}"),
+            saying("three wait"),
+        ],
+        &held,
+        Arc::clone(&store),
+    );
+    first.turn("plan it").expect("a turn");
+    drop(first);
+
+    // A registry that already holds a batch of its own keeps it, and the
+    // session's are not restored over it; the ids that session spent stay
+    // spent all the same.
+    let later = Deferred::default();
+    later.register(vec![storage()]).expect("a batch fits");
+    let mut resumed = resumed(
+        &store,
+        vec![calling("c4", "ask", "{}"), saying("asked")],
+        Some(&later),
+    );
+    resumed.turn("ask again").expect("a turn that asks");
+
+    assert_eq!(
+        waiting_ids(&later),
+        ["q0", "q3"],
+        "an id the log names was handed out again"
+    );
 }

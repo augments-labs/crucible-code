@@ -48,6 +48,6 @@ pub use assembly::{Assembled, ContextInputs, Live, asked, assemble};
 pub use compaction::Room;
 pub use prompt::{
     EnvironmentSection, Identity, ModelSection, PermissionsSection, Questions, QuestionsSection,
-    Skill, SkillsSection, SystemPrompt, ToolsSection, WorkspaceSection,
+    Skill, SkillsSection, SystemPrompt, ToolsSection, WorkspaceSection, continue_numbering,
 };
 pub use sections::{ContextSection, capture, seen};
