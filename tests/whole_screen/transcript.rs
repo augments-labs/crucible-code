@@ -17,6 +17,8 @@ mod corpus {
 
 use std::fmt::Write as _;
 
+use base64::Engine as _;
+
 pub(crate) use corpus::END;
 
 /// What every corpus case types to ask for its answer.
@@ -59,4 +61,37 @@ pub(crate) fn rewrite_input() -> String {
         "replace": rewrite("is now"),
     })
     .to_string()
+}
+
+/// The first block of `name`'s answer that opens with `opening`, as the answer
+/// wrote it: from that line down to the blank line, or the end, that closes it.
+///
+/// The text a selection over the drawn block has to put on the clipboard, read
+/// out of the corpus rather than written beside it, for the reason the answers
+/// themselves are included rather than copied.
+pub(crate) fn block_of(name: &str, opening: &str) -> String {
+    let answer = said(name);
+    let from = answer
+        .find(opening)
+        .unwrap_or_else(|| panic!("no block opening {opening:?} in the {name} answer"));
+    let rest = answer.get(from..).unwrap_or_default();
+    let to = rest.find("\n\n").map_or(rest.len(), |at| at + 1);
+    rest.get(..to).unwrap_or_default().to_owned()
+}
+
+/// What crucible asked the terminal to put on the clipboard, in order.
+///
+/// Read out of the command strings the window was sent: `52;c;` and the base64
+/// of the text, which is the whole of what a terminal is given.
+pub(crate) fn copied(commands: &[String]) -> Vec<String> {
+    commands
+        .iter()
+        .filter_map(|said| said.strip_prefix("52;c;"))
+        .map(|payload| {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(payload)
+                .expect("a clipboard request carries base64");
+            String::from_utf8(bytes).expect("a clipboard request carries text")
+        })
+        .collect()
 }

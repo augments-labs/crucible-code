@@ -1,0 +1,17 @@
+---
+source: tests/whole_screen/main.rs
+expression: opened
+---
+80x12 cursor 11,0 scrolled 0
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|table                                                                           |
+|                                                                                |
+|| region | owner | window | rows | scrollback | theme | glyphs | notes |        |
+|| --- | --- | --- | --- | --- | --- | --- | --- |                               |
+|| north | the drawing thread | eighty columns of prose that has to wrap         |
+|somewhere | twenty-four | two rows | dark | unicode | a note long enough to be  |
+|split across rows again |                                                       |
+|| south | the reading thread | one hundred and twenty columns of prose that also|
+|                                                                                |
+|esc to close · ↑↓ pgup pgdn to see more · ←→ source 1 of 2                      |

@@ -117,7 +117,7 @@ Under three rows it is not drawn, but it is still there: <kbd>↑</kbd> and
 | --- | --- |
 | <kbd>Shift-Tab</kbd> | Steps the permission mode on the press: `ask`, `allowEdits`, `fullAccess`, then `ask` again. See [Stepping it while you type](../permissions/modes.md#stepping-it-while-you-type). |
 | <kbd>Ctrl+B</kbd> | Stands the list of commands left running. With none running it closes at once. A click on their count under the box does the same. While a turn runs it stands the list only when the turn has no command to leave in the background and one or more commands are left running: see [While a turn runs](#while-a-turn-runs). |
-| <kbd>Ctrl+O</kbd> | Stands the results the transcript cut short. Nothing while none were cut. |
+| <kbd>Ctrl+O</kbd> | Stands the results the transcript cut short, then the source of each table, formula, diagram or diff it drew. Nothing while there is neither: a drawn block alone opens it. See [Results cut short](#results-cut-short). |
 | <kbd>Ctrl+T</kbd> | Expands the plan past its seven rows, or folds it back. Nothing without a plan. See [Seven rows, and the key that gives the rest back](../tools/planning.md#seven-rows-and-the-key-that-gives-the-rest-back). |
 | <kbd>Esc</kbd> | Closes the command list, keeping the line. Nothing otherwise. |
 | <kbd>Ctrl+E</kbd>, <kbd>Ctrl+X</kbd> | Take the highlighted prompt of [the queue](#the-queue) back into the box, or delete it. Nothing while none are waiting. |
@@ -141,7 +141,7 @@ wheel. These differ:
 | <kbd>Ctrl+C</kbd> | Clears the box. When it is already empty it offers to leave as at the prompt, and the second press within two seconds stops the turn and ends the session. |
 | <kbd>Ctrl+D</kbd> | Nothing. |
 | <kbd>Ctrl+B</kbd> | Leaves the running command in the background, where it can be, including in the seconds before its row offering `(ctrl+b to background)` is drawn ([`output.pinAfterSeconds`](../configuration/configuration.md#output)). See [Leaving one running](../tools/commands.md#leaving-one-running). Where there is no such command and one or more commands are left running, it stands their `Still running` list, as a click on their count under the box does. Nothing otherwise. |
-| <kbd>Ctrl+O</kbd> | Stands the cut results under the tail of the answer, which goes on arriving above them. |
+| <kbd>Ctrl+O</kbd> | Stands the cut results, then the source of each drawn block, under the tail of the answer, which goes on arriving above them. Opens for a drawn block alone. |
 | <kbd>Ctrl+E</kbd>, <kbd>Ctrl+X</kbd> | Take the highlighted prompt of [the queue](#the-queue) back into the box, or delete it. Nothing while none are waiting. |
 | <kbd>Ctrl+Enter</kbd>, <kbd>Ctrl+S</kbd> | Stop the turn and send [the queue](#the-queue) now: all of it with the line in the box last, or the highlighted prompt alone. Each prompt is sent as the line it was typed as. |
 | <kbd>Tab</kbd> | Nothing. |
@@ -462,6 +462,18 @@ open. The footer reads `esc to close`; where there is more it reads
 result it goes on ` · ←→ result 2 of 7`, counting the result at the top of
 the view with the newest as 1. In a window too narrow for all of it, it loses
 whole parts from the right, and never `esc to close`.
+
+After the results the view stands the source of each table, formula (display
+math), mermaid diagram and diff the transcript drew, newest first, each under
+its word and written as the model wrote it, however wide the block was drawn.
+A rule and a fenced block of code are not among them. The source is shown in
+full: one longer than the window is read in pieces the height of the window,
+and the arrows step from the last result onto the first source. Over the
+sources the footer counts `source 1 of 2` where it counts results otherwise.
+A block still arriving grows in the view as it does; a block drawn after the
+view opened is there the next time it is opened. The view opens when a drawn
+block is all there is to show. It is the same in both
+[`output.screen`](../configuration/configuration.md#output) modes.
 
 | Key | What it does |
 | --- | --- |
