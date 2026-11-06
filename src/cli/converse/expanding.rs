@@ -16,7 +16,7 @@
 //! the blocks are those drawn when the view opened, and a click on a row that
 //! offered one result stands that result alone.
 //!
-//! //! It stands rather than being written into the transcript for the reason
+//! It stands rather than being written into the transcript for the reason
 //! nothing else standing here is written down: the results are already in the
 //! record as the rows that could not fit them, and committing the text a second
 //! time would be a session saying everything twice. So the way out of it is the
@@ -59,7 +59,9 @@
 
 use std::collections::HashMap;
 
-use crucible_tui::{Caret, Expanded, Glyphs, Key, Pressed, Renderer, Row, Shown, Source, Terminal};
+use crucible_tui::{
+    Caret, Expanded, Glyphs, Key, Pressed, Renderer, Row, Shown, Size, Source, Terminal,
+};
 use crucible_types::TOOL_RESULT_BYTES;
 
 use crate::cli::Fatal;
@@ -146,7 +148,7 @@ pub(super) struct View {
     refused: Option<(usize, Mark)>,
     /// How many rows each block's source came to at the width of the last
     /// frame, so that a frame lays out only the sources its window reaches.
-    counted: Counted,
+    counted: Box<Counted>,
 }
 
 impl View {
@@ -163,7 +165,7 @@ impl View {
             over,
             back: Vec::new(),
             refused: None,
-            counted: Counted::default(),
+            counted: Box::default(),
         }
     }
 }
@@ -334,7 +336,10 @@ pub(super) fn stand<T: Terminal>(
     let glyphs = style.glyphs();
     let picture = |renderer: &Renderer<T>, view: &mut View, columns: usize, rows: usize| {
         let sources: Vec<Source<'_>> = renderer.sources().collect();
-        (laying(kept, &sources, view, glyphs, columns, rows), None)
+        (
+            laying(kept, &sources, view, glyphs, Size { columns, rows }),
+            None,
+        )
     };
 
     // Nothing is taken here and nothing is committed, so every way out is the
@@ -384,7 +389,7 @@ pub(super) fn under<T: Terminal>(
     let columns = renderer.columns();
     let sources: Vec<Source<'_>> = renderer.sources().collect();
     let (blank, rows) = laying_under_a_turn(room, working, |rows| {
-        laying(kept, &sources, view, style.glyphs(), columns, rows)
+        laying(kept, &sources, view, style.glyphs(), Size { columns, rows })
     });
     if rows.is_empty() {
         *standing = Standing::Closed;
@@ -447,8 +452,7 @@ fn laying(
     sources: &[Source<'_>],
     view: &mut View,
     glyphs: Glyphs,
-    columns: usize,
-    rows: usize,
+    Size { columns, rows }: Size,
 ) -> Vec<Row> {
     let entries = entries(kept, sources, &view.over);
     if entries.is_empty() {
@@ -494,7 +498,7 @@ fn laying(
         .iter()
         .filter(|entry| matches!(entry, Entry::Block(_)))
         .count();
-    expanded.within_measured(&heights, columns, rows, glyphs, blocks)
+    expanded.within_measured(&heights, Size { columns, rows }, glyphs, blocks)
 }
 
 /// Keeps the window on the result at its top when the window changed width

@@ -516,14 +516,19 @@ fn a_window_laid_from_measured_lengths_is_the_window_laid_from_everything() {
                     .count();
                 let counted = footer(
                     laid.len() > held,
-                    begun,
-                    shown.len(),
-                    0,
+                    Top {
+                        at: begun,
+                        of: shown.len(),
+                        sources: 0,
+                    },
                     columns,
                     Glyphs::Unicode,
                 );
-                let measured =
-                    expanded.within_measured(&lengths, columns, room, Glyphs::Unicode, 0);
+                let size = Size {
+                    columns,
+                    rows: room,
+                };
+                let measured = expanded.within_measured(&lengths, size, Glyphs::Unicode, 0);
                 let said = format!("{columns} columns, {room} rows, from {from}");
 
                 assert_eq!(
@@ -539,8 +544,7 @@ fn a_window_laid_from_measured_lengths_is_the_window_laid_from_everything() {
                 assert_eq!(
                     expanded.within_measured(
                         lengths.get(1..).unwrap_or_default(),
-                        columns,
-                        room,
+                        size,
                         Glyphs::Unicode,
                         0,
                     ),
@@ -569,7 +573,7 @@ fn two_results_and_three_sources(from: usize, columns: usize, glyphs: Glyphs) ->
     };
     let lengths = expanded.lengths(columns);
     expanded
-        .within_measured(&lengths, columns, 10, glyphs, 3)
+        .within_measured(&lengths, Size { columns, rows: 10 }, glyphs, 3)
         .last()
         .map(Row::text)
 }
@@ -622,7 +626,15 @@ fn a_view_of_sources_alone_counts_them_from_one() {
         from: 0,
     };
     let lengths = expanded.lengths(80);
-    let rows = expanded.within_measured(&lengths, 80, 10, Glyphs::Unicode, 2);
+    let rows = expanded.within_measured(
+        &lengths,
+        Size {
+            columns: 80,
+            rows: 10,
+        },
+        Glyphs::Unicode,
+        2,
+    );
 
     assert_eq!(
         rows.last().map(Row::text).as_deref(),
@@ -642,7 +654,15 @@ fn a_lone_source_names_no_step_it_has_nowhere_to_take() {
         from: 0,
     };
     let lengths = expanded.lengths(80);
-    let rows = expanded.within_measured(&lengths, 80, 10, Glyphs::Unicode, 1);
+    let rows = expanded.within_measured(
+        &lengths,
+        Size {
+            columns: 80,
+            rows: 10,
+        },
+        Glyphs::Unicode,
+        1,
+    );
 
     assert_eq!(
         rows.last().map(Row::text).as_deref(),

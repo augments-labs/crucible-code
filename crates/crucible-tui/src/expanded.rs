@@ -47,6 +47,7 @@
 use crate::color::Slot;
 use crate::glyphs::Glyphs;
 use crate::row::Row;
+use crate::terminal::Size;
 use crate::width::{clip, columns as wide};
 
 /// Rows spent on everything that is not a result: the rule, the blank under it,
@@ -148,7 +149,15 @@ impl Expanded<'_> {
     /// whole of what was cut short while hiding that it was cut twice.
     #[must_use]
     pub fn within(&self, columns: usize, room: usize, glyphs: Glyphs) -> Vec<Row> {
-        self.within_measured(&self.lengths(columns), columns, room, glyphs, 0)
+        self.within_measured(
+            &self.lengths(columns),
+            Size {
+                columns,
+                rows: room,
+            },
+            glyphs,
+            0,
+        )
     }
 
     /// [`Expanded::within`], for a caller that already knows how many rows
@@ -164,8 +173,10 @@ impl Expanded<'_> {
     pub fn within_measured(
         &self,
         lengths: &[usize],
-        columns: usize,
-        room: usize,
+        Size {
+            columns,
+            rows: room,
+        }: Size,
         glyphs: Glyphs,
         sources: usize,
     ) -> Vec<Row> {
@@ -221,7 +232,12 @@ impl Expanded<'_> {
         rows.extend(laid.into_iter().skip(skipped).take(held));
 
         rows.push(Row::new());
-        let footer = footer(scrolls, top, self.shown.len(), sources, columns, glyphs);
+        let at = Top {
+            at: top,
+            of: self.shown.len(),
+            sources,
+        };
+        let footer = footer(scrolls, at, columns, glyphs);
         rows.push(Row::new().then(Slot::Quiet, footer));
 
         rows
@@ -256,19 +272,25 @@ fn lay(at: usize, shown: &Shown<'_>, columns: usize, rows: &mut Vec<Row>) {
     }
 }
 
-/// The row under the window, saying only what is true of it: the way out, the
-/// keys that move the window where there is somewhere to move it, and which of
-/// `of` items is at its top where there is another to step to: a result among
-/// the results, or, for the last `sources` of the items, a source among the
-/// sources.
-fn footer(
-    scrolls: bool,
-    top: usize,
+/// Which item is at the top of the window, counted from one with the newest as
+/// one, and of how many; the last `sources` of the items are sources.
+#[derive(Clone, Copy)]
+struct Top {
+    at: usize,
     of: usize,
     sources: usize,
-    columns: usize,
-    glyphs: Glyphs,
-) -> String {
+}
+
+/// The row under the window, saying only what is true of it: the way out, the
+/// keys that move the window where there is somewhere to move it, and which
+/// item is at its top where there is another to step to: a result among the
+/// results, or a source among the sources.
+fn footer(scrolls: bool, top: Top, columns: usize, glyphs: Glyphs) -> String {
+    let Top {
+        at: top,
+        of,
+        sources,
+    } = top;
     // A window too narrow even for the way out keeps as much of it as fits,
     // and nothing after it.
     let mut said = clip(CLOSE, columns).to_owned();

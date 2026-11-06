@@ -19,7 +19,7 @@ fn standing(from: usize, end: usize) -> View {
         over: Over::Everything { cut: 0, blocks: 0 },
         back: Vec::new(),
         refused: None,
-        counted: Counted::default(),
+        counted: Box::default(),
     }
 }
 
@@ -82,7 +82,16 @@ fn the_view_under_a_turn_leaves_the_tail_a_row_to_go_on_writing_into() {
 
     let mut same = Standing::default();
     same.open(&held, 0);
-    let rows = laying(&held, &[], opened(&mut same), Glyphs::Unicode, 80, 23);
+    let rows = laying(
+        &held,
+        &[],
+        opened(&mut same),
+        Glyphs::Unicode,
+        Size {
+            columns: 80,
+            rows: 23,
+        },
+    );
     assert_eq!(rows.len(), 23);
 
     let mut by_hand = Renderer::new(Recording::new(80, 24));
@@ -124,7 +133,16 @@ fn the_working_row_stands_over_the_view_parted_from_the_transcript_by_a_blank() 
 
     let mut same = Standing::default();
     same.open(&held, 0);
-    let mut rows = laying(&held, &[], opened(&mut same), Glyphs::Unicode, 80, 21);
+    let mut rows = laying(
+        &held,
+        &[],
+        opened(&mut same),
+        Glyphs::Unicode,
+        Size {
+            columns: 80,
+            rows: 21,
+        },
+    );
     assert_eq!(rows.len(), 21);
     rows.insert(0, working);
 
@@ -187,7 +205,7 @@ fn the_view_under_a_turn_fits_every_window_it_is_given() {
                 standing.open(&held, 0);
                 let view = opened(&mut standing);
                 let (blank, rows) = laying_under_a_turn(room, Some(Row::plain("w")), |rows| {
-                    laying(&held, &[], view, glyphs, columns, rows)
+                    laying(&held, &[], view, glyphs, Size { columns, rows })
                 });
                 let at = format!("{glyphs:?} {columns}x{room}");
                 assert!(blank.iter().len() + rows.len() <= room, "{at}");
@@ -244,7 +262,16 @@ fn a_click_stands_the_one_result_the_row_it_landed_on_offered() {
     let mut standing = Standing::default();
     standing.one(&held, 1);
 
-    let rows = laying(&held, &[], opened(&mut standing), Glyphs::Unicode, 60, 40);
+    let rows = laying(
+        &held,
+        &[],
+        opened(&mut standing),
+        Glyphs::Unicode,
+        Size {
+            columns: 60,
+            rows: 40,
+        },
+    );
     let said = rows.iter().map(Row::text).collect::<Vec<_>>().join("\n");
 
     assert!(said.contains("Read(src/main.rs)"), "{said}");
@@ -279,7 +306,16 @@ fn a_view_over_a_result_the_ceiling_dropped_lays_out_no_rows() {
     held.calling(call.clone(), "Bash(cat big)".to_owned());
     held.finished(&call, "x".repeat(1024 * 1024).into_boxed_str(), 1);
 
-    let rows = laying(&held, &[], opened(&mut standing), Glyphs::Unicode, 60, 40);
+    let rows = laying(
+        &held,
+        &[],
+        opened(&mut standing),
+        Glyphs::Unicode,
+        Size {
+            columns: 60,
+            rows: 40,
+        },
+    );
     assert!(rows.is_empty(), "{rows:?}");
 }
 
@@ -293,13 +329,31 @@ fn a_view_stands_still_while_the_turn_under_it_goes_on_cutting() {
 
     let mut standing = Standing::default();
     standing.open(&held, 0);
-    let before = laying(&held, &[], opened(&mut standing), Glyphs::Unicode, 60, 20);
+    let before = laying(
+        &held,
+        &[],
+        opened(&mut standing),
+        Glyphs::Unicode,
+        Size {
+            columns: 60,
+            rows: 20,
+        },
+    );
 
     let call = crucible_types::ToolId::new("test");
     held.calling(call.clone(), "Bash(cargo test)".to_owned());
     held.finished(&call, "something else entirely\n".into(), 1);
 
-    let after = laying(&held, &[], opened(&mut standing), Glyphs::Unicode, 60, 20);
+    let after = laying(
+        &held,
+        &[],
+        opened(&mut standing),
+        Glyphs::Unicode,
+        Size {
+            columns: 60,
+            rows: 20,
+        },
+    );
     assert_eq!(before, after);
 }
 
@@ -312,14 +366,32 @@ fn opening_it_again_is_what_brings_the_newer_results_in() {
 
     let mut standing = Standing::default();
     standing.open(&held, 0);
-    let before = laying(&held, &[], opened(&mut standing), Glyphs::Unicode, 60, 20);
+    let before = laying(
+        &held,
+        &[],
+        opened(&mut standing),
+        Glyphs::Unicode,
+        Size {
+            columns: 60,
+            rows: 20,
+        },
+    );
 
     let call = crucible_types::ToolId::new("test");
     held.calling(call.clone(), "Bash(cargo test)".to_owned());
     held.finished(&call, "something else entirely\n".into(), 1);
 
     standing.open(&held, 0);
-    let after = laying(&held, &[], opened(&mut standing), Glyphs::Unicode, 60, 20);
+    let after = laying(
+        &held,
+        &[],
+        opened(&mut standing),
+        Glyphs::Unicode,
+        Size {
+            columns: 60,
+            rows: 20,
+        },
+    );
     assert_ne!(before, after);
 }
 
@@ -482,10 +554,16 @@ fn a_resize_owes_the_next_frame() {
 
 /// The rows of the view over `kept` at 80 columns and `rows` rows, as text.
 fn frame(kept: &Kept, standing: &mut Standing, rows: usize) -> Vec<String> {
-    laying(kept, &[], opened(standing), Glyphs::Unicode, 80, rows)
-        .iter()
-        .map(Row::text)
-        .collect()
+    laying(
+        kept,
+        &[],
+        opened(standing),
+        Glyphs::Unicode,
+        Size { columns: 80, rows },
+    )
+    .iter()
+    .map(Row::text)
+    .collect()
 }
 
 #[test]
@@ -675,10 +753,16 @@ fn taller_when_narrower() -> Kept {
 
 /// The rows of the view over `kept` at `columns` and `rows`, as text.
 fn frame_at(kept: &Kept, standing: &mut Standing, columns: usize, rows: usize) -> Vec<String> {
-    laying(kept, &[], opened(standing), Glyphs::Unicode, columns, rows)
-        .iter()
-        .map(Row::text)
-        .collect()
+    laying(
+        kept,
+        &[],
+        opened(standing),
+        Glyphs::Unicode,
+        Size { columns, rows },
+    )
+    .iter()
+    .map(Row::text)
+    .collect()
 }
 
 #[test]
@@ -1041,7 +1125,16 @@ fn opening_every_row_in_turn_holds_one_result_beyond_the_store_at_most() {
     for at in 0..40 {
         let mut standing = Standing::default();
         standing.one(&kept, at);
-        let rows = laying(&kept, &[], opened(&mut standing), Glyphs::Unicode, 80, 40);
+        let rows = laying(
+            &kept,
+            &[],
+            opened(&mut standing),
+            Glyphs::Unicode,
+            Size {
+                columns: 80,
+                rows: 40,
+            },
+        );
         assert!(!rows.is_empty(), "row {at} opened nothing");
         let view = opened(&mut standing);
 
@@ -1062,7 +1155,16 @@ fn walked(kept: &Kept, standing: &mut Standing, step: usize) -> (Vec<Vec<String>
     let mut frames = Vec::new();
     let mut most = 0;
     loop {
-        let rows = laying(kept, &[], opened(standing), Glyphs::Unicode, 80, 40);
+        let rows = laying(
+            kept,
+            &[],
+            opened(standing),
+            Glyphs::Unicode,
+            Size {
+                columns: 80,
+                rows: 40,
+            },
+        );
         assert!(!rows.is_empty(), "the view closed");
         frames.push(rows.iter().map(Row::text).collect());
         most = most.max(read_back(opened(standing)));
@@ -1139,7 +1241,16 @@ fn a_step_past_a_result_read_back_moves_the_rows_by_that_step() {
     // go of is read back with the next one waiting under it.
     opened(&mut standing).from = kept.newest().count() * (LINES + 3) - 40;
     loop {
-        let rows = laying(&kept, &[], opened(&mut standing), Glyphs::Unicode, 80, 40);
+        let rows = laying(
+            &kept,
+            &[],
+            opened(&mut standing),
+            Glyphs::Unicode,
+            Size {
+                columns: 80,
+                rows: 40,
+            },
+        );
         if rows.iter().any(|row| row.text().contains(LATER)) {
             break;
         }
@@ -1149,10 +1260,19 @@ fn a_step_past_a_result_read_back_moves_the_rows_by_that_step() {
         );
     }
 
-    let mut last: Vec<String> = laying(&kept, &[], opened(&mut standing), Glyphs::Unicode, 80, 40)
-        .iter()
-        .map(Row::text)
-        .collect();
+    let mut last: Vec<String> = laying(
+        &kept,
+        &[],
+        opened(&mut standing),
+        Glyphs::Unicode,
+        Size {
+            columns: 80,
+            rows: 40,
+        },
+    )
+    .iter()
+    .map(Row::text)
+    .collect();
     let mut read: Vec<Mark> = Vec::new();
     for back in [false, true] {
         for step in 0..60 {
@@ -1160,11 +1280,19 @@ fn a_step_past_a_result_read_back_moves_the_rows_by_that_step() {
                 standing.against(Pressed::Scrolled { back }, 1),
                 "stuck at {step}"
             );
-            let now: Vec<String> =
-                laying(&kept, &[], opened(&mut standing), Glyphs::Unicode, 80, 40)
-                    .iter()
-                    .map(Row::text)
-                    .collect();
+            let now: Vec<String> = laying(
+                &kept,
+                &[],
+                opened(&mut standing),
+                Glyphs::Unicode,
+                Size {
+                    columns: 80,
+                    rows: 40,
+                },
+            )
+            .iter()
+            .map(Row::text)
+            .collect();
             for (mark, _) in &opened(&mut standing).back {
                 if !read.contains(mark) {
                     read.push(mark.clone());
@@ -1241,13 +1369,31 @@ fn a_result_whose_batch_is_not_written_yet_is_read_once_it_is() {
 
     let mut standing = Standing::default();
     standing.one(&kept, 0);
-    let before = laying(&kept, &[], opened(&mut standing), Glyphs::Unicode, 80, 40);
+    let before = laying(
+        &kept,
+        &[],
+        opened(&mut standing),
+        Glyphs::Unicode,
+        Size {
+            columns: 80,
+            rows: 40,
+        },
+    );
     let before: Vec<String> = before.iter().map(Row::text).collect();
     assert!(!before.iter().any(|row| row.contains(UNREAD)), "{before:?}");
 
     went.borrow_mut()
         .push((crucible_types::ToolId::new("call-000"), 0));
-    let after = laying(&kept, &[], opened(&mut standing), Glyphs::Unicode, 80, 40);
+    let after = laying(
+        &kept,
+        &[],
+        opened(&mut standing),
+        Glyphs::Unicode,
+        Size {
+            columns: 80,
+            rows: 40,
+        },
+    );
     assert!(
         after
             .iter()
@@ -1276,7 +1422,16 @@ fn a_result_left_for_later_is_not_read_again_while_the_window_stands_still() {
     standing.one(&kept, 0);
     opened(&mut standing).from = kept.newest().count() * (LINES + 3) - 40;
     loop {
-        let rows = laying(&kept, &[], opened(&mut standing), Glyphs::Unicode, 80, 40);
+        let rows = laying(
+            &kept,
+            &[],
+            opened(&mut standing),
+            Glyphs::Unicode,
+            Size {
+                columns: 80,
+                rows: 40,
+            },
+        );
         if rows.iter().any(|row| row.text().contains(LATER)) {
             break;
         }
@@ -1288,7 +1443,16 @@ fn a_result_left_for_later_is_not_read_again_while_the_window_stands_still() {
 
     let read = reads.get();
     for _ in 0..5 {
-        laying(&kept, &[], opened(&mut standing), Glyphs::Unicode, 80, 40);
+        laying(
+            &kept,
+            &[],
+            opened(&mut standing),
+            Glyphs::Unicode,
+            Size {
+                columns: 80,
+                rows: 40,
+            },
+        );
     }
     assert_eq!(
         reads.get(),
@@ -1311,7 +1475,16 @@ fn a_result_the_log_will_never_place_says_it_cannot_be_read_back() {
 
     let mut standing = Standing::default();
     standing.one(&kept, 0);
-    let rows = laying(&kept, &[], opened(&mut standing), Glyphs::Unicode, 80, 40);
+    let rows = laying(
+        &kept,
+        &[],
+        opened(&mut standing),
+        Glyphs::Unicode,
+        Size {
+            columns: 80,
+            rows: 40,
+        },
+    );
     assert!(
         rows.iter().any(|row| row.text().contains(UNREAD)),
         "{:?}",
@@ -1333,7 +1506,16 @@ fn the_first_result_the_window_reaches_is_read_whatever_was_refused_before() {
         .expect("row 0 was let go of");
     opened(&mut standing).refused = Some((0, mark));
 
-    let rows = laying(&kept, &[], opened(&mut standing), Glyphs::Unicode, 80, 40);
+    let rows = laying(
+        &kept,
+        &[],
+        opened(&mut standing),
+        Glyphs::Unicode,
+        Size {
+            columns: 80,
+            rows: 40,
+        },
+    );
     assert!(
         rows.iter()
             .any(|row| row.text().contains("call-000 line 0001")),
@@ -1433,10 +1615,16 @@ fn frame_of(
     standing: &mut Standing,
     rows: usize,
 ) -> Vec<String> {
-    laying(kept, sources, opened(standing), Glyphs::Unicode, 80, rows)
-        .iter()
-        .map(|row| row.text().trim_end().to_owned())
-        .collect()
+    laying(
+        kept,
+        sources,
+        opened(standing),
+        Glyphs::Unicode,
+        Size { columns: 80, rows },
+    )
+    .iter()
+    .map(|row| row.text().trim_end().to_owned())
+    .collect()
 }
 
 #[test]
@@ -1475,7 +1663,12 @@ fn the_sources_stand_after_the_results_newest_first_each_under_its_word() {
         at("math"),
         at("table"),
     ];
-    assert!(order.windows(2).all(|pair| pair[0] < pair[1]), "{rows:#?}");
+    assert!(
+        order
+            .windows(2)
+            .all(|pair| matches!(pair, [before, after] if before < after)),
+        "{rows:#?}"
+    );
 
     // The whole of each source, as written.
     for line in ["-old", "+new", "x^2", "| 1 | 2 |", "|---|---|"] {
@@ -1490,7 +1683,10 @@ fn the_sources_stand_after_the_results_newest_first_each_under_its_word() {
 
 #[test]
 fn a_source_longer_than_the_window_is_read_in_pieces_the_height_of_the_window() {
-    let long: String = (1..=60).map(|at| format!("row {at:02}\n")).collect();
+    let long = (1..=60)
+        .map(|at| format!("row {at:02}\n"))
+        .collect::<Vec<_>>()
+        .concat();
     let sources = [Source {
         line: 3,
         word: "table",
@@ -1539,7 +1735,10 @@ fn a_block_drawn_after_the_view_opened_is_not_let_in_underneath_the_reader() {
 #[test]
 fn the_arrows_step_from_the_last_result_onto_the_first_source_and_the_footer_counts_it() {
     let kept = cut(&["Read(one)"]);
-    let long: String = (1..=30).map(|at| format!("row {at:02}\n")).collect();
+    let long = (1..=30)
+        .map(|at| format!("row {at:02}\n"))
+        .collect::<Vec<_>>()
+        .concat();
     let sources = [
         Source {
             line: 4,
@@ -1615,8 +1814,10 @@ fn the_rows_of_a_source_are_counted_once_for_each_width() {
         &sources,
         opened(&mut standing),
         Glyphs::Unicode,
-        20,
-        40,
+        Size {
+            columns: 20,
+            rows: 40,
+        },
     );
     assert!(rows.len() > wide.len(), "the narrower window folds more");
     assert_eq!(opened(&mut standing).counted.columns, 20);
