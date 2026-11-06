@@ -1,6 +1,6 @@
 {
   "harness": {
-    "tests/whole_screen/screen.rs": "50ba111632e53d8a38402f258586548babe76be99832fbea1aa141d582323852",
+    "tests/whole_screen/screen.rs": "cacfa04961bbd83b9cb4e1663b13743ff01fb41ee80d7d213180f6bbfa1f7fc1",
     "tests/whole_screen/vendor.rs": "e0a073bccef228848c35dc9968f2ba4e34e6911d22f9996de65d287053b76d60",
     "tests/whole_screen/watched.rs": "26d6a4e63a6be6f0295b77a60fd5764a467ab3d3be1bcd168a2fb36758d4b433"
   },
@@ -2559,6 +2559,42 @@
         "Watched::drawn_in_colour( \"transcript-rules-80-native\", (80, 42), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
       "sha256": "1878ebf7837f04c5f84b430cba4ac6149f68e80dc65210dd2925cc245250aa95"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__transcript_sources_80_fullscreen.snap",
+      "case": "transcript_sources_80_fullscreen",
+      "opened": [
+        "Vendor::answering(transcript::said(\"tables\"))",
+        "Watched::in_default_colours( \"transcript-sources-80-fullscreen\", (80, 12), Some(&vendor), None, )"
+      ],
+      "sha256": "d840cdedd687c7b0b6cb05e020c472d33ab4df05b68b7c3d8142e07d7578e650"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__transcript_sources_80_fullscreen_second.snap",
+      "case": "transcript_sources_80_fullscreen",
+      "opened": [
+        "Vendor::answering(transcript::said(\"tables\"))",
+        "Watched::in_default_colours( \"transcript-sources-80-fullscreen\", (80, 12), Some(&vendor), None, )"
+      ],
+      "sha256": "74585bee48e2373022d04b2c17436e423f4f20e000ecf666fa75fcc4a2ffaf1f"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__transcript_sources_80_native.snap",
+      "case": "transcript_sources_80_native",
+      "opened": [
+        "Vendor::answering(transcript::said(\"tables\"))",
+        "Watched::drawn_in_colour( \"transcript-sources-80-native\", (80, 20), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
+      ],
+      "sha256": "2aa8a75ee94ec25c007361cdbea92030222f97e51971a0d02bc2f3f4447506e1"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__transcript_sources_80_native_second.snap",
+      "case": "transcript_sources_80_native",
+      "opened": [
+        "Vendor::answering(transcript::said(\"tables\"))",
+        "Watched::drawn_in_colour( \"transcript-sources-80-native\", (80, 20), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
+      ],
+      "sha256": "e79391b53ea9fad5590cd5dfd92bba460e046b55963b94e54d1e3ce45b0737eb"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_tables_120_fullscreen.snap",
