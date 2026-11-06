@@ -15,8 +15,9 @@
 //! very turn that asked not to be.
 //!
 //! **It changes nothing and reaches nothing.** No file is touched, no process
-//! is started and nothing leaves the machine, so there is no target to name and
-//! nothing a rule could usefully be written about. It carries a read-only
+//! is started and nothing leaves the machine; a call that does not wait leaves
+//! its questions only in the session's own registry. So there is no target to
+//! name and nothing a rule could usefully be written about. It carries a read-only
 //! sensitivity over a target that resolves to nothing, which is the answer
 //! [`crate::ToolSearch`] carries for the same reason.
 //!
@@ -71,6 +72,8 @@ const MODE: &str = "mode";
 /// The two ways a call can wait for its answer, spelled as the model sends them.
 const BLOCKING: &str = "blocking";
 const DEFERRED: &str = "deferred";
+/// Both, as the schema offers them and the parse accepts them.
+const MODES: &[&str] = &[BLOCKING, DEFERRED];
 
 // How many questions one call may put, how many answers each may offer and how
 // many rows a specimen may show are `crucible_tools`'s: a question that waits
@@ -219,7 +222,7 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
                  from the person. Defaults to {BLOCKING}."
             ),
             needed: false,
-            shape: Shape::Choice(&[BLOCKING, DEFERRED]),
+            shape: Shape::Choice(MODES),
         }],
     }
     .text()
@@ -253,16 +256,15 @@ impl AskUser {
     /// How the call waits for its answer, refused where it asks not to and
     /// there is nowhere to hold the questions.
     fn mode<'a>(&'a self, args: &Args) -> Result<Mode<'a>, ToolError> {
-        if args.choice(MODE, BLOCKING, &[BLOCKING, DEFERRED])? == BLOCKING {
-            return Ok(Mode::Blocking);
+        match args.choice(MODE, BLOCKING, MODES)? {
+            DEFERRED => self.held.as_ref().map(Mode::Deferred).ok_or_else(|| {
+                args.wrong(format!(
+                    "nothing in this session can hold a question for later, so {MODE} {DEFERRED} \
+                     is not available; ask with {MODE} {BLOCKING}, or in your reply"
+                ))
+            }),
+            _ => Ok(Mode::Blocking),
         }
-
-        self.held.as_ref().map(Mode::Deferred).ok_or_else(|| {
-            args.wrong(format!(
-                "nothing in this session can hold a question for later, so {MODE} {DEFERRED} is \
-                 not available; ask with {MODE} {BLOCKING}, or in your reply"
-            ))
-        })
     }
 }
 
@@ -302,8 +304,9 @@ impl Tool for AskUser {
     }
 
     /// Reads nothing and reaches nothing. It puts words on the screen and waits
-    /// for a key, so there is no target to name and nothing a rule could
-    /// usefully be written about.
+    /// for a key, or leaves them in the session's registry to be answered later,
+    /// so there is no target to name and nothing a rule could usefully be
+    /// written about.
     fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
         Sensitivity::ReadOnly {
             target: Target::pathless(),

@@ -454,7 +454,7 @@ fn the_schema_offers_the_flag_on_an_answer_and_keeps_best_first() {
 }
 
 /// `ONE`, saying outright that it waits.
-const BLOCKING: &str = r#"{"mode":"blocking","questions":[{"heading":"Language",
+const WAITING: &str = r#"{"mode":"blocking","questions":[{"heading":"Language",
     "question":"Which language?",
     "answers":[{"answer":"Rust","says":"crucible's own"},{"answer":"Python"}]}]}"#;
 
@@ -484,7 +484,7 @@ fn batch(question: &str) -> Vec<Question> {
 
 #[test]
 fn a_call_that_names_no_mode_or_blocking_waits_for_the_reader_and_holds_nothing() {
-    for args in [ONE, BLOCKING] {
+    for args in [ONE, WAITING] {
         let put = Arc::new(Whoever::saying(vec![Answered::new(["Rust"])]));
         let held = Deferred::default();
         let before = held.revision();
@@ -584,4 +584,22 @@ fn a_mode_this_tool_does_not_have_is_refused_naming_the_two_it_has() {
         refusal.contains("blocking") && refusal.contains("deferred"),
         "{refusal}"
     );
+}
+
+#[test]
+fn a_deferred_call_with_nowhere_to_hold_it_is_refused_before_it_is_decided_about() {
+    // The runner checks a call before asking anyone to allow it, so a call
+    // that cannot be held is refused there, not after somebody said yes.
+    let call = ToolArgs::new(LATER);
+
+    let refusal = AskUser::new(Arc::new(Nobody))
+        .validate(&call)
+        .expect_err("no registry to hold it");
+
+    assert!(matches!(refusal, ToolError::Arguments { .. }), "{refusal}");
+    assert!(refusal.to_string().contains(BLOCKING), "{refusal}");
+    AskUser::new(Arc::new(Nobody))
+        .deferring(Deferred::default())
+        .validate(&call)
+        .expect("somewhere to hold it");
 }
