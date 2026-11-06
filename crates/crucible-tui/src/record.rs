@@ -143,7 +143,11 @@ impl Drawn {
     /// `links`, with every edit and the prefix it was given since.
     fn lay(&mut self, columns: usize, glyphs: Glyphs, links: &Links) {
         let laid = markdown::lay(&self.block, columns, glyphs, links);
-        let mut rows = responsive_rows(laid.iter().flat_map(|row| row.fold(columns)).collect());
+        let mut rows = responsive_rows(
+            laid.iter()
+                .flat_map(|row| markdown::framed(row, columns).unwrap_or_else(|| row.fold(columns)))
+                .collect(),
+        );
         for edit in &self.edits {
             edit(&mut rows);
         }
@@ -1652,8 +1656,13 @@ impl Record {
 /// words rather than under its mark, which is [`markdown::hang`]'s to say: the
 /// bar is stood again and the mark's columns are left blank. Any other line is
 /// folded flush, as prose is. A hang as wide as the window leaves the words no
-/// room, so it is not kept and the line folds flush instead.
+/// room, so it is not kept and the line folds flush instead. A row of code in
+/// its frame breaks wherever the room runs out, which is
+/// [`markdown::framed`]'s to say.
 fn flowed(row: &Row, columns: usize) -> Vec<Row> {
+    if let Some(rows) = markdown::framed(row, columns) {
+        return rows;
+    }
     let Some((hang, room)) = hung(row, columns) else {
         return row.fold(columns);
     };
@@ -1672,6 +1681,9 @@ fn flowed(row: &Row, columns: usize) -> Vec<Row> {
 
 /// How many display rows [`flowed`] gives `row`, without building them.
 fn flowed_height(row: &Row, columns: usize) -> usize {
+    if let Some(height) = markdown::framed_height(row, columns) {
+        return height;
+    }
     let Some((hang, room)) = hung(row, columns) else {
         return row.folds(columns);
     };

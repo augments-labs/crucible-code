@@ -47,8 +47,10 @@ expression: "pictured(80, Glyphs::Unicode)"
 <Quiet>│  </><Quiet>Fixed</>                                                                        
 <Quiet>│  </><Bullet>•</><Quiet> </><Bold>Code keeps its lines.</>                                                      
 <Quiet>│</>                                                                               
-<Quiet>│  </><Quiet>first line</>                                                                   
-<Quiet>│  </><Quiet>second line</>                                                                  
+<Quiet>│  </><Quiet>┌─</>                                                                           
+<Quiet>│  </><Quiet>│ </><Quiet>first line</>                                                                 
+<Quiet>│  </><Quiet>│ </><Quiet>second line</>                                                                
+<Quiet>│  </><Quiet>└─</>                                                                           
 <Quiet>│</>                                                                               
 <Quiet>│</>                                                                               
 <Accent>◆ </><Strong>0.41.1</><Quiet> · 2026-09-29</>                                                           

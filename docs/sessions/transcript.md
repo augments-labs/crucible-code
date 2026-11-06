@@ -4,7 +4,7 @@ The transcript is the conversation as crucible draws it: your prompts, what
 each tool did, and the model's answers. An answer is Markdown, and it is drawn
 as it arrives, a few characters at a time. Most of it can be: a word is bold
 or a link the moment its markers close, and a code fence is highlighted line
-by line as it streams.
+by line as it streams, in a frame that names its language.
 
 ## Blocks held until they close
 
@@ -52,6 +52,34 @@ both its text and its rows. When the oldest of the transcript is dropped, a
 table goes with its text. The [session log](sessions.md) still holds every
 answer.
 
+## Code blocks
+
+A fenced block of code is drawn in a frame. The top edge names the language
+written after the opening fence, every line of code stands behind a bar, and
+the bottom edge closes it:
+
+```text
+┌─ rust
+│ fn main() {
+│     println!("hello");
+│ }
+└─
+```
+
+A fence that names no language has an unlabelled top edge. Only the first word
+after the fence is used, and a name longer than 32 columns is cut short with an
+ellipsis. A fence the answer never closes has no bottom edge. With the ASCII
+glyph set the corners are `+`, the rule `-` and the bar `|`.
+
+A line of code longer than the window is never folded at a space: it is cut
+where the room runs out, and each row after the first starts with `┆` (`:` in
+the ASCII glyph set) where the bar would be. In the full screen, crucible's own
+selection copies the code without the frame (its bars and both edges), and a
+line that wrapped copies as the one line it was written as, with no line break
+where it wrapped. In the native screen, or with <kbd>Shift</kbd> held while you
+drag, your terminal copies what it shows. When the window changes width the
+rows are cut again from the line.
+
 ## Lists and quotes that wrap
 
 A bullet, a task or a numbered item that is longer than the window continues
@@ -72,7 +100,9 @@ Some text is drawn exactly as the model wrote it, rather than as a block:
 
 - **A held block that grows past its limit.** A table is held for at most
   8 KiB, display math for 4 KiB, and a mermaid or diff fence for 16 KiB. Past
-  that, the block is drawn as it was written, as it would have streamed.
+  that, the block is drawn as it was written, as it would have streamed. A
+  fence is drawn in its frame, and its top edge says why:
+  `┌─ mermaid · longer than this can hold · shown as written`.
 - **A fence or display math the answer never closes.** It is drawn as
   written when the answer ends. A table the answer ends in is still drawn as
   a table: its last row is where it stops.

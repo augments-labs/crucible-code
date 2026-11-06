@@ -2,7 +2,7 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-120x77 cursor 66,4 scrollback 0
+120x77 cursor 68,4 scrollback 0
 |╭─ crucible v###### ───────────────────────────────────────────────────────────────────────────────────────────────────╮|
 |│                                  │ Recent sessions                                                                   │|
 |│  ▄▄▄ ▄▄▄ █  █ ▄▄▄ █ ▄▄▄ █   ▄▄▄  │                                                                                   │|
@@ -61,7 +61,9 @@ expression: window.picture()
 |                                                                                                                        |
 |A math fence:                                                                                                           |
 |                                                                                                                        |
-|x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}                                                                                  |
+|┌─ math                                                                                                                 |
+|│ x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}                                                                                |
+|└─                                                                                                                      |
 |                                                                                                                        |
 |The corpus ends here.                                                                                                   |
 |                                                                                                                        |
@@ -72,8 +74,6 @@ expression: window.picture()
 |│ ›                                                                                                                    │|
 |╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                                                               anthropic · claude-test-1|
-|                                                                                                                        |
-|                                                                                                                        |
 |                                                                                                                        |
 |                                                                                                                        |
 |                                                                                                                        |

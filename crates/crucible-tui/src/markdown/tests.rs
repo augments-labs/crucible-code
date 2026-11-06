@@ -160,12 +160,13 @@ fn inline_code_wears_its_own_slot_and_loses_its_backticks() {
 }
 
 #[test]
-fn a_fence_and_the_language_written_on_it_take_no_row_of_their_own() {
+fn a_fence_and_the_language_written_on_it_are_the_edges_of_its_frame() {
     let said = whole("before\n```rust\nlet it = 1;\n```\nafter\n");
 
-    // The fence and the word after it are markers, so neither is drawn and
-    // neither costs a row. What is between them is the block.
-    assert_eq!(drawn(&said), "before\nlet it = 1;\nafter\n");
+    // The fence and the word after it are not drawn as they were written: the
+    // fence's two lines become the two edges of a frame, and the word after the
+    // first names it. What is between them is the block.
+    assert_eq!(drawn(&said), "before\n┌─ rust\n│ let it = 1;\n└─\nafter\n");
 
     // The block is read rather than quiet, because the fence named a language
     // this build knows. What it is *not* is prose: nothing inside it comes back
@@ -194,7 +195,10 @@ fn a_fence_and_the_language_written_on_it_take_no_row_of_their_own() {
 fn everything_inside_a_fence_is_code_however_it_is_punctuated() {
     let said = whole("```\n# not a heading **not bold** _not_\n```\n");
 
-    assert_eq!(drawn(&said), "# not a heading **not bold** _not_\n");
+    assert_eq!(
+        drawn(&said),
+        "┌─\n│ # not a heading **not bold** _not_\n└─\n"
+    );
     assert_eq!(slots(&said), vec![Slot::Quiet]);
 }
 
@@ -202,7 +206,7 @@ fn everything_inside_a_fence_is_code_however_it_is_punctuated() {
 fn one_backtick_inside_a_fence_is_a_backtick() {
     let said = whole("```\n`quoted` in a shell\n```\n");
 
-    assert_eq!(drawn(&said), "`quoted` in a shell\n");
+    assert_eq!(drawn(&said), "┌─\n│ `quoted` in a shell\n└─\n");
     assert_eq!(slots(&said), vec![Slot::Quiet]);
 }
 
@@ -320,8 +324,9 @@ fn a_fence_split_across_three_deltas_is_still_one_fence() {
     // a highlighter reads lines and a delta is a piece of the wire. So code
     // arrives on screen a line at a time where prose arrives a character at a
     // time — bounded by one line, and the price of reading it at all.
-    assert_eq!(drawn(&second), "");
-    assert_eq!(drawn(&third), "let it = 1;\n");
+    // The frame is up as soon as the fence's line is, and the gutter with it.
+    assert_eq!(drawn(&second), "┌─ rust\n│ ");
+    assert_eq!(drawn(&third), "let it = 1;\n└─\n");
 
     let read_as: Vec<Slot> = third.iter().map(|(slot, _)| *slot).collect();
     assert!(read_as.contains(&Slot::Keyword), "{third:?}");
@@ -360,13 +365,20 @@ fn a_fence_naming_something_nothing_knows_is_the_block_it_always_was() {
 
 #[test]
 fn a_block_that_was_read_says_exactly_what_arrived() {
-    // Every byte of the code comes back, once, in order — the fence's own two
-    // lines being the markers they always were.
+    // Every byte of the code comes back, once, in order, each line behind the
+    // gutter of its frame.
     let code = "fn main() {\n    let x = 1; // hi\n    println!(\"{x}\");\n}\n";
     let said = whole(&format!("```rust\n{code}```\n"));
     let text: String = said.iter().map(|(_, text)| text.as_str()).collect();
+    let inside = text
+        .lines()
+        .skip(1)
+        .filter_map(|line| line.strip_prefix("│ "))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
 
-    assert_eq!(text, code);
+    assert_eq!(inside, code);
 }
 
 #[test]
@@ -507,7 +519,7 @@ fn a_message_that_ended_inside_a_link_keeps_what_it_wrote() {
 fn a_link_in_a_fenced_block_is_code() {
     let said = whole("```\n[a](b)\n```\n");
 
-    assert_eq!(drawn(&said), "[a](b)\n");
+    assert_eq!(drawn(&said), "┌─\n│ [a](b)\n└─\n");
 }
 
 #[test]
@@ -845,7 +857,7 @@ fn nothing_inside_a_fence_is_read_as_a_table() {
     // are code and stay exactly as they were written.
     let said = whole("```\n| a | b |\n| --- | --- |\n```\n");
 
-    assert_eq!(drawn(&said), "| a | b |\n| --- | --- |\n");
+    assert_eq!(drawn(&said), "┌─\n│ | a | b |\n│ | --- | --- |\n└─\n");
 }
 
 #[test]
@@ -997,7 +1009,7 @@ fn two_markers_alone_on_a_line_are_the_characters_somebody_wrote() {
 fn a_line_of_dashes_inside_a_fence_is_code_rather_than_a_rule() {
     let said = narrowed("```\n---\n```\n", 20);
 
-    assert_eq!(drawn(&said), "---\n");
+    assert_eq!(drawn(&said), "┌─\n│ ---\n└─\n");
 }
 
 #[test]
@@ -1263,7 +1275,7 @@ fn emphasis_nobody_closed_ends_where_the_next_block_starts() {
 fn the_spaces_in_front_of_a_fence_go_with_it() {
     let said = ended("- item\n  ```rs\n  let a = 1;\n  ```\n- next\n");
 
-    assert_eq!(drawn(&said), "• item\n  let a = 1;\n• next\n");
+    assert_eq!(drawn(&said), "• item\n┌─ rs\n│   let a = 1;\n└─\n• next\n");
 }
 
 #[test]
@@ -1277,7 +1289,7 @@ fn the_spaces_in_front_of_a_nested_item_stay_where_they_were() {
 fn a_block_fenced_with_tildes_is_a_block() {
     let said = ended("~~~\nlet a = **1**;\n~~~\n");
 
-    assert_eq!(drawn(&said), "let a = **1**;\n");
+    assert_eq!(drawn(&said), "┌─\n│ let a = **1**;\n└─\n");
     assert_eq!(slots(&said), vec![Slot::Quiet]);
 }
 
@@ -1285,7 +1297,7 @@ fn a_block_fenced_with_tildes_is_a_block() {
 fn a_block_is_closed_by_the_marker_that_opened_it() {
     let said = ended("~~~\n```\nstill code\n~~~\n");
 
-    assert_eq!(drawn(&said), "```\nstill code\n");
+    assert_eq!(drawn(&said), "┌─\n│ ```\n│ still code\n└─\n");
 }
 
 /// The repository the references below are counted against.
@@ -1972,7 +1984,24 @@ fn a_held_block_past_its_cap_is_shown_as_written_and_never_handed_on() {
         let (blocks, runs) = blocks(&answer);
 
         assert!(blocks.is_empty(), "{opener:?}: {} blocks", blocks.len());
-        assert_eq!(runs, as_written(&answer), "{opener:?}");
+
+        // The same rows as the block read as it was written, except for the
+        // top edge of a fence, which says why it was not drawn.
+        let written = as_written(&answer);
+        if let Some(kind) = opener.strip_prefix("```") {
+            let kind = kind.trim_end();
+            let (first, rest) = runs.split_once('\n').expect("a row");
+            assert_eq!(
+                first,
+                format!("┌─ {kind} · longer than this can hold · shown as written"),
+                "{opener:?}"
+            );
+            let (was, rest_was) = written.split_once('\n').expect("a row");
+            assert_eq!(was, format!("┌─ {kind}"), "{opener:?}");
+            assert_eq!(rest, rest_was, "{opener:?}");
+        } else {
+            assert_eq!(runs, written, "{opener:?}");
+        }
     }
 }
 
@@ -2206,5 +2235,172 @@ fn prose_and_things_that_only_look_like_marks_hang_under_nothing() {
         let row = row_of(answer, Glyphs::Unicode);
 
         assert_eq!(hang(&row), None, "{answer:?} draws {row:?}");
+    }
+}
+
+// A fence in its frame.
+
+/// The runs `answer` comes to, read and finished in `glyphs`.
+fn framed(answer: &str, glyphs: Glyphs) -> Vec<(Slot, String)> {
+    let mut markdown = Markdown::new(glyphs);
+    let mut said = read(&mut markdown, answer);
+    markdown.finish_runs(ROOM, &mut |slot, text, _| {
+        said.push((slot, text.to_owned()));
+    });
+    said
+}
+
+#[test]
+fn a_fence_is_said_between_a_top_edge_and_a_bottom_edge() {
+    let said = framed("```rust\nlet x = 1;\n```\nafter\n", Glyphs::Unicode);
+
+    assert_eq!(drawn(&said), "┌─ rust\n│ let x = 1;\n└─\nafter\n");
+    assert_eq!(said.first(), Some(&(Slot::Quiet, "┌─ rust".to_owned())));
+    assert!(said.contains(&(Slot::Quiet, "│ ".to_owned())), "{said:?}");
+    assert!(said.contains(&(Slot::Quiet, "└─".to_owned())), "{said:?}");
+}
+
+#[test]
+fn a_fence_is_said_with_the_ascii_edges_in_the_ascii_set() {
+    let said = framed("```rust\nlet x = 1;\n```\n", Glyphs::Ascii);
+
+    assert_eq!(drawn(&said), "+- rust\n| let x = 1;\n+-\n");
+}
+
+#[test]
+fn every_line_of_a_fence_wears_one_gutter_even_a_blank_one() {
+    for language in ["", "rust"] {
+        let said = framed(
+            &format!("```{language}\none\n\n  two\n```\n"),
+            Glyphs::Unicode,
+        );
+
+        let gutters = said
+            .iter()
+            .filter(|(slot, text)| *slot == Slot::Quiet && text == "│ ")
+            .count();
+        assert_eq!(gutters, 3, "{language:?}: {said:?}");
+        assert!(drawn(&said).contains("│ \n"), "{language:?}: {said:?}");
+        assert!(drawn(&said).contains("│   two\n"), "{language:?}: {said:?}");
+    }
+}
+
+#[test]
+fn a_fence_the_message_ends_inside_is_never_given_a_bottom() {
+    let said = framed("```rust\nlet x = 1;\n", Glyphs::Unicode);
+
+    assert_eq!(drawn(&said), "┌─ rust\n│ let x = 1;\n");
+}
+
+#[test]
+fn a_fence_holding_the_other_marker_is_framed_once() {
+    let said = framed("~~~\n```\ninside\n~~~\n", Glyphs::Unicode);
+
+    assert_eq!(drawn(&said), "┌─\n│ ```\n│ inside\n└─\n");
+}
+
+/// What a label makes of the info string that was written for it.
+fn labelled(info: &str) -> String {
+    let said = framed(&format!("```{info}\ncode\n```\n"), Glyphs::Unicode);
+    drawn(&said)
+        .lines()
+        .next()
+        .and_then(|top| top.strip_prefix("┌─"))
+        .map(|label| label.trim_start().to_owned())
+        .unwrap_or_default()
+}
+
+#[test]
+fn a_label_is_the_first_word_of_the_info_string_as_written() {
+    assert_eq!(labelled("rust"), "rust");
+    assert_eq!(labelled("Rust,ignore title=\"a.rs\""), "Rust,ignore");
+    assert_eq!(labelled("c++"), "c++");
+    assert_eq!(labelled("  python  "), "python");
+    assert_eq!(labelled("{.rust .numberLines}"), "{.rust");
+    assert_eq!(labelled(""), "");
+}
+
+#[test]
+fn a_label_is_cleaned_before_it_is_drawn() {
+    for (info, label) in [
+        ("\u{1b}]0;a title\u{7}rust", "rust"),
+        ("\u{1b}[31mrust", "rust"),
+        ("ru\u{7}st", "rust"),
+        ("ru\u{9b}st", "rust"),
+        ("\u{202e}tsur", "tsur"),
+        ("\u{2066}rust\u{2069}", "rust"),
+        ("\u{10eeee}\u{305}\u{305}rust", "rust"),
+        ("ru\u{200b}st", "rust"),
+        ("\u{1b}", ""),
+    ] {
+        assert_eq!(labelled(info), label, "{info:?}");
+    }
+}
+
+#[test]
+fn a_label_wider_than_a_label_may_be_ends_in_an_ellipsis() {
+    let long = "x".repeat(200);
+
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let said = framed(&format!("```{long}\ncode\n```\n"), glyphs);
+        let top = drawn(&said).lines().next().expect("a top edge").to_owned();
+
+        assert!(top.ends_with(glyphs.ellipsis()), "{top:?}");
+        assert!(width::columns(&top) < 48, "{top:?}");
+    }
+}
+
+/// A fence named `kind` with the source of a held block past its cap.
+fn past_its_cap(kind: &str, line: &str, cap: usize) -> String {
+    format!(
+        "```{kind}\n{}\n```\nafter\n",
+        line.repeat(cap / line.len() + 1)
+    )
+}
+
+#[test]
+fn a_held_fence_past_its_cap_says_why_in_the_label_of_its_frame() {
+    for (kind, line, cap) in [
+        ("mermaid", "A --> B\n", MERMAID_CAP),
+        ("diff", "+added\n", DIFF_CAP),
+        ("math", "x + y\n", MATH_CAP),
+    ] {
+        let said = framed(&past_its_cap(kind, line, cap), Glyphs::Unicode);
+
+        assert_eq!(
+            drawn(&said).lines().next(),
+            Some(format!("┌─ {kind} · longer than this can hold · shown as written").as_str()),
+            "{kind}"
+        );
+        assert!(drawn(&said).ends_with("└─\nafter\n"), "{kind}");
+    }
+}
+
+#[test]
+fn a_fence_that_is_not_held_says_nothing_of_a_cap() {
+    for answer in [
+        "```rust\nfn main() {}\n```\n",
+        "```mermaid\ngraph TD\n```\n",
+        "```\ntext\n```\n",
+    ] {
+        let said = framed(answer, Glyphs::Unicode);
+
+        assert!(
+            !drawn(&said).contains("longer than this can hold"),
+            "{answer:?}"
+        );
+    }
+}
+
+#[test]
+fn a_closing_fence_the_message_ends_in_the_middle_of_still_shuts_its_frame() {
+    for answer in ["```rust\nlet x = 1;\n```", "~~~\nx\n~~~"] {
+        let said = ended(answer);
+
+        assert!(
+            drawn(&said).ends_with("\n└─\n"),
+            "{answer:?}: {:?}",
+            drawn(&said)
+        );
     }
 }

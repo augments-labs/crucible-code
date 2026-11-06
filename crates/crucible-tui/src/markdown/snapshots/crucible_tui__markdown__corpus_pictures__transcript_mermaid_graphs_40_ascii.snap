@@ -4,32 +4,42 @@ expression: "pictured(\"mermaid_graphs\", 40, Glyphs::Ascii)"
 ---
 A flow chart:                           
                                         
-<Quiet>graph TD</>                                
-<Quiet>  A[Start] --> B{Ok?}</>                   
-<Quiet>  B -->|yes| C[Done]</>                    
-<Quiet>  B -->|no| A</>                           
+<Quiet>+- mermaid</>                              
+<Quiet>| </><Quiet>graph TD</>                              
+<Quiet>| </><Quiet>  A[Start] --> B{Ok?}</>                 
+<Quiet>| </><Quiet>  B -->|yes| C[Done]</>                  
+<Quiet>| </><Quiet>  B -->|no| A</>                         
+<Quiet>+-</>                                      
                                         
 A state diagram:                        
                                         
-<Quiet>stateDiagram</>                            
-<Quiet>  [*] --> Idle</>                          
+<Quiet>+- mermaid</>                              
+<Quiet>| </><Quiet>stateDiagram</>                          
+<Quiet>| </><Quiet>  [*] --> Idle</>                        
+<Quiet>+-</>                                      
                                         
 And the versioned spelling:             
                                         
-<Quiet>stateDiagram-v2</>                         
-<Quiet>  [*] --> Idle</>                          
-<Quiet>  Idle --> Running: start</>               
-<Quiet>  Running --> [*]</>                       
+<Quiet>+- mermaid</>                              
+<Quiet>| </><Quiet>stateDiagram-v2</>                       
+<Quiet>| </><Quiet>  [*] --> Idle</>                        
+<Quiet>| </><Quiet>  Idle --> Running: start</>             
+<Quiet>| </><Quiet>  Running --> [*]</>                     
+<Quiet>+-</>                                      
                                         
 A class diagram:                        
                                         
-<Quiet>classDiagram</>                            
-<Quiet>  class Reader</>                          
-<Quiet>  Reader : +read(delta)</>                 
+<Quiet>+- mermaid</>                              
+<Quiet>| </><Quiet>classDiagram</>                          
+<Quiet>| </><Quiet>  class Reader</>                        
+<Quiet>| </><Quiet>  Reader : +read(delta)</>               
+<Quiet>+-</>                                      
                                         
 An entity relationship diagram:         
                                         
-<Quiet>erDiagram</>                               
-<Quiet>  ANSWER ||--o{ BLOCK : draws</>           
+<Quiet>+- mermaid</>                              
+<Quiet>| </><Quiet>erDiagram</>                             
+<Quiet>| </><Quiet>  ANSWER ||--o{ BLOCK : draws</>         
+<Quiet>+-</>                                      
                                         
 The corpus ends here.

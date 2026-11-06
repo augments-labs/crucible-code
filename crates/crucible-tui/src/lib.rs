@@ -32,6 +32,7 @@ mod asked;
 mod asking;
 mod bands;
 mod bar;
+pub mod chrome;
 mod clipboard;
 mod color;
 #[cfg(test)]

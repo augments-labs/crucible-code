@@ -4,29 +4,37 @@ expression: "pictured(\"mermaid_timelines\", 40, Glyphs::Unicode)"
 ---
 A sequence diagram:                     
                                         
-<Quiet>sequenceDiagram</>                         
-<Quiet>  Alice->>Bob: Hello</>                    
-<Quiet>  Bob-->>Alice: Hi</>                      
+<Quiet>┌─ mermaid</>                              
+<Quiet>│ </><Quiet>sequenceDiagram</>                       
+<Quiet>│ </><Quiet>  Alice->>Bob: Hello</>                  
+<Quiet>│ </><Quiet>  Bob-->>Alice: Hi</>                    
+<Quiet>└─</>                                      
                                         
 A gantt chart:                          
                                         
-<Quiet>gantt</>                                   
-<Quiet>  title Release</>                         
-<Quiet>  section Tests</>                         
-<Quiet>  Gate :a1, 2026-11-01, 3d</>              
+<Quiet>┌─ mermaid</>                              
+<Quiet>│ </><Quiet>gantt</>                                 
+<Quiet>│ </><Quiet>  title Release</>                       
+<Quiet>│ </><Quiet>  section Tests</>                       
+<Quiet>│ </><Quiet>  Gate :a1, 2026-11-01, 3d</>            
+<Quiet>└─</>                                      
                                         
 A git graph:                            
                                         
-<Quiet>gitGraph</>                                
-<Quiet>  commit id: "one"</>                      
-<Quiet>  branch feature</>                        
-<Quiet>  commit id: "two"</>                      
-<Quiet>  checkout main</>                         
-<Quiet>  merge feature</>                         
+<Quiet>┌─ mermaid</>                              
+<Quiet>│ </><Quiet>gitGraph</>                              
+<Quiet>│ </><Quiet>  commit id: "one"</>                    
+<Quiet>│ </><Quiet>  branch feature</>                      
+<Quiet>│ </><Quiet>  commit id: "two"</>                    
+<Quiet>│ </><Quiet>  checkout main</>                       
+<Quiet>│ </><Quiet>  merge feature</>                       
+<Quiet>└─</>                                      
                                         
 A kind with no drawing of its own:      
                                         
-<Quiet>pie</>                                     
-<Quiet>  "drawn" : 1</>                           
+<Quiet>┌─ mermaid</>                              
+<Quiet>│ </><Quiet>pie</>                                   
+<Quiet>│ </><Quiet>  "drawn" : 1</>                         
+<Quiet>└─</>                                      
                                         
 The corpus ends here.

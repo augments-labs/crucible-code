@@ -3,47 +3,47 @@ source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
 40x47 cursor 44,4 scrolled 0
-|CRUCIBLE                                |
-|/…/workspace                            |
-|                                        |
-|› show me the corpus                    |
-|                                        |
-|A flow chart:                           |
-|                                        |
-|graph TD                                |
-|  A[Start] --> B{Ok?}                   |
-|  B -->|yes| C[Done]                    |
-|  B -->|no| A                           |
-|                                        |
-|A state diagram:                        |
-|                                        |
-|stateDiagram                            |
-|  [*] --> Idle                          |
-|                                        |
-|And the versioned spelling:             |
-|                                        |
-|stateDiagram-v2                         |
-|  [*] --> Idle                          |
-|  Idle --> Running: start               |
-|  Running --> [*]                       |
-|                                        |
-|A class diagram:                        |
-|                                        |
-|classDiagram                            |
-|  class Reader                          |
-|  Reader : +read(delta)                 |
-|                                        |
-|An entity relationship diagram:         |
-|                                        |
-|erDiagram                               |
-|  ANSWER ||--o{ BLOCK : draws           |
-|                                        |
-|The corpus ends here.                   |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
-|                                        |
+|A flow chart:                          │|
+|                                       │|
+|┌─ mermaid                             ●|
+|│ graph TD                             │|
+|│   A[Start] --> B{Ok?}                ┃|
+|│   B -->|yes| C[Done]                 ┃|
+|│   B -->|no| A                        ┃|
+|└─                                     ┃|
+|                                       ┃|
+|A state diagram:                       ┃|
+|                                       ┃|
+|┌─ mermaid                             ┃|
+|│ stateDiagram                         ┃|
+|│   [*] --> Idle                       ┃|
+|└─                                     ┃|
+|                                       ┃|
+|And the versioned spelling:            ┃|
+|                                       ┃|
+|┌─ mermaid                             ┃|
+|│ stateDiagram-v2                      ┃|
+|│   [*] --> Idle                       ┃|
+|│   Idle --> Running: start            ┃|
+|│   Running --> [*]                    ┃|
+|└─                                     ┃|
+|                                       ┃|
+|A class diagram:                       ┃|
+|                                       ┃|
+|┌─ mermaid                             ┃|
+|│ classDiagram                         ┃|
+|│   class Reader                       ┃|
+|│   Reader : +read(delta)              ┃|
+|└─                                     ┃|
+|                                       ┃|
+|An entity relationship diagram:        ┃|
+|                                       ┃|
+|┌─ mermaid                             ┃|
+|│ erDiagram                            ┃|
+|│   ANSWER ||--o{ BLOCK : draws        ┃|
+|└─                                     ┃|
+|                                       ┃|
+|The corpus ends here.                  ┃|
 |                                        |
 |                         99% window left|
 |╭──────────────────────────────────────╮|

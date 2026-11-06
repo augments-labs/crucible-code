@@ -4,24 +4,30 @@ expression: "pictured(\"diff\", 120, Glyphs::Unicode)"
 ---
 A change written as a diff fence:                                                                                       
                                                                                                                         
---- a/x.rs                                                                                                              
-+++ b/x.rs                                                                                                              
-@@ -1,2 +1,2 @@                                                                                                         
--let a = <Figure>1</>;                                                                                                             
-+let a = <Figure>2</>;                                                                                                             
- context                                                                                                                
+<Quiet>┌─ diff</>                                                                                                                 
+<Quiet>│ </>--- a/x.rs                                                                                                            
+<Quiet>│ </>+++ b/x.rs                                                                                                            
+<Quiet>│ </>@@ -1,2 +1,2 @@                                                                                                       
+<Quiet>│ </>-let a = <Figure>1</>;                                                                                                           
+<Quiet>│ </>+let a = <Figure>2</>;                                                                                                           
+<Quiet>│ </> context                                                                                                              
+<Quiet>└─</>                                                                                                                      
                                                                                                                         
 The same change written as a patch:                                                                                     
                                                                                                                         
---- a/y.rs                                                                                                              
-+++ b/y.rs                                                                                                              
-@@ -1 +1 @@                                                                                                             
--old                                                                                                                    
-+new                                                                                                                    
+<Quiet>┌─ patch</>                                                                                                                
+<Quiet>│ </>--- a/y.rs                                                                                                            
+<Quiet>│ </>+++ b/y.rs                                                                                                            
+<Quiet>│ </>@@ -1 +1 @@                                                                                                           
+<Quiet>│ </>-old                                                                                                                  
+<Quiet>│ </>+new                                                                                                                  
+<Quiet>└─</>                                                                                                                      
                                                                                                                         
 A fence named diff that is not a diff at all:                                                                           
                                                                                                                         
-this is not a unified diff                                                                                              
-it has no hunks                                                                                                         
+<Quiet>┌─ diff</>                                                                                                                 
+<Quiet>│ </>this is not a unified diff                                                                                            
+<Quiet>│ </>it has no hunks                                                                                                       
+<Quiet>└─</>                                                                                                                      
                                                                                                                         
 The corpus ends here.

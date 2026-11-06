@@ -156,24 +156,34 @@ fn specimen(standing: &Standing, columns: usize, _glyphs: Glyphs) -> Vec<Row> {
 }
 
 /// One line of code, read the way a fenced block in the transcript is read.
+///
+/// What comes back is the code and nothing of its frame: the reading says a
+/// top edge, then the line behind its gutter, then a bottom edge, each on a
+/// row of its own, and the specimen draws a gutter of its own and no edges.
 fn read_as_code(line: &str) -> Vec<(Slot, String)> {
     /// The width a reading is laid out against. A fenced line is drawn where it
     /// stands whatever the window is, so this specimen is never measured.
     const ROOM: usize = 80;
 
-    let mut runs = Vec::new();
+    let mut rows: Vec<Vec<(Slot, String)>> = vec![Vec::new()];
     // As written, so the fenced line reaches here as runs and is never held
     // back as a whole block.
     let mut markdown = crucible_tui::Markdown::default().as_written();
 
     markdown.read(&format!("```rust\n{line}\n```\n"), ROOM, &mut |said| {
-        if let crucible_tui::markdown::Said::Run { slot, text, .. } = said
-            && text != "\n"
-        {
-            runs.push((slot, text.to_owned()));
+        if let crucible_tui::markdown::Said::Run { slot, text, .. } = said {
+            if text == "\n" {
+                rows.push(Vec::new());
+            } else if let Some(row) = rows.last_mut() {
+                row.push((slot, text.to_owned()));
+            }
         }
     });
-    runs
+
+    // The second row is the line, and the first run of it is its gutter.
+    let mut code = rows.into_iter().nth(1).unwrap_or_default().into_iter();
+    code.next();
+    code.collect()
 }
 
 /// Runs the command.

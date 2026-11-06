@@ -44,6 +44,8 @@ d &= e + f
                                                                                 
 A math fence:                                                                   
                                                                                 
-<Quiet>x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}</>                                          
+<Quiet>┌─ math</>                                                                         
+<Quiet>│ </><Quiet>x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}</>                                        
+<Quiet>└─</>                                                                              
                                                                                 
 The corpus ends here.

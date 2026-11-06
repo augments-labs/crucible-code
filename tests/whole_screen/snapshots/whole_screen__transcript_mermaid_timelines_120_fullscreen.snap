@@ -22,40 +22,40 @@ expression: window.picture()
 |                                                                                                                        |
 |A sequence diagram:                                                                                                     |
 |                                                                                                                        |
-|sequenceDiagram                                                                                                         |
-|  Alice->>Bob: Hello                                                                                                    |
-|  Bob-->>Alice: Hi                                                                                                      |
+|┌─ mermaid                                                                                                              |
+|│ sequenceDiagram                                                                                                       |
+|│   Alice->>Bob: Hello                                                                                                  |
+|│   Bob-->>Alice: Hi                                                                                                    |
+|└─                                                                                                                      |
 |                                                                                                                        |
 |A gantt chart:                                                                                                          |
 |                                                                                                                        |
-|gantt                                                                                                                   |
-|  title Release                                                                                                         |
-|  section Tests                                                                                                         |
-|  Gate :a1, 2026-11-01, 3d                                                                                              |
+|┌─ mermaid                                                                                                              |
+|│ gantt                                                                                                                 |
+|│   title Release                                                                                                       |
+|│   section Tests                                                                                                       |
+|│   Gate :a1, 2026-11-01, 3d                                                                                            |
+|└─                                                                                                                      |
 |                                                                                                                        |
 |A git graph:                                                                                                            |
 |                                                                                                                        |
-|gitGraph                                                                                                                |
-|  commit id: "one"                                                                                                      |
-|  branch feature                                                                                                        |
-|  commit id: "two"                                                                                                      |
-|  checkout main                                                                                                         |
-|  merge feature                                                                                                         |
+|┌─ mermaid                                                                                                              |
+|│ gitGraph                                                                                                              |
+|│   commit id: "one"                                                                                                    |
+|│   branch feature                                                                                                      |
+|│   commit id: "two"                                                                                                    |
+|│   checkout main                                                                                                       |
+|│   merge feature                                                                                                       |
+|└─                                                                                                                      |
 |                                                                                                                        |
 |A kind with no drawing of its own:                                                                                      |
 |                                                                                                                        |
-|pie                                                                                                                     |
-|  "drawn" : 1                                                                                                           |
+|┌─ mermaid                                                                                                              |
+|│ pie                                                                                                                   |
+|│   "drawn" : 1                                                                                                         |
+|└─                                                                                                                      |
 |                                                                                                                        |
 |The corpus ends here.                                                                                                   |
-|                                                                                                                        |
-|                                                                                                                        |
-|                                                                                                                        |
-|                                                                                                                        |
-|                                                                                                                        |
-|                                                                                                                        |
-|                                                                                                                        |
-|                                                                                                                        |
 |                                                                                                                        |
 |                                                                                                                        |
 |                                                                                                                        |
