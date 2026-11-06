@@ -171,12 +171,11 @@ impl Terminal for PipeSink {
 /// measured loop is not timing a formatter.
 #[cfg(target_os = "linux")]
 fn streamed() -> Vec<String> {
-    // A fenced block, opened once and never closed, so that most of what this
-    // streams is code being read rather than prose being scanned. Reading is
-    // the more expensive of the two by a wide margin — a parser and a theme
-    // against a marker scan — and it is the half that arrived most recently, so
-    // it is the half a burst has to cover. Without this the probe would go on
-    // measuring the cheaper path and report the budget held.
+    // A fenced block, opened once a cycle and closed only at its end, so that
+    // most of what this streams is code being read rather than prose being
+    // scanned. Reading is the more expensive of the two by a wide margin — a
+    // parser and a theme against a marker scan — and without this the probe
+    // would go on measuring the cheaper path and report the budget held.
     let opening = "```rust\n".to_owned();
 
     let words = [
@@ -196,7 +195,7 @@ fn streamed() -> Vec<String> {
         "\"tool\" } ",
     ];
 
-    let mut deltas = Vec::with_capacity(258);
+    let mut deltas = Vec::with_capacity(258 + HELD.len().div_ceil(5));
     deltas.push(opening);
 
     for (index, word) in words.iter().cycle().take(256).enumerate() {
@@ -212,8 +211,44 @@ fn streamed() -> Vec<String> {
         }
     }
 
+    // Then the fence closes and the blocks a reader holds follow it, streamed
+    // in the same few characters at a time. Each is gathered whole before it
+    // is drawn, with one row saying so in the meantime, and then kept with its
+    // source so a resize can lay it out again, and a burst that never reached
+    // one would leave that work unmeasured.
+    let held: Vec<char> = HELD.chars().collect();
+    deltas.extend(held.chunks(5).map(|chunk| chunk.iter().collect::<String>()));
+
     deltas
 }
+
+/// What follows the code in every cycle of the burst: a table, a formula, a
+/// diagram and a diff, each closed before the next opens.
+#[cfg(target_os = "linux")]
+const HELD: &str = "\n```\n\n\
+    | probe | budget | measured | verdict |\n\
+    | --- | ---: | ---: | :---: |\n\
+    | render burst | 30/s | 412/s | held |\n\
+    | live burst | 30/s | 388/s | held |\n\
+    | session rss | 35 MB | 21 MB | held |\n\
+    | first frame | 60 ms | 18 ms | held |\n\
+    | read back | 120 ms | 44 ms | held |\n\
+    \n\
+    $$\n\
+    \\sum_{i=1}^{n} \\frac{x_i}{2} = \\sqrt{y}\n\
+    $$\n\
+    \n\
+    ```mermaid\n\
+    graph TD\n\
+    \x20 reader --> record\n\
+    \x20 record --> window\n\
+    ```\n\
+    \n\
+    ```diff\n\
+    - let rows = lay(text);\n\
+    + let rows = lay(&block, columns);\n\
+    ```\n\
+    \n";
 
 #[cfg(target_os = "linux")]
 fn measure() -> Result<Burst, ProbeError> {

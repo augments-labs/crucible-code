@@ -2984,3 +2984,627 @@ fn a_recall_as_a_wait_ends_calls_it_off() {
         "{pressed:?}"
     );
 }
+
+/// A renderer on a window of the given size that reads markdown, as a session
+/// with colour does.
+fn reading(columns: usize, rows: usize) -> Drawn {
+    let mut drawn = Drawn::new(columns, rows);
+    drawn.wears(colourful());
+    drawn
+}
+
+impl Drawn {
+    /// One whole answer, as one delta, then the end of the message.
+    fn answer(&mut self, text: &str) {
+        self.render.stream(text).unwrap();
+        self.render.settle().unwrap();
+    }
+
+    /// One answer cut into deltas at the given byte offsets.
+    fn answer_in_pieces(&mut self, text: &str, cuts: &[usize]) {
+        let mut from = 0;
+        for &cut in cuts {
+            if cut > from && text.is_char_boundary(cut) {
+                self.render.stream(&text[from..cut]).unwrap();
+                from = cut;
+            }
+        }
+        self.render.stream(&text[from..]).unwrap();
+        self.render.settle().unwrap();
+    }
+
+    /// Makes the window this size and tells the renderer.
+    fn resize(&mut self, columns: usize, rows: usize) {
+        self.render.terminal.resize(columns, rows);
+        self.render.resized().unwrap();
+    }
+
+    /// Every row of the window, as words.
+    fn rows(&self) -> Vec<String> {
+        self.screen().said()
+    }
+}
+
+/// The table the narrowing cases draw: about fifty columns at its natural
+/// width.
+const TABLE: &str = "| name | what it does | since |\n|---|---|---|\n\
+     | alpha | reads the markdown out of a stream | 0.1 |\n\
+     | beta | lays a table against the window | 0.2 |\n";
+
+#[test]
+fn a_table_narrowed_is_the_table_a_window_that_narrow_draws() {
+    // The oracle is the same build drawing the same answer at the new width
+    // from the start, so whatever narrowing rule is in force is the rule a
+    // resize follows too.
+    let mut fresh = reading(30, 20);
+    fresh.answer(TABLE);
+
+    let mut drawn = reading(60, 20);
+    drawn.answer(TABLE);
+    drawn.resize(30, 20);
+
+    assert_eq!(drawn.rows(), fresh.rows());
+}
+
+#[test]
+fn a_table_that_fits_keeps_one_window_row_per_table_row() {
+    // Every table row fits one window row at its natural width.
+    let mut drawn = reading(80, 20);
+    drawn.answer(TABLE);
+    drawn.resize(56, 20);
+
+    let rows: Vec<String> = drawn
+        .rows()
+        .into_iter()
+        .filter(|row| !row.trim().is_empty())
+        .collect();
+    assert_eq!(rows.len(), 4, "{rows:#?}");
+    for row in rows
+        .iter()
+        .enumerate()
+        .filter(|(at, _)| *at != 1)
+        .map(|(_, row)| row)
+    {
+        assert_eq!(row.matches('│').count(), 2, "{row:?} lost a column bar");
+    }
+}
+
+#[test]
+fn a_table_narrowed_and_widened_again_is_the_table_it_was() {
+    let mut drawn = reading(60, 20);
+    drawn.answer("| a | b |\n|---|---|\n| one | two |\n");
+    let before = drawn.rows();
+    drawn.resize(12, 20);
+    drawn.resize(60, 20);
+
+    assert_eq!(drawn.rows(), before);
+}
+
+#[test]
+fn a_rule_narrowed_is_still_one_row() {
+    let mut drawn = reading(40, 10);
+    drawn.answer("above\n\n---\n\nbelow\n");
+    drawn.resize(25, 10);
+
+    let rows = drawn.rows();
+    let ruled: Vec<&String> = rows.iter().filter(|row| row.contains('─')).collect();
+    assert_eq!(
+        ruled
+            .iter()
+            .map(|row| crate::width::columns(row))
+            .collect::<Vec<_>>(),
+        [25],
+        "{rows:#?}"
+    );
+}
+
+/// The words of an item that wraps at thirty columns, three rows or more.
+const LONG: &str = "long enough that it has to wrap onto another row, and then one more";
+
+/// The rows of `answer` at thirty columns that are not blank.
+fn drawn_at_thirty(answer: &str, glyphs: Glyphs) -> Vec<String> {
+    let mut drawn = reading(30, 12);
+    drawn.render.draws(glyphs);
+    drawn.answer(answer);
+    drawn
+        .rows()
+        .into_iter()
+        .map(|row| row.trim_end().to_owned())
+        .filter(|row| !row.is_empty())
+        .collect()
+}
+
+/// The first of `rows`, or nothing where there is none.
+fn first_of(rows: &[String]) -> &str {
+    rows.first().map_or("", String::as_str)
+}
+
+/// How many columns of blank stand in front of `row`'s first word.
+fn indent(row: &str) -> usize {
+    row.len() - row.trim_start().len()
+}
+
+#[test]
+fn a_wrapped_bullet_hangs_under_its_words() {
+    let rows = drawn_at_thirty(&format!("- a bullet item {LONG}\n"), Glyphs::Unicode);
+
+    assert!(rows.len() > 2, "{rows:#?}");
+    assert!(first_of(&rows).starts_with("• a bullet"), "{rows:#?}");
+    for row in rows.iter().skip(1) {
+        assert_eq!(indent(row), 2, "{row:?} does not hang under the words");
+    }
+}
+
+#[test]
+fn a_wrapped_task_hangs_under_its_words() {
+    for (answer, first) in [
+        (format!("- [ ] a task {LONG}\n"), "□ a task"),
+        (format!("- [x] a task {LONG}\n"), "✓ a task"),
+    ] {
+        let rows = drawn_at_thirty(&answer, Glyphs::Unicode);
+
+        assert!(first_of(&rows).starts_with(first), "{rows:#?}");
+        for row in rows.iter().skip(1) {
+            assert_eq!(indent(row), 2, "{row:?} does not hang under the words");
+        }
+    }
+}
+
+#[test]
+fn a_wrapped_numbered_item_hangs_under_its_own_number() {
+    let rows = drawn_at_thirty(
+        &format!("1. a numbered item {LONG}\n\n10. a longer number {LONG}\n"),
+        Glyphs::Unicode,
+    );
+
+    let tenth = rows
+        .iter()
+        .position(|row| row.starts_with("10. "))
+        .unwrap_or_default();
+    assert!(tenth > 2, "{rows:#?}");
+    for row in rows.iter().take(tenth).skip(1) {
+        assert_eq!(indent(row), 3, "{row:?} does not hang under the words");
+    }
+    for row in rows.iter().skip(tenth + 1) {
+        assert_eq!(indent(row), 4, "{row:?} does not hang under the words");
+    }
+}
+
+#[test]
+fn a_wrapped_nested_item_hangs_under_its_words_not_its_parents() {
+    let rows = drawn_at_thirty(
+        &format!("- an outer item\n  - a nested item {LONG}\n"),
+        Glyphs::Unicode,
+    );
+
+    assert_eq!(first_of(&rows), "• an outer item", "{rows:#?}");
+    assert!(
+        rows.get(1)
+            .is_some_and(|row| row.starts_with("  • a nested item")),
+        "{rows:#?}"
+    );
+    for row in rows.iter().skip(2) {
+        assert_eq!(indent(row), 4, "{row:?} does not hang under the words");
+    }
+}
+
+#[test]
+fn a_wrapped_item_hangs_under_its_words_in_ascii_too() {
+    let rows = drawn_at_thirty(&format!("- a bullet item {LONG}\n"), Glyphs::Ascii);
+
+    assert!(first_of(&rows).starts_with("- a bullet"), "{rows:#?}");
+    for row in rows.iter().skip(1) {
+        assert_eq!(indent(row), 2, "{row:?} does not hang under the words");
+    }
+}
+
+#[test]
+fn a_wrapped_quote_keeps_its_bar_on_every_row() {
+    let rows = drawn_at_thirty(&format!("> a quote {LONG}\n"), Glyphs::Unicode);
+
+    assert!(rows.len() > 2, "{rows:#?}");
+    for row in &rows {
+        assert!(row.starts_with("│ "), "{row:?} lost the quote bar");
+    }
+}
+
+#[test]
+fn a_wrapped_quote_keeps_its_bar_in_ascii_too() {
+    let rows = drawn_at_thirty(&format!("> a quote {LONG}\n"), Glyphs::Ascii);
+
+    assert!(rows.len() > 2, "{rows:#?}");
+    for row in &rows {
+        assert!(row.starts_with("| "), "{row:?} lost the quote bar");
+    }
+}
+
+#[test]
+fn a_wrapped_item_is_drawn_again_under_its_words_at_a_new_width() {
+    let answer = format!("- a bullet item {LONG}\n\n> a quote {LONG}\n");
+    let mut drawn = reading(60, 12);
+    drawn.answer(&answer);
+    drawn.resize(30, 12);
+
+    let mut fresh = reading(30, 12);
+    fresh.answer(&answer);
+    assert_eq!(drawn.rows(), fresh.rows());
+
+    let rows: Vec<String> = drawn
+        .rows()
+        .into_iter()
+        .map(|row| row.trim_end().to_owned())
+        .filter(|row| !row.is_empty())
+        .collect();
+    let quoted = rows
+        .iter()
+        .position(|row| row.starts_with('│'))
+        .unwrap_or_default();
+    assert!(quoted > 2, "{rows:#?}");
+    for row in rows.iter().take(quoted).skip(1) {
+        assert_eq!(indent(row), 2, "{row:?} does not hang under the words");
+    }
+    for row in rows.iter().skip(quoted) {
+        assert!(row.starts_with("│ "), "{row:?} lost the quote bar");
+    }
+}
+
+#[test]
+fn every_cut_of_an_answer_draws_what_the_whole_answer_draws() {
+    let corpus = [
+        "a **loud** and *leant* phrase with `code` and a [link](https://example.com)\n",
+        "- one\n- [x] done\n  - nested\n1. first\n> quoted *words*\n",
+        // Items and a quote that wrap at fifty columns, as one delta or many.
+        "- a bullet item long enough that it has to wrap onto another row\n  - a nested one long enough to wrap onto another row too\n1. a numbered item long enough that it has to wrap as well\n> a quote long enough that it has to wrap onto another row too\n",
+        "| a | b |\n|:--|--:|\n| `x` | **y** |\n\nafter\n",
+        "```rust\nfn main() { let x = 1; }\n```\n\n---\n\nend\n",
+        "see #12 and owner/repo#3 at https://example.com/a_b.\n",
+        "~~gone~~ and \\*kept\\* and a_b_c\n",
+        // Every kind the reader holds whole, and the lines that only look
+        // like the start of one.
+        "before\n\n$$\nx^2 + y^2\n$$\n\nafter\n",
+        "\\[\nx = 1\n\\]\n\\begin{align*}\na &= b\n\\end{align*}\nend\n",
+        "```mermaid\ngraph TD\n  A --> B\n```\n```diff\n-old\n+new\n```\nend\n",
+        "```math\nx^2\n```\n$5 a price, $$ in prose\n\\section{not math}\n",
+        "$$\nnever closed\n",
+    ];
+
+    for answer in corpus {
+        let mut whole = reading(50, 30);
+        whole.answer(answer);
+        let expected = whole.rows();
+
+        for cut in 1..answer.len() {
+            let mut pieces = reading(50, 30);
+            pieces.answer_in_pieces(answer, &[cut]);
+            assert_eq!(pieces.rows(), expected, "cut at {cut} of {answer:?}");
+        }
+    }
+}
+
+#[test]
+fn a_held_block_shows_one_status_row_and_none_of_its_source() {
+    let mut drawn = reading(64, 12);
+    drawn.render.stream("before\n\n$$\nx^2 + y^2\n").unwrap();
+
+    let rows = drawn.rows();
+    let status: Vec<&String> = rows
+        .iter()
+        .filter(|row| row.contains("drawing a"))
+        .collect();
+    assert_eq!(
+        status.iter().map(|row| row.trim_end()).collect::<Vec<_>>(),
+        ["◇ drawing a formula · 2 lines so far"],
+        "{rows:#?}"
+    );
+    assert!(!rows.iter().any(|row| row.contains("x^2")), "{rows:#?}");
+    assert!(rows.iter().any(|row| row.contains("before")), "{rows:#?}");
+
+    drawn.render.stream("$$\nafter\n").unwrap();
+    drawn.render.settle().unwrap();
+
+    let rows = drawn.rows();
+    assert!(
+        !rows.iter().any(|row| row.contains("drawing a")),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| row.contains("x^2 + y^2")),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_held_table_is_counted_in_the_glyphs_worn() {
+    let mut drawn = reading(64, 12);
+    drawn.render.draws(Glyphs::Ascii);
+    drawn
+        .render
+        .stream("| a | b |\n|---|---|\n| 1 | 2 |\n")
+        .unwrap();
+
+    let rows = drawn.rows();
+    assert!(
+        rows.iter()
+            .any(|row| row.trim_end() == "o drawing a table - 3 lines so far"),
+        "{rows:#?}"
+    );
+    assert!(!rows.iter().any(|row| row.contains("| 1 |")), "{rows:#?}");
+}
+
+/// Every row the record holds, as words, and the width it holds them at.
+fn kept(drawn: &Drawn) -> (usize, Vec<String>) {
+    let record = &drawn.render.record;
+    let rows = (0..record.lines())
+        .flat_map(|line| record.folded(line))
+        .map(|row| row.text())
+        .collect();
+    (drawn.render.folds(), rows)
+}
+
+#[test]
+fn every_corpus_answer_resized_to_a_width_is_what_that_width_draws_fresh() {
+    // Fresh at a width is the oracle, so whatever layout rule is in force is
+    // the one a resize is held to; from either end of the range, because a
+    // block laid out wide and one laid out narrow lose different things.
+    const WIDTHS: std::ops::RangeInclusive<usize> = 8..=160;
+    for (name, answer) in crate::markdown::corpus::ANSWERS {
+        let drawn_at = |columns| {
+            let mut drawn = reading(columns, 8);
+            drawn.answer(answer);
+            drawn
+        };
+        let mut from = [drawn_at(*WIDTHS.end()), drawn_at(*WIDTHS.start())];
+        for columns in WIDTHS {
+            let (folds, fresh) = kept(&drawn_at(columns));
+            for row in &fresh {
+                assert!(
+                    width::columns(row) <= folds,
+                    "{name} at {columns}: {row:?} is wider than {folds}"
+                );
+            }
+            for resized in &mut from {
+                let was = resized.render.size.columns;
+                resized.resize(columns, 8);
+                assert_eq!(
+                    kept(resized),
+                    (folds, fresh.clone()),
+                    "{name} resized from {was} to {columns}"
+                );
+                resized.resize(was, 8);
+            }
+        }
+    }
+}
+
+/// What the transcript band holds mid-stream, as a picture: every row the
+/// record keeps, then the row a held block stands as at the foot.
+fn held_picture(glyphs: Glyphs) -> String {
+    const COLUMNS: usize = 64;
+    let mut drawn = reading(COLUMNS, 24);
+    drawn.render.draws(glyphs);
+    let mut picture = String::new();
+    for delta in [
+        "The probes and their budgets:\n\n| probe | budget | measured |\n|---|---:|---:|\n| render burst | 30/s | 412/s |\n",
+        "| session rss | 35 MB | 21 MB |\n\nThe sum they come to:\n\n$$\n\\sum_{i=1}^{n} x_i\n",
+    ] {
+        drawn.render.stream(delta).unwrap();
+        let record = &drawn.render.record;
+        let mut rows: Vec<Row> = (0..record.lines())
+            .flat_map(|line| record.folded(line))
+            .collect();
+        rows.extend(drawn.render.holding(COLUMNS));
+        picture.push_str(&crate::dump::dump(&rows, COLUMNS));
+        picture.push_str("\n\n");
+    }
+    picture
+}
+
+#[test]
+fn a_table_and_a_formula_held_mid_stream_unicode() {
+    insta::assert_snapshot!(held_picture(Glyphs::Unicode));
+}
+
+#[test]
+fn a_table_and_a_formula_held_mid_stream_ascii() {
+    insta::assert_snapshot!(held_picture(Glyphs::Ascii));
+}
+
+// While a block is held, the record is shown in one row fewer than the band,
+// and the row under it is the held block's. What answers the pointer and what
+// the rail stands for are counted in the rows the record is shown in.
+
+/// A renderer thirty numbered lines into a window forty columns wide and ten
+/// tall, holding a formula: `line 21` to `line 29` over the held block's row.
+fn holding_under_thirty_lines() -> (Drawn, Vec<(String, usize)>) {
+    let mut drawn = reading(40, 10);
+    let mut numbered = Vec::new();
+    for k in 0..30 {
+        drawn.commit(&format!("line {k}")).unwrap();
+        numbered.push((format!("line {k}"), drawn.lines() - 1));
+    }
+    drawn.render.stream("$$\nx\n").unwrap();
+    (drawn, numbered)
+}
+
+#[test]
+fn a_click_while_a_block_is_held_names_the_line_drawn_under_it() {
+    let (drawn, numbered) = holding_under_thirty_lines();
+    let rows = drawn.rows();
+    assert_eq!(
+        rows.last().map(|row| row.trim_end()),
+        Some("◇ drawing a formula · 2 lines so far"),
+        "{rows:#?}"
+    );
+    let mut checked = 0;
+    for (at, row) in rows.iter().enumerate() {
+        if let Some((_, line)) = numbered.iter().find(|(text, _)| row.trim_end() == text) {
+            assert_eq!(
+                drawn.aimed(at),
+                Some(Aimed::Line(*line)),
+                "row {at}: {row:?}"
+            );
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, 9, "{rows:#?}");
+}
+
+#[test]
+fn a_pointer_while_a_block_is_held_lights_the_result_drawn_under_it() {
+    let mut drawn = reading(40, 6);
+    for k in 0..10 {
+        drawn.commit(&format!("line {k}")).unwrap();
+    }
+    drawn.present(&[cut("alpha")]).unwrap();
+    drawn.render.stream("$$\nx\n").unwrap();
+    let rows = drawn.rows();
+    let at = rows
+        .iter()
+        .position(|row| row.trim_end() == "alpha")
+        .unwrap();
+    assert!(
+        rows.get(at + 1)
+            .is_some_and(|row| row.contains("drawing a")),
+        "{rows:#?}"
+    );
+    drawn.take();
+
+    drawn.took(Pressed::Hovered { row: at, column: 0 }).unwrap();
+    assert!(
+        lit(&mut drawn, "alpha"),
+        "the result under the pointer did not light"
+    );
+}
+
+#[test]
+fn the_rail_while_a_block_is_held_stands_for_the_rows_drawn() {
+    // Twelve lines on a rail of ten. Held, the band shows `line 3` to
+    // `line 11` and the held block's row under them, which reads as the
+    // record's last, the way a running turn's rows do: thirteen rows, the
+    // band's first three rows in, so the thumb starts on rail row two. A rail
+    // laid for the band's whole height over the record alone starts it on
+    // row one, for a `line 2` the band does not show.
+    let mut drawn = reading(60, 10);
+    drawn.rails(true);
+    for line in 0..12 {
+        drawn.commit(&format!("line {line}")).unwrap();
+    }
+    drawn.render.stream("$$\nx\n").unwrap();
+    let rows = drawn.rows();
+    assert!(
+        rows.first().is_some_and(|row| row.starts_with("line 3")),
+        "{rows:#?}"
+    );
+    assert_eq!(rail_of(&drawn), "││┃┃┃┃┃┃┃┃");
+}
+
+#[test]
+fn display_math_counts_and_opens_what_it_streamed_with() {
+    let slots = |answer: &str| {
+        let mut drawn = reading(60, 10);
+        drawn.render.counts(Some(crate::forge::Forge::new(
+            "https://github.com",
+            "augments-labs/crucible-code",
+            "/issues/",
+        )));
+        drawn.render.reads_paths(Some(crate::files::Files::new(
+            std::path::Path::new("/home/me/repo"),
+            crate::files::Line::Fragment,
+        )));
+        drawn.answer(answer);
+        let record = &drawn.render.record;
+        (0..record.lines())
+            .flat_map(|line| record.folded(line))
+            .filter(|row| row.text().contains("#12"))
+            .map(|row| format!("{row:?}"))
+            .collect::<Vec<_>>()
+    };
+    // On the answer's first line, where the stream counts and opens what it
+    // reads, as prose and as a formula held until it closes alike.
+    for answer in [
+        "see #12 in [main](src/main.rs)\n",
+        "$$ see #12 in [main](src/main.rs) $$\n",
+    ] {
+        let rows = slots(answer);
+        assert!(
+            rows.iter().any(|row| row.contains(
+                "slot: Link, structural: [], link: Some(\"https://github.com/augments-labs/crucible-code/issues/12\")"
+            )),
+            "{answer:?}: {rows:#?}"
+        );
+        assert!(
+            rows.iter().any(|row| row.contains(
+                "slot: Link, structural: [], link: Some(\"file:///home/me/repo/src/main.rs\")"
+            )),
+            "{answer:?}: {rows:#?}"
+        );
+    }
+}
+
+// A move that brings a held band back to its foot owes the frame that shows
+// the held row again, and a drag reaching that row takes none of its words.
+
+/// The held picture's last row.
+const HELD_ROW: &str = "◇ drawing a formula · 2 lines so far";
+
+#[test]
+fn a_notch_back_and_one_forward_while_a_block_is_held_draws_it_held_again() {
+    let (mut drawn, _) = holding_under_thirty_lines();
+    assert!(drawn.render.scrolled(-1).unwrap());
+    let rows = drawn.rows();
+    assert_eq!(
+        rows.last().map(|row| row.trim_end()),
+        Some("line 29"),
+        "{rows:#?}"
+    );
+
+    assert!(drawn.render.scrolled(1).unwrap(), "the notch was swallowed");
+    let rows = drawn.rows();
+    assert_eq!(
+        rows.last().map(|row| row.trim_end()),
+        Some(HELD_ROW),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_thumb_held_back_to_the_foot_while_a_block_is_held_draws_it_held_again() {
+    let mut drawn = reading(60, 10);
+    drawn.rails(true);
+    for line in 0..30 {
+        drawn.commit(&format!("line {line}")).unwrap();
+    }
+    drawn.render.stream("$$\nx\n").unwrap();
+    assert!(drawn.render.scrolled(-1).unwrap());
+    let column = drawn.columns() - 1;
+    // The thumb stands on the rail's last row with the band at the foot of
+    // the record alone; pressed there under a resting pointer and moved along
+    // that row, it seeks that foot, where the record follows and the held row
+    // is drawn again.
+    drawn.took(Pressed::Hovered { row: 9, column }).unwrap();
+    assert!(rail_click(&mut drawn, 9).is_none());
+    drawn.took(Pressed::Dragged { row: 9, column }).unwrap();
+    let rows = drawn.rows();
+    assert_eq!(
+        rows.last().map(|row| row.trim_end_matches([' ', '│', '┃'])),
+        Some(HELD_ROW.trim_end()),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_drag_reaching_the_held_row_copies_none_of_its_words() {
+    let (mut drawn, _) = holding_under_thirty_lines();
+    drawn.take();
+    let wrote = drag(&mut drawn, (0, 0), (9, 39));
+    let shown = (21..30)
+        .map(|line| format!("line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    // The held row comes as a row with no words on it, as a blank row under
+    // the last line would.
+    assert!(
+        wrote.contains(&onto_the_clipboard(&format!("{shown}\n"))),
+        "{wrote:?}"
+    );
+}

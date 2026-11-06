@@ -17,34 +17,47 @@
 //! A picture is what the reader drew, so nothing here asserts a rule: the
 //! accepted file is the assertion, and a moved one is a drawing that changed.
 
-use crate::color::Slot;
+use crate::color::Theme;
 use crate::dump::dump;
 use crate::escape::Escapes;
 use crate::glyphs::Glyphs;
 use crate::record::Record;
 use crate::width;
 
-use super::Markdown;
 use super::corpus;
+use super::{Markdown, Said};
 
 /// What the answer called `name` lays out as, at `columns`, in `glyphs`.
 ///
 /// The same three steps the renderer takes for a run: escape sequences and
 /// format characters go, the text lands in a record at the width, and what the
-/// record kept is written out a row at a time.
+/// record kept is written out a row at a time. A block lands as the renderer
+/// lands one, kept with its source and laid out by the record.
 fn pictured(name: &str, columns: usize, glyphs: Glyphs) -> String {
     let answer = corpus::answer(name).unwrap_or_else(|| panic!("no corpus answer named {name}"));
     let mut record = Record::new(columns);
     let mut markdown = Markdown::new(glyphs);
     let mut escapes = Escapes::default();
     let mut free = String::new();
-    let mut write = |slot: Slot, text: &str, link: Option<&str>| {
-        free.clear();
-        free.extend(
-            text.chars()
-                .filter(|character| !escapes.holds(*character) && !width::unshown(*character)),
-        );
-        record.write(slot, &free, link);
+    let mut write = |said: Said<'_>| match said {
+        Said::Run { slot, text, link } => {
+            free.clear();
+            free.extend(
+                text.chars()
+                    .filter(|character| !escapes.holds(*character) && !width::unshown(*character)),
+            );
+            record.write(slot, &free, link);
+        }
+        // A block is kept with its source, as the renderer keeps one; the
+        // theme is any, since a picture is glyphs and slots and no colour.
+        Said::Block(mut block) => {
+            block.source = block
+                .source
+                .chars()
+                .filter(|character| !escapes.holds(*character) && !width::unshown(*character))
+                .collect();
+            record.drawn(block, glyphs, Theme::Dark);
+        }
     };
 
     markdown.read(answer, columns, &mut write);

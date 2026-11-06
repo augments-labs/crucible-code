@@ -565,3 +565,34 @@ fn the_release_notes_follow_the_colour_rule() {
         );
     }
 }
+
+#[test]
+fn a_number_in_a_formula_links_to_the_repository_as_one_in_words_does() {
+    let forge = forge();
+    let told = [Told {
+        brief: Brief {
+            version: "0.39.0",
+            date: "2026-09-29",
+            counted: &[("fixed", 1)],
+        },
+        text: "$$ see #12 here $$\n",
+    }];
+    let rows = Timeline {
+        older: &[],
+        told: &told,
+        running: Some("0.43.3"),
+        forge: Some(&forge),
+        closing: None,
+        most: 20_000,
+    }
+    .rows(80, Glyphs::Unicode);
+    let number = rows
+        .iter()
+        .find(|row| row.text().contains("#12"))
+        .expect("the number");
+    let painted = number.paint(&for_tests());
+    assert!(
+        painted.contains("https://github.com/augments-labs/crucible-code/issues/12"),
+        "{painted:?}"
+    );
+}

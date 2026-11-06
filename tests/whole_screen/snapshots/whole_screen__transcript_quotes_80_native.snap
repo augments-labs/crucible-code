@@ -23,7 +23,7 @@ expression: window.picture()
 |The reply quoted somebody else:                                                 |
 |                                                                                |
 |│ a quote long enough that it has to wrap onto another row, and then onto one   |
-|more                                                                            |
+|│ more                                                                          |
 |>                                                                               |
 |│ and a second paragraph inside the same quote                                  |
 |                                                                                |

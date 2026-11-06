@@ -5,10 +5,10 @@ expression: "pictured(\"quotes\", 40, Glyphs::Ascii)"
 The reply quoted somebody else:         
                                         
 <Quiet>|</><Quiet> </><Quote>a quote long enough that it </><Quote>ha</><Quote>s to</>    
-<Quote>wrap onto another row, and then onto one</>
-<Quote>more</>                                    
+<Quiet>|</><Quiet> </><Quote>wrap onto another row, and then onto</>  
+<Quiet>|</><Quiet> </><Quote>one more</>                              
 >                                       
 <Quiet>|</><Quiet> </><Quote>and a second paragraph inside the same</>
-<Quote>quote</>                                   
+<Quiet>|</><Quiet> </><Quote>quote</>                                 
                                         
 The corpus ends here.

@@ -10,6 +10,6 @@ that changes a file or starts a process.
 - [Configuration](configuration/index.md): the JSON files, and which one wins.
 - [Permissions](permissions/index.md): what you are asked, and what each answer means.
 - [Security](security/index.md): operating-system confinement and its exact capabilities.
-- [Sessions](sessions/index.md): where a session is kept, `--continue`, what the model is told, and the files attached to a prompt.
+- [Sessions](sessions/index.md): where a session is kept, `--continue`, what the model is told, the files attached to a prompt, and what the transcript draws.
 - [Building](building/index.md): what to install to build it from source.
 - [Reference](reference/index.md): pages to look things up in, such as every command-line flag, environment variable and key.
