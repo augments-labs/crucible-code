@@ -999,7 +999,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(&format!(\"context-fresh-{columns}\"), columns, 24, &vendor)"
       ],
-      "sha256": "56a4d6a6767da92a26146e108b1b4dd8409f2eb3d30ac94a76316d0e2f574c77"
+      "sha256": "d7ce23edeba9b88478704d26b07096d097294ec52ded5401d180392f23c232e9"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__context_fresh_80.snap",
@@ -1008,7 +1008,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(&format!(\"context-fresh-{columns}\"), columns, 24, &vendor)"
       ],
-      "sha256": "65d2ef34dcaa8783a1c4ad220b69c92e086109c16c0ab15f420df75eb1b877f1"
+      "sha256": "2961a809cec0aae1813fbf35069767353b41405b1034e9f53eeadca6f1d172e0"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__context_long_80.snap",
@@ -1017,7 +1017,7 @@
         "Vendor::answering_each(&[&a_long_answer(), &again])",
         "Watched::answering(case, columns, rows, &vendor)"
       ],
-      "sha256": "ea3f2cbf2b6e808d4e549d0f4024c29fa21e84d8d2f6ea1c3c3600ee47498d0c"
+      "sha256": "388f05206d9f365b04babf9338569bac20706d6b4e9ea9d149a85896c9454505"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__context_mid_turn_80.snap",
@@ -1026,7 +1026,7 @@
         "Vendor::calling_then_holding( \"bash\", r#\"{\"command\":\"sleep 30\",\"background\":true}\"#, HELD_ANSWER, )",
         "Watched::allowing(\"context-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "73c8d291c6c1108b770cf13117fe8641ad39a85b9cb0c573bd0919f08eff0a9e"
+      "sha256": "393d0b5adf7b3599f61b82a7019ff3c191f0e086023cbc42b08ea44d586a7744"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__context_short_40.snap",
@@ -1035,7 +1035,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(\"context-short-40\", 40, 12, &vendor)"
       ],
-      "sha256": "f2b744d8a3b0dd8daa6ffc4ba3b3ab3d388adf63668f56bdb3f61a6434715d38"
+      "sha256": "c2f90802226f5cea4e0a8fd717f843bc565dbca9872a8b337b967c1b456d9bba"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_a_shows_every_project_and_says_where_each_session_is.snap",
@@ -1543,7 +1543,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::native(\"native-context-fresh\", 80, 24, &vendor)"
       ],
-      "sha256": "4860be28fbc8631baa6caeaafc607c186e56567eeb39dfd4ec8bfad6eaab7805"
+      "sha256": "5d377d5934a5a02a13bac5d95d3065439f18a8e7b6c7bf2e7d32c995678ddfc6"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__ctrl_b_opens_the_running_list_during_a_turn_in_native_mode.snap",
