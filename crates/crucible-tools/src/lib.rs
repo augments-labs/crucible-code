@@ -13,7 +13,10 @@ mod tool;
 mod toolset;
 mod worker;
 
-pub use ask::Put;
+pub use ask::{
+    Deferred, Delivered, Full, MOST_HELD, MOST_HELD_BYTES, MOST_REPLY_BYTES, Part, Put, Unrestored,
+    Unsettled,
+};
 // Public because this crate's public surface is written in them:
 // `CallResultAcceptance::accept` takes a `CallResultReceipt`,
 // `ToolContext::with_invocation` an `InvocationId`, and `DescribeTool::effect`
