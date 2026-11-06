@@ -56,8 +56,9 @@ Some text is drawn exactly as the model wrote it, rather than as a block:
 - **A held block that grows past its limit.** A table is held for at most
   8 KiB, display math for 4 KiB, and a mermaid or diff fence for 16 KiB. Past
   that, the block is drawn as it was written, as it would have streamed.
-- **A held block the answer never closes.** It is drawn as written when the
-  answer ends.
+- **A fence or display math the answer never closes.** It is drawn as
+  written when the answer ends. A table the answer ends in is still drawn as
+  a table: its last row is where it stops.
 - **Display math, mermaid diagrams and diffs.** They are held so they arrive
   whole, and are then shown as written.
 - **A table without its outer bars.** Lines such as `name | since` that do not

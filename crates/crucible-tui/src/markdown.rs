@@ -208,8 +208,9 @@ pub struct Block {
     pub kind: Kind,
     /// The lines it was written as, markers and breaks included.
     pub source: String,
-    /// Whether it closed before the message ended. One that never closed is
-    /// shown as written.
+    /// Whether it closed before the message ended. A fence or display math
+    /// that never closed is shown as written; a table the message ended in is
+    /// still drawn as a table.
     pub closed: bool,
 }
 
@@ -1900,8 +1901,9 @@ impl Markdown {
             });
         });
 
-        // A block that never closed is handed on as written: the end of the
-        // message is the last thing that could have closed it.
+        // A block that never closed is handed on as it stands: the end of the
+        // message is the last thing that could have closed it. A table is
+        // drawn from what arrived; anything else is shown as written.
         if let Some(gathering) = self.gathering.take() {
             self.hand_on(&mut kinds, say);
             self.ready = Some(Block {
