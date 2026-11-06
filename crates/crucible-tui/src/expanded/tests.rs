@@ -518,10 +518,12 @@ fn a_window_laid_from_measured_lengths_is_the_window_laid_from_everything() {
                     laid.len() > held,
                     begun,
                     shown.len(),
+                    0,
                     columns,
                     Glyphs::Unicode,
                 );
-                let measured = expanded.within_measured(&lengths, columns, room, Glyphs::Unicode);
+                let measured =
+                    expanded.within_measured(&lengths, columns, room, Glyphs::Unicode, 0);
                 let said = format!("{columns} columns, {room} rows, from {from}");
 
                 assert_eq!(
@@ -540,6 +542,7 @@ fn a_window_laid_from_measured_lengths_is_the_window_laid_from_everything() {
                         columns,
                         room,
                         Glyphs::Unicode,
+                        0,
                     ),
                     measured,
                     "{said}"
@@ -547,4 +550,102 @@ fn a_window_laid_from_measured_lengths_is_the_window_laid_from_everything() {
             }
         }
     }
+}
+
+/// Two results and three blocks' sources, each of ten lines, laid as the view
+/// lays them: the results first, and the sources after them. The footer of the
+/// window opened `from` rows down, in the glyphs asked for.
+fn two_results_and_three_sources(from: usize, columns: usize, glyphs: Glyphs) -> Option<String> {
+    let texts: Vec<String> = (0..5).map(|_| counted(10)).collect();
+    let words = ["Read(one)", "Read(two)", "table", "math", "diff"];
+    let shown: Vec<Shown<'_>> = texts
+        .iter()
+        .zip(words)
+        .map(|(text, called)| Shown { called, text })
+        .collect();
+    let expanded = Expanded {
+        shown: &shown,
+        from,
+    };
+    let lengths = expanded.lengths(columns);
+    expanded
+        .within_measured(&lengths, columns, 10, glyphs, 3)
+        .last()
+        .map(Row::text)
+}
+
+#[test]
+fn the_footer_counts_the_results_among_the_results_and_the_sources_among_the_sources() {
+    // Thirteen rows to an item past the first, which has twelve: the third
+    // item, the first source, begins at row 25.
+    assert_eq!(
+        two_results_and_three_sources(0, 80, Glyphs::Unicode).as_deref(),
+        Some("esc to close · ↑↓ pgup pgdn to see more · ←→ result 1 of 2")
+    );
+    assert_eq!(
+        two_results_and_three_sources(12, 80, Glyphs::Unicode).as_deref(),
+        Some("esc to close · ↑↓ pgup pgdn to see more · ←→ result 2 of 2")
+    );
+    assert_eq!(
+        two_results_and_three_sources(25, 80, Glyphs::Unicode).as_deref(),
+        Some("esc to close · ↑↓ pgup pgdn to see more · ←→ source 1 of 3")
+    );
+    assert_eq!(
+        two_results_and_three_sources(51, 80, Glyphs::Unicode).as_deref(),
+        Some("esc to close · ↑↓ pgup pgdn to see more · ←→ source 3 of 3")
+    );
+}
+
+#[test]
+fn the_footer_names_a_source_in_the_glyphs_asked_for() {
+    assert_eq!(
+        two_results_and_three_sources(38, 80, Glyphs::Ascii).as_deref(),
+        Some("esc to close - ^v pgup pgdn to see more - <> source 2 of 3")
+    );
+}
+
+#[test]
+fn a_view_of_sources_alone_counts_them_from_one() {
+    let texts = [counted(10), counted(10)];
+    let shown = [
+        Shown {
+            called: "table",
+            text: &texts[0],
+        },
+        Shown {
+            called: "math",
+            text: &texts[1],
+        },
+    ];
+    let expanded = Expanded {
+        shown: &shown,
+        from: 0,
+    };
+    let lengths = expanded.lengths(80);
+    let rows = expanded.within_measured(&lengths, 80, 10, Glyphs::Unicode, 2);
+
+    assert_eq!(
+        rows.last().map(Row::text).as_deref(),
+        Some("esc to close · ↑↓ pgup pgdn to see more · ←→ source 1 of 2")
+    );
+}
+
+#[test]
+fn a_lone_source_names_no_step_it_has_nowhere_to_take() {
+    let text = counted(10);
+    let shown = [Shown {
+        called: "table",
+        text: &text,
+    }];
+    let expanded = Expanded {
+        shown: &shown,
+        from: 0,
+    };
+    let lengths = expanded.lengths(80);
+    let rows = expanded.within_measured(&lengths, 80, 10, Glyphs::Unicode, 1);
+
+    assert_eq!(
+        rows.last().map(Row::text).as_deref(),
+        Some("esc to close · ↑↓ pgup pgdn to see more")
+    );
 }

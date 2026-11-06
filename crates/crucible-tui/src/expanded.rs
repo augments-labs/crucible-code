@@ -1,5 +1,6 @@
 //! What a transcript cut down to a row, shown whole: a rule, and under it each
-//! result behind the line of the call it answers.
+//! result behind the line of the call it answers, and after the results the
+//! source of each block the transcript drew in place of its text.
 //!
 //! **Rows, not a screen.** Like every component here this hands back rows and
 //! draws nothing. What is on screen at the moment somebody asks is the caller's
@@ -7,6 +8,13 @@
 //! is that they are taken back rather than written down. A result is already in
 //! the record as the row that could not say it; the same text committed a second
 //! time would be a transcript that says everything twice.
+//!
+//! **Results, then sources.** A source is shown the way a result is: a heading
+//! line, here the word the block is drawn under, and the whole of its text
+//! under it. The caller lays the results first and the sources after them, and
+//! says how many of the last items are sources, which is all the window needs
+//! to know to count them apart. They are [`Shown`]s like any other, so they
+//! borrow from where the record keeps them and nothing is copied into the view.
 //!
 //! **The complete text.** Explicit line breaks stay in place, and a line too
 //! wide for the window continues on rows below it. The transcript already
@@ -27,8 +35,9 @@
 //! see more` is true when there are rows the window did not reach and false
 //! when there are not, and a row that says it either way is one nobody can
 //! believe the rest of the time. `←→ result 2 of 7` is said only where there is
-//! both a window to move and another result to move it to, and counts the
-//! result at the top of the window, newest first. Where the row is wider than
+//! both a window to move and another item to move it to, and counts the
+//! item at the top of the window, newest first: `←→ source 2 of 3` once that
+//! item is a source, counted among the sources and not among everything. Where the row is wider than
 //! the window it loses whole segments from the right, so what is left still
 //! says something true, and `esc to close` is the one it never loses. Its
 //! arrows and the mark parting its segments are the session's glyphs, so with
@@ -139,7 +148,7 @@ impl Expanded<'_> {
     /// whole of what was cut short while hiding that it was cut twice.
     #[must_use]
     pub fn within(&self, columns: usize, room: usize, glyphs: Glyphs) -> Vec<Row> {
-        self.within_measured(&self.lengths(columns), columns, room, glyphs)
+        self.within_measured(&self.lengths(columns), columns, room, glyphs, 0)
     }
 
     /// [`Expanded::within`], for a caller that already knows how many rows
@@ -158,6 +167,7 @@ impl Expanded<'_> {
         columns: usize,
         room: usize,
         glyphs: Glyphs,
+        sources: usize,
     ) -> Vec<Row> {
         let Some(held) = room.checked_sub(CHROME).filter(|held| *held > 0) else {
             return Vec::new();
@@ -211,7 +221,7 @@ impl Expanded<'_> {
         rows.extend(laid.into_iter().skip(skipped).take(held));
 
         rows.push(Row::new());
-        let footer = footer(scrolls, top, self.shown.len(), columns, glyphs);
+        let footer = footer(scrolls, top, self.shown.len(), sources, columns, glyphs);
         rows.push(Row::new().then(Slot::Quiet, footer));
 
         rows
@@ -248,8 +258,17 @@ fn lay(at: usize, shown: &Shown<'_>, columns: usize, rows: &mut Vec<Row>) {
 
 /// The row under the window, saying only what is true of it: the way out, the
 /// keys that move the window where there is somewhere to move it, and which of
-/// `of` results is at its top where there is another to step to.
-fn footer(scrolls: bool, top: usize, of: usize, columns: usize, glyphs: Glyphs) -> String {
+/// `of` items is at its top where there is another to step to: a result among
+/// the results, or, for the last `sources` of the items, a source among the
+/// sources.
+fn footer(
+    scrolls: bool,
+    top: usize,
+    of: usize,
+    sources: usize,
+    columns: usize,
+    glyphs: Glyphs,
+) -> String {
     // A window too narrow even for the way out keeps as much of it as fits,
     // and nothing after it.
     let mut said = clip(CLOSE, columns).to_owned();
@@ -261,7 +280,13 @@ fn footer(scrolls: bool, top: usize, of: usize, columns: usize, glyphs: Glyphs) 
     let (up, down) = glyphs.walking();
     let (newer, older) = glyphs.stepping();
     let more = format!("{up}{down} {MORE}");
-    let counted = (of > 1).then(|| format!("{newer}{older} result {top} of {of}"));
+    // The sources are the last of the items, so the item at the top is one of
+    // them once it is past the results, and is counted among them from one.
+    let results = of.saturating_sub(sources);
+    let counted = (of > 1).then(|| match top.checked_sub(results).filter(|at| *at > 0) {
+        Some(at) => format!("{newer}{older} source {at} of {sources}"),
+        None => format!("{newer}{older} result {top} of {results}"),
+    });
     for segment in std::iter::once(more).chain(counted) {
         // Whole segments or none, from the right: half of a key's name is not
         // a key anybody can press, and a count cut short reads as a different

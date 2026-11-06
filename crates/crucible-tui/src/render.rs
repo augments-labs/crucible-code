@@ -40,7 +40,7 @@ use crate::files::Files;
 use crate::forge::Forge;
 use crate::glyphs::Glyphs;
 use crate::markdown::{self, Block, Markdown, Said};
-use crate::record::Record;
+use crate::record::{Record, Source};
 use crate::row::Row;
 use crate::scroll_rail::{self, ScrollRail};
 use crate::select::{self, Place, Taken, View};
@@ -1269,6 +1269,27 @@ impl<T: Terminal> Renderer<T> {
     /// worth is the reader's, and this is where their answer lands.
     pub fn rolls(&mut self, rows: i32) {
         self.notch = rows;
+    }
+
+    /// The source of every block drawn in the transcript that has one to read
+    /// whole, newest first, lent from the record that holds it.
+    ///
+    /// A table, display math, a diagram or a diff; not a rule, which draws all
+    /// there is of it. The record is the only copy, so what lists these reads
+    /// it where it stands.
+    pub fn sources(&self) -> impl Iterator<Item = Source<'_>> + '_ {
+        self.record.sources()
+    }
+
+    /// One past the line of the newest of [`Renderer::sources`], and zero
+    /// where there is none: a bound a list taken now can be held to later,
+    /// so that blocks drawn after it do not slide in under a reader.
+    #[must_use]
+    pub fn sourced(&self) -> usize {
+        self.record
+            .sources()
+            .next()
+            .map_or(0, |source| source.line.saturating_add(1))
     }
 
     /// How many rows one wheel notch moves in any scrollable view.

@@ -4226,3 +4226,36 @@ fn a_drag_over_a_drawn_block_that_scrolled_off_the_window_still_copies_its_sourc
         "{rows:#?} gave {wrote:?}"
     );
 }
+
+#[test]
+fn the_drawn_blocks_are_listed_newest_first_each_with_the_source_it_was_written_as() {
+    let mut drawn = reading(60, 20);
+    drawn.answer(&format!(
+        "before\n\n{WRITTEN_TABLE}\nbetween\n\n{WRITTEN_MATH}\nafter\n"
+    ));
+
+    let listed: Vec<(&str, &str)> = drawn
+        .sources()
+        .map(|source| (source.word, source.text))
+        .collect();
+    assert_eq!(listed, [("math", WRITTEN_MATH), ("table", WRITTEN_TABLE)]);
+
+    // A bound a later list can be held to: past the newest of them, and none
+    // of theirs past it.
+    let bound = drawn.sourced();
+    assert!(bound > 0);
+    assert!(drawn.sources().all(|source| source.line < bound));
+    assert_eq!(
+        drawn.sources().next().map(|source| source.line + 1),
+        Some(bound)
+    );
+}
+
+#[test]
+fn prose_and_a_rule_list_no_source_and_bound_nothing() {
+    let mut drawn = Drawn::new(60, 20);
+    drawn.answer("just prose\n\n---\n\nand a rule above it\n");
+
+    assert_eq!(drawn.sources().count(), 0);
+    assert_eq!(drawn.sourced(), 0);
+}

@@ -5,7 +5,18 @@
 //! offer, so it stands that one. Everything after that is the same — the same
 //! rows, the same arrows through them, the same keys out.
 //!
-//! It stands rather than being written into the transcript for the reason
+//! After the results it stands the source of each block the transcript drew in
+//! place of its text -- a table, display math, a diagram, a diff -- newest
+//! first, each under the word the block is drawn under and as long as it was
+//! written. They are items of the same view: the same rows, the same keys, and
+//! the arrows step from the oldest result onto the newest block. They are
+//! lent by the renderer's record as each frame is laid out, never copied into
+//! the view, and the rows each comes to are counted once for each width and
+//! kept, so a frame lays out only what its window reaches. Like the results,
+//! the blocks are those drawn when the view opened, and a click on a row that
+//! offered one result stands that result alone.
+//!
+//! //! It stands rather than being written into the transcript for the reason
 //! nothing else standing here is written down: the results are already in the
 //! record as the rows that could not fit them, and committing the text a second
 //! time would be a session saying everything twice. So the way out of it is the
@@ -46,7 +57,9 @@
 //! costs what reading one result costs. A result the log cannot give back
 //! stands as a line saying so, and the others still open.
 
-use crucible_tui::{Caret, Expanded, Glyphs, Key, Pressed, Renderer, Row, Shown, Terminal};
+use std::collections::HashMap;
+
+use crucible_tui::{Caret, Expanded, Glyphs, Key, Pressed, Renderer, Row, Shown, Source, Terminal};
 use crucible_types::TOOL_RESULT_BYTES;
 
 use crate::cli::Fatal;
@@ -67,8 +80,16 @@ enum Over {
     /// Everything that had been cut when it opened, newest first.
     ///
     /// A count of them rather than the results themselves, so that nothing
-    /// standing here borrows what a running turn is writing into.
-    Everything(usize),
+    /// standing here borrows what a running turn is writing into. The blocks
+    /// drawn in the transcript stand after them, held to the line they had
+    /// reached for the same reason.
+    Everything {
+        /// How many results had been cut.
+        cut: usize,
+        /// One past the line of the newest block drawn, and zero where there
+        /// was none.
+        blocks: usize,
+    },
     /// The one result whose offer was written on this row of the record.
     ///
     /// The row rather than the result, for the same reason. It is also what
@@ -123,6 +144,9 @@ pub(super) struct View {
     /// back, and where the window was: not read again until the window moves,
     /// or until nothing above it in the window has been read back.
     refused: Option<(usize, Mark)>,
+    /// How many rows each block's source came to at the width of the last
+    /// frame, so that a frame lays out only the sources its window reaches.
+    counted: Counted,
 }
 
 impl View {
@@ -139,7 +163,37 @@ impl View {
             over,
             back: Vec::new(),
             refused: None,
+            counted: Counted::default(),
         }
+    }
+}
+
+/// How many rows the source of each block comes to at one width.
+///
+/// Counted once for each width and kept, as a held result is by the store,
+/// because a block's source is lent by the record and so has no place of its
+/// own to keep a count beside. Keyed by the line it is held as and how long it
+/// is, so a block still being written is counted again as it grows; a frame at
+/// another width drops all of it.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Counted {
+    /// The width every count here is for.
+    columns: usize,
+    /// Rows, for the block held as this line with this many bytes of source.
+    rows: HashMap<(usize, usize), usize>,
+}
+
+impl Counted {
+    /// The rows of `source` at `columns`, from `count` where not known.
+    fn of(&mut self, source: &Source<'_>, columns: usize, count: impl FnOnce() -> usize) -> usize {
+        if self.columns != columns {
+            self.rows.clear();
+            self.columns = columns;
+        }
+        *self
+            .rows
+            .entry((source.line, source.text.len()))
+            .or_insert_with(count)
     }
 }
 
@@ -179,20 +233,14 @@ impl Standing {
         matches!(self, Self::Open(_))
     }
 
-    /// Opens the view over everything cut so far.
-    ///
-    /// Nothing opens where nothing was cut. The key is offered by the rows that
-    /// were cut, so a session with none of them has made no offer, and a frame
-    /// put up in answer to a press nobody meant is one that took the prompt
-    /// away for no reason.
     /// Whether this is what the box was answered with, opening it if it is.
     ///
     /// Asked before the answer is read as a line, because the two keys that reach
     /// this are answered by the state that holds what they stand over rather than
     /// by the loop that read them.
-    pub(super) fn asked(&mut self, asked: &Asked, kept: &Kept) -> bool {
+    pub(super) fn asked(&mut self, asked: &Asked, kept: &Kept, blocks: usize) -> bool {
         match asked {
-            Asked::Expand => self.open(kept),
+            Asked::Expand => self.open(kept, blocks),
             Asked::Clicked(at) => self.one(kept, *at),
 
             // Not this one's. A line, a turn nobody typed and the end of a
@@ -205,12 +253,23 @@ impl Standing {
         true
     }
 
-    pub(super) fn open(&mut self, kept: &Kept) {
-        if kept.is_empty() {
+    /// Opens the view over everything cut so far, and the blocks drawn up to
+    /// the line `blocks` is one past.
+    ///
+    /// Nothing opens where nothing was cut and nothing was drawn as a block.
+    /// The key is offered by the rows that were cut, and by the blocks whose
+    /// sources are in the view, so a session with none of them has made no
+    /// offer, and a frame put up in answer to a press nobody meant is one that
+    /// took the prompt away for no reason.
+    pub(super) fn open(&mut self, kept: &Kept, blocks: usize) {
+        if kept.is_empty() && blocks == 0 {
             return;
         }
 
-        *self = Self::Open(View::onto(Over::Everything(kept.cut())));
+        *self = Self::Open(View::onto(Over::Everything {
+            cut: kept.cut(),
+            blocks,
+        }));
     }
 
     /// Opens the view over the one result the record row `at` offered.
@@ -273,15 +332,16 @@ pub(super) fn stand<T: Terminal>(
     };
 
     let glyphs = style.glyphs();
-    let picture = |view: &mut View, columns: usize, rows: usize| {
-        (laying(kept, view, glyphs, columns, rows), None)
+    let picture = |renderer: &Renderer<T>, view: &mut View, columns: usize, rows: usize| {
+        let sources: Vec<Source<'_>> = renderer.sources().collect();
+        (laying(kept, &sources, view, glyphs, columns, rows), None)
     };
 
     // Nothing is taken here and nothing is committed, so every way out is the
     // same way out: the region goes back and the box comes up under it. A
     // window with no room to stand it in is one of them — a component that
     // never drew and read no key, which here is a view the reader never saw.
-    region::stand(renderer, |_| style, view, picture, moving)?;
+    region::stand_reading(renderer, |_| style, view, picture, moving)?;
     *standing = Standing::Closed;
     Ok(())
 }
@@ -322,8 +382,9 @@ pub(super) fn under<T: Terminal>(
     // is the renderer's to say, as it is for the view between turns.
     let room = renderer.room().saturating_sub(1);
     let columns = renderer.columns();
+    let sources: Vec<Source<'_>> = renderer.sources().collect();
     let (blank, rows) = laying_under_a_turn(room, working, |rows| {
-        laying(kept, view, style.glyphs(), columns, rows)
+        laying(kept, &sources, view, style.glyphs(), columns, rows)
     });
     if rows.is_empty() {
         *standing = Standing::Closed;
@@ -381,14 +442,21 @@ fn laying_under_a_turn(
 /// view closing. That is a result the ceiling dropped while somebody was
 /// reading it — rare, and the honest answer to it is the screen coming back
 /// rather than a frame of chrome with nothing under it.
-fn laying(kept: &Kept, view: &mut View, glyphs: Glyphs, columns: usize, rows: usize) -> Vec<Row> {
-    let entries = entries(kept, &view.over);
+fn laying(
+    kept: &Kept,
+    sources: &[Source<'_>],
+    view: &mut View,
+    glyphs: Glyphs,
+    columns: usize,
+    rows: usize,
+) -> Vec<Row> {
+    let entries = entries(kept, sources, &view.over);
     if entries.is_empty() {
         return Vec::new();
     }
     refolded(view, &entries, columns);
     let heights = reaching(kept, view, &entries, columns, rows)
-        .unwrap_or_else(|| heights(&entries, &view.back, columns));
+        .unwrap_or_else(|| heights(&entries, &view.back, &mut view.counted, columns));
 
     let View {
         from,
@@ -422,7 +490,11 @@ fn laying(kept: &Kept, view: &mut View, glyphs: Glyphs, columns: usize, rows: us
     // Where the last of them ends, which no step goes to.
     begun.pop();
 
-    expanded.within_measured(&heights, columns, rows, glyphs)
+    let blocks = entries
+        .iter()
+        .filter(|entry| matches!(entry, Entry::Block(_)))
+        .count();
+    expanded.within_measured(&heights, columns, rows, glyphs, blocks)
 }
 
 /// Keeps the window on the result at its top when the window changed width
@@ -455,15 +527,15 @@ fn refolded(view: &mut View, entries: &[Entry<'_>], columns: usize) {
     // again at the width it was laid at.
     let old = match view.starts.get(top.saturating_add(1)) {
         Some(next) => next.saturating_sub(start),
-        None => measured(*entry, top, &view.back, was),
+        None => measured(*entry, top, &view.back, &mut view.counted, was),
     };
     let now: usize = entries
         .iter()
         .take(top)
         .enumerate()
-        .map(|(at, entry)| measured(*entry, at, &view.back, columns))
+        .map(|(at, entry)| measured(*entry, at, &view.back, &mut view.counted, columns))
         .fold(0, usize::saturating_add);
-    let tall = measured(*entry, top, &view.back, columns);
+    let tall = measured(*entry, top, &view.back, &mut view.counted, columns);
 
     let into = if into <= 1 {
         into
@@ -483,10 +555,12 @@ fn refolded(view: &mut View, entries: &[Entry<'_>], columns: usize) {
 enum Entry<'a> {
     Held(&'a Whole),
     Let(&'a Placed),
+    /// The source of a block drawn in the transcript, lent by the record.
+    Block(Source<'a>),
 }
 
 /// What the view stands over, in the order it is read.
-fn entries<'a>(kept: &'a Kept, over: &Over) -> Vec<Entry<'a>> {
+fn entries<'a>(kept: &'a Kept, sources: &[Source<'a>], over: &Over) -> Vec<Entry<'a>> {
     // Newest first by the order the rows were drawn in, held or let go of: a
     // short result can stay held after a longer one drawn later was let go of,
     // so neither list alone says which came first.
@@ -513,10 +587,20 @@ fn entries<'a>(kept: &'a Kept, over: &Over) -> Vec<Entry<'a>> {
         // thing there is and it is what a reader pressing this while a command
         // runs is asking about. Kept apart from what was cut: a call that has
         // not answered has not been counted among them.
-        Over::Everything(opened) => kept
+        Over::Everything {
+            cut: opened,
+            blocks,
+        } => kept
             .writing()
             .map(Entry::Held)
             .chain(cut(None).into_iter().filter(|entry| entry.drawn() < opened))
+            .chain(
+                sources
+                    .iter()
+                    .filter(|source| source.line < blocks)
+                    .copied()
+                    .map(Entry::Block),
+            )
             .collect(),
 
         // Every result that row offered, and usually that is one. A row
@@ -529,11 +613,13 @@ fn entries<'a>(kept: &'a Kept, over: &Over) -> Vec<Entry<'a>> {
 }
 
 impl Entry<'_> {
-    /// The order its row was drawn in.
+    /// The order its row was drawn in; for a block the line it is held as,
+    /// which is only ever compared with another block's.
     fn drawn(&self) -> usize {
         match self {
             Self::Held(whole) => whole.drawn(),
             Self::Let(placed) => placed.drawn(),
+            Self::Block(source) => source.line,
         }
     }
 }
@@ -543,6 +629,10 @@ impl Entry<'_> {
 fn shown<'a>(entry: Entry<'a>, back: &'a [(Mark, Option<Box<str>>)]) -> Shown<'a> {
     match entry {
         Entry::Held(whole) => showing(whole),
+        Entry::Block(source) => Shown {
+            called: source.word,
+            text: source.text,
+        },
         Entry::Let(placed) => Shown {
             called: placed.called(),
             text: match back.iter().find(|(mark, _)| placed.is(mark)) {
@@ -584,7 +674,7 @@ fn reaching(
     }
     let seen = Expanded::seen(rows);
     let down = view.from >= view.was;
-    let mut heights = heights(entries, &view.back, columns);
+    let mut heights = heights(entries, &view.back, &mut view.counted, columns);
     view.from = stopped(view, entries, &heights, down);
 
     for _ in 0..2 {
@@ -597,7 +687,7 @@ fn reaching(
             .filter(|(_, span)| within(span))
             .filter_map(|(entry, _)| match entry {
                 Entry::Let(placed) => Some(*placed),
-                Entry::Held(_) => None,
+                Entry::Held(_) | Entry::Block(_) => None,
             })
             .collect();
 
@@ -608,7 +698,13 @@ fn reaching(
         if has == had {
             break;
         }
-        remeasured(&mut heights, entries, &view.back, columns);
+        remeasured(
+            &mut heights,
+            entries,
+            &view.back,
+            &mut view.counted,
+            columns,
+        );
 
         // The result the window opens on, or, stepping up onto one just read
         // back, the one under it: that one's rows are the ones staying put.
@@ -678,11 +774,16 @@ fn unread(entries: &[Entry<'_>], back: &[(Mark, Option<Box<str>>)], heights: &[u
 
 /// How many rows each of `entries` comes to at this width, counting the blank
 /// that parts it from the one above.
-fn heights(entries: &[Entry<'_>], back: &[(Mark, Option<Box<str>>)], columns: usize) -> Vec<usize> {
+fn heights(
+    entries: &[Entry<'_>],
+    back: &[(Mark, Option<Box<str>>)],
+    counted: &mut Counted,
+    columns: usize,
+) -> Vec<usize> {
     entries
         .iter()
         .enumerate()
-        .map(|(at, entry)| measured(*entry, at, back, columns))
+        .map(|(at, entry)| measured(*entry, at, back, counted, columns))
         .collect()
 }
 
@@ -692,11 +793,12 @@ fn remeasured(
     heights: &mut [usize],
     entries: &[Entry<'_>],
     back: &[(Mark, Option<Box<str>>)],
+    counted: &mut Counted,
     columns: usize,
 ) {
     for (at, (height, entry)) in heights.iter_mut().zip(entries).enumerate() {
         if matches!(entry, Entry::Let(_)) {
-            *height = measured(*entry, at, back, columns);
+            *height = measured(*entry, at, back, counted, columns);
         }
     }
 }
@@ -711,6 +813,7 @@ fn measured(
     entry: Entry<'_>,
     at: usize,
     back: &[(Mark, Option<Box<str>>)],
+    counted: &mut Counted,
     columns: usize,
 ) -> usize {
     let length = |one: Shown<'_>| {
@@ -722,6 +825,7 @@ fn measured(
     };
     match entry {
         Entry::Held(whole) => whole.rows(columns, || length(showing(whole))),
+        Entry::Block(source) => counted.of(&source, columns, || length(shown(entry, back))),
         Entry::Let(_) => length(shown(entry, back)),
     }
     .saturating_add(usize::from(at > 0))

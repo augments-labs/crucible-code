@@ -35,9 +35,9 @@
 //! other colours. Both forms count against the ceiling, and a drawn block that
 //! falls off the top takes its source with it. The source is lent, not copied:
 //! [`Record::source_of`] answers for a row and [`Record::sources`] walks the
-//! blocks, so what copies a block and what lists it read the record itself. Everything else is *set*: a box
-//! laid out by something that is gone is clipped rather than pretending it can
-//! be rebuilt.
+//! blocks, so what copies a block and what lists it read the record itself.
+//! Everything else is *set*: a box laid out by something that is gone is
+//! clipped rather than pretending it can be rebuilt.
 //!
 //! The opening is responsive for the same reason. It is drawn from facts read
 //! once at launch and kept for the whole session, so what laid it is still here
@@ -1063,12 +1063,6 @@ impl Record {
     }
 }
 
-/// What native mode hands over to the terminal's own scrollback.
-///
-/// A line written into the reader's buffer is shown by the terminal from then
-/// on, and the live region no longer draws it. It is kept here all the same,
-/// under the one ceiling, because the terminal cannot be trusted to put what it
-/// holds at a new width, and a resize is answered by giving it all again.
 /// A drawn block's source, borrowed from the record that keeps it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Source<'a> {
@@ -1080,6 +1074,12 @@ pub struct Source<'a> {
     pub text: &'a str,
 }
 
+/// What native mode hands over to the terminal's own scrollback.
+///
+/// A line written into the reader's buffer is shown by the terminal from then
+/// on, and the live region no longer draws it. It is kept here all the same,
+/// under the one ceiling, because the terminal cannot be trusted to put what it
+/// holds at a new width, and a resize is answered by giving it all again.
 impl Record {
     /// The source of the drawn block that shows at absolute display row
     /// `row`, lent from the record.

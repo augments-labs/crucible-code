@@ -2444,3 +2444,43 @@ fn a_native_hostile_fence_label_reaches_the_terminal_as_nothing_but_its_name() {
         }
     }
 }
+
+#[test]
+fn a_native_session_lists_the_drawn_blocks_newest_first_each_with_its_written_source() {
+    let table = "| name | job |\n|---|---|\n| alpha | first |\n| beta | second |\n";
+    let math = "$$\nx^2 + y^2\n$$\n";
+    let window = Window::new(60, 20);
+    let mut render = native(&window);
+    render.wears(colourful());
+    stands(&mut render);
+    render
+        .stream(&format!("before\n\n{table}\nbetween\n\n{math}\nafter\n"))
+        .unwrap();
+    render.settle().unwrap();
+    render.seal().unwrap();
+
+    let listed: Vec<(&str, &str)> = render
+        .sources()
+        .map(|source| (source.word, source.text))
+        .collect();
+    assert_eq!(listed, [("math", math), ("table", table)]);
+
+    let bound = render.sourced();
+    assert!(bound > 0);
+    assert!(render.sources().all(|source| source.line < bound));
+}
+
+#[test]
+fn a_native_session_of_prose_and_a_rule_lists_no_source_and_bounds_nothing() {
+    let window = Window::new(60, 20);
+    let mut render = native(&window);
+    stands(&mut render);
+    render
+        .stream("just prose\n\n---\n\nand a rule above it\n")
+        .unwrap();
+    render.settle().unwrap();
+    render.seal().unwrap();
+
+    assert_eq!(render.sources().count(), 0);
+    assert_eq!(render.sourced(), 0);
+}
