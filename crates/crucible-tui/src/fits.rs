@@ -26,6 +26,7 @@
 //! sentence is the defect this catches, and a fixture of short words never
 //! reaches it.
 
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use crate::asked::{Asked, Choice, Given, Stop, Writing};
@@ -33,6 +34,9 @@ use crate::asking::Question;
 use crate::bar::{Bar, Fill, Part};
 use crate::chrome::{Frame, Label, Undrawn};
 use crate::color::Slot;
+use crate::docked::{
+    Batched, Chosen, Dock, Docked, Drafted, Editing, Focus, Member, Offer, Phase, Scrolled,
+};
 use crate::expanded::{Expanded, Shown};
 use crate::glyphs::Glyphs;
 use crate::key_panel::KeyPanel;
@@ -614,6 +618,72 @@ fn an_ask_fits_the_window_its_questions_are_put_in() {
     down("an ask", |columns, room, glyphs| {
         asked.within(columns, room, glyphs).0
     });
+}
+
+#[test]
+fn a_dock_fits_the_window_its_questions_wait_in() {
+    // Every phase, over four questions of the hostile texts with eight answers
+    // each, so that the open dock is far taller than most rooms here: the
+    // sweep's small rooms are where it has to give way to the closed row.
+    let member = |at: usize, text: &str| Member {
+        heading: format!("{text} {at}"),
+        question: format!("{PROSE} {text}"),
+        answers: (0..8)
+            .map(|answer| Offer {
+                answer: format!("{text} {answer}"),
+                says: PROSE.to_owned(),
+                shows: (0..=answer)
+                    .map(|line| format!("{line} {LONG} {MARKED}"))
+                    .collect(),
+                recommended: answer == 0,
+            })
+            .collect(),
+        draft: Drafted {
+            chosen: if at % 2 == 1 {
+                Chosen::Several(BTreeSet::from([0, 7]))
+            } else {
+                Chosen::One(Some(7))
+            },
+            written: WIDE.to_owned(),
+            note: PROSE.to_owned(),
+            declined: at == 3,
+        },
+    };
+    for phase in [
+        Phase::Collapsed,
+        Phase::Answering,
+        Phase::Reviewing,
+        Phase::Submitting,
+        Phase::Refused(PROSE.to_owned()),
+        Phase::Accepted,
+    ] {
+        let dock = Dock {
+            batches: vec![Batched {
+                key: 0_u8,
+                members: [LONG, WIDE, MARKED, PROSE]
+                    .iter()
+                    .enumerate()
+                    .map(|(at, text)| member(at, text))
+                    .collect(),
+            }],
+            current: 0,
+            focus: Focus {
+                member: 1,
+                marked: 8,
+                editing: Some(Editing::Written { column: 2 }),
+            },
+            scrolled: Scrolled::default(),
+            phase,
+        };
+        down("a dock", |columns, room, glyphs| {
+            Docked {
+                dock: &dock,
+                footer: PROSE,
+            }
+            .within(columns, room, glyphs)
+            .0
+        });
+    }
 }
 
 #[test]

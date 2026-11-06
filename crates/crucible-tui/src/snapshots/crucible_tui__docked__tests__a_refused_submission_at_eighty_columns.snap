@@ -1,0 +1,21 @@
+---
+source: crates/crucible-tui/src/docked.rs
+expression: "dump(&rows, 80)"
+---
+<Accent>╭──────────────────────────────────────────────────────────────────────────────╮</>
+<Accent>│</>  <Trouble>✗</> <Strong>Answer not accepted</>                                                       <Accent>│</>
+<Accent>│</>  the session could not save it                                               <Accent>│</>
+<Accent>│</>  <Quiet>Your draft is still here.</>                                                   <Accent>│</>
+<Accent>│</>                                                                              <Accent>│</>
+<Accent>│</>  <DoneMark>✓</> <Quiet>Format</>                                                                    <Accent>│</>
+<Accent>│</>    CSV                                                                       <Accent>│</>
+<Accent>│</>                                                                              <Accent>│</>
+<Accent>│</>  <DoneMark>✓</> <Quiet>Scope</>                                                                     <Accent>│</>
+<Accent>│</>    <Strong>Declined</>                                                                  <Accent>│</>
+<Accent>│</>                                                                              <Accent>│</>
+<Accent>│</>  <Quiet>──────────────────────────────────────────────────────────────────────────</>  <Accent>│</>
+<Accent>│</>  <Accent>›</> <Strong>Retry submission</>                                                          <Accent>│</>
+<Accent>│</>  <Accent> </> <Strong>Keep editing</>                                                              <Accent>│</>
+<Accent>│</>  <Accent> </> <Strong>Close</>                                                                     <Accent>│</>
+<Accent>╰──────────────────────────────────────────────────────────────────────────────╯</>
+  <Quiet>enter choose · tab composer · esc close</>
