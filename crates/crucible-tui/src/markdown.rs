@@ -260,10 +260,6 @@ pub(crate) struct Links {
 
 /// `block` laid out as the lines it draws `room` columns wide, in `glyphs`.
 ///
-/// A table is drawn against the room, or put back as it was written where it
-/// cannot be; a rule is drawn across the room; anything else is read again by
-/// a reader that holds nothing and links by `links`, so it is shown the way it
-/// would have streamed.
 /// What the record keeps a block as, and what it lays it out with again at
 /// every width and glyph set it is asked for.
 ///
@@ -272,7 +268,7 @@ pub(crate) struct Links {
 #[must_use]
 pub(crate) fn lay(block: &Block, room: usize, glyphs: Glyphs, links: &Links) -> Vec<Row> {
     let mut rows = vec![Row::new()];
-    let mut put = |slot: Slot, text: &str, link: Option<&str>| {
+    tell(block, room, glyphs, links, &mut |slot, text, link| {
         let mut pieces = text.split('\n');
         if let Some(piece) = pieces.next() {
             push(&mut rows, slot, piece, link);
@@ -281,15 +277,37 @@ pub(crate) fn lay(block: &Block, room: usize, glyphs: Glyphs, links: &Links) -> 
             rows.push(Row::new());
             push(&mut rows, slot, piece, link);
         }
-    };
+    });
 
+    // The break that ends the last line ends the block, and is no row of it.
+    if rows.last().is_some_and(Row::is_empty) {
+        rows.pop();
+    }
+    rows
+}
+
+/// `block` as the runs [`lay`] makes its lines of, each with where it links,
+/// handed to `put` in order, a line's end as a break in the text.
+///
+/// A table is drawn against the room, or put back as it was written where it
+/// cannot be; a rule is drawn across the room; anything else is read again by
+/// a reader that holds nothing and links by `links`, so it is shown the way it
+/// would have streamed. Runs rather than lines for a page printed once, which
+/// keeps each address beside its words as a run streamed past it would.
+pub(crate) fn tell(
+    block: &Block,
+    room: usize,
+    glyphs: Glyphs,
+    links: &Links,
+    put: &mut dyn FnMut(Slot, &str, Option<&str>),
+) {
     match block.kind {
         Kind::Table => {
             let mut kinds = kind::Kinds::default();
             Table::of(&block.source).laid(glyphs, room, &mut |slot, text, link| {
-                kinds.tell(slot, text, link, &mut put);
+                kinds.tell(slot, text, link, &mut *put);
             });
-            kinds.flush(&mut put);
+            kinds.flush(&mut *put);
         }
         // A character at a time, as the rule streamed before it was a block.
         Kind::Rule => {
@@ -308,12 +326,6 @@ pub(crate) fn lay(block: &Block, room: usize, glyphs: Glyphs, links: &Links) -> 
             markdown.finish(room, &mut said);
         }
     }
-
-    // The break that ends the last line ends the block, and is no row of it.
-    if rows.last().is_some_and(Row::is_empty) {
-        rows.pop();
-    }
-    rows
 }
 
 /// One run onto the last of `rows`.

@@ -355,9 +355,10 @@ fn read(segment: &str, room: usize, glyphs: Glyphs, forge: Option<&Forge>, rows:
             lines.push(line);
         }
     };
-    // A block is laid out as the record lays one, at this width and linking
-    // what the runs around it link, and its rows follow the runs before it: a
-    // page printed once has no later width to keep its source for.
+    // A block is told in the runs the record lays one out of, at this width
+    // and linking what the runs around it link, and they follow the runs
+    // before it: a page printed once has no later width to keep its source
+    // for. Its last line is ended where its runs leave it open.
     let linking = Links {
         forge: forge.cloned(),
         files: None,
@@ -365,10 +366,14 @@ fn read(segment: &str, room: usize, glyphs: Glyphs, forge: Option<&Forge>, rows:
     let mut said = |said: Said<'_>| match said {
         Said::Run { slot, text, link } => say(slot, text, link),
         Said::Block(block) => {
-            for row in markdown::lay(&block, room, glyphs, &linking) {
-                for (slot, text) in row.spans() {
-                    say(slot, text, None);
+            let mut open = false;
+            markdown::tell(&block, room, glyphs, &linking, &mut |slot, text, link| {
+                if let Some(last) = text.chars().last() {
+                    open = last != '\n';
                 }
+                say(slot, text, link);
+            });
+            if open {
                 say(Slot::Plain, "\n", None);
             }
         }
