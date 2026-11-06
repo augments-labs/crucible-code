@@ -399,14 +399,6 @@ const HINT: &str = "/questions";
 /// shows, naming the keys that move it.
 const MORE: &str = "pgup pgdn to see more";
 
-/// The rung a window is cut from: the tightest that still says everything,
-/// since a window is what is drawn instead of giving up any of the words.
-const WINDOWED: Spacing = Spacing {
-    footer: false,
-    says: true,
-    opening: false,
-};
-
 /// The fewest columns a detail on the closed row is kept for. Narrower than
 /// this and the row drops it, rather than showing a word and a half of it.
 const DETAIL: usize = 8;
@@ -506,6 +498,7 @@ impl<K> Docked<'_, K> {
             return Drawn::Closed;
         }
 
+        let mut tightest = None;
         for spacing in Spacing::LADDER.into_iter().filter(|spacing| spacing.says) {
             let Some(opened) = self.open(batch, columns, glyphs, spacing) else {
                 return Drawn::Closed;
@@ -513,11 +506,15 @@ impl<K> Docked<'_, K> {
             if opened.height() <= room {
                 return Drawn::Whole(opened);
             }
+            tightest = Some(opened);
         }
 
-        // The tightest rung that still says everything, with the row under the
-        // frame given to the keys that move the window.
-        let Some(opened) = self.open(batch, columns, glyphs, WINDOWED) else {
+        // A window is cut from the tightest rung that still says everything,
+        // the one just found taller than the room, with the row under the frame
+        // given to the keys that move it. Being taller than the room is what
+        // leaves its body more rows than the window holds, so a window drawn is
+        // always one that can move.
+        let Some(opened) = tightest else {
             return Drawn::Closed;
         };
         let chrome = opened.head.len() + opened.pinned.len() + 2;
@@ -996,7 +993,10 @@ impl<K> Docked<'_, K> {
                 }
             }
 
-            if !draft.note.is_empty() {
+            // A declined question is sent as declined and nothing else, so its
+            // note stays in the draft for an undone decline and is not read
+            // back beside it.
+            if !draft.declined && !draft.note.is_empty() {
                 let at = PAYLOAD + wide(NOTED);
                 let room = inner.saturating_sub(at).saturating_sub(SAID);
                 let note = spoken(&draft.note);
@@ -1977,6 +1977,39 @@ mod tests {
     }
 
     #[test]
+    fn the_scroll_keys_are_drawn_exactly_where_the_window_can_move() {
+        for bytes in (0..=2400).step_by(150) {
+            let (note, _) = numbered('n', bytes);
+            for phase in [Phase::Answering, Phase::Reviewing] {
+                let mut sized = dock(vec![format(), scope()], phase);
+                if let Some(member) = sized
+                    .batches
+                    .first_mut()
+                    .and_then(|b| b.members.first_mut())
+                {
+                    member.draft.note.clone_from(&note);
+                }
+                for columns in [24, 40, 80, 120] {
+                    for room in 1..=70 {
+                        let rows = art(&sized, columns, room);
+                        let keys = rows.last().is_some_and(|row| row.contains("pgup"));
+                        let end = Docked {
+                            dock: &sized,
+                            footer: "",
+                        }
+                        .end(columns, room, Glyphs::Unicode);
+                        assert_eq!(
+                            keys,
+                            end > 0,
+                            "{bytes} bytes of note, {columns}x{room}, end {end}: {rows:#?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn the_scroll_keys_are_named_only_where_there_is_more_to_see() {
         let short = dock(vec![format(), scope()], Phase::Answering);
         let (note, _) = numbered('n', 4096);
@@ -2040,10 +2073,21 @@ mod tests {
 
     #[test]
     fn a_declined_question_keeps_its_draft_for_when_the_decline_is_undone() {
-        let declined = drafted(Phase::Reviewing);
+        let mut declined = drafted(Phase::Reviewing);
+        if let Some(scope) = declined
+            .batches
+            .first_mut()
+            .and_then(|b| b.members.get_mut(1))
+        {
+            scope.draft.note = "send the orders table only".to_owned();
+        }
         let rows = art(&declined, 80, 40);
         row(&rows, "Declined");
         assert!(!rows.iter().any(|row| row.contains("Orders")), "{rows:#?}");
+        assert!(
+            !rows.iter().any(|row| row.contains("orders table only")),
+            "a declined question is sent with no note, so none is read back: {rows:#?}"
+        );
 
         let mut undone = declined;
         if let Some(scope) = undone
@@ -2059,6 +2103,7 @@ mod tests {
             "{rows:#?}"
         );
         row(&rows, "Orders");
+        row(&rows, "orders table only");
     }
 
     #[test]
