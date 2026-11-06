@@ -20,10 +20,10 @@ expression: on_the_first_beat(&picture)
 |                                                                                |
 |  ██ system prompt           1.0k     0.5%                                      |
 |  ██ project instructions       0       0%                                      |
-|  ██ tool schemas            3.8k     1.9%                                      |
+|  ██ tool schemas            3.9k     2.0%                                      |
 |  ██ MCP tool schemas           0       0%                                      |
-|  ██ messages                 482     0.2%                                      |
+|  ██ messages                 483     0.2%                                      |
 |  ██ reserve                28.1k    14.1%                                      |
-|  ░░ free                  166.4k      99%                                      |
+|  ░░ free                  166.3k      99%                                      |
 |                                                                                |
 |esc to close                                                                    |
