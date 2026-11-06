@@ -27,8 +27,12 @@
 //!
 //! A run whose output is redirected has no screen to own, and no frame either:
 //! text goes straight through at the moment it arrives, stripped of the escape
-//! bytes an untrusted string put in it. It keeps the same record all the same,
-//! so what separates one block from the next is decided once rather than twice.
+//! bytes an untrusted string put in it. The one line it holds back is a line
+//! that could still be the header of a table written without outer bars,
+//! since what is written cannot be taken back: it goes out with its delta once
+//! it is known, and a table goes out whole. It keeps the same record all the
+//! same, so what separates one block from the next is decided once rather than
+//! twice.
 //! Nothing on that path can write an escape sequence, because nothing on it
 //! goes near one.
 
@@ -376,6 +380,13 @@ pub struct Renderer<T: Terminal> {
     painted: Painted,
     /// Reused across deltas: one run of text with its escape bytes taken out.
     free: String,
+    /// What a redirected run has been told and not yet written, because the
+    /// line it ends in may still be taken back.
+    ///
+    /// Empty on a screen, where a frame decides what is written. Bounded by
+    /// the header a line in doubt can be: past [`markdown::HEADER_CAP`] bytes
+    /// a line is prose, and goes out with the delta it was found to be in.
+    unwritten: String,
     /// How far into an escape sequence streamed text is.
     ///
     /// Held across deltas because a sequence arrives split across two of them
@@ -506,6 +517,7 @@ impl<T: Terminal> Renderer<T> {
             size,
             painted: Painted::new(),
             free: String::new(),
+            unwritten: String::new(),
             escapes: Escapes::default(),
             markdown: Markdown::default(),
             arriving: Arriving::Nothing,
@@ -1350,16 +1362,12 @@ impl<T: Terminal> Renderer<T> {
         let columns = self.folds();
         let redirected = !self.terminal.is_terminal();
         let theme = self.palette.theme();
-        // What is written to a terminal that is not one cannot be taken back,
-        // so the reader keeps a header it cannot tell from prose as the prose
-        // it may be. Only a caller of this crate gets here: the app gives such
-        // output no colour, and the early return above reads no markdown.
-        self.markdown.commits(redirected);
         let Self {
             markdown,
             record,
             escapes,
             free,
+            unwritten,
             terminal,
             glyphs,
             ..
@@ -1369,6 +1377,7 @@ impl<T: Terminal> Renderer<T> {
             record,
             escapes,
             free,
+            unwritten,
             out: redirected.then_some(terminal),
             columns,
             glyphs: *glyphs,
@@ -1387,7 +1396,72 @@ impl<T: Terminal> Renderer<T> {
         });
         wrote?;
 
+        // What a file has been given cannot be taken back, so a line that may
+        // still be the header of a table is not written until it is known.
+        self.written_out(self.markdown.in_doubt())?;
+
         self.draw()
+    }
+
+    /// Reads a line that may still be the header of a table as the prose it
+    /// was said to be, for a call that is about to end the line it is on.
+    fn undoubted(&mut self) -> Result<(), TerminalError> {
+        if !self.markdown.in_doubt() {
+            return Ok(());
+        }
+
+        let columns = self.folds();
+        let redirected = !self.terminal.is_terminal();
+        let theme = self.palette.theme();
+        let Self {
+            markdown,
+            record,
+            escapes,
+            free,
+            unwritten,
+            terminal,
+            glyphs,
+            ..
+        } = self;
+
+        let mut taking = Taking {
+            record,
+            escapes,
+            free,
+            unwritten,
+            out: redirected.then_some(terminal),
+            columns,
+            glyphs: *glyphs,
+            theme,
+        };
+        let mut wrote = Ok(());
+        markdown.undoubted(columns, &mut |said| {
+            let said = taking.said(said);
+            if wrote.is_ok() {
+                wrote = said;
+            }
+        });
+        wrote?;
+        self.written_out(false)
+    }
+
+    /// Writes what a redirected run has been told and kept back: all of it,
+    /// or with `doubtful` the lines that are whole, leaving the one that may
+    /// still be taken back.
+    fn written_out(&mut self, doubtful: bool) -> Result<(), TerminalError> {
+        let whole = if doubtful {
+            self.unwritten.rfind('\n').map_or(0, |at| at + 1)
+        } else {
+            self.unwritten.len()
+        };
+        if whole == 0 {
+            return Ok(());
+        }
+
+        let kept = self.unwritten.split_off(whole);
+        let wrote = self.terminal.write(&self.unwritten);
+        self.unwritten = kept;
+        wrote
     }
 
     /// Writes a line that is finished and will never be re-read.
@@ -1438,6 +1512,7 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn present(&mut self, rows: &[Row]) -> Result<(), TerminalError> {
+        self.undoubted()?;
         if !self.terminal.is_terminal() {
             // The line still open has already gone out without its ending, so
             // the ending is owed before anything is written under it.
@@ -1773,6 +1848,7 @@ impl<T: Terminal> Renderer<T> {
             record,
             escapes,
             free,
+            unwritten,
             terminal,
             glyphs,
             ..
@@ -1782,6 +1858,7 @@ impl<T: Terminal> Renderer<T> {
             record,
             escapes,
             free,
+            unwritten,
             out: redirected.then_some(terminal),
             columns,
             glyphs: *glyphs,
@@ -1796,6 +1873,7 @@ impl<T: Terminal> Renderer<T> {
             }
         });
         wrote?;
+        self.written_out(false)?;
 
         // The markers belong to the message that is ending. A fence the model
         // opened and never closed would otherwise read the tool result under it
@@ -2373,6 +2451,7 @@ impl<T: Terminal> Renderer<T> {
             record,
             escapes,
             free,
+            unwritten,
             terminal,
             glyphs,
             ..
@@ -2382,12 +2461,14 @@ impl<T: Terminal> Renderer<T> {
             record,
             escapes,
             free,
+            unwritten,
             out: redirected.then_some(terminal),
             columns,
             glyphs: *glyphs,
             theme,
         }
-        .take(slot, text, None)
+        .take(slot, text, None)?;
+        self.written_out(false)
     }
 
     /// The row that tells of a block the reader is holding, drawn `columns`
@@ -2558,6 +2639,9 @@ struct Taking<'a, T: Terminal> {
     free: &'a mut String,
     /// `None` on a screen, where a frame decides when a row is written.
     out: Option<&'a mut T>,
+    /// What `out` has been told and not yet been given, because the line it is
+    /// part of may still be taken back.
+    unwritten: &'a mut String,
     /// The width a block is laid out for, where it is written out.
     columns: usize,
     /// The glyph set and theme a block is laid out in.
@@ -2573,6 +2657,9 @@ impl<T: Terminal> Taking<'_, T> {
             Said::Block(block) => self.block(block),
             Said::Retract => {
                 self.record.retract();
+                // Only the line, and not the lines kept back with it.
+                let kept = self.unwritten.rfind('\n').map_or(0, |at| at + 1);
+                self.unwritten.truncate(kept);
                 Ok(())
             }
         }
@@ -2594,6 +2681,8 @@ impl<T: Terminal> Taking<'_, T> {
         // A redirected run is written the block as it is laid out now, row by
         // row: a file has one width, and it is this one.
         if let Some(out) = &mut self.out {
+            out.write(self.unwritten)?;
+            self.unwritten.clear();
             for row in markdown::lay(&block, self.columns, self.glyphs, self.record.links()) {
                 out.write(&row.text())?;
                 out.write("\n")?;
@@ -2625,10 +2714,10 @@ impl<T: Terminal> Taking<'_, T> {
         // The address never reaches a redirected run. What that run is written
         // is what the row says, and an address a terminal would have swallowed
         // is bytes in the middle of a file somebody is going to read.
-        match &mut self.out {
-            Some(out) => out.write(self.free),
-            None => Ok(()),
+        if self.out.is_some() {
+            self.unwritten.push_str(self.free);
         }
+        Ok(())
     }
 }
 

@@ -720,22 +720,79 @@ fn a_format_character_from_elsewhere_reaches_no_screen_and_no_file() {
 }
 
 #[test]
-fn a_redirected_run_keeps_a_table_written_without_outer_bars_as_it_was_written() {
-    // A header is written as the prose it may be, and a file cannot take a
-    // line back: so a run whose output is a file never learns the header was
-    // one, and the table is the text it arrived as, once.
+fn a_redirected_run_is_written_a_table_without_outer_bars_as_the_table_and_never_its_header() {
+    // What a file is given cannot be taken back, so a line that may be a
+    // header is not written until the delimiter row under it says what it is:
+    // the file has the table once, and no row of it as prose.
+    let table = "name | since\n--|--\nalpha | 0.1\n";
+    let answer = format!("before\n{table}\nafter\n");
+    let whole = {
+        let mut render = Renderer::new(Recording::redirected(80, 24));
+        render.wears(colourful());
+        render.stream(&answer).unwrap();
+        render.settle().unwrap();
+        render.terminal.written().to_owned()
+    };
+    assert!(whole.contains('│'), "{whole:?}");
+    assert!(
+        !whole.contains("--|--") && !whole.contains("name | since"),
+        "{whole:?}"
+    );
+
+    // A character at a time, and cut once at every offset.
     let mut render = Renderer::new(Recording::redirected(80, 24));
     render.wears(colourful());
-    let table = "name | since\n--|--\nalpha | 0.1\n";
-    render.stream("before\n").unwrap();
-    for piece in table.chars() {
+    for piece in answer.chars() {
         render.stream(&piece.to_string()).unwrap();
     }
-    render.stream("\nafter\n").unwrap();
     render.settle().unwrap();
+    assert_eq!(render.terminal.written(), whole);
 
-    let written = render.terminal.written();
-    assert_eq!(written, format!("before\n{table}\nafter\n"));
+    for cut in 0..=answer.len() {
+        let (first, second) = answer.split_at(cut);
+        let mut render = Renderer::new(Recording::redirected(80, 24));
+        render.wears(colourful());
+        render.stream(first).unwrap();
+        render.stream(second).unwrap();
+        render.settle().unwrap();
+        assert_eq!(render.terminal.written(), whole, "cut at {cut}");
+    }
+}
+
+#[test]
+fn a_redirected_run_has_not_written_a_line_that_may_still_be_a_header() {
+    let mut render = Renderer::new(Recording::redirected(80, 24));
+    render.wears(colourful());
+    render.stream("before\nname | sin").unwrap();
+    assert_eq!(render.terminal.written(), "before\n");
+
+    // Not a header after all: the line is written, whole.
+    render.stream("ce\nnot a delimiter\n").unwrap();
+    assert_eq!(
+        render.terminal.written(),
+        "before\nname | since\nnot a delimiter\n"
+    );
+}
+
+#[test]
+fn a_recording_that_is_no_screen_draws_a_table_written_without_outer_bars_as_one() {
+    // How a session is previewed: replayed onto a renderer over a recording
+    // that stands in for a pipe, so that nothing repaints, wearing the palette
+    // of the screen, and read back as rows. The rows are what picking the
+    // session up would draw.
+    let mut preview = Renderer::new(Recording::redirected(40, 20));
+    preview.wears(colourful());
+    preview
+        .stream("name | what it does\n--|--\nalpha | first\n")
+        .unwrap();
+    preview.settle().unwrap();
+    let rows: Vec<String> = preview.tail(20).iter().map(Row::text).collect();
+
+    let mut live = reading(40, 20);
+    live.answer("name | what it does\n--|--\nalpha | first\n");
+    assert!(rows.iter().any(|row| row.contains('│')), "{rows:#?}");
+    assert!(!rows.iter().any(|row| row.contains("--|--")), "{rows:#?}");
+    assert_eq!(rows, kept(&live).1);
 }
 
 #[test]
@@ -3202,6 +3259,39 @@ fn a_frame_drawn_while_a_header_is_in_doubt_leaves_what_drawing_the_whole_answer
             .any(|row| row.contains("name | what") || row.contains("--|--")),
         "{rows:#?}"
     );
+}
+
+#[test]
+fn a_component_presented_while_a_header_is_in_doubt_ends_it_as_the_prose_it_was() {
+    // The rows of a component end the line the transcript was on, so a header
+    // that is still only a guess is the prose it looked like: the record is
+    // what it is for the same words with nothing in them that could be a
+    // header, with no row of the answer's own missing, repeated or made blank.
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let run = |cut: &str| {
+            let mut drawn = reading(40, 12);
+            drawn.render.stream(&format!("before\n\n{cut}")).unwrap();
+            drawn.render.present(&[Row::plain("component")]).unwrap();
+            drawn.render.stream("\nafter\n").unwrap();
+            drawn.render.settle().unwrap();
+            kept(&drawn).1
+        };
+        let doubtful = run(cut);
+        let plain: Vec<String> = run(&cut.replace('|', "-"))
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
 }
 
 #[test]

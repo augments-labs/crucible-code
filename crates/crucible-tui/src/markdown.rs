@@ -916,10 +916,12 @@ enum Header {
     Declined,
 }
 
-/// Whether this reader may take back the line it is on.
+/// Whether the line being said is to be taken back.
 ///
 /// What a header of a table written without outer bars needs: it is said as
-/// prose until the delimiter row under it settles what it is.
+/// prose until the delimiter row under it settles what it is. Whoever is told
+/// what is said keeps the line apart until then, if it can put it out for
+/// good: see [`Markdown::in_doubt`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 enum Retract {
     /// It may, and nothing is owed.
@@ -927,13 +929,6 @@ enum Retract {
     Allowed,
     /// The line is to be taken back before anything else is said.
     Owed,
-    /// It may not: what is said goes out for good, so a header is not told
-    /// apart from the prose it may be. For a renderer built over a terminal
-    /// that is not one, whose palette still reads the markdown into slots. The
-    /// shipped app builds none: it gives output that is not a terminal no
-    /// colour, and the renderer then reads no markdown at all. So this is a
-    /// guard for a caller of this crate, not a state a user meets.
-    Refused,
 }
 
 /// What the scan is in the middle of, across lines.
@@ -1183,7 +1178,7 @@ pub struct Markdown {
     /// Whether this line may still be watched as the header of a table without
     /// outer bars.
     header: Header,
-    /// Whether the line being said is to be taken back, or may not be.
+    /// Whether the line being said is to be taken back.
     retract: Retract,
     /// The line of code collected so far, waiting for the break that completes
     /// it.
@@ -1291,20 +1286,17 @@ impl Markdown {
         self
     }
 
-    /// Sets whether what this reader says goes out for good.
+    /// Whether the line being said may yet be taken back with a
+    /// [`Said::Retract`]: it is the header of a table written without outer
+    /// bars, and the delimiter row under it has not arrived to say so.
     ///
-    /// Where it does, a line is never taken back, and so a table written
-    /// without outer bars is read as the prose it may be and stays so. Only a
-    /// renderer over a terminal that is not one, wearing a palette that reads
-    /// slots, says so: see `Retract::Refused`.
-    pub fn commits(&mut self, commits: bool) {
-        if self.retract != Retract::Owed {
-            self.retract = if commits {
-                Retract::Refused
-            } else {
-                Retract::Allowed
-            };
-        }
+    /// What a caller that puts what it is told out for good, and cannot take
+    /// it back, asks after each delta, and holds the line until it is false.
+    /// It is false for a line of more than [`HEADER_CAP`] bytes, and for one
+    /// with a single cell once its break has come.
+    #[must_use]
+    pub fn in_doubt(&self) -> bool {
+        self.table.as_ref().is_some_and(Table::pending)
     }
 
     /// The held block being gathered, and how many of its lines have begun.
@@ -1987,7 +1979,6 @@ impl Markdown {
     /// since those are another reading of the same line.
     fn opens_bare(&self, character: char) -> bool {
         self.holds()
-            && self.retract != Retract::Refused
             && self.header == Header::Open
             && self.inside == Inside::Prose
             && !self.started
@@ -2493,6 +2484,29 @@ impl Markdown {
             });
         }
         self.passing = None;
+        self.hand_on(&mut kinds, say);
+        kinds.flush(&mut |slot, text, link| say(Said::Run { slot, text, link }));
+        self.kinds = kinds;
+    }
+
+    /// Reads a line that is still in doubt ([`Markdown::in_doubt`]) as the
+    /// prose it was said to be, because whoever is told is about to end the
+    /// line itself and the delimiter row that would have taken it back can
+    /// no longer reach it.
+    ///
+    /// What the header's table held back is read as written, and nothing is
+    /// watched for after. The rest of a message is read as it would have been
+    /// had the line ended there, so a table that straddles it is not one.
+    pub fn undoubted(&mut self, room: usize, say: &mut dyn FnMut(Said<'_>)) {
+        let mut kinds = std::mem::take(&mut self.kinds);
+        let mut tell = |slot: Slot, text: &str, link: Option<&str>| {
+            kinds.tell(slot, text, link, &mut |slot, text, link| {
+                say(Said::Run { slot, text, link });
+            });
+        };
+        while let Some(table) = self.table.take_if(|table| table.pending()) {
+            self.release(&table, room, &mut tell);
+        }
         self.hand_on(&mut kinds, say);
         kinds.flush(&mut |slot, text, link| say(Said::Run { slot, text, link }));
         self.kinds = kinds;

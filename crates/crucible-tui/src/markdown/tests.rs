@@ -2256,9 +2256,8 @@ fn a_message_that_ends_in_a_table_without_outer_bars_draws_it_as_one() {
 
 /// What the reader said while `answer` was read a character at a time and
 /// finished, as one line per thing: `run <text>`, `retract` and `block`.
-fn told(answer: &str, commits: bool) -> Vec<String> {
+fn told(answer: &str) -> Vec<String> {
     let mut markdown = Markdown::default();
-    markdown.commits(commits);
     let mut told = Vec::new();
     let mut say = |said: Said<'_>| match said {
         Said::Run { text, .. } => told.push(format!("run {text}")),
@@ -2284,7 +2283,7 @@ fn said_text(told: &[String]) -> String {
 
 #[test]
 fn a_header_is_said_as_the_prose_it_is_so_far_and_taken_back_when_the_delimiter_row_decides() {
-    let told = told("before\nname | since\n--|--\nalpha | 0.1\n\nafter", false);
+    let told = told("before\nname | since\n--|--\nalpha | 0.1\n\nafter");
 
     let retract = told.iter().position(|thing| thing == "retract");
     let block = told.iter().position(|thing| thing == "block");
@@ -2305,7 +2304,7 @@ fn a_line_that_stops_looking_like_a_header_is_never_taken_back() {
         "a | b",
         "no bars\n--|--\n",
     ] {
-        let told = told(answer, false);
+        let told = told(answer);
 
         assert!(
             !told.iter().any(|thing| thing == "retract"),
@@ -2316,17 +2315,44 @@ fn a_line_that_stops_looking_like_a_header_is_never_taken_back() {
 }
 
 #[test]
-fn a_header_is_not_taken_back_by_a_reader_told_what_it_says_is_final() {
+fn a_header_is_in_doubt_exactly_until_the_delimiter_row_has_arrived() {
     let answer = "name | since\n--|--\nalpha | 0.1\n\nafter";
-    let told = told(answer, true);
+    let mut markdown = Markdown::default();
+    let mut doubt = Vec::new();
+    for (at, character) in answer.char_indices() {
+        let piece = answer
+            .get(at..at + character.len_utf8())
+            .unwrap_or_default();
+        markdown.read(piece, ROOM, &mut |_| {});
+        doubt.push(markdown.in_doubt());
+    }
 
+    // From the first character, through the header's break and the start of
+    // the line under it, up to the last character of the delimiter row; the
+    // break that ends that row decides it, and the rows of the table are no
+    // longer a line that could be a header.
+    let row = answer.find("--|--").unwrap_or_default() + "--|--".len();
+    let table = row + "\nalpha | 0.1".len();
+    assert!(doubt.iter().take(row).all(|doubt| *doubt), "{doubt:?}");
     assert!(
-        !told
-            .iter()
-            .any(|thing| thing == "retract" || thing == "block"),
-        "{told:?}"
+        doubt.iter().take(table + 1).skip(row).all(|doubt| !*doubt),
+        "{doubt:?}"
     );
-    assert_eq!(said_text(&told), answer);
+}
+
+#[test]
+fn a_line_that_cannot_be_a_header_is_not_in_doubt() {
+    let long = format!("{} | b\n", "x".repeat(HEADER_CAP));
+    for answer in [
+        "no bars here\n",
+        "a | b\nthen no bars\n",
+        "- a | b\n",
+        long.as_str(),
+    ] {
+        let mut markdown = Markdown::default();
+        markdown.read(answer, ROOM, &mut |_| {});
+        assert!(!markdown.in_doubt(), "{answer:?}");
+    }
 }
 
 #[test]

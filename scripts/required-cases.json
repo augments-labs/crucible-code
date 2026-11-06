@@ -5321,7 +5321,7 @@
       },
       "case": "markdown::tests::a_header_is_said_as_the_prose_it_is_so_far_and_taken_back_when_the_delimiter_row_decides",
       "source": "crates/crucible-tui/src/markdown/tests.rs",
-      "body_sha256": "91cc743a74b04b12933377da08aa3855cfb0794545831e0dcdb1c9e0dbba5d1a",
+      "body_sha256": "39291b3de95f3c926408fe0695cd7975799e3e5212b7ad349baf6948ae093cb9",
       "platforms": [
         "linux",
         "macos",
@@ -5339,7 +5339,25 @@
       },
       "case": "markdown::tests::a_line_that_stops_looking_like_a_header_is_never_taken_back",
       "source": "crates/crucible-tui/src/markdown/tests.rs",
-      "body_sha256": "14fc18ce13ce0ee208f7f51d23d35883bd35d80af4416d40eff84bd4fff4bde2",
+      "body_sha256": "7751079f85ad99397c0da719494800585b9e4242508bb79ae32c6848c7c62be0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-PRESENT-IN-DOUBT",
+      "family": "transcript-blocks",
+      "obligation": "A component drawn while a line may still be the header of a table written without outer bars ends that line as the prose it was, said once, as if it had never been in doubt.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_component_presented_while_a_header_is_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "3fcd5f2d297ec6a313f22f60f62e6781d2fce6c1e782a40b94f09172d55b1f1f",
       "platforms": [
         "linux",
         "macos",
@@ -5349,15 +5367,69 @@
     {
       "id": "CASE-TRANSCRIPT-BARE-TABLE-REDIRECTED",
       "family": "transcript-blocks",
-      "obligation": "A run whose output is a file cannot take a line back, so it keeps a table written without outer bars as it was written.",
+      "obligation": "A run whose output is a file is written a table without outer bars as the table, once, and never its header as prose, however the answer is cut into deltas.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "render::tests::a_redirected_run_keeps_a_table_written_without_outer_bars_as_it_was_written",
+      "case": "render::tests::a_redirected_run_is_written_a_table_without_outer_bars_as_the_table_and_never_its_header",
       "source": "crates/crucible-tui/src/render/tests.rs",
-      "body_sha256": "81fb4a84e638e034f6d8322215b1626bc7d967a2b8ee73646c736728df13d448",
+      "body_sha256": "967ea9e21f6c302296bd6aa54917b4db004cb02a19af9a375653b1b6d0db36d6",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-REDIRECTED-HELD",
+      "family": "transcript-blocks",
+      "obligation": "A run whose output is a file has not written a line that may still be the header of a table until it is known, and writes it whole when it is not one.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_redirected_run_has_not_written_a_line_that_may_still_be_a_header",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "30109628eba39dc1c0ec2301aaeef9a81ba97227c1a23feaea96e4d857e3c1ea",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-PREVIEW",
+      "family": "transcript-blocks",
+      "obligation": "A session replayed onto a recording that stands in for a pipe, wearing a palette, draws a table written without outer bars as the table the screen draws.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_recording_that_is_no_screen_draws_a_table_written_without_outer_bars_as_one",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "378b7ed2fa0b8ee94d79aec005eee3e9f577aaeaa9cdd1071641b19032783f5b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-IN-DOUBT-READER",
+      "family": "transcript-blocks",
+      "obligation": "The reader says a line is in doubt from its first character until the delimiter row under it is whole, and not for a line that cannot be a header.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_header_is_in_doubt_exactly_until_the_delimiter_row_has_arrived",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "91bd5808bcbf38b57ed05df289a9f94d20e5561c156b5c249c84a74c447a5121",
       "platforms": [
         "linux",
         "macos",
