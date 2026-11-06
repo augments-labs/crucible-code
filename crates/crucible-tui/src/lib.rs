@@ -80,7 +80,7 @@ pub use asking::Question;
 pub use bar::{Bar, Fill, Part};
 pub use color::{Design, Palette, Sequence, Slot, Theme, Worn};
 pub use docked::{
-    Action, Batched, Chosen, Dock, Docked, Drafted, Editing, Focus, Member, Offer, Phase,
+    Action, Batched, Chosen, Dock, Docked, Drafted, Editing, Focus, Member, Offer, Phase, Scrolled,
 };
 pub use editor::{Editor, Key, Projection, Sending, Typed};
 pub use expanded::{Expanded, Shown};

@@ -47,7 +47,19 @@
 //! stay where they are, the rest scrolls, and the row under the frame says
 //! `pgup pgdn to see more`, which it says nowhere else. [`Dock::scrolled`] is
 //! how far down the window opens, and [`Docked::end`] how far it may go at this
-//! size, which the caller clamps its offset to. Only where the window cannot
+//! size, which the caller clamps its offset to.
+//!
+//! **The window keeps what the keys act on in view.** A scroll is set with
+//! [`Dock::scroll_to`], which records the batch, the question or review, the
+//! mark and the cursor it was set on. A scroll set on another question, on the
+//! review or on another batch draws from the top, so a view opens at its start
+//! however far down the last one was read. Where the mark or the cursor of a
+//! line being written has moved since, the window opens at the nearest offset
+//! that shows its row, so an arrow never leaves the mark out of sight and
+//! nobody types into a line they cannot see. Between those moves the scroll
+//! keys move the window freely, which is how a note longer than the window is
+//! read whole, and [`Docked::opens_at`] says where it opened, for the caller to
+//! page from. Only where the window cannot
 //! hold even the frame, one row and the actions is the dock the closed row.
 //! Width gives way the way the blocking panel's does: the row of question
 //! names becomes *question 2 of 3 · 1 answered* where it will not fit whole,
@@ -79,14 +91,83 @@ pub struct Dock<K> {
     pub current: usize,
     /// Where the reader is in it.
     pub focus: Focus,
-    /// How many rows down the open question or review the window opens, where
-    /// it is taller than the room: see [`Docked::end`].
-    pub scrolled: usize,
+    /// How far down the open question or review the window opens, where it is
+    /// taller than the room, and what that was set on: see [`Dock::scroll_to`].
+    pub scrolled: Scrolled<K>,
     /// What the dock is doing.
     pub phase: Phase,
 }
 
+/// How far down the window opens, and the view, mark and cursor it was set
+/// on; [`Dock::scroll_to`] is the only way to set one, and the default is the
+/// top of whatever is in front.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Scrolled<K> {
+    /// Rows down the body of the view.
+    rows: usize,
+    /// What was in front when it was set, or `None` for no scroll yet.
+    on: Option<Seen<K>>,
+}
+
+impl<K> Default for Scrolled<K> {
+    fn default() -> Self {
+        Self { rows: 0, on: None }
+    }
+}
+
+/// What a scroll was set on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Seen<K> {
+    /// The batch in front.
+    key: K,
+    /// The question or the review.
+    view: View,
+    /// Where the mark stood.
+    marked: usize,
+    /// The line being written and where its cursor stood.
+    editing: Option<Editing>,
+}
+
+/// Which of a batch's views is drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum View {
+    /// The question at this index, being answered.
+    Question(usize),
+    /// Every answer read back.
+    Review,
+}
+
+impl<K: Clone> Dock<K> {
+    /// Opens the window `rows` down the view in front, as it stands now: the
+    /// batch, the question or the review, the mark and the cursor. Drawn
+    /// against another view it counts as no scroll at all, and drawn after the
+    /// mark or the cursor has moved it gives way to the nearest offset showing
+    /// that row.
+    pub fn scroll_to(&mut self, rows: usize) {
+        let on = self.front().map(|(_, batch)| Seen {
+            key: batch.key.clone(),
+            view: self.view(),
+            marked: self.focus.marked,
+            editing: self.focus.editing,
+        });
+        self.scrolled = Scrolled { rows, on };
+    }
+}
+
 impl<K> Dock<K> {
+    /// Which view of the batch in front is drawn: the open question while one
+    /// is being answered, the review in every other phase.
+    fn view(&self) -> View {
+        match self.phase {
+            Phase::Answering => View::Question(self.open().map_or(0, |(at, _)| at)),
+            Phase::Collapsed
+            | Phase::Reviewing
+            | Phase::Submitting
+            | Phase::Refused(_)
+            | Phase::Accepted => View::Review,
+        }
+    }
+
     /// The batch in front, and where it stands: the one [`Dock::current`]
     /// names, or the last where it names none, so a batch taken away under it
     /// leaves the dock showing what is still waiting rather than nothing.
@@ -420,7 +501,7 @@ impl<K> Clone for Docked<'_, K> {
 
 impl<K> Copy for Docked<'_, K> {}
 
-impl<K> Docked<'_, K> {
+impl<K: PartialEq> Docked<'_, K> {
     /// The dock in `room` rows: the open dock where it fits, a window of it
     /// where it is taller than the room, the closed row where not even the
     /// window fits, and nothing where nothing waits or no row is left.
@@ -443,8 +524,7 @@ impl<K> Docked<'_, K> {
                 (opened.whole(), caret)
             }
             Drawn::Window { opened, held } => {
-                let end = opened.body.len().saturating_sub(held);
-                let from = self.dock.scrolled.min(end);
+                let from = self.from(&opened, held);
                 let caret = opened
                     .caret
                     .filter(|caret| caret.row >= from && caret.row < from + held)
@@ -467,6 +547,42 @@ impl<K> Docked<'_, K> {
                 rows.push(said(SAID, Slot::Quiet, clip(MORE, room)));
                 (rows, caret)
             }
+        }
+    }
+
+    /// How many rows down the window [`Docked::within`] draws at this size
+    /// opens, after [`Dock::scrolled`] has been clamped and has given way to
+    /// the mark or the cursor; zero wherever the dock is not a window. The row
+    /// a caller pages from, through [`Dock::scroll_to`].
+    #[must_use]
+    pub fn opens_at(&self, columns: usize, room: usize, glyphs: Glyphs) -> usize {
+        match self.drawn(columns, room, glyphs) {
+            Drawn::Window { opened, held } => self.from(&opened, held),
+            Drawn::Nothing | Drawn::Closed | Drawn::Whole(_) => 0,
+        }
+    }
+
+    /// Where a window `held` rows tall opens on `opened`: the scroll as it was
+    /// set, or the top where it was set on another view, moved only as far as
+    /// it takes to show the cursor's row, or else the mark's, where either has
+    /// moved since.
+    fn from(&self, opened: &Opened, held: usize) -> usize {
+        let end = opened.body.len().saturating_sub(held);
+        let dock = self.dock;
+        let here = dock.front().map(|(_, batch)| &batch.key);
+        let (rows, moved) = match &dock.scrolled.on {
+            Some(on) if here == Some(&on.key) && on.view == dock.view() => (
+                dock.scrolled.rows,
+                on.marked != dock.focus.marked || on.editing != dock.focus.editing,
+            ),
+            Some(_) | None => (0, true),
+        };
+        let from = rows.min(end);
+        let target = opened.caret.map(|caret| caret.row).or(opened.marked);
+        match target.filter(|_| moved) {
+            Some(row) if row < from => row,
+            Some(row) if row >= from + held => (row + 1).saturating_sub(held).min(end),
+            Some(_) | None => from,
         }
     }
 
@@ -659,10 +775,10 @@ impl<K> Docked<'_, K> {
         ));
 
         let mut body = Vec::new();
-        let (caret, pinned) = if self.dock.phase == Phase::Answering {
+        let ((caret, marked), pinned) = if self.dock.phase == Phase::Answering {
             (self.answering(batch, member, laid, &mut body), Vec::new())
         } else {
-            (None, self.reviewed(batch, laid, &mut body))
+            ((None, None), self.reviewed(batch, laid, &mut body))
         };
 
         let footer = (spacing.footer && !self.footer.is_empty()).then(|| {
@@ -677,20 +793,21 @@ impl<K> Docked<'_, K> {
             bottom: Row::new().then(Slot::Accent, format!("{close}{bar}{closed}")),
             footer,
             caret,
+            marked,
         })
     }
 
     /// The open question's rows: which question of the batch it is, what it
     /// asks, every answer it offers, the reader's own, the note, the specimen,
     /// and the decline. Returns where the cursor stands, where a line is being
-    /// written.
+    /// written, and the row the mark stands on.
     fn answering(
         &self,
         batch: &Batched<K>,
         member: &Member,
         laid: Laid,
         rows: &mut Vec<Row>,
-    ) -> Option<Caret> {
+    ) -> (Option<Caret>, Option<usize>) {
         let Laid {
             inner,
             glyphs,
@@ -715,7 +832,11 @@ impl<K> Docked<'_, K> {
         blank(rows);
 
         let mut caret = None;
+        let mut on = None;
         for (at, offer) in member.answers.iter().enumerate() {
+            if at == focus.marked {
+                on = Some(rows.len());
+            }
             for row in self.offered(member, at, offer, laid) {
                 rows.push(framed(row, inner, glyphs));
             }
@@ -725,6 +846,9 @@ impl<K> Docked<'_, K> {
         let front = front(member);
         let room = inner.saturating_sub(front);
         let marked = focus.marked == own;
+        if marked {
+            on = Some(rows.len());
+        }
         let mut row = opening(member, own, marked, glyphs);
         boxed_mark(
             &mut row,
@@ -808,6 +932,9 @@ impl<K> Docked<'_, K> {
         let ruled = glyphs.horizontal().repeat(across.saturating_sub(SAID));
         rows.push(framed(said(SAID, Slot::Quiet, &ruled), inner, glyphs));
         let declines = member.declines_at();
+        if focus.marked == declines {
+            on = Some(rows.len());
+        }
         let mut row = opening(member, declines, focus.marked == declines, glyphs);
         boxed_mark(&mut row, false, draft.declined, glyphs);
         rows.push(framed(
@@ -816,7 +943,7 @@ impl<K> Docked<'_, K> {
             glyphs,
         ));
 
-        caret
+        (caret, on)
     }
 
     /// The row naming every question of the batch, with the open one marked,
@@ -1054,6 +1181,9 @@ struct Opened {
     footer: Option<Row>,
     /// Where the cursor stands, counted in rows of `body`.
     caret: Option<Caret>,
+    /// The row of `body` the mark stands on, where it stands on one that
+    /// scrolls.
+    marked: Option<usize>,
 }
 
 impl Opened {
@@ -1190,7 +1320,7 @@ mod tests {
             batches: vec![Batched { key: 7, members }],
             current: 0,
             focus: Focus::default(),
-            scrolled: 0,
+            scrolled: Scrolled::default(),
             phase,
         }
     }
@@ -1247,7 +1377,7 @@ mod tests {
                 batches: Vec::new(),
                 current: 0,
                 focus: Focus::default(),
-                scrolled: 0,
+                scrolled: Scrolled::default(),
                 phase: phase.clone(),
             };
             assert!(art(&empty, 80, 40).is_empty(), "{phase:?}");
@@ -1774,7 +1904,7 @@ mod tests {
                 marked: 7,
                 editing: None,
             },
-            scrolled: 0,
+            scrolled: Scrolled::default(),
             phase: Phase::Answering,
         }
     }
@@ -1903,10 +2033,8 @@ mod tests {
         let end = Docked { dock, footer: "" }.end(columns, room, Glyphs::Unicode);
         (0..=end)
             .map(|scrolled| {
-                let at = Dock {
-                    scrolled,
-                    ..dock.clone()
-                };
+                let mut at = dock.clone();
+                at.scroll_to(scrolled);
                 art(&at, columns, room)
             })
             .collect()
@@ -1974,6 +2102,92 @@ mod tests {
             );
             assert_eq!(reachable(&windows, &every), Vec::<String>::new(), "{room}");
         }
+    }
+
+    /// The question about the wire format, each answer described over three
+    /// rows at eighty columns and showing an eight-row specimen.
+    fn described() -> Member {
+        let says = "a description long enough to fold over three rows at eighty \
+                    columns, which is what an ordinary model writes about an \
+                    answer it offers";
+        let shows: Vec<String> = (0..8).map(|at| format!("specimen row {at}")).collect();
+        let mut member = format();
+        for offer in &mut member.answers {
+            offer.says = says.to_owned();
+            offer.shows.clone_from(&shows);
+        }
+        member
+    }
+
+    #[test]
+    fn a_window_keeps_the_marked_row_and_the_caret_in_view() {
+        let member = described();
+        for room in [24, 20, 16] {
+            let mut marked = dock(vec![member.clone()], Phase::Answering);
+            marked.focus.marked = member.declines_at();
+            let end = Docked {
+                dock: &marked,
+                footer: "",
+            }
+            .end(80, room, Glyphs::Unicode);
+            assert_ne!(end, 0, "room {room} is a window");
+            row(&art(&marked, 80, room), "Decline question");
+
+            let mut writing = dock(vec![member.clone()], Phase::Answering);
+            writing.focus.marked = member.writes_at();
+            writing.focus.editing = Some(Editing::Written { column: 0 });
+            let (_, caret) = Docked {
+                dock: &writing,
+                footer: "",
+            }
+            .within(80, room, Glyphs::Unicode);
+            assert!(
+                caret.is_some(),
+                "room {room}: no caret on the line being written"
+            );
+
+            let mut moved = dock(vec![member.clone()], Phase::Answering);
+            moved.scroll_to(end);
+            moved.focus.marked = 1;
+            row(&art(&moved, 80, room), "CSV");
+        }
+    }
+
+    #[test]
+    fn a_scroll_set_on_one_question_draws_the_next_question_and_the_review_from_the_top() {
+        let (note, _) = numbered('n', 4096);
+        let mut both = dock(vec![format(), scope()], Phase::Answering);
+        for member in both.batches.iter_mut().flat_map(|b| b.members.iter_mut()) {
+            member.draft.note.clone_from(&note);
+        }
+        both.scroll_to(40);
+
+        let mut next = both.clone();
+        next.focus.member = 1;
+        row(&art(&next, 80, 60), "Which tables go in the first export?");
+
+        let mut review = both;
+        review.phase = Phase::Reviewing;
+        review.focus.marked = 0;
+        row(&art(&review, 80, 60), "Format");
+    }
+
+    #[test]
+    fn a_scroll_set_with_nothing_moved_since_draws_where_it_was_set() {
+        let (note, _) = numbered('n', 4096);
+        let mut long = dock(vec![format(), scope()], Phase::Answering);
+        if let Some(member) = long.batches.first_mut().and_then(|b| b.members.first_mut()) {
+            member.draft.note = note;
+        }
+        let mut set = long.clone();
+        set.scroll_to(10);
+        let opens = Docked {
+            dock: &set,
+            footer: "",
+        }
+        .opens_at(80, 30, Glyphs::Unicode);
+        assert_eq!(opens, 10);
+        assert_ne!(art(&set, 80, 30), art(&long, 80, 30));
     }
 
     #[test]
@@ -2058,14 +2272,10 @@ mod tests {
             footer: "",
         }
         .end(80, 60, Glyphs::Unicode);
-        let last = Dock {
-            scrolled: end,
-            ..long.clone()
-        };
-        let past = Dock {
-            scrolled: usize::MAX,
-            ..long
-        };
+        let mut last = long.clone();
+        last.scroll_to(end);
+        let mut past = long;
+        past.scroll_to(usize::MAX);
 
         assert_ne!(end, 0);
         assert_eq!(art(&past, 80, 60), art(&last, 80, 60));

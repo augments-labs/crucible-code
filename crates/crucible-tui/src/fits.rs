@@ -34,7 +34,9 @@ use crate::asking::Question;
 use crate::bar::{Bar, Fill, Part};
 use crate::chrome::{Frame, Label, Undrawn};
 use crate::color::Slot;
-use crate::docked::{Batched, Chosen, Dock, Docked, Drafted, Editing, Focus, Member, Offer, Phase};
+use crate::docked::{
+    Batched, Chosen, Dock, Docked, Drafted, Editing, Focus, Member, Offer, Phase, Scrolled,
+};
 use crate::expanded::{Expanded, Shown};
 use crate::glyphs::Glyphs;
 use crate::key_panel::KeyPanel;
@@ -670,7 +672,7 @@ fn a_dock_fits_the_window_its_questions_wait_in() {
                 marked: 8,
                 editing: Some(Editing::Written { column: 2 }),
             },
-            scrolled: 0,
+            scrolled: Scrolled::default(),
             phase,
         };
         down("a dock", |columns, room, glyphs| {
