@@ -6005,7 +6005,7 @@
       },
       "case": "render::native::tests::a_native_underline_and_a_title_of_the_most_the_reader_holds_are_headings_and_one_more_is_not",
       "source": "crates/crucible-tui/src/render/native/tests.rs",
-      "body_sha256": "15cf172cdd4bdd937ce22cb9df658879da9906ca187898e99573fbb1a11af2a0",
+      "body_sha256": "cd8cb63508b1c85d3ceb9c79a00512356a0192e2c7e34dfa1c1dd50e293361bf",
       "platforms": [
         "linux",
         "macos",
@@ -6221,7 +6221,7 @@
       },
       "case": "render::native::tests::a_native_answer_cut_anywhere_draws_the_setext_heading_the_whole_answer_draws",
       "source": "crates/crucible-tui/src/render/native/tests.rs",
-      "body_sha256": "271c0557b257e8210fadb92fab50d95be835a71167f6bb31717952a2e87dd12f",
+      "body_sha256": "b0210324fe9712144d96b7753ecea9b5d6b40a737b4eea0c413fa31f25d26285",
       "platforms": [
         "linux",
         "macos",

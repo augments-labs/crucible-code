@@ -2754,16 +2754,25 @@ fn a_native_underline_and_a_title_of_the_most_the_reader_holds_are_headings_and_
         ),
         ["Title".to_owned(), "=".repeat(129)]
     );
-    let long = "t".repeat(128);
-    assert_eq!(
-        kept_natively(200, Glyphs::Unicode, &[&format!("{long}\n---\n")]),
-        [long.clone(), "─".repeat(128)]
-    );
-    let longer = "t".repeat(129);
-    assert_eq!(
-        kept_natively(200, Glyphs::Unicode, &[&format!("{longer}\n===\n")]),
-        [longer, "===".to_owned()]
-    );
+    for (underline, heavy) in [("---", false), ("===", true)] {
+        let long = "t".repeat(128);
+        let rule = if heavy { "━" } else { "─" }.repeat(128);
+        assert_eq!(
+            kept_natively(200, Glyphs::Unicode, &[&format!("{long}\n{underline}\n")]),
+            [long.clone(), rule]
+        );
+
+        let longer = "t".repeat(129);
+        let expected = if heavy {
+            underline.to_owned()
+        } else {
+            "─".repeat(200)
+        };
+        assert_eq!(
+            kept_natively(200, Glyphs::Unicode, &[&format!("{longer}\n{underline}\n")]),
+            [longer, expected]
+        );
+    }
 }
 
 #[test]
@@ -2788,13 +2797,23 @@ fn a_native_title_of_markers_or_opening_with_a_dollar_or_a_backslash_is_a_headin
 
 #[test]
 fn a_native_answer_cut_anywhere_draws_the_setext_heading_the_whole_answer_draws() {
-    let answer = "intro\n\nTitle\n=====\n\nSub\n---\nafter\n";
-    let whole = kept_natively(40, Glyphs::Unicode, &[answer]);
-    assert!(whole.iter().any(|row| row == "━━━━━"), "{whole:#?}");
+    for answer in [
+        "intro\n\nTitle\n=====\n\nSub\n---\nafter\n",
+        "intro line\nTitle with **bold**\n=\nafter\n",
+        "$5\n---\nx\n\\*x\n===\nend\n",
+    ] {
+        let whole = kept_natively(40, Glyphs::Unicode, &[answer]);
+        assert!(
+            whole
+                .iter()
+                .any(|row| row.contains('━') || row.contains('─')),
+            "{answer:?} drew no rule: {whole:#?}"
+        );
 
-    for cut in 1..answer.len() {
-        let rows = kept_natively(40, Glyphs::Unicode, &[&answer[..cut], &answer[cut..]]);
-        assert_eq!(rows, whole, "cut at {cut}");
+        for cut in 1..answer.len() {
+            let rows = kept_natively(40, Glyphs::Unicode, &[&answer[..cut], &answer[cut..]]);
+            assert_eq!(rows, whole, "cut at {cut} of {answer:?}");
+        }
     }
 }
 
