@@ -11,8 +11,10 @@ authors.workspace = true
 
 # `resvg` draws the SVG a drawer wrote into pixels, with the font and the
 # colours the caller hands it. `icy_sixel` quantises and encodes pixels as the
-# payload a Sixel terminal draws.
+# payload a Sixel terminal draws. `image` decodes an image file under limits and
+# encodes the PNG payload.
 [dependencies]
+image.workspace = true
 resvg.workspace = true
 icy_sixel.workspace = true
 

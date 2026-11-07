@@ -29,10 +29,12 @@ publish = false
 # path, so its backend is named outright instead of leaving Linux support to
 # whichever display server happens to be in use.
 arboard = { version = "=3.7.0", features = ["wayland-data-control"] }
-# Encodes the clipboard's RGBA pixels as the PNG every provider accepts. The
+# Encodes the clipboard's RGBA pixels as the PNG every provider accepts, and
+# decodes PNG, JPEG, GIF and WebP image files under `Limits`, so a file that
+# claims a size past the ceiling is refused before its pixels are allocated. The
 # same release is already in arboard's image-data graph, so this names the API
-# without compiling a second encoder.
-image = { version = "=0.25.10", default-features = false, features = ["png"] }
+# without compiling a second PNG codec.
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 # Draws an SVG into pixels, which `std` has no parser, path filler or glyph
 # shaper for. Only `text` is on, so no system font is scanned and no gzip
 # stream is inflated, and the raster-image decoders it would otherwise carry
