@@ -812,3 +812,168 @@ fn the_widest_noisiest_sixel_payload_stays_within_its_measured_bound() {
     // Measured at 2 694 084 bytes: about 1.3 bytes a byte of pixels.
     assert!(payload.len() < 4 * MOST_DECODED, "{} bytes", payload.len());
 }
+
+/// A document of `inner` in a page, with the namespaces a link needs.
+fn page(inner: &str) -> String {
+    format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="20" height="20">{inner}</svg>"#
+    )
+}
+
+/// `count` elements of `make(index, next)`, each naming the next and the last
+/// naming the first: a ring no shorter than three is where the parser's own
+/// check for a reference that leads back stops looking.
+fn ring(count: usize, make: impl Fn(usize, usize) -> String) -> String {
+    (0..count).map(|at| make(at, (at + 1) % count)).collect()
+}
+
+/// `count` elements of `make(index)`, from 1, each of which names the one before.
+fn line(count: usize, make: impl Fn(usize) -> String) -> String {
+    (1..=count).map(make).collect()
+}
+
+#[test]
+fn references_that_lead_back_to_where_they_started_are_refused_before_the_parser_follows_them() {
+    let _alone = alone();
+    // Each of these overflows the stack of the thread that draws it, however
+    // large that stack is, in the parser the crate carries.
+    let rings = [
+        (
+            "masks",
+            page(&format!(
+                r#"<defs>{}</defs><rect width="20" height="20" mask="url(#m0)"/>"#,
+                ring(3, |at, next| format!(
+                    r##"<mask id="m{at}"><rect width="20" height="20" fill="#fff" mask="url(#m{next})"/></mask>"##
+                ))
+            )),
+        ),
+        (
+            "clip paths",
+            page(&format!(
+                r#"<defs>{}</defs><rect width="20" height="20" clip-path="url(#c0)"/>"#,
+                ring(4, |at, next| format!(
+                    r#"<clipPath id="c{at}"><rect width="9" height="9" clip-path="url(#c{next})"/></clipPath>"#
+                ))
+            )),
+        ),
+        (
+            "patterns",
+            page(&format!(
+                r#"<defs>{}</defs><rect width="20" height="20" fill="url(#p0)"/>"#,
+                ring(3, |at, next| format!(
+                    r#"<pattern id="p{at}" width="5" height="5" patternUnits="userSpaceOnUse"><rect width="2" height="2" fill="url(#p{next})"/></pattern>"#
+                ))
+            )),
+        ),
+        (
+            "copies of each other",
+            page(&format!(
+                r##"<defs>{}</defs><use href="#u0"/>"##,
+                ring(3, |at, next| format!(
+                    r##"<g id="u{at}"><use xlink:href="#u{next}"/></g>"##
+                ))
+            )),
+        ),
+        (
+            "a style attribute",
+            page(&format!(
+                r#"<defs>{}</defs><rect width="20" height="20" style="mask: url( '#m0' )"/>"#,
+                ring(3, |at, next| format!(
+                    r#"<mask id="m{at}"><rect width="20" height="20" style="MASK:URL(#m{next})"/></mask>"#
+                ))
+            )),
+        ),
+        (
+            "a style sheet",
+            page(&format!(
+                // Nothing in the elements themselves names another.
+                r#"<style>{}</style><defs>{}</defs><rect width="20" height="20" class="r0"/>"#,
+                ring(3, |at, next| format!(".r{at} {{ mask: url(#m{next}) }} ")),
+                ring(3, |at, _| format!(
+                    r#"<mask id="m{at}"><rect width="20" height="20" class="r{at}"/></mask>"#
+                ))
+            )),
+        ),
+        (
+            "a mask that is its own ancestor",
+            page(
+                r#"<mask id="m0"><g><g><rect width="20" height="20" mask="url(#m0)"/></g></g></mask><rect width="20" height="20" mask="url(#m0)"/>"#,
+            ),
+        ),
+    ];
+    for (name, svg) in rings {
+        assert_eq!(
+            rasterise(svg.as_bytes(), 20, &[]),
+            Err(Refused::NotAnImage),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn references_that_share_a_target_without_leading_back_are_drawn() {
+    let _alone = alone();
+    let diamonds = [
+        (
+            "one mask on two elements",
+            page(
+                r##"<mask id="m"><rect width="10" height="20" fill="#fff"/></mask><rect width="20" height="9" mask="url(#m)"/><rect y="10" width="20" height="9" mask="url(#m)"/>"##,
+            ),
+        ),
+        (
+            "two paths to one symbol",
+            page(
+                r##"<symbol id="s"><rect width="4" height="4"/></symbol><g id="a"><use href="#s"/></g><g id="b"><use href="#s"/></g><g id="top"><use href="#a"/><use href="#b" x="8"/></g>"##,
+            ),
+        ),
+        (
+            "a gradient named by a style sheet",
+            page(
+                r##"<style>.fill { fill: url(#g) }</style><linearGradient id="g"><stop offset="0" stop-color="#f00"/><stop offset="1" stop-color="#00f"/></linearGradient><rect width="20" height="20" class="fill"/>"##,
+            ),
+        ),
+        (
+            "a link to the group it is in",
+            page(r##"<g id="all"><a href="#all"><rect width="20" height="20"/></a></g>"##),
+        ),
+        (
+            "a long line of groups",
+            page(&format!(
+                r##"<defs><rect id="u0" width="4" height="4"/>{}</defs><use href="#u200"/>"##,
+                line(200, |at| format!(
+                    r##"<g id="u{at}"><use href="#u{}"/></g>"##,
+                    at - 1
+                ))
+            )),
+        ),
+    ];
+    for (name, svg) in diamonds {
+        assert!(rasterise(svg.as_bytes(), 20, &[]).is_ok(), "{name}");
+    }
+}
+
+#[test]
+fn a_ring_inside_a_nested_svg_is_dropped_and_the_page_around_it_is_drawn() {
+    let _alone = alone();
+    let inner = page(&format!(
+        r#"<defs>{}</defs><rect width="20" height="20" mask="url(#m0)"/>"#,
+        ring(3, |at, next| format!(
+            r##"<mask id="m{at}"><rect width="20" height="20" fill="#fff" mask="url(#m{next})"/></mask>"##
+        ))
+    ));
+    let encoded: String = inner
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() {
+                char::from(byte).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect();
+    let outer = page(&format!(
+        r##"<rect width="20" height="20" fill="#00ff00"/><image width="20" height="20" xlink:href="data:image/svg+xml;charset=utf8,{encoded}"/>"##
+    ));
+    let pixels = rasterise(outer.as_bytes(), 20, &[]).expect("the page around it");
+    assert_eq!(at(&pixels, 10, 10), [0, 255, 0, 255]);
+}

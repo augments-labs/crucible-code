@@ -6,8 +6,10 @@ use image::{
     DynamicImage, ExtendedColorType, ImageDecoder, ImageEncoder, ImageError, ImageReader, Limits,
 };
 use resvg::tiny_skia::{Pixmap, Transform};
+use resvg::usvg::roxmltree::{self, Document, Node, ParsingOptions};
 use resvg::usvg::{Error as UsvgError, ImageHrefResolver, Options, Tree, fontdb};
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::io::{self, Cursor, Write};
 use std::marker::PhantomData;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
@@ -145,10 +147,16 @@ pub fn decode(bytes: &[u8]) -> Result<Pixels, Refused> {
 /// `@import` and a font URL are not followed, and the only font is the one this
 /// crate carries. The height follows the SVG's own proportions, rounded up.
 ///
+/// A mask, clip path, pattern, filter, marker or copy that comes to name itself
+/// through three elements or more is refused before the parser sees it: the
+/// parser only looks for a loop two elements long, and follows a longer one
+/// until its stack is gone, whatever size that stack is.
+///
 /// # Errors
 /// [`Refused::TooLarge`] for an SVG past [`MOST_INPUT`] or a drawing past
 /// [`MOST_DECODED`], [`Refused::NotAnImage`] for bytes that are not an SVG, a
-/// zero width or an ink that cannot be a class, [`Refused::OverTime`] when the
+/// zero width, a document whose references lead back to themselves or an ink
+/// that cannot be a class, [`Refused::OverTime`] when the
 /// decode slot stays busy.
 pub fn rasterise(svg: &[u8], width_px: u32, inks: &[(&str, [u8; 3])]) -> Result<Pixels, Refused> {
     if svg.len() > MOST_INPUT {
@@ -162,7 +170,7 @@ pub fn rasterise(svg: &[u8], width_px: u32, inks: &[(&str, [u8; 3])]) -> Result<
         font_family: FONT_FAMILY.to_owned(),
         fontdb: fonts(),
         image_href_resolver: ImageHrefResolver {
-            resolve_data: ImageHrefResolver::default_data_resolver(),
+            resolve_data: without_loops(ImageHrefResolver::default_data_resolver()),
             // The default reads the file an `href` names. Nothing here is
             // allowed to name one.
             resolve_string: Box::new(|_, _| None),
@@ -190,7 +198,11 @@ const DRAWING_STACK: usize = 32 << 20;
 
 /// [`rasterise`] once the slot is held and the drawing has the stack it needs.
 fn draw(svg: &[u8], width_px: u32, options: &Options<'_>) -> Result<Pixels, Refused> {
-    let tree = Tree::from_data(svg, options).map_err(|error| match error {
+    let document = parse(svg).ok_or(Refused::NotAnImage)?;
+    if leads_back(&document) {
+        return Err(Refused::NotAnImage);
+    }
+    let tree = Tree::from_xmltree(&document, options).map_err(|error| match error {
         UsvgError::ElementsLimitReached => Refused::TooLarge,
         _ => Refused::NotAnImage,
     })?;
@@ -226,6 +238,159 @@ fn draw(svg: &[u8], width_px: u32, options: &Options<'_>) -> Result<Pixels, Refu
         })
         .collect();
     Pixels::from_rgba(width_px, height, straight)
+}
+
+/// `svg` as the tree parser would read it: text, and XML with a doctype
+/// allowed. A gzip stream is not text here, and the parser's own gzip reader is
+/// not built.
+fn parse(svg: &[u8]) -> Option<Document<'_>> {
+    let text = std::str::from_utf8(svg).ok()?;
+    let options = ParsingOptions {
+        allow_dtd: true,
+        ..ParsingOptions::default()
+    };
+    Document::parse_with_options(text, options).ok()
+}
+
+/// A data resolver that does not hand a nested SVG whose references lead back
+/// to themselves to the tree parser. Such an image is left out, as one that
+/// does not parse is.
+fn without_loops(
+    resolve: resvg::usvg::ImageHrefDataResolverFn<'static>,
+) -> resvg::usvg::ImageHrefDataResolverFn<'static> {
+    Box::new(move |mime, data, options| {
+        let is_nested_svg = matches!(mime, "image/svg+xml" | "text/plain");
+        if is_nested_svg && parse(&data).is_some_and(|document| leads_back(&document)) {
+            return None;
+        }
+        resolve(mime, data, options)
+    })
+}
+
+/// Whether some element of `document` comes to refer to itself: through an
+/// attribute or a style sheet that names another element, or through the
+/// elements it holds.
+///
+/// Every `url(#id)` in an attribute, every `href` that is a `#id` (an `a` link
+/// is not drawn from), and every `url(#id)` in a `<style>` is a reference. A
+/// style sheet cannot say which element a rule reaches, so one that names
+/// anything but a gradient is taken to lead back: a gradient draws nothing
+/// that is drawn from another. Where an id is given twice the parser uses the
+/// last, and so does this.
+fn leads_back(document: &Document<'_>) -> bool {
+    let elements: Vec<Node<'_, '_>> = document.descendants().filter(Node::is_element).collect();
+    let position: HashMap<roxmltree::NodeId, usize> = elements
+        .iter()
+        .enumerate()
+        .map(|(at, element)| (element.id(), at))
+        .collect();
+    let named: HashMap<&str, usize> = elements
+        .iter()
+        .enumerate()
+        .filter_map(|(at, element)| Some((element.attribute("id")?, at)))
+        .collect();
+
+    let is_gradient = |at: &usize| {
+        elements.get(*at).is_some_and(|element| {
+            matches!(
+                element.tag_name().name(),
+                "linearGradient" | "radialGradient"
+            )
+        })
+    };
+    let styled_by_a_sheet = elements
+        .iter()
+        .filter(|element| element.tag_name().name() == "style")
+        .flat_map(|sheet| sheet.descendants().filter_map(|text| text.text()))
+        .flat_map(url_targets)
+        .filter_map(|target| named.get(target))
+        .any(|at| !is_gradient(at));
+    if styled_by_a_sheet {
+        return true;
+    }
+
+    let edges: Vec<Vec<usize>> = elements
+        .iter()
+        .map(|element| {
+            let held = element
+                .children()
+                .filter(Node::is_element)
+                .filter_map(|child| position.get(&child.id()).copied());
+            let named_by_attributes = element.attributes().flat_map(|attribute| {
+                let link = (attribute.name() == "href" && element.tag_name().name() != "a")
+                    .then(|| attribute.value().trim().strip_prefix('#'))
+                    .flatten();
+                url_targets(attribute.value()).into_iter().chain(link)
+            });
+            held.chain(named_by_attributes.filter_map(|target| named.get(target).copied()))
+                .collect()
+        })
+        .collect();
+
+    // Depth first, without recursing: a document can be a thousand deep. A
+    // reference back to an element on the path being walked is a loop.
+    let mut state = vec![Walk::New; elements.len()];
+    for first in 0..elements.len() {
+        if state.get(first) != Some(&Walk::New) {
+            continue;
+        }
+        let mut path = vec![(first, 0_usize)];
+        if let Some(entry) = state.get_mut(first) {
+            *entry = Walk::OnThePath;
+        }
+        while let Some((element, next)) = path.last().copied() {
+            let Some(&to) = edges.get(element).and_then(|edges| edges.get(next)) else {
+                if let Some(entry) = state.get_mut(element) {
+                    *entry = Walk::Done;
+                }
+                path.pop();
+                continue;
+            };
+            if let Some((_, taken)) = path.last_mut() {
+                *taken += 1;
+            }
+            match state.get(to).copied() {
+                Some(Walk::OnThePath) => return true,
+                Some(Walk::New) => {
+                    if let Some(entry) = state.get_mut(to) {
+                        *entry = Walk::OnThePath;
+                    }
+                    path.push((to, 0));
+                }
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
+/// How far the walk of [`leads_back`] has come with an element.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Walk {
+    New,
+    OnThePath,
+    Done,
+}
+
+/// The ids that `url(#id)` names in `value`, in a style attribute, a presentation
+/// attribute or a style sheet. `url` is read in any case, and the id up to the
+/// closing bracket, a quote or a space.
+fn url_targets(value: &str) -> Vec<&str> {
+    // Lower-casing ASCII keeps every byte where it was.
+    value
+        .to_ascii_lowercase()
+        .match_indices("url(")
+        .filter_map(|(at, found)| {
+            let rest = value.get(at + found.len()..)?;
+            let rest =
+                rest.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == '\'' || c == '"');
+            let rest = rest.strip_prefix('#')?;
+            let end = rest
+                .find(|c: char| c == ')' || c == '\'' || c == '"' || c.is_ascii_whitespace())
+                .unwrap_or(rest.len());
+            rest.get(..end)
+        })
+        .collect()
 }
 
 /// The `color` of each class in `inks`, as the style sheet that gives it.
