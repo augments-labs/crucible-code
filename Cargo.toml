@@ -33,6 +33,12 @@ arboard = { version = "=3.7.0", features = ["wayland-data-control"] }
 # same release is already in arboard's image-data graph, so this names the API
 # without compiling a second encoder.
 image = { version = "=0.25.10", default-features = false, features = ["png"] }
+# Draws an SVG into pixels, which `std` has no parser, path filler or glyph
+# shaper for. Only `text` is on, so no system font is scanned and no gzip
+# stream is inflated, and the raster-image decoders it would otherwise carry
+# are the `image` crate's job here. Fonts and every `href` are the caller's:
+# nothing it names is read from the machine.
+resvg = { version = "=0.49.0", default-features = false, features = ["text"] }
 # This workspace's own crates. Path dependencies, released together, so there is
 # no version to pin and no third party whose publish could move them.
 crucible-agents = { path = "crates/crucible-agents" }

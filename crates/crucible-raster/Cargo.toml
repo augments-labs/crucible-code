@@ -9,5 +9,10 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+# `resvg` draws the SVG a drawer wrote into pixels, with the font and the
+# colours the caller hands it.
+[dependencies]
+resvg.workspace = true
+
 [lints]
 workspace = true
