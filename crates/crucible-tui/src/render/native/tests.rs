@@ -3183,3 +3183,70 @@ fn a_native_session_of_prose_and_a_rule_lists_no_source_and_bounds_nothing() {
     assert_eq!(render.sources().count(), 0);
     assert_eq!(render.sourced(), 0);
 }
+
+#[test]
+fn a_native_lone_marker_is_an_underline() {
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["Title\n=\n"]),
+        ["Title", "━━━━━"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["Sub\n-\n"]),
+        ["Sub", "───"]
+    );
+}
+
+#[test]
+fn native_atx_and_setext_headings_of_one_level_look_alike_and_levels_four_to_six_look_like_three() {
+    let atx = kept_natively(40, Glyphs::Unicode, &["# One\n\n## Two\n\n### Three\n"]);
+    let setext = kept_natively(40, Glyphs::Unicode, &["One\n===\n\nTwo\n---\n\nThree\n"]);
+    assert_eq!(atx, ["One", "━━━", "Two", "───", "Three"]);
+    assert_eq!(
+        setext.iter().take(4).collect::<Vec<_>>(),
+        atx.iter().take(4).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        kept_natively(
+            40,
+            Glyphs::Unicode,
+            &["#### Four\n\n##### Five\n\n###### Six\n"]
+        ),
+        ["Four", "Five", "Six"]
+    );
+}
+
+#[test]
+fn a_native_line_of_cells_over_a_delimiter_row_is_still_a_table_and_not_a_heading() {
+    let rows = kept_natively(40, Glyphs::Unicode, &["a | b\n--|--\n1 | 2\n"]);
+    assert!(rows.iter().any(|row| row.contains('│')), "{rows:#?}");
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row.contains('─') && !row.contains('┼')),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_native_dashed_row_under_a_line_that_was_no_table_header_underlines_it() {
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["one cell\n---\n"]),
+        ["one cell", "────────"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["a | b\n---\n1 | 2\n"]),
+        ["a | b", "─────", "1 | 2"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["one cell\n:-:\n"]),
+        ["one cell", ":-:"]
+    );
+}
+
+#[test]
+fn a_native_underline_makes_only_the_last_line_of_a_paragraph_the_heading() {
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["first line\nsecond line\n===\n"]),
+        ["first line", "second line", "━━━━━━━━━━━"]
+    );
+}
