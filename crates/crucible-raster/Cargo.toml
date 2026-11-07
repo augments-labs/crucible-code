@@ -19,5 +19,12 @@ resvg.workspace = true
 icy_sixel.workspace = true
 thiserror.workspace = true
 
+# A test that no reference reaches a named pipe needs a pipe to point at, and
+# `std` can open one on Windows but not make one. `tokio` is already in the tree
+# for the crates that serve and call over a socket; here it is only the server
+# end of that pipe, in tests, and no release build of this crate links it.
+[target.'cfg(windows)'.dev-dependencies]
+tokio = { workspace = true, features = ["net", "rt", "time"] }
+
 [lints]
 workspace = true
