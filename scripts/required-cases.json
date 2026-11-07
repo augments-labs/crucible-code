@@ -6275,7 +6275,7 @@
       },
       "case": "render::tests::headings::a_redirected_run_writes_a_title_once_and_only_when_it_is_settled",
       "source": "crates/crucible-tui/src/render/tests/headings.rs",
-      "body_sha256": "8d413f7433cd64a08f48f49fcb0b324fba5d6dfc75f010a7d54a7af9702aac89",
+      "body_sha256": "bfe030f94743382e89c8cfb5456b4e56e240192cad06ad700f05beda108a75be",
       "platforms": [
         "linux",
         "macos",

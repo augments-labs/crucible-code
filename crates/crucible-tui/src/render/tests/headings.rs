@@ -316,35 +316,40 @@ fn a_setext_heading_cut_anywhere_draws_what_the_whole_answer_draws() {
 
 #[test]
 fn a_redirected_run_writes_a_title_once_and_only_when_it_is_settled() {
-    let rule = "━━━━━";
-    for pieces in [
-        ["**Ti", "tle**\n=", "====\n"].as_slice(),
-        ["**Title**", "\n", "=====\n"].as_slice(),
-        ["**Title**\n", "=====\n"].as_slice(),
-        ["**Title**\n=====\n"].as_slice(),
-    ] {
-        let mut render = Renderer::new(Recording::redirected(80, 24));
-        render.wears(colourful());
-        for (at, piece) in pieces.iter().enumerate() {
-            render.stream(piece).unwrap();
-            if at + 1 < pieces.len() {
-                assert_eq!(render.terminal.written(), "", "{pieces:?} at {at}");
+    let cases: [(&[&[&str]], &str); 2] = [
+        (
+            &[
+                &["**Ti", "tle**\n=", "====\n"],
+                &["**Title**", "\n", "=====\n"],
+                &["**Title**\n", "=====\n"],
+                &["**Title**\n=====\n"],
+            ],
+            "Title\n━━━━━\n",
+        ),
+        (
+            &[
+                &["**Su", "b**\n-", "--\n"],
+                &["**Sub**", "\n", "---\n"],
+                &["**Sub**\n", "---\n"],
+                &["**Sub**\n---\n"],
+            ],
+            "Sub\n───\n",
+        ),
+    ];
+    for (cuts, expected) in cases {
+        for pieces in cuts {
+            let mut render = Renderer::new(Recording::redirected(80, 24));
+            render.wears(colourful());
+            for (at, piece) in pieces.iter().enumerate() {
+                render.stream(piece).unwrap();
+                if at + 1 < pieces.len() {
+                    assert_eq!(render.terminal.written(), "", "{pieces:?} at {at}");
+                }
             }
+            render.settle().unwrap();
+            assert_eq!(render.terminal.written(), expected, "{pieces:?}");
         }
-        render.settle().unwrap();
-        assert_eq!(
-            render.terminal.written(),
-            format!("Title\n{rule}\n"),
-            "{pieces:?}"
-        );
     }
-
-    let mut render = Renderer::new(Recording::redirected(80, 24));
-    render.wears(colourful());
-    render.stream("**Sub**\n").unwrap();
-    render.stream("---\n").unwrap();
-    render.settle().unwrap();
-    assert_eq!(render.terminal.written(), "Sub\n───\n");
 }
 
 #[test]
