@@ -11,6 +11,7 @@ use std::cell::Cell;
 use std::io::{self, Cursor, Write};
 use std::marker::PhantomData;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::thread;
 use std::time::{Duration, Instant};
 
 /// Why bytes did not become pixels, or pixels did not become a payload.
@@ -169,7 +170,27 @@ pub fn rasterise(svg: &[u8], width_px: u32, inks: &[(&str, [u8; 3])]) -> Result<
         ..Options::default()
     };
     let _slot = Slot::take(WAIT)?;
-    let tree = Tree::from_data(svg, &options).map_err(|error| match error {
+    // The parser and the renderer recurse as deep as the document nests, and
+    // the document may nest as deep as the XML parser allows. That is more
+    // than the stack of whichever thread asked, so the drawing has its own.
+    thread::scope(|scope| {
+        thread::Builder::new()
+            .stack_size(DRAWING_STACK)
+            .spawn_scoped(scope, || draw(svg, width_px, &options))
+            .map_err(|_| Refused::TooLarge)?
+            .join()
+            .unwrap_or_else(|unwound| std::panic::resume_unwind(unwound))
+    })
+}
+
+/// The stack the drawing thread is given: room for the deepest nesting the XML
+/// parser lets through, in a build with no optimisation, and twice over. Only
+/// the pages a drawing touches are ever backed by memory.
+const DRAWING_STACK: usize = 32 << 20;
+
+/// [`rasterise`] once the slot is held and the drawing has the stack it needs.
+fn draw(svg: &[u8], width_px: u32, options: &Options<'_>) -> Result<Pixels, Refused> {
+    let tree = Tree::from_data(svg, options).map_err(|error| match error {
         UsvgError::ElementsLimitReached => Refused::TooLarge,
         _ => Refused::NotAnImage,
     })?;

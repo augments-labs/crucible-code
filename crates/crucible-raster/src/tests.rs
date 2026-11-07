@@ -502,6 +502,23 @@ fn the_classes_an_svg_names_are_coloured_by_the_inks_it_is_given() {
 }
 
 #[test]
+fn a_picture_nested_as_deep_as_the_parser_allows_is_drawn_whatever_stack_the_caller_has() {
+    let _alone = alone();
+    let nested = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">{}<rect width="10" height="10" fill="#ff0000"/>{}</svg>"##,
+        "<g>".repeat(1000),
+        "</g>".repeat(1000)
+    );
+    // A stack far smaller than the nesting needs, as a caller's thread may have.
+    let caller = thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(move || rasterise(nested.as_bytes(), 10, &[]))
+        .expect("a thread");
+    let pixels = caller.join().expect("the drawing ends").expect("an svg");
+    assert_eq!(at(&pixels, 5, 5), RED);
+}
+
+#[test]
 fn a_name_that_is_not_a_class_is_not_let_into_the_style_sheet() {
     let _alone = alone();
     for name in [
