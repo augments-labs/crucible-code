@@ -50,10 +50,12 @@ target `main`: a release branch carrying the version bump, and a hotfix for
 something already published. [`RELEASING.md`](RELEASING.md) owns both.
 
 Both branches refuse direct pushes, force-pushes and deletion, and need
-`CI required` green before a merge. A pull request to `dev` merges once
+`CI required` green before a merge. A pull request to `dev` can merge once
 `CI required` is green on a head that is up to date with `dev`. Everything else
 is a task branch, and merging its pull request deletes it — the work is on `dev` by
 then, and the ruleset is what keeps the same rule from reaching `dev` or `main`.
+Who may merge or close a pull request is set out under
+[merging and closing](#merging-and-closing).
 
 ## Make a change
 
@@ -273,6 +275,40 @@ review, and the template then asks for that review instead: which agents read
 the diff, in the table, and what each checked against and found, under the
 box. The pull request is weighed on who made it, its proof and that review,
 not closed for the empty box.
+
+### Merging and closing
+
+Only a maintainer, or an agent a maintainer authorized, merges or closes a
+pull request. A maintainer is a person with maintain or admin access to the
+repository on GitHub. Opening a pull request, or having write access, is not
+leave to merge or close one.
+
+An agent merges a pull request only when all of these hold:
+
+- **A maintainer authorized it.** A maintainer said, in the pull request or
+  in the session that drives the agent, that the agent may merge that pull
+  request.
+- **The merged head is the one reviewed and green.** `CI required` is green
+  on the head the review read, and that head is up to date with the base. The
+  merge names the head, with `gh pr merge --merge --match-head-commit <sha>`,
+  so a commit pushed after the review stops it.
+- **Every finding has an outcome.** Each one is fixed and re-reviewed,
+  refuted with the evidence, or left with the reason the pull request states.
+  A finding that would make the change wrong or unsafe to ship is neither
+  refuted nor left except by a maintainer's decision.
+
+A maintainer merges these, never an agent:
+
+- anything against `main`, which means a release branch or a hotfix;
+- a change that weakens or removes a gate, a required case, a CI workflow or
+  a ruleset, or widens a budget;
+- a change that widens the licenses `deny.toml` allows;
+- a change to who may merge or close a pull request.
+
+An agent a maintainer authorized to close pull requests closes only one it
+opened, and only when another pull request supersedes or duplicates it. It
+links that pull request in a comment as it closes. Any other pull request is
+closed by a maintainer.
 
 ## Changelog entries
 

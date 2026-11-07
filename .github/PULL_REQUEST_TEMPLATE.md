@@ -4,6 +4,7 @@ AI agent. Every section needs a specific, true answer. A PR that leaves a
 section blank, keeps placeholder text, bundles unrelated changes, hides who
 made it, or claims a human reading of the diff that nobody gave is closed
 without review. One that says no human has read the diff is reviewed as it is.
+Only a maintainer, or an agent a maintainer authorized, merges or closes it.
 
 Security issues do not belong here. See SECURITY.md.
 -->
