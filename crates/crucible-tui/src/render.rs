@@ -28,7 +28,7 @@
 //! A run whose output is redirected has no screen to own, and no frame either:
 //! text goes straight through at the moment it arrives, stripped of the escape
 //! bytes an untrusted string put in it. The one line it holds back is a line
-//! that could still be the header of a table written without outer bars,
+//! that could still be the header of a table or the title of a heading,
 //! since what is written cannot be taken back: it goes out with its delta once
 //! it is known, and a table goes out whole. It keeps the same record all the
 //! same, so what separates one block from the next is decided once rather than
@@ -384,8 +384,9 @@ pub struct Renderer<T: Terminal> {
     /// line it ends in may still be taken back.
     ///
     /// Empty on a screen, where a frame decides what is written. Bounded by
-    /// the header a line in doubt can be: past [`markdown::HEADER_CAP`] bytes
-    /// a line is prose, and goes out with the delta it was found to be in.
+    /// the header or title a line in doubt can be, and the row under it: past
+    /// [`markdown::HEADER_CAP`] bytes a line is prose, and goes out with the
+    /// delta it was found to be in.
     unwritten: String,
     /// How far into an escape sequence streamed text is.
     ///
@@ -1199,10 +1200,11 @@ impl<T: Terminal> Renderer<T> {
     /// thing here that puts a character of its own in place of one the model
     /// wrote. The reader is told rather than replaced, since a change can
     /// arrive between two deltas of one answer and the scan has to go on where
-    /// it was. A table or a rule already written is laid out again in this
-    /// set now, since the record keeps the source it was written as; other
-    /// rows already written keep the characters they were drawn with, except
-    /// the opening, which the next resize lays out again in this set.
+    /// it was. A table, a rule or the rule under a heading already written is
+    /// laid out again in this set now, since the record keeps the source it
+    /// was written as; other rows already written keep the characters they
+    /// were drawn with, except the opening, which the next resize lays out
+    /// again in this set.
     pub fn draws(&mut self, glyphs: Glyphs) {
         self.glyphs = glyphs;
         self.markdown.draws(glyphs);
@@ -1397,14 +1399,16 @@ impl<T: Terminal> Renderer<T> {
         wrote?;
 
         // What a file has been given cannot be taken back, so a line that may
-        // still be the header of a table is not written until it is known.
+        // still be the header of a table or the title of a heading is not
+        // written until it is known.
         self.written_out(self.markdown.in_doubt())?;
 
         self.draw()
     }
 
-    /// Reads a line that may still be the header of a table as the prose it
-    /// was said to be, for a call that is about to end the line it is on.
+    /// Reads a line that may still be the header of a table or the title of a
+    /// heading as the prose it was said to be, for a call that is about to end
+    /// the line it is on.
     fn undoubted(&mut self) -> Result<(), TerminalError> {
         if !self.markdown.in_doubt() {
             return Ok(());
@@ -1475,8 +1479,8 @@ impl<T: Terminal> Renderer<T> {
     /// taken: the divider is already the row that parts what follows, and a
     /// blank one under it would part the new session from its own start.
     ///
-    /// A line of an answer that may still be the header of a table written
-    /// without outer bars is ended as the prose it was said to be first, as
+    /// A line of an answer that may still be the header of a table or the title of
+    /// a heading is ended as the prose it was said to be first, as
     /// [`Renderer::present`] does: what is committed is under it.
     ///
     /// # Errors
@@ -1551,8 +1555,8 @@ impl<T: Terminal> Renderer<T> {
     /// over, charged against that record's ceiling. Each width it is handed is
     /// [`Self::transcript_columns`], as for [`Self::present`].
     ///
-    /// A line of an answer that may still be the header of a table written
-    /// without outer bars is ended as the prose it was said to be first, as
+    /// A line of an answer that may still be the header of a table or the title of
+    /// a heading is ended as the prose it was said to be first, as
     /// [`Self::present`] does: the block is under it.
     ///
     /// # Errors
@@ -1612,8 +1616,8 @@ impl<T: Terminal> Renderer<T> {
     /// named, so a card laid out again after the reader changed it is drawn
     /// in the set they chose.
     ///
-    /// A line of an answer that may still be the header of a table written
-    /// without outer bars is ended as the prose it was said to be first, as
+    /// A line of an answer that may still be the header of a table or the title of
+    /// a heading is ended as the prose it was said to be first, as
     /// [`Self::present`] does: the opening is under it.
     ///
     /// # Errors
@@ -2051,7 +2055,7 @@ impl<T: Terminal> Renderer<T> {
     /// screen marks nothing of a reply that emptied the transcript.
     ///
     /// On a screen, a line of an answer that may still be the header of a
-    /// table written without outer bars is ended as the prose it was said to
+    /// table or the title of a heading is ended as the prose it was said to
     /// be first, as [`Renderer::present`] does: what follows is under it.
     /// Output that is not a terminal keeps what was written to it, and the
     /// line goes on there.
@@ -2091,8 +2095,8 @@ impl<T: Terminal> Renderer<T> {
     /// the question before it can answer, and the record only lets go of a line
     /// once that line can no longer change.
     ///
-    /// A line of an answer that may still be the header of a table written
-    /// without outer bars is ended as the prose it was said to be first, as
+    /// A line of an answer that may still be the header of a table or the title of
+    /// a heading is ended as the prose it was said to be first, as
     /// [`Renderer::present`] does.
     ///
     /// # Errors
@@ -2338,7 +2342,7 @@ impl<T: Terminal> Renderer<T> {
     /// stable line numbering: only output written after that reset is changed.
     ///
     /// On a screen the line still open is ended, and one that may still be the
-    /// header of a table written without outer bars is ended as the prose it
+    /// header of a table or the title of a heading is ended as the prose it
     /// was said to be first, as [`Renderer::present`] does: what follows is
     /// under it.
     ///

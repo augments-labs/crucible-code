@@ -20,15 +20,20 @@
 //! the `](` after them. Either one that runs past its bound, or past the line
 //! it is on, is handed out as the text it turned out to be.
 //!
-//! A table written without outer bars is prose until the delimiter row under
-//! it arrives, and prose that is not a table is not made to wait for it. The
-//! first line of a paragraph is read as it arrives, as the prose it is so far,
-//! while a copy of it is watched for the shape of a header. Only once it is a
-//! whole line with two cells in it is its break held back, together with the
-//! start of the next line for as long as that could be a delimiter row; both
-//! are handed out as they were written the moment they are not. A delimiter
-//! row that is one takes the line back ([`Said::Retract`]), and the table is
-//! handed on as a block like any other.
+//! A table written without outer bars, and a heading written as a line over a
+//! row of `=` or `-`, are prose until the line under them arrives, and prose
+//! that is neither is not made to wait for it. Every paragraph line is read
+//! as it arrives, as the prose it is so far, while a copy of it is watched,
+//! from its first character, for the shape of a header or a title. Its break
+//! is held back once it is a whole line, together with the start of the next
+//! line for as long as that could be a delimiter row or an underline; both are
+//! handed out as they were written the moment they are not. A delimiter row
+//! that is one takes the line back ([`Said::Retract`]), and the table is handed
+//! on as a block like any other. An underline takes the line back the same
+//! way, and says it again as the heading it is, with the rule under it as a
+//! block; the underline itself is read and never said. A heading written with
+//! `#` is never taken back, since its first characters say what it is: it
+//! streams, and its rule follows once its line is whole.
 //!
 //! Whole blocks are held too, and handed on as a [`Block`] rather than as
 //! runs, in order with the runs around them: a table, display math, a mermaid
@@ -107,11 +112,12 @@ const TILDES: &str = "~~~~~~";
 pub(crate) const TABLE_CAP: usize = 8 * 1024;
 
 /// The most of a line watched in case it is the header or the delimiter row of
-/// a table written without outer bars.
+/// a table written without outer bars, the title of a heading or the row of
+/// `=` or `-` under it.
 ///
 /// Only a copy is kept: the line itself goes out as it arrives. A line past it
-/// is prose, and is not watched any further. Far longer than any header an
-/// answer sensibly contains.
+/// is prose, and is not watched any further. Far longer than any header or
+/// title an answer sensibly contains.
 pub(crate) const HEADER_CAP: usize = 128;
 
 /// The most of a block of display math held before it is shown as written.
@@ -232,6 +238,10 @@ pub enum Kind {
     Table,
     /// A rule across the width it is given.
     Rule,
+    /// The rule under a heading of the first or second level, as wide as the
+    /// words above it. The words themselves are runs: they stream before the
+    /// heading's end is known, and only the rule needs the room there is.
+    Heading(Level),
     /// Display math, shown as written.
     DisplayMath,
     /// A mermaid fence, shown as written.
@@ -242,9 +252,22 @@ pub enum Kind {
     Image,
 }
 
+/// How loud a heading is, where it is drawn with a rule under it.
+///
+/// Two, because a rule is what tells the first two levels apart from the
+/// rest: the third and every deeper level are drawn alike, on a row of their
+/// own and with no rule, and so have no block to say which they were.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Level {
+    /// A heading `#` or a row of `=` makes, with a heavy rule.
+    One,
+    /// A heading `##` or a row of `-` makes, with a light rule.
+    Two,
+}
+
 impl Kind {
     /// The word the reader knows this block by, where it has a source worth
-    /// reading whole: a rule and an image have none.
+    /// reading whole: a rule, a heading's rule and an image have none.
     #[must_use]
     pub fn named(self) -> Option<&'static str> {
         match self {
@@ -252,7 +275,7 @@ impl Kind {
             Self::DisplayMath => Some("math"),
             Self::Mermaid => Some("mermaid diagram"),
             Self::Diff => Some("diff"),
-            Self::Rule | Self::Image => None,
+            Self::Rule | Self::Heading(_) | Self::Image => None,
         }
     }
 }
@@ -301,11 +324,13 @@ pub enum Said<'a> {
     /// A block, handed on once it is whole.
     Block(Block),
     /// The line being written is taken back: it was the header of a table
-    /// written without outer bars, which comes next as a [`Block`].
+    /// written without outer bars, which comes next as a [`Block`], or the
+    /// title of a heading, which comes next as the same words and then its
+    /// rule as a [`Block`].
     ///
-    /// Said once the delimiter row under the line has settled it, so a line
-    /// that might have been one is on screen as prose until then. Everything
-    /// before it was said is the line's own, and nothing else is taken.
+    /// Said once the line under it has settled it, so a line that might have
+    /// been one is on screen as prose until then. Everything before it was
+    /// said is the line's own, and nothing else is taken.
     Retract,
 }
 
@@ -382,6 +407,17 @@ pub(crate) fn tell(
                 put(Slot::Quiet, glyphs.horizontal(), None);
             }
         }
+        // As wide as the last row the words come to at this room, which is
+        // the row the record draws them in: the same reader, the same fold.
+        Kind::Heading(level) => {
+            let mark = match level {
+                Level::One => glyphs.heavy(),
+                Level::Two => glyphs.horizontal(),
+            };
+            for _ in 0..headed(block, room, glyphs, links) {
+                put(Slot::Quiet, mark, None);
+            }
+        }
         Kind::DisplayMath | Kind::Mermaid | Kind::Diff | Kind::Image => {
             let mut markdown = Markdown::new(glyphs).linking(links).as_written();
             let mut said = |said: Said<'_>| {
@@ -393,6 +429,35 @@ pub(crate) fn tell(
             markdown.finish(room, &mut said);
         }
     }
+}
+
+/// The title a heading block was written with: the line a row of `=` or `-`
+/// stood under, or the heading line itself, `#` marks and all.
+///
+/// A line that is a title is read again as the heading it is, which is the one
+/// reading the record draws it with.
+fn title(source: &str) -> Cow<'_, str> {
+    match source.split_once('\n') {
+        Some((title, _)) => Cow::Owned(format!("# {}", title.trim())),
+        None => Cow::Borrowed(source),
+    }
+}
+
+/// How many columns the last row of `block`'s words comes to, folded to `room`.
+fn headed(block: &Block, room: usize, glyphs: Glyphs, links: &Links) -> usize {
+    let mut row = Row::new();
+    let mut markdown = Markdown::new(glyphs).linking(links).as_written();
+    let mut said = |said: Said<'_>| {
+        if let Said::Run { slot, text, link } = said {
+            match link {
+                Some(link) => row.push_linked(slot, text, link),
+                None => row.push(slot, text),
+            }
+        }
+    };
+    markdown.read(&title(&block.source), room, &mut said);
+    markdown.finish(room, &mut said);
+    row.fold(room).last().map_or(0, Row::columns)
 }
 
 /// One run onto the last of `rows`.
@@ -906,9 +971,10 @@ struct Emphasis {
     struck: bool,
 }
 
-/// Whether a line may still be read as the header of a table written without
-/// outer bars. A table that ran past its cap is written out as it was, and
-/// the rest of its line is `Declined`: it is not watched a second time.
+/// Whether a line may still be watched as the header of a table written
+/// without outer bars or the title of a heading. A line that ran past its cap
+/// or showed it was neither is written out as it was, and the rest of its line
+/// is `Declined`: it is not watched a second time.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 enum Header {
     #[default]
@@ -918,10 +984,10 @@ enum Header {
 
 /// Whether the line being said is to be taken back.
 ///
-/// What a header of a table written without outer bars needs: it is said as
-/// prose until the delimiter row under it settles what it is. Whoever is told
-/// what is said keeps the line apart until then, if it can put it out for
-/// good: see [`Markdown::in_doubt`].
+/// What a header of a table written without outer bars or the title of a
+/// heading needs: it is said as prose until the line under it settles what it
+/// is. Whoever is told what is said keeps the line apart until then, if it can
+/// put it out for good: see [`Markdown::in_doubt`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 enum Retract {
     /// It may, and nothing is owed.
@@ -1175,11 +1241,19 @@ pub struct Markdown {
     /// that is not one of its own, which is a question asked at the start of
     /// every line rather than settled once.
     table: Option<Table>,
-    /// Whether this line may still be watched as the header of a table without
-    /// outer bars.
+    /// Whether this line may still be watched, as the header of a table
+    /// without outer bars or as the title of a setext heading.
     header: Header,
     /// Whether the line being said is to be taken back.
     retract: Retract,
+    /// The title of the setext heading the line taken back turned out to be,
+    /// to be said again as the heading it is straight after that line.
+    retitle: Option<String>,
+    /// The heading line being read, as it was written, from its marks on.
+    ///
+    /// Kept for the rule under a heading of the first or second level, which
+    /// is a block and is laid out from this. Bounded by [`MOST`].
+    atx: Option<(Level, String)>,
     /// The line of code collected so far, waiting for the break that completes
     /// it.
     ///
@@ -1288,15 +1362,20 @@ impl Markdown {
 
     /// Whether the line being said may yet be taken back with a
     /// [`Said::Retract`]: it may be the header of a table written without
-    /// outer bars, and the delimiter row under it has not arrived to say so.
+    /// outer bars or the title of a heading, and the line under it has not
+    /// arrived to say so.
     ///
     /// What a caller that puts what it is told out for good, and cannot take
     /// it back, asks after each delta, and holds the line until it is false.
-    /// It is false for a line of more than 128 bytes, and for one with a
-    /// single cell once its break has come.
+    /// It is true for a paragraph line from its first character, whatever it
+    /// opens with, while it is no more than 128 bytes (the header cap), and
+    /// after its break until the start of the next line rules out a row of `=`
+    /// or `-`: any other character, a mix of the two, a blank line, the end of
+    /// the message, or a row past the same cap. A line that opens another
+    /// block, a rule or a heading of its own is never in doubt.
     #[must_use]
     pub fn in_doubt(&self) -> bool {
-        self.table.as_ref().is_some_and(Table::pending)
+        self.table.as_ref().is_some_and(Table::pending) || matches!(self.probe, Probe::Probing(_))
     }
 
     /// The held block being gathered, and how many of its lines have begun.
@@ -1343,7 +1422,7 @@ impl Markdown {
                     say(Said::Run { slot, text, link });
                 });
             });
-            self.hand_on(&mut kinds, say);
+            self.hand_on(room, &mut kinds, say);
             match resume {
                 Some(at) => rest = rest.get(at..).unwrap_or_default(),
                 None => break,
@@ -1354,11 +1433,22 @@ impl Markdown {
 
     /// Hands on the block that has just closed, after every run before it, and
     /// the line it takes back before either.
-    fn hand_on(&mut self, kinds: &mut kind::Kinds, say: &mut dyn FnMut(Said<'_>)) {
+    fn hand_on(&mut self, room: usize, kinds: &mut kind::Kinds, say: &mut dyn FnMut(Said<'_>)) {
         if self.retract == Retract::Owed {
             self.retract = Retract::Allowed;
             kinds.flush(&mut |slot, text, link| say(Said::Run { slot, text, link }));
             say(Said::Retract);
+        }
+        // The line taken back was a title: it is said again as a heading,
+        // read by a reader that holds nothing, in the words the heading line
+        // streams in.
+        if let Some(title) = self.retitle.take() {
+            let mut heading = Markdown::new(self.glyphs)
+                .counting(self.forge.clone())
+                .opening(self.files.clone())
+                .as_written();
+            heading.read(&format!("# {}\n", title.trim()), room, say);
+            heading.finish(room, say);
         }
         if let Some(block) = self.ready.take() {
             kinds.flush(&mut |slot, text, link| say(Said::Run { slot, text, link }));
@@ -1395,13 +1485,12 @@ impl Markdown {
                 return Some(at);
             }
 
-            // A header that may be one is read as it arrives, and watched. Its
-            // break is the one character held, with the start of the line
-            // under it, until they say what it was.
-            if self.table.as_ref().is_some_and(Table::mirrors) && self.mirrored(character) {
-                self.say(delta.get(run..at).unwrap_or_default(), say);
-                run = next;
-                continue;
+            // What a heading is written with is kept for the rule under it.
+            if let Some((_, line)) = self.atx.as_mut()
+                && character != '\n'
+                && line.len() < MOST
+            {
+                line.push(character);
             }
 
             // A block of bars takes every character in it, so nothing below
@@ -1441,13 +1530,20 @@ impl Markdown {
                 run = at;
             }
 
-            // The start of a line that could be the header of a table written
-            // without outer bars is watched from its first character, and read
-            // like any other: it is prose until the delimiter row under it
-            // says otherwise.
-            if self.opens_bare(character) {
+            // A paragraph line is watched from its first character, and read
+            // like any other: it is prose until the line under it says it was
+            // the header of a table written without outer bars, or the title of
+            // a heading. Its break is the one character held, with the start of
+            // the line under it, until that says what it was. After the probe,
+            // so that a line that opens like display math and is not is watched
+            // from the character it opened with.
+            if self.opens_title(character) {
                 self.table = Some(Table::bare());
-                self.mirrored(character);
+            }
+            if self.table.as_ref().is_some_and(Table::mirrors) && self.mirrored(character) {
+                self.say(delta.get(run..at).unwrap_or_default(), say);
+                run = next;
+                continue;
             }
 
             match self.held {
@@ -1650,6 +1746,9 @@ impl Markdown {
             }
             Opener::Whole(closer) => {
                 self.probe = Probe::Done;
+                // Display math is no paragraph line, whatever stood in front
+                // of it.
+                self.table = None;
                 self.gathering = Some(Gathering {
                     held: Held::DisplayMath,
                     line: written.len(),
@@ -1661,6 +1760,11 @@ impl Markdown {
             Opener::Not => {
                 self.probe = Probe::Done;
                 written.truncate(held);
+                // What stood in front of the line is read again with the rest
+                // of it, and watched again.
+                if self.table.take_if(|table| table.mirrors()).is_some() {
+                    self.header = Header::Open;
+                }
                 self.scan(&written, room, say);
                 false
             }
@@ -1797,8 +1901,9 @@ impl Markdown {
             // written with, because what the model meant by them is a
             // separator and a separator that stops after three columns reads
             // as a stray. This stands above every arm below it: a line that is
-            // nothing but markers cannot also be emphasis, a bullet, or the
-            // start of anything.
+            // nothing but markers cannot also be emphasis or a bullet. Under a
+            // paragraph line it is not reached at all: the watch of that line
+            // has taken `-` and `=` for the underline of a heading.
             //
             // Handed on as a block where blocks are held, so whoever keeps it
             // can draw it across the room there is later rather than the room
@@ -1823,6 +1928,18 @@ impl Markdown {
             '#' if next == ' ' => {
                 self.opens_block();
                 self.line.heading = true;
+                let level = match held.count {
+                    1 => Some(Level::One),
+                    2 => Some(Level::Two),
+                    _ => None,
+                };
+                if let (true, Some(level)) = (self.holds(), level) {
+                    // Without the blanks in front of it: the rule is as wide
+                    // as the words, as a setext heading's is.
+                    let mut line = String::from(written(held));
+                    line.push(' ');
+                    self.atx = Some((level, line));
+                }
                 true
             }
             // Three or more open a block that outlives the line it is on, or
@@ -1997,6 +2114,19 @@ impl Markdown {
             )
     }
 
+    /// Whether `character` starts a paragraph line, which is watched as the
+    /// header of a table written without outer bars and as the title of a
+    /// heading.
+    ///
+    /// Of the line and of what is open, what [`Markdown::opens_bare`] asks;
+    /// of the character, only that it is not a bar, which opens a block of
+    /// bars, and not a break, which opens nothing. A marker, a space and a
+    /// dollar open a title as any other does, since what a line is written
+    /// with does not say what it was a title of.
+    fn opens_title(&self, character: char) -> bool {
+        self.table.is_none() && !matches!(character, '\n' | '|') && self.opens_bare('a')
+    }
+
     /// Reads `character` into the block of bars being held. Answers whether it
     /// belonged to the block.
     ///
@@ -2049,13 +2179,17 @@ impl Markdown {
     /// header of a table written without outer bars. Answers whether it is the
     /// header's break, which is held back rather than read.
     ///
-    /// A header with fewer than two cells, or too long a one, is prose, and
-    /// nothing is watched past it.
+    /// A line too long to be a header or a title is prose, and nothing is
+    /// watched past it. A line with fewer than two cells is no table header,
+    /// but it is still watched as the title of a heading, so only the table
+    /// side of the watch stops there.
     fn mirrored(&mut self, character: char) -> bool {
         let Some(mut table) = self.table.take() else {
             return false;
         };
         if table.sees(character) != Sight::Keep {
+            // Not watched a second time on the same line.
+            self.header = Header::Declined;
             return false;
         }
 
@@ -2093,6 +2227,10 @@ impl Markdown {
                 self.started = false;
                 false
             }
+            Sight::Under(level) => {
+                self.titled(&table, level);
+                true
+            }
             Sight::Spill => {
                 table.spilt(say);
                 self.header = Header::Declined;
@@ -2112,6 +2250,21 @@ impl Markdown {
         }
     }
 
+    /// Takes the line a row of `=` or `-` stood under back, to be said again as
+    /// the heading it is, with the rule under it handed on as a block.
+    ///
+    /// The row itself was only ever watched: it has not been said, and is not.
+    fn titled(&mut self, table: &Table, level: Level) {
+        self.retract = Retract::Owed;
+        self.retitle = table.title().map(str::to_owned);
+        self.ready = Some(Block {
+            kind: Kind::Heading(level),
+            source: table.source(),
+            closed: true,
+        });
+        self.forgets_line();
+    }
+
     /// Reads what a header's table held back as the prose it always was: the
     /// header's break, and the start of the line under it.
     fn release(
@@ -2128,7 +2281,8 @@ impl Markdown {
     /// Forgets what the line being read had begun, without saying it.
     ///
     /// For a line that is no longer prose being read as such: it is the header
-    /// of a table, which keeps its source and is laid out from that.
+    /// of a table or the title of a heading, which keep their source and are
+    /// laid out from that.
     fn forgets_line(&mut self) {
         self.held = None;
         self.link = None;
@@ -2140,6 +2294,7 @@ impl Markdown {
         self.started = false;
         self.line = Line::default();
         self.probe = Probe::default();
+        self.atx = None;
     }
 
     /// Lets go of a table that has ended: as a block where blocks are held
@@ -2472,11 +2627,18 @@ impl Markdown {
             self.end_line(room, &mut tell);
         }
 
+        // The heading the message ended in the middle of has its rule all the
+        // same, under a line that ends as a break would have ended it.
+        if let Some(block) = self.atx.take().and_then(ruled) {
+            tell(Slot::Plain, "\n", None);
+            self.ready = Some(block);
+        }
+
         // A block that never closed is handed on as it stands: the end of the
         // message is the last thing that could have closed it. A table is
         // drawn from what arrived; anything else is shown as written.
         if let Some(gathering) = self.gathering.take() {
-            self.hand_on(&mut kinds, say);
+            self.hand_on(room, &mut kinds, say);
             self.ready = Some(Block {
                 kind: gathering.held.kind(),
                 source: gathering.source,
@@ -2484,19 +2646,20 @@ impl Markdown {
             });
         }
         self.passing = None;
-        self.hand_on(&mut kinds, say);
+        self.hand_on(room, &mut kinds, say);
         kinds.flush(&mut |slot, text, link| say(Said::Run { slot, text, link }));
         self.kinds = kinds;
     }
 
     /// Reads a line that is still in doubt ([`Markdown::in_doubt`]) as the
     /// prose it was said to be, because whoever is told is about to end the
-    /// line itself and the delimiter row that would have taken it back can
-    /// no longer reach it.
+    /// line itself and the delimiter row or underline that would have taken it
+    /// back can no longer reach it.
     ///
-    /// What the header's table held back is read as written, and nothing is
-    /// watched for after. The rest of a message is read as it would have been
-    /// had the line ended there, so a table that straddles it is not one.
+    /// What the watch held back is read as written, and nothing is watched for
+    /// after. The rest of a message is read as it would have been had the line
+    /// ended there, so a table that straddles it is not one, and a row of `=`
+    /// or `-` that follows is no underline.
     pub fn undoubted(&mut self, room: usize, say: &mut dyn FnMut(Said<'_>)) {
         let mut kinds = std::mem::take(&mut self.kinds);
         let mut tell = |slot: Slot, text: &str, link: Option<&str>| {
@@ -2507,7 +2670,7 @@ impl Markdown {
         while let Some(table) = self.table.take_if(|table| table.pending()) {
             self.release(&table, room, &mut tell);
         }
-        self.hand_on(&mut kinds, say);
+        self.hand_on(room, &mut kinds, say);
         kinds.flush(&mut |slot, text, link| say(Said::Run { slot, text, link }));
         self.kinds = kinds;
     }
@@ -2518,9 +2681,14 @@ impl Markdown {
         // A header still waiting for its delimiter row is the prose it was
         // read as until then, and what was held back with it is read before
         // anything else is let go of, since the line it begins is what the
-        // rest of this stands in.
+        // rest of this stands in. The end of the message is a break, so a row
+        // of `=` or `-` complete at it underlines the line above it as one
+        // followed by a break does.
         while let Some(table) = self.table.take_if(|table| table.pending()) {
-            self.release(&table, room, say);
+            match table.underlined() {
+                Some(level) => self.titled(&table, level),
+                None => self.release(&table, room, say),
+            }
         }
 
         // A run of markers is held for the character that says what it was,
@@ -2574,6 +2742,7 @@ impl Markdown {
     /// Ends the line, and with it everything markdown ends at one.
     fn end_line(&mut self, room: usize, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         let ended = self.inside;
+        let heading = self.atx.take();
         // Belt and braces: the line break puts a link back before it gets here,
         // and the reset below would drop what one was holding without a sound.
         self.close(room, say);
@@ -2671,6 +2840,7 @@ impl Markdown {
             glyphs: self.glyphs,
             unheld: self.unheld,
             retract: self.retract,
+            retitle: self.retitle.take(),
             refusal: self.refusal.filter(|_| ended != Inside::Opening),
             ready,
             gathering: held,
@@ -2692,6 +2862,12 @@ impl Markdown {
         // After the break, so the slot the row ends under is the one it would
         // have worn before emphasis learnt to cross a line at all.
         self.line.emphasis = emphasis;
+
+        // The heading's words have gone out as they arrived, and the rule
+        // under them follows as the block it is.
+        if let Some(block) = heading.and_then(ruled) {
+            self.ready = Some(block);
+        }
     }
 
     /// Hands on a run of text, if there is any.
@@ -2841,6 +3017,18 @@ fn target(between: &str) -> &str {
         .next()
         .unwrap_or_default()
         .trim_matches(|character| character == '<' || character == '>')
+}
+
+/// The rule under a heading `line` was read from, where it has words to rule
+/// under.
+fn ruled((level, line): (Level, String)) -> Option<Block> {
+    let words = line.trim_start().trim_start_matches('#');
+    let words = !words.trim().is_empty();
+    words.then_some(Block {
+        kind: Kind::Heading(level),
+        source: line,
+        closed: true,
+    })
 }
 
 /// The text a run is put back as, where it meant nothing.

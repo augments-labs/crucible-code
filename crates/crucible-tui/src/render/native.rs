@@ -294,8 +294,8 @@ impl<T: Terminal> Renderer<T> {
     /// that first draws it, and a mark hung after that frame would find the
     /// divider gone and mark nothing.
     ///
-    /// A line of an answer that may still be the header of a table written
-    /// without outer bars is ended as the prose it was said to be first, as
+    /// A line of an answer that may still be the header of a table or the title of
+    /// a heading is ended as the prose it was said to be first, as
     /// [`Renderer::present`] does: the divider is under it.
     ///
     /// # Errors

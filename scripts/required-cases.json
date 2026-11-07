@@ -5645,7 +5645,7 @@
       },
       "case": "render::tests::a_redirected_run_has_not_written_a_line_that_may_still_be_a_header",
       "source": "crates/crucible-tui/src/render/tests.rs",
-      "body_sha256": "30109628eba39dc1c0ec2301aaeef9a81ba97227c1a23feaea96e4d857e3c1ea",
+      "body_sha256": "6d22ca13a770e39ed5449f4c01990f93fb9445b8f186ef06ac6c0b65f67363ae",
       "platforms": [
         "linux",
         "macos",
@@ -5682,6 +5682,762 @@
       "case": "markdown::tests::a_header_is_in_doubt_exactly_until_the_delimiter_row_has_arrived",
       "source": "crates/crucible-tui/src/markdown/tests.rs",
       "body_sha256": "91bd5808bcbf38b57ed05df289a9f94d20e5561c156b5c249c84a74c447a5121",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-READ",
+      "family": "transcript-blocks",
+      "obligation": "Title over =====, and Sub over -----, are drawn as headings and the underline rows are never shown: no row of the window holds ===== or ---, and a rule row is never wider than the words above it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::setext_underlines_are_read_rather_than_drawn",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "91fc327276e866dcf47d61338636e88a9978714da00c7c9a93284ed4fa0d2a13",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-READ-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode the scrollback holds the same: no ===== or --- row, a rule under each of Title and Sub no wider than its words.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_setext_underline_is_read_rather_than_drawn",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "8e7934a2498d516738c77c2b9b83e453b28d348f8cdff474296cc2264b7727e6",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-RULE",
+      "family": "transcript-blocks",
+      "obligation": "A level-1 heading wears a heavy rule (\u2501, ascii =) and a level-2 heading a light one (\u2500, ascii -), each as many columns wide as the words as drawn, whatever the length of the underline written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::setext_headings_wear_a_rule_as_wide_as_their_words_in_both_sets",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "a815321d11ca28c6a6b0bd8afd5b453b1c07cb8949cc85acb109f6d1a410333e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-RULE-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The native scrollback wears the same rules, in both glyph sets.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_setext_heading_wears_a_rule_as_wide_as_its_words_in_both_sets",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "4534973912f934a1399098177975faa62529ee848a822e970294d29fe8316861",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-WRAPS",
+      "family": "transcript-blocks",
+      "obligation": "A heading wider than the window wraps, and its single rule is as wide as the last row the words are drawn on; no other row holds a rule glyph.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_screen_wraps_a_heading_with_a_rule_as_wide_as_its_last_row",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "3f5236c015b09de81460ad12e5933c22bd6725a46a837a9b8becd09558550c97",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-WRAPS-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode a wrapped heading wears one rule as wide as its last row.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_heading_that_wraps_wears_a_rule_as_wide_as_its_last_row",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "9b8cd4e090ebb12cb2807da91391a2f829e92936b163c4d2eacec9a62d58bd70",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-RELAID",
+      "family": "transcript-blocks",
+      "obligation": "A heading already written is laid out again when the window narrows and when the glyph set changes: the rule is as wide as the last row of the words at the new width, in the new set's stroke.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_heading_is_laid_out_again_at_a_new_width_and_in_a_new_glyph_set",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "0253d5d1790de9ac04f04e153ad2fe689a51379c145e7806aae071f2608878f8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-RELAID-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The native scrollback is written again with the heading's rule at the new width and in the new glyph set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_heading_is_laid_out_again_at_a_new_width_and_in_a_new_glyph_set",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "3b7e028228c364615039d2c24e81943d8d4c03c847995fe9caa19a09dee32ca8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-NOT-A-PARAGRAPH",
+      "family": "transcript-blocks",
+      "obligation": "A --- at the start of an answer, after a blank line, or under a list item, a quote, an ATX heading, a closed fence or a closed table is a rule as wide as the window; a === row under a list item or a closed fence is prose, and under an ATX heading is prose beside that heading's own rule.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_dashed_row_under_something_that_is_not_a_paragraph_stays_a_full_width_rule",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "9fe8977945903124e54d7713ede12c3cc84db8ee182e7f4d2901c7b474d6ae0e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-NOT-A-PARAGRAPH-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The native scrollback reads --- and === under what is not a paragraph the same way.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_dashed_row_under_something_that_is_not_a_paragraph_stays_a_full_width_rule",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "f3f6445a1aed41f9703db7e37a35d620589d7e1b0845264e532ac106bc8fc11f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-TABLE-BOUNDARY",
+      "family": "transcript-blocks",
+      "obligation": "a | b over --|-- with as many cells is a table (a bar is drawn, no bare rule row), never a level-2 heading.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_line_of_cells_over_a_delimiter_row_is_still_a_table_and_not_a_heading",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "631ea66f101261248b10f56c575c4d87303389d242aeb15f1634ae9e4dd45d32",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-TABLE-BOUNDARY-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The same in native mode: the bar-less table is still a table.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_line_of_cells_over_a_delimiter_row_is_still_a_table_and_not_a_heading",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "a467ff30b5b61a63f3aa383cfd9b68aa60d76b76827626dec3e96705600d8689",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-DECLINED-HEADER",
+      "family": "transcript-blocks",
+      "obligation": "one cell over --- and a | b over --- over 1 | 2 are level-2 headings with their rules; one cell over :-: stays prose.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_dashed_row_under_a_line_that_was_no_table_header_underlines_it",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "1f7b4427b81468bfda0e0e524af63ddc64f2872ef218148bb0a9555abe3684cb",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-DECLINED-HEADER-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The same three answers in native mode.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_dashed_row_under_a_line_that_was_no_table_header_underlines_it",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "78895f3954013ddfc9b94fcb1a12aa5e15039f3a7acb8ece9eccebc0edbd3615",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-END-OF-MESSAGE",
+      "family": "transcript-blocks",
+      "obligation": "Title over ===== and Sub over --- with no final line break are headings: the end of the message completes an underline.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::an_underline_complete_at_the_end_of_the_message_counts",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "3219aeb3d5e2d6c85325fe3f59f1e15147b7dbd981484bb584d884654b43347e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-END-OF-MESSAGE-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The same in native mode, and trailing blanks after the underline are part of it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_underline_at_the_end_of_the_message_or_with_trailing_blanks_counts",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "07b709f4416fda17b7cdc332e799eaccee3e34c9830c436d2ed7c644f738b618",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-UNDERLINE-CAP",
+      "family": "transcript-blocks",
+      "obligation": "Exactly 128 - or 128 = under a short title are headings (levels 2 and 1); 129 - is a full-width rule under prose, and 129 = is prose.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_screen_reads_an_underline_of_a_hundred_and_twenty_eight_marks_and_not_one_more",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "ef7b1c8813ea0153bd57b626b63eff9668dcacc23e065b88181c2e9cc86ffbc4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-UNDERLINE-CAP-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The native scrollback draws a 128-mark underline as a heading and a 129-mark one as it was written, and does the same for a title of 128 bytes against one of 129.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_underline_and_a_title_of_the_most_the_reader_holds_are_headings_and_one_more_is_not",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "cd8cb63508b1c85d3ceb9c79a00512356a0192e2c7e34dfa1c1dd50e293361bf",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-TITLE-CAP",
+      "family": "transcript-blocks",
+      "obligation": "A title of exactly 128 bytes over --- or === is a heading with a rule 128 columns wide; one of 129 bytes over --- stays prose over a full-width rule, and over === stays prose over the row of equals signs.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_screen_reads_a_title_of_a_hundred_and_twenty_eight_bytes_and_not_one_more",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "462d501c210928efe11ad53edb4524936eb17a3821443d14edde25f6a708a598",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-MARKERS-ONLY",
+      "family": "transcript-blocks",
+      "obligation": "**  over --- and --  over --- are level-2 headings with a 2-column rule.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_title_of_nothing_but_markers_is_a_heading_with_a_rule_as_wide_as_the_markers",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "38305ab06d9e3da89eac8edc89ad29499f66ca67dbed6eb8ebc343c338cd04e9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ATX-INDENT-RULE",
+      "family": "transcript-blocks",
+      "obligation": "An ATX heading with up to three spaces in front of it wears a rule as wide as its words alone: `  # Title` draws `  Title` over a 5-column heavy rule, `   ## Sub` over a 3-column light one, and ascii draws `=`.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::an_indented_atx_heading_wears_a_rule_as_wide_as_its_words_and_not_its_indent",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "e401fd3cc2a147ceef84f44a2877b550cba47a412f486ec376ffafd588e4d787",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ATX-INDENT-RULE-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode, an ATX heading with up to three spaces in front of it wears a rule as wide as its words alone: `  # Title` draws `  Title` over a 5-column heavy rule, `   ## Sub` over a 3-column light one, and ascii draws `=`.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_indented_atx_heading_wears_a_rule_as_wide_as_its_words_and_not_its_indent",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "9d7c512978cc816585222917bc16ca541bcbd0101d4d4834ef5d209d96adfe81",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-DOLLAR-BACKSLASH",
+      "family": "transcript-blocks",
+      "obligation": "$5 over --- is a level-2 heading and \\*x over === a level-1 heading drawn as *x, since the display-math probe gives up on both.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_title_that_opens_with_a_dollar_or_a_backslash_is_a_heading",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "d21a1c0e5394ffaa84f0b564a7899dc82bd430f0fb08540ffe4bb3dcc6b7537c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-DOLLAR-BACKSLASH-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The same in native mode, and the marker-only titles.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_title_of_markers_or_opening_with_a_dollar_or_a_backslash_is_a_heading",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "36ea5bed6feba98b24d6965fb42b2de4c614f56f22d80ed72d12fd7bdec569cb",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-LAST-LINE",
+      "family": "transcript-blocks",
+      "obligation": "first line, second line over === draws the first line as prose and the second as the heading with its rule.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_screen_reads_only_the_last_line_of_a_paragraph_as_the_heading",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "44ef58f060bcf842d84d89f0b273fc6428349cfe954923054e3f004cefb9e8aa",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-LAST-LINE-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The same in native mode.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_underline_makes_only_the_last_line_of_a_paragraph_the_heading",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "e12d210163d0af0dacad7ef10425929fc1cb0d7e02262aaded37eddbd7eb9824",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-LOOK-ALIKE",
+      "family": "transcript-blocks",
+      "obligation": "# and a === heading are drawn alike, ## and a --- heading are drawn alike, no # is drawn, and levels 4 to 6 are one row with no rule like level 3.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::atx_and_setext_headings_of_one_level_look_alike_and_levels_four_to_six_look_like_three",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "f79ad50fe5c3090a93d907aa6dc7405654ef7fba8b901651dbca7fa47f7a01fe",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-LOOK-ALIKE-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The same in native mode.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::native_atx_and_setext_headings_of_one_level_look_alike_and_levels_four_to_six_look_like_three",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "27eaaea2edebfd26aa3c424a09d3fead6422c4cd0b5a056686cc1a32b439888f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-LONE-MARKER",
+      "family": "transcript-blocks",
+      "obligation": "Title over a single = and Sub over a single - are headings with rules of 5 and 3 columns.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_lone_marker_is_an_underline",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "f42c25ceb6159dd63e84892122fc77ccbb7c60f9a44ed96f9db4c3f1d0172b29",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-LONE-MARKER-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The same in native mode.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_lone_marker_is_an_underline",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "81048c3d7b32dfe2f4f24c7c1cd5ceef82a3d539e065fba3cd983fff6e1f5ffc",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-CUT",
+      "family": "transcript-blocks",
+      "obligation": "Three answers holding setext headings (and $5 and \\*x titles), each cut into two deltas at every byte, draw the rows the whole answer draws.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_setext_heading_cut_anywhere_draws_what_the_whole_answer_draws",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "98d5ef7e04ceaad8aaa7d2403de7a21ab68df424bee6575243fe852cf6852c22",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-CUT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "The native scrollback of an answer cut into two deltas at every byte equals the one the whole answer keeps.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_answer_cut_anywhere_draws_the_setext_heading_the_whole_answer_draws",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "b0210324fe9712144d96b7753ecea9b5d6b40a737b4eea0c413fa31f25d26285",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-TWO-DELTAS-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "A title and its underline arriving in separate deltas, however cut, are one heading in the scrollback: the title is written once, with its rule under it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_title_and_its_underline_in_two_deltas_are_one_heading",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "06e40182917568c98c938d924e04edafe5c5f8c2508bb091eb94457354368e54",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-PROSE-ONCE-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "A title the next line proves prose reaches the scrollback once, as it was written, before that line.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_title_that_proved_prose_reaches_the_scrollback_once_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "0472cab29e88718a91454ffd70edbf1b6e33fe73c8e446a1d198ccde2f2286c0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-REDIRECTED",
+      "family": "transcript-blocks",
+      "obligation": "With output redirected and colour on, a title (with markers) over === is written once, as the heading drawn with its rule, only after its underline has arrived: nothing is written before, however the answer is cut; Sub over --- is written the same way.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_redirected_run_writes_a_title_once_and_only_when_it_is_settled",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "bfe030f94743382e89c8cfb5456b4e56e240192cad06ad700f05beda108a75be",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-REDIRECTED-PROSE",
+      "family": "transcript-blocks",
+      "obligation": "With output redirected, a title waits for the next line, and when that line is not an underline it is written then as the prose it was.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_redirected_run_ends_a_title_that_proved_prose_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "418f21c3f9144d44de97628cb4e829d7d3aab84c4e71cd78f30e7019ffd69e48",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-COPY",
+      "family": "transcript-blocks",
+      "obligation": "A drag over a heading copies its words and then its rule as drawn, and Ctrl+O lists no source for it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::a_drag_over_a_heading_copies_it_as_it_is_drawn_and_lists_no_source",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "001df272bb438655cee04bffb2e2715675252208103cc3bf3e745c40c1545c70",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-READER-CUT",
+      "family": "transcript-blocks",
+      "obligation": "The reader says the same blocks for an answer cut into deltas anywhere as for the whole answer.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_heading_is_the_same_however_the_answer_is_cut_into_deltas",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "66ad50a3d3868c228fae87025fc268dec91391ce9caf2c5f3388deab3ee5214c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-READER-IN-DOUBT",
+      "family": "transcript-blocks",
+      "obligation": "A paragraph line is in doubt from its first character and after its break, up to the 128-byte cap.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_paragraph_line_is_in_doubt_while_it_is_open_and_right_after_its_break",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "6b307821d0c72b0e96273142d018c4bfe0a459f927a45b95f9382cb4cd563bda",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-READER-DOLLAR-IN-DOUBT",
+      "family": "transcript-blocks",
+      "obligation": "A title opening with $ or a backslash is in doubt from its first character.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_title_that_opens_with_a_dollar_or_a_backslash_is_in_doubt_from_its_first_character",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "522303deeb15428bcc4a14c4d94754bda9a3fc06726a9cb125259de6f423ce4c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-READER-NO-SOURCE",
+      "family": "transcript-blocks",
+      "obligation": "A heading block names no source to list.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_heading_block_names_no_source_to_list",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "a862eebfcaababf72ab6543e7646f227a99382671daa31097814ea478368158c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SETEXT-GLYPH",
+      "family": "transcript-blocks",
+      "obligation": "The heavy rule glyph is one column wide, and differs from the light one in the unicode set only.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "glyphs::tests::the_heavy_rule_is_one_column_and_apart_from_the_light_one_only_where_the_set_can",
+      "source": "crates/crucible-tui/src/glyphs.rs",
+      "body_sha256": "83a652f623cf18639ff41268ebabb522c4c85a4bb585f86eb18aca5a72a5398b",
       "platforms": [
         "linux",
         "macos",

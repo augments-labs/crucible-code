@@ -766,11 +766,12 @@ fn a_redirected_run_has_not_written_a_line_that_may_still_be_a_header() {
     render.stream("before\nname | sin").unwrap();
     assert_eq!(render.terminal.written(), "before\n");
 
-    // Not a header after all: the line is written, whole.
-    render.stream("ce\nnot a delimiter\n").unwrap();
+    // Not a header after all: the line is written, whole, and so is the next
+    // one once its break has shown it is no underline either.
+    render.stream("ce\nnot a delimiter\n\n").unwrap();
     assert_eq!(
         render.terminal.written(),
-        "before\nname | since\nnot a delimiter\n"
+        "before\nname | since\nnot a delimiter\n\n"
     );
 }
 
@@ -3644,6 +3645,8 @@ fn a_rule_narrowed_is_still_one_row() {
         "{rows:#?}"
     );
 }
+
+mod headings;
 
 /// The words of an item that wraps at thirty columns, three rows or more.
 const LONG: &str = "long enough that it has to wrap onto another row, and then one more";

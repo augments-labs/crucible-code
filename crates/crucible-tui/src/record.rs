@@ -29,13 +29,14 @@
 //! words hang where the first row's began. A component whose source is still
 //! held is *responsive*: a prompt, a diff, or a command's answer drawn from
 //! figures it still holds is laid out again at the new width. A block of an
-//! answer is *drawn*: a table or a rule arrives as the source it was written
-//! as, which is kept beside what it was laid out as, and laid out again for a
-//! new width or a new glyph set; a new theme only paints the same rows in
-//! other colours. Both forms count against the ceiling, and a drawn block that
-//! falls off the top takes its source with it. The source is lent, not copied:
-//! [`Record::source_of`] answers for a row and [`Record::sources`] walks the
-//! blocks, so what copies a block and what lists it read the record itself.
+//! answer is *drawn*: a table, a rule or the rule under a heading arrives as
+//! the source it was written as, which is kept beside what it was laid out as,
+//! and laid out again for a new width or a new glyph set; a new theme only
+//! paints the same rows in other colours. Both forms count against the
+//! ceiling, and a drawn block that falls off the top takes its source with it.
+//! The source is lent, not copied: [`Record::source_of`] answers for a row and
+//! [`Record::sources`] walks the blocks, so what copies a block and what lists
+//! it read the record itself.
 //! Everything else is *set*: a box laid out by something that is gone is
 //! clipped rather than pretending it can be rebuilt.
 //!
@@ -647,7 +648,8 @@ impl Record {
     /// Takes the open line back, as if none of it had been written.
     ///
     /// For a line that turned out to be the first of a block laid out from its
-    /// source instead. Only the open line can go: a line that has ended may
+    /// source instead, or the title of a heading, which is written again. Only
+    /// the open line can go: a line that has ended may
     /// already be in the terminal's own scrollback, and nothing takes it out,
     /// which is why a line in doubt is kept open until it is settled.
     pub(crate) fn retract(&mut self) {
