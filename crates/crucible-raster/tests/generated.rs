@@ -315,7 +315,7 @@ fn noise_after_magic(rng: &mut Rng) -> Input {
     }
 }
 
-/// CRC-32 of a PNG chunk, which a rewritten header must carry to be believed.
+/// The checksum of a PNG chunk, which a rewritten header must carry to be believed.
 fn crc32(bytes: &[u8]) -> u32 {
     let mut crc = u32::MAX;
     for byte in bytes {
