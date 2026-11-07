@@ -90,6 +90,16 @@ impl Glyphs {
         }
     }
 
+    /// One column of the rule under a heading of the first level: the heavier
+    /// stroke, where the set has one.
+    #[must_use]
+    pub fn heavy(self) -> &'static str {
+        match self {
+            Self::Unicode => "━",
+            Self::Ascii => "=",
+        }
+    }
+
     /// One row of an edge that runs down.
     ///
     /// Public for the reason [`Glyphs::top`] is.
@@ -562,6 +572,21 @@ mod tests {
             assert_eq!(columns(glyphs.caret()), 1, "{glyphs:?}");
             assert_eq!(columns(glyphs.hidden()), 1, "{glyphs:?}");
         }
+    }
+
+    #[test]
+    fn the_heavy_rule_is_one_column_and_apart_from_the_light_one_only_where_the_set_can() {
+        // A heading's rule is as wide as its words in columns, so a glyph of
+        // two would draw it twice as long in that set only. The ascii set has
+        // no heavier stroke than the plain one, and answers with the equals
+        // sign the way an underlined title in plain text always has.
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            assert_eq!(columns(glyphs.heavy()), 1, "{glyphs:?}");
+        }
+        assert_eq!(Glyphs::Unicode.heavy(), "━");
+        assert_eq!(Glyphs::Ascii.heavy(), "=");
+        assert_ne!(Glyphs::Unicode.heavy(), Glyphs::Unicode.horizontal());
+        assert_ne!(Glyphs::Ascii.heavy(), Glyphs::Ascii.horizontal());
     }
 
     #[test]

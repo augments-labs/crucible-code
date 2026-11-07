@@ -2550,6 +2550,260 @@ fn a_native_rule_narrowed_is_still_one_row() {
     );
 }
 
+/// What a native session on a window `columns` wide keeps of `answer`, which
+/// arrives as `pieces`, once it has settled.
+fn kept_natively(columns: usize, glyphs: Glyphs, pieces: &[&str]) -> Vec<String> {
+    answered_natively_in_pieces(&Window::new(columns, 30), glyphs, pieces, None)
+        .into_iter()
+        .map(|row| row.trim_end().to_owned())
+        .collect()
+}
+
+#[test]
+fn a_native_setext_underline_is_read_rather_than_drawn() {
+    let rows = answered_natively(
+        &Window::new(40, 12),
+        "Title\n=====\n\nSub\n---\n\nprose\n",
+        None,
+    );
+
+    assert!(!rows.iter().any(|row| row.contains("=====")), "{rows:#?}");
+    assert!(!rows.iter().any(|row| row.contains("---")), "{rows:#?}");
+    let is_rule = |row: &str| {
+        let row = row.trim();
+        !row.is_empty() && row.chars().all(|c| matches!(c, '─' | '━'))
+    };
+    let above = std::iter::once("").chain(rows.iter().map(String::as_str));
+    for (over, row) in above.zip(rows.iter()) {
+        if is_rule(row) {
+            assert!(
+                row.trim().chars().count() <= over.trim().chars().count(),
+                "a rule under {over:?} is wider than its words: {rows:#?}"
+            );
+        }
+    }
+    assert!(rows.iter().any(|row| row.contains("Title")));
+    assert!(rows.iter().any(|row| row.contains("Sub")));
+}
+
+#[test]
+fn a_native_setext_heading_wears_a_rule_as_wide_as_its_words_in_both_sets() {
+    let answer = "Title\n=====\n\nSub\n---\n\nprose\n";
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &[answer]),
+        ["Title", "━━━━━", "Sub", "───", "prose"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Ascii, &[answer]),
+        ["Title", "=====", "Sub", "---", "prose"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Ascii, &["Title\n==========\n"]),
+        ["Title", "====="]
+    );
+}
+
+#[test]
+fn a_native_title_and_its_underline_in_two_deltas_are_one_heading() {
+    for pieces in [
+        ["Title\n", "=====\n"].as_slice(),
+        ["Ti", "tle", "\n", "=", "====", "\n"].as_slice(),
+        ["Title\n=====", "\n"].as_slice(),
+        ["Title\n", "=====\n\nafter\n"].as_slice(),
+    ] {
+        let rows = kept_natively(40, Glyphs::Unicode, pieces);
+        assert_eq!(
+            rows.iter().filter(|row| row.contains("Title")).count(),
+            1,
+            "{pieces:?}: {rows:#?}"
+        );
+        assert_eq!(
+            rows.iter().take(2).map(String::as_str).collect::<Vec<_>>(),
+            ["Title", "━━━━━"],
+            "{pieces:?}: {rows:#?}"
+        );
+    }
+}
+
+#[test]
+fn a_native_dashed_row_under_something_that_is_not_a_paragraph_stays_a_full_width_rule() {
+    let rule = "─".repeat(40);
+    for answer in [
+        "---\n",
+        "above\n\n---\n",
+        "- item\n---\n",
+        "> quote\n---\n",
+        "# Foo\n---\n",
+        "```\ncode\n```\n---\n",
+        "| a | b |\n|---|---|\n| 1 | 2 |\n---\n",
+    ] {
+        let rows = kept_natively(40, Glyphs::Unicode, &[answer]);
+        assert_eq!(rows.last(), Some(&rule), "{answer:?}: {rows:#?}");
+    }
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["one cell\n---\n"]),
+        ["one cell", "────────"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["a | b\n--|--\n1 | 2\n"]).len(),
+        3
+    );
+}
+
+#[test]
+fn a_native_heading_that_wraps_wears_a_rule_as_wide_as_its_last_row() {
+    let rows = kept_natively(16, Glyphs::Unicode, &["A title long enough to wrap\n=\n"]);
+    assert!(rows.len() > 2, "{rows:#?}");
+    let [.., words, rule] = rows.as_slice() else {
+        panic!("{rows:#?}");
+    };
+    assert_eq!(*rule, "━".repeat(crate::width::columns(words)), "{rows:#?}");
+}
+
+#[test]
+fn a_native_heading_is_laid_out_again_at_a_new_width_and_in_a_new_glyph_set() {
+    let answer = "A title long enough to wrap\n=====\n\nAnd a second one to wrap\n---\n";
+    let narrowed = answered_natively(&Window::new(40, 30), answer, Some((16, 30)));
+    let narrowed: Vec<String> = narrowed
+        .iter()
+        .map(|row| row.trim_end().to_owned())
+        .collect();
+    assert!(
+        narrowed.iter().any(|row| row.contains('━')),
+        "{narrowed:#?}"
+    );
+    assert_eq!(narrowed, kept_natively(16, Glyphs::Unicode, &[answer]));
+
+    // The set changes after the answer is kept; the next replay is in it.
+    let window = Window::new(40, 30);
+    let mut render = native(&window);
+    render.wears(colourful());
+    stands(&mut render);
+    render.stream(answer).unwrap();
+    render.settle().unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+    render.draws(Glyphs::Ascii);
+    settles_at(&window, &mut render, 16, 30);
+    let (boxed, _) = boxed();
+    let boxed: Vec<String> = boxed.iter().map(Row::text).collect();
+    let replayed: Vec<String> = window
+        .all()
+        .into_iter()
+        .filter(|row| !row.trim().is_empty() && !boxed.contains(row))
+        .map(|row| row.trim_end().to_owned())
+        .collect();
+    assert!(
+        replayed.iter().any(|row| row.starts_with('=')),
+        "{replayed:#?}"
+    );
+    assert_eq!(replayed, kept_natively(16, Glyphs::Ascii, &[answer]));
+}
+
+#[test]
+fn a_native_underline_at_the_end_of_the_message_or_with_trailing_blanks_counts() {
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["Title\n====="]),
+        ["Title", "━━━━━"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["Sub\n---"]),
+        ["Sub", "───"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["Title\n===\t\n"]),
+        ["Title", "━━━━━"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["Sub\n---\t\n"]),
+        ["Sub", "───"]
+    );
+}
+
+#[test]
+fn a_native_underline_and_a_title_of_the_most_the_reader_holds_are_headings_and_one_more_is_not() {
+    assert_eq!(
+        kept_natively(
+            200,
+            Glyphs::Unicode,
+            &[&format!("Sub\n{}\n", "-".repeat(128))]
+        ),
+        ["Sub", "───"]
+    );
+    assert_eq!(
+        kept_natively(
+            200,
+            Glyphs::Unicode,
+            &[&format!("Title\n{}\n", "=".repeat(128))]
+        ),
+        ["Title", "━━━━━"]
+    );
+    assert_eq!(
+        kept_natively(
+            200,
+            Glyphs::Unicode,
+            &[&format!("Sub\n{}\n", "-".repeat(129))]
+        ),
+        ["Sub".to_owned(), "─".repeat(200)]
+    );
+    assert_eq!(
+        kept_natively(
+            200,
+            Glyphs::Unicode,
+            &[&format!("Title\n{}\n", "=".repeat(129))]
+        ),
+        ["Title".to_owned(), "=".repeat(129)]
+    );
+    let long = "t".repeat(128);
+    assert_eq!(
+        kept_natively(200, Glyphs::Unicode, &[&format!("{long}\n---\n")]),
+        [long.clone(), "─".repeat(128)]
+    );
+    let longer = "t".repeat(129);
+    assert_eq!(
+        kept_natively(200, Glyphs::Unicode, &[&format!("{longer}\n===\n")]),
+        [longer, "===".to_owned()]
+    );
+}
+
+#[test]
+fn a_native_title_of_markers_or_opening_with_a_dollar_or_a_backslash_is_a_heading() {
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["**\n---\n"]),
+        ["**", "──"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["--\n---\n"]),
+        ["--", "──"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["$5\n---\n"]),
+        ["$5", "──"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["\\*x\n===\n"]),
+        ["*x", "━━"]
+    );
+}
+
+#[test]
+fn a_native_answer_cut_anywhere_draws_the_setext_heading_the_whole_answer_draws() {
+    let answer = "intro\n\nTitle\n=====\n\nSub\n---\nafter\n";
+    let whole = kept_natively(40, Glyphs::Unicode, &[answer]);
+    assert!(whole.iter().any(|row| row == "━━━━━"), "{whole:#?}");
+
+    for cut in 1..answer.len() {
+        let rows = kept_natively(40, Glyphs::Unicode, &[&answer[..cut], &answer[cut..]]);
+        assert_eq!(rows, whole, "cut at {cut}");
+    }
+}
+
+#[test]
+fn a_native_title_that_proved_prose_reaches_the_scrollback_once_as_the_prose_it_was() {
+    let rows = kept_natively(40, Glyphs::Unicode, &["Title\n", "not an underline\n"]);
+    assert_eq!(rows, ["Title", "not an underline"]);
+}
+
 /// An item long enough to wrap at thirty columns onto three rows or more.
 const LONG_ITEM: &str = "long enough that it has to wrap onto another row, and then one more";
 

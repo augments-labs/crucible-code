@@ -35,7 +35,50 @@ or with <kbd>Shift</kbd> held while you drag, your terminal selects and copies
 it as it does any other text.
 
 A rule, a line of `---`, `***` or `___` on its own, is never held. It is drawn
-across the window at once.
+across the window at once. A heading does not wait for its end either: its
+words are drawn as they arrive. See [Headings](#headings) for the rule under
+them.
+
+## Headings
+
+A heading is its words on a row of their own, with no `#` and no underline
+drawn. A heading of the first level has a heavy rule on the row under it
+(`━`, or `=` in the ASCII glyph set), and one of the second level a light rule
+(`─`, or `-`). Each rule is as wide as the last row the words are drawn on, in
+columns, so a heading that wraps is ruled as wide as its last row, and the
+length of a row of `=` or `-` you wrote under it makes no difference. A heading
+of the third level has its row and no rule, and so do the fourth, fifth and
+sixth, which look like the third.
+
+A heading is written with `#` marks (`# One`, `## Two`, `### Three`), or as a
+line over a row of `=` (the first level) or `-` (the second):
+
+```text
+Title
+=====
+```
+
+The row is one mark or more, up to three spaces in front of it, and spaces or
+tabs after it, and nothing else. Only the last line of a paragraph is the
+heading; the lines above it stay as they were. The two ways of writing a
+heading are drawn alike. A row of `-` under a list item, a quote, a heading, a
+code block or a table is a rule across the window, as it is after a blank
+line, and a row of `=` there is text; so is a row of `=` or `-` of more than
+128 bytes, and so is a title of more than 128 bytes. The row under a line of
+two or more cells that has as many cells is the delimiter row of a table: see
+[Blocks held until they close](#blocks-held-until-they-close). Any other line
+over a row of dashes is a heading of the second level, so `one cell` over `---`
+is one.
+
+The words of a line that may be a title are drawn as they arrive. Only the
+line break after it, and the start of the line under it, wait; when the row
+turns out to be an underline the line is drawn again as the heading it is, and
+when it turns out to be anything else nothing changes. In the native screen
+the line stays out of the terminal's scrollback until that is known, and
+nothing already written to it is taken back. Output that is not a terminal
+keeps the markdown as it was written, the row of `=` or `-` included. Heading
+rules are laid out again when the window changes width or you change the glyph
+set, in both screens, from the heading as it was written.
 
 ## The source of a table, formula, diagram or diff
 
@@ -43,7 +86,8 @@ A table, a formula, a mermaid diagram and a diff are drawn from the text the
 model wrote, and that text can be had whole. In the full screen, a selection
 that touches any row of one of them copies the whole of its source, once however
 many of its rows or times it is touched, in order with the prose around it.
-Two blocks in one selection give both. A rule copies as it is drawn. In the
+Two blocks in one selection give both. A rule, and a heading with its rule
+copy as they are drawn, the words and then the rule. In the
 native screen, or with <kbd>Shift</kbd> held while you drag, your terminal
 copies what it shows. In both screens <kbd>Ctrl+O</kbd> lists the source of
 each drawn block, newest first, after any cut results: see
@@ -51,8 +95,8 @@ each drawn block, newest first, after any cut results: see
 
 ## Drawn again at every width
 
-A table and a rule are kept as the text the model wrote, beside the rows they
-were drawn as. When the window changes width, or you change the glyph set,
+A table, a rule and the rule under a heading are kept as the text the model
+wrote, beside the rows they were drawn as. When the window changes width, or you change the glyph set,
 each is laid out again from that text for the window it is in now, so a table
 drawn in a narrow window and then widened is the table a window that wide
 would have drawn. A change of theme repaints the same rows in the new colours.
@@ -128,9 +172,9 @@ Some text is drawn exactly as the model wrote it, rather than as a block:
   delimiter row in the middle of prose leaves both lines as prose. Nothing
   marks the first line as a header until the delimiter row has arrived, so
   every line is shown as it arrives, as the prose it may be, and is replaced by
-  the table once the delimiter row has. Only the line break after a line of two
-  or more cells, and the start of the line under it, wait for what follows;
-  a header longer than 128 bytes is prose. Output that is not a terminal keeps
+  the table once the delimiter row has. Only the line break after a line, and
+  the start of the line under it, wait for what follows; a header longer than
+  128 bytes is prose. Output that is not a terminal keeps
   every table, like the rest of the model's markdown, as it was written.
 - **Lines with bars and no delimiter row.** They are drawn as written.
 - **A `$` in prose.** A price such as `$5`, or `$$` after other words on a
