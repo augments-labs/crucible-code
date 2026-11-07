@@ -2146,9 +2146,12 @@ fn a_native_frame_drawn_while_a_header_is_in_doubt_leaves_what_drawing_the_whole
     }
 }
 
+/// A call that writes under the line an answer left open.
+type Writes = fn(&mut Renderer<Window>);
+
 /// What a native screen is left holding when `call` writes under an answer
 /// cut at `cut`, then the rest of the answer arrives.
-fn written_under_the_cut(cut: &str, call: fn(&mut Renderer<Window>)) -> Vec<String> {
+fn written_under_the_cut(cut: &str, call: Writes) -> Vec<String> {
     let window = Window::new(40, 12);
     let mut render = native(&window);
     render.wears(colourful());
@@ -2174,7 +2177,7 @@ fn a_native_call_that_writes_under_a_header_in_doubt_ends_it_as_the_prose_it_was
     // line an answer left open, and a header that is still only a guess is
     // the prose it looked like when they do: said once in the scrollback,
     // with the same rows for the same words that could not have been a header.
-    let calls: [(&str, fn(&mut Renderer<Window>)); 3] = [
+    let calls: [(&str, Writes); 3] = [
         ("present", |render| {
             render.present(&[row("component")]).unwrap();
         }),
@@ -2205,6 +2208,148 @@ fn a_native_call_that_writes_under_a_header_in_doubt_ends_it_as_the_prose_it_was
             );
             assert_eq!(doubtful, plain, "{name} {cut:?}");
         }
+    }
+}
+
+#[test]
+fn a_native_responsive_block_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // On a native screen a block that keeps what lays it ends the line an
+    // answer left open, and a header still in doubt goes to the scrollback as
+    // the prose it looked like, said once, never as a table made of it later.
+    let call: Writes = |render| {
+        render
+            .responsive(9, Box::new(|_| vec![row("component")]))
+            .unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = written_under_the_cut(cut, call);
+        let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_native_block_charged_as_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // As the responsive block, for the one charged as its rows: the header
+    // still in doubt reaches the scrollback once, as the prose it looked like.
+    let call: Writes = |render| {
+        render
+            .responsive_as_laid(Box::new(|_| vec![row("component")]))
+            .unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = written_under_the_cut(cut, call);
+        let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_native_opening_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // The opening ends the line an answer left open the same way on a native
+    // screen: the header still in doubt reaches the scrollback once, as prose.
+    let call: Writes = |render| {
+        render
+            .opens(Box::new(|_, _| vec![row("component")]))
+            .unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = written_under_the_cut(cut, call);
+        let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_native_divider_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // A divider parts what is above it in the scrollback from what follows,
+    // so a header still in doubt over it goes there once, as the prose it
+    // looked like, and the delimiter row that comes later makes no table of it.
+    let call: Writes = |render| render.divides("new session").unwrap();
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = written_under_the_cut(cut, call);
+        let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
     }
 }
 

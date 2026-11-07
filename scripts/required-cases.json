@@ -5375,7 +5375,7 @@
       },
       "case": "render::native::tests::a_native_call_that_writes_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
       "source": "crates/crucible-tui/src/render/native/tests.rs",
-      "body_sha256": "c4b9f9475e185d77893aede0a0450351ee926faa29030027799da8c1cce2e994",
+      "body_sha256": "36319500e603f651d211d4c385172c78774858cc77ab012c0f361d2376f4f918",
       "platforms": [
         "linux",
         "macos",
@@ -5393,7 +5393,151 @@
       },
       "case": "render::tests::a_line_written_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
       "source": "crates/crucible-tui/src/render/tests.rs",
-      "body_sha256": "661c464e619ddc018fa0c2ee3b5b36f8751f057a9b79e9413b77899f31f8aa8d",
+      "body_sha256": "be0665e6466ebabbc86fac479a1fe9dc68e8eb4a9c537c16edfcbb82a79d5ec1",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-RESPONSIVE-IN-DOUBT",
+      "family": "transcript-blocks",
+      "obligation": "A responsive block laid while a line may still be the header of a table written without outer bars ends it as the prose it was: the header said once, no blank row added, no table made of it when the delimiter row comes, as for the same words with no header in them.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_responsive_block_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "a2d8421614c75ad06740b68ce47491ee202345a13a8984550057ae08894a8dfe",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-RESPONSIVE-IN-DOUBT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "On a native screen, a responsive block laid while a line may still be the header of a table written without outer bars sends it to the scrollback once, as the prose it was, with no table made of it when the delimiter row comes.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_responsive_block_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "f9b9e98fd7b08f14fbaffc6121ccce0ba6009fb143b61a2baee286c32269214d",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-AS-LAID-IN-DOUBT",
+      "family": "transcript-blocks",
+      "obligation": "A responsive block charged as laid while a line may still be the header of a table written without outer bars ends it as the prose it was: the header said once, no blank row added, no table made of it when the delimiter row comes, as for the same words with no header in them.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_block_charged_as_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "2fe663fa05725ce15e6a33ab9de6c07efb71045444ca8704cdea164e39157596",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-AS-LAID-IN-DOUBT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "On a native screen, a responsive block charged as laid while a line may still be the header of a table written without outer bars sends it to the scrollback once, as the prose it was, with no table made of it when the delimiter row comes.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_block_charged_as_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "5f40a6fe1e5548a7c119a34b0a488575d8c5e65d93d41e7ab36297f3767bdb72",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-OPENS-IN-DOUBT",
+      "family": "transcript-blocks",
+      "obligation": "An opening laid while a line may still be the header of a table written without outer bars ends it as the prose it was: the header said once, no blank row added, no table made of it when the delimiter row comes, as for the same words with no header in them.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::an_opening_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "820cd2114682fc5e970ea275204b59b79b218dcee041504156fba5db4270c0a3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-OPENS-IN-DOUBT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "On a native screen, an opening laid while a line may still be the header of a table written without outer bars sends it to the scrollback once, as the prose it was, with no table made of it when the delimiter row comes.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_opening_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "4d6b17c4cf05e53dc804fda38ce3710dd10fbf8081a3e1242a1346dd7e37011c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-DIVIDES-IN-DOUBT",
+      "family": "transcript-blocks",
+      "obligation": "A divider laid while a line may still be the header of a table written without outer bars ends it as the prose it was: the header said once, no blank row added, no table made of it when the delimiter row comes, as for the same words with no header in them.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_divider_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "c509936d43b2f8319e386bca6b57c577a6ebac0b5e2c30dc3a7f53d7846ffb70",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-DIVIDES-IN-DOUBT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "On a native screen, a divider laid while a line may still be the header of a table written without outer bars sends it to the scrollback once, as the prose it was, with no table made of it when the delimiter row comes.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_divider_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "e6e6dabd8bb0aa6da351a4f174c9c97a437e454b91a5785bafd01a03cd073338",
       "platforms": [
         "linux",
         "macos",

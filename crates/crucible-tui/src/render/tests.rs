@@ -3300,7 +3300,7 @@ fn a_line_written_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
     // that is still only a guess first, as presenting rows does: what is
     // written is under the prose, and the delimiter row that comes later has
     // no header left to turn into a table or to take back.
-    let calls: [(&str, fn(&mut Renderer<Recording>)); 2] = [
+    let calls: [(&str, Writes); 2] = [
         ("commit", |render| render.commit("note").unwrap()),
         ("prompt", |render| {
             render.prompt(Slot::Plain, "note").unwrap();
@@ -3339,6 +3339,167 @@ fn a_line_written_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
             );
             assert_eq!(doubtful, plain, "{name} {cut:?}");
         }
+    }
+}
+
+/// A call that writes under the line an answer left open.
+type Writes = fn(&mut Renderer<Recording>);
+
+/// What the record keeps when `call` writes under an answer cut at `cut`,
+/// then the rest of the answer arrives, delimiter row and all.
+fn laid_under_the_cut(cut: &str, call: Writes) -> Vec<String> {
+    let mut drawn = reading(40, 12);
+    drawn.render.stream(&format!("before\n\n{cut}")).unwrap();
+    call(&mut drawn.render);
+    drawn
+        .render
+        .stream("\n--|--\nalpha | 0.1\n\nafter\n")
+        .unwrap();
+    drawn.render.settle().unwrap();
+    kept(&drawn).1
+}
+
+#[test]
+fn a_responsive_block_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // A block that keeps what lays it ends the line an answer left open, as
+    // presenting rows does, so a header that is still only a guess is the
+    // prose it looked like: said once, with no blank row added and no table
+    // made of it when the delimiter row comes later.
+    let call: Writes = |render| {
+        render
+            .responsive(9, Box::new(|_| vec![Row::plain("component")]))
+            .unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = laid_under_the_cut(cut, call);
+        let plain: Vec<String> = laid_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_block_charged_as_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // As a responsive block, for the one whose rows are what it is charged:
+    // the header still in doubt is the prose it looked like, said once.
+    let call: Writes = |render| {
+        render
+            .responsive_as_laid(Box::new(|_| vec![Row::plain("component")]))
+            .unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = laid_under_the_cut(cut, call);
+        let plain: Vec<String> = laid_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn an_opening_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // The opening keeps what lays it too, and ends the line an answer left
+    // open the same way: the header still in doubt is the prose it looked
+    // like, said once.
+    let call: Writes = |render| {
+        render
+            .opens(Box::new(|_, _| vec![Row::plain("component")]))
+            .unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = laid_under_the_cut(cut, call);
+        let plain: Vec<String> = laid_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_divider_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // A divider is a row of its own under the line an answer left open, so a
+    // header still in doubt is the prose it looked like when one is laid:
+    // said once, and no table made of it when the delimiter row comes later.
+    let call: Writes = |render| render.divides("new session").unwrap();
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = laid_under_the_cut(cut, call);
+        let plain: Vec<String> = laid_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
     }
 }
 

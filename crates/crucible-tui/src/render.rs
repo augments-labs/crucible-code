@@ -1551,6 +1551,10 @@ impl<T: Terminal> Renderer<T> {
     /// over, charged against that record's ceiling. Each width it is handed is
     /// [`Self::transcript_columns`], as for [`Self::present`].
     ///
+    /// A line of an answer that may still be the header of a table written
+    /// without outer bars is ended as the prose it was said to be first, as
+    /// [`Self::present`] does: the block is under it.
+    ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
@@ -1560,6 +1564,7 @@ impl<T: Terminal> Renderer<T> {
         retained: usize,
         lay: Box<dyn Fn(usize) -> Vec<Row>>,
     ) -> Result<(), TerminalError> {
+        self.undoubted()?;
         if !self.terminal.is_terminal() {
             return self.present(&lay(self.transcript_columns()));
         }
@@ -1575,7 +1580,8 @@ impl<T: Terminal> Renderer<T> {
     /// the rows laid for the width there is now are what is charged, so they
     /// are laid out once, and not a second time to be measured. A source much
     /// larger than what it lays, such as one clipped at a narrow width, goes
-    /// through [`Self::responsive`] with its own size instead.
+    /// through [`Self::responsive`] with its own size instead. A line still in
+    /// doubt is ended first, as there.
     ///
     /// # Errors
     ///
@@ -1584,6 +1590,7 @@ impl<T: Terminal> Renderer<T> {
         &mut self,
         lay: Box<dyn Fn(usize) -> Vec<Row>>,
     ) -> Result<(), TerminalError> {
+        self.undoubted()?;
         if !self.terminal.is_terminal() {
             return self.present(&lay(self.transcript_columns()));
         }
@@ -1605,6 +1612,10 @@ impl<T: Terminal> Renderer<T> {
     /// named, so a card laid out again after the reader changed it is drawn
     /// in the set they chose.
     ///
+    /// A line of an answer that may still be the header of a table written
+    /// without outer bars is ended as the prose it was said to be first, as
+    /// [`Self::present`] does: the opening is under it.
+    ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
@@ -1612,6 +1623,7 @@ impl<T: Terminal> Renderer<T> {
         &mut self,
         lay: Box<dyn Fn(usize, Glyphs) -> Vec<Row>>,
     ) -> Result<(), TerminalError> {
+        self.undoubted()?;
         if !self.terminal.is_terminal() {
             // Nothing will resize a file, so holding what could draw it again
             // would be holding it for an event that cannot arrive.
