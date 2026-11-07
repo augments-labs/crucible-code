@@ -6459,6 +6459,582 @@
       "platforms": [
         "linux"
       ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-INPUT-CEILING",
+      "family": "transcript-pictures",
+      "obligation": "A picture file or SVG one byte past one mebibyte is refused.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::input_is_refused_one_byte_past_its_ceiling",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "ac2060154e5f6c413a97e5e4150c26498db3265a92c6053185c1952053713ce6",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-DECODED-CEILING",
+      "family": "transcript-pictures",
+      "obligation": "A decoded picture one byte past two mebibytes is refused.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::decoded_pixels_are_refused_one_byte_past_their_ceiling",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "217f86ef08a46dc18cdd6e537a1f321354c7c571e2abec8e86b079323ba1d93c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-FORGED-HEADER",
+      "family": "transcript-pictures",
+      "obligation": "A header that claims four billion pixels is refused, not allocated.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_header_claiming_four_billion_pixels_is_refused_not_allocated",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "3a3db6a7b06c6a7d11f734f1fe3d33183d3928cb5e5a567796017c58a78b3ce4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-DRAWING-CEILING",
+      "family": "transcript-pictures",
+      "obligation": "An SVG drawn into more than two mebibytes of pixels is refused.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_drawing_is_refused_one_byte_past_its_ceiling",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "c461a9fb74639c2a8fc503771c05360a1bfd0735d41825bf670507bcf0bc4703",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ONE-SLOT",
+      "family": "transcript-pictures",
+      "obligation": "Only one picture is read or drawn at a time, across threads.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::the_slot_lets_one_thread_hold_it_at_a_time",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "9e1103fb95cc5b66566ef90cc8e69508c2ac895b7958ba271ed2c82e411ee7ea",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SLOT-OVER-TIME",
+      "family": "transcript-pictures",
+      "obligation": "The wait for the decode slot is bounded and ends as OverTime.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::the_wait_for_the_slot_is_bounded_and_says_over_time",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "d29573ee493cacd61d101bf086b1dc781f4badf0ce3c62acd31edfdbc7fbaa3f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SLOT-UNWIND",
+      "family": "transcript-pictures",
+      "obligation": "The decode slot is released when its holder unwinds.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::the_slot_is_released_when_its_holder_unwinds",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "63336443745b8e3c885abe7ada75d737e2ad8a14a135840136b0794eb78318b7",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-PNG-CEILING",
+      "family": "transcript-pictures",
+      "obligation": "A PNG payload is refused one byte past one mebibyte.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_png_payload_is_refused_one_byte_past_its_ceiling",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "13098e26accb0a19fa6718377cc7c4b214a0bd4a9667448fbfb39033b3dc950e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SIXEL-WIDTH",
+      "family": "transcript-pictures",
+      "obligation": "A Sixel payload is refused wider than six hundred pixels.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_sixel_payload_is_refused_wider_than_its_ceiling",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "e246250aca8dfe5fe0beac5fc2abee2f18b1c8c881543fbedf6ad7016a5ff501",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SIXEL-NOISE",
+      "family": "transcript-pictures",
+      "obligation": "The widest, noisiest Sixel payload stays within the size measured for it.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::the_widest_noisiest_sixel_payload_stays_within_its_measured_bound",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "e6faf6010cd830184438d2c6b9cf7ecb15ca182227b903f199c1f74cd481c19e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-IMAGE-HREF",
+      "family": "transcript-pictures",
+      "obligation": "An image in an SVG that is not a data URL is not followed.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::an_image_that_is_not_a_data_url_is_not_followed",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "7f9f6225a33fe40f8cf4cf6d05770fb47ea89c5f5eee3bd63f417a3988d0b01c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ONE-FONT",
+      "family": "transcript-pictures",
+      "obligation": "The font database holds the one embedded face and nothing from the system.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::the_font_database_holds_the_one_embedded_face_and_nothing_from_the_system",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "b6d4a57645aaf453ec6f91854c586510eb98bbfd67105bab1f598c3083710ab9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-REFERENCE-RINGS",
+      "family": "transcript-pictures",
+      "obligation": "References that lead back to where they started are refused before the parser follows them.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::references_that_lead_back_to_where_they_started_are_refused_before_the_parser_follows_them",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "6b631ea204c466fac669b96e06eadc96ad71c6e425d44225173865afc0e01f0a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-NEAR-MISSES",
+      "family": "transcript-pictures",
+      "obligation": "References that share a target without leading back are drawn.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::references_that_share_a_target_without_leading_back_are_drawn",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "b4e4b7ec0598bb0a9acc6cba2c959d8e71b9ed06e620d75fd9aae2e872426ac2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-DEEP-NESTING",
+      "family": "transcript-pictures",
+      "obligation": "A picture nested as deep as the parser allows is drawn whatever stack the caller has.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_picture_nested_as_deep_as_the_parser_allows_is_drawn_whatever_stack_the_caller_has",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "295b85b6730a3d0d2149008bd42e70ed0e414b34e9bf3ac7658baa9b418d4461",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-RENDERER-PANIC",
+      "family": "transcript-pictures",
+      "obligation": "A drawing the renderer panics on is refused, not raised to the caller.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_drawing_the_renderer_panics_on_is_refused_not_raised_to_the_caller",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "8a901b90b25cc9d3f24c0371ce237aa4e0ce93c1d08a38823f79086fae29c437",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-CORPUS",
+      "family": "transcript-pictures",
+      "obligation": "Every file of the hostile corpus is drawn or refused as recorded, and the record and the corpus agree.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "every_file_of_the_corpus_is_drawn_or_refused_as_recorded",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "b1cfb61b941bba266c770ff06687745c8406f7242285a9b11ea75ced8ba6f244",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-CORPUS-RECORD",
+      "family": "transcript-pictures",
+      "obligation": "No file of the corpus is missing from the record, or the record from the corpus.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "no_file_of_the_corpus_is_missing_from_the_record_or_the_record_from_the_corpus",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "41f0e8c5e0634a4a31276d8320b14871a9b2221d14838bab4852ef64c38e3a49",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-NO-REFERENCE-FOLLOWED",
+      "family": "transcript-pictures",
+      "obligation": "Every reference an SVG makes is drawn as if it were not there, and what it names records no open, connect, accept or use.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "every_reference_is_drawn_as_if_it_were_not_there_and_what_it_names_records_nothing",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "c89e1691801a72505d7c696647d96d1ab08a63eb220f9dbd917d8915e4faace1",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-OBSERVER-USE",
+      "family": "transcript-pictures",
+      "obligation": "A resolver planted to use the sentinel changes the output and is found.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_planted_resolver_that_uses_the_sentinel_changes_the_output_and_is_found",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "3e46c832abf6a2a3a8f7e2e39f6f667ea4ff0ee3d319563f2be43678986bd3f9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-OBSERVER-READ",
+      "family": "transcript-pictures",
+      "obligation": "A resolver planted to read and discard is found by the pipe that was opened.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_planted_resolver_that_reads_and_discards_is_found_by_the_pipe_that_was_opened",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "c90dc0888270be0a404d4b3c0b3108a3755c789ba8881b211ac2a04f1740f9eb",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-OBSERVER-CONNECT",
+      "family": "transcript-pictures",
+      "obligation": "A resolver planted to connect is found by the listener that accepted.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_planted_resolver_that_connects_is_found_by_the_listener_that_accepted",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "a49defc638d53f9e41dd398839868d61eb29b90cbc57e3c0ca9f28273fd458d5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-CORPUS-SILENT",
+      "family": "transcript-pictures",
+      "obligation": "The whole corpus drawn in a child process prints nothing.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "the_whole_corpus_drawn_in_a_child_process_prints_nothing",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "0927fbedacfcac12a9aa5d113bd47e075134ce3291779926f98277d8054b207c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SILENT-PLANTED-DIAGNOSTIC",
+      "family": "transcript-pictures",
+      "obligation": "A diagnostic planted behind an allow is found by the child-process check.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_planted_diagnostic_behind_an_allow_is_found_by_the_child_process_check",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "484a58e11c66b082510e6dd1e27f82abf9b0d05031b7b6059661851726d73b93",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SILENT-PLANTED-LINE",
+      "family": "transcript-pictures",
+      "obligation": "A line planted on the standard output is found by the child-process check.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_planted_line_on_the_standard_output_is_found_by_the_child_process_check",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "30daf95b0787975651a06a2ce843c9ef9b509b8975954c51e3cc5783783070e2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-HOSTILE-RUNNER-PANIC",
+      "family": "transcript-pictures",
+      "obligation": "A panic in the corpus runner is reported as a finding, not lost.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_planted_panic_is_found_by_the_runner",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "78b5e57ed82cc7ab0bba9f5eca58d3cc079343b9765f04a4b24215c54b151e0c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-HOSTILE-RUNNER-LOOP",
+      "family": "transcript-pictures",
+      "obligation": "An unbounded loop in the corpus runner is reported as a finding, not waited on.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_planted_unbounded_loop_is_found_by_the_runner",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "8c7134978c2b82be83b30c12da573ab347f2c5a81da1fa6ecace283af999edb8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-GENERATED",
+      "family": "transcript-pictures",
+      "obligation": "Generated pictures of every family are decoded, drawn or refused within the ceilings, none panicking or hanging.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "generated"
+      },
+      "case": "generated_pictures_are_decoded_drawn_or_refused_within_the_ceilings",
+      "source": "crates/crucible-raster/tests/generated.rs",
+      "body_sha256": "dce71f6197cead6275a2b2106127406be44603f6dec2d7579c8461dafae49086",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-GENERATED-DETERMINISTIC",
+      "family": "transcript-pictures",
+      "obligation": "A generated case is the same from the same seed and index.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "generated"
+      },
+      "case": "the_same_case_is_made_from_the_same_seed_and_index",
+      "source": "crates/crucible-raster/tests/generated.rs",
+      "body_sha256": "69183561f7c3129310d7ecbef1d949e946702f2af1e73bec530995299bce945f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-GENERATED-FORGED",
+      "family": "transcript-pictures",
+      "obligation": "The forged headers of every format are read by the decoder as a size past the ceiling.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "generated"
+      },
+      "case": "the_forged_headers_are_forged_to_something_the_decoder_reads_as_a_size",
+      "source": "crates/crucible-raster/tests/generated.rs",
+      "body_sha256": "003d06d826d575457d64a74a3b97e43a5aff618319c5eb9f1b151e71e6b57e95",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-GENERATED-RUNNER-PANIC",
+      "family": "transcript-pictures",
+      "obligation": "A panic planted in the generated runner is reported as a finding.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "generated"
+      },
+      "case": "a_planted_panic_is_found_by_the_generated_runner",
+      "source": "crates/crucible-raster/tests/generated.rs",
+      "body_sha256": "9778df341b9d094df39c63686ed1496ce5fcc416f92081f54f305e561a28d880",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-GENERATED-RUNNER-LOOP",
+      "family": "transcript-pictures",
+      "obligation": "A loop planted in the generated runner is reported as a finding.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "generated"
+      },
+      "case": "a_planted_unbounded_loop_is_found_by_the_generated_runner",
+      "source": "crates/crucible-raster/tests/generated.rs",
+      "body_sha256": "dd0d64dcc0d4b182c19fd2ea184eb6b78050ed62220de531493060d4d904d1d9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
     }
   ]
 }
