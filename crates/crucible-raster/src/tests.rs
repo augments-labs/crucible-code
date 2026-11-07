@@ -1,4 +1,5 @@
 use super::*;
+use resvg::usvg;
 use std::sync::{Mutex, MutexGuard, PoisonError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -345,6 +346,288 @@ fn decode_waits_for_the_slot_before_it_works() {
     assert!(
         heard.recv_timeout(Duration::from_millis(300)).is_err(),
         "decoded while another held the slot"
+    );
+    drop(held);
+    assert!(
+        heard
+            .recv_timeout(SOON)
+            .expect("it finishes once the slot is free")
+    );
+    worker
+        .join()
+        .expect("the thread ends")
+        .expect("the test is listening");
+}
+
+const RECT: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"><rect width="50" height="50" fill="#ff0000"/></svg>"##;
+
+/// The pixel at a column and row.
+fn at(pixels: &Pixels, column: u32, row: u32) -> [u8; 4] {
+    let index = ((row * pixels.width() + column) * 4) as usize;
+    *pixels
+        .rgba()
+        .get(index..index + 4)
+        .expect("inside the picture")
+        .first_chunk()
+        .expect("four bytes")
+}
+
+#[test]
+fn an_svg_is_drawn_at_the_width_asked_with_nothing_behind_it() {
+    let _alone = alone();
+    let pixels = rasterise(RECT.as_bytes(), 200, &[]).expect("a rectangle");
+    assert_eq!((pixels.width(), pixels.height()), (200, 100));
+    assert_eq!(at(&pixels, 10, 10), RED, "inside the rectangle");
+    assert_eq!(
+        at(&pixels, 150, 10)[3],
+        0,
+        "outside it is transparent, not white"
+    );
+}
+
+#[test]
+fn the_height_follows_the_proportions_and_rounds_up_to_a_row() {
+    let _alone = alone();
+    let tall = r#"<svg xmlns="http://www.w3.org/2000/svg" width="3" height="10"><rect width="3" height="10"/></svg>"#;
+    let flat = r#"<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1"><rect width="1000" height="1"/></svg>"#;
+    assert_eq!(
+        rasterise(tall.as_bytes(), 10, &[]).map(|p| p.height()),
+        Ok(34),
+        "33.3 rows is 34"
+    );
+    assert_eq!(
+        rasterise(flat.as_bytes(), 10, &[]).map(|p| p.height()),
+        Ok(1),
+        "never a zero-row picture"
+    );
+}
+
+#[test]
+fn a_drawing_is_refused_one_byte_past_its_ceiling() {
+    let _alone = alone();
+    let square = r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>"#;
+    assert_eq!(
+        rasterise(square.as_bytes(), 724, &[]).map(|p| p.rgba().len()),
+        Ok(724 * 724 * 4)
+    );
+    assert_eq!(
+        rasterise(square.as_bytes(), 725, &[]).map(|_| ()),
+        Err(Refused::TooLarge)
+    );
+    let wide = r#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><rect width="2" height="1"/></svg>"#;
+    assert_eq!(
+        rasterise(wide.as_bytes(), 1024, &[]).map(|p| p.rgba().len()),
+        Ok(MOST_DECODED)
+    );
+    assert_eq!(
+        rasterise(wide.as_bytes(), 1025, &[]).map(|_| ()),
+        Err(Refused::TooLarge)
+    );
+    for width in [u32::MAX, 1 << 31, 100_000] {
+        assert_eq!(
+            rasterise(wide.as_bytes(), width, &[]).map(|_| ()),
+            Err(Refused::TooLarge),
+            "{width}"
+        );
+    }
+}
+
+#[test]
+fn an_svg_is_refused_one_byte_past_its_ceiling() {
+    let _alone = alone();
+    let mut at = RECT.as_bytes().to_vec();
+    at.resize(MOST_INPUT, b' ');
+    assert!(
+        rasterise(&at, 10, &[]).is_ok(),
+        "an SVG of exactly {MOST_INPUT} bytes is read"
+    );
+    at.push(b' ');
+    assert_eq!(rasterise(&at, 10, &[]).map(|_| ()), Err(Refused::TooLarge));
+}
+
+#[test]
+fn bytes_that_are_no_svg_are_not_an_image() {
+    let _alone = alone();
+    for (name, bytes) in [
+        ("empty", Vec::new()),
+        ("text", b"not a picture".to_vec()),
+        ("a png", made::png(4, 4, RED)),
+        ("bytes that are not utf-8", vec![0xff, 0xfe, 0x3c, 0x73]),
+        (
+            "a compressed svg, which is not read",
+            vec![0x1f, 0x8b, 8, 0, 0, 0, 0, 0],
+        ),
+        ("markup that is not svg", b"<html><body/></html>".to_vec()),
+        (
+            "an unclosed svg",
+            b"<svg xmlns='http://www.w3.org/2000/svg' width='4' height='4'><g>".to_vec(),
+        ),
+    ] {
+        assert_eq!(
+            rasterise(&bytes, 10, &[]).map(|_| ()),
+            Err(Refused::NotAnImage),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        rasterise(RECT.as_bytes(), 0, &[]).map(|_| ()),
+        Err(Refused::NotAnImage),
+        "no width"
+    );
+}
+
+const INKED: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><g class="warm"><rect width="5" height="10" fill="currentColor"/></g><rect x="5" width="5" height="10" class="cool" fill="currentColor"/></svg>"#;
+
+#[test]
+fn the_classes_an_svg_names_are_coloured_by_the_inks_it_is_given() {
+    let _alone = alone();
+    let by_day = [("warm", [200, 40, 0]), ("cool", [0, 40, 200])];
+    let by_night = [("warm", [255, 200, 120]), ("cool", [10, 10, 90])];
+    let day = rasterise(INKED.as_bytes(), 10, &by_day).expect("by day");
+    let night = rasterise(INKED.as_bytes(), 10, &by_night).expect("by night");
+    assert_eq!(
+        (at(&day, 1, 5), at(&day, 8, 5)),
+        ([200, 40, 0, 255], [0, 40, 200, 255])
+    );
+    assert_eq!(
+        (at(&night, 1, 5), at(&night, 8, 5)),
+        ([255, 200, 120, 255], [10, 10, 90, 255])
+    );
+    let unlisted = rasterise(INKED.as_bytes(), 10, &[("warm", [200, 40, 0])]).expect("one ink");
+    assert_eq!(
+        at(&unlisted, 8, 5),
+        [0, 0, 0, 255],
+        "a class with no ink keeps the default colour"
+    );
+}
+
+#[test]
+fn a_name_that_is_not_a_class_is_not_let_into_the_style_sheet() {
+    let _alone = alone();
+    for name in [
+        "",
+        "a b",
+        "a{color:red}b",
+        "a,b",
+        "a;b",
+        "é",
+        "a\nb",
+        ".warm",
+        "a/*",
+        "a}",
+    ] {
+        assert_eq!(
+            rasterise(INKED.as_bytes(), 10, &[(name, [1, 2, 3])]).map(|_| ()),
+            Err(Refused::NotAnImage),
+            "{name:?}"
+        );
+    }
+    assert!(rasterise(INKED.as_bytes(), 10, &[("Slot_9-b", [1, 2, 3])]).is_ok());
+}
+
+const WORDS: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="120" height="30"><text x="2" y="22" font-size="20" font-family="FAMILY">Hello</text></svg>"#;
+
+#[test]
+fn text_is_drawn_with_the_font_the_crate_carries_whatever_family_is_named() {
+    let _alone = alone();
+    let drawn = |family: &str| {
+        rasterise(WORDS.replace("FAMILY", family).as_bytes(), 120, &[]).expect("a text")
+    };
+    let reference = drawn("DejaVu Sans");
+    assert!(
+        reference
+            .rgba()
+            .chunks_exact(4)
+            .any(|pixel| pixel.last().is_some_and(|alpha| *alpha > 0)),
+        "no glyph reached the picture"
+    );
+    // Were any system font consulted, one of these names would find its own.
+    for family in [
+        "Times New Roman",
+        "monospace",
+        "serif",
+        "Courier New",
+        "Liberation Sans",
+        "No Such Family",
+    ] {
+        assert_eq!(
+            drawn(family),
+            reference,
+            "{family} was drawn in another font"
+        );
+    }
+}
+
+#[test]
+fn the_font_database_holds_the_one_embedded_face_and_nothing_from_the_system() {
+    let database = fonts();
+    let faces: Vec<_> = database.faces().collect();
+    assert_eq!(faces.len(), 1, "a second face came from somewhere");
+    let face = faces.first().expect("the embedded face");
+    assert_eq!(
+        face.families.first().map(|(name, _)| name.as_str()),
+        Some("DejaVu Sans")
+    );
+    assert!(
+        matches!(face.source, usvg::fontdb::Source::Binary(_)),
+        "the face was read from a file"
+    );
+}
+
+#[test]
+fn an_image_that_is_not_a_data_url_is_not_followed() {
+    let _alone = alone();
+    // An SVG file, because that is what a resolver that reads the file would
+    // draw even where raster images are not.
+    let file =
+        std::env::temp_dir().join(format!("crucible-raster-href-{}.svg", std::process::id()));
+    std::fs::write(
+        &file,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#00ff00"/></svg>"##,
+    )
+    .expect("a picture to point at");
+    let page = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="8" height="8"><image width="8" height="8" xlink:href="{}"/></svg>"#,
+        file.display()
+    );
+    let pixels = rasterise(page.as_bytes(), 8, &[]).expect("an svg");
+    std::fs::remove_file(&file).expect("clean up");
+    assert!(
+        pixels.rgba().iter().all(|byte| *byte == 0),
+        "the file named by an href was read and drawn"
+    );
+}
+
+#[test]
+fn an_svg_inside_a_data_url_is_drawn_and_its_own_references_are_not_followed() {
+    let _alone = alone();
+    let inner = r##"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4" fill="#00ff00"/></svg>"##;
+    let encoded: String = inner
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() {
+                char::from(byte).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect();
+    let outer = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="4" height="4"><image width="4" height="4" xlink:href="data:image/svg+xml;charset=utf8,{encoded}"/></svg>"#
+    );
+    let pixels = rasterise(outer.as_bytes(), 4, &[]).expect("a nested svg");
+    assert_eq!(at(&pixels, 2, 2), [0, 255, 0, 255]);
+}
+
+#[test]
+fn rasterise_waits_for_the_slot_before_it_works() {
+    let _alone = alone();
+    let held = Slot::take(SOON).expect("the slot");
+    let (told, heard) = mpsc::channel();
+    let worker = thread::spawn(move || told.send(rasterise(RECT.as_bytes(), 10, &[]).is_ok()));
+    assert!(
+        heard.recv_timeout(Duration::from_millis(300)).is_err(),
+        "drew while another held the slot"
     );
     drop(held);
     assert!(

@@ -1,10 +1,12 @@
 //! Pictures and image files as bounded pixels, and as PNG and Sixel payloads.
 
 use image::{DynamicImage, ImageDecoder, ImageError, ImageReader, Limits};
+use resvg::tiny_skia::{Pixmap, Transform};
+use resvg::usvg::{Error as UsvgError, ImageHrefResolver, Options, Tree, fontdb};
 use std::cell::Cell;
 use std::io::Cursor;
 use std::marker::PhantomData;
-use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 /// Why bytes did not become pixels, or pixels did not become a payload.
@@ -92,7 +94,8 @@ impl std::fmt::Debug for Pixels {
 /// The bytes of a `width` by `height` RGBA picture, or `None` where they do
 /// not fit a `usize`.
 fn rgba_len(width: u32, height: u32) -> Option<usize> {
-    usize::try_from(u64::from(width) * u64::from(height) * 4).ok()
+    let pixels = u64::from(width).checked_mul(u64::from(height))?;
+    usize::try_from(pixels.checked_mul(4)?).ok()
 }
 
 /// Decode a PNG, JPEG, GIF or WebP file; the first frame of an animation.
@@ -123,6 +126,122 @@ pub fn decode(bytes: &[u8]) -> Result<Pixels, Refused> {
     }
     let picture = DynamicImage::from_decoder(decoder).map_err(|error| refusal(&error))?;
     Pixels::from_rgba(width, height, picture.into_rgba8().into_raw())
+}
+
+/// Draw an SVG at `width_px` wide, as straight RGBA with nothing behind it.
+///
+/// `inks` are the colours of the classes the SVG names: each `(class, rgb)`
+/// colours, through `currentColor`, whatever carries that class, so one SVG is
+/// drawn in the theme of whichever composition asks. A class is made of ASCII
+/// letters, digits, `-` and `_`; any other name is refused rather than let into
+/// the style sheet.
+///
+/// Nothing outside the bytes is read: an `<image>` that is not a `data:` URL, an
+/// `@import` and a font URL are not followed, and the only font is the one this
+/// crate carries. The height follows the SVG's own proportions, rounded up.
+///
+/// # Errors
+/// [`Refused::TooLarge`] for an SVG past [`MOST_INPUT`] or a drawing past
+/// [`MOST_DECODED`], [`Refused::NotAnImage`] for bytes that are not an SVG, a
+/// zero width or an ink that cannot be a class, [`Refused::OverTime`] when the
+/// decode slot stays busy.
+pub fn rasterise(svg: &[u8], width_px: u32, inks: &[(&str, [u8; 3])]) -> Result<Pixels, Refused> {
+    if svg.len() > MOST_INPUT {
+        return Err(Refused::TooLarge);
+    }
+    if width_px == 0 {
+        return Err(Refused::NotAnImage);
+    }
+    let options = Options {
+        style_sheet: Some(style_sheet(inks)?),
+        font_family: FONT_FAMILY.to_owned(),
+        fontdb: fonts(),
+        image_href_resolver: ImageHrefResolver {
+            resolve_data: ImageHrefResolver::default_data_resolver(),
+            // The default reads the file an `href` names. Nothing here is
+            // allowed to name one.
+            resolve_string: Box::new(|_, _| None),
+        },
+        ..Options::default()
+    };
+    let _slot = Slot::take(WAIT)?;
+    let tree = Tree::from_data(svg, &options).map_err(|error| match error {
+        UsvgError::ElementsLimitReached => Refused::TooLarge,
+        _ => Refused::NotAnImage,
+    })?;
+    let size = tree.size();
+    // The ceiling is judged on the size the drawing would have, before a pixmap
+    // is asked for. A float is cast to a `u32` by saturating, so a height too
+    // tall for one is still too tall for the ceiling.
+    let height = (f64::from(size.height()) * f64::from(width_px) / f64::from(size.width()))
+        .ceil()
+        .max(1.0);
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "saturates, and the ceiling is checked next"
+    )]
+    let height = height as u32;
+    if rgba_len(width_px, height).is_none_or(|rgba| rgba > MOST_DECODED) {
+        return Err(Refused::TooLarge);
+    }
+    let mut canvas = Pixmap::new(width_px, height).ok_or(Refused::TooLarge)?;
+    #[allow(clippy::cast_precision_loss, reason = "a size under the ceiling")]
+    let scale = Transform::from_scale(
+        width_px as f32 / size.width(),
+        height as f32 / size.height(),
+    );
+    resvg::render(&tree, scale, &mut canvas.as_mut());
+    let straight = canvas
+        .pixels()
+        .iter()
+        .flat_map(|pixel| {
+            let pixel = pixel.demultiply();
+            [pixel.red(), pixel.green(), pixel.blue(), pixel.alpha()]
+        })
+        .collect();
+    Pixels::from_rgba(width_px, height, straight)
+}
+
+/// The `color` of each class in `inks`, as the style sheet that gives it.
+fn style_sheet(inks: &[(&str, [u8; 3])]) -> Result<String, Refused> {
+    inks.iter()
+        .map(|(name, [red, green, blue])| {
+            let is_class = !name.is_empty()
+                && name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_');
+            is_class
+                .then(|| format!(".{name} {{ color: #{red:02x}{green:02x}{blue:02x} }}\n"))
+                .ok_or(Refused::NotAnImage)
+        })
+        .collect()
+}
+
+/// `DejaVu Sans` 2.37, the one font any text is drawn in. Its licence is beside
+/// it in `fonts/`.
+const DEJAVU_SANS: &[u8] = include_bytes!("../fonts/DejaVuSans.ttf");
+
+/// The family name [`DEJAVU_SANS`] carries, which every generic family and the
+/// default are pointed at.
+const FONT_FAMILY: &str = "DejaVu Sans";
+
+/// The font database: [`DEJAVU_SANS`] and nothing from the system, loaded on
+/// the first drawing.
+fn fonts() -> Arc<fontdb::Database> {
+    static FONTS: OnceLock<Arc<fontdb::Database>> = OnceLock::new();
+    FONTS
+        .get_or_init(|| {
+            let mut database = fontdb::Database::new();
+            database.load_font_source(fontdb::Source::Binary(Arc::new(DEJAVU_SANS)));
+            database.set_serif_family(FONT_FAMILY);
+            database.set_sans_serif_family(FONT_FAMILY);
+            database.set_cursive_family(FONT_FAMILY);
+            database.set_fantasy_family(FONT_FAMILY);
+            database.set_monospace_family(FONT_FAMILY);
+            Arc::new(database)
+        })
+        .clone()
 }
 
 /// How long an entry point waits for the decode slot. The work behind it is
