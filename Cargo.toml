@@ -724,3 +724,18 @@ inherits = "release"
 # optimized in the builds tests use.
 [profile.dev.package.sha2]
 opt-level = 3
+
+# The picture crate draws hostile SVG and decodes hostile images, and its
+# generated corpus runs thousands of them. Unoptimized, the renderer takes
+# seconds for a picture a release build draws in milliseconds, so the corpus
+# would not finish in a gate's time, and it needs far more stack to recurse as
+# deep as the parser allows. The crates that do that work are optimized in the
+# builds tests use.
+[profile.dev.package.tiny-skia]
+opt-level = 3
+[profile.dev.package.tiny-skia-path]
+opt-level = 3
+[profile.dev.package.resvg]
+opt-level = 3
+[profile.dev.package.usvg]
+opt-level = 3
