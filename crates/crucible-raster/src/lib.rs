@@ -155,9 +155,9 @@ pub fn decode(bytes: &[u8]) -> Result<Pixels, Refused> {
 /// # Errors
 /// [`Refused::TooLarge`] for an SVG past [`MOST_INPUT`] or a drawing past
 /// [`MOST_DECODED`], [`Refused::NotAnImage`] for bytes that are not an SVG, a
-/// zero width, a document whose references lead back to themselves or an ink
-/// that cannot be a class, [`Refused::OverTime`] when the
-/// decode slot stays busy.
+/// zero width, a drawing the renderer panics on, a document whose references
+/// lead back to themselves or an ink that cannot be a class,
+/// [`Refused::OverTime`] when the decode slot stays busy.
 pub fn rasterise(svg: &[u8], width_px: u32, inks: &[(&str, [u8; 3])]) -> Result<Pixels, Refused> {
     if svg.len() > MOST_INPUT {
         return Err(Refused::TooLarge);
@@ -187,7 +187,10 @@ pub fn rasterise(svg: &[u8], width_px: u32, inks: &[(&str, [u8; 3])]) -> Result<
             .spawn_scoped(scope, || draw(svg, width_px, &options))
             .map_err(|_| Refused::TooLarge)?
             .join()
-            .unwrap_or_else(|unwound| std::panic::resume_unwind(unwound))
+            // A renderer that panics on a picture has not drawn it, and the
+            // panic ends with the drawing thread. The process's panic hook
+            // has still reported it.
+            .unwrap_or(Err(Refused::NotAnImage))
     })
 }
 

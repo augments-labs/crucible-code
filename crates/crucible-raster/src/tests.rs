@@ -977,3 +977,17 @@ fn a_ring_inside_a_nested_svg_is_dropped_and_the_page_around_it_is_drawn() {
     let pixels = rasterise(outer.as_bytes(), 20, &[]).expect("the page around it");
     assert_eq!(at(&pixels, 10, 10), [0, 255, 0, 255]);
 }
+
+#[test]
+fn a_drawing_the_renderer_panics_on_is_refused_not_raised_to_the_caller() {
+    let _alone = alone();
+    // A stroke far wider than the picture, dashed, makes the renderer's
+    // anti-aliasing index past its own rows. Found by generated input.
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="756.131" height="1e400" viewBox="0 0 3803.823 3803.823"><g transform="scale(2215.33)"><path d="M0 0 L3803.823 3803.823" stroke="#000" stroke-width="413156971" stroke-dasharray="5em 5em" fill="none"/><circle cx="3803.823" cy="3803.823" r="756.131"/></g></svg>"##;
+    assert_eq!(
+        rasterise(svg.as_bytes(), 583, &[]),
+        Err(Refused::NotAnImage)
+    );
+    // The slot is free again for the next picture.
+    assert!(rasterise(RECT.as_bytes(), 100, &[]).is_ok());
+}
