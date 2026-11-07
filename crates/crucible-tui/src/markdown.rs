@@ -1241,8 +1241,8 @@ pub struct Markdown {
     /// that is not one of its own, which is a question asked at the start of
     /// every line rather than settled once.
     table: Option<Table>,
-    /// Whether this line may still be watched as the header of a table without
-    /// outer bars.
+    /// Whether this line may still be watched, as the header of a table
+    /// without outer bars or as the title of a setext heading.
     header: Header,
     /// Whether the line being said is to be taken back.
     retract: Retract,
@@ -2178,8 +2178,10 @@ impl Markdown {
     /// header of a table written without outer bars. Answers whether it is the
     /// header's break, which is held back rather than read.
     ///
-    /// A header with fewer than two cells, or too long a one, is prose, and
-    /// nothing is watched past it.
+    /// A line too long to be a header or a title is prose, and nothing is
+    /// watched past it. A line with fewer than two cells is no table header,
+    /// but it is still watched as the title of a heading, so only the table
+    /// side of the watch stops there.
     fn mirrored(&mut self, character: char) -> bool {
         let Some(mut table) = self.table.take() else {
             return false;

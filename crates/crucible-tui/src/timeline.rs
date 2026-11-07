@@ -379,7 +379,8 @@ fn read(segment: &str, room: usize, glyphs: Glyphs, forge: Option<&Forge>, rows:
                 put(&mut lines, Slot::Plain, "\n", None);
             }
         }
-        // The line being written is the header of the table that follows.
+        // The line being written is the header of the table that follows, or
+        // the title of the heading that follows.
         Said::Retract => {
             if let Some(line) = lines.last_mut() {
                 *line = Spans::default();
