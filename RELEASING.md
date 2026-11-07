@@ -160,7 +160,7 @@ git push -u origin release/v0.0.1
 # 2. Open it against the released branch, let CI answer, merge it.
 gh pr create --base main --title "release: 0.0.1"
 gh pr checks --watch
-gh pr merge --merge
+gh pr merge --merge --match-head-commit "$(git rev-parse HEAD)"
 
 # 3. Wait for the run the merge started on main, which tests every platform,
 #    then stage that commit's release and wait for its verdict.
@@ -184,7 +184,7 @@ git push -u origin chore/merge-v0.0.1
 
 gh pr create --base dev --title "chore: merge 0.0.1 back into dev"
 gh pr checks --watch
-gh pr merge --merge
+gh pr merge --merge --match-head-commit "$(git rev-parse HEAD)"
 ```
 
 Step 5 carries the bump over a branch rather than opening `main` against `dev`
@@ -196,7 +196,8 @@ it did.
 
 `dev` and `main` both merge directly once `CI required` is green on a head that
 is up to date with the base. Only a release branch or a hotfix reaches `main`,
-one at a time.
+one at a time, and a maintainer merges it, as
+[`CONTRIBUTING.md`](CONTRIBUTING.md#merging-and-closing) sets out.
 
 Step 5 is not bookkeeping either. Until it runs, `dev` builds a binary that
 reports the previous version and a changelog with no entry for the release that
