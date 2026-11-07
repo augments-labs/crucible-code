@@ -1,0 +1,13 @@
+[package]
+name = "crucible-raster"
+description = "Pictures and image files as bounded pixels, and as PNG and Sixel payloads."
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true

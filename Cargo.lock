@@ -691,6 +691,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-raster"
+version = "0.50.0"
+
+[[package]]
 name = "crucible-registry"
 version = "0.50.0"
 dependencies = [

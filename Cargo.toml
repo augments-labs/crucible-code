@@ -52,6 +52,7 @@ crucible-mcp = { path = "crates/crucible-mcp" }
 crucible-models = { path = "crates/crucible-models" }
 crucible-privacy = { path = "crates/crucible-privacy" }
 crucible-provider = { path = "crates/crucible-provider" }
+crucible-raster = { path = "crates/crucible-raster" }
 crucible-registry = { path = "crates/crucible-registry" }
 crucible-runner = { path = "crates/crucible-runner" }
 crucible-runtime = { path = "crates/crucible-runtime" }
