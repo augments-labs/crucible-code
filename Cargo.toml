@@ -37,9 +37,10 @@ arboard = { version = "=3.7.0", features = ["wayland-data-control"] }
 image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 # Draws an SVG into pixels, which `std` has no parser, path filler or glyph
 # shaper for. Only `text` is on, so no system font is scanned and no gzip
-# stream is inflated, and the raster-image decoders it would otherwise carry
-# are the `image` crate's job here. Fonts and every `href` are the caller's:
-# nothing it names is read from the machine.
+# stream is inflated, and its own raster-image decoders are left off, so a
+# raster image embedded in an SVG is skipped rather than drawn; the `image`
+# crate decodes image files, never an SVG's. Fonts and every `href` are the
+# caller's: nothing it names is read from the machine.
 resvg = { version = "=0.49.0", default-features = false, features = ["text"] }
 # Encodes pixels as a Sixel payload for terminals that draw one, which `std`
 # cannot do: Sixel is a six-pixel-row text format over a palette, so the work is
