@@ -1,10 +1,14 @@
 //! Pictures and image files as bounded pixels, and as PNG and Sixel payloads.
 
-use image::{DynamicImage, ImageDecoder, ImageError, ImageReader, Limits};
+use icy_sixel::{EncodeOptions, SixelImage};
+use image::codecs::png::PngEncoder;
+use image::{
+    DynamicImage, ExtendedColorType, ImageDecoder, ImageEncoder, ImageError, ImageReader, Limits,
+};
 use resvg::tiny_skia::{Pixmap, Transform};
 use resvg::usvg::{Error as UsvgError, ImageHrefResolver, Options, Tree, fontdb};
 use std::cell::Cell;
-use std::io::Cursor;
+use std::io::{self, Cursor, Write};
 use std::marker::PhantomData;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
@@ -242,6 +246,112 @@ fn fonts() -> Arc<fontdb::Database> {
             Arc::new(database)
         })
         .clone()
+}
+
+/// Encode pixels as a PNG file, which a terminal that draws PNG shows as it is.
+///
+/// # Errors
+/// [`Refused::TooLarge`] when the file would be past [`MOST_PNG`] bytes; the
+/// bytes already made are dropped, and none past the ceiling are kept.
+pub fn png(pixels: &Pixels) -> Result<Vec<u8>, Refused> {
+    png_within(pixels, MOST_PNG)
+}
+
+/// [`png`] with the ceiling given, so a test can sit on the byte.
+fn png_within(pixels: &Pixels, most: usize) -> Result<Vec<u8>, Refused> {
+    let mut out = Capped {
+        kept: Vec::new(),
+        most,
+        refused: false,
+    };
+    PngEncoder::new(&mut out)
+        .write_image(
+            pixels.rgba(),
+            pixels.width(),
+            pixels.height(),
+            ExtendedColorType::Rgba8,
+        )
+        .map_err(|_| Refused::TooLarge)?;
+    // The encoder writes its last chunk from a destructor that drops the
+    // error, so a refusal there leaves a short file and an `Ok`. The sink
+    // remembers it has refused.
+    if out.refused {
+        return Err(Refused::TooLarge);
+    }
+    Ok(out.kept)
+}
+
+/// A sink that keeps what it is given up to a ceiling and fails the write that
+/// would pass it, keeping none of that write.
+struct Capped {
+    kept: Vec<u8>,
+    most: usize,
+    refused: bool,
+}
+
+impl Write for Capped {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if self.kept.len().saturating_add(bytes.len()) > self.most {
+            self.refused = true;
+            return Err(io::Error::other("past the ceiling"));
+        }
+        self.kept.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// How a Sixel payload is made, which the terminal cannot say for itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SixelPalette {
+    /// The colour transparent and half-transparent pixels are laid over: Sixel
+    /// has no alpha worth the name, so what shows through is decided here, and
+    /// it should be the terminal's own background.
+    pub ground: [u8; 3],
+    /// The most colours the payload defines, from 2 to 256; a number outside
+    /// that is taken as the nearest end of it.
+    pub colours: u16,
+}
+
+/// Encode pixels as a Sixel payload, `ESC P … ESC \`, for a terminal that
+/// draws Sixel.
+///
+/// Refused wider than [`MOST_SIXEL_WIDTH`]: quantising grows steeply with the
+/// area, and a picture that wide already fills the screens this is for.
+///
+/// # Errors
+/// [`Refused::TooLarge`] for a picture wider than the ceiling,
+/// [`Refused::NotAnImage`] when the encoder cannot make a payload of it.
+pub fn sixel(pixels: &Pixels, palette: &SixelPalette) -> Result<Vec<u8>, Refused> {
+    if pixels.width() > MOST_SIXEL_WIDTH {
+        return Err(Refused::TooLarge);
+    }
+    let [red, green, blue] = palette.ground;
+    let laid_over: Vec<u8> = pixels
+        .rgba()
+        .chunks_exact(4)
+        .flat_map(|pixel| {
+            let [r, g, b, alpha] = *pixel.first_chunk::<4>().unwrap_or(&[0; 4]);
+            let over = |top: u8, under: u8| {
+                let (top, under, alpha) = (u16::from(top), u16::from(under), u16::from(alpha));
+                u8::try_from((top * alpha + under * (255 - alpha) + 127) / 255).unwrap_or(u8::MAX)
+            };
+            [over(r, red), over(g, green), over(b, blue), 255]
+        })
+        .collect();
+    let width = usize::try_from(pixels.width()).map_err(|_| Refused::TooLarge)?;
+    let height = usize::try_from(pixels.height()).map_err(|_| Refused::TooLarge)?;
+    let options = EncodeOptions {
+        max_colors: palette.colours.clamp(2, 256),
+        ..EncodeOptions::default()
+    };
+    SixelImage::try_from_rgba(laid_over, width, height)
+        .and_then(|image| image.encode_with(&options))
+        .map(String::into_bytes)
+        .map_err(|_| Refused::NotAnImage)
 }
 
 /// How long an entry point waits for the decode slot. The work behind it is

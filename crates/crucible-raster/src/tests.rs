@@ -640,3 +640,158 @@ fn rasterise_waits_for_the_slot_before_it_works() {
         .expect("the thread ends")
         .expect("the test is listening");
 }
+
+/// Bytes nothing compresses, from a fixed seed.
+fn noise(width: u32, height: u32) -> Pixels {
+    let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+    let rgba = (0..width * height * 4)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state.to_le_bytes().first().copied().unwrap_or(0)
+        })
+        .collect();
+    Pixels::from_rgba(width, height, rgba).expect("pixels")
+}
+
+fn flat_pixels(width: u32, height: u32, rgba: [u8; 4]) -> Pixels {
+    Pixels::from_rgba(width, height, made::flat(width, height, rgba)).expect("pixels")
+}
+
+#[test]
+fn a_png_payload_decodes_back_to_the_pixels_it_was_made_from() {
+    let _alone = alone();
+    let pixels = noise(40, 30);
+    let payload = png(&pixels).expect("a PNG");
+    assert!(payload.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]));
+    assert_eq!(
+        decode(&payload),
+        Ok(pixels),
+        "straight alpha comes back as it went"
+    );
+}
+
+#[test]
+fn a_png_payload_is_refused_one_byte_past_its_ceiling() {
+    let pixels = noise(64, 64);
+    let whole = png_within(&pixels, usize::MAX).expect("no ceiling");
+    assert!(whole.len() > 1000, "noise does not shrink");
+    assert!(
+        png_within(&pixels, whole.len()).is_ok_and(|exact| exact == whole),
+        "exactly the ceiling"
+    );
+    assert_eq!(png_within(&pixels, whole.len() - 1), Err(Refused::TooLarge));
+    assert_eq!(png_within(&pixels, 0), Err(Refused::TooLarge));
+}
+
+#[test]
+fn the_ceiling_a_png_payload_is_held_to_is_one_mebibyte() {
+    assert_eq!(MOST_PNG, 1024 * 1024);
+    // 1024 x 512 of noise is 2 MiB before the encoder starts, and does not shrink.
+    assert_eq!(png(&noise(1024, 512)), Err(Refused::TooLarge));
+    assert!(png(&noise(256, 256)).is_ok_and(|payload| payload.len() <= MOST_PNG));
+}
+
+const PLAIN: SixelPalette = SixelPalette {
+    ground: [0, 0, 0],
+    colours: 256,
+};
+
+fn text(payload: Vec<u8>) -> String {
+    String::from_utf8(payload).expect("a Sixel payload is ASCII")
+}
+
+#[test]
+fn a_sixel_payload_is_a_device_control_string_defining_the_colours_it_draws() {
+    let drawn = text(sixel(&flat_pixels(8, 12, RED), &PLAIN).expect("a payload"));
+    assert!(drawn.starts_with("\u{1b}P"), "opens with DCS: {drawn:?}");
+    assert!(drawn.ends_with("\u{1b}\\"), "closes with ST: {drawn:?}");
+    assert!(
+        drawn.contains(";2;100;0;0"),
+        "red is defined, in percent: {drawn:?}"
+    );
+}
+
+#[test]
+fn a_sixel_payload_is_refused_wider_than_its_ceiling() {
+    assert_eq!(MOST_SIXEL_WIDTH, 600);
+    assert!(
+        sixel(&flat_pixels(600, 6, RED), &PLAIN).is_ok(),
+        "exactly the ceiling"
+    );
+    assert_eq!(
+        sixel(&flat_pixels(601, 6, RED), &PLAIN),
+        Err(Refused::TooLarge)
+    );
+    assert_eq!(
+        sixel(&flat_pixels(4000, 1, RED), &PLAIN),
+        Err(Refused::TooLarge)
+    );
+}
+
+#[test]
+fn what_is_transparent_shows_the_ground_it_is_laid_over() {
+    let nothing = flat_pixels(8, 12, [255, 0, 0, 0]);
+    let on_blue = text(
+        sixel(
+            &nothing,
+            &SixelPalette {
+                ground: [0, 0, 255],
+                colours: 16,
+            },
+        )
+        .expect("blue"),
+    );
+    let on_green = text(
+        sixel(
+            &nothing,
+            &SixelPalette {
+                ground: [0, 255, 0],
+                colours: 16,
+            },
+        )
+        .expect("green"),
+    );
+    assert!(on_blue.contains(";2;0;0;100"), "{on_blue:?}");
+    assert!(on_green.contains(";2;0;100;0"), "{on_green:?}");
+    assert!(
+        !on_blue.contains(";2;100;0;0"),
+        "the colour of a pixel with no alpha leaked: {on_blue:?}"
+    );
+    // Half way is half way between.
+    let half = flat_pixels(8, 12, [255, 255, 255, 128]);
+    let grey = text(sixel(&half, &PLAIN).expect("grey"));
+    assert!(
+        grey.contains(";2;50;50;50") || grey.contains(";2;51;51;51"),
+        "{grey:?}"
+    );
+}
+
+#[test]
+fn the_payload_defines_no_more_colours_than_it_is_allowed() {
+    let defined = |colours: u16| {
+        let palette = SixelPalette {
+            ground: [0, 0, 0],
+            colours,
+        };
+        text(sixel(&noise(60, 60), &palette).expect("a payload"))
+            .matches(";2;")
+            .count()
+    };
+    assert!(defined(8) <= 8 && defined(8) > 2, "{}", defined(8));
+    assert!(defined(256) > 100, "{}", defined(256));
+    // A number outside 2 to 256 is the nearest end of it.
+    assert_eq!(defined(0), defined(2));
+    assert_eq!(defined(1), defined(2));
+    assert_eq!(defined(1000), defined(256));
+}
+
+#[test]
+fn the_widest_noisiest_sixel_payload_stays_within_its_measured_bound() {
+    let pixels = noise(600, 873);
+    assert_eq!(pixels.rgba().len(), 600 * 873 * 4);
+    let payload = sixel(&pixels, &PLAIN).expect("a payload");
+    // Measured at 2 694 084 bytes: about 1.3 bytes a byte of pixels.
+    assert!(payload.len() < 4 * MOST_DECODED, "{} bytes", payload.len());
+}
