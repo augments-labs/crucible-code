@@ -1368,7 +1368,7 @@ impl Markdown {
     /// What a caller that puts what it is told out for good, and cannot take
     /// it back, asks after each delta, and holds the line until it is false.
     /// It is true for a paragraph line from its first character, whatever it
-    /// opens with, while it is no more than 128 bytes ([`HEADER_CAP`]), and
+    /// opens with, while it is no more than 128 bytes (the header cap), and
     /// after its break until the start of the next line rules out a row of `=`
     /// or `-`: any other character, a mix of the two, a blank line, the end of
     /// the message, or a row past the same cap. A line that opens another

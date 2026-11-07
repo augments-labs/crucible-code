@@ -5697,8 +5697,8 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "render::tests::setext_underlines_are_read_rather_than_drawn",
-      "source": "crates/crucible-tui/src/render/tests.rs",
+      "case": "render::tests::headings::setext_underlines_are_read_rather_than_drawn",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
       "body_sha256": "91fc327276e866dcf47d61338636e88a9978714da00c7c9a93284ed4fa0d2a13",
       "platforms": [
         "linux",
@@ -5733,8 +5733,8 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "render::tests::setext_headings_wear_a_rule_as_wide_as_their_words_in_both_sets",
-      "source": "crates/crucible-tui/src/render/tests.rs",
+      "case": "render::tests::headings::setext_headings_wear_a_rule_as_wide_as_their_words_in_both_sets",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
       "body_sha256": "a815321d11ca28c6a6b0bd8afd5b453b1c07cb8949cc85acb109f6d1a410333e",
       "platforms": [
         "linux",
@@ -5769,9 +5769,9 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "render::tests::a_heading_that_wraps_wears_a_rule_as_wide_as_its_last_row",
-      "source": "crates/crucible-tui/src/render/tests.rs",
-      "body_sha256": "2d7117dab0d9c23758e559bdb7955e383464163c64c40370f882d858e2e2116a",
+      "case": "render::tests::headings::a_screen_wraps_a_heading_with_a_rule_as_wide_as_its_last_row",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "3f5236c015b09de81460ad12e5933c22bd6725a46a837a9b8becd09558550c97",
       "platforms": [
         "linux",
         "macos",
@@ -5805,8 +5805,8 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "render::tests::a_heading_is_laid_out_again_at_a_new_width_and_in_a_new_glyph_set",
-      "source": "crates/crucible-tui/src/render/tests.rs",
+      "case": "render::tests::headings::a_heading_is_laid_out_again_at_a_new_width_and_in_a_new_glyph_set",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
       "body_sha256": "0253d5d1790de9ac04f04e153ad2fe689a51379c145e7806aae071f2608878f8",
       "platforms": [
         "linux",
@@ -5841,8 +5841,8 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "render::tests::a_dashed_row_under_something_that_is_not_a_paragraph_stays_a_full_width_rule",
-      "source": "crates/crucible-tui/src/render/tests.rs",
+      "case": "render::tests::headings::a_dashed_row_under_something_that_is_not_a_paragraph_stays_a_full_width_rule",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
       "body_sha256": "9fe8977945903124e54d7713ede12c3cc84db8ee182e7f4d2901c7b474d6ae0e",
       "platforms": [
         "linux",
@@ -5877,8 +5877,8 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "render::tests::a_line_of_cells_over_a_delimiter_row_is_still_a_table_and_not_a_heading",
-      "source": "crates/crucible-tui/src/render/tests.rs",
+      "case": "render::tests::headings::a_line_of_cells_over_a_delimiter_row_is_still_a_table_and_not_a_heading",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
       "body_sha256": "631ea66f101261248b10f56c575c4d87303389d242aeb15f1634ae9e4dd45d32",
       "platforms": [
         "linux",
@@ -5913,8 +5913,8 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "render::tests::a_dashed_row_under_a_line_that_was_no_table_header_underlines_it",
-      "source": "crates/crucible-tui/src/render/tests.rs",
+      "case": "render::tests::headings::a_dashed_row_under_a_line_that_was_no_table_header_underlines_it",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
       "body_sha256": "1f7b4427b81468bfda0e0e524af63ddc64f2872ef218148bb0a9555abe3684cb",
       "platforms": [
         "linux",
@@ -5949,8 +5949,8 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "render::tests::an_underline_complete_at_the_end_of_the_message_counts",
-      "source": "crates/crucible-tui/src/render/tests.rs",
+      "case": "render::tests::headings::an_underline_complete_at_the_end_of_the_message_counts",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
       "body_sha256": "3219aeb3d5e2d6c85325fe3f59f1e15147b7dbd981484bb584d884654b43347e",
       "platforms": [
         "linux",
@@ -5985,9 +5985,9 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "render::tests::an_underline_of_a_hundred_and_twenty_eight_marks_is_read_and_one_more_is_not",
-      "source": "crates/crucible-tui/src/render/tests.rs",
-      "body_sha256": "75dd52d96b9c306f0bc617b977267a4e931e5d868075667026cd1f1715bac3e1",
+      "case": "render::tests::headings::a_screen_reads_an_underline_of_a_hundred_and_twenty_eight_marks_and_not_one_more",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "ef7b1c8813ea0153bd57b626b63eff9668dcacc23e065b88181c2e9cc86ffbc4",
       "platforms": [
         "linux",
         "macos",
@@ -6021,9 +6021,9 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "render::tests::a_title_of_a_hundred_and_twenty_eight_bytes_is_a_heading_and_one_more_is_prose",
-      "source": "crates/crucible-tui/src/render/tests.rs",
-      "body_sha256": "ffd2e147a7c181287006d068266a2fc3856613754770e3969211d9ae929da6d3",
+      "case": "render::tests::headings::a_screen_reads_a_title_of_a_hundred_and_twenty_eight_bytes_and_not_one_more",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "462d501c210928efe11ad53edb4524936eb17a3821443d14edde25f6a708a598",
       "platforms": [
         "linux",
         "macos",
@@ -6039,8 +6039,8 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "render::tests::a_title_of_nothing_but_markers_is_a_heading_with_a_rule_as_wide_as_the_markers",
-      "source": "crates/crucible-tui/src/render/tests.rs",
+      "case": "render::tests::headings::a_title_of_nothing_but_markers_is_a_heading_with_a_rule_as_wide_as_the_markers",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
       "body_sha256": "38305ab06d9e3da89eac8edc89ad29499f66ca67dbed6eb8ebc343c338cd04e9",
       "platforms": [
         "linux",
@@ -6057,8 +6057,8 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "render::tests::a_title_that_opens_with_a_dollar_or_a_backslash_is_a_heading",
-      "source": "crates/crucible-tui/src/render/tests.rs",
+      "case": "render::tests::headings::a_title_that_opens_with_a_dollar_or_a_backslash_is_a_heading",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
       "body_sha256": "d21a1c0e5394ffaa84f0b564a7899dc82bd430f0fb08540ffe4bb3dcc6b7537c",
       "platforms": [
         "linux",
@@ -6093,9 +6093,9 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "render::tests::only_the_last_line_of_a_paragraph_is_the_heading",
-      "source": "crates/crucible-tui/src/render/tests.rs",
-      "body_sha256": "c49c3f66ce60b509a1275872a530eb595e123c024cece90bfdaa0d50dfdfebdf",
+      "case": "render::tests::headings::a_screen_reads_only_the_last_line_of_a_paragraph_as_the_heading",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "44ef58f060bcf842d84d89f0b273fc6428349cfe954923054e3f004cefb9e8aa",
       "platforms": [
         "linux",
         "macos",
@@ -6129,8 +6129,8 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "render::tests::atx_and_setext_headings_of_one_level_look_alike_and_levels_four_to_six_look_like_three",
-      "source": "crates/crucible-tui/src/render/tests.rs",
+      "case": "render::tests::headings::atx_and_setext_headings_of_one_level_look_alike_and_levels_four_to_six_look_like_three",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
       "body_sha256": "f79ad50fe5c3090a93d907aa6dc7405654ef7fba8b901651dbca7fa47f7a01fe",
       "platforms": [
         "linux",
@@ -6165,8 +6165,8 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "render::tests::a_lone_marker_is_an_underline",
-      "source": "crates/crucible-tui/src/render/tests.rs",
+      "case": "render::tests::headings::a_lone_marker_is_an_underline",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
       "body_sha256": "f42c25ceb6159dd63e84892122fc77ccbb7c60f9a44ed96f9db4c3f1d0172b29",
       "platforms": [
         "linux",
@@ -6201,8 +6201,8 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "render::tests::a_setext_heading_cut_anywhere_draws_what_the_whole_answer_draws",
-      "source": "crates/crucible-tui/src/render/tests.rs",
+      "case": "render::tests::headings::a_setext_heading_cut_anywhere_draws_what_the_whole_answer_draws",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
       "body_sha256": "98d5ef7e04ceaad8aaa7d2403de7a21ab68df424bee6575243fe852cf6852c22",
       "platforms": [
         "linux",
@@ -6273,8 +6273,8 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "render::tests::a_redirected_run_writes_a_title_once_and_only_when_it_is_settled",
-      "source": "crates/crucible-tui/src/render/tests.rs",
+      "case": "render::tests::headings::a_redirected_run_writes_a_title_once_and_only_when_it_is_settled",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
       "body_sha256": "8d413f7433cd64a08f48f49fcb0b324fba5d6dfc75f010a7d54a7af9702aac89",
       "platforms": [
         "linux",
@@ -6291,8 +6291,8 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "render::tests::a_redirected_run_ends_a_title_that_proved_prose_as_the_prose_it_was",
-      "source": "crates/crucible-tui/src/render/tests.rs",
+      "case": "render::tests::headings::a_redirected_run_ends_a_title_that_proved_prose_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
       "body_sha256": "418f21c3f9144d44de97628cb4e829d7d3aab84c4e71cd78f30e7019ffd69e48",
       "platforms": [
         "linux",
@@ -6309,8 +6309,8 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "render::tests::a_drag_over_a_heading_copies_it_as_it_is_drawn_and_lists_no_source",
-      "source": "crates/crucible-tui/src/render/tests.rs",
+      "case": "render::tests::headings::a_drag_over_a_heading_copies_it_as_it_is_drawn_and_lists_no_source",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
       "body_sha256": "001df272bb438655cee04bffb2e2715675252208103cc3bf3e745c40c1545c70",
       "platforms": [
         "linux",
