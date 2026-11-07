@@ -2776,6 +2776,22 @@ fn a_native_underline_and_a_title_of_the_most_the_reader_holds_are_headings_and_
 }
 
 #[test]
+fn a_native_indented_atx_heading_wears_a_rule_as_wide_as_its_words_and_not_its_indent() {
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["  # Title\nafter\n"]),
+        ["  Title", "━━━━━", "after"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Unicode, &["   ## Sub\nafter\n"]),
+        ["   Sub", "───", "after"]
+    );
+    assert_eq!(
+        kept_natively(40, Glyphs::Ascii, &["  # Title"]),
+        ["  Title", "====="]
+    );
+}
+
+#[test]
 fn a_native_title_of_markers_or_opening_with_a_dollar_or_a_backslash_is_a_heading() {
     assert_eq!(
         kept_natively(40, Glyphs::Unicode, &["**\n---\n"]),

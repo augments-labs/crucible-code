@@ -6049,6 +6049,42 @@
       ]
     },
     {
+      "id": "CASE-TRANSCRIPT-ATX-INDENT-RULE",
+      "family": "transcript-blocks",
+      "obligation": "An ATX heading with up to three spaces in front of it wears a rule as wide as its words alone: `  # Title` draws `  Title` over a 5-column heavy rule, `   ## Sub` over a 3-column light one, and ascii draws `=`.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::headings::an_indented_atx_heading_wears_a_rule_as_wide_as_its_words_and_not_its_indent",
+      "source": "crates/crucible-tui/src/render/tests/headings.rs",
+      "body_sha256": "e401fd3cc2a147ceef84f44a2877b550cba47a412f486ec376ffafd588e4d787",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ATX-INDENT-RULE-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In native mode, an ATX heading with up to three spaces in front of it wears a rule as wide as its words alone: `  # Title` draws `  Title` over a 5-column heavy rule, `   ## Sub` over a 3-column light one, and ascii draws `=`.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_indented_atx_heading_wears_a_rule_as_wide_as_its_words_and_not_its_indent",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "9d7c512978cc816585222917bc16ca541bcbd0101d4d4834ef5d209d96adfe81",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
       "id": "CASE-TRANSCRIPT-SETEXT-DOLLAR-BACKSLASH",
       "family": "transcript-blocks",
       "obligation": "$5 over --- is a level-2 heading and \\*x over === a level-1 heading drawn as *x, since the display-math probe gives up on both.",

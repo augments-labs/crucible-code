@@ -1934,8 +1934,9 @@ impl Markdown {
                     _ => None,
                 };
                 if let (true, Some(level)) = (self.holds(), level) {
-                    let mut line = " ".repeat(self.indent.min(MOST));
-                    line.push_str(written(held));
+                    // Without the blanks in front of it: the rule is as wide
+                    // as the words, as a setext heading's is.
+                    let mut line = String::from(written(held));
                     line.push(' ');
                     self.atx = Some((level, line));
                 }

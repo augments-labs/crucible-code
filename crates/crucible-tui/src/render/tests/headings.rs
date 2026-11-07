@@ -285,6 +285,22 @@ fn a_title_of_nothing_but_markers_is_a_heading_with_a_rule_as_wide_as_the_marker
 }
 
 #[test]
+fn an_indented_atx_heading_wears_a_rule_as_wide_as_its_words_and_not_its_indent() {
+    assert_eq!(
+        drawn_in(40, Glyphs::Unicode, "  # Title\nafter\n"),
+        ["  Title", "━━━━━", "after"]
+    );
+    assert_eq!(
+        drawn_in(40, Glyphs::Unicode, "   ## Sub\nafter\n"),
+        ["   Sub", "───", "after"]
+    );
+    assert_eq!(
+        drawn_in(40, Glyphs::Ascii, "  # Title"),
+        ["  Title", "====="]
+    );
+}
+
+#[test]
 fn a_title_that_opens_with_a_dollar_or_a_backslash_is_a_heading() {
     assert_eq!(drawn_in(40, Glyphs::Unicode, "$5\n---\n"), ["$5", "──"]);
     assert_eq!(drawn_in(40, Glyphs::Unicode, "\\*x\n===\n"), ["*x", "━━"]);
