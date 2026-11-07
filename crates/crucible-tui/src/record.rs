@@ -30,12 +30,13 @@
 //! held is *responsive*: a prompt, a diff, or a command's answer drawn from
 //! figures it still holds is laid out again at the new width. A block of an
 //! answer is *drawn*: a table, a rule or the rule under a heading arrives as
-//! the source it was written as, which is kept beside what it was laid out as, and laid out again for a
-//! new width or a new glyph set; a new theme only paints the same rows in
-//! other colours. Both forms count against the ceiling, and a drawn block that
-//! falls off the top takes its source with it. The source is lent, not copied:
-//! [`Record::source_of`] answers for a row and [`Record::sources`] walks the
-//! blocks, so what copies a block and what lists it read the record itself.
+//! the source it was written as, which is kept beside what it was laid out as,
+//! and laid out again for a new width or a new glyph set; a new theme only
+//! paints the same rows in other colours. Both forms count against the
+//! ceiling, and a drawn block that falls off the top takes its source with it.
+//! The source is lent, not copied: [`Record::source_of`] answers for a row and
+//! [`Record::sources`] walks the blocks, so what copies a block and what lists
+//! it read the record itself.
 //! Everything else is *set*: a box laid out by something that is gone is
 //! clipped rather than pretending it can be rebuilt.
 //!

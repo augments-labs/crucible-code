@@ -86,22 +86,21 @@ A table, a formula, a mermaid diagram and a diff are drawn from the text the
 model wrote, and that text can be had whole. In the full screen, a selection
 that touches any row of one of them copies the whole of its source, once however
 many of its rows or times it is touched, in order with the prose around it.
-Two blocks in one selection give both. A rule, and a heading with its rule
-copy as they are drawn, the words and then the rule. In the
-native screen, or with <kbd>Shift</kbd> held while you drag, your terminal
-copies what it shows. In both screens <kbd>Ctrl+O</kbd> lists the source of
+Two blocks in one selection give both. A rule, and a heading with its rule,
+copy as they are drawn, the words and then the rule. In the native screen, or
+with <kbd>Shift</kbd> held while you drag, your terminal copies what it shows. In both screens <kbd>Ctrl+O</kbd> lists the source of
 each drawn block, newest first, after any cut results: see
 [Results cut short](../reference/keys.md#results-cut-short).
 
 ## Drawn again at every width
 
 A table, a rule and the rule under a heading are kept as the text the model
-wrote, beside the rows they were drawn as. When the window changes width, or you change the glyph set,
-each is laid out again from that text for the window it is in now, so a table
-drawn in a narrow window and then widened is the table a window that wide
-would have drawn. A change of theme repaints the same rows in the new colours.
-In native mode this happens when the terminal's scrollback is written again,
-once the window has kept its new size.
+wrote, beside the rows they were drawn as. When the window changes width, or
+you change the glyph set, each is laid out again from that text for the window
+it is in now, so a table drawn in a narrow window and then widened is the table
+a window that wide would have drawn. A change of theme repaints the same rows
+in the new colours. In native mode this happens when the terminal's scrollback
+is written again, once the window has kept its new size.
 
 What the transcript keeps is bounded, and a table counts against that bound by
 both its text and its rows. When the oldest of the transcript is dropped, a
