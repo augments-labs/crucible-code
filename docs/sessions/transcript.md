@@ -13,7 +13,7 @@ holds each one back and draws it whole once it closes:
 
 | Block | Opens with | Closes with |
 | --- | --- | --- |
-| Table | a line starting with `\|`, followed by a delimiter row such as `\| --- \| ---: \|` | the first line that does not start with `\|` |
+| Table | a line starting with `\|`, followed by a delimiter row such as `\| --- \| ---: \|`; or a line of two or more cells separated by `\|` with no outer bars, followed by a delimiter row such as `--\|--` with as many cells | the first line that does not start with `\|`; or, for one without outer bars, the first blank line |
 | Display math | `$$`, `\[` or `\begin{…}` of an equation environment at the start of a line, or a fence named `math`, `latex`, `tex` or `katex` | the line its closing marker is on |
 | Mermaid diagram | a fence named `mermaid` | the fence closing |
 | Diff | a fence named `diff` or `patch` | the fence closing |
@@ -120,8 +120,18 @@ Some text is drawn exactly as the model wrote it, rather than as a block:
   a table: its last row is where it stops.
 - **Display math, mermaid diagrams and diffs.** They are held so they arrive
   whole, and are then shown as written.
-- **A table without its outer bars.** Lines such as `name | since` that do not
-  start with `|` are prose, not a table.
+- **A table without its outer bars.** A line such as `name | since` over a
+  delimiter row such as `--|--` with the same number of cells is a table. Its
+  rows are the lines after them up to the first blank line, so a table written
+  this way needs a blank line before whatever follows it. A delimiter row with
+  another number of cells, a lone `---`, or a line that only looks like a
+  delimiter row in the middle of prose leaves both lines as prose. Nothing
+  marks the first line as a header until the delimiter row has arrived, so
+  every line is shown as it arrives, as the prose it may be, and is replaced by
+  the table once the delimiter row has. Only the line break after a line of two
+  or more cells, and the start of the line under it, wait for what follows;
+  a header longer than 128 bytes is prose. Output that is not a terminal keeps
+  every table, like the rest of the model's markdown, as it was written.
 - **Lines with bars and no delimiter row.** They are drawn as written.
 - **A `$` in prose.** A price such as `$5`, or `$$` after other words on a
   line, opens no formula.

@@ -1,0 +1,25 @@
+---
+source: tests/whole_screen/main.rs
+expression: bare
+---
+80x20 cursor 19,0 scrollback 46
+|       │ reading   │ hundred  │          │          │       │         │ note,   |
+|       │ thread    │ and      │          │          │       │         │ just as |
+|       │           │ twenty   │          │          │       │         │ long, so|
+|       │           │ columns  │          │          │       │         │ the     |
+|       │           │ of prose │          │          │       │         │ split is|
+|       │           │ that     │          │          │       │         │ not a   |
+|       │           │ also     │          │          │       │         │ special |
+|       │           │ wraps    │          │          │       │         │ case    |
+|                                                                                |
+|The corpus ends here.                                                           |
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|table                                                                           |
+|                                                                                |
+|name | what it does | since                                                     |
+|--|--|--                                                                        |
+|delta | draws a rule across the window | 0.4                                    |
+|epsilon | folds a long cell | 0.5                                               |
+|                                                                                |
+|esc to close · ↑↓ pgup pgdn to see more · ←→ source 2 of 3                      |

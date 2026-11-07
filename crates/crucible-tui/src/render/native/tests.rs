@@ -2055,11 +2055,23 @@ fn answered_natively_in(
     answer: &str,
     resized: Option<(usize, usize)>,
 ) -> Vec<String> {
+    answered_natively_in_pieces(window, glyphs, &[answer], resized)
+}
+
+/// [`answered_natively_in`], the answer arriving as `pieces`, one delta each.
+fn answered_natively_in_pieces(
+    window: &Window,
+    glyphs: Glyphs,
+    pieces: &[&str],
+    resized: Option<(usize, usize)>,
+) -> Vec<String> {
     let mut render = native(window);
     render.draws(glyphs);
     render.wears(colourful());
     stands(&mut render);
-    render.stream(answer).unwrap();
+    for piece in pieces {
+        render.stream(piece).unwrap();
+    }
     render.settle().unwrap();
     stands(&mut render);
     render.seal().unwrap();
@@ -2084,6 +2096,439 @@ fn a_native_table_narrowed_is_the_table_a_window_that_narrow_draws() {
     let narrowed = answered_natively(&Window::new(60, 20), table, Some((30, 20)));
 
     assert_eq!(narrowed, fresh);
+}
+
+#[test]
+fn a_native_table_written_without_outer_bars_is_drawn_as_a_table() {
+    let rows = answered_natively(&Window::new(40, 8), "a | b\n--|--\n1 | 2\n", None);
+
+    assert!(!rows.iter().any(|row| row.contains("--|--")), "{rows:#?}");
+    assert!(rows.iter().any(|row| row.contains('│')), "{rows:#?}");
+}
+
+#[test]
+fn a_native_frame_drawn_while_a_header_is_in_doubt_leaves_what_drawing_the_whole_answer_leaves() {
+    // A frame between two deltas, wherever the answer is cut: inside the
+    // header, between it and the delimiter row, or inside that row. What
+    // reached the scrollback is what one delta gives, so no header was sent
+    // out as prose that the table then repeated.
+    let answer = "before\n\nname | what it does\n--|--\nalpha | first\n\nafter\n";
+    let fresh = answered_natively(&Window::new(40, 10), answer, None);
+    assert!(fresh.iter().any(|row| row.contains('│')), "{fresh:#?}");
+    assert!(
+        !fresh
+            .iter()
+            .any(|row| row.contains("name | what") || row.contains("--|--")),
+        "{fresh:#?}"
+    );
+
+    for cut in 0..=answer.len() {
+        let (first, second) = answer.split_at(cut);
+        let window = Window::new(40, 10);
+        let mut render = native(&window);
+        render.wears(colourful());
+        stands(&mut render);
+        render.stream(first).unwrap();
+        stands(&mut render);
+        render.stream(second).unwrap();
+        render.settle().unwrap();
+        stands(&mut render);
+        render.seal().unwrap();
+
+        let (boxed, _) = boxed();
+        let boxed: Vec<String> = boxed.iter().map(Row::text).collect();
+        let rows: Vec<String> = window
+            .all()
+            .into_iter()
+            .filter(|row| !row.trim().is_empty() && !boxed.contains(row))
+            .collect();
+        assert_eq!(rows, fresh, "cut at {cut}");
+    }
+}
+
+/// A call that writes under the line an answer left open.
+type Writes = fn(&mut Renderer<Window>);
+
+/// What a native screen is left holding when `call` writes under an answer
+/// cut at `cut`, then the rest of the answer arrives.
+fn written_under_the_cut(cut: &str, call: Writes) -> Vec<String> {
+    let window = Window::new(40, 12);
+    let mut render = native(&window);
+    render.wears(colourful());
+    stands(&mut render);
+    render.stream(&format!("before\n\n{cut}")).unwrap();
+    call(&mut render);
+    render.stream("\n--|--\nalpha | 0.1\n\nafter\n").unwrap();
+    render.settle().unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+    let (boxed, _) = boxed();
+    let boxed: Vec<String> = boxed.iter().map(Row::text).collect();
+    window
+        .all()
+        .into_iter()
+        .filter(|row| !row.trim().is_empty() && !boxed.contains(row))
+        .collect()
+}
+
+#[test]
+fn a_native_call_that_writes_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // Presenting rows, committing a line and writing a prompt each end the
+    // line an answer left open, and a header that is still only a guess is
+    // the prose it looked like when they do: said once in the scrollback,
+    // with the same rows for the same words that could not have been a header.
+    let calls: [(&str, Writes); 3] = [
+        ("present", |render| {
+            render.present(&[row("component")]).unwrap();
+        }),
+        ("commit", |render| render.commit("note").unwrap()),
+        ("prompt", |render| {
+            render.prompt(Slot::Plain, "note").unwrap();
+        }),
+    ];
+    for (name, call) in calls {
+        for cut in [
+            "name | what it does\n",
+            "name | what",
+            "name | what it does\n--",
+        ] {
+            let doubtful = written_under_the_cut(cut, call);
+            let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+                .iter()
+                .map(|row| row.replace(" - ", " | "))
+                .collect();
+
+            assert_eq!(
+                doubtful
+                    .iter()
+                    .filter(|row| row.contains("name | what"))
+                    .count(),
+                1,
+                "{name} {cut:?}: {doubtful:#?}"
+            );
+            assert_eq!(doubtful, plain, "{name} {cut:?}");
+        }
+    }
+}
+
+#[test]
+fn a_native_responsive_block_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // On a native screen a block that keeps what lays it ends the line an
+    // answer left open, and a header still in doubt goes to the scrollback as
+    // the prose it looked like, said once, never as a table made of it later.
+    let call: Writes = |render| {
+        render
+            .responsive(9, Box::new(|_| vec![row("component")]))
+            .unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = written_under_the_cut(cut, call);
+        let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_native_block_charged_as_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // As the responsive block, for the one charged as its rows: the header
+    // still in doubt reaches the scrollback once, as the prose it looked like.
+    let call: Writes = |render| {
+        render
+            .responsive_as_laid(Box::new(|_| vec![row("component")]))
+            .unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = written_under_the_cut(cut, call);
+        let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_native_opening_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // The opening ends the line an answer left open the same way on a native
+    // screen: the header still in doubt reaches the scrollback once, as prose.
+    let call: Writes = |render| {
+        render
+            .opens(Box::new(|_, _| vec![row("component")]))
+            .unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = written_under_the_cut(cut, call);
+        let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_native_divider_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // A divider parts what is above it in the scrollback from what follows,
+    // so a header still in doubt over it goes there once, as the prose it
+    // looked like, and the delimiter row that comes later makes no table of it.
+    let call: Writes = |render| render.divides("new session").unwrap();
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = written_under_the_cut(cut, call);
+        let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_native_transcript_emptied_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // Emptying a native transcript writes what it held out to the scrollback,
+    // so a header still in doubt goes there once, as the prose it looked like,
+    // and the delimiter row that comes later makes no table of it.
+    let call: Writes = |render| render.empties().unwrap();
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = written_under_the_cut(cut, call);
+        let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_native_answer_hung_while_a_header_is_in_doubt_ends_it_as_the_prose_it_was() {
+    // Hanging what was written under a result mark ends the line an answer
+    // left open, so on a native screen a header still in doubt reaches the
+    // scrollback once, marked, as the prose it looked like.
+    let call: Writes = |render| {
+        let last = render.lines().saturating_sub(1);
+        render.subordinate(last, Glyphs::Unicode).unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = written_under_the_cut(cut, call);
+        let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_native_line_still_arriving_is_on_screen_whatever_it_could_turn_out_to_be() {
+    let window = Window::new(40, 8);
+    let mut render = native(&window);
+    render.wears(colourful());
+    stands(&mut render);
+    render.stream("It is started. That is all.").unwrap();
+    render.seal().unwrap();
+
+    let rows = window.all();
+    assert!(
+        rows.iter().any(|row| row.contains("That is all.")),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_native_header_stalled_part_way_never_reaches_the_scrollback_as_prose() {
+    // A window this short pushes every finished line out into the terminal's
+    // own buffer, which cannot take one back: so a header that turned out to
+    // be a table's must never have been finished while it was in doubt.
+    let window = Window::new(40, 6);
+    let mut render = native(&window);
+    render.wears(colourful());
+    stands(&mut render);
+    let piece = |render: &mut Renderer<Window>, text: &str| {
+        render.stream(text).unwrap();
+        render
+            .under(&[row("* thinking")], None, Palette::plain())
+            .unwrap();
+        render.seal().unwrap();
+        window.all()
+    };
+    let has = |rows: &[String], needle: &str| rows.iter().any(|row| row.contains(needle));
+
+    let rows = piece(&mut render, "one\ntwo\nthree\nfour\n\nname | wha");
+    assert!(has(&rows, "name | wha"), "{rows:#?}");
+
+    let rows = piece(&mut render, "t it does\n");
+    assert!(has(&rows, "name | what it does"), "{rows:#?}");
+
+    let rows = piece(&mut render, "--|--\n");
+    assert!(!has(&rows, "name | what"), "{rows:#?}");
+    assert!(!has(&rows, "--|--"), "{rows:#?}");
+
+    let rows = piece(&mut render, "alpha | first\nbeta | second\n\n");
+    assert!(has(&rows, "alpha"), "{rows:#?}");
+
+    render.settle().unwrap();
+    render.under(&[], None, Palette::plain()).unwrap();
+    stands(&mut render);
+    render.seal().unwrap();
+    let rows = window.all();
+    assert!(!has(&rows, "name | what"), "{rows:#?}");
+    assert!(!has(&rows, "--|--"), "{rows:#?}");
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("name") && row.contains('│')),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_native_table_written_without_outer_bars_narrowed_is_the_table_a_window_that_narrow_draws() {
+    let table = "name | what it does | since\n--|--|--\n\
+         alpha | reads the markdown out of a stream | 0.1\n\
+         beta | lays a table against the window | 0.2\n";
+    let fresh = answered_natively(&Window::new(30, 20), table, None);
+    assert!(
+        fresh.iter().filter(|row| row.contains('│')).count() >= 3,
+        "{fresh:#?}"
+    );
+    let narrowed = answered_natively(&Window::new(60, 20), table, Some((30, 20)));
+
+    assert_eq!(narrowed, fresh);
+}
+
+#[test]
+fn a_native_table_written_without_outer_bars_draws_its_structure_in_the_glyphs_worn() {
+    let rows = answered_natively_in(
+        &Window::new(40, 8),
+        Glyphs::Ascii,
+        "a | b\n--|--\n1 | 2\n",
+        None,
+    );
+
+    let rows: Vec<&str> = rows.iter().map(|row| row.trim_end()).collect();
+    assert_eq!(rows, ["a | b", "--+--", "1 | 2"], "{rows:#?}");
+}
+
+#[test]
+fn a_native_answer_cut_anywhere_draws_the_table_written_without_outer_bars_the_whole_answer_draws()
+{
+    let answer = "before\n\na | b\n--|--\n1 | 2\n\nafter\n";
+    let window = Window::new(40, 12);
+    let whole = answered_natively(&window, answer, None);
+    assert!(whole.iter().any(|row| row.contains('│')), "{whole:#?}");
+
+    for cut in 1..answer.len() {
+        let rows = answered_natively_in_pieces(
+            &Window::new(40, 12),
+            Glyphs::Unicode,
+            &[&answer[..cut], &answer[cut..]],
+            None,
+        );
+        assert_eq!(rows, whole, "cut at {cut}");
+    }
 }
 
 #[test]

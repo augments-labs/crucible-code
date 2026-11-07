@@ -720,6 +720,82 @@ fn a_format_character_from_elsewhere_reaches_no_screen_and_no_file() {
 }
 
 #[test]
+fn a_redirected_run_is_written_a_table_without_outer_bars_as_the_table_and_never_its_header() {
+    // What a file is given cannot be taken back, so a line that may be a
+    // header is not written until the delimiter row under it says what it is:
+    // the file has the table once, and no row of it as prose.
+    let table = "name | since\n--|--\nalpha | 0.1\n";
+    let answer = format!("before\n{table}\nafter\n");
+    let whole = {
+        let mut render = Renderer::new(Recording::redirected(80, 24));
+        render.wears(colourful());
+        render.stream(&answer).unwrap();
+        render.settle().unwrap();
+        render.terminal.written().to_owned()
+    };
+    assert!(whole.contains('│'), "{whole:?}");
+    assert!(
+        !whole.contains("--|--") && !whole.contains("name | since"),
+        "{whole:?}"
+    );
+
+    // A character at a time, and cut once at every offset.
+    let mut render = Renderer::new(Recording::redirected(80, 24));
+    render.wears(colourful());
+    for piece in answer.chars() {
+        render.stream(&piece.to_string()).unwrap();
+    }
+    render.settle().unwrap();
+    assert_eq!(render.terminal.written(), whole);
+
+    for cut in 0..=answer.len() {
+        let (first, second) = answer.split_at(cut);
+        let mut render = Renderer::new(Recording::redirected(80, 24));
+        render.wears(colourful());
+        render.stream(first).unwrap();
+        render.stream(second).unwrap();
+        render.settle().unwrap();
+        assert_eq!(render.terminal.written(), whole, "cut at {cut}");
+    }
+}
+
+#[test]
+fn a_redirected_run_has_not_written_a_line_that_may_still_be_a_header() {
+    let mut render = Renderer::new(Recording::redirected(80, 24));
+    render.wears(colourful());
+    render.stream("before\nname | sin").unwrap();
+    assert_eq!(render.terminal.written(), "before\n");
+
+    // Not a header after all: the line is written, whole.
+    render.stream("ce\nnot a delimiter\n").unwrap();
+    assert_eq!(
+        render.terminal.written(),
+        "before\nname | since\nnot a delimiter\n"
+    );
+}
+
+#[test]
+fn a_recording_that_is_no_screen_draws_a_table_written_without_outer_bars_as_one() {
+    // How a session is previewed: replayed onto a renderer over a recording
+    // that stands in for a pipe, so that nothing repaints, wearing the palette
+    // of the screen, and read back as rows. The rows are what picking the
+    // session up would draw.
+    let mut preview = Renderer::new(Recording::redirected(40, 20));
+    preview.wears(colourful());
+    preview
+        .stream("name | what it does\n--|--\nalpha | first\n")
+        .unwrap();
+    preview.settle().unwrap();
+    let rows: Vec<String> = preview.tail(20).iter().map(Row::text).collect();
+
+    let mut live = reading(40, 20);
+    live.answer("name | what it does\n--|--\nalpha | first\n");
+    assert!(rows.iter().any(|row| row.contains('│')), "{rows:#?}");
+    assert!(!rows.iter().any(|row| row.contains("--|--")), "{rows:#?}");
+    assert_eq!(rows, kept(&live).1);
+}
+
+#[test]
 fn a_redirected_run_is_given_every_line_as_text() {
     let mut render = Renderer::new(Recording::redirected(80, 24));
     render.commit("first").unwrap();
@@ -3080,6 +3156,477 @@ fn a_table_narrowed_and_widened_again_is_the_table_it_was() {
     assert_eq!(drawn.rows(), before);
 }
 
+/// A table written without its outer bars.
+const BARE_TABLE: &str = "name | what it does | since\n--|--|--\n\
+     alpha | reads the markdown out of a stream | 0.1\n\
+     beta | lays a table against the window | 0.2\n";
+
+#[test]
+fn a_table_written_without_outer_bars_is_drawn_as_a_table() {
+    let mut drawn = reading(40, 8);
+    drawn.answer("a | b\n--|--\n1 | 2\n");
+
+    let rows = drawn.rows();
+    assert!(!rows.iter().any(|row| row.contains("--|--")), "{rows:#?}");
+    assert!(rows.iter().any(|row| row.contains('│')), "{rows:#?}");
+}
+
+#[test]
+fn a_line_still_arriving_is_on_screen_whatever_it_could_turn_out_to_be() {
+    // Prose that is not a table is not made to wait for the one that is: a
+    // line that starts like a header is drawn as the prose it is so far.
+    let mut drawn = reading(40, 8);
+    drawn.render.stream("It is started. That is all.").unwrap();
+
+    let rows = drawn.rows();
+    assert!(
+        rows.iter().any(|row| row.contains("That is all.")),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_header_stalled_part_way_is_drawn_as_the_prose_it_is_until_the_delimiter_row_decides() {
+    let mut drawn = reading(40, 8);
+    let shown = |drawn: &Drawn, needle: &str| drawn.rows().iter().any(|row| row.contains(needle));
+
+    drawn.render.stream("before\n\nname | wha").unwrap();
+    assert!(shown(&drawn, "name | wha"), "{:#?}", drawn.rows());
+
+    // The line is whole and nothing says yet what it is a header of.
+    drawn.render.stream("t it does\n").unwrap();
+    assert!(shown(&drawn, "name | what it does"), "{:#?}", drawn.rows());
+
+    // The delimiter row decides: the header is no longer a line of prose, and
+    // the table is not drawn in part either.
+    drawn.render.stream("--|--\n").unwrap();
+    let rows = drawn.rows();
+    assert!(!shown(&drawn, "name | what it does"), "{rows:#?}");
+    assert!(!shown(&drawn, "--|--"), "{rows:#?}");
+    assert!(!rows.iter().any(|row| row.contains('│')), "{rows:#?}");
+
+    drawn.render.stream("alpha | first\n\n").unwrap();
+    let rows = drawn.rows();
+    assert!(rows.iter().any(|row| row.contains('│')), "{rows:#?}");
+
+    // Nothing the table owns was left in the record as a line of prose.
+    drawn.render.settle().unwrap();
+    let (_, kept) = kept(&drawn);
+    assert!(
+        !kept
+            .iter()
+            .any(|row| row.contains("name | what") || row.contains("--|--")),
+        "{kept:#?}"
+    );
+    assert!(
+        kept.iter()
+            .any(|row| row.contains("name") && row.contains('│')),
+        "{kept:#?}"
+    );
+}
+
+#[test]
+fn a_frame_drawn_while_a_header_is_in_doubt_leaves_what_drawing_the_whole_answer_leaves() {
+    // The app draws a frame between deltas, with its own rows under the
+    // transcript. Whichever byte the answer is cut at, so that one falls
+    // inside the header, between it and the delimiter row, or inside the
+    // delimiter row, the screen and the record end up what one delta gives.
+    let answer = "before\n\nname | what it does\n--|--\nalpha | first\n\nafter\n";
+    let mut fresh = reading(40, 10);
+    fresh.answer(answer);
+    fresh.under(&[], None, colourful()).unwrap();
+
+    for cut in 0..=answer.len() {
+        let (first, second) = answer.split_at(cut);
+        let mut drawn = reading(40, 10);
+        drawn.render.stream(first).unwrap();
+        drawn.under(&standing(), None, colourful()).unwrap();
+        drawn.render.stream(second).unwrap();
+        drawn.render.settle().unwrap();
+        drawn.under(&[], None, colourful()).unwrap();
+
+        assert_eq!(drawn.rows(), fresh.rows(), "cut at {cut}");
+        assert_eq!(kept(&drawn), kept(&fresh), "cut at {cut}");
+    }
+
+    // The oracle is the same build, so say what it is: a table, and no line of
+    // the header or of the delimiter row left over as prose.
+    let rows = fresh.rows();
+    assert!(rows.iter().any(|row| row.contains('│')), "{rows:#?}");
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row.contains("name | what") || row.contains("--|--")),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_component_presented_while_a_header_is_in_doubt_ends_it_as_the_prose_it_was() {
+    // The rows of a component end the line the transcript was on, so a header
+    // that is still only a guess is the prose it looked like: the record is
+    // what it is for the same words with nothing in them that could be a
+    // header, with no row of the answer's own missing, repeated or made blank.
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let run = |cut: &str| {
+            let mut drawn = reading(40, 12);
+            drawn.render.stream(&format!("before\n\n{cut}")).unwrap();
+            drawn.render.present(&[Row::plain("component")]).unwrap();
+            drawn.render.stream("\nafter\n").unwrap();
+            drawn.render.settle().unwrap();
+            kept(&drawn).1
+        };
+        let doubtful = run(cut);
+        let plain: Vec<String> = run(&cut.replace('|', "-"))
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_line_written_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // Every call that writes under the line an answer left open ends a header
+    // that is still only a guess first, as presenting rows does: what is
+    // written is under the prose, and the delimiter row that comes later has
+    // no header left to turn into a table or to take back.
+    let calls: [(&str, Writes); 2] = [
+        ("commit", |render| render.commit("note").unwrap()),
+        ("prompt", |render| {
+            render.prompt(Slot::Plain, "note").unwrap();
+        }),
+    ];
+    for (name, call) in calls {
+        for cut in [
+            "name | what it does\n",
+            "name | what",
+            "name | what it does\n--",
+        ] {
+            let run = |cut: &str| {
+                let mut drawn = reading(40, 12);
+                drawn.render.stream(&format!("before\n\n{cut}")).unwrap();
+                call(&mut drawn.render);
+                drawn
+                    .render
+                    .stream("\n--|--\nalpha | 0.1\n\nafter\n")
+                    .unwrap();
+                drawn.render.settle().unwrap();
+                kept(&drawn).1
+            };
+            let doubtful = run(cut);
+            let plain: Vec<String> = run(&cut.replace('|', "-"))
+                .iter()
+                .map(|row| row.replace(" - ", " | "))
+                .collect();
+
+            assert!(
+                doubtful
+                    .iter()
+                    .filter(|row| row.contains("name | what"))
+                    .count()
+                    == 1,
+                "{name} {cut:?}: {doubtful:#?}"
+            );
+            assert_eq!(doubtful, plain, "{name} {cut:?}");
+        }
+    }
+}
+
+/// A call that writes under the line an answer left open.
+type Writes = fn(&mut Renderer<Recording>);
+
+/// What the record keeps when `call` writes under an answer cut at `cut`,
+/// then the rest of the answer arrives, delimiter row and all.
+fn laid_under_the_cut(cut: &str, call: Writes) -> Vec<String> {
+    let mut drawn = reading(40, 12);
+    drawn.render.stream(&format!("before\n\n{cut}")).unwrap();
+    call(&mut drawn.render);
+    drawn
+        .render
+        .stream("\n--|--\nalpha | 0.1\n\nafter\n")
+        .unwrap();
+    drawn.render.settle().unwrap();
+    kept(&drawn).1
+}
+
+#[test]
+fn a_responsive_block_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // A block that keeps what lays it ends the line an answer left open, as
+    // presenting rows does, so a header that is still only a guess is the
+    // prose it looked like: said once, with no blank row added and no table
+    // made of it when the delimiter row comes later.
+    let call: Writes = |render| {
+        render
+            .responsive(9, Box::new(|_| vec![Row::plain("component")]))
+            .unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = laid_under_the_cut(cut, call);
+        let plain: Vec<String> = laid_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_block_charged_as_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // As a responsive block, for the one whose rows are what it is charged:
+    // the header still in doubt is the prose it looked like, said once.
+    let call: Writes = |render| {
+        render
+            .responsive_as_laid(Box::new(|_| vec![Row::plain("component")]))
+            .unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = laid_under_the_cut(cut, call);
+        let plain: Vec<String> = laid_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn an_opening_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // The opening keeps what lays it too, and ends the line an answer left
+    // open the same way: the header still in doubt is the prose it looked
+    // like, said once.
+    let call: Writes = |render| {
+        render
+            .opens(Box::new(|_, _| vec![Row::plain("component")]))
+            .unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = laid_under_the_cut(cut, call);
+        let plain: Vec<String> = laid_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_divider_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // A divider is a row of its own under the line an answer left open, so a
+    // header still in doubt is the prose it looked like when one is laid:
+    // said once, and no table made of it when the delimiter row comes later.
+    let call: Writes = |render| render.divides("new session").unwrap();
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = laid_under_the_cut(cut, call);
+        let plain: Vec<String> = laid_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_transcript_emptied_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // Emptying the transcript ends the line an answer left open with
+    // everything else, so a header still in doubt is the prose it looked like
+    // and goes with it: no blank row is left for it and no table is made of it
+    // when the delimiter row comes later.
+    let call: Writes = |render| render.empties().unwrap();
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = laid_under_the_cut(cut, call);
+        let plain: Vec<String> = laid_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            0,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn an_answer_hung_while_a_header_is_in_doubt_ends_it_as_the_prose_it_was() {
+    // Hanging what was written under a result mark ends the line an answer
+    // left open, so a header still in doubt is marked as the prose it looked
+    // like, said once, and the delimiter row that comes later makes no table.
+    let call: Writes = |render| {
+        let last = render.lines().saturating_sub(1);
+        render.subordinate(last, Glyphs::Unicode).unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = laid_under_the_cut(cut, call);
+        let plain: Vec<String> = laid_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_table_written_without_outer_bars_narrowed_is_the_table_a_window_that_narrow_draws() {
+    let mut fresh = reading(30, 20);
+    fresh.answer(BARE_TABLE);
+    let rows = fresh.rows();
+    assert!(
+        rows.iter().filter(|row| row.contains('│')).count() >= 3,
+        "{rows:#?}"
+    );
+
+    let mut drawn = reading(60, 20);
+    drawn.answer(BARE_TABLE);
+    drawn.resize(30, 20);
+
+    assert_eq!(drawn.rows(), fresh.rows());
+}
+
+#[test]
+fn a_table_written_without_outer_bars_draws_its_structure_in_the_glyphs_worn() {
+    let mut drawn = reading(40, 8);
+    drawn.render.draws(Glyphs::Ascii);
+    drawn.answer("a | b\n--|--\n1 | 2\n");
+
+    let rows: Vec<String> = drawn
+        .rows()
+        .into_iter()
+        .map(|row| row.trim_end().to_owned())
+        .filter(|row| !row.is_empty())
+        .collect();
+    assert_eq!(rows, ["a | b", "--+--", "1 | 2"], "{rows:#?}");
+}
+
+#[test]
+fn the_corpus_table_written_without_outer_bars_is_drawn_as_a_table() {
+    // The rows the width sweep compares, so what is asserted here is what the
+    // sweep holds every width to.
+    let answer = crate::markdown::corpus::answer("tables").expect("the tables answer");
+    for columns in [40, 80, 120] {
+        let mut drawn = reading(columns, 8);
+        drawn.answer(answer);
+
+        let (_, rows) = kept(&drawn);
+        assert!(
+            !rows.iter().any(|row| row.contains("--|--|--")),
+            "{rows:#?}"
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("delta") && row.contains('│')),
+            "at {columns}: {rows:#?}"
+        );
+    }
+}
+
 #[test]
 fn a_rule_narrowed_is_still_one_row() {
     let mut drawn = reading(40, 10);
@@ -3269,12 +3816,33 @@ fn every_cut_of_an_answer_draws_what_the_whole_answer_draws() {
         "```mermaid\ngraph TD\n  A --> B\n```\n```diff\n-old\n+new\n```\nend\n",
         "```math\nx^2\n```\n$5 a price, $$ in prose\n\\section{not math}\n",
         "$$\nnever closed\n",
+        // Lines that only look like the start of a table without its outer
+        // bars: the delimiter row has another number of cells, or has no
+        // bar, or the header has none.
+        "a | b\n--|---|--\n1 | 2\n\nno bars\n--|--\nend\n",
+        "a | b\n---\n1 | 2\n\nx | y\n:|:\nend\n",
     ];
 
-    for answer in corpus {
+    // Tables written without their outer bars, which a cut can split in the
+    // header, in the middle of the delimiter row or in the body. Each one is
+    // drawn as a table, so a reader that stopped recognising them would draw
+    // the same rows however they were cut and still fail here.
+    let tables = [
+        "before\n\na | b\n--|--\n1 | 2\n\nafter\n",
+        "name | since\n:--|--:\n`x` | **y**\nlonger cell | 2\n\n```rust\nlet a = 1 | 2;\n```\n",
+        "text\nname | what it does\n--|--\nalpha | first\n",
+    ];
+
+    for answer in corpus.into_iter().chain(tables) {
         let mut whole = reading(50, 30);
         whole.answer(answer);
         let expected = whole.rows();
+        if tables.contains(&answer) {
+            assert!(
+                expected.iter().any(|row| row.contains('│')),
+                "{answer:?} drew no table: {expected:#?}"
+            );
+        }
 
         for cut in 1..answer.len() {
             let mut pieces = reading(50, 30);
@@ -4098,6 +4666,23 @@ fn a_drag_touching_one_row_of_a_drawn_table_copies_the_whole_source() {
 
     assert!(
         wrote.contains(&onto_the_clipboard(WRITTEN_TABLE)),
+        "{rows:#?} gave {wrote:?}"
+    );
+}
+
+#[test]
+fn a_drag_over_a_table_written_without_outer_bars_copies_it_as_written_with_no_bars_added() {
+    let written = "name | job\n--|--\nalpha | first\nbeta | second\n";
+    let mut drawn = reading(60, 20);
+    drawn.answer(written);
+    let rows = window(&drawn, 20);
+    let row = row_containing(&rows, "alpha");
+    drawn.take();
+
+    let wrote = drag(&mut drawn, (row, 0), (row, 8));
+
+    assert!(
+        wrote.contains(&onto_the_clipboard(written)),
         "{rows:#?} gave {wrote:?}"
     );
 }

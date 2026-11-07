@@ -20,6 +20,16 @@
 //! the `](` after them. Either one that runs past its bound, or past the line
 //! it is on, is handed out as the text it turned out to be.
 //!
+//! A table written without outer bars is prose until the delimiter row under
+//! it arrives, and prose that is not a table is not made to wait for it. The
+//! first line of a paragraph is read as it arrives, as the prose it is so far,
+//! while a copy of it is watched for the shape of a header. Only once it is a
+//! whole line with two cells in it is its break held back, together with the
+//! start of the next line for as long as that could be a delimiter row; both
+//! are handed out as they were written the moment they are not. A delimiter
+//! row that is one takes the line back ([`Said::Retract`]), and the table is
+//! handed on as a block like any other.
+//!
 //! Whole blocks are held too, and handed on as a [`Block`] rather than as
 //! runs, in order with the runs around them: a table, display math, a mermaid
 //! fence and a diff fence ([`Held`]) are gathered until they close, and a rule
@@ -66,7 +76,7 @@ mod kind;
 mod table;
 
 use crate::syntax::Syntax;
-use table::Table;
+use table::{Sight, Table};
 
 /// The longest run of one marker character read as a marker.
 ///
@@ -96,6 +106,14 @@ const TILDES: &str = "~~~~~~";
 /// an end to a wall of bars that is never going to stop.
 pub(crate) const TABLE_CAP: usize = 8 * 1024;
 
+/// The most of a line watched in case it is the header or the delimiter row of
+/// a table written without outer bars.
+///
+/// Only a copy is kept: the line itself goes out as it arrives. A line past it
+/// is prose, and is not watched any further. Far longer than any header an
+/// answer sensibly contains.
+pub(crate) const HEADER_CAP: usize = 128;
+
 /// The most of a block of display math held before it is shown as written.
 ///
 /// Smaller than the others because a formula is a line or two, and one that
@@ -114,7 +132,8 @@ pub(crate) const DIFF_CAP: usize = 16 * 1024;
 /// rule is a block of one line that is never held at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Held {
-    /// Lines that open with a bar, until one that does not.
+    /// Lines that open with a bar, until one that does not; or a header and a
+    /// delimiter row written without outer bars, until the first blank line.
     Table,
     /// `$$`, `\[` or `\begin{…}` of an equation environment, until the
     /// marker that closes it, or a fence named for math.
@@ -281,6 +300,13 @@ pub enum Said<'a> {
     },
     /// A block, handed on once it is whole.
     Block(Block),
+    /// The line being written is taken back: it was the header of a table
+    /// written without outer bars, which comes next as a [`Block`].
+    ///
+    /// Said once the delimiter row under the line has settled it, so a line
+    /// that might have been one is on screen as prose until then. Everything
+    /// before it was said is the line's own, and nothing else is taken.
+    Retract,
 }
 
 /// What a reader links its text to: the repository a bare number counts
@@ -880,6 +906,31 @@ struct Emphasis {
     struck: bool,
 }
 
+/// Whether a line may still be read as the header of a table written without
+/// outer bars. A table that ran past its cap is written out as it was, and
+/// the rest of its line is `Declined`: it is not watched a second time.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum Header {
+    #[default]
+    Open,
+    Declined,
+}
+
+/// Whether the line being said is to be taken back.
+///
+/// What a header of a table written without outer bars needs: it is said as
+/// prose until the delimiter row under it settles what it is. Whoever is told
+/// what is said keeps the line apart until then, if it can put it out for
+/// good: see [`Markdown::in_doubt`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum Retract {
+    /// It may, and nothing is owed.
+    #[default]
+    Allowed,
+    /// The line is to be taken back before anything else is said.
+    Owed,
+}
+
 /// What the scan is in the middle of, across lines.
 ///
 /// The fence is the one thing a line break does not end — that is what a fence
@@ -1124,6 +1175,11 @@ pub struct Markdown {
     /// that is not one of its own, which is a question asked at the start of
     /// every line rather than settled once.
     table: Option<Table>,
+    /// Whether this line may still be watched as the header of a table without
+    /// outer bars.
+    header: Header,
+    /// Whether the line being said is to be taken back.
+    retract: Retract,
     /// The line of code collected so far, waiting for the break that completes
     /// it.
     ///
@@ -1230,6 +1286,19 @@ impl Markdown {
         self
     }
 
+    /// Whether the line being said may yet be taken back with a
+    /// [`Said::Retract`]: it may be the header of a table written without
+    /// outer bars, and the delimiter row under it has not arrived to say so.
+    ///
+    /// What a caller that puts what it is told out for good, and cannot take
+    /// it back, asks after each delta, and holds the line until it is false.
+    /// It is false for a line of more than 128 bytes, and for one with a
+    /// single cell once its break has come.
+    #[must_use]
+    pub fn in_doubt(&self) -> bool {
+        self.table.as_ref().is_some_and(Table::pending)
+    }
+
     /// The held block being gathered, and how many of its lines have begun.
     ///
     /// What the live foot says while one is: the block is not drawn until it
@@ -1237,7 +1306,11 @@ impl Markdown {
     /// why.
     #[must_use]
     pub fn holding(&self) -> Option<Holding> {
-        if let Some(table) = self.table.as_ref().filter(|_| self.holds()) {
+        if let Some(table) = self
+            .table
+            .as_ref()
+            .filter(|table| self.holds() && !table.pending())
+        {
             return Some(Holding {
                 held: Held::Table,
                 lines: table.begun(),
@@ -1279,8 +1352,14 @@ impl Markdown {
         self.kinds = kinds;
     }
 
-    /// Hands on the block that has just closed, after every run before it.
+    /// Hands on the block that has just closed, after every run before it, and
+    /// the line it takes back before either.
     fn hand_on(&mut self, kinds: &mut kind::Kinds, say: &mut dyn FnMut(Said<'_>)) {
+        if self.retract == Retract::Owed {
+            self.retract = Retract::Allowed;
+            kinds.flush(&mut |slot, text, link| say(Said::Run { slot, text, link }));
+            say(Said::Retract);
+        }
         if let Some(block) = self.ready.take() {
             kinds.flush(&mut |slot, text, link| say(Said::Run { slot, text, link }));
             say(Said::Block(block));
@@ -1310,15 +1389,24 @@ impl Markdown {
             let next = at.saturating_add(character.len_utf8());
 
             // A block closed on the character before this one, and goes out
-            // before anything after it does.
-            if self.ready.is_some() {
+            // before anything after it does; so does the line it takes back.
+            if self.ready.is_some() || self.retract == Retract::Owed {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
                 return Some(at);
             }
 
+            // A header that may be one is read as it arrives, and watched. Its
+            // break is the one character held, with the start of the line
+            // under it, until they say what it was.
+            if self.table.as_ref().is_some_and(Table::mirrors) && self.mirrored(character) {
+                self.say(delta.get(run..at).unwrap_or_default(), say);
+                run = next;
+                continue;
+            }
+
             // A block of bars takes every character in it, so nothing below
             // runs while one is open and the run stays empty until it closes.
-            if self.table.is_some() {
+            if self.table.as_ref().is_some_and(|table| !table.mirrors()) {
                 if self.tabled(character, room, say) {
                     run = next;
                     continue;
@@ -1351,6 +1439,15 @@ impl Markdown {
                     continue;
                 }
                 run = at;
+            }
+
+            // The start of a line that could be the header of a table written
+            // without outer bars is watched from its first character, and read
+            // like any other: it is prose until the delimiter row under it
+            // says otherwise.
+            if self.opens_bare(character) {
+                self.table = Some(Table::bare());
+                self.mirrored(character);
             }
 
             match self.held {
@@ -1873,6 +1970,33 @@ impl Markdown {
         character == '|' && self.inside == Inside::Prose && !self.started && !self.line.code
     }
 
+    /// Whether `character` starts a line that could be the header of a table
+    /// written without outer bars.
+    ///
+    /// Only the first character of a line nothing else has claimed: after
+    /// spaces, a marker or a bullet it is `a | b` in a list item or a quote,
+    /// which is the prose it was. Not one a marker or a bar would have opened,
+    /// since those are another reading of the same line.
+    fn opens_bare(&self, character: char) -> bool {
+        self.holds()
+            && self.header == Header::Open
+            && self.inside == Inside::Prose
+            && !self.started
+            && self.previous == '\0'
+            && self.indent == 0
+            && !self.line.code
+            && self.held.is_none()
+            && self.link.is_none()
+            && self.address.is_none()
+            && self.reference.is_none()
+            && !self.escaped
+            && !character.is_whitespace()
+            && !matches!(
+                character,
+                '`' | '*' | '_' | '~' | '#' | '-' | '+' | '>' | '[' | '\\' | '|' | '$'
+            )
+    }
+
     /// Reads `character` into the block of bars being held. Answers whether it
     /// belonged to the block.
     ///
@@ -1889,6 +2013,10 @@ impl Markdown {
         let Some(mut table) = self.table.take() else {
             return false;
         };
+
+        if table.is_bare() {
+            return self.bared(table, character, room, say);
+        }
 
         // A line that does not open with a bar is not the table's, and the
         // table ended above it.
@@ -1915,6 +2043,103 @@ impl Markdown {
 
         self.table = Some(table);
         true
+    }
+
+    /// Watches `character`, which the scan reads all the same, as part of the
+    /// header of a table written without outer bars. Answers whether it is the
+    /// header's break, which is held back rather than read.
+    ///
+    /// A header with fewer than two cells, or too long a one, is prose, and
+    /// nothing is watched past it.
+    fn mirrored(&mut self, character: char) -> bool {
+        let Some(mut table) = self.table.take() else {
+            return false;
+        };
+        if table.sees(character) != Sight::Keep {
+            return false;
+        }
+
+        self.table = Some(table);
+        character == '\n'
+    }
+
+    /// [`Markdown::tabled`] for a block that opened without a bar, once its
+    /// header is whole. Answers whether `character` belonged to the block.
+    ///
+    /// Until the delimiter row is whole, what the second line has spelled is
+    /// held; a line that turns out not to be one is read as the prose it is,
+    /// from the header's break on, and `character` is the caller's. The
+    /// delimiter row takes the header back from whoever was told it as prose.
+    fn bared(
+        &mut self,
+        mut table: Table,
+        character: char,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) -> bool {
+        let lines = table.lined();
+        match table.sees(character) {
+            Sight::Keep => {
+                if lines == 1 && table.lined() == 2 {
+                    self.retract = Retract::Owed;
+                    self.forgets_line();
+                }
+                self.table = Some(table);
+                true
+            }
+            Sight::Over => {
+                self.lays(&table, room, say);
+                self.line = Line::default();
+                self.started = false;
+                false
+            }
+            Sight::Spill => {
+                table.spilt(say);
+                self.header = Header::Declined;
+                true
+            }
+            Sight::Release => {
+                self.release(&table, room, say);
+                // What the second line began may have opened a block of its
+                // own, which then has the character: a header to watch, or a
+                // block of bars.
+                if self.table.as_ref().is_some_and(Table::mirrors) {
+                    self.mirrored(character)
+                } else {
+                    self.table.is_some() && self.tabled(character, room, say)
+                }
+            }
+        }
+    }
+
+    /// Reads what a header's table held back as the prose it always was: the
+    /// header's break, and the start of the line under it.
+    fn release(
+        &mut self,
+        table: &Table,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) {
+        if let Some(held) = table.held() {
+            self.scan(&held, room, say);
+        }
+    }
+
+    /// Forgets what the line being read had begun, without saying it.
+    ///
+    /// For a line that is no longer prose being read as such: it is the header
+    /// of a table, which keeps its source and is laid out from that.
+    fn forgets_line(&mut self) {
+        self.held = None;
+        self.link = None;
+        self.address = None;
+        self.reference = None;
+        self.escaped = false;
+        self.indent = 0;
+        self.previous = '\0';
+        self.started = false;
+        self.line = Line::default();
+        self.probe = Probe::default();
     }
 
     /// Lets go of a table that has ended: as a block where blocks are held
@@ -2264,9 +2489,40 @@ impl Markdown {
         self.kinds = kinds;
     }
 
+    /// Reads a line that is still in doubt ([`Markdown::in_doubt`]) as the
+    /// prose it was said to be, because whoever is told is about to end the
+    /// line itself and the delimiter row that would have taken it back can
+    /// no longer reach it.
+    ///
+    /// What the header's table held back is read as written, and nothing is
+    /// watched for after. The rest of a message is read as it would have been
+    /// had the line ended there, so a table that straddles it is not one.
+    pub fn undoubted(&mut self, room: usize, say: &mut dyn FnMut(Said<'_>)) {
+        let mut kinds = std::mem::take(&mut self.kinds);
+        let mut tell = |slot: Slot, text: &str, link: Option<&str>| {
+            kinds.tell(slot, text, link, &mut |slot, text, link| {
+                say(Said::Run { slot, text, link });
+            });
+        };
+        while let Some(table) = self.table.take_if(|table| table.pending()) {
+            self.release(&table, room, &mut tell);
+        }
+        self.hand_on(&mut kinds, say);
+        kinds.flush(&mut |slot, text, link| say(Said::Run { slot, text, link }));
+        self.kinds = kinds;
+    }
+
     /// Lets go of whatever the scan was still holding, which a line's end does
     /// as well as a message's.
     fn close(&mut self, room: usize, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        // A header still waiting for its delimiter row is the prose it was
+        // read as until then, and what was held back with it is read before
+        // anything else is let go of, since the line it begins is what the
+        // rest of this stands in.
+        while let Some(table) = self.table.take_if(|table| table.pending()) {
+            self.release(&table, room, say);
+        }
+
         // A run of markers is held for the character that says what it was,
         // and the end of a message is that character never arriving. Settled
         // against a line break, because the end of a message ends everything a
@@ -2407,12 +2663,14 @@ impl Markdown {
             // over so much as never given up: they are what the terminal can
             // draw, which no line of an answer changes. Nor is whether blocks
             // are held, or a block that has just closed and not yet gone out,
-            // or display math past its cap.
+            // or a line taken back that has not been told, or display math past
+            // its cap.
             inside,
             fenced: self.fenced,
             syntax,
             glyphs: self.glyphs,
             unheld: self.unheld,
+            retract: self.retract,
             refusal: self.refusal.filter(|_| ended != Inside::Opening),
             ready,
             gathering: held,
