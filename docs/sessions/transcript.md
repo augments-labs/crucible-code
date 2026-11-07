@@ -182,3 +182,27 @@ Some text is drawn exactly as the model wrote it, rather than as a block:
 
 A table with more columns than the window can hold is still drawn as a table,
 with each cell folded into the room its column has, however narrow.
+
+## Pictures and image files
+
+A picture the transcript turns into pixels, whether an SVG diagram or a PNG,
+JPEG, GIF or WebP file, is bounded before it is read, and a picture past any
+bound is refused rather than shrunk or cut:
+
+- **The file or the SVG.** At most 1 MiB. Past that it is refused unread.
+- **The pixels.** At most 2 MiB of them, at four bytes a pixel, so a picture of
+  about 724 by 724 pixels, or 1 024 by 512. The size a file or an SVG says it
+  has is judged before any pixel is made, so a small file that claims a huge
+  picture is refused at once.
+- **A picture sent to the terminal.** Sent as PNG it is at most 1 MiB, and
+  sent as Sixel it is at most 600 pixels wide.
+- **One at a time.** Only one picture is read or drawn at a time, wherever it
+  was asked for. One that waits longer than ten seconds for its turn is
+  refused as late.
+
+An SVG is drawn from its own bytes and nothing else. A file, a URL, a style
+sheet import or a font it names is not opened, followed or fetched, and the
+picture is drawn as if the reference were not there. Only one font is
+available, DejaVu Sans, so text in a script it has no letters for is drawn
+with gaps. A picture whose references lead round to themselves, such as three
+masks that each use the next, is refused, as is one the drawing cannot finish.
