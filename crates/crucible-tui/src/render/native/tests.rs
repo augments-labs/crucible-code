@@ -2354,6 +2354,75 @@ fn a_native_divider_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
 }
 
 #[test]
+fn a_native_transcript_emptied_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // Emptying a native transcript writes what it held out to the scrollback,
+    // so a header still in doubt goes there once, as the prose it looked like,
+    // and the delimiter row that comes later makes no table of it.
+    let call: Writes = |render| render.empties().unwrap();
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = written_under_the_cut(cut, call);
+        let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn a_native_answer_hung_while_a_header_is_in_doubt_ends_it_as_the_prose_it_was() {
+    // Hanging what was written under a result mark ends the line an answer
+    // left open, so on a native screen a header still in doubt reaches the
+    // scrollback once, marked, as the prose it looked like.
+    let call: Writes = |render| {
+        let last = render.lines().saturating_sub(1);
+        render.subordinate(last, Glyphs::Unicode).unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = written_under_the_cut(cut, call);
+        let plain: Vec<String> = written_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
 fn a_native_line_still_arriving_is_on_screen_whatever_it_could_turn_out_to_be() {
     let window = Window::new(40, 8);
     let mut render = native(&window);

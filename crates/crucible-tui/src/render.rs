@@ -2050,10 +2050,19 @@ impl<T: Terminal> Renderer<T> {
     /// A reply hung by [`Renderer::hangs`] is let go of unmarked, as the full
     /// screen marks nothing of a reply that emptied the transcript.
     ///
+    /// On a screen, a line of an answer that may still be the header of a
+    /// table written without outer bars is ended as the prose it was said to
+    /// be first, as [`Renderer::present`] does: what follows is under it.
+    /// Output that is not a terminal keeps what was written to it, and the
+    /// line goes on there.
+    ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn empties(&mut self) -> Result<(), TerminalError> {
+        if self.terminal.is_terminal() {
+            self.undoubted()?;
+        }
         self.record.unhangs();
         self.native_empties()?;
         match self.native {
@@ -2328,6 +2337,11 @@ impl<T: Terminal> Renderer<T> {
     /// copies it. A command that emptied the record is handled by the record's
     /// stable line numbering: only output written after that reset is changed.
     ///
+    /// On a screen the line still open is ended, and one that may still be the
+    /// header of a table written without outer bars is ended as the prose it
+    /// was said to be first, as [`Renderer::present`] does: what follows is
+    /// under it.
+    ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be redrawn.
@@ -2340,6 +2354,7 @@ impl<T: Terminal> Renderer<T> {
             return Ok(());
         }
 
+        self.undoubted()?;
         self.record.subordinate(from, glyphs.hangs());
         self.draw()
     }

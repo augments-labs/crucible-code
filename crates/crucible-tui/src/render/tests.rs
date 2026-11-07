@@ -3504,6 +3504,76 @@ fn a_divider_laid_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
 }
 
 #[test]
+fn a_transcript_emptied_under_a_header_in_doubt_ends_it_as_the_prose_it_was() {
+    // Emptying the transcript ends the line an answer left open with
+    // everything else, so a header still in doubt is the prose it looked like
+    // and goes with it: no blank row is left for it and no table is made of it
+    // when the delimiter row comes later.
+    let call: Writes = |render| render.empties().unwrap();
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = laid_under_the_cut(cut, call);
+        let plain: Vec<String> = laid_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            0,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
+fn an_answer_hung_while_a_header_is_in_doubt_ends_it_as_the_prose_it_was() {
+    // Hanging what was written under a result mark ends the line an answer
+    // left open, so a header still in doubt is marked as the prose it looked
+    // like, said once, and the delimiter row that comes later makes no table.
+    let call: Writes = |render| {
+        let last = render.lines().saturating_sub(1);
+        render.subordinate(last, Glyphs::Unicode).unwrap();
+    };
+    for cut in [
+        "name | what it does\n",
+        "name | what",
+        "name | what it does\n--",
+    ] {
+        let doubtful = laid_under_the_cut(cut, call);
+        let plain: Vec<String> = laid_under_the_cut(&cut.replace('|', "-"), call)
+            .iter()
+            .map(|row| row.replace(" - ", " | "))
+            .collect();
+
+        assert_eq!(
+            doubtful
+                .iter()
+                .filter(|row| row.contains("name | what"))
+                .count(),
+            1,
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert!(
+            !doubtful.iter().any(|row| row.contains('│')),
+            "{cut:?}: {doubtful:#?}"
+        );
+        assert_eq!(doubtful, plain, "{cut:?}");
+    }
+}
+
+#[test]
 fn a_table_written_without_outer_bars_narrowed_is_the_table_a_window_that_narrow_draws() {
     let mut fresh = reading(30, 20);
     fresh.answer(BARE_TABLE);

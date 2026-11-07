@@ -5545,6 +5545,78 @@
       ]
     },
     {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-EMPTIES-IN-DOUBT",
+      "family": "transcript-blocks",
+      "obligation": "Emptying the transcript on a screen while a line may still be the header of a table written without outer bars ends it as the prose it was and drops it with the rest: no blank row left for it, no table made of it when the delimiter row comes, as for the same words with no header in them.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_transcript_emptied_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "c3fa3c987f72ffe0d79e2fbff14d73ddbe28b5decf47be48b10867af32c834c5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-EMPTIES-IN-DOUBT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "Emptying a native transcript while a line may still be the header of a table written without outer bars sends it to the scrollback once, as the prose it was, with no table made of it when the delimiter row comes.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_transcript_emptied_under_a_header_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "5ebf0eecf689b4e777e606495b691b11fed0de0eec23865e64a7315f398d8f69",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-SUBORDINATE-IN-DOUBT",
+      "family": "transcript-blocks",
+      "obligation": "Hanging an answer under a result mark while a line may still be the header of a table written without outer bars ends it as the prose it was: the header marked and said once, no blank row added, no table made of it when the delimiter row comes, as for the same words with no header in them.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::an_answer_hung_while_a_header_is_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "e056d3d82736b5f21180b9f43f9e4937afa2bef4c7d904ac286e5125c9f6e895",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BARE-TABLE-SUBORDINATE-IN-DOUBT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "On a native screen, hanging an answer under a result mark while a line may still be the header of a table written without outer bars sends it to the scrollback once, marked, as the prose it was, with no table made of it when the delimiter row comes.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_answer_hung_while_a_header_is_in_doubt_ends_it_as_the_prose_it_was",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "42a40d05ed37b78bead13647bc908ad361ea1450ca66bc9d1113742ec3fbbddc",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
       "id": "CASE-TRANSCRIPT-BARE-TABLE-REDIRECTED",
       "family": "transcript-blocks",
       "obligation": "A run whose output is a file is written a table without outer bars as the table, once, and never its header as prose, however the answer is cut into deltas.",
