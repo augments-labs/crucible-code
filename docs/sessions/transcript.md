@@ -194,6 +194,18 @@ bound is refused rather than shrunk or cut:
   about 724 by 724 pixels, or 1 024 by 512. The size a file or an SVG says it
   has is judged before any pixel is made, so a small file that claims a huge
   picture is refused at once.
+- **What drawing an SVG holds at once.** The same 2 MiB bounds the sum of
+  every pixmap the drawing would hold together: the picture itself, each
+  group drawn apart from its parent (for opacity, a filter, a clip, a mask or
+  a blend), the result of each filter step, and each clip, mask and pattern.
+  The sum is worked out from the SVG before anything is drawn, so a small file
+  whose filters ask for far more room than the picture is refused at once.
+- **What the filters of an SVG compute.** The pixels of each filter step's
+  region, times what the step does with each pixel (a turbulence per octave, a
+  morphology per cell of its window, a convolution per cell of its matrix),
+  added up over the picture, are at most 140 000. That is about what a
+  drawing can finish in a fiftieth of a second. A picture past it is refused
+  before it is drawn.
 - **A picture sent to the terminal.** Sent as PNG it is at most 1 MiB, and
   sent as Sixel it is at most 600 pixels wide.
 - **One at a time.** Only one picture is read or drawn at a time, wherever it
@@ -204,5 +216,9 @@ An SVG is drawn from its own bytes and nothing else. A file, a URL, a style
 sheet import or a font it names is not opened, followed or fetched, and the
 picture is drawn as if the reference were not there. Only one font is
 available, DejaVu Sans, so text in a script it has no letters for is drawn
-with gaps. A picture whose references lead round to themselves, such as three
-masks that each use the next, is refused, as is one the drawing cannot finish.
+with gaps. A raster image embedded in an SVG, such as a PNG in a `data:` URL,
+is not drawn; the SVG is drawn without it. A picture whose references lead
+round to themselves, such as three masks that each use the next, is refused,
+as is one the drawing cannot finish. So is any picture with a `<style>` sheet
+that names an element other than a gradient with `url(#id)`, because a sheet
+cannot say which element a rule reaches, even when no loop is present.

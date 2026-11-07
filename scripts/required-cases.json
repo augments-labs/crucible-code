@@ -7035,6 +7035,114 @@
         "macos",
         "windows"
       ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-MEMORY-MANY-RESULTS",
+      "family": "transcript-pictures",
+      "obligation": "A filter with many named results is refused before it is drawn, whatever the size of the file.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_filter_with_many_named_results_is_refused_before_it_is_drawn",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "fb265cf72c8bed7aad77085b9e6c7bf48729644a332521448119d5d9f178a303",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-MEMORY-LAYER-EDGE",
+      "family": "transcript-pictures",
+      "obligation": "A layer beside the canvas is counted against the two mebibyte ceiling, drawn at it and refused one byte past it.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_layer_beside_the_canvas_is_counted_against_the_ceiling_one_byte_past_it",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "f6fe1e0fd0d0a820f623364a617289202ef4c6fc6c96d0f485a20a0f2447d4f4",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-MEMORY-SMALL-DRAWN",
+      "family": "transcript-pictures",
+      "obligation": "A small filter and a small layer are drawn.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_small_filter_and_a_small_layer_are_drawn",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "e9828895c585acf10487664d9b6c928e0ba1954c4a3e0ec66abe4c5f36501e03",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-FILTER-WORK-EDGE",
+      "family": "transcript-pictures",
+      "obligation": "Filter work is drawn at its ceiling and refused one row past it.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::filter_work_is_refused_one_row_past_its_ceiling",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "f16c8fb5d491204174bd41ede7d233d4dba6f6446eb503b24352a92a8c22ce33",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-FILTER-WORK-SUM",
+      "family": "transcript-pictures",
+      "obligation": "Filter work is added up over the whole drawing, not judged per primitive.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::filter_work_is_added_up_over_the_whole_drawing",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "3a2a1a19d1898fb00b788762c9dfd9faf4ffc3c5e7b6b104636dab5dc1600540",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-FILTER-WORK-WINDOWS",
+      "family": "transcript-pictures",
+      "obligation": "A morphology and a convolution are counted by the window each pixel reads.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_morphology_and_a_convolution_are_counted_by_the_window_each_pixel_reads",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "466109e790eaa5792a48282e46d984f33daf98309844b562f6c09e1d68cfc395",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
     }
   ]
 }

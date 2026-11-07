@@ -545,9 +545,10 @@ fn linked_svg(rng: &mut Rng) -> Input {
             inner.push_str("</defs><rect width=\"100\" height=\"60\" clip-path=\"url(#c0)\" fill=\"url(#p0)\"/>");
         }
         // A filter chain that asks for more than the canvas. It is blurs,
-        // offsets and floods only: the renderer's time in a turbulence or a
-        // morphology grows with the layer and nothing caps it, so even a few
-        // of those are not drawn in any time a test can wait for.
+        // offsets and floods only: a turbulence or a morphology over a region
+        // this large is past the filter work a drawing may ask for and is
+        // refused, which the hostile corpus pins, so the chain here is one
+        // the drawing is let to finish or is refused for its size.
         4 => {
             let steps = rng.between(1, 20);
             inner.push_str("<defs><filter id=\"f\" x=\"-1000%\" y=\"-1000%\" width=\"3000%\" height=\"3000%\">");

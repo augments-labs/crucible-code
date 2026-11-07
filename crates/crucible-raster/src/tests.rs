@@ -1,5 +1,6 @@
 use super::*;
 use resvg::usvg;
+use std::fmt::Write as _;
 use std::sync::{Mutex, MutexGuard, PoisonError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -990,4 +991,128 @@ fn a_drawing_the_renderer_panics_on_is_refused_not_raised_to_the_caller() {
     );
     // The slot is free again for the next picture.
     assert!(rasterise(RECT.as_bytes(), 100, &[]).is_ok());
+}
+
+// ---------------------------------------------------------------------------
+// What a drawing would hold and compute, judged before it is drawn.
+
+/// A page holding `count` rectangles `across` by `down` pixels in a row, each
+/// drawn through the filter `primitives`, whose region is the rectangle.
+fn filtered(primitives: &str, count: u32, across: u32, down: u32) -> String {
+    let rectangles = (0..count).fold(String::new(), |mut all, at| {
+        let _ = write!(
+            all,
+            r#"<rect x="{}" width="{across}" height="{down}" filter="url(#f)"/>"#,
+            at * across
+        );
+        all
+    });
+    format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{}" height="{down}"><filter id="f" x="0" y="0" width="1" height="1">{primitives}</filter>{rectangles}</svg>"#,
+        count * across
+    )
+}
+
+/// A square page `side` pixels across with one square the size of the page
+/// drawn at half opacity: the renderer makes a layer for it beside the canvas.
+fn faded(side: u32) -> String {
+    format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{side}" height="{side}"><rect width="{side}" height="{side}" opacity="0.5"/></svg>"#
+    )
+}
+
+#[test]
+fn a_filter_with_many_named_results_is_refused_before_it_is_drawn() {
+    let _alone = alone();
+    // Each result is a pixmap the size of the filter region, and the region is
+    // allowed to be five canvases across and down: sixteen of them are
+    // hundreds of megabytes from a file under a kilobyte.
+    let results = line(16, |at| format!(r#"<feFlood result="r{at}"/>"#));
+    let svg = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="60"><filter id="f" x="-1000%" y="-1000%" width="3000%" height="3000%">{results}</filter><rect width="100" height="60" filter="url(#f)"/></svg>"#
+    );
+    assert!(svg.len() < 1024);
+    assert_eq!(rasterise(svg.as_bytes(), 100, &[]), Err(Refused::TooLarge));
+}
+
+#[test]
+fn a_layer_beside_the_canvas_is_counted_against_the_ceiling_one_byte_past_it() {
+    let _alone = alone();
+    // The canvas is 4 bytes a pixel and the layer has two pixels more on each
+    // side, so the two together are 8 side² + 32 side + 64 bytes.
+    let held = |side: u32| 8 * u64::from(side).pow(2) + 32 * u64::from(side) + 64;
+    let side = (1..=u32::MAX)
+        .take_while(|side| held(*side) <= MOST_DECODED as u64)
+        .last()
+        .expect("a side that fits");
+    assert!(held(side) <= MOST_DECODED as u64 && held(side + 1) > MOST_DECODED as u64);
+    let drawn = rasterise(faded(side).as_bytes(), side, &[]).expect("held at the ceiling");
+    assert_eq!((drawn.width(), drawn.height()), (side, side));
+    assert_eq!(
+        rasterise(faded(side + 1).as_bytes(), side + 1, &[]),
+        Err(Refused::TooLarge)
+    );
+    // The same canvas without the layer is well within its own ceiling.
+    let plain = faded(side + 1).replace(r#" opacity="0.5""#, "");
+    assert!(rasterise(plain.as_bytes(), side + 1, &[]).is_ok());
+}
+
+#[test]
+fn a_small_filter_and_a_small_layer_are_drawn() {
+    let _alone = alone();
+    let blurred = filtered(r#"<feGaussianBlur stdDeviation="2"/>"#, 4, 10, 10);
+    assert!(rasterise(blurred.as_bytes(), 40, &[]).is_ok());
+    assert!(rasterise(faded(100).as_bytes(), 100, &[]).is_ok());
+}
+
+/// Ten octaves of turbulence over `count` rectangles `across` by `down`: ten
+/// steps for each pixel.
+fn turbulent(count: u32, across: u32, down: u32) -> String {
+    filtered(
+        r#"<feTurbulence baseFrequency="0.1" numOctaves="10"/>"#,
+        count,
+        across,
+        down,
+    )
+}
+
+#[test]
+fn filter_work_is_refused_one_row_past_its_ceiling() {
+    let _alone = alone();
+    // 14 000 pixels of 10 octaves: 140 000 steps. One more row of the region
+    // is 141 000.
+    let at = turbulent(1, 100, 140);
+    assert!(rasterise(at.as_bytes(), 100, &[]).is_ok());
+    let past = turbulent(1, 100, 141);
+    assert_eq!(rasterise(past.as_bytes(), 100, &[]), Err(Refused::TooLarge));
+}
+
+#[test]
+fn filter_work_is_added_up_over_the_whole_drawing() {
+    let _alone = alone();
+    // Each rectangle is 80 000 steps and passes alone; two are past the ceiling.
+    let one = turbulent(1, 100, 80);
+    assert!(rasterise(one.as_bytes(), 100, &[]).is_ok());
+    let two = turbulent(2, 100, 80);
+    assert_eq!(rasterise(two.as_bytes(), 200, &[]), Err(Refused::TooLarge));
+}
+
+#[test]
+fn a_morphology_and_a_convolution_are_counted_by_the_window_each_pixel_reads() {
+    let _alone = alone();
+    // A morphology radius 4 reads 9 by 9 pixels for each of 100.
+    let small = filtered(r#"<feMorphology radius="4"/>"#, 1, 10, 10);
+    assert!(rasterise(small.as_bytes(), 10, &[]).is_ok());
+    // A radius no region can use is a window as wide as the region, and
+    // twenty regions of it are past the ceiling.
+    let wide = filtered(r#"<feMorphology radius="65830"/>"#, 20, 10, 10);
+    assert_eq!(rasterise(wide.as_bytes(), 200, &[]), Err(Refused::TooLarge));
+    let kernel = ["1"; 81].join(" ");
+    let convolved = filtered(
+        &format!(r#"<feConvolveMatrix order="9" kernelMatrix="{kernel}"/>"#),
+        1,
+        10,
+        10,
+    );
+    assert!(rasterise(convolved.as_bytes(), 10, &[]).is_ok());
 }

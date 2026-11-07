@@ -1,5 +1,7 @@
 //! Pictures and image files as bounded pixels, and as PNG and Sixel payloads.
 
+mod budget;
+
 use icy_sixel::{EncodeOptions, SixelImage};
 use image::codecs::png::PngEncoder;
 use image::{
@@ -34,9 +36,15 @@ pub enum Refused {
 /// The most bytes of picture or image file any entry point reads: 1 MiB.
 pub const MOST_INPUT: usize = 1 << 20;
 
-/// The most bytes of decoded pixels an entry point returns, and the most the
-/// decoders may allocate while making them: 2 MiB, which is 524 288 RGBA
-/// pixels.
+/// The most bytes of decoded pixels an entry point returns, and the most a
+/// decode or a drawing may hold at once while making them: 2 MiB, which is
+/// 524 288 RGBA pixels.
+///
+/// For an image file that is what the decoders allocate. For a picture it is
+/// the sum of every pixmap the renderer would hold at the same time: the
+/// canvas, the layer of each group drawn apart from its parent, the result of
+/// each filter primitive, and each clip, mask and pattern. A picture whose sum
+/// is past it is refused before it is drawn.
 pub const MOST_DECODED: usize = 2 << 20;
 
 /// The most bytes of PNG [`png`] returns: 1 MiB.
@@ -183,6 +191,7 @@ pub fn rasterise(svg: &[u8], width_px: u32, inks: &[(&str, [u8; 3])]) -> Result<
     // than the stack of whichever thread asked, so the drawing has its own.
     thread::scope(|scope| {
         thread::Builder::new()
+            .name("picture".to_owned())
             .stack_size(DRAWING_STACK)
             .spawn_scoped(scope, || draw(svg, width_px, &options))
             .map_err(|_| Refused::TooLarge)?
@@ -225,12 +234,15 @@ fn draw(svg: &[u8], width_px: u32, options: &Options<'_>) -> Result<Pixels, Refu
     if rgba_len(width_px, height).is_none_or(|rgba| rgba > MOST_DECODED) {
         return Err(Refused::TooLarge);
     }
-    let mut canvas = Pixmap::new(width_px, height).ok_or(Refused::TooLarge)?;
     #[allow(clippy::cast_precision_loss, reason = "a size under the ceiling")]
     let scale = Transform::from_scale(
         width_px as f32 / size.width(),
         height as f32 / size.height(),
     );
+    // What the renderer would hold and compute is judged before it holds or
+    // computes any of it: the canvas is not the only pixmap it makes.
+    budget::cost(&tree, scale, width_px, height)?;
+    let mut canvas = Pixmap::new(width_px, height).ok_or(Refused::TooLarge)?;
     resvg::render(&tree, scale, &mut canvas.as_mut());
     let straight = canvas
         .pixels()
@@ -277,8 +289,9 @@ fn without_loops(
 /// Every `url(#id)` in an attribute, every `href` that is a `#id` (an `a` link
 /// is not drawn from), and every `url(#id)` in a `<style>` is a reference. A
 /// style sheet cannot say which element a rule reaches, so one that names
-/// anything but a gradient is taken to lead back: a gradient draws nothing
-/// that is drawn from another. Where an id is given twice the parser uses the
+/// anything but a gradient is taken to lead back, whether or not a loop is
+/// there: such a picture is refused, and a gradient is let through because it
+/// draws nothing that is drawn from another. Where an id is given twice the parser uses the
 /// last, and so does this.
 fn leads_back(document: &Document<'_>) -> bool {
     let elements: Vec<Node<'_, '_>> = document.descendants().filter(Node::is_element).collect();
@@ -544,7 +557,9 @@ pub fn sixel(pixels: &Pixels, palette: &SixelPalette) -> Result<Vec<u8>, Refused
 }
 
 /// How long an entry point waits for the decode slot. The work behind it is
-/// bounded by the caps, so this is only the time a queue of pictures may take.
+/// bounded by the caps on its input and pixels and by the memory and filter
+/// work a drawing is judged to need before it is drawn, so this is only the
+/// time a queue of pictures may take.
 const WAIT: Duration = Duration::from_secs(10);
 
 /// The decoders' own ceilings: what they may allocate, and the sides they may
@@ -600,7 +615,8 @@ impl Slot {
     /// Take the slot, waiting up to `within` for whoever holds it.
     ///
     /// The wait is for the slot only. What a holder does with it is bounded by
-    /// the caps on its input and its pixels, not by a deadline.
+    /// the caps on its input and its pixels and by the memory and filter work
+    /// a drawing is judged to need, not by a deadline.
     ///
     /// # Errors
     /// [`Refused::OverTime`] when the slot is not free within `within`.
