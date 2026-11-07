@@ -88,8 +88,9 @@ that touches any row of one of them copies the whole of its source, once however
 many of its rows or times it is touched, in order with the prose around it.
 Two blocks in one selection give both. A rule, and a heading with its rule,
 copy as they are drawn, the words and then the rule. In the native screen, or
-with <kbd>Shift</kbd> held while you drag, your terminal copies what it shows. In both screens <kbd>Ctrl+O</kbd> lists the source of
-each drawn block, newest first, after any cut results: see
+with <kbd>Shift</kbd> held while you drag, your terminal copies what it shows.
+In both screens <kbd>Ctrl+O</kbd> lists the source of each drawn block, newest
+first, after any cut results: see
 [Results cut short](../reference/keys.md#results-cut-short).
 
 ## Drawn again at every width
