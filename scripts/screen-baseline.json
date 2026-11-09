@@ -2189,7 +2189,7 @@
         "Vendor::answering(transcript::said(\"code\"))",
         "Watched::in_default_colours( \"transcript-code-80-fullscreen\", (80, 43), Some(&vendor), None, )"
       ],
-      "sha256": "17450a3b7ffa1593413c7cad8e29f3dafa76ece52a7188c9fd376df8b9e195b1"
+      "sha256": "9a209f4b0392a0b2d5c309163a911eac6c841d1f1f21249c61d34b82233b9236"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_code_80_native.snap",
@@ -2198,7 +2198,7 @@
         "Vendor::answering(transcript::said(\"code\"))",
         "Watched::drawn_in_colour( \"transcript-code-80-native\", (80, 43), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "8bce04bb7968bd9a50d45782c6280d72a29ad6769a15b4407df8af9cb2afa715"
+      "sha256": "46ce4095802c219194d065d4e00899c41422b6b3a79a1c348ae4378c2ebadbe0"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_code_80_native_ascii.snap",
@@ -2207,7 +2207,7 @@
         "Vendor::answering(transcript::said(\"code\"))",
         "Watched::drawn_in_colour( \"transcript-code-80-native-ascii\", (80, 43), &vendor, None, (\"ascii\", \"native\", Profile::default()), )"
       ],
-      "sha256": "1bccbd1638f5cba2c4cf21481fcbf02a3e8fd03ea6c9d87f01ee5522e96d0598"
+      "sha256": "586657817711dbd64b9705dd85f12a5cfb0ad3f6e69d5c04b1fa81f49b7f1fb5"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_diff_80_fullscreen.snap",

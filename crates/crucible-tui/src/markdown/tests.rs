@@ -1246,7 +1246,7 @@ fn an_address_a_link_names_is_still_the_link_it_names() {
 }
 
 /// Every shape this file reads, as one answer each.
-const SHAPES: [&str; 15] = [
+const SHAPES: [&str; 16] = [
     "**strong** and *leaning* words",
     "a [link](https://example.com) here",
     "| a | b |\n|---|---|\n| 1 | 2 |\n",
@@ -1262,6 +1262,7 @@ const SHAPES: [&str; 15] = [
     "a `*ptr*` span",
     "~~struck~~ words",
     "# heading\n",
+    "para\n\n    let x = 1;\n\n    y\n---\n",
 ];
 
 #[test]
@@ -2878,6 +2879,104 @@ fn a_closing_fence_the_message_ends_in_the_middle_of_still_shuts_its_frame() {
     }
 }
 
+// A block indented four spaces after a blank line, in the frame a fence has.
+
+#[test]
+fn a_block_indented_after_a_blank_line_is_quiet_code_in_a_frame() {
+    let said = ended("para\n\n    let x = 1;\n    let y = 2;\n\nafter\n");
+
+    assert_eq!(
+        drawn(&said),
+        "para\n\n┌─\n│ let x = 1;\n│ let y = 2;\n└─\n\nafter\n"
+    );
+    assert!(
+        !said.iter().any(|(slot, _)| *slot == Slot::Figure),
+        "{said:?}"
+    );
+    assert!(
+        said.iter()
+            .filter(|(_, text)| text.contains("let"))
+            .all(|(slot, _)| *slot == Slot::Quiet),
+        "{said:?}"
+    );
+}
+
+#[test]
+fn a_dashed_row_under_an_indented_block_is_a_rule_across_the_room() {
+    let answer = "para\n\n    code\n---\n";
+    let (blocks, runs) = blocks(answer);
+
+    assert_eq!(runs, "para\n\n┌─\n│ code\n└─\n");
+    assert_eq!(
+        blocks.iter().map(|block| &block.kind).collect::<Vec<_>>(),
+        [&Kind::Rule]
+    );
+    assert_eq!(
+        drawn(&ended(answer)),
+        format!("para\n\n┌─\n│ code\n└─\n{}\n", "─".repeat(ROOM))
+    );
+}
+
+#[test]
+fn a_row_of_equals_under_an_indented_block_is_prose() {
+    let (blocks, runs) = blocks("para\n\n    code\n===\n");
+
+    assert_eq!(runs, "para\n\n┌─\n│ code\n└─\n===\n");
+    assert!(blocks.is_empty(), "{blocks:?}");
+}
+
+#[test]
+fn a_blank_line_between_two_indented_lines_stays_in_the_frame() {
+    let said = ended("para\n\n    one\n\n    two\n\nafter\n");
+
+    assert_eq!(drawn(&said), "para\n\n┌─\n│ one\n│ \n│ two\n└─\n\nafter\n");
+}
+
+#[test]
+fn the_spaces_past_the_fourth_and_the_markers_are_the_codes_own() {
+    let said = ended("para\n\n    if *a* {\n        `b` # c\n    }\n");
+
+    assert_eq!(
+        drawn(&said),
+        "para\n\n┌─\n│ if *a* {\n│     `b` # c\n│ }\n└─\n"
+    );
+}
+
+#[test]
+fn an_indented_block_the_message_ends_in_is_shut() {
+    for (answer, drawn_text) in [
+        ("para\n\n    code", "para\n\n┌─\n│ code\n└─\n"),
+        ("para\n\n    code\n", "para\n\n┌─\n│ code\n└─\n"),
+        ("para\n\n    code\n\n", "para\n\n┌─\n│ code\n└─\n\n"),
+    ] {
+        assert_eq!(drawn(&ended(answer)), drawn_text, "{answer:?}");
+    }
+}
+
+#[test]
+fn an_indented_line_in_a_list_item_or_a_quote_or_a_paragraph_is_read_as_before() {
+    for (answer, drawn_text) in [
+        ("- item\n\n    more\n", "• item\n\n    more\n"),
+        ("1. step\n\n    more\n", "1. step\n\n    more\n"),
+        ("- item\nlazy\n\n    more\n", "• item\nlazy\n\n    more\n"),
+        (
+            "- item\n\n  more\n\n    deeper\n",
+            "• item\n\n  more\n\n    deeper\n",
+        ),
+        ("> quote\n\n>     code\n", "│ quote\n\n│     code\n"),
+        ("para\n    more\n", "para\n    more\n"),
+    ] {
+        assert_eq!(drawn(&ended(answer)), drawn_text, "{answer:?}");
+    }
+}
+
+#[test]
+fn a_paragraph_after_a_blank_line_ends_the_list_an_indented_block_continued() {
+    let said = ended("- item\n\npara\n\n    code\n");
+
+    assert_eq!(drawn(&said), "• item\n\npara\n\n┌─\n│ code\n└─\n");
+}
+
 /// What `answer` read to its end handed on: the blocks, and the runs with
 /// every line taken back gone.
 fn headed(answer: &str) -> (Vec<Block>, String) {
@@ -3300,4 +3399,17 @@ fn setext_headings_64_unicode() {
 #[test]
 fn setext_headings_64_ascii() {
     insta::assert_snapshot!(corpus_pictures::picture(SETEXT_HEADINGS, 64, Glyphs::Ascii));
+}
+
+const INDENTED_CODE: &str = "A block indented four spaces:\n\n    let total = 1 + 2;\n\n    \
+    let message = \"a line of code long enough to wrap at sixty-four columns\";\n\nAfter it.\n";
+
+#[test]
+fn indented_code_64_unicode() {
+    insta::assert_snapshot!(corpus_pictures::picture(INDENTED_CODE, 64, Glyphs::Unicode));
+}
+
+#[test]
+fn indented_code_64_ascii() {
+    insta::assert_snapshot!(corpus_pictures::picture(INDENTED_CODE, 64, Glyphs::Ascii));
 }

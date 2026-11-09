@@ -127,6 +127,14 @@ after the fence is used, and a name longer than 32 columns is cut short with an
 ellipsis. A fence the answer never closes has no bottom edge. With the ASCII
 glyph set the corners are `+`, the rule `-` and the bar `|`.
 
+A block indented four spaces after a blank line is code too, and is drawn in
+the same frame with an unlabelled top edge. The four spaces are not drawn, and
+any past them are the code's own. The block ends at the first line that is not
+blank and is indented less, and the blank lines before that line are drawn
+after the bottom edge; the end of the answer closes it as well. A line
+indented four spaces inside a list item, in a quote, or straight under a
+paragraph line is not code, and is drawn as text as before.
+
 A line of code longer than the window is never folded at a space: it is cut
 where the room runs out, and each row after the first starts with `┆` (`:` in
 the ASCII glyph set) where the bar would be. In the full screen, crucible's own
