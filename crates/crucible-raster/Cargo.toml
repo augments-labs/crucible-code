@@ -13,10 +13,15 @@ authors.workspace = true
 # colours the caller hands it. `icy_sixel` quantises and encodes pixels as the
 # payload a Sixel terminal draws. `image` decodes an image file under limits and
 # encodes the PNG payload. `thiserror` writes the `Display` of the refusal.
+# `svgtypes` and `simplecss` read a picture's numbers and style declarations
+# with the parsers `resvg` itself uses, so their sizes are bounded before the
+# build.
 [dependencies]
 image.workspace = true
 resvg.workspace = true
 icy_sixel.workspace = true
+simplecss.workspace = true
+svgtypes.workspace = true
 thiserror.workspace = true
 
 # A test that no reference reaches a named pipe needs a pipe to point at, and

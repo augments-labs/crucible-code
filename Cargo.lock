@@ -747,6 +747,8 @@ dependencies = [
  "icy_sixel",
  "image",
  "resvg",
+ "simplecss",
+ "svgtypes",
  "thiserror",
  "tokio",
 ]

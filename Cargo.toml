@@ -47,6 +47,16 @@ resvg = { version = "=0.49.0", default-features = false, features = ["text"] }
 # choosing at most 256 colours and dithering to them, in a quantiser written for
 # it. The crate is pure Rust and takes pixels, never a file or a terminal.
 icy_sixel = { version = "=0.7.0" }
+# Parses an SVG attribute's own grammar (path data, lengths with their units,
+# transforms, number lists, view boxes, the `font` shorthand), which `std`
+# cannot: the raster crate reads a picture's numbers with the very parser
+# `resvg` builds from, to bound their size before the build. Already in the
+# tree under `resvg`; pinned to the version it locks.
+svgtypes = { version = "=0.16.2" }
+# Splits a `style` attribute into declarations exactly as `resvg` does, so the
+# numbers a style gives are bounded alike. Already in the tree under `resvg`;
+# pinned to the version it locks.
+simplecss = { version = "=0.2.2" }
 # This workspace's own crates. Path dependencies, released together, so there is
 # no version to pin and no third party whose publish could move them.
 crucible-agents = { path = "crates/crucible-agents" }
