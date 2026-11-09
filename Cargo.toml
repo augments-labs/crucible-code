@@ -122,6 +122,13 @@ clap_complete = "=4.6.11"
 # boxed error does. Derive only — nothing of it survives into the binary.
 thiserror = "=2.0.21"
 
+# Which words of a changed line changed: a diff over the line's words, so a
+# change draws the replaced word raised on both lines of its pair. `std` has no
+# sequence diff, and a longest-common-subsequence written here would be the
+# algorithm this is, without its bounds. Already in the graph under `insta`,
+# so this compiles the same version once; the default `text` feature only.
+similar = "=2.7.0"
+
 # Asks the terminal what colour its own background is, over OSC 11, and reads
 # the answer. `std` has no timed read on a file descriptor and `crossterm` has
 # neither the query nor a way to see the reply — its parser consumes stdin and
