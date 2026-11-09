@@ -1075,10 +1075,8 @@ enum Item {
     Open,
 }
 
-/// The most digits an item's number is written with.
-///
-/// What markdown allows, and what keeps a year at the start of a sentence
-/// from being read as one.
+/// The most digits an item's number is written with, as markdown allows: a
+/// longer run of digits opens no item.
 const NUMBERED: usize = 9;
 
 /// How many spaces in front of a line make it a line of code.
@@ -2444,6 +2442,7 @@ impl Markdown {
             self.lays(&table, room, say);
             self.line = Line::default();
             self.started = false;
+            self.lead = Lead::default();
             return false;
         }
 
@@ -2583,6 +2582,7 @@ impl Markdown {
         self.previous = '\0';
         self.started = false;
         self.line = Line::default();
+        self.lead = Lead::default();
         self.probe = Probe::default();
         self.atx = None;
     }

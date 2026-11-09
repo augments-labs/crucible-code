@@ -2970,6 +2970,48 @@ fn an_indented_line_in_a_list_item_or_a_quote_or_a_paragraph_is_read_as_before()
     }
 }
 
+// A table and a heading underlined with dashes each end on a line the reader
+// never sees end, since the block took its break: the next line starts where
+// the block let go of it, and is read from its first character all the same.
+// A table written without outer bars ends only at a blank line, which the
+// reader does see, and takes every other line under it as a row.
+const ENDED_BY_THE_LINE_UNDER: [&str; 2] = ["| a |\n| - |\n| 1 |\n", "Title\n-----\n"];
+
+#[test]
+fn an_item_straight_under_a_table_or_a_heading_keeps_its_indented_line() {
+    let mut wrong = Vec::new();
+    for block in ENDED_BY_THE_LINE_UNDER {
+        let answer = format!("{block}1. item\n\n    more\n");
+        let (_, runs) = headed(&answer);
+        let whole = drawn(&ended(&answer));
+        if !runs.ends_with("1. item\n\n    more\n")
+            || !whole.ends_with("1. item\n\n    more\n")
+            || whole.contains("│ more")
+        {
+            wrong.push((answer, runs, whole));
+        }
+    }
+
+    assert_eq!(wrong, []);
+}
+
+// The line above it was written, so it opens no block of code, however far
+// back the last blank line was.
+#[test]
+fn a_line_indented_straight_under_a_table_or_a_heading_is_not_code() {
+    let mut wrong = Vec::new();
+    for block in ENDED_BY_THE_LINE_UNDER {
+        let answer = format!("para\n\n{block}    code\n");
+        let (_, runs) = headed(&answer);
+        let whole = drawn(&ended(&answer));
+        if runs.contains("┌─") || !runs.ends_with("    code\n") || whole.contains("┌─") {
+            wrong.push((answer, runs, whole));
+        }
+    }
+
+    assert_eq!(wrong, []);
+}
+
 #[test]
 fn a_paragraph_after_a_blank_line_ends_the_list_an_indented_block_continued() {
     let said = ended("- item\n\npara\n\n    code\n");
