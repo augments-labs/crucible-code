@@ -926,13 +926,18 @@ fn references_that_share_a_target_without_leading_back_are_drawn() {
 #[test]
 fn a_drawing_the_renderer_panics_on_is_refused_not_raised_to_the_caller() {
     let _alone = alone();
-    // A stroke far wider than the picture, dashed, makes the renderer's
-    // anti-aliasing index past its own rows. Found by generated input. Its
-    // dashes are few, since a drawing cut into many would be refused before it
-    // was drawn.
-    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="756.131" height="1e400" viewBox="0 0 3803.823 3803.823"><g transform="scale(2215.33)"><path d="M0 0 L3803.823 3803.823" stroke="#000" stroke-width="413156971" stroke-dasharray="10000" fill="none"/><circle cx="3803.823" cy="3803.823" r="756.131"/></g></svg>"##;
+    // A circle within every size a number may have, in a view box so small that
+    // the circle comes out millions of times the picture's width: the
+    // renderer's anti-aliasing indexes past its own rows.
+    let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 0.00001 0.00001"><circle r="100000"/></svg>"#;
+    // Everything judged before the tree is built lets it through, so it is the
+    // renderer that panics and not a refusal that answers first.
+    let document = parse(svg.as_bytes()).expect("a document");
+    assert_eq!(admitted::admitted(&document), Ok(()));
+    assert!(!leads_back(&document));
+    assert!(copying(&document, 0).is_ok_and(|copying| copying <= MOST_COPYING_NS));
     assert_eq!(
-        rasterise(svg.as_bytes(), 583, &[]),
+        rasterise(svg.as_bytes(), 200, &[]),
         Err(Refused::NotAnImage)
     );
     // The slot is free again for the next picture.
@@ -2027,6 +2032,91 @@ fn a_number_whose_size_is_past_the_limit_is_refused_and_one_at_it_is_drawn() {
         let drawn = on_page(at);
         assert!(drawn.is_ok(), "{name} at the limit: {drawn:?}");
     }
+}
+
+#[test]
+fn a_relative_size_on_a_nested_viewport_or_a_use_is_refused_and_an_absolute_one_is_drawn() {
+    let _alone = alone();
+    // Each of these sets the view the next percentage is taken of, from the
+    // view it sits in, so a chain of them multiplies.
+    let circle = r#"<circle r="5"/>"#;
+    let pairs = [
+        (
+            "a nested width in a percentage",
+            format!(r#"<svg width="50%" height="10">{circle}</svg>"#),
+            format!(r#"<svg width="10" height="10">{circle}</svg>"#),
+        ),
+        (
+            "a nested height in ems",
+            format!(r#"<svg width="10" height="2em">{circle}</svg>"#),
+            format!(r#"<svg width="10" height="10">{circle}</svg>"#),
+        ),
+        (
+            "a nested x in exes",
+            format!(r#"<svg x="1ex" width="10" height="10">{circle}</svg>"#),
+            format!(r#"<svg x="1" width="10" height="10">{circle}</svg>"#),
+        ),
+        (
+            "a nested y in a percentage",
+            format!(r#"<svg y="10%" width="10" height="10">{circle}</svg>"#),
+            format!(r#"<svg y="1" width="10" height="10">{circle}</svg>"#),
+        ),
+        (
+            "a nested width in a declaration",
+            format!(r#"<svg style="width:50%" height="10">{circle}</svg>"#),
+            format!(r#"<svg style="width:10px" height="10">{circle}</svg>"#),
+        ),
+        (
+            "a symbol's width in a percentage",
+            format!(
+                r##"<defs><symbol id="s" width="50%">{circle}</symbol></defs><use href="#s"/>"##
+            ),
+            format!(
+                r##"<defs><symbol id="s" width="10">{circle}</symbol></defs><use href="#s"/>"##
+            ),
+        ),
+        (
+            "a use's height in a percentage",
+            format!(
+                r##"<defs><symbol id="s">{circle}</symbol></defs><use href="#s" height="50%"/>"##
+            ),
+            format!(
+                r##"<defs><symbol id="s">{circle}</symbol></defs><use href="#s" height="10"/>"##
+            ),
+        ),
+        (
+            "a use's x in a percentage",
+            r##"<defs><circle id="c" r="5"/></defs><use href="#c" x="10%"/>"##.to_owned(),
+            r##"<defs><circle id="c" r="5"/></defs><use href="#c" x="1"/>"##.to_owned(),
+        ),
+        (
+            "a use's width in ems, in a declaration",
+            format!(
+                r##"<defs><symbol id="s">{circle}</symbol></defs><use href="#s" style="width:2em"/>"##
+            ),
+            format!(
+                r##"<defs><symbol id="s">{circle}</symbol></defs><use href="#s" style="width:10px"/>"##
+            ),
+        ),
+    ];
+    for (name, relative, absolute) in pairs {
+        assert_eq!(on_page(&relative), Err(Refused::NotAnImage), "{name}");
+        let drawn = on_page(&absolute);
+        assert!(drawn.is_ok(), "{name}, made absolute: {drawn:?}");
+    }
+    // A percentage on anything that sets no view is taken of the view it sits
+    // in and goes no further.
+    let inside = on_page(r#"<svg width="10" height="10"><rect width="50%" height="10%"/></svg>"#);
+    assert!(
+        inside.is_ok(),
+        "a percentage inside a nested view: {inside:?}"
+    );
+    // The outermost view keeps its relative sizes.
+    let outermost = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="2em" x="1ex" y="10%">{circle}</svg>"#
+    );
+    let drawn = rasterise(outermost.as_bytes(), 20, &[]);
+    assert!(drawn.is_ok(), "the outermost view: {drawn:?}");
 }
 
 #[test]

@@ -1,7 +1,7 @@
 //! What a picture may say, judged on the XML before the tree parser reads it.
 //!
 //! The tree parser follows what a picture says without asking what it costs,
-//! so four things are refused before it starts, each as not an image:
+//! so five things are refused before it starts, each as not an image:
 //!
 //! - an element outside [`DRAWN_ELEMENTS`](super::DRAWN_ELEMENTS);
 //! - a reference anywhere but where a picture is drawn with one: an `href`, in
@@ -16,7 +16,13 @@
 //! - a number of the picture's geometry past [`MOST_MAGNITUDE`]: a length, a
 //!   coordinate, a radius, a number of path data, a view box, a factor of a
 //!   transform, a width of a stroke and a font size, wherever the parser reads
-//!   one, in an attribute or in a `style` attribute.
+//!   one, in an attribute or in a `style` attribute;
+//! - a `width`, `height`, `x` or `y` in a percentage, `em` or `ex`, in an
+//!   attribute or in a `style` attribute, on a `<svg>` inside the picture, on a
+//!   `<symbol>` or on a `<use>`: each sets the view the next percentage is
+//!   taken of from the view it sits in, so a chain of them multiplies a size
+//!   past any judged here. The outermost `<svg>` keeps its relative sizes,
+//!   which the parser takes of a view of its own.
 //!
 //! A length is judged in user units: an absolute unit by its size, a
 //! percentage by the largest view any element of the picture sets, and a size
@@ -104,7 +110,10 @@ const INHERITED: &[&str] = &[
 pub(super) fn admitted(document: &Document<'_>) -> Result<(), Refused> {
     let elements = Elements::of(document);
     let allowed = elements.all.iter().all(|element| {
-        is_drawn_element(element) && references_allowed(element) && !id_in_a_namespace(element)
+        is_drawn_element(element)
+            && references_allowed(element)
+            && !id_in_a_namespace(element)
+            && !sets_a_view_relatively(element)
     });
     if !allowed || given_twice(&elements) || !sizes_within(&elements) {
         return Err(Refused::NotAnImage);
@@ -132,6 +141,28 @@ fn id_in_a_namespace(element: &Node<'_, '_>) -> bool {
     element
         .attributes()
         .any(|attribute| attribute.name() == "id" && attribute.namespace().is_some())
+}
+
+/// Whether `element` sets the view inside it by a size relative to the view it
+/// sits in: a `width`, `height`, `x` or `y` in a percentage, `em` or `ex` on a
+/// `<svg>` that is not the outermost, a `<symbol>` or a `<use>`.
+fn sets_a_view_relatively(element: &Node<'_, '_>) -> bool {
+    let sets_a_view = match element.tag_name().name() {
+        "svg" => element.parent_element().is_some(),
+        "symbol" | "use" => true,
+        _ => false,
+    };
+    sets_a_view
+        && properties(element)
+            .into_iter()
+            .filter(|(name, _)| matches!(*name, "width" | "height" | "x" | "y"))
+            .filter_map(|(_, value)| Length::from_str(value).ok())
+            .any(|length| {
+                matches!(
+                    length.unit,
+                    LengthUnit::Percent | LengthUnit::Em | LengthUnit::Ex
+                )
+            })
 }
 
 /// Whether any id is given to more than one element.

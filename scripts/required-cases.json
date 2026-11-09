@@ -6741,7 +6741,7 @@
       },
       "case": "tests::a_drawing_the_renderer_panics_on_is_refused_not_raised_to_the_caller",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "4d815335f8deee1af0a2a224aebca786b1e14cac5cd5366fd36f3ab76965e4dc",
+      "body_sha256": "3e0017e9c102d1880bceb23b9cbb94e91bb1cc6ebf8a821aa6ab552101cc0294",
       "platforms": [
         "linux",
         "macos",

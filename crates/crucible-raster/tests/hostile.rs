@@ -125,21 +125,22 @@ use Expect::{Drawn, Refused as No};
 /// any step of work is priced. The `form-*.svg` files are
 /// `Refused::NotAnImage`, each for the one element outside those drawn that
 /// it holds, and so are the `probe-*.svg` files that hold a mask, a style
-/// sheet, a reference to text or an image. Nine more `probe-*.svg` files are
-/// `Refused::NotAnImage` for what they say: an arc, a circle and, through
+/// sheet, a reference to text or an image. Eleven more `probe-*.svg` files
+/// are `Refused::NotAnImage` for what they say: an arc, a circle and, through
 /// font sizes in `em` and `inherit`, a circle, each with a radius past the
 /// largest size a number may have; a filter image or a gradient that names an
-/// element; and an id given twice. The fourteen `work-*.svg` files,
-/// `worst.svg` and the other eight `probe-*.svg` files are refused by the work
-/// drawing them would take and by nothing else: the two `work-copied-*.svg`
-/// and two `work-nested-uses*.svg` files, and the probes of copies, by the
-/// copies the parser would make of what their uses, markers, clips, text and
-/// gradient stops name; the two `probe-nested-*.svg` files by a marker inside
-/// a marker and a clip inside a clip, whose copies no count bounds; and the
-/// rest by the work budget, the steps the renderer would take, a stroke
-/// reaching too far among them. The test after the corpus check draws each of
-/// them with that work made small, the one after it each file refused for an
-/// element with that element taken out, and the one after that each file
+/// element; an id given twice; and a chain of nested views, and one of uses of
+/// symbols, each sized in a percentage of the one around it. The fourteen
+/// `work-*.svg` files, `worst.svg` and the other eight `probe-*.svg` files are
+/// refused by the work drawing them would take and by nothing else: the two
+/// `work-copied-*.svg` and two `work-nested-uses*.svg` files, and the probes of
+/// copies, by the copies the parser would make of what their uses, markers,
+/// clips, text and gradient stops name; the two `probe-nested-*.svg` files by a
+/// marker inside a marker and a clip inside a clip, whose copies no count
+/// bounds; and the rest by the work budget, the steps the renderer would take,
+/// a stroke reaching too far among them. The test after the corpus check draws
+/// each of them with that work made small, the one after it each file refused
+/// for an element with that element taken out, and the one after that each file
 /// refused for what it says with that made plain.
 const ENTRIES: &[(&str, Expect)] = &[
     ("image/anim.gif", Drawn),
@@ -186,6 +187,11 @@ const ENTRIES: &[(&str, Expect)] = &[
     ("svg/probe-nested-clips.svg", No(Refused::TooLarge)),
     ("svg/probe-nested-markers.svg", No(Refused::TooLarge)),
     ("svg/probe-nested-masks.svg", No(Refused::NotAnImage)),
+    ("svg/probe-percent-svg-chain.svg", No(Refused::NotAnImage)),
+    (
+        "svg/probe-percent-symbol-chain.svg",
+        No(Refused::NotAnImage),
+    ),
     ("svg/probe-scaled-stroke.svg", No(Refused::TooLarge)),
     ("svg/probe-stops-object-box.svg", No(Refused::TooLarge)),
     ("svg/probe-stops-user-space.svg", No(Refused::TooLarge)),
@@ -497,8 +503,8 @@ fn a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small() {
 const SOON_REFUSED: Duration = Duration::from_millis(100);
 
 /// The files refused before the renderer or the parser does the work they
-/// ask for, each by a price, a count or an element the renderer or the parser
-/// would otherwise have reached long after the ceiling.
+/// ask for, each by a price, a count, a size or an element the renderer or
+/// the parser would otherwise have reached long after the ceiling.
 const REFUSED_SOON: &[(&str, Refused)] = &[
     ("svg/work-gradient-crossover.svg", Refused::TooLarge),
     ("svg/probe-arc-huge.svg", Refused::NotAnImage),
@@ -513,6 +519,8 @@ const REFUSED_SOON: &[(&str, Refused)] = &[
     ("svg/probe-nested-clips.svg", Refused::TooLarge),
     ("svg/probe-nested-markers.svg", Refused::TooLarge),
     ("svg/probe-nested-masks.svg", Refused::NotAnImage),
+    ("svg/probe-percent-svg-chain.svg", Refused::NotAnImage),
+    ("svg/probe-percent-symbol-chain.svg", Refused::NotAnImage),
     ("svg/probe-scaled-stroke.svg", Refused::TooLarge),
     ("svg/probe-stops-object-box.svg", Refused::TooLarge),
     ("svg/probe-stops-user-space.svg", Refused::TooLarge),
@@ -632,6 +640,23 @@ const REFUSED_FOR_SAYING: &[(&str, &[(&str, &str)])] = &[
     (
         "svg/probe-twice-given-id.svg",
         &[(r#"<rect id="a" x="20""#, r#"<rect id="b" x="20""#)],
+    ),
+    (
+        "svg/probe-percent-svg-chain.svg",
+        &[(
+            r#"width="100000%" height="100000%""#,
+            r#"width="1" height="1""#,
+        )],
+    ),
+    (
+        "svg/probe-percent-symbol-chain.svg",
+        &[
+            (
+                r#"width="100000%" height="100000%""#,
+                r#"width="1" height="1""#,
+            ),
+            (r#"width="100%" height="100%""#, r#"width="1" height="1""#),
+        ],
     ),
 ];
 

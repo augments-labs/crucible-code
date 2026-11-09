@@ -172,7 +172,11 @@ pub fn decode(bytes: &[u8]) -> Result<Pixels, Refused> {
 /// picture's geometry (a length, a coordinate, a radius, a number of path
 /// data, a view box, a factor of a transform, a width of a stroke or a font
 /// size) past 100 000 user units: the parser cuts an arc into curves by its
-/// radius, with no bound on how many.
+/// radius, with no bound on how many. A `width`, `height`, `x` or `y` in a
+/// percentage, `em` or `ex` on a `<svg>` inside the picture, a `<symbol>` or a
+/// `<use>` refuses it too: each takes the view inside it from the view it sits
+/// in, so a chain of them multiplies a size without bound. The outermost
+/// `<svg>` keeps its relative sizes.
 ///
 /// Nothing outside the bytes is read, and the only font is the one this crate
 /// carries. A filter's image step that names a `data:` URL holding an SVG
@@ -207,10 +211,11 @@ pub fn decode(bytes: &[u8]) -> Result<Pixels, Refused> {
 /// a drawing past [`MOST_DECODED`] or past the work it may ask for, or a stroke
 /// reaching too far; [`Refused::NotAnImage`] for bytes that are not an SVG, a
 /// zero width, an element outside those drawn, a reference where none is let
-/// in, an id given twice or in a namespace, a number past 100 000, an SVG
-/// inside a filter's image step, a drawing the renderer panics on, a document
-/// whose references lead back to themselves or an ink that cannot be a class;
-/// [`Refused::OverTime`] when the decode slot stays busy.
+/// in, an id given twice or in a namespace, a number past 100 000, a relative
+/// size on a view inside the picture, an SVG inside a filter's image step, a
+/// drawing the renderer panics on, a document whose references lead back to
+/// themselves or an ink that cannot be a class; [`Refused::OverTime`] when the
+/// decode slot stays busy.
 pub fn rasterise(svg: &[u8], width_px: u32, inks: &[(&str, [u8; 3])]) -> Result<Pixels, Refused> {
     if svg.len() > MOST_INPUT {
         return Err(Refused::TooLarge);

@@ -246,9 +246,12 @@ picture or on a filter's image step naming something outside it: a gradient
 that takes its stops from another, or an image step that draws an element,
 is refused. So is an id given to two elements, and a number of the picture's
 geometry, such as a length, a coordinate, a radius or a factor of a
-transform, larger than 100 000. A file, a URL or a font it names is not
-opened, followed or fetched: a filter's image step naming one is drawn as if
-the reference were not there. Only
+transform, larger than 100 000, and a `width`, `height`, `x` or `y` given in
+`%`, `em` or `ex` on an `svg` inside the picture, a `symbol` or a `use`: each
+sizes the view inside it from the one around it, so a chain of them grows
+without bound. The outermost `svg` may still give its size in any unit. A
+file, a URL or a font it names is not opened, followed or fetched: a filter's
+image step naming one is drawn as if the reference were not there. Only
 one font is available, DejaVu Sans, so text in a script it has no letters for
 is drawn with gaps. A filter's image step holding a
 raster image, such as a PNG in a `data:` URL, is drawn as nothing; one
