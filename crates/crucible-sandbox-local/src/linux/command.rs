@@ -4,9 +4,11 @@
 //! by sizing the tmpfs Bubblewrap makes the root with and making `/tmp` and the
 //! home as directories inside it, with `/dev`, the one other tmpfs Bubblewrap
 //! makes, remounted read-only. A run with a writable host root, through a
-//! filesystem rule or a manifest mount, writes to the host's own filesystem,
-//! which no tmpfs size reaches, so such a run cannot be held to a ceiling and a
-//! request for one is refused before anything starts.
+//! filesystem rule or a manifest mount, writes either to the host's own
+//! filesystem or into the overlay Bubblewrap lays over that root, which is
+//! sized by nothing this plan mounts. Neither is reached by the root's size, so
+//! such a run cannot be held to a ceiling and a request for one is refused
+//! before anything starts.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ffi::{OsStr, OsString};
