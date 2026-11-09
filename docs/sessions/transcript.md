@@ -182,3 +182,88 @@ Some text is drawn exactly as the model wrote it, rather than as a block:
 
 A table with more columns than the window can hold is still drawn as a table,
 with each cell folded into the room its column has, however narrow.
+
+## Pictures and image files
+
+A picture the transcript turns into pixels, whether an SVG diagram or a PNG,
+JPEG, GIF or WebP file, is bounded before it is read, and a picture past any
+bound is refused rather than shrunk or cut:
+
+- **The file or the SVG.** At most 1 MiB. Past that it is refused unread.
+- **The pixels.** At most 2 MiB of them, at four bytes a pixel, so a picture of
+  about 724 by 724 pixels, or 1 024 by 512. The size a file or an SVG says it
+  has is judged before any pixel is made, so a small file that claims a huge
+  picture is refused at once.
+- **What drawing an SVG holds at once.** The same 2 MiB bounds the sum of
+  every pixmap the drawing would hold together: the picture itself, each
+  group drawn apart from its parent (for opacity, a filter, a clip or a
+  blend), the result of each filter step, and each clip.
+  The sum is worked out from the SVG before anything is drawn, so a small file
+  whose filters ask for far more room than the picture is refused at once.
+- **What drawing an SVG computes.** The pixels each filter step's region
+  holds, times what the step does with each pixel (a turbulence per octave, a
+  morphology per cell of its window, a convolution per cell of its matrix, a
+  merge per input it draws), and for each fill or stroke, a shape inside a
+  clip among them, the largest of: twenty steps, however small it is or far
+  off the picture; one step for every sixteen pixels it covers inside the
+  picture, or for a dashed stroke at least eight for each dash it is cut
+  into, however short and thin; the time its outline takes to build and to
+  sweep down the rows it crosses, longer for a stroke than for a fill; for a
+  fill whose edges crowd together along a row, how far along the row each
+  can walk; and for a gradient, its pixels times its stops, with every stop
+  set up again for each shape it paints. Added up over the picture, these
+  are at most 140 000 steps. That is about what a drawing can finish in a
+  fiftieth of a second. A picture past it is refused before it is drawn, and
+  so is one with a stroke reaching more than a million pixels from the
+  corner of the picture, which takes far longer to outline than its size
+  says.
+- **What the copies in an SVG take.** A `<use>` copies what it names, and a
+  copy can hold uses of its own, so a few hundred bytes can ask for millions
+  of copies. A marker's content is copied at every vertex it is drawn on, a
+  clip or a filter sized to the shape it is on is made again for each shape,
+  a gradient sized to the shape it paints has its stops copied for each
+  shape, a text copied where it is not drawn still has its letters laid out,
+  and each colour the picture is drawn in is matched against every copy.
+  Every shape drawn, once or in each copy, has its outline built: a circle,
+  an ellipse, a rounded rectangle or an arc is cut into more curves the
+  larger it is, and a stroked shape has the outline of its stroke worked out,
+  which takes longer the larger its curves are. A stroked shape that is
+  turned or skewed, by its own transform or by what holds, copies or marks
+  it, has that outline worked out again at its size on the page. The time
+  making them all would take, by the elements, attributes, letters and
+  outlines made, is counted before the picture is built, and copies that
+  would take more than 16 ms are refused.
+- **A picture sent to the terminal.** Sent as PNG it is at most 1 MiB, and
+  sent as Sixel it is at most 600 pixels wide.
+- **One at a time.** Only one picture is read or drawn at a time, wherever it
+  was asked for. One that waits longer than ten seconds for its turn is
+  refused as late.
+
+An SVG is drawn from its own bytes and nothing else, and only with the
+elements a picture is drawn with: `svg`, `g`, `defs`, `symbol` and `use`;
+`path`, `rect`, `circle`, `ellipse`, `line`, `polyline` and `polygon`; `text`
+and `tspan`; `marker`; `linearGradient`, `radialGradient` and `stop`;
+`clipPath`; `filter` and its steps; and `title`, `desc` and `metadata`. A
+picture holding any other element, such as a `<style>` sheet, a `<mask>`, a
+`<pattern>`, an `<image>`, a `<foreignObject>`, a `<switch>`, a link, a
+`<tref>` or a `<textPath>`, or an element in a namespace other than SVG's, is
+refused. So is a reference anywhere but on a `<use>` naming an element of the
+picture or on a filter's image step naming something outside it: a gradient
+that takes its stops from another, or an image step that draws an element,
+is refused. So is an id given to two elements, and a number of the picture's
+geometry, such as a length, a coordinate, a radius or a factor of a
+transform, larger than 100 000, and a `width`, `height`, `x` or `y` given in
+`%`, `em` or `ex` on an `svg` inside the picture, a `symbol` or a `use`: each
+sizes the view inside it from the one around it, so a chain of them grows
+without bound. The outermost `svg` may still give its size in any unit, and
+a percentage inside the picture is taken of the largest view that size, a
+view box, or a `use` drawing a `symbol` gives. A
+file, a URL or a font it names is not opened, followed or fetched: a filter's
+image step naming one is drawn as if the reference were not there. Only
+one font is available, DejaVu Sans, so text in a script it has no letters for
+is drawn with gaps. A filter's image step holding a
+raster image, such as a PNG in a `data:` URL, is drawn as nothing; one
+holding an SVG refuses the picture. A picture whose references lead round to
+themselves, such as three clips that each use the next, is refused, as is a
+marker drawn inside a marker, a clip or a filter inside a clip, and one the
+drawing cannot finish.

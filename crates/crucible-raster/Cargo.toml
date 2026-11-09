@@ -1,0 +1,35 @@
+[package]
+name = "crucible-raster"
+description = "Pictures and image files as bounded pixels, and as PNG and Sixel payloads."
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# `resvg` draws the SVG a drawer wrote into pixels, with the font and the
+# colours the caller hands it. `icy_sixel` quantises and encodes pixels as the
+# payload a Sixel terminal draws. `image` decodes an image file under limits and
+# encodes the PNG payload. `thiserror` writes the `Display` of the refusal.
+# `svgtypes` and `simplecss` read a picture's numbers and style declarations
+# with the parsers `resvg` itself uses, so their sizes are bounded before the
+# build.
+[dependencies]
+image.workspace = true
+resvg.workspace = true
+icy_sixel.workspace = true
+simplecss.workspace = true
+svgtypes.workspace = true
+thiserror.workspace = true
+
+# A test that no reference reaches a named pipe needs a pipe to point at, and
+# `std` can open one on Windows but not make one. `tokio` is already in the tree
+# for the crates that serve and call over a socket; here it is only the server
+# end of that pipe, in tests, and no release build of this crate links it.
+[target.'cfg(windows)'.dev-dependencies]
+tokio = { workspace = true, features = ["net", "rt", "time"] }
+
+[lints]
+workspace = true
