@@ -7407,7 +7407,7 @@
       },
       "case": "tests::a_copy_is_counted_by_the_text_and_the_attributes_it_copies",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "2deced1289d8182b765be0e84aa21e6a19dd0b8db48c7ab4c452521d8206ea3b",
+      "body_sha256": "f1ba0ea058dad90f9119af1829cd8cf2d11077e6788c3496cc2c04e0690743a5",
       "platforms": [
         "linux",
         "macos",
@@ -7443,7 +7443,7 @@
       },
       "case": "tests::edges_of_a_stroke_crowded_along_a_row_are_counted_by_the_pixels_each_can_walk",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "cc48991eca58a5dd0a001be586cdb0ced32b9feb6d8a444917c75d7e7fa50d0b",
+      "body_sha256": "af01799158e87097b9d44f793dfa6aa62b9e749d4af7c306903bf90683e027e8",
       "platforms": [
         "linux",
         "macos",
@@ -7533,7 +7533,7 @@
       },
       "case": "tests::the_copies_markers_clips_and_text_ask_for_are_counted_before_any_is_made",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "5d76bacd44c5cfc47f00b8979c5f66425853ad8f4d6fbd24307bd03a7cbf61ea",
+      "body_sha256": "1dd698ede2eee44c5be9a3e54a62359f2e524c91673863f9cfcb5466d8aea4e4",
       "platforms": [
         "linux",
         "macos",

@@ -1335,15 +1335,15 @@ fn a_copy_is_counted_by_the_text_and_the_attributes_it_copies() {
     assert_eq!(drawn, Err(Refused::TooLarge), "a hundred copies of text");
     assert!(took < SOON_REFUSED, "shaped first: {took:?}");
     assert!(rasterise(copied(&letters, 1).as_bytes(), 100, &[]).is_ok());
-    // A path's data is read again for every copy of it: fifty copies of
-    // 16 000 segments are refused, and one is drawn.
+    // A path's data is read again for every copy of it: a hundred copies of
+    // 2 000 segments are refused, and one is drawn.
     let mut data = String::from("M0 0");
-    for at in 0..16_000_u32 {
+    for at in 0..2_000_u32 {
         let _ = write!(data, "L{} {}", at % 100, at * 7 % 100);
     }
     let path = format!(r#"<path id="copied" d="{data}"/>"#);
-    let (drawn, took) = refused_in(&copied(&path, 50));
-    assert_eq!(drawn, Err(Refused::TooLarge), "fifty copies of a path");
+    let (drawn, took) = refused_in(&copied(&path, 100));
+    assert_eq!(drawn, Err(Refused::TooLarge), "a hundred copies of a path");
     assert!(took < SOON_REFUSED, "read first: {took:?}");
     assert!(rasterise(copied(&path, 1).as_bytes(), 100, &[]).is_ok());
 }
@@ -1527,10 +1527,10 @@ fn edges_of_a_stroke_crowded_along_a_row_are_counted_by_the_pixels_each_can_walk
     let _alone = alone();
     // The outline of a stroke has an edge each side of every segment, and
     // those of segments a fifth of a pixel apart walk the row over again as a
-    // fill's do: 19 000 across a row 3 838 wide are refused, before they are
+    // fill's do: 7 000 across a row 1 414 wide are refused, before they are
     // drawn, and 6 000 across one 1 212 wide are drawn.
-    let (wide, width) = crowded_stroke(19_000);
-    assert_eq!(width, 3_838);
+    let (wide, width) = crowded_stroke(7_000);
+    assert_eq!(width, 1_414);
     let (drawn, took) = refused_in_at(&wide, width);
     assert_eq!(drawn, Err(Refused::TooLarge));
     assert!(took < SOON_REFUSED, "drawn first: {took:?}");
@@ -1789,15 +1789,15 @@ fn the_copies_markers_clips_and_text_ask_for_are_counted_before_any_is_made() {
     assert_eq!(drawn, Err(Refused::TooLarge), "a marker's copies");
     assert!(took < SOON_REFUSED, "copied first: {took:?}");
     assert!(rasterise(marked(10, 10).as_bytes(), 100, &[]).is_ok());
-    // A clip sized to what it clips is made again for each shape: a thousand
-    // rectangles clipping a thousand are refused, and ten clipping ten drawn.
-    let (drawn, took) = refused_in(&boxed(1_000, 1_000));
+    // A clip sized to what it clips is made again for each shape: 300
+    // rectangles clipping 300 are refused, and ten clipping ten drawn.
+    let (drawn, took) = refused_in(&boxed(300, 300));
     assert_eq!(drawn, Err(Refused::TooLarge), "a clip's copies");
     assert!(took < SOON_REFUSED, "copied first: {took:?}");
     assert!(rasterise(boxed(10, 10).as_bytes(), 100, &[]).is_ok());
     // Letters are copied with the text that holds them though nothing draws
-    // them: 2 000 copies of 50 000 are refused, and 2 000 of two are drawn.
-    let (drawn, took) = refused_in(&undrawn(50_000, 2_000));
+    // them: 250 copies of 50 000 are refused, and 2 000 of two are drawn.
+    let (drawn, took) = refused_in(&undrawn(50_000, 250));
     assert_eq!(drawn, Err(Refused::TooLarge), "letters not drawn");
     assert!(took < SOON_REFUSED, "copied first: {took:?}");
     assert!(rasterise(undrawn(2, 2_000).as_bytes(), 100, &[]).is_ok());
@@ -2224,7 +2224,7 @@ fn the_stops_of_a_gradient_in_its_shapes_units_are_counted_copied_for_each_shape
         10 * 10 * 500 * STOP_CLONED_NS
     );
     let _alone = alone();
-    let svg = used_graded_shapes(70, 70, 1_000, "objectBoundingBox");
+    let svg = used_graded_shapes(70, 70, 500, "objectBoundingBox");
     let (drawn, took) = refused_in_at(&svg, 100);
     assert_eq!(drawn, Err(Refused::TooLarge), "stops copied");
     assert!(took < SOON_REFUSED, "copied first: {took:?}");
@@ -2583,8 +2583,8 @@ fn shapes_whose_outlines_take_longer_to_build_than_the_parser_may_are_refused_be
  {
     let _alone = alone();
     // Ten stroked circles of radius 100 000 are 26 ms of outlines, and
-    // twenty-five paths of a thousand arcs of radius 100 000 each, eleven
-    // curves an arc, 30 ms of curves. The curves are written as arcs, eleven
+    // fourteen paths of a thousand arcs of radius 100 000 each, eleven
+    // curves an arc, 17 ms of curves. The curves are written as arcs, eleven
     // to eighteen bytes, so that the file is read well within the time a
     // debug build may take to refuse it.
     let stroked = r##"<circle r="1e5" fill="none" stroke="#000"/>"##.to_owned();
@@ -2592,7 +2592,7 @@ fn shapes_whose_outlines_take_longer_to_build_than_the_parser_may_are_refused_be
         r#"<path d="M0 0{}" fill="none"/>"#,
         "a1e5 1e5 0 1 1 1 0".repeat(1000)
     );
-    for (shape, refused, drawn) in [(&stroked, 10, 5), (&filled, 25, 5)] {
+    for (shape, refused, drawn) in [(&stroked, 10, 5), (&filled, 14, 5)] {
         let named = shape.get(..40).unwrap_or(shape);
         let (result, took) = refused_in_at(&page(&shape.repeat(refused)), 20);
         assert_eq!(result, Err(Refused::TooLarge), "{refused} of {named}");
