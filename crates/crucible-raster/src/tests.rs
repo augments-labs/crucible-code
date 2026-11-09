@@ -596,7 +596,8 @@ fn the_font_database_holds_the_one_embedded_face_and_nothing_from_the_system() {
 fn an_image_that_is_not_a_data_url_is_not_followed() {
     let _alone = alone();
     // An SVG file, because that is what a resolver that reads the file would
-    // draw even where raster images are not.
+    // draw even where raster images are not. A filter's image step is the one
+    // element drawn that names an image.
     let file =
         std::env::temp_dir().join(format!("crucible-raster-href-{}.svg", std::process::id()));
     std::fs::write(
@@ -605,7 +606,7 @@ fn an_image_that_is_not_a_data_url_is_not_followed() {
     )
     .expect("a picture to point at");
     let page = format!(
-        r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="8" height="8"><image width="8" height="8" xlink:href="{}"/></svg>"#,
+        r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="8" height="8"><filter id="f" x="0" y="0" width="1" height="1"><feImage width="8" height="8" xlink:href="{}"/></filter><rect width="8" height="8" filter="url(#f)"/></svg>"#,
         file.display()
     );
     let pixels = rasterise(page.as_bytes(), 8, &[]).expect("an svg");
@@ -614,27 +615,6 @@ fn an_image_that_is_not_a_data_url_is_not_followed() {
         pixels.rgba().iter().all(|byte| *byte == 0),
         "the file named by an href was read and drawn"
     );
-}
-
-#[test]
-fn an_svg_inside_a_data_url_is_drawn_and_its_own_references_are_not_followed() {
-    let _alone = alone();
-    let inner = r##"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4" fill="#00ff00"/></svg>"##;
-    let encoded: String = inner
-        .bytes()
-        .map(|byte| {
-            if byte.is_ascii_alphanumeric() {
-                char::from(byte).to_string()
-            } else {
-                format!("%{byte:02X}")
-            }
-        })
-        .collect();
-    let outer = format!(
-        r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="4" height="4"><image width="4" height="4" xlink:href="data:image/svg+xml;charset=utf8,{encoded}"/></svg>"#
-    );
-    let pixels = rasterise(outer.as_bytes(), 4, &[]).expect("a nested svg");
-    assert_eq!(at(&pixels, 2, 2), [0, 255, 0, 255]);
 }
 
 #[test]
@@ -916,9 +896,9 @@ fn references_that_share_a_target_without_leading_back_are_drawn() {
     let _alone = alone();
     let diamonds = [
         (
-            "one mask on two elements",
+            "one clip on two elements",
             page(
-                r##"<mask id="m"><rect width="10" height="20" fill="#fff"/></mask><rect width="20" height="9" mask="url(#m)"/><rect y="10" width="20" height="9" mask="url(#m)"/>"##,
+                r#"<clipPath id="c"><rect width="10" height="20"/></clipPath><rect width="20" height="9" clip-path="url(#c)"/><rect y="10" width="20" height="9" clip-path="url(#c)"/>"#,
             ),
         ),
         (
@@ -926,16 +906,6 @@ fn references_that_share_a_target_without_leading_back_are_drawn() {
             page(
                 r##"<symbol id="s"><rect width="4" height="4"/></symbol><g id="a"><use href="#s"/></g><g id="b"><use href="#s"/></g><g id="top"><use href="#a"/><use href="#b" x="8"/></g>"##,
             ),
-        ),
-        (
-            "a gradient named by a style sheet",
-            page(
-                r##"<style>.fill { fill: url(#g) }</style><linearGradient id="g"><stop offset="0" stop-color="#f00"/><stop offset="1" stop-color="#00f"/></linearGradient><rect width="20" height="20" class="fill"/>"##,
-            ),
-        ),
-        (
-            "a link to the group it is in",
-            page(r##"<g id="all"><a href="#all"><rect width="20" height="20"/></a></g>"##),
         ),
         (
             "a long line of groups",
@@ -951,32 +921,6 @@ fn references_that_share_a_target_without_leading_back_are_drawn() {
     for (name, svg) in diamonds {
         assert!(rasterise(svg.as_bytes(), 20, &[]).is_ok(), "{name}");
     }
-}
-
-#[test]
-fn a_ring_inside_a_nested_svg_is_dropped_and_the_page_around_it_is_drawn() {
-    let _alone = alone();
-    let inner = page(&format!(
-        r#"<defs>{}</defs><rect width="20" height="20" mask="url(#m0)"/>"#,
-        ring(3, |at, next| format!(
-            r##"<mask id="m{at}"><rect width="20" height="20" fill="#fff" mask="url(#m{next})"/></mask>"##
-        ))
-    ));
-    let encoded: String = inner
-        .bytes()
-        .map(|byte| {
-            if byte.is_ascii_alphanumeric() {
-                char::from(byte).to_string()
-            } else {
-                format!("%{byte:02X}")
-            }
-        })
-        .collect();
-    let outer = page(&format!(
-        r##"<rect width="20" height="20" fill="#00ff00"/><image width="20" height="20" xlink:href="data:image/svg+xml;charset=utf8,{encoded}"/>"##
-    ));
-    let pixels = rasterise(outer.as_bytes(), 20, &[]).expect("the page around it");
-    assert_eq!(at(&pixels, 10, 10), [0, 255, 0, 255]);
 }
 
 #[test]
@@ -1338,9 +1282,7 @@ const SOON_REFUSED: Duration = Duration::from_millis(100);
 
 /// What drawing `svg` 100 wide comes to, and how long it took to say so.
 fn refused_in(svg: &str) -> (Result<Pixels, Refused>, Duration) {
-    let began = Instant::now();
-    let drawn = rasterise(svg.as_bytes(), 100, &[]);
-    (drawn, began.elapsed())
+    refused_in_at(svg, 100)
 }
 
 #[test]
@@ -1508,13 +1450,365 @@ fn graded(count: usize, side: u32) -> String {
 #[test]
 fn a_gradient_is_counted_by_its_stops_over_the_pixels_it_paints() {
     let _alone = alone();
-    // The renderer works every stop at every pixel: 512 stops over the 10 000
-    // pixels of the page are 10 000 steps, where the pixels alone are 625.
-    assert_eq!(work_of(&graded(512, 100)), Ok(10_000));
+    // The renderer paints every pixel and works every stop at it: 512 stops
+    // over the 10 000 pixels of the page are 10 000 steps, and the pixels
+    // themselves 625 more.
+    assert_eq!(work_of(&graded(512, 100)), Ok(10_625));
     // A thousand stops over 500 by 500 pixels are refused, and two are drawn.
     assert_eq!(
         rasterise(graded(1_000, 500).as_bytes(), 500, &[]),
         Err(Refused::TooLarge)
     );
     assert!(rasterise(graded(2, 500).as_bytes(), 500, &[]).is_ok());
+}
+
+/// A page 200 pixels square painted `count` times over with a linear gradient
+/// of `stops` stops.
+fn painted(count: usize, stops: usize) -> String {
+    let graded = graded(stops, 200);
+    let (head, rect) = graded
+        .rsplit_once("<rect")
+        .expect("the page's one rectangle");
+    let rect = format!("<rect{}", rect.trim_end_matches("</svg>"));
+    format!("{head}{}</svg>", rect.repeat(count))
+}
+
+#[test]
+fn a_gradient_costs_its_pixels_and_its_stops_together() {
+    let _alone = alone();
+    // Each paint of 32 stops over the 40 000 pixels of the page is 2 500
+    // steps by its pixels and 2 500 by its stops; neither alone is past the
+    // ceiling for 52 of them, and together they are. Two stops are drawn.
+    let (drawn, took) = refused_in_at(&painted(52, 32), 200);
+    assert_eq!(drawn, Err(Refused::TooLarge));
+    assert!(took < SOON_REFUSED, "drawn first: {took:?}");
+    assert!(rasterise(painted(52, 2).as_bytes(), 200, &[]).is_ok());
+}
+
+/// What drawing `svg` `width` wide comes to, and how long it took to say so.
+fn refused_in_at(svg: &str, width: u32) -> (Result<Pixels, Refused>, Duration) {
+    let began = Instant::now();
+    let drawn = rasterise(svg.as_bytes(), width, &[]);
+    (drawn, began.elapsed())
+}
+
+/// A page `segments` fifths of a pixel wide and one row tall, stroked five
+/// wide along a zigzag of `segments` segments from the top of the row to the
+/// bottom and back.
+fn crowded_stroke(segments: usize) -> (String, u32) {
+    let mut data = String::from("M0 0");
+    for at in 1..=segments {
+        #[allow(clippy::cast_precision_loss, reason = "a small count")]
+        let x = at as f64 * 0.202;
+        let _ = write!(data, "L{x:.3} {}", at % 2);
+    }
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss,
+        reason = "a small count"
+    )]
+    let width = (segments as f64 * 0.202).round() as u32;
+    (
+        format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="1"><path d="{data}" fill="none" stroke="#000" stroke-width="5"/></svg>"##
+        ),
+        width,
+    )
+}
+
+#[test]
+fn edges_of_a_stroke_crowded_along_a_row_are_counted_by_the_pixels_each_can_walk() {
+    let _alone = alone();
+    // The outline of a stroke has an edge each side of every segment, and
+    // those of segments a fifth of a pixel apart walk the row over again as a
+    // fill's do: 19 000 across a row 3 838 wide are refused, before they are
+    // drawn, and 6 000 across one 1 212 wide are drawn.
+    let (wide, width) = crowded_stroke(19_000);
+    assert_eq!(width, 3_838);
+    let (drawn, took) = refused_in_at(&wide, width);
+    assert_eq!(drawn, Err(Refused::TooLarge));
+    assert!(took < SOON_REFUSED, "drawn first: {took:?}");
+    let (narrower, width) = crowded_stroke(6_000);
+    assert_eq!(width, 1_212);
+    assert!(rasterise(narrower.as_bytes(), width, &[]).is_ok());
+}
+
+// ---------------------------------------------------------------------------
+// What the tree parser is let make: the elements it draws, and no copies or
+// pictures past those it is counted making.
+
+/// Every element and filter primitive drawn, in one page 20 pixels square.
+const EVERY_DRAWN_ELEMENT: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="20" height="20"><title>all</title><desc>every element drawn</desc><metadata>none</metadata><defs><symbol id="s"><rect width="2" height="2"/></symbol><marker id="m" markerWidth="2" markerHeight="2"><circle cx="1" cy="1" r="1"/></marker><linearGradient id="lg"><stop offset="0" stop-color="#f00"/><stop offset="1" stop-color="#00f"/></linearGradient><radialGradient id="rg"><stop offset="0" stop-color="#0f0"/><stop offset="1" stop-color="#fff"/></radialGradient><clipPath id="c"><rect width="20" height="20"/></clipPath><filter id="f"><feFlood flood-color="#0f0" result="flood"/><feBlend in="SourceGraphic" in2="flood"/><feColorMatrix type="saturate" values="0.5"/><feComponentTransfer><feFuncR type="identity"/><feFuncG type="identity"/><feFuncB type="identity"/><feFuncA type="identity"/></feComponentTransfer><feComposite in2="flood" operator="over"/><feConvolveMatrix order="1" kernelMatrix="1"/><feDiffuseLighting><feDistantLight azimuth="45" elevation="45"/></feDiffuseLighting><feDisplacementMap in2="flood" scale="1"/><feDropShadow dx="1" dy="1" stdDeviation="1"/><feGaussianBlur stdDeviation="1"/><feImage xlink:href="#s"/><feMerge><feMergeNode in="flood"/><feMergeNode/></feMerge><feMorphology radius="1"/><feOffset dx="1"/><feSpecularLighting><fePointLight x="1" y="1" z="1"/></feSpecularLighting><feSpecularLighting><feSpotLight x="1" y="1" z="1"/></feSpecularLighting><feTile/><feTurbulence baseFrequency="0.1"/></filter></defs><g clip-path="url(#c)"><use xlink:href="#s"/><path d="M0 0L5 5L9 1" stroke="#000" fill="none" marker-end="url(#m)"/><rect x="10" width="4" height="4" fill="url(#lg)"/><circle cx="3" cy="15" r="2" fill="url(#rg)"/><ellipse cx="8" cy="15" rx="2" ry="1"/><line x1="0" y1="19" x2="19" y2="19" stroke="#000"/><polyline points="0 0 1 1 2 0" stroke="#000"/><polygon points="5 5 6 6 7 5"/><text x="1" y="12" font-size="4">a<tspan>b</tspan></text></g><rect x="15" y="15" width="4" height="4" filter="url(#f)"/></svg>"##;
+
+#[test]
+fn an_element_outside_those_drawn_is_refused_and_every_element_drawn_is_drawn() {
+    let _alone = alone();
+    // Each of these is read past the bytes, or makes work no count here
+    // prices, or is drawn by rules the counts do not follow. A picture holding
+    // one is refused, wherever it is, before the tree parser sees it.
+    let outside = [
+        ("a style sheet", r"<style>rect { fill: red }</style>"),
+        (
+            "a reference to text",
+            r##"<text id="t">x</text><text><tref xlink:href="#t"/></text>"##,
+        ),
+        (
+            "text along a path",
+            r##"<path id="p" d="M0 0H20"/><text><textPath xlink:href="#p">x</textPath></text>"##,
+        ),
+        (
+            "a mask",
+            r#"<mask id="k"><rect width="20" height="20"/></mask>"#,
+        ),
+        (
+            "a pattern",
+            r#"<pattern id="p" width="2" height="2"><rect width="1" height="1"/></pattern>"#,
+        ),
+        ("an image", r#"<image width="20" height="20"/>"#),
+        (
+            "a foreign object",
+            r#"<foreignObject width="20" height="20"><p xmlns="http://www.w3.org/1999/xhtml">x</p></foreignObject>"#,
+        ),
+        (
+            "a switch",
+            r#"<switch><rect width="20" height="20"/></switch>"#,
+        ),
+        (
+            "a link",
+            r##"<a href="#x"><rect width="20" height="20"/></a>"##,
+        ),
+        (
+            "an animation",
+            r#"<rect width="20" height="20"><set attributeName="width" to="1"/></rect>"#,
+        ),
+        (
+            "an element of another namespace",
+            r#"<other:thing xmlns:other="urn:example"/>"#,
+        ),
+        (
+            "one deep in the definitions",
+            r"<defs><g><g><style>rect { fill: red }</style></g></g></defs>",
+        ),
+    ];
+    for (name, inner) in outside {
+        let svg = page(&format!(
+            r##"<rect width="20" height="20" fill="#0f0"/>{inner}"##
+        ));
+        assert_eq!(
+            rasterise(svg.as_bytes(), 20, &[]),
+            Err(Refused::NotAnImage),
+            "{name}"
+        );
+    }
+    // Every element drawn is drawn, and so is a name of one outside them that
+    // is only text or the value of an attribute.
+    assert!(rasterise(EVERY_DRAWN_ELEMENT.as_bytes(), 20, &[]).is_ok());
+    let named = page(
+        r#"<g id="style" class="mask pattern"><title>style, mask, image</title><text x="1" y="10" font-size="4">foreignObject switch a</text></g>"#,
+    );
+    assert!(rasterise(named.as_bytes(), 20, &[]).is_ok());
+}
+
+/// `data` percent-encoded, as a `data:` URL may hold it.
+fn percent_encoded(data: &[u8]) -> String {
+    data.iter()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() {
+                char::from(*byte).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect()
+}
+
+/// A page 4 pixels square, green, with a rectangle over it drawn through a
+/// filter whose one step is an image of `href`.
+fn imaged(href: &str) -> String {
+    format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="4" height="4"><filter id="f" x="0" y="0" width="1" height="1"><feImage width="4" height="4" xlink:href="{href}"/></filter><rect width="4" height="4" fill="#00ff00"/><rect width="4" height="4" filter="url(#f)"/></svg>"##
+    )
+}
+
+#[test]
+fn a_picture_inside_a_filter_image_is_refused_and_a_raster_one_is_not_drawn() {
+    let _alone = alone();
+    // A picture in a picture is built by the tree parser as one of its own,
+    // past every count made of the page around it: it is refused, however it
+    // says what it is.
+    let inner = br##"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4" fill="#ff0000"/></svg>"##;
+    for mime in ["image/svg+xml", "text/plain"] {
+        let svg = imaged(&format!(
+            "data:{mime};charset=utf8,{}",
+            percent_encoded(inner)
+        ));
+        assert_eq!(
+            rasterise(svg.as_bytes(), 4, &[]),
+            Err(Refused::NotAnImage),
+            "{mime}"
+        );
+    }
+    // A raster image is not drawn, so the page under it shows, as it does for
+    // a page with no image at all.
+    let red = png(&flat_pixels(4, 4, [255, 0, 0, 255])).expect("a png");
+    for mime in ["image/png", "text/plain"] {
+        let svg = imaged(&format!("data:{mime},{}", percent_encoded(&red)));
+        let pixels = rasterise(svg.as_bytes(), 4, &[]).expect("a raster image");
+        assert_eq!(at(&pixels, 2, 2), [0, 255, 0, 255], "{mime}");
+    }
+}
+
+#[test]
+fn a_marker_drawn_inside_a_marker_is_refused_before_the_tree_is_built() {
+    let _alone = alone();
+    let inner = r#"<marker id="m0" markerWidth="1" markerHeight="1" overflow="visible"><rect width="1" height="1"/></marker>"#;
+    // A marker of a marker is copied at every vertex of every copy of the
+    // shape it marks, so a few levels of them are millions of copies.
+    let nested = [
+        (
+            "on a shape in it",
+            r#"<marker id="m1" overflow="visible"><path d="M0 0L1 0L2 0" marker-mid="url(#m0)"/></marker>"#,
+        ),
+        (
+            "on a group in it",
+            r#"<marker id="m1" overflow="visible"><g marker-end="url(#m0)"><path d="M0 0L1 0"/></g></marker>"#,
+        ),
+        (
+            "on the marker itself",
+            r#"<marker id="m1" overflow="visible" marker-start="url(#m0)"><path d="M0 0L1 0"/></marker>"#,
+        ),
+        (
+            "in a style",
+            r#"<marker id="m1" overflow="visible"><path d="M0 0L1 0" style="marker-start: url(#m0)"/></marker>"#,
+        ),
+        (
+            "on what a use in it copies",
+            r##"<defs><path id="p" d="M0 0L1 0" marker-end="url(#m0)"/></defs><marker id="m1" overflow="visible"><use xlink:href="#p"/></marker>"##,
+        ),
+    ];
+    for (name, outer) in nested {
+        let svg = page(&format!(
+            r##"<defs>{inner}</defs>{outer}<path d="M0 0L5 5L10 0" stroke="#000" marker-mid="url(#m1)"/>"##
+        ));
+        let (drawn, took) = refused_in(&svg);
+        assert_eq!(drawn, Err(Refused::TooLarge), "{name}");
+        assert!(took < SOON_REFUSED, "{name}: built first: {took:?}");
+    }
+    // Two markers on one shape, and one on many, are drawn.
+    let beside = page(&format!(
+        r##"<defs>{inner}<marker id="m1"><path d="M0 0L1 0"/></marker></defs><path d="M0 0L5 5L10 0" stroke="#000" marker-start="url(#m0)" marker-end="url(#m1)"/><g marker-mid="url(#m0)"><path d="M0 0L1 1L2 0"/><polyline points="0 0 1 1 2 0"/></g>"##
+    ));
+    assert!(rasterise(beside.as_bytes(), 20, &[]).is_ok());
+}
+
+#[test]
+fn a_clip_or_filter_inside_a_clip_is_refused_before_the_tree_is_built() {
+    let _alone = alone();
+    let inner = r#"<clipPath id="c0" clipPathUnits="objectBoundingBox"><rect width="1" height="1"/></clipPath><filter id="f"><feOffset dx="1"/></filter>"#;
+    // A clip is drawn again for each shape it clips, a shape clipped inside it
+    // among them, so a few levels of them are millions of drawings.
+    let nested = [
+        (
+            "a clip on a shape in it",
+            r#"<clipPath id="c1"><rect width="9" height="9" clip-path="url(#c0)"/></clipPath>"#,
+        ),
+        (
+            "a filter on a shape in it",
+            r#"<clipPath id="c1"><rect width="9" height="9" filter="url(#f)"/></clipPath>"#,
+        ),
+        (
+            "a clip in a style",
+            r#"<clipPath id="c1"><rect width="9" height="9" style="clip-path:url(#c0)"/></clipPath>"#,
+        ),
+        (
+            "a clip on what a use in it copies",
+            r##"<defs><rect id="r" width="9" height="9" clip-path="url(#c0)"/></defs><clipPath id="c1"><use xlink:href="#r"/></clipPath>"##,
+        ),
+    ];
+    for (name, outer) in nested {
+        let svg = page(&format!(
+            r#"<defs>{inner}</defs>{outer}<rect width="20" height="20" clip-path="url(#c1)"/>"#
+        ));
+        let (drawn, took) = refused_in(&svg);
+        assert_eq!(drawn, Err(Refused::TooLarge), "{name}");
+        assert!(took < SOON_REFUSED, "{name}: built first: {took:?}");
+    }
+    // A clip clipped by another as a whole, and one clip on many shapes, are
+    // drawn.
+    let beside = page(&format!(
+        r#"<defs>{inner}</defs><clipPath id="c1" clip-path="url(#c0)"><rect width="9" height="9"/></clipPath><rect width="20" height="20" clip-path="url(#c1)"/><rect y="10" width="20" height="9" clip-path="url(#c1)" filter="url(#f)"/>"#
+    ));
+    assert!(rasterise(beside.as_bytes(), 20, &[]).is_ok());
+}
+
+/// A page whose one marker holds `count` rectangles off the page, on the
+/// `vertices` vertices of one path.
+fn marked(count: usize, vertices: usize) -> String {
+    let rects = r#"<rect x="-900" width="1" height="1"/>"#.repeat(count);
+    let mut data = String::from("M0 0");
+    for at in 1..vertices {
+        let _ = write!(data, "L{} 0", at % 10);
+    }
+    page(&format!(
+        r#"<defs><marker id="m" overflow="visible">{rects}</marker></defs><path d="{data}" fill="none" marker-mid="url(#m)"/>"#
+    ))
+}
+
+/// A page whose one clip, sized to what it clips, holds `count` rectangles
+/// off the page, and clips `clipped` rectangles.
+fn boxed(count: usize, clipped: usize) -> String {
+    let rects = r#"<rect x="-900" width="1" height="1"/>"#.repeat(count);
+    let shapes = r#"<rect width="1" height="1" clip-path="url(#c)"/>"#.repeat(clipped);
+    page(&format!(
+        r#"<defs><clipPath id="c" clipPathUnits="objectBoundingBox">{rects}</clipPath></defs>{shapes}"#
+    ))
+}
+
+/// A page whose definitions hold a text of `letters` letters and `count` uses
+/// of it, none of them drawn.
+fn undrawn(letters: usize, count: usize) -> String {
+    let uses = r##"<use xlink:href="#t"/>"##.repeat(count);
+    page(&format!(
+        r#"<defs><text id="t">{}</text>{uses}</defs><rect width="1" height="1"/>"#,
+        "x ".repeat(letters / 2)
+    ))
+}
+
+#[test]
+fn the_copies_markers_clips_and_text_ask_for_are_counted_before_any_is_made() {
+    let _alone = alone();
+    // A marker is copied at every vertex it marks: a thousand rectangles on a
+    // thousand vertices are refused, and ten on ten are drawn.
+    let (drawn, took) = refused_in(&marked(1_000, 1_000));
+    assert_eq!(drawn, Err(Refused::TooLarge), "a marker's copies");
+    assert!(took < SOON_REFUSED, "copied first: {took:?}");
+    assert!(rasterise(marked(10, 10).as_bytes(), 100, &[]).is_ok());
+    // A clip sized to what it clips is made again for each shape: a thousand
+    // rectangles clipping a thousand are refused, and ten clipping ten drawn.
+    let (drawn, took) = refused_in(&boxed(1_000, 1_000));
+    assert_eq!(drawn, Err(Refused::TooLarge), "a clip's copies");
+    assert!(took < SOON_REFUSED, "copied first: {took:?}");
+    assert!(rasterise(boxed(10, 10).as_bytes(), 100, &[]).is_ok());
+    // Letters are copied with the text that holds them though nothing draws
+    // them: 2 000 copies of 50 000 are refused, and 2 000 of two are drawn.
+    let (drawn, took) = refused_in(&undrawn(50_000, 2_000));
+    assert_eq!(drawn, Err(Refused::TooLarge), "letters not drawn");
+    assert!(took < SOON_REFUSED, "copied first: {took:?}");
+    assert!(rasterise(undrawn(2, 2_000).as_bytes(), 100, &[]).is_ok());
+    // Each copy is matched against the rule of every ink: three levels of ten
+    // uses with two thousand inks are refused, and drawn with none, and two
+    // levels are drawn with them all.
+    let names: Vec<String> = (0..2_000).map(|at| format!("c{at}")).collect();
+    let inks: Vec<(&str, [u8; 3])> = names
+        .iter()
+        .map(|name| (name.as_str(), [0, 0, 0]))
+        .collect();
+    assert_eq!(
+        rasterise(nested_uses(3).as_bytes(), 100, &inks),
+        Err(Refused::TooLarge),
+        "copies matched against many inks"
+    );
+    assert!(rasterise(nested_uses(3).as_bytes(), 100, &[]).is_ok());
+    assert!(rasterise(nested_uses(2).as_bytes(), 100, &inks).is_ok());
 }

@@ -196,8 +196,8 @@ bound is refused rather than shrunk or cut:
   picture is refused at once.
 - **What drawing an SVG holds at once.** The same 2 MiB bounds the sum of
   every pixmap the drawing would hold together: the picture itself, each
-  group drawn apart from its parent (for opacity, a filter, a clip, a mask or
-  a blend), the result of each filter step, and each clip, mask and pattern.
+  group drawn apart from its parent (for opacity, a filter, a clip or a
+  blend), the result of each filter step, and each clip.
   The sum is worked out from the SVG before anything is drawn, so a small file
   whose filters ask for far more room than the picture is refused at once.
 - **What drawing an SVG computes.** The pixels each filter step's region
@@ -216,22 +216,33 @@ bound is refused rather than shrunk or cut:
   it is drawn.
 - **What the copies in an SVG take.** A `<use>` copies what it names, and a
   copy can hold uses of its own, so a few hundred bytes can ask for millions
-  of copies. The time making them would take, by the elements, attributes
-  and text copied, is counted before the picture is built, and copies that
-  would take more than 16 ms are refused.
+  of copies. A marker's content is copied at every vertex it is drawn on, a
+  clip or a filter sized to the shape it is on is made again for each shape,
+  a text copied where it is not drawn still has its letters laid out, and
+  each colour the picture is drawn in is matched against every copy. The
+  time making them all would take, by the elements, attributes and letters
+  copied, is counted before the picture is built, and copies that would take
+  more than 16 ms are refused.
 - **A picture sent to the terminal.** Sent as PNG it is at most 1 MiB, and
   sent as Sixel it is at most 600 pixels wide.
 - **One at a time.** Only one picture is read or drawn at a time, wherever it
   was asked for. One that waits longer than ten seconds for its turn is
   refused as late.
 
-An SVG is drawn from its own bytes and nothing else. A file, a URL, a style
-sheet import or a font it names is not opened, followed or fetched, and the
-picture is drawn as if the reference were not there. Only one font is
-available, DejaVu Sans, so text in a script it has no letters for is drawn
-with gaps. A raster image embedded in an SVG, such as a PNG in a `data:` URL,
-is not drawn; the SVG is drawn without it. A picture whose references lead
-round to themselves, such as three masks that each use the next, is refused,
-as is one the drawing cannot finish. So is any picture with a `<style>` sheet
-that names an element other than a gradient with `url(#id)`, because a sheet
-cannot say which element a rule reaches, even when no loop is present.
+An SVG is drawn from its own bytes and nothing else, and only with the
+elements a picture is drawn with: `svg`, `g`, `defs`, `symbol` and `use`;
+`path`, `rect`, `circle`, `ellipse`, `line`, `polyline` and `polygon`; `text`
+and `tspan`; `marker`; `linearGradient`, `radialGradient` and `stop`;
+`clipPath`; `filter` and its steps; and `title`, `desc` and `metadata`. A
+picture holding any other element, such as a `<style>` sheet, a `<mask>`, a
+`<pattern>`, an `<image>`, a `<foreignObject>`, a `<switch>`, a link, a
+`<tref>` or a `<textPath>`, or an element in a namespace other than SVG's, is
+refused. A file, a URL or a font it names is not opened, followed or
+fetched, and the picture is drawn as if the reference were not there. Only
+one font is available, DejaVu Sans, so text in a script it has no letters for
+is drawn with gaps. A filter's image step holding a
+raster image, such as a PNG in a `data:` URL, is drawn as nothing; one
+holding an SVG refuses the picture. A picture whose references lead round to
+themselves, such as three clips that each use the next, is refused, as is a
+marker drawn inside a marker, a clip or a filter inside a clip, and one the
+drawing cannot finish.

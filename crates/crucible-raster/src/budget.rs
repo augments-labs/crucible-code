@@ -14,15 +14,15 @@
 //! renderer frees early, the pixmap is counted as held. It is refused past
 //! [`MOST_DECODED`]. The second is the work: for each filter primitive the
 //! pixels of its region times what it does with each pixel, and for each shape
-//! the largest of five prices, all summed over the tree. They are what any
+//! the largest of four prices, all summed over the tree. They are what any
 //! shape costs however little it covers; the pixels it reaches on the pixmap it
-//! is drawn on, its fill and its stroke each on their own, and a dashed stroke
-//! by the dashes it is cut into instead of by the pixels it reaches; every
-//! segment of its outline by the rows of that pixmap it crosses; every edge of
-//! a fill by the pixels along each of those rows it can walk past; and every
-//! stop of a gradient at every pixel the gradient paints. A shape in a clip is
-//! priced as the fill it is drawn as, on the clip's own pixmap. The work is
-//! refused past [`MOST_WORK`].
+//! is drawn on, its fill and its stroke each on their own, a dashed stroke by
+//! the dashes it is cut into instead of by the pixels it reaches, and every
+//! stop of a gradient at every pixel the gradient paints added to them; every
+//! segment of its outline by the rows of that pixmap it crosses; and every
+//! edge of its fill, and of its stroke's outline, by the pixels along each of
+//! those rows it can walk past. A shape in a clip is priced as the fill it is
+//! drawn as, on the clip's own pixmap. The work is refused past [`MOST_WORK`].
 
 use crate::{MOST_DECODED, Refused};
 use resvg::tiny_skia::{IntRect, PathSegment, Point, Rect, StrokeDash, Transform};
@@ -53,8 +53,8 @@ const MOST_WORK: u64 = 140_000;
 /// a plain colour, and seven, for a radial gradient of two stops, which is 20
 /// pixels to a step. Sixteen counts the shapes a little above what they cost,
 /// so a plain page-sized background does not use up a drawing's work. A
-/// gradient of many stops is slower than any of these, and is counted by its
-/// stops besides: [`PIXEL_STOPS_PER_STEP`].
+/// gradient of many stops is slower than any of these, and its stops are
+/// counted on top of its pixels: [`PIXEL_STOPS_PER_STEP`].
 const PIXELS_PER_STEP: u64 = 16;
 
 /// The steps any shape costs however few pixels it reaches: 20.
@@ -100,9 +100,12 @@ const RUNS_PER_STEP: u64 = 128;
 
 /// How many pixels and stops of a gradient count as one step: 512.
 ///
-/// The renderer works out every stop at every pixel a gradient paints: a
-/// linear gradient of 100 stops over 250 000 pixels took 0.27 ns a pixel and
-/// a stop, the dearest measured, which is 527 to a step.
+/// The renderer works out every stop at every pixel a gradient paints, on top
+/// of painting the pixel: a linear gradient of 100 stops over 250 000 pixels
+/// took 0.27 ns a pixel and a stop, the dearest measured, which is 527 to a
+/// step. Linear gradients of 16 to 48 stops over two million pixels took 10
+/// to 15 ns a pixel all told, which the pixels and the stops counted together
+/// put at 13 to 22.
 const PIXEL_STOPS_PER_STEP: u64 = 512;
 
 /// The steps a dash costs however thin it is: 8.
@@ -546,18 +549,18 @@ impl Walk {
 }
 
 /// The steps drawing `path` costs on a pixmap `pixmap` wide and tall: the
-/// largest of what any shape costs, the pixels it reaches, its segments by the
-/// rows they cross, the pixels its fill's edges walk along those rows, and the
-/// stops of its gradients at the pixels they paint.
+/// largest of what any shape costs, the pixels it reaches with the stops of
+/// its gradients at the pixels they paint, its segments by the rows they
+/// cross, and the pixels its edges walk along those rows.
 ///
 /// Painting is a pass over every pixel it reaches, the fill and the stroke
 /// each on their own, and a dashed stroke is counted by its dashes instead.
 /// The renderer builds the edges of the fill, and of the outline of the
 /// stroke, from every segment of the path, and walks each down every row it
-/// spans; a stroke spans half its width more each side. The edges of a fill
-/// also walk along each row they cross, as [`RUNS_PER_STEP`] says. A fill that
-/// reaches no pixel builds no edge, and a stroke that reaches none is still
-/// outlined.
+/// spans; a stroke spans half its width more each side. The edges of a fill,
+/// and the two edges of the stroke's outline beside each segment, also walk
+/// along each row they cross, as [`RUNS_PER_STEP`] says. A fill that reaches
+/// no pixel builds no edge, and a stroke that reaches none is still outlined.
 ///
 /// # Errors
 /// [`Refused::TooLarge`] when the stroke is dashed and the length of the path
@@ -580,7 +583,8 @@ fn shape(path: &Path, transform: Transform, pixmap: (u32, u32)) -> Result<u64, R
         }
     }
     if let Some(stroke) = path.stroke() {
-        let reach = reached(path.stroke_bounding_box(), transform, canvas);
+        let area = reaches(path.stroke_bounding_box(), transform, canvas);
+        let reach = area.map_or(0, pixels_of);
         pixels = pixels.saturating_add(match dashing(stroke) {
             Some(dash) => dashes(path, stroke, dash, transform, canvas)?,
             None => reach.div_ceil(PIXELS_PER_STEP),
@@ -595,7 +599,17 @@ fn shape(path: &Path, transform: Transform, pixmap: (u32, u32)) -> Result<u64, R
         };
         // Off the pixmap, the outline is made and no row is walked.
         let rows = if reach > 0 { pixmap.1 } else { 0 };
-        nanos = nanos.saturating_add(outline.of(path.data(), transform, rows).nanos);
+        let walked = outline.of(path.data(), transform, rows);
+        nanos = nanos.saturating_add(walked.nanos);
+        if let Some(area) = area.filter(|_| reach > 0) {
+            // The outline has an edge on each side of every segment.
+            let sides = Walked {
+                nanos: walked.nanos,
+                edges: walked.edges.saturating_mul(2),
+                edge_rows: walked.edge_rows.saturating_mul(2),
+            };
+            runs = runs.saturating_add(sides.runs(area.width()));
+        }
     }
     Ok(largest(pixels, nanos, stops, runs))
 }
@@ -634,21 +648,15 @@ fn filled(path: &Path) -> bool {
     bounds.width() > 0.0 && bounds.height() > 0.0
 }
 
-/// The steps of a shape: the largest of [`STEPS_PER_SHAPE`], its `pixels`
-/// in steps, the `nanos` its segments take, its pixels and `stops`, and the
-/// `runs` its edges walk.
+/// The steps of a shape: the largest of [`STEPS_PER_SHAPE`], its `pixels` in
+/// steps with its pixels and `stops` added, the `nanos` its segments take,
+/// and the `runs` its edges walk. A gradient's stops are worked at a pixel on
+/// top of painting it, so the two are summed.
 fn largest(pixels: u64, nanos: u64, stops: u64, runs: u64) -> u64 {
     STEPS_PER_SHAPE
-        .max(pixels)
+        .max(pixels.saturating_add(stops.div_ceil(PIXEL_STOPS_PER_STEP)))
         .max(nanos.div_ceil(STEP_NS))
-        .max(stops.div_ceil(PIXEL_STOPS_PER_STEP))
         .max(runs.div_ceil(RUNS_PER_STEP))
-}
-
-/// The pixels a shape with this bounding box reaches on a pixmap, as the
-/// renderer clips it: none where it is off the pixmap.
-fn reached(bounds: Rect, transform: Transform, pixmap: Option<IntRect>) -> u64 {
-    reaches(bounds, transform, pixmap).map_or(0, pixels_of)
 }
 
 /// The part of a pixmap a shape with this bounding box reaches, as the

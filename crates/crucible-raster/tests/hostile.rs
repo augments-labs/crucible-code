@@ -122,12 +122,19 @@ use Expect::{Drawn, Refused as No};
 /// of pixels, past `MOST_DECODED`. So are `many-results.svg` and the three
 /// `filter-work-*.svg` files, by the other half of that ceiling: each asks for
 /// a filter region so large that the pixmaps it would hold are past it before
-/// any step of work is priced. Only the fifteen `work-*.svg` files and
-/// `worst.svg` are refused by the work drawing them would take and by nothing
-/// else: the two `work-copied-*.svg` and two `work-nested-uses*.svg` files by
-/// the copies the parser would make of what their uses name, and the rest by
-/// the work budget, the steps the renderer would take. The test after the
-/// corpus check draws each of them with that work made small.
+/// any step of work is priced. The `form-*.svg` files are
+/// `Refused::NotAnImage`, each for the one element outside those drawn that
+/// it holds, and so are the `probe-*.svg` files that hold a mask, a style
+/// sheet, a reference to text or an image. The fourteen `work-*.svg` files,
+/// `worst.svg` and the other five `probe-*.svg` files are refused by the work
+/// drawing them would take and by nothing else: the two `work-copied-*.svg`
+/// and two `work-nested-uses*.svg` files, and the probes of copies, by the
+/// copies the parser would make of what their uses, markers, clips and text
+/// name; the two `probe-nested-*.svg` files by a marker inside a marker and a
+/// clip inside a clip, whose copies no count bounds; and the rest by the work
+/// budget, the steps the renderer would take. The test after the corpus check
+/// draws each of them with that work made small, and the one after it each
+/// file refused for an element with that element taken out.
 const ENTRIES: &[(&str, Expect)] = &[
     ("image/anim.gif", Drawn),
     ("image/bomb.jpg", No(Refused::TooLarge)),
@@ -149,15 +156,33 @@ const ENTRIES: &[(&str, Expect)] = &[
         No(Refused::TooLarge),
     ),
     ("svg/filter-work-turbulence.svg", No(Refused::TooLarge)),
+    ("svg/form-a.svg", No(Refused::NotAnImage)),
+    ("svg/form-foreignObject.svg", No(Refused::NotAnImage)),
+    ("svg/form-image.svg", No(Refused::NotAnImage)),
+    ("svg/form-mask.svg", No(Refused::NotAnImage)),
+    ("svg/form-pattern.svg", No(Refused::NotAnImage)),
+    ("svg/form-style.svg", No(Refused::NotAnImage)),
+    ("svg/form-switch.svg", No(Refused::NotAnImage)),
+    ("svg/form-textPath.svg", No(Refused::NotAnImage)),
+    ("svg/form-tref.svg", No(Refused::NotAnImage)),
     ("svg/garbage.svg", No(Refused::NotAnImage)),
     ("svg/many-results.svg", No(Refused::TooLarge)),
     ("svg/nested.svg", Drawn),
+    ("svg/probe-box-clips.svg", No(Refused::TooLarge)),
+    ("svg/probe-marker-copies.svg", No(Refused::TooLarge)),
+    ("svg/probe-nested-clips.svg", No(Refused::TooLarge)),
+    ("svg/probe-nested-markers.svg", No(Refused::TooLarge)),
+    ("svg/probe-nested-masks.svg", No(Refused::NotAnImage)),
+    ("svg/probe-style-copies.svg", No(Refused::NotAnImage)),
+    ("svg/probe-svg-image.svg", No(Refused::NotAnImage)),
+    ("svg/probe-tref.svg", No(Refused::NotAnImage)),
+    ("svg/probe-undrawn-letters.svg", No(Refused::TooLarge)),
     ("svg/small.svg", Drawn),
     ("svg/work-clip-shapes.svg", No(Refused::TooLarge)),
     ("svg/work-copied-path.svg", No(Refused::TooLarge)),
     ("svg/work-copied-text.svg", No(Refused::TooLarge)),
-    ("svg/work-crowded-row.svg", No(Refused::TooLarge)),
     ("svg/work-dashes.svg", No(Refused::TooLarge)),
+    ("svg/work-gradient-crossover.svg", No(Refused::TooLarge)),
     ("svg/work-gradient-stops.svg", No(Refused::TooLarge)),
     ("svg/work-merge-inputs.svg", No(Refused::TooLarge)),
     ("svg/work-nested-uses-deeper.svg", No(Refused::TooLarge)),
@@ -305,7 +330,12 @@ fn a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small() {
     let paths = read("svg/work-paths-tiny.svg");
     let rows = read("svg/work-segment-rows.svg");
     let stops = read("svg/work-gradient-stops.svg");
-    let crowded = read("svg/work-crowded-row.svg");
+    let crossover = read("svg/work-gradient-crossover.svg");
+    let nested_markers = read("svg/probe-nested-markers.svg");
+    let nested_clips = read("svg/probe-nested-clips.svg");
+    let marker_copies = read("svg/probe-marker-copies.svg");
+    let box_clips = read("svg/probe-box-clips.svg");
+    let letters = read("svg/probe-undrawn-letters.svg");
     let worst = read("svg/worst.svg");
     // The path with its first hundred edges and no more.
     let fewer = |original: &str| {
@@ -353,6 +383,19 @@ fn a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small() {
         assert!(kept.len() < original.len(), "text to take out");
         kept
     };
+    // The file with the references to its first `levels` levels taken out,
+    // which are the ones made inside a marker or a clip, and the one to the
+    // last level, from outside them, kept.
+    let unnested = |original: &str, levels: u32, reference: &dyn Fn(u32) -> String| {
+        let mut kept = original.to_owned();
+        for level in 0..levels {
+            let inner = reference(level);
+            assert!(kept.contains(&inner), "a reference to level {level}");
+            kept = kept.replace(&inner, "");
+        }
+        assert!(kept.contains(&reference(levels)), "the reference drawn");
+        kept
+    };
     let small = [
         once(&merge, r#"<feMergeNode in="SourceGraphic"/>"#),
         turbulence.replace(r#"numOctaves="10""#, r#"numOctaves="1""#),
@@ -371,11 +414,22 @@ fn a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small() {
         once(&paths, r#"<path d="M0 0L1 1" stroke="black"/>"#),
         fewer(&rows),
         ends(&stops),
-        fewer(&crowded),
+        unnested(&nested_markers, 4, &|level| {
+            format!(
+                r#" marker-start="url(#m{level})" marker-mid="url(#m{level})" marker-end="url(#m{level})""#
+            )
+        }),
         lines(&worst),
         two_levels(&deeper),
         once(&copied_path, r##"<use xlink:href="#copied" x="-200"/>"##),
         once(&copied_text, r##"<use xlink:href="#copied" x="-200"/>"##),
+        ends(&crossover),
+        unnested(&nested_clips, 5, &|level| {
+            format!(r#" clip-path="url(#c{level})""#)
+        }),
+        once(&marker_copies, r#"<rect x="-900" width="1" height="1"/>"#),
+        once(&box_clips, r#"<rect x="-900" width="1" height="1"/>"#),
+        letters.replace(&"x ".repeat(25_000), "x "),
     ];
     for (name, original, small) in [
         ("svg/work-merge-inputs.svg", &merge, &small[0]),
@@ -389,11 +443,16 @@ fn a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small() {
         ("svg/work-paths-tiny.svg", &paths, &small[8]),
         ("svg/work-segment-rows.svg", &rows, &small[9]),
         ("svg/work-gradient-stops.svg", &stops, &small[10]),
-        ("svg/work-crowded-row.svg", &crowded, &small[11]),
+        ("svg/probe-nested-markers.svg", &nested_markers, &small[11]),
         ("svg/worst.svg", &worst, &small[12]),
         ("svg/work-nested-uses-deeper.svg", &deeper, &small[13]),
         ("svg/work-copied-path.svg", &copied_path, &small[14]),
         ("svg/work-copied-text.svg", &copied_text, &small[15]),
+        ("svg/work-gradient-crossover.svg", &crossover, &small[16]),
+        ("svg/probe-nested-clips.svg", &nested_clips, &small[17]),
+        ("svg/probe-marker-copies.svg", &marker_copies, &small[18]),
+        ("svg/probe-box-clips.svg", &box_clips, &small[19]),
+        ("svg/probe-undrawn-letters.svg", &letters, &small[20]),
     ] {
         assert_ne!(original, small, "{name}");
         assert_eq!(
@@ -403,6 +462,79 @@ fn a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small() {
         );
         let drawn = rasterise(small.as_bytes(), WIDTH, INKS);
         assert!(drawn.is_ok(), "{name} with its work made small: {drawn:?}");
+    }
+}
+
+/// Longer than judging any file of the corpus takes, and shorter than drawing
+/// or building those judged here: 100 ms.
+const SOON_REFUSED: Duration = Duration::from_millis(100);
+
+/// The files refused before the renderer or the parser does the work they
+/// ask for, each by a price, a count or an element the renderer or the parser
+/// would otherwise have reached long after the ceiling.
+const REFUSED_SOON: &[(&str, Refused)] = &[
+    ("svg/work-gradient-crossover.svg", Refused::TooLarge),
+    ("svg/probe-box-clips.svg", Refused::TooLarge),
+    ("svg/probe-marker-copies.svg", Refused::TooLarge),
+    ("svg/probe-nested-clips.svg", Refused::TooLarge),
+    ("svg/probe-nested-markers.svg", Refused::TooLarge),
+    ("svg/probe-nested-masks.svg", Refused::NotAnImage),
+    ("svg/probe-style-copies.svg", Refused::NotAnImage),
+    ("svg/probe-svg-image.svg", Refused::NotAnImage),
+    ("svg/probe-tref.svg", Refused::NotAnImage),
+    ("svg/probe-undrawn-letters.svg", Refused::TooLarge),
+];
+
+#[test]
+fn a_file_refused_for_its_work_is_refused_before_the_work_is_done() {
+    let _alone = alone();
+    for (name, refused) in REFUSED_SOON {
+        let bytes = fs::read(Path::new(CORPUS).join(name)).expect("a corpus file");
+        let began = Instant::now();
+        let drawn = rasterise(&bytes, WIDTH, INKS);
+        let took = began.elapsed();
+        assert_eq!(drawn, Err(*refused), "{name}");
+        assert!(took < SOON_REFUSED, "{name} took {took:?} to refuse");
+    }
+}
+
+/// The files refused for holding an element outside those drawn, each with
+/// the one element that refuses it.
+const REFUSED_FOR: &[(&str, &str)] = &[
+    ("svg/form-a.svg", "a"),
+    ("svg/form-foreignObject.svg", "foreignObject"),
+    ("svg/form-image.svg", "image"),
+    ("svg/form-mask.svg", "mask"),
+    ("svg/form-pattern.svg", "pattern"),
+    ("svg/form-style.svg", "style"),
+    ("svg/form-switch.svg", "switch"),
+    ("svg/form-textPath.svg", "textPath"),
+    ("svg/form-tref.svg", "tref"),
+    ("svg/probe-nested-masks.svg", "mask"),
+    ("svg/probe-style-copies.svg", "style"),
+    ("svg/probe-svg-image.svg", "image"),
+    ("svg/probe-tref.svg", "tref"),
+];
+
+#[test]
+fn a_file_refused_for_an_element_is_drawn_once_the_element_is_a_group() {
+    let _alone = alone();
+    for (name, element) in REFUSED_FOR {
+        let original = fs::read_to_string(Path::new(CORPUS).join(name)).expect("a corpus file");
+        let opened = format!("<{element}");
+        let closed = format!("</{element}>");
+        assert!(original.contains(&opened), "{name} holds {element}");
+        let grouped = original.replace(&opened, "<g").replace(&closed, "</g>");
+        assert_eq!(
+            rasterise(original.as_bytes(), WIDTH, INKS),
+            Err(Refused::NotAnImage),
+            "{name}"
+        );
+        let drawn = rasterise(grouped.as_bytes(), WIDTH, INKS);
+        assert!(
+            drawn.is_ok(),
+            "{name} with its {element} a group: {drawn:?}"
+        );
     }
 }
 
@@ -739,15 +871,20 @@ fn what_a_drawer_does_with_the_references(sentinels: &Sentinels, drawer: &Drawer
         };
         let (with, without) = with_and_without(&filled);
         let (with, without) = (drawer(sentinels, &with), drawer(sentinels, &without));
-        drawn += 1;
         match (with, without) {
+            // A template that holds an element outside those drawn is refused
+            // with its reference and without it alike, and nothing is drawn.
+            (Err(with), Err(without)) if with == without => continue,
             (Ok(with), Ok(without)) if with == without => {}
             (with, without) => wrong.push(format!(
                 "{name}: drew {with:?} where the reference removed draws {without:?}"
             )),
         }
+        drawn += 1;
     }
-    assert!(drawn >= 5, "only {drawn} templates drawn");
+    // The four `href-*.svg` templates each platform fills; the two that hold a
+    // style sheet are refused.
+    assert!(drawn >= 4, "only {drawn} templates drawn");
     wrong
 }
 
@@ -819,10 +956,6 @@ fn a_planted_resolver_that_uses_the_sentinel_changes_the_output_and_is_found() {
     let wrong = what_a_drawer_does_with_the_references(&sentinels, &uses_what_it_reads);
     assert!(
         wrong.iter().any(|line| line.starts_with("href-file.svg")),
-        "{wrong:#?}"
-    );
-    assert!(
-        wrong.iter().any(|line| line.starts_with("import-file.svg")),
         "{wrong:#?}"
     );
 }

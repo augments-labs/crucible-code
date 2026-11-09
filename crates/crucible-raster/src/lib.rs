@@ -14,6 +14,7 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::io::{self, Cursor, Write};
 use std::marker::PhantomData;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -151,25 +152,44 @@ pub fn decode(bytes: &[u8]) -> Result<Pixels, Refused> {
 /// letters, digits, `-` and `_`; any other name is refused rather than let into
 /// the style sheet.
 ///
-/// Nothing outside the bytes is read: an `<image>` that is not a `data:` URL, an
-/// `@import` and a font URL are not followed, and the only font is the one this
-/// crate carries. The height follows the SVG's own proportions, rounded up.
+/// Only the elements a picture is drawn with are let in: the root, groups,
+/// definitions, symbols and uses; paths, rectangles, circles, ellipses, lines,
+/// polylines and polygons; text and its spans; markers; linear and radial
+/// gradients and their stops; clip paths; filters, their steps and what those
+/// steps hold; and a title, a description and metadata. A picture holding any
+/// other element, or an element in a namespace other than SVG's, is refused
+/// before the parser sees it: a `<style>` sheet, a `<mask>`, a `<pattern>`, an
+/// `<image>`, a `<foreignObject>`, a `<switch>`, a link, a `<tref>` and a
+/// `<textPath>` among them.
 ///
-/// A mask, clip path, pattern, filter, marker or copy that comes to name itself
-/// through three elements or more is refused before the parser sees it: the
-/// parser only looks for a loop two elements long, and follows a longer one
-/// until its stack is gone, whatever size that stack is.
+/// Nothing outside the bytes is read, and the only font is the one this crate
+/// carries. A filter's image step that names a `data:` URL holding an SVG
+/// refuses the picture, since that SVG is not judged as this one is; one
+/// holding a raster image, or naming anything else, is drawn as nothing. The
+/// height follows the SVG's own proportions, rounded up.
 ///
-/// The copies `<use>` elements ask for, and the copies within those, are
-/// counted before the parser makes any of them: copies that would take it more
-/// than 16 ms to make are refused, however few bytes ask for them.
+/// A clip path, filter, marker or copy that comes to name itself through three
+/// elements or more is refused before the parser sees it: the parser only
+/// looks for a loop two elements long, and follows a longer one until its
+/// stack is gone, whatever size that stack is. So is a marker drawn inside a
+/// marker, and a clip or a filter inside a clip: the parser makes the inner
+/// one again for every place the outer one is drawn.
+///
+/// The copies the parser would make are counted before it makes any of them:
+/// what each `<use>` copies, and the copies within those; a marker's content
+/// at every vertex it is drawn on; a clip or a filter sized to each shape it is
+/// on; the letters of a text copied where it is not drawn; and every rule of
+/// the inks matched against every copy. Copies that would take it more than
+/// 16 ms to make are refused, however few bytes ask for them.
 ///
 /// # Errors
 /// [`Refused::TooLarge`] for an SVG past [`MOST_INPUT`], copies past what the
-/// parser may make or a drawing past [`MOST_DECODED`], [`Refused::NotAnImage`]
-/// for bytes that are not an SVG, a zero width, a drawing the renderer panics
-/// on, a document whose references lead back to themselves or an ink that
-/// cannot be a class, [`Refused::OverTime`] when the decode slot stays busy.
+/// parser may make, a marker inside a marker, a clip or a filter inside a clip,
+/// or a drawing past [`MOST_DECODED`]; [`Refused::NotAnImage`] for bytes that
+/// are not an SVG, a zero width, an element outside those drawn, an SVG inside
+/// a filter's image step, a drawing the renderer panics on, a document whose
+/// references lead back to themselves or an ink that cannot be a class;
+/// [`Refused::OverTime`] when the decode slot stays busy.
 pub fn rasterise(svg: &[u8], width_px: u32, inks: &[(&str, [u8; 3])]) -> Result<Pixels, Refused> {
     if svg.len() > MOST_INPUT {
         return Err(Refused::TooLarge);
@@ -177,12 +197,22 @@ pub fn rasterise(svg: &[u8], width_px: u32, inks: &[(&str, [u8; 3])]) -> Result<
     if width_px == 0 {
         return Err(Refused::NotAnImage);
     }
+    // Set when a filter's image step holds an SVG, which the parser would
+    // build with none of the checks this one is held to.
+    let embedded = AtomicBool::new(false);
     let options = Options {
         style_sheet: Some(style_sheet(inks)?),
         font_family: FONT_FAMILY.to_owned(),
         fontdb: fonts(),
         image_href_resolver: ImageHrefResolver {
-            resolve_data: without_loops(ImageHrefResolver::default_data_resolver()),
+            // No image is drawn: the renderer is built without raster images,
+            // and an SVG refuses the picture once the tree is built.
+            resolve_data: Box::new(|mime, data, _| {
+                if matches!(mime, "image/svg+xml" | "text/plain") && parse(&data).is_some() {
+                    embedded.store(true, Ordering::Relaxed);
+                }
+                None
+            }),
             // The default reads the file an `href` names. Nothing here is
             // allowed to name one.
             resolve_string: Box::new(|_, _| None),
@@ -197,7 +227,9 @@ pub fn rasterise(svg: &[u8], width_px: u32, inks: &[(&str, [u8; 3])]) -> Result<
         thread::Builder::new()
             .name("picture".to_owned())
             .stack_size(DRAWING_STACK)
-            .spawn_scoped(scope, || draw(svg, width_px, &options))
+            .spawn_scoped(scope, || {
+                draw(svg, width_px, inks.len(), &options, &embedded)
+            })
             .map_err(|_| Refused::TooLarge)?
             .join()
             // A renderer that panics on a picture has not drawn it, and the
@@ -212,21 +244,33 @@ pub fn rasterise(svg: &[u8], width_px: u32, inks: &[(&str, [u8; 3])]) -> Result<
 /// the pages a drawing touches are ever backed by memory.
 const DRAWING_STACK: usize = 32 << 20;
 
-/// [`rasterise`] once the slot is held and the drawing has the stack it needs.
-fn draw(svg: &[u8], width_px: u32, options: &Options<'_>) -> Result<Pixels, Refused> {
+/// [`rasterise`] once the slot is held and the drawing has the stack it needs,
+/// with `rules` rules in the inks' style sheet and `embedded` set by the image
+/// resolver of `options` when it is handed an SVG.
+fn draw(
+    svg: &[u8],
+    width_px: u32,
+    rules: usize,
+    options: &Options<'_>,
+    embedded: &AtomicBool,
+) -> Result<Pixels, Refused> {
     let document = parse(svg).ok_or(Refused::NotAnImage)?;
     if leads_back(&document) {
         return Err(Refused::NotAnImage);
     }
-    // The tree parser makes every copy a `<use>` asks for, and the copies
-    // within it, before anything else could be judged.
-    if copying(&document).is_none_or(|nanos| nanos > MOST_COPYING_NS) {
+    // The tree parser makes every copy a `<use>`, a marker, a clip or a filter
+    // asks for, and the copies within them, before anything else could be
+    // judged.
+    if copying(&document, rules)? > MOST_COPYING_NS {
         return Err(Refused::TooLarge);
     }
     let tree = Tree::from_xmltree(&document, options).map_err(|error| match error {
         UsvgError::ElementsLimitReached => Refused::TooLarge,
         _ => Refused::NotAnImage,
     })?;
+    if embedded.load(Ordering::Relaxed) {
+        return Err(Refused::NotAnImage);
+    }
     let size = tree.size();
     // The ceiling is judged on the size the drawing would have, before a pixmap
     // is asked for. A float is cast to a `u32` by saturating, so a height too
@@ -276,21 +320,6 @@ fn parse(svg: &[u8]) -> Option<Document<'_>> {
     Document::parse_with_options(text, options).ok()
 }
 
-/// A data resolver that does not hand a nested SVG whose references lead back
-/// to themselves to the tree parser. Such an image is left out, as one that
-/// does not parse is.
-fn without_loops(
-    resolve: resvg::usvg::ImageHrefDataResolverFn<'static>,
-) -> resvg::usvg::ImageHrefDataResolverFn<'static> {
-    Box::new(move |mime, data, options| {
-        let is_nested_svg = matches!(mime, "image/svg+xml" | "text/plain");
-        if is_nested_svg && parse(&data).is_some_and(|document| leads_back(&document)) {
-            return None;
-        }
-        resolve(mime, data, options)
-    })
-}
-
 /// Whether some element of `document` comes to refer to itself: through an
 /// attribute or a style sheet that names another element, or through the
 /// elements it holds.
@@ -300,8 +329,10 @@ fn without_loops(
 /// style sheet cannot say which element a rule reaches, so one that names
 /// anything but a gradient is taken to lead back, whether or not a loop is
 /// there: such a picture is refused, and a gradient is let through because it
-/// draws nothing that is drawn from another. Where an id is given twice the parser uses the
-/// last, and so does this.
+/// draws nothing that is drawn from another. Where an id is given twice, the
+/// parser takes a `url(#id)` to name the last element given it and a `<use>`
+/// to name the first; this takes the last for both, and [`copying`] finds a
+/// loop of copies through the first.
 fn leads_back(document: &Document<'_>) -> bool {
     let elements: Vec<Node<'_, '_>> = document.descendants().filter(Node::is_element).collect();
     let position: HashMap<roxmltree::NodeId, usize> = elements
@@ -431,59 +462,376 @@ const COPIED_ATTRIBUTE_BYTE_NS: u64 = 20;
 /// measured.
 const COPIED_LETTER_NS: u64 = 1_500;
 
-/// The time the tree parser would take making the copies that the `<use>`
-/// elements of `document` ask for, a copy within a copy counted as often as it
-/// is made, by [`COPY_MADE_NS`], [`COPY_DRAWN_NS`], [`COPIED_ATTRIBUTE_BYTE_NS`]
-/// and [`COPIED_LETTER_NS`]. `None` where a copy would come to hold itself.
+/// The time the tree parser takes to match one rule of the inks' style sheet
+/// against one copy, drawn or not: 7 ns.
 ///
-/// A use names its element as the parser reads the name: an `href` with no
-/// namespace before an `xlink:href`, spaces before the `#` and the id up to the
-/// first space, and where an id is given twice, the first. A use in the
-/// definitions, or one that names what nothing draws, is copied all the same,
-/// and so counted. A copy is taken to be drawn unless it is in the definitions
-/// and outside every clip, mask, pattern, marker and filter there, which are
-/// drawn wherever they are named from.
-fn copying(document: &Document<'_>) -> Option<u64> {
-    let elements: Vec<Node<'_, '_>> = document.descendants().filter(Node::is_element).collect();
-    let position: HashMap<roxmltree::NodeId, usize> = elements
-        .iter()
-        .enumerate()
-        .map(|(at, element)| (element.id(), at))
-        .collect();
-    let mut named: HashMap<&str, usize> = HashMap::new();
-    for (at, element) in elements.iter().enumerate() {
-        if let Some(id) = element.attribute("id") {
-            named.entry(id).or_insert(at);
+/// A thousand rules were matched against ten thousand groups at 6.4 ns a
+/// match, the dearest measured.
+const MATCH_NS: u64 = 7;
+
+/// The time the tree parser takes for one byte of the text of a copy that is
+/// not drawn: 2 ns, since a text is gathered before it is known to be drawn.
+///
+/// Twenty thousand copies of a thousand letters in the definitions were made
+/// at 1.41 ns a letter past [`COPY_MADE_NS`], the dearest measured.
+const UNDRAWN_LETTER_NS: u64 = 2;
+
+/// The namespace of SVG. The parser reads an element in it or in none, and
+/// passes over one in any other with all it holds.
+const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
+
+/// The elements a picture is drawn with: what holds and names the rest,
+/// shapes, text, markers, gradients, clip paths, and filters with their steps
+/// and what those steps hold. Any other element refuses the picture, a style
+/// sheet, a mask, a pattern, an image, a `foreignObject`, a `switch`, a link,
+/// a `tref` and a `textPath` among them: each is drawn by a part of the parser
+/// or the renderer that nothing here judges.
+const DRAWN_ELEMENTS: &[&str] = &[
+    "svg",
+    "g",
+    "defs",
+    "title",
+    "desc",
+    "metadata",
+    "symbol",
+    "use",
+    "path",
+    "rect",
+    "circle",
+    "ellipse",
+    "line",
+    "polyline",
+    "polygon",
+    "text",
+    "tspan",
+    "marker",
+    "linearGradient",
+    "radialGradient",
+    "stop",
+    "clipPath",
+    "filter",
+    "feBlend",
+    "feColorMatrix",
+    "feComponentTransfer",
+    "feComposite",
+    "feConvolveMatrix",
+    "feDiffuseLighting",
+    "feDisplacementMap",
+    "feDropShadow",
+    "feFlood",
+    "feGaussianBlur",
+    "feImage",
+    "feMerge",
+    "feMorphology",
+    "feOffset",
+    "feSpecularLighting",
+    "feTile",
+    "feTurbulence",
+    "feMergeNode",
+    "feFuncR",
+    "feFuncG",
+    "feFuncB",
+    "feFuncA",
+    "feDistantLight",
+    "fePointLight",
+    "feSpotLight",
+];
+
+/// The kinds of marker a shape is given: at its start, at every vertex
+/// between, at its end, and, where a `marker` shorthand or a style attribute
+/// gives it, at any of those.
+const MARKER_KINDS: usize = 4;
+
+/// The elements of a document in document order, each after its parent, and
+/// the elements each one names.
+struct Elements<'a, 'input> {
+    all: Vec<Node<'a, 'input>>,
+    position: HashMap<roxmltree::NodeId, usize>,
+    /// Each id and the first element given it, which a `<use>` names.
+    first: HashMap<&'a str, usize>,
+    /// Each id and the last element given it, which a `url(#id)` names.
+    last: HashMap<&'a str, usize>,
+}
+
+impl<'a, 'input> Elements<'a, 'input> {
+    fn of(document: &'a Document<'input>) -> Self {
+        let all: Vec<Node<'a, 'input>> = document.descendants().filter(Node::is_element).collect();
+        let position = all
+            .iter()
+            .enumerate()
+            .map(|(at, element)| (element.id(), at))
+            .collect();
+        let mut first = HashMap::new();
+        let mut last = HashMap::new();
+        for (at, element) in all.iter().enumerate() {
+            if let Some(id) = element.attribute("id") {
+                first.entry(id).or_insert(at);
+                last.insert(id, at);
+            }
+        }
+        Self {
+            all,
+            position,
+            first,
+            last,
         }
     }
-    // Each element held, and the element a use copies, with whether it is
-    // drawn where the element itself is drawn and where it is not.
-    let edges: Vec<Vec<(usize, [bool; 2])>> = elements
-        .iter()
-        .map(|element| {
-            let held = [false, true].map(|drawn| holds_drawn(element, drawn));
-            let children = element
-                .children()
-                .filter(Node::is_element)
-                .filter_map(|child| position.get(&child.id()).copied())
-                .map(|child| (child, held));
-            let copied = (element.tag_name().name() == "use")
-                .then(|| used(element).and_then(|id| named.get(id).copied()))
-                .flatten()
-                .map(|target| (target, [false, true]));
-            children.chain(copied).collect()
-        })
-        .collect();
+
+    fn name(&self, at: usize) -> &'a str {
+        self.all
+            .get(at)
+            .map_or("", |element| element.tag_name().name())
+    }
+
+    fn parent(&self, at: usize) -> Option<usize> {
+        let parent = self.all.get(at)?.parent_element()?;
+        self.position.get(&parent.id()).copied()
+    }
+
+    fn children(&self, at: usize) -> impl Iterator<Item = usize> + '_ {
+        self.all
+            .get(at)
+            .into_iter()
+            .flat_map(Node::children)
+            .filter(Node::is_element)
+            .filter_map(|child| self.position.get(&child.id()).copied())
+    }
+
+    /// The element the `<use>` at `at` copies.
+    fn copied(&self, at: usize) -> Option<usize> {
+        let element = self.all.get(at)?;
+        if element.tag_name().name() != "use" {
+            return None;
+        }
+        used(element).and_then(|id| self.first.get(id).copied())
+    }
+
+    /// The elements the attribute `name` of the element at `at` names by
+    /// `url(#id)`, or every attribute where `name` is `None`.
+    fn linked(&self, at: usize, name: Option<&str>) -> Vec<usize> {
+        self.all
+            .get(at)
+            .into_iter()
+            .flat_map(Node::attributes)
+            .filter(|attribute| name.is_none_or(|name| attribute.name() == name))
+            .flat_map(|attribute| url_targets(attribute.value()))
+            .filter_map(|id| self.last.get(id).copied())
+            .collect()
+    }
+
+    /// Every element the element at `at` holds or names: by holding it, by
+    /// copying it, by `url(#id)` and by an `href` that is a `#id`, taken as
+    /// either element given that id.
+    fn reached_from(&self, at: usize) -> Vec<usize> {
+        let hrefs = self
+            .all
+            .get(at)
+            .into_iter()
+            .flat_map(Node::attributes)
+            .filter(|attribute| attribute.name() == "href")
+            .filter_map(|attribute| attribute.value().trim().strip_prefix('#'))
+            .flat_map(|id| [self.first.get(id).copied(), self.last.get(id).copied()])
+            .flatten();
+        self.children(at)
+            .chain(self.copied(at))
+            .chain(self.linked(at, None))
+            .chain(hrefs)
+            .collect()
+    }
+
+    /// The markers the element at `at` gives itself and what it holds, by
+    /// kind: `marker-start`, `marker-mid`, `marker-end`, and the `marker`
+    /// shorthand or a style attribute that names a marker property.
+    fn markers_given(&self, at: usize) -> [Vec<usize>; MARKER_KINDS] {
+        let mut given: [Vec<usize>; MARKER_KINDS] = Default::default();
+        let attributes = self.all.get(at).into_iter().flat_map(Node::attributes);
+        for attribute in attributes {
+            let kind = match attribute.name() {
+                "marker-start" => 0,
+                "marker-mid" => 1,
+                "marker-end" => 2,
+                "marker" => 3,
+                "style" if attribute.value().to_ascii_lowercase().contains("marker") => 3,
+                _ => continue,
+            };
+            let markers = url_targets(attribute.value())
+                .into_iter()
+                .filter_map(|id| self.last.get(id).copied())
+                .filter(|&to| self.name(to) == "marker");
+            if let Some(list) = given.get_mut(kind) {
+                list.extend(markers);
+            }
+        }
+        given
+    }
+}
+
+/// Whether `element` is one of [`DRAWN_ELEMENTS`], in SVG's namespace or in
+/// none.
+fn is_drawn_element(element: &Node<'_, '_>) -> bool {
+    let name = element.tag_name();
+    name.namespace()
+        .is_none_or(|namespace| namespace == SVG_NAMESPACE)
+        && DRAWN_ELEMENTS.contains(&name.name())
+}
+
+/// The time the tree parser would take making the copies that `document` asks
+/// for, a copy within a copy counted as often as it is made, by
+/// [`COPY_MADE_NS`], [`COPY_DRAWN_NS`], [`COPIED_ATTRIBUTE_BYTE_NS`],
+/// [`COPIED_LETTER_NS`] and [`UNDRAWN_LETTER_NS`], and by [`MATCH_NS`] for each
+/// of `rules` rules matched against each copy.
+///
+/// Copies are what a `<use>` makes of the element it names; what a marker
+/// holds, made again at every place it is drawn on a shape; and a clip path or
+/// a filter sized to the shape it is on, made again for every shape that
+/// names it. A use names its element as the parser reads the name: an `href`
+/// with no namespace before an `xlink:href`, spaces before the `#` and the id
+/// up to the first space, and where an id is given twice, the first; a
+/// `url(#id)` names the last. A use in the definitions, or one that names what
+/// nothing draws, is copied all the same, and so counted. A copy is taken to
+/// be drawn unless it is in the definitions and outside every clip, marker
+/// and filter there, which are drawn wherever they are named from. A shape is
+/// taken to be given each marker that it or what holds it gives, every marker
+/// any `<use>` is given, and a marker between its ends at every vertex it may
+/// have.
+///
+/// # Errors
+/// [`Refused::NotAnImage`] for an element outside [`DRAWN_ELEMENTS`];
+/// [`Refused::TooLarge`] for a marker drawn inside a marker, a clip or a
+/// filter inside a clip, and a copy that would come to hold itself.
+fn copying(document: &Document<'_>, rules: usize) -> Result<u64, Refused> {
+    let elements = Elements::of(document);
+    if !elements.all.iter().all(is_drawn_element) {
+        return Err(Refused::NotAnImage);
+    }
+    let count = elements.all.len();
+    let given: Vec<[Vec<usize>; MARKER_KINDS]> =
+        (0..count).map(|at| elements.markers_given(at)).collect();
+    // The element whose markers of each kind each element is drawn with: its
+    // own where it gives some, else those of what holds it.
+    let mut source: Vec<[Option<usize>; MARKER_KINDS]> = vec![[None; MARKER_KINDS]; count];
+    for at in 0..count {
+        let inherited = elements
+            .parent(at)
+            .and_then(|parent| source.get(parent).copied())
+            .unwrap_or([None; MARKER_KINDS]);
+        let own = given.get(at);
+        if let Some(entry) = source.get_mut(at) {
+            *entry = std::array::from_fn(|kind| {
+                let has_own = own
+                    .and_then(|own| own.get(kind))
+                    .is_some_and(|markers| !markers.is_empty());
+                if has_own {
+                    Some(at)
+                } else {
+                    inherited.get(kind).copied().flatten()
+                }
+            });
+        }
+    }
+    let markers_of = |at: usize, kind: usize| -> &[usize] {
+        source
+            .get(at)
+            .and_then(|sources| sources.get(kind).copied().flatten())
+            .and_then(|from| given.get(from))
+            .and_then(|given| given.get(kind))
+            .map_or(&[], Vec::as_slice)
+    };
+    if nested(&elements, |at| {
+        (0..MARKER_KINDS).any(|kind| !markers_of(at, kind).is_empty())
+    }) {
+        return Err(Refused::TooLarge);
+    }
+
+    // A shape a use copies is drawn with the markers the use is given, which
+    // are not those of what holds the shape. One node of each kind stands for
+    // every marker any use is given, after the elements.
+    let mut by_uses: [Vec<usize>; MARKER_KINDS] = Default::default();
+    for at in (0..count).filter(|&at| elements.name(at) == "use") {
+        for (kind, markers) in by_uses.iter_mut().enumerate() {
+            markers.extend_from_slice(markers_of(at, kind));
+        }
+    }
+    for markers in &mut by_uses {
+        markers.sort_unstable();
+        markers.dedup();
+    }
+    let given_by_uses = |kind: usize| count + kind;
+
+    // State `2 * node + drawn` is a node, drawn or not. Each edge is a state
+    // made from this one and the times it is made.
+    let states = count.saturating_add(MARKER_KINDS).saturating_mul(2);
+    let mut edges: Vec<Vec<(usize, u64)>> = vec![Vec::new(); states];
+    let state = |node: usize, drawn: bool| 2 * node + usize::from(drawn);
+    for at in 0..count {
+        let Some(element) = elements.all.get(at) else {
+            continue;
+        };
+        let reaching = vertices(element);
+        for drawn in [false, true] {
+            let held = holds_drawn(element, drawn);
+            let mut made: Vec<(usize, u64)> = elements
+                .children(at)
+                .map(|child| (state(child, held), 1))
+                .chain(elements.copied(at).map(|copied| (state(copied, drawn), 1)))
+                .collect();
+            if drawn {
+                if let Some(vertices) = reaching {
+                    for kind in 0..MARKER_KINDS {
+                        let places = match kind {
+                            1 => vertices,
+                            3 => vertices.saturating_add(2),
+                            _ => 1,
+                        };
+                        made.extend(
+                            markers_of(at, kind)
+                                .iter()
+                                .map(|&marker| (state(marker, true), places)),
+                        );
+                        if by_uses.get(kind).is_some_and(|markers| !markers.is_empty()) {
+                            made.push((state(given_by_uses(kind), true), places));
+                        }
+                    }
+                }
+                made.extend(
+                    elements
+                        .linked(at, None)
+                        .into_iter()
+                        .filter(|&to| elements.all.get(to).is_some_and(sized_to_shape))
+                        .map(|to| (state(to, true), 1)),
+                );
+            }
+            if let Some(entry) = edges.get_mut(state(at, drawn)) {
+                *entry = made;
+            }
+        }
+    }
+    for (kind, markers) in by_uses.iter().enumerate() {
+        let made: Vec<(usize, u64)> = markers
+            .iter()
+            .map(|&marker| (state(marker, true), 1))
+            .collect();
+        for drawn in [false, true] {
+            if let Some(entry) = edges.get_mut(state(given_by_uses(kind), drawn)) {
+                entry.clone_from(&made);
+            }
+        }
+    }
+    let alone = |state: usize| {
+        elements
+            .all
+            .get(state / 2)
+            .map_or(0, |element| made_alone(element, state % 2 == 1, rules))
+    };
+
     // Each element once, where the document puts it. Every element comes
     // after its parent.
-    let mut drawn_once = vec![true; elements.len()];
-    for (at, element) in elements.iter().enumerate() {
-        let parent = element
-            .parent_element()
-            .and_then(|parent| position.get(&parent.id()).copied());
-        if let Some(parent) = parent {
+    let mut drawn_once = vec![true; count];
+    for at in 0..count {
+        if let Some(parent) = elements.parent(at) {
             let drawn = drawn_once.get(parent).copied().unwrap_or(true);
             let held = elements
+                .all
                 .get(parent)
                 .is_none_or(|parent| holds_drawn(parent, drawn));
             if let Some(entry) = drawn_once.get_mut(at) {
@@ -491,44 +839,47 @@ fn copying(document: &Document<'_>) -> Option<u64> {
             }
         }
     }
-    let once = elements
+    let once = drawn_once
         .iter()
-        .zip(&drawn_once)
-        .map(|(element, drawn)| made_alone(element, *drawn))
+        .enumerate()
+        .map(|(at, &drawn)| alone(state(at, drawn)))
         .fold(0, u64::saturating_add);
 
-    // What building each element takes, drawn or not, with all it holds and
-    // copies. Depth first, without recursing, each element and way once: a
-    // copy of a copy is counted by adding what its element was found to take.
-    // State `2 * at + drawn` is element `at`, drawn or not.
-    let states = elements.len().saturating_mul(2);
+    // What building each state takes, with all it makes. Depth first, without
+    // recursing, each state once: a copy of a copy is counted by adding what
+    // its state was found to take, as many times as it is made.
     let mut built: Vec<Option<u64>> = vec![None; states];
     let mut on_the_path = vec![false; states];
-    let next = |state: usize, taken: usize| {
-        let drawn = state % 2;
+    let next = |from: usize, taken: usize| {
         edges
-            .get(state / 2)
+            .get(from)
             .and_then(|edges| edges.get(taken))
-            .map(|(to, held)| 2 * to + usize::from(held.get(drawn).copied().unwrap_or(true)))
+            .map(|&(to, _)| to)
     };
-    let first = 1;
+    let first = state(0, true);
     let mut path = vec![(first, 0_usize)];
     if let Some(entry) = on_the_path.get_mut(first) {
         *entry = true;
     }
-    while let Some((state, taken)) = path.last().copied() {
-        let Some(to) = next(state, taken) else {
-            let held = (0..)
-                .map_while(|taken| next(state, taken))
-                .map(|to| built.get(to).copied().flatten().unwrap_or(0))
+    while let Some((from, taken)) = path.last().copied() {
+        let Some(to) = next(from, taken) else {
+            let held = edges
+                .get(from)
+                .into_iter()
+                .flatten()
+                .map(|&(to, times)| {
+                    built
+                        .get(to)
+                        .copied()
+                        .flatten()
+                        .unwrap_or(0)
+                        .saturating_mul(times)
+                })
                 .fold(0, u64::saturating_add);
-            let alone = elements
-                .get(state / 2)
-                .map_or(0, |element| made_alone(element, state % 2 == 1));
-            if let Some(entry) = built.get_mut(state) {
-                *entry = Some(alone.saturating_add(held));
+            if let Some(entry) = built.get_mut(from) {
+                *entry = Some(alone(from).saturating_add(held));
             }
-            if let Some(entry) = on_the_path.get_mut(state) {
+            if let Some(entry) = on_the_path.get_mut(from) {
                 *entry = false;
             }
             path.pop();
@@ -538,7 +889,7 @@ fn copying(document: &Document<'_>) -> Option<u64> {
             *taken += 1;
         }
         if on_the_path.get(to).copied().unwrap_or(false) {
-            return None;
+            return Err(Refused::TooLarge);
         }
         if built.get(to).copied().flatten().is_none() {
             if let Some(entry) = on_the_path.get_mut(to) {
@@ -548,37 +899,135 @@ fn copying(document: &Document<'_>) -> Option<u64> {
         }
     }
     // The document itself is built once; all past it is copies.
-    Some(
-        built
-            .get(first)
-            .copied()
-            .flatten()
-            .unwrap_or(0)
-            .saturating_sub(once),
-    )
+    Ok(built
+        .get(first)
+        .copied()
+        .flatten()
+        .unwrap_or(0)
+        .saturating_sub(once))
+}
+
+/// Whether a marker is drawn inside a marker, or a clip or a filter inside a
+/// clip, where `marked` says whether an element is given a marker. The parser
+/// makes the inner one again for every place the outer one is drawn, and
+/// again within each of those, with no count that bounds it.
+///
+/// Inside is everything a marker or a clip path holds, and everything that
+/// names: what it copies, and what it names by `url(#id)` or `href`. A clip
+/// path's own `clip-path` is not inside it.
+fn nested(elements: &Elements<'_, '_>, marked: impl Fn(usize) -> bool) -> bool {
+    let inside = |outer: &str| {
+        let mut seen = vec![false; elements.all.len()];
+        let mut waiting: Vec<usize> = (0..elements.all.len())
+            .filter(|&at| elements.name(at) == outer)
+            .flat_map(|at| elements.children(at))
+            .collect();
+        while let Some(at) = waiting.pop() {
+            if let Some(entry) = seen.get_mut(at).filter(|seen| !**seen) {
+                *entry = true;
+                waiting.extend(elements.reached_from(at));
+            }
+        }
+        seen
+    };
+    let marker_in_marker = inside("marker").iter().enumerate().any(|(at, &inside)| {
+        inside && (vertices_of(elements, at) || elements.name(at) == "use") && marked(at)
+    });
+    let clip_in_clip = inside("clipPath").iter().enumerate().any(|(at, &inside)| {
+        inside
+            && elements
+                .linked(at, None)
+                .into_iter()
+                .any(|to| matches!(elements.name(to), "clipPath" | "filter"))
+    });
+    marker_in_marker || clip_in_clip
+}
+
+/// Whether the element at `at` is a shape a marker is drawn on.
+fn vertices_of(elements: &Elements<'_, '_>, at: usize) -> bool {
+    elements.all.get(at).and_then(vertices).is_some()
+}
+
+/// The most places a marker between the ends of `element` is drawn at, where
+/// it is a shape a marker is drawn on: one for each vertex it may have.
+///
+/// A path has a vertex at most for each number and each command in its data,
+/// and one more; a path with an arc, which is cut into curves by its size, is
+/// taken to have one for each byte of its data. A polyline has one at most
+/// for each number in its points, and a polygon two more, to close it. A line
+/// has two, and a rectangle, a circle and an ellipse at most 32, as curves.
+fn vertices(element: &Node<'_, '_>) -> Option<u64> {
+    let numbers = |value: &str| {
+        let mut runs = 0_usize;
+        let mut in_one = false;
+        for byte in value.bytes() {
+            let digit = byte.is_ascii_digit();
+            if digit && !in_one {
+                runs += 1;
+            }
+            in_one = digit;
+        }
+        runs
+    };
+    let attribute = |name: &str| element.attribute(name).unwrap_or("");
+    let places = match element.tag_name().name() {
+        "path" => {
+            let data = attribute("d");
+            if data.contains(['A', 'a']) {
+                data.len()
+            } else {
+                let commands = data.bytes().filter(u8::is_ascii_alphabetic).count();
+                numbers(data).saturating_add(commands).saturating_add(1)
+            }
+        }
+        "polyline" => numbers(attribute("points")).saturating_add(1),
+        "polygon" => numbers(attribute("points")).saturating_add(2),
+        "line" => 2,
+        "rect" | "circle" | "ellipse" => 32,
+        _ => return None,
+    };
+    Some(u64::try_from(places).unwrap_or(u64::MAX))
+}
+
+/// Whether a clip path or filter is made again for each shape that names it:
+/// a clip path sized to the shape's box, and a filter whose region or steps
+/// are, or that takes them from another filter.
+fn sized_to_shape(element: &Node<'_, '_>) -> bool {
+    let is = |name: &str, value: &str| {
+        element
+            .attribute(name)
+            .is_some_and(|given| given.trim() == value)
+    };
+    match element.tag_name().name() {
+        "clipPath" => is("clipPathUnits", "objectBoundingBox"),
+        "filter" => {
+            let inherits = element
+                .attributes()
+                .any(|attribute| attribute.name() == "href");
+            inherits
+                || !is("filterUnits", "userSpaceOnUse")
+                || !is("primitiveUnits", "userSpaceOnUse")
+        }
+        _ => false,
+    }
 }
 
 /// Whether what `element` holds is drawn, where `element` is drawn or not: not
-/// in the definitions, and again in a clip, mask, pattern, marker or filter.
+/// in the definitions, and again in a clip, marker or filter.
 fn holds_drawn(element: &Node<'_, '_>, drawn: bool) -> bool {
     match element.tag_name().name() {
         "defs" => false,
-        "clipPath" | "mask" | "pattern" | "marker" | "filter" => true,
+        "clipPath" | "marker" | "filter" => true,
         _ => drawn,
     }
 }
 
-/// What making `element` takes, without what it holds: the copy, and where it
-/// is drawn its attributes and the text it holds where text is shaped.
-fn made_alone(element: &Node<'_, '_>, drawn: bool) -> u64 {
-    if !drawn {
-        return COPY_MADE_NS;
-    }
-    let attributes: usize = element
-        .attributes()
-        .map(|attribute| attribute.name().len() + attribute.value().len())
-        .sum();
-    let letters: usize = if matches!(element.tag_name().name(), "text" | "tspan" | "textPath") {
+/// What making `element` takes, without what it holds and with `rules` rules
+/// matched against it: the copy, the text it holds, and where it is drawn its
+/// attributes and that text shaped.
+fn made_alone(element: &Node<'_, '_>, drawn: bool, rules: usize) -> u64 {
+    let bytes = |count: usize| u64::try_from(count).unwrap_or(u64::MAX);
+    let letters: usize = if matches!(element.tag_name().name(), "text" | "tspan") {
         element
             .children()
             .filter_map(|child| child.text().filter(|_| child.is_text()))
@@ -587,9 +1036,17 @@ fn made_alone(element: &Node<'_, '_>, drawn: bool) -> u64 {
     } else {
         0
     };
-    let bytes = |count: usize| u64::try_from(count).unwrap_or(u64::MAX);
-    COPY_MADE_NS
-        .saturating_add(COPY_DRAWN_NS)
+    let made = COPY_MADE_NS
+        .saturating_add(bytes(letters).saturating_mul(UNDRAWN_LETTER_NS))
+        .saturating_add(bytes(rules).saturating_mul(MATCH_NS));
+    if !drawn {
+        return made;
+    }
+    let attributes: usize = element
+        .attributes()
+        .map(|attribute| attribute.name().len() + attribute.value().len())
+        .sum();
+    made.saturating_add(COPY_DRAWN_NS)
         .saturating_add(bytes(attributes).saturating_mul(COPIED_ATTRIBUTE_BYTE_NS))
         .saturating_add(bytes(letters).saturating_mul(COPIED_LETTER_NS))
 }

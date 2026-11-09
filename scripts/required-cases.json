@@ -6651,7 +6651,7 @@
       },
       "case": "tests::an_image_that_is_not_a_data_url_is_not_followed",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "7f9f6225a33fe40f8cf4cf6d05770fb47ea89c5f5eee3bd63f417a3988d0b01c",
+      "body_sha256": "682eb5f5c4b96dfa7336df6da2dd4a437c89e70a1885148878f2f9599b175f7b",
       "platforms": [
         "linux",
         "macos",
@@ -6705,7 +6705,7 @@
       },
       "case": "tests::references_that_share_a_target_without_leading_back_are_drawn",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "b4e4b7ec0598bb0a9acc6cba2c959d8e71b9ed06e620d75fd9aae2e872426ac2",
+      "body_sha256": "d6342dcd2c855df7280e63749782e7b8f97b5e15e2fca55613767fed8d546f36",
       "platforms": [
         "linux",
         "macos",
@@ -6813,7 +6813,7 @@
       },
       "case": "a_planted_resolver_that_uses_the_sentinel_changes_the_output_and_is_found",
       "source": "crates/crucible-raster/tests/hostile.rs",
-      "body_sha256": "3e46c832abf6a2a3a8f7e2e39f6f667ea4ff0ee3d319563f2be43678986bd3f9",
+      "body_sha256": "653f693d7b7d6c9d9796954a29d36016ccc32965f722aec02e3bd8f6993ac9c7",
       "platforms": [
         "linux",
         "macos",
@@ -7209,7 +7209,7 @@
       },
       "case": "a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small",
       "source": "crates/crucible-raster/tests/hostile.rs",
-      "body_sha256": "a6ead910b24da80cf4ba0194feff793f58d2814cc35e5ee9ec23decc072504af",
+      "body_sha256": "db63b4b659f138131b1ff4bc4b7375f6a007bb99ef1b6b340cb0a6f61efcf190",
       "platforms": [
         "linux",
         "macos",
@@ -7371,7 +7371,7 @@
       },
       "case": "tests::a_gradient_is_counted_by_its_stops_over_the_pixels_it_paints",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "e08edb9c7d6a5b8b353040c384bf7d25e0cce45b0ed5b20ffcaff54922d9b627",
+      "body_sha256": "fd7ba1981fb72129fb309edba2dc35446fa1ea25480f14058339ea586120971e",
       "platforms": [
         "linux",
         "macos",
@@ -7408,6 +7408,168 @@
       "case": "tests::a_copy_is_counted_by_the_text_and_the_attributes_it_copies",
       "source": "crates/crucible-raster/src/tests.rs",
       "body_sha256": "2deced1289d8182b765be0e84aa21e6a19dd0b8db48c7ab4c452521d8206ea3b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SHAPE-WORK-GRADIENT-PIXELS",
+      "family": "transcript-pictures",
+      "obligation": "A gradient costs the pixels it paints and its stops at each together: paints neither of which alone is past the ceiling are refused before they are drawn, and the same paints with two stops are drawn.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_gradient_costs_its_pixels_and_its_stops_together",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "5ad804abebf48113928e85faa6a6aac5fe51150230c0ffb21b2a042fbc390e3e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SHAPE-WORK-CROWDED-STROKE",
+      "family": "transcript-pictures",
+      "obligation": "A stroke whose edges crowd along a row is counted by the pixels each edge can walk: a wide crowded row is refused before it is drawn, and a narrower one is drawn.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::edges_of_a_stroke_crowded_along_a_row_are_counted_by_the_pixels_each_can_walk",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "cc48991eca58a5dd0a001be586cdb0ced32b9feb6d8a444917c75d7e7fa50d0b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ELEMENTS-DRAWN",
+      "family": "transcript-pictures",
+      "obligation": "An element outside those drawn is refused wherever it is before the parser sees it, and every element drawn is drawn, as is a name outside them that is only text or an attribute's value.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::an_element_outside_those_drawn_is_refused_and_every_element_drawn_is_drawn",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "ab7b11cbfe526f818ef36cdd77e6a6301853893514948087e3f68e9017d820e6",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-FILTER-IMAGE-SVG",
+      "family": "transcript-pictures",
+      "obligation": "An SVG inside a filter's image step refuses the picture, and a raster image there is drawn as nothing.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_picture_inside_a_filter_image_is_refused_and_a_raster_one_is_not_drawn",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "2b64434bcbf7f08e39dc37a6b85d947c7d8676864ef7675d2f04c8def0ddc854",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-NESTED-MARKERS",
+      "family": "transcript-pictures",
+      "obligation": "A marker drawn inside a marker is refused before the tree is built, and two markers on one shape, and one on many, are drawn.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_marker_drawn_inside_a_marker_is_refused_before_the_tree_is_built",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "90911e09113645218adc41db70b27153a98c0c1b0ff26deaa092bdd80e2993cf",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-NESTED-CLIPS",
+      "family": "transcript-pictures",
+      "obligation": "A clip or a filter inside a clip is refused before the tree is built, and a clip clipped by another as a whole, and one clip on many shapes, are drawn.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_clip_or_filter_inside_a_clip_is_refused_before_the_tree_is_built",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "745b5bad188e0c714f2bc554b2d706f4cb32300ff0e973fa616d7a6519bfd478",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-MARKER-CLIP-TEXT-COPIES",
+      "family": "transcript-pictures",
+      "obligation": "The copies a marker makes at each vertex, a clip sized to each shape it clips, and letters copied where nothing draws them are counted and refused before any is made, and a few of each are drawn.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::the_copies_markers_clips_and_text_ask_for_are_counted_before_any_is_made",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "5d76bacd44c5cfc47f00b8979c5f66425853ad8f4d6fbd24307bd03a7cbf61ea",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-CORPUS-REFUSED-SOON",
+      "family": "transcript-pictures",
+      "obligation": "Each corpus file whose drawing or tree build would take long, by nesting, copies, an element outside those drawn or a gradient's stops, is refused as recorded within the time a refusal may take.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_file_refused_for_its_work_is_refused_before_the_work_is_done",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "79bcedd8d62b146f03c1ac3d586baf74aaae0a42bf38b9dc66291b05fe9795bc",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-CORPUS-ELEMENT-AS-GROUP",
+      "family": "transcript-pictures",
+      "obligation": "A corpus file refused for an element is drawn once that element is made a group, so the element is what refused it.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_file_refused_for_an_element_is_drawn_once_the_element_is_a_group",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "5e5fe214b35f078a20ddde81063bcc51e267bd2a716990d7beaef581cfc046b0",
       "platforms": [
         "linux",
         "macos",
