@@ -2045,10 +2045,8 @@ fn a_stroke_reaching_past_a_million_pixels_from_the_origin_is_refused() {
     assert!(on_page(&near).is_ok(), "a stroke nearer in");
 }
 
-/// A page 100 units square of `count` rectangles a unit square, each filled by
-/// one linear gradient of `stops` stops in `units`, each stop at an offset of
-/// its own.
-fn graded_shapes(count: usize, stops: usize, units: &str) -> String {
+/// `stops` stops of a gradient, each at an offset of its own.
+fn stop_list(stops: usize) -> String {
     use std::fmt::Write as _;
     let mut stop_list = String::new();
     for at in 0..stops {
@@ -2061,7 +2059,15 @@ fn graded_shapes(count: usize, stops: usize, units: &str) -> String {
             at % 16
         );
     }
-    let stops = stop_list;
+    stop_list
+}
+
+/// A page 100 units square of `count` rectangles a unit square, each filled by
+/// one linear gradient of `stops` stops in `units`, each stop at an offset of
+/// its own.
+fn graded_shapes(count: usize, stops: usize, units: &str) -> String {
+    use std::fmt::Write as _;
+    let stops = stop_list(stops);
     let mut shapes = String::new();
     for at in 0..count {
         let _ = write!(
@@ -2073,6 +2079,36 @@ fn graded_shapes(count: usize, stops: usize, units: &str) -> String {
     }
     format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><defs><linearGradient id="g" gradientUnits="{units}" x2="100">{stops}</linearGradient></defs>{shapes}</svg>"#
+    )
+}
+
+/// A page 100 units square of `uses` uses of one group of `rects` rectangles
+/// a unit square, each filled by one linear gradient of `stops` stops in
+/// `units`: `uses` times `rects` shapes painted, from a document of a few
+/// hundred elements.
+fn used_graded_shapes(rects: usize, uses: usize, stops: usize, units: &str) -> String {
+    use std::fmt::Write as _;
+    let stops = stop_list(stops);
+    let mut shapes = String::new();
+    for at in 0..rects {
+        let _ = write!(
+            shapes,
+            r#"<rect x="{}" y="{}" width="1" height="1" fill="url(#g)"/>"#,
+            at % 10,
+            at / 10
+        );
+    }
+    let mut copies = String::new();
+    for at in 0..uses {
+        let _ = write!(
+            copies,
+            r##"<use xlink:href="#r" x="{}" y="{}"/>"##,
+            at % 10 * 10,
+            at / 10 * 10
+        );
+    }
+    format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="100" height="100"><defs><linearGradient id="g" gradientUnits="{units}" x2="100">{stops}</linearGradient><g id="r">{shapes}</g></defs>{copies}</svg>"#
     )
 }
 
@@ -2089,9 +2125,18 @@ fn the_stops_of_a_gradient_in_its_shapes_units_are_counted_copied_for_each_shape
         copies("objectBoundingBox") - copies("userSpaceOnUse"),
         100 * 500 * STOP_CLONED_NS
     );
+    // And for each copy a use makes of a shape.
+    let used = |units: &str| {
+        let svg = used_graded_shapes(10, 10, 500, units);
+        let document = parse(svg.as_bytes()).expect("a document");
+        copying(&document, 0).expect("counted")
+    };
+    assert_eq!(
+        used("objectBoundingBox") - used("userSpaceOnUse"),
+        10 * 10 * 500 * STOP_CLONED_NS
+    );
     let _alone = alone();
-    let svg = graded_shapes(2_000, 2_500, "objectBoundingBox");
-    assert!(svg.len() < MOST_INPUT, "{} bytes", svg.len());
+    let svg = used_graded_shapes(70, 70, 1_000, "objectBoundingBox");
     let (drawn, took) = refused_in_at(&svg, 100);
     assert_eq!(drawn, Err(Refused::TooLarge), "stops copied");
     assert!(took < SOON_REFUSED, "copied first: {took:?}");
@@ -2101,13 +2146,13 @@ fn the_stops_of_a_gradient_in_its_shapes_units_are_counted_copied_for_each_shape
 fn every_stop_of_a_gradient_is_set_up_again_for_each_shape_it_paints() {
     let _alone = alone();
     // The renderer makes the stops of a gradient again for every shape it
-    // paints, however few pixels the shape reaches: two hundred shapes a pixel
-    // square of 5 000 stops are refused, and a hundred drawn.
-    let (drawn, took) = refused_in_at(&graded_shapes(200, 5_000, "userSpaceOnUse"), 100);
+    // paints, however few pixels the shape reaches: two thousand shapes a pixel
+    // square of 400 stops are refused, and a thousand drawn.
+    let (drawn, took) = refused_in_at(&used_graded_shapes(40, 50, 400, "userSpaceOnUse"), 100);
     assert_eq!(drawn, Err(Refused::TooLarge), "stops set up");
     assert!(took < SOON_REFUSED, "drawn first: {took:?}");
     let drawn = rasterise(
-        graded_shapes(100, 5_000, "userSpaceOnUse").as_bytes(),
+        used_graded_shapes(40, 25, 400, "userSpaceOnUse").as_bytes(),
         100,
         &[],
     );
