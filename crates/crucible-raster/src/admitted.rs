@@ -28,10 +28,20 @@
 //! percentage by the largest view any element of the picture sets, and a size
 //! in `em` or `ex` by the largest font size the element can be given, which is
 //! worked out through everything that holds or copies it, as the parser
-//! compounds it. A value that does not parse is passed over, as the parser
-//! passes over it.
+//! compounds it. The outermost `<svg>` sets a view by its own size, relative
+//! or not, and a `<use>` that draws a `<symbol>` by the size it gives it. A
+//! value that does not parse is passed over, as the parser passes over it.
+//!
+//! What a picture lets through is priced by the outline the parser builds of
+//! each shape, with its sizes taken the same way: the curves it cuts a circle,
+//! an ellipse, a rounded rectangle and an arc of a path into, more the larger
+//! the radius, and, for a shape stroked by what it or anything that holds or
+//! copies it says, the outline of that stroke, an edge or a curve at a time.
 
-use super::{Elements, Refused, is_drawn_element};
+use super::{
+    ARC_OUTLINE_NS, CUBIC_MADE_NS, CURVE_OUTLINE_NS, Elements, Refused, STRAIGHT_OUTLINE_NS,
+    STROKED_SHAPE_NS, is_drawn_element,
+};
 use resvg::usvg::roxmltree::{Document, Node};
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
@@ -104,10 +114,13 @@ const INHERITED: &[&str] = &[
 
 /// Whether `document` says only what a picture may say: see the module.
 ///
+/// The time the parser takes to build the outline of each element, for each
+/// place it is drawn, when it is.
+///
 /// # Errors
 /// [`Refused::NotAnImage`] for anything the module refuses, and for an element
 /// that comes to hold or copy itself.
-pub(super) fn admitted(document: &Document<'_>) -> Result<(), Refused> {
+pub(super) fn admitted(document: &Document<'_>) -> Result<Outlines, Refused> {
     let elements = Elements::of(document);
     let allowed = elements.all.iter().all(|element| {
         is_drawn_element(element)
@@ -115,10 +128,22 @@ pub(super) fn admitted(document: &Document<'_>) -> Result<(), Refused> {
             && !id_in_a_namespace(element)
             && !sets_a_view_relatively(element)
     });
-    if !allowed || given_twice(&elements) || !sizes_within(&elements) {
+    if !allowed || given_twice(&elements) {
         return Err(Refused::NotAnImage);
     }
-    Ok(())
+    sizes_within(&elements).ok_or(Refused::NotAnImage)
+}
+
+/// The time the tree parser takes to build the outline of each element, in
+/// document order, each time it is drawn.
+pub(super) struct Outlines(Vec<u64>);
+
+impl Outlines {
+    /// The time for the element at `at`: none for an element that is not a
+    /// shape.
+    pub(super) fn of(&self, at: usize) -> u64 {
+        self.0.get(at).copied().unwrap_or(0)
+    }
 }
 
 /// Whether every `href` of `element` is one a picture is drawn with.
@@ -287,13 +312,11 @@ fn properties<'a>(element: &Node<'a, '_>) -> Vec<(&'a str, &'a str)> {
         .collect()
 }
 
-/// Whether every number of every element's geometry is within
-/// [`MOST_MAGNITUDE`]; see the module. An element that comes to hold or copy
-/// itself is not.
-fn sizes_within(elements: &Elements<'_, '_>) -> bool {
-    let Some(order) = elements.in_order() else {
-        return false;
-    };
+/// The outline of every element, if every number of every element's geometry
+/// is within [`MOST_MAGNITUDE`]; see the module. `None` where one is not, or
+/// where an element comes to hold or copy itself.
+fn sizes_within(elements: &Elements<'_, '_>) -> Option<Outlines> {
+    let order = elements.in_order()?;
     let count = elements.all.len();
     let properties: Vec<Vec<(&str, &str)>> = elements.all.iter().map(properties).collect();
     let view = properties
@@ -306,11 +329,18 @@ fn sizes_within(elements: &Elements<'_, '_>) -> bool {
             _ => None,
         })
         .fold(100.0_f64, f64::max);
-    let view = elements
+    // A `<use>` sets the view of the `<symbol>` it draws by its size.
+    let mut view = elements
         .all
         .iter()
+        .enumerate()
         .zip(&properties)
-        .filter(|(element, _)| element.tag_name().name() == "svg")
+        .filter(|((at, element), _)| {
+            element.tag_name().name() == "svg"
+                || elements
+                    .copied(*at)
+                    .is_some_and(|copied| elements.name(copied) == "symbol")
+        })
         .flat_map(|(_, properties)| properties)
         .filter(|(name, _)| matches!(*name, "width" | "height"))
         .filter_map(|(_, value)| Length::from_str(value).ok())
@@ -343,6 +373,8 @@ fn sizes_within(elements: &Elements<'_, '_>) -> bool {
     // given that `inherit` takes.
     let mut font = vec![FIRST_FONT_SIZE; count];
     let mut font_given = vec![Size::default(); count];
+    let mut stroked = vec![false; count];
+    let mut outlines = vec![0; count];
 
     let parents = elements.parents();
     for &at in &order {
@@ -372,7 +404,19 @@ fn sizes_within(elements: &Elements<'_, '_>) -> bool {
         }
         let size = size.unwrap_or(font_above);
         if !within(size) {
-            return false;
+            return None;
+        }
+        // The outermost `<svg>` comes first, and sets the view of everything
+        // after it by its own size, a relative one taken of the view before.
+        let outermost = elements.parent(at).is_none();
+        let around = view;
+        if outermost {
+            view = own
+                .iter()
+                .filter(|(name, _)| matches!(*name, "width" | "height"))
+                .filter_map(|(_, value)| Length::from_str(value).ok())
+                .map(|length| Size::of(length, around).at(size))
+                .fold(view, f64::max);
         }
         if let Some(entry) = font.get_mut(at) {
             *entry = size;
@@ -393,7 +437,7 @@ fn sizes_within(elements: &Elements<'_, '_>) -> bool {
                 }
                 if value.trim() == "inherit" {
                     if !within(above.at(size)) {
-                        return false;
+                        return None;
                     }
                 } else {
                     here = here.or(lengths(value)
@@ -406,14 +450,268 @@ fn sizes_within(elements: &Elements<'_, '_>) -> bool {
             }
         }
 
+        let view_of = |name: &str| {
+            if outermost && matches!(name, "width" | "height" | "x" | "y") {
+                around
+            } else {
+                view
+            }
+        };
         if !own
             .iter()
-            .all(|&(name, value)| property_within(name, value, size, view))
+            .all(|&(name, value)| property_within(name, value, size, view_of(name)))
         {
-            return false;
+            return None;
+        }
+
+        // A shape is stroked by the last `stroke` it is given, a declaration
+        // of its style over its attribute, and otherwise by what holds or
+        // copies it.
+        let stroke = own
+            .iter()
+            .rev()
+            .find(|(name, _)| *name == "stroke")
+            .map(|(_, value)| value.trim());
+        let is_stroked = match stroke {
+            Some("none") => false,
+            Some("inherit") | None => from
+                .iter()
+                .any(|&parent| stroked.get(parent).copied().unwrap_or(false)),
+            Some(_) => true,
+        };
+        if let Some(entry) = stroked.get_mut(at) {
+            *entry = is_stroked;
+        }
+        if let Some(entry) = outlines.get_mut(at) {
+            *entry = outline(elements.name(at), own, is_stroked, |length| {
+                Size::of(length, view).at(size)
+            });
         }
     }
-    true
+    Some(Outlines(outlines))
+}
+
+/// What the parser builds of a shape: the curves it cuts its arcs into, and
+/// the time it takes to outline its stroke, past [`STROKED_SHAPE_NS`].
+#[derive(Clone, Copy, Default)]
+struct Built {
+    curves: u64,
+    stroke: u64,
+}
+
+impl Built {
+    /// The time it takes to build, stroked or not.
+    fn time(self, stroked: bool) -> u64 {
+        let curves = self.curves.saturating_mul(CUBIC_MADE_NS);
+        if stroked {
+            curves
+                .saturating_add(STROKED_SHAPE_NS)
+                .saturating_add(self.stroke)
+        } else {
+            curves
+        }
+    }
+}
+
+/// The time the parser takes to build the outline of the element `name` whose
+/// properties are `own`, with `size` the size of a length of it in user units.
+/// Nothing for an element that is not a shape, or a shape the parser skips:
+/// a circle, an ellipse or a rectangle with no size, and fewer than two
+/// points.
+fn outline(name: &str, own: &[(&str, &str)], stroked: bool, size: impl Fn(Length) -> f64) -> u64 {
+    let largest = |of: &str| {
+        own.iter()
+            .filter(|(name, _)| *name == of)
+            .filter_map(|(_, value)| Length::from_str(value).ok())
+            .map(&size)
+            .fold(None, |most: Option<f64>, size| {
+                Some(most.map_or(size, |most| most.max(size)))
+            })
+    };
+    // One radius given stands for both, as the parser takes it.
+    let radii = || {
+        let (rx, ry) = (largest("rx"), largest("ry"));
+        (rx.or(ry).unwrap_or(0.0), ry.or(rx).unwrap_or(0.0))
+    };
+    let each = |of: &str, built: &dyn Fn(&str) -> Option<Built>| {
+        own.iter()
+            .filter(|(name, _)| *name == of)
+            .filter_map(|(_, value)| built(value))
+            .map(|built| built.time(stroked))
+            .max()
+            .unwrap_or(0)
+    };
+    let built = match name {
+        "circle" => {
+            let radius = largest("r").unwrap_or(0.0);
+            (radius > 0.0).then(|| rounded(radius, radius))
+        }
+        "ellipse" => {
+            let (rx, ry) = radii();
+            (rx > 0.0 && ry > 0.0).then(|| rounded(rx.max(ry), rx.max(ry)))
+        }
+        "rect" => {
+            let width = largest("width").unwrap_or(0.0);
+            let height = largest("height").unwrap_or(0.0);
+            let (rx, ry) = radii();
+            let (corner_x, corner_y) = (rx.min(width / 2.0), ry.min(height / 2.0));
+            (width > 0.0 && height > 0.0).then(|| {
+                if corner_x > 0.0 {
+                    rounded(corner_x.max(corner_y), width.max(height))
+                } else {
+                    Built {
+                        curves: 0,
+                        stroke: 4 * STRAIGHT_OUTLINE_NS,
+                    }
+                }
+            })
+        }
+        "line" => Some(Built {
+            curves: 0,
+            stroke: STRAIGHT_OUTLINE_NS,
+        }),
+        "polyline" | "polygon" => {
+            let closed = u64::from(name == "polygon");
+            return each("points", &|points| {
+                let count = u64::try_from(PointsParser::from(points).count()).unwrap_or(u64::MAX);
+                (count >= 2).then(|| Built {
+                    curves: 0,
+                    stroke: (count - 1 + closed).saturating_mul(STRAIGHT_OUTLINE_NS),
+                })
+            });
+        }
+        "path" => return each("d", &|data| Some(path_built(data))),
+        _ => None,
+    };
+    built.map_or(0, |built| built.time(stroked))
+}
+
+/// A circle, an ellipse or a rectangle with rounded corners: four arcs of
+/// `radius`, and the outline of a stroke as long as `side`.
+fn rounded(radius: f64, side: f64) -> Built {
+    Built {
+        curves: count((arc_curves(radius) / 4.0).ceil()).saturating_mul(4),
+        stroke: priced(ARC_OUTLINE_NS, side),
+    }
+}
+
+/// What the parser builds of path data `data`: each arc cut into curves by its
+/// radius, and its stroke outlined a segment at a time, a curve by how far its
+/// points reach from where it starts, the control a smooth curve reflects
+/// among them.
+fn path_built(data: &str) -> Built {
+    let mut built = Built::default();
+    let (mut at, mut start) = ((0.0_f64, 0.0_f64), (0.0_f64, 0.0_f64));
+    // The second control of the last cubic, and the control of the last
+    // quadratic, which the smooth curve after each reflects.
+    let (mut cubic, mut quadratic) = (None, None);
+    for segment in PathParser::from(data) {
+        let Ok(segment) = segment else {
+            break;
+        };
+        let from = if segment.is_abs() { (0.0, 0.0) } else { at };
+        let point = |x: f64, y: f64| (from.0 + x, from.1 + y);
+        let reflected = |control: Option<(f64, f64)>| {
+            control.map_or(at, |(x, y)| (2.0 * at.0 - x, 2.0 * at.1 - y))
+        };
+        let curve = |points: &[(f64, f64)]| {
+            let reach = points
+                .iter()
+                .map(|(x, y)| (x - at.0).abs().max((y - at.1).abs()))
+                .fold(0.0_f64, f64::max);
+            priced(CURVE_OUTLINE_NS, reach)
+        };
+        let (end, stroke) = match segment {
+            PathSegment::MoveTo { x, y, .. } => {
+                start = point(x, y);
+                (start, 0)
+            }
+            PathSegment::LineTo { x, y, .. } => (point(x, y), STRAIGHT_OUTLINE_NS),
+            PathSegment::HorizontalLineTo { x, .. } => ((from.0 + x, at.1), STRAIGHT_OUTLINE_NS),
+            PathSegment::VerticalLineTo { y, .. } => ((at.0, from.1 + y), STRAIGHT_OUTLINE_NS),
+            PathSegment::ClosePath { .. } => (start, STRAIGHT_OUTLINE_NS),
+            PathSegment::CurveTo {
+                x1,
+                y1,
+                x2,
+                y2,
+                x,
+                y,
+                ..
+            } => {
+                let (second, end) = (point(x2, y2), point(x, y));
+                (end, curve(&[point(x1, y1), second, end]))
+            }
+            PathSegment::SmoothCurveTo { x2, y2, x, y, .. } => {
+                let (second, end) = (point(x2, y2), point(x, y));
+                (end, curve(&[reflected(cubic), second, end]))
+            }
+            PathSegment::Quadratic { x1, y1, x, y, .. } => {
+                let end = point(x, y);
+                (end, curve(&[point(x1, y1), end]))
+            }
+            PathSegment::SmoothQuadratic { x, y, .. } => {
+                let end = point(x, y);
+                (end, curve(&[reflected(quadratic), end]))
+            }
+            PathSegment::EllipticalArc {
+                rx,
+                ry,
+                x_axis_rotation,
+                x,
+                y,
+                ..
+            } => {
+                let end = point(x, y);
+                let radius = arc_radius(at, end, rx, ry, x_axis_rotation);
+                if radius > 0.0 {
+                    built.curves = built
+                        .curves
+                        .saturating_add(count(arc_curves(radius).ceil()));
+                    (end, priced(ARC_OUTLINE_NS, radius))
+                } else {
+                    (end, STRAIGHT_OUTLINE_NS)
+                }
+            }
+        };
+        (cubic, quadratic) = match segment {
+            PathSegment::CurveTo { x2, y2, .. } | PathSegment::SmoothCurveTo { x2, y2, .. } => {
+                (Some(point(x2, y2)), None)
+            }
+            PathSegment::Quadratic { x1, y1, .. } => (None, Some(point(x1, y1))),
+            PathSegment::SmoothQuadratic { .. } => (None, Some(reflected(quadratic))),
+            _ => (None, None),
+        };
+        built.stroke = built.stroke.saturating_add(stroke);
+        at = end;
+    }
+    built
+}
+
+/// How many curves the parser cuts a whole turn of an arc of `radius` into, as
+/// a number not yet rounded up: kurbo's count at the parser's tolerance of a
+/// tenth of a unit, never fewer than four.
+fn arc_curves(radius: f64) -> f64 {
+    (1.1163 * radius / 0.1).powf(1.0 / 6.0).max(3.999_999)
+}
+
+/// The price `table` gives `size`: that of the first size it is within, and
+/// past the last one more than any picture may take.
+fn priced(table: &[(f64, u64)], size: f64) -> u64 {
+    table
+        .iter()
+        .find(|(most, _)| size <= *most)
+        .map_or(u64::MAX, |&(_, time)| time)
+}
+
+/// `value` as a count: a float saturates, and nothing is negative.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "saturates, and is judged against a ceiling"
+)]
+fn count(value: f64) -> u64 {
+    value as u64
 }
 
 /// The lengths of a list, up to the first that does not parse.

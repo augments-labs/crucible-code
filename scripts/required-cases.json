@@ -6741,7 +6741,7 @@
       },
       "case": "tests::a_drawing_the_renderer_panics_on_is_refused_not_raised_to_the_caller",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "3e0017e9c102d1880bceb23b9cbb94e91bb1cc6ebf8a821aa6ab552101cc0294",
+      "body_sha256": "b47b528ce0aba20cd43d8c5bde7919b37fa0ff9d3215d1a11f009aeeeb4279f8",
       "platforms": [
         "linux",
         "macos",
@@ -7209,7 +7209,7 @@
       },
       "case": "a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small",
       "source": "crates/crucible-raster/tests/hostile.rs",
-      "body_sha256": "f54c30d7064f58ea7f0b8e7f9cda9fb5c2b2c9c92f8c4630c76a7dfb1d2d4ff2",
+      "body_sha256": "d13413952b867fbf2c0d5f58453c7c596ebf66e8f978629cc9e3ffb8470ebde9",
       "platforms": [
         "linux",
         "macos",

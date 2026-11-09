@@ -223,10 +223,14 @@ bound is refused rather than shrunk or cut:
   clip or a filter sized to the shape it is on is made again for each shape,
   a gradient sized to the shape it paints has its stops copied for each
   shape, a text copied where it is not drawn still has its letters laid out,
-  and each colour the picture is drawn in is matched against every copy. The
-  time making them all would take, by the elements, attributes and letters
-  copied, is counted before the picture is built, and copies that would take
-  more than 16 ms are refused.
+  and each colour the picture is drawn in is matched against every copy.
+  Every shape drawn, once or in each copy, has its outline built: a circle,
+  an ellipse, a rounded rectangle or an arc is cut into more curves the
+  larger it is, and a stroked shape has the outline of its stroke worked out,
+  which takes longer the larger its curves are. The time making them all
+  would take, by the elements, attributes, letters and outlines made, is
+  counted before the picture is built, and copies that would take more than
+  16 ms are refused.
 - **A picture sent to the terminal.** Sent as PNG it is at most 1 MiB, and
   sent as Sixel it is at most 600 pixels wide.
 - **One at a time.** Only one picture is read or drawn at a time, wherever it
@@ -249,7 +253,9 @@ geometry, such as a length, a coordinate, a radius or a factor of a
 transform, larger than 100 000, and a `width`, `height`, `x` or `y` given in
 `%`, `em` or `ex` on an `svg` inside the picture, a `symbol` or a `use`: each
 sizes the view inside it from the one around it, so a chain of them grows
-without bound. The outermost `svg` may still give its size in any unit. A
+without bound. The outermost `svg` may still give its size in any unit, and
+a percentage inside the picture is taken of the largest view that size, a
+view box, or a `use` drawing a `symbol` gives. A
 file, a URL or a font it names is not opened, followed or fetched: a filter's
 image step naming one is drawn as if the reference were not there. Only
 one font is available, DejaVu Sans, so text in a script it has no letters for

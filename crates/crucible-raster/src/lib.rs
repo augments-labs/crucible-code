@@ -3,6 +3,7 @@
 mod admitted;
 mod budget;
 
+use admitted::Outlines;
 use icy_sixel::{EncodeOptions, SixelImage};
 use image::codecs::png::PngEncoder;
 use image::{
@@ -176,7 +177,9 @@ pub fn decode(bytes: &[u8]) -> Result<Pixels, Refused> {
 /// percentage, `em` or `ex` on a `<svg>` inside the picture, a `<symbol>` or a
 /// `<use>` refuses it too: each takes the view inside it from the view it sits
 /// in, so a chain of them multiplies a size without bound. The outermost
-/// `<svg>` keeps its relative sizes.
+/// `<svg>` keeps its relative sizes, and a percentage inside the picture is
+/// taken of the largest view they, a view box or a `<use>` of a `<symbol>`
+/// set.
 ///
 /// Nothing outside the bytes is read, and the only font is the one this crate
 /// carries. A filter's image step that names a `data:` URL holding an SVG
@@ -196,8 +199,12 @@ pub fn decode(bytes: &[u8]) -> Result<Pixels, Refused> {
 /// at every vertex it is drawn on; a clip or a filter sized to each shape it is
 /// on; the stops of a gradient in the units of a shape's bounding box, for
 /// every shape it paints; the letters of a text copied where it is not drawn;
-/// and every rule of the inks matched against every copy. Copies that would
-/// take it more than 16 ms to make are refused, however few bytes ask for them.
+/// and every rule of the inks matched against every copy. The outline of every
+/// shape drawn, once or in a copy, is counted with them: the curves a circle,
+/// an ellipse, a rounded rectangle or an arc is cut into, more the larger it
+/// is, and for a stroked shape the outline of its stroke by its size. Copies
+/// that would take it more than 16 ms to make are refused, however few bytes
+/// ask for them.
 ///
 /// What the drawing would hold and compute is counted before it is drawn: a
 /// drawing that would hold more than [`MOST_DECODED`] bytes of pixmaps at once,
@@ -206,8 +213,8 @@ pub fn decode(bytes: &[u8]) -> Result<Pixels, Refused> {
 /// which the renderer outlines at a quarter pixel however long it is.
 ///
 /// # Errors
-/// [`Refused::TooLarge`] for an SVG past [`MOST_INPUT`], copies past what the
-/// parser may make, a marker inside a marker, a clip or a filter inside a clip,
+/// [`Refused::TooLarge`] for an SVG past [`MOST_INPUT`], copies and outlines
+/// past what the parser may make, a marker inside a marker, a clip or a filter inside a clip,
 /// a drawing past [`MOST_DECODED`] or past the work it may ask for, or a stroke
 /// reaching too far; [`Refused::NotAnImage`] for bytes that are not an SVG, a
 /// zero width, an element outside those drawn, a reference where none is let
@@ -283,14 +290,14 @@ fn draw(
     let document = parse(svg).ok_or(Refused::NotAnImage)?;
     // What a picture says is judged first: the elements, references, ids and
     // sizes of numbers the parser would follow without counting.
-    admitted::admitted(&document)?;
+    let outlines = admitted::admitted(&document)?;
     if leads_back(&document) {
         return Err(Refused::NotAnImage);
     }
     // The tree parser makes every copy a `<use>`, a marker, a clip or a filter
     // asks for, and the copies within them, before anything else could be
     // judged.
-    if copying(&document, rules)? > MOST_COPYING_NS {
+    if copying(&document, &outlines, rules)? > MOST_COPYING_NS {
         return Err(Refused::TooLarge);
     }
     let tree = Tree::from_xmltree(&document, options).map_err(|error| match error {
@@ -484,6 +491,67 @@ const UNDRAWN_LETTER_NS: u64 = 2;
 /// The time the tree parser takes to copy one stop of a gradient in the units
 /// of a shape's bounding box, for each shape that gradient paints: 4 ns.
 const STOP_CLONED_NS: u64 = 4;
+
+/// The time the tree parser takes to make one curve of an arc, filled,
+/// stroked or neither: 110 ns. A circle, an ellipse and a rectangle's rounded
+/// corners are four arcs each, and the parser cuts an arc into more curves the
+/// larger its radius, twelve for a circle of radius 100 000.
+///
+/// Twenty thousand circles and twenty thousand arcs of a path were built at
+/// up to 101 ns a curve past those of radius 1, the dearest measured.
+const CUBIC_MADE_NS: u64 = 110;
+
+/// The time the tree parser takes besides for a shape it strokes: 2.4 µs.
+///
+/// Lines, rectangles and polygons stroked with each join and each cap were
+/// outlined at up to 2.38 µs a shape past the edges each has, with round caps
+/// on a line, the dearest measured, at any size and any width of stroke.
+const STROKED_SHAPE_NS: u64 = 2_400;
+
+/// The time the tree parser takes to outline one straight edge of a stroke:
+/// 1.4 µs.
+///
+/// A polyline of ten thousand edges with round joins, stroked from 10 to
+/// 100 000 wide, was outlined at up to 1.38 µs an edge, the dearest measured.
+const STRAIGHT_OUTLINE_NS: u64 = 1_400;
+
+/// The time the tree parser takes to outline the stroke of an arc, by the
+/// largest radius each price holds to: a circle, an ellipse, a rectangle with
+/// rounded corners by its larger side, and an arc of a path, each measured at
+/// every width of stroke from a millionth to 100 000 and the dearest kept.
+///
+/// The stroker halves a curve until its outline is within a quarter of a
+/// unit, so the work grows with the curve's length; where the halving stops
+/// turns on the width, by more than the length alone would say, so a price is
+/// the dearest width at that size and not the width given.
+const ARC_OUTLINE_NS: &[(f64, u64)] = &[
+    (1.0, 25_600),
+    (10.0, 28_200),
+    (100.0, 31_000),
+    (300.0, 49_500),
+    (1_000.0, 181_100),
+    (3_000.0, 252_100),
+    (10_000.0, 597_000),
+    (30_000.0, 1_079_200),
+    (100_000.0, 2_594_400),
+    (200_000.0, 3_169_900),
+];
+
+/// The time the tree parser takes to outline the stroke of a curve of a path
+/// that is not an arc, by the farthest its points reach from where it
+/// starts, each price measured as [`ARC_OUTLINE_NS`] is.
+const CURVE_OUTLINE_NS: &[(f64, u64)] = &[
+    (1.0, 11_500),
+    (10.0, 11_700),
+    (100.0, 11_700),
+    (300.0, 18_100),
+    (1_000.0, 28_500),
+    (3_000.0, 45_200),
+    (10_000.0, 97_500),
+    (30_000.0, 154_400),
+    (100_000.0, 713_100),
+    (200_000.0, 1_125_800),
+];
 
 /// The namespace of SVG. The parser reads an element in it or in none, and
 /// passes over one in any other with all it holds.
@@ -735,8 +803,9 @@ fn is_drawn_element(element: &Node<'_, '_>) -> bool {
 /// for, a copy within a copy counted as often as it is made, by
 /// [`COPY_MADE_NS`], [`COPY_DRAWN_NS`], [`COPIED_ATTRIBUTE_BYTE_NS`],
 /// [`COPIED_LETTER_NS`] and [`UNDRAWN_LETTER_NS`], by [`MATCH_NS`] for each
-/// of `rules` rules matched against each copy, and by [`STOP_CLONED_NS`] for
-/// each stop copied to paint a shape.
+/// of `rules` rules matched against each copy, by [`STOP_CLONED_NS`] for
+/// each stop copied to paint a shape, and by `outlines` for each shape drawn,
+/// once or in a copy.
 ///
 /// Copies are what a `<use>` makes of the element it names; what a marker
 /// holds, made again at every place it is drawn on a shape; a clip path or a
@@ -756,7 +825,7 @@ fn is_drawn_element(element: &Node<'_, '_>) -> bool {
 /// # Errors
 /// [`Refused::TooLarge`] for a marker drawn inside a marker, a clip or a
 /// filter inside a clip, and a copy that would come to hold itself.
-fn copying(document: &Document<'_>, rules: usize) -> Result<u64, Refused> {
+fn copying(document: &Document<'_>, outlines: &Outlines, rules: usize) -> Result<u64, Refused> {
     let elements = Elements::of(document);
     let count = elements.all.len();
     let given: Vec<[Vec<usize>; MARKER_KINDS]> =
@@ -875,11 +944,10 @@ fn copying(document: &Document<'_>, rules: usize) -> Result<u64, Refused> {
     let alone = |state: usize| {
         let (at, drawn) = (state / 2, state % 2 == 1);
         let cloned = if drawn {
-            stops
+            let stops = stops
                 .get(at)
-                .copied()
-                .unwrap_or(0)
-                .saturating_mul(STOP_CLONED_NS)
+                .map_or(0, |&stops| stops.saturating_mul(STOP_CLONED_NS));
+            stops.saturating_add(outlines.of(at))
         } else {
             0
         };
@@ -889,8 +957,8 @@ fn copying(document: &Document<'_>, rules: usize) -> Result<u64, Refused> {
     };
 
     // Each element once, where the document puts it, and not the stops it
-    // is painted with, which are copied for it all the same. Every element
-    // comes after its parent.
+    // is painted with or the outline it is built with, which are made for it
+    // all the same. Every element comes after its parent.
     let mut drawn_once = vec![true; count];
     for at in 0..count {
         if let Some(parent) = elements.parent(at) {

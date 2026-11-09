@@ -933,9 +933,9 @@ fn a_drawing_the_renderer_panics_on_is_refused_not_raised_to_the_caller() {
     // Everything judged before the tree is built lets it through, so it is the
     // renderer that panics and not a refusal that answers first.
     let document = parse(svg.as_bytes()).expect("a document");
-    assert_eq!(admitted::admitted(&document), Ok(()));
+    let outlines = admitted::admitted(&document).expect("admitted");
     assert!(!leads_back(&document));
-    assert!(copying(&document, 0).is_ok_and(|copying| copying <= MOST_COPYING_NS));
+    assert!(copying(&document, &outlines, 0).is_ok_and(|copying| copying <= MOST_COPYING_NS));
     assert_eq!(
         rasterise(svg.as_bytes(), 200, &[]),
         Err(Refused::NotAnImage)
@@ -2208,8 +2208,7 @@ fn the_stops_of_a_gradient_in_its_shapes_units_are_counted_copied_for_each_shape
     // shape's bounding box for each shape it paints, and keeps the copies.
     let copies = |units: &str| {
         let svg = graded_shapes(100, 500, units);
-        let document = parse(svg.as_bytes()).expect("a document");
-        copying(&document, 0).expect("counted")
+        built(&svg)
     };
     assert_eq!(
         copies("objectBoundingBox") - copies("userSpaceOnUse"),
@@ -2218,8 +2217,7 @@ fn the_stops_of_a_gradient_in_its_shapes_units_are_counted_copied_for_each_shape
     // And for each copy a use makes of a shape.
     let used = |units: &str| {
         let svg = used_graded_shapes(10, 10, 500, units);
-        let document = parse(svg.as_bytes()).expect("a document");
-        copying(&document, 0).expect("counted")
+        built(&svg)
     };
     assert_eq!(
         used("objectBoundingBox") - used("userSpaceOnUse"),
@@ -2247,4 +2245,234 @@ fn every_stop_of_a_gradient_is_set_up_again_for_each_shape_it_paints() {
         &[],
     );
     assert!(drawn.is_ok(), "{drawn:?}");
+}
+
+/// What [`copying`] counts for `svg`, with the outlines [`admitted`] prices.
+fn built(svg: &str) -> u64 {
+    let document = parse(svg.as_bytes()).expect("a document");
+    let outlines = admitted::admitted(&document).expect("admitted");
+    copying(&document, &outlines, 0).expect("counted")
+}
+
+#[test]
+fn a_shape_the_parser_cuts_into_curves_is_counted_by_its_curves_whatever_it_is_painted_with() {
+    // An ellipse, and each corner of a rectangle, is four quarters, and a
+    // quarter is cut into a fourth of `(1.1163 * radius / 0.1) ^ (1 / 6)`
+    // curves, rounded up, and no fewer than four in all: a radius of 1 is four
+    // curves, one of 50 000 or 100 000 twelve. An arc of a path is cut by the
+    // turn it makes, eleven curves for nearly a whole turn of 100 000.
+    let hundred = |shape: &str| built(&page(&shape.repeat(100)));
+    let pairs = [
+        (r#"<circle r="1e5"/>"#, r#"<circle r="1"/>"#, 8),
+        (
+            r#"<circle r="1e5" fill="none"/>"#,
+            r#"<circle r="1" fill="none"/>"#,
+            8,
+        ),
+        (
+            r#"<ellipse rx="1e5" ry="1"/>"#,
+            r#"<ellipse rx="1" ry="1"/>"#,
+            8,
+        ),
+        (
+            r#"<rect width="1e5" height="1e5" rx="5e4"/>"#,
+            r#"<rect width="1e5" height="1e5"/>"#,
+            12,
+        ),
+        (
+            r#"<path d="M0 0a1e5 1e5 0 1 1 1 0"/>"#,
+            r#"<path d="M0 0a1 1 0 1 1 1 0"/>"#,
+            7,
+        ),
+        // Sizes in `em` and in a percentage are taken as the parser takes them.
+        (
+            r#"<g font-size="1e4"><circle r="10em"/></g>"#,
+            r#"<g font-size="1e4"><circle r="1"/></g>"#,
+            8,
+        ),
+        (r#"<circle r="1e5%"/>"#, r#"<circle r="1"/>"#, 8),
+    ];
+    for (large, small, curves) in pairs {
+        assert_eq!(
+            hundred(large) - hundred(small),
+            100 * curves * CUBIC_MADE_NS,
+            "{large}"
+        );
+    }
+    // Neither the definitions nor what nothing draws are cut into curves.
+    let undrawn = |shape: &str| built(&page(&format!("<defs>{}</defs>", shape.repeat(100))));
+    assert_eq!(
+        undrawn(r#"<circle r="1e5"/>"#),
+        undrawn(r#"<circle r="1"/>"#)
+    );
+}
+
+#[test]
+fn a_stroked_shape_is_counted_by_the_outline_of_its_stroke_at_its_size() {
+    // Each stroked shape costs 2.4 µs, a straight edge 1.4 µs, and a curve by
+    // the dearest outline measured at its size: an arc, a circle, an ellipse
+    // or a rectangle with rounded corners by its radius or its larger side,
+    // and any other curve by how far its points reach from where it starts.
+    let ten = |shape: &str| built(&page(&shape.repeat(10)));
+    let shapes = [
+        (r##"<circle r="1e5" stroke="#000"/>"##, 2_400 + 2_594_400),
+        (r##"<circle r="1" stroke="#000"/>"##, 2_400 + 25_600),
+        (
+            r##"<ellipse rx="1e3" ry="1" stroke="#000"/>"##,
+            2_400 + 181_100,
+        ),
+        (
+            r##"<rect width="300" height="200" rx="10" stroke="#000"/>"##,
+            2_400 + 49_500,
+        ),
+        (
+            r##"<rect width="1e5" height="1e5" stroke="#000"/>"##,
+            2_400 + 4 * 1_400,
+        ),
+        (r##"<line x2="1e5" stroke="#000"/>"##, 2_400 + 1_400),
+        (
+            r##"<polyline points="0 0 1e5 0 0 1" stroke="#000"/>"##,
+            2_400 + 2 * 1_400,
+        ),
+        (
+            r##"<polygon points="0 0 1e5 0 0 1" stroke="#000"/>"##,
+            2_400 + 3 * 1_400,
+        ),
+        (
+            r##"<path d="M0 0L10 0H20V5Z" stroke="#000"/>"##,
+            2_400 + 4 * 1_400,
+        ),
+        (
+            r##"<path d="M0 0a1e3 1e3 0 1 1 1 0" stroke="#000"/>"##,
+            2_400 + 181_100,
+        ),
+        (
+            r##"<path d="M0 0C3e4 0 0 1 2 2" stroke="#000"/>"##,
+            2_400 + 154_400,
+        ),
+        // The control a smooth curve reflects is part of its reach.
+        (
+            r##"<path d="M0 0Q50 50 100 0T200 0" stroke="#000"/>"##,
+            2_400 + 2 * 11_700,
+        ),
+        (
+            r##"<path d="M0 0C0 0 10 0 10 0S2000 0 20 0" stroke="#000"/>"##,
+            2_400 + 11_700 + 45_200,
+        ),
+    ];
+    for (stroked, outline) in shapes {
+        let unstroked = stroked.replace(r##"stroke="#000""##, r#"stroke="none""#);
+        assert_eq!(ten(stroked) - ten(&unstroked), 10 * outline, "{stroked}");
+    }
+}
+
+#[test]
+fn a_shape_is_stroked_as_it_or_what_holds_or_copies_it_says() {
+    let circle = 2_400 + 2_594_400;
+    let given = [
+        (
+            "its attribute",
+            r##"<circle r="1e5" stroke="#000"/>"##,
+            circle,
+        ),
+        (
+            "its style",
+            r#"<circle r="1e5" style="stroke:#000"/>"#,
+            circle,
+        ),
+        (
+            "its style over its attribute",
+            r#"<circle r="1e5" stroke="none" style="stroke:#000"/>"#,
+            circle,
+        ),
+        (
+            "a group",
+            r##"<g stroke="#000"><circle r="1e5"/></g>"##,
+            circle,
+        ),
+        (
+            "a group, by inherit",
+            r##"<g stroke="#000"><circle r="1e5" stroke="inherit"/></g>"##,
+            circle,
+        ),
+        (
+            "a use",
+            r##"<defs><circle id="c" r="1e5"/></defs><use href="#c" stroke="#000"/>"##,
+            circle,
+        ),
+        (
+            "a use of a symbol, twice",
+            r##"<defs><symbol id="s"><circle r="1e5"/></symbol></defs><use href="#s" stroke="#000"/><use href="#s" stroke="#000"/>"##,
+            2 * circle,
+        ),
+        (
+            "nothing past its own none",
+            r##"<g stroke="#000"><circle r="1e5" stroke="none"/></g>"##,
+            0,
+        ),
+        (
+            "nothing in the definitions",
+            r##"<defs><circle r="1e5" stroke="#000"/></defs>"##,
+            0,
+        ),
+    ];
+    for (name, stroked, outline) in given {
+        let unstroked = stroked.replace("#000", "none");
+        assert_eq!(
+            built(&page(stroked)) - built(&page(&unstroked)),
+            outline,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn shapes_whose_outlines_take_longer_to_build_than_the_parser_may_are_refused_before_it_builds_them()
+ {
+    let _alone = alone();
+    // Ten stroked circles of radius 100 000 are 26 ms of outlines, and twenty
+    // thousand filled ones 26 ms of curves.
+    let stroked = r##"<circle r="1e5" fill="none" stroke="#000"/>"##;
+    let filled = r#"<circle r="1e5" fill="none"/>"#;
+    for (shape, refused, drawn) in [(stroked, 10, 5), (filled, 20_000, 1_000)] {
+        let (result, took) = refused_in_at(&page(&shape.repeat(refused)), 20);
+        assert_eq!(result, Err(Refused::TooLarge), "{refused} of {shape}");
+        assert!(
+            took < SOON_REFUSED,
+            "{refused} of {shape} built first: {took:?}"
+        );
+        let result = rasterise(page(&shape.repeat(drawn)).as_bytes(), 20, &[]);
+        assert!(result.is_ok(), "{drawn} of {shape}: {result:?}");
+    }
+}
+
+#[test]
+fn a_percentage_is_taken_of_the_view_the_outermost_svg_or_a_use_of_a_symbol_sizes() {
+    let _alone = alone();
+    // The outermost view's own percentage, and a use's size for the symbol it
+    // draws, set the view the circle's percentage is taken of: 1e4 % of a view
+    // 10 000 wide is past the largest size a number may have, and 1e4 % of
+    // one 1 000 wide is not.
+    let outermost = |size: &str| {
+        format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}"><circle r="1e4%"/></svg>"#
+        )
+    };
+    assert_eq!(
+        rasterise(outermost("1e4%").as_bytes(), 20, &[]),
+        Err(Refused::NotAnImage)
+    );
+    let drawn = rasterise(outermost("1e3%").as_bytes(), 20, &[]);
+    assert!(drawn.is_ok(), "an outermost view of 1 000: {drawn:?}");
+    let used = |size: &str| {
+        page(&format!(
+            r##"<defs><symbol id="s" overflow="visible"><circle r="1e4%"/></symbol></defs><use href="#s" width="{size}" height="{size}"/>"##
+        ))
+    };
+    assert_eq!(
+        rasterise(used("1e4").as_bytes(), 20, &[]),
+        Err(Refused::NotAnImage)
+    );
+    let drawn = rasterise(used("1e3").as_bytes(), 20, &[]);
+    assert!(drawn.is_ok(), "a symbol used 1 000 wide: {drawn:?}");
 }
