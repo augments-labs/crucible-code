@@ -2140,8 +2140,9 @@ fn a_call_that_changed_a_file_in_colour() {
 /// cannot show. Both live and resumed previews must report the same omission.
 const REWRITTEN: usize = 40;
 
-/// The counts the box that call is drawn in opens with, on its `╭─` header.
-const CHANGED: &str = "+40 \u{2212}40";
+/// The header the box that call is drawn in opens with: the file the tool
+/// named and the counts of what moved in it.
+const CHANGED: &str = "\u{256D}\u{2500} notes.md +40 \u{2212}40";
 
 /// The quiet row inside that box counting the lines the tool never kept, on
 /// both the live and the restored bounded preview.

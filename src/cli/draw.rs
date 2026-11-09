@@ -1799,9 +1799,11 @@ fn block(diff: &Diff, failed: bool, window: usize, glyphs: Glyphs, details: bool
         .collect()
 }
 
-/// The file a tool's change is drawn as: every line it kept, numbered as the
-/// tool numbered them, counted as the tool counted the whole of the edit, and
-/// the lines it never kept as a count.
+/// The file a tool's change is drawn as: named as the tool named it, every
+/// line it kept, numbered as the tool numbered them, counted as the tool
+/// counted the whole of the edit, and the lines it never kept as a count. A
+/// change kept before it could name its file is drawn with no name, and so
+/// with no language to colour its lines as.
 fn tool_file(diff: &Diff) -> File {
     let lines = diff.lines().iter().map(|line| {
         let side = match line.change() {
@@ -1812,7 +1814,7 @@ fn tool_file(diff: &Diff) -> File {
         (line.number(), side, line.text())
     });
 
-    File::numbered(None, lines)
+    File::numbered(diff.path(), lines)
         .counted(diff.added(), diff.removed())
         .dropping(diff.dropped())
 }

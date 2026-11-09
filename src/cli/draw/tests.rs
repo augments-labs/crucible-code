@@ -1395,6 +1395,53 @@ fn the_box_header_counts_the_change_rather_than_answering_the_model() {
 }
 
 #[test]
+fn a_tools_change_names_the_file_it_changed_on_the_box_header() {
+    let rows = boxed(
+        Diff::new([
+            Line::new(1, Change::Kept, "fn kept() {}"),
+            Line::new(2, Change::Removed, "let a = 1;"),
+            Line::new(2, Change::Added, "let a = 2;"),
+        ])
+        .in_file("src/a.rs"),
+        NARROW,
+    );
+
+    assert_eq!(
+        texts(&rows).first().map(String::as_str),
+        Some("  ╭─ src/a.rs +1 −1")
+    );
+    // And its name says which language the lines that did not move are
+    // coloured as, as a fence's path does.
+    let kept = rows.get(1).expect("a kept row");
+    assert!(
+        kept.kinds().any(|slot| slot == Slot::Keyword),
+        "{:?}",
+        texts(&rows)
+    );
+}
+
+#[test]
+fn a_change_kept_before_it_named_its_file_opens_on_its_counts_without_colour() {
+    // What a session written before a change named its file gives back: the
+    // same box, with nothing to name and no language to colour it as.
+    let rows = boxed(
+        Diff::new([
+            Line::new(1, Change::Kept, "fn kept() {}"),
+            Line::new(2, Change::Added, "let a = 2;"),
+        ]),
+        NARROW,
+    );
+
+    assert_eq!(texts(&rows).first().map(String::as_str), Some("  ╭─ +1"));
+    let kept = rows.get(1).expect("a kept row");
+    assert!(
+        kept.kinds().all(|slot| slot != Slot::Keyword),
+        "{:?}",
+        texts(&rows)
+    );
+}
+
+#[test]
 fn a_change_in_one_direction_only_says_the_one_thing_that_happened() {
     let one = |change| ToolOutput::ok("wrote it").showing(Diff::new([Line::new(1, change, "a")]));
     let said = |output| hung(&output, WIDE, Style::plain());

@@ -13,7 +13,7 @@ expression: window.picture()
 |› rename that comment                                                          ┃|
 |                                                                               ┃|
 |● Edit(release.yml)                                                            ┃|
-|  ╭─ +1 −1                                                                     ┃|
+|  ╭─ release.yml +1 −1                                                         ┃|
 |  │    1 - # trend data                                                        ●|
 |  │    1 + # what stops a tag                                                  ┃|
 |  │    2   budgets:                                                            ┃|

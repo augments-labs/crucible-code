@@ -18,7 +18,13 @@
 //! never reach ordinary logs, errors or panic payloads. [`Debug`] is written
 //! by hand and redacts, like other values carrying file contents.
 //!
-//! Both bounds are taken here rather than trusted from above: a diff crosses a
+//! A diff may name the file it changed, as the tool that made it was asked for
+//! it. The name is the model's, so it is hostile text: whatever draws it makes
+//! it safe to draw, and [`Debug`] redacts it with the lines, since a file's
+//! name can say what is in it. A diff kept before it could name its file has
+//! none, and is drawn without one.
+//!
+//! Every bound is taken here rather than trusted from above: a diff crosses a
 //! thread and is held until it is drawn, and a producer that forgot to cut one
 //! would be a screenful of rows and a megabyte of them.
 
@@ -104,6 +110,7 @@ impl Line {
 /// The lines a call changed, and how many of them there were.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Diff {
+    path: Option<Box<str>>,
     lines: Box<[Line]>,
     added: usize,
     removed: usize,
@@ -113,6 +120,7 @@ pub struct Diff {
 impl fmt::Debug for Diff {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Diff")
+            .field("path", &self.path.as_ref().map(|_| "[redacted]"))
             .field("lines", &"[redacted]")
             .field("added", &self.added)
             .field("removed", &self.removed)
@@ -154,6 +162,7 @@ impl Diff {
             return None;
         }
         Some(Self {
+            path: None,
             lines: lines.into_boxed_slice(),
             added,
             removed,
@@ -169,6 +178,35 @@ impl Diff {
     /// on trust from the count, and this type is the detail under that count
     /// rather than the file.
     pub const LINES: usize = 64;
+
+    /// The most of a path a diff carries, in characters.
+    ///
+    /// Longer than any path a reader would want spelled out, which whatever
+    /// draws it shortens to its window anyway; the cut here is about what
+    /// crosses a thread and waits to be drawn.
+    pub const PATH: usize = 1024;
+
+    /// Names the file this changed, cut to its last [`Diff::PATH`] characters.
+    ///
+    /// The end is kept because it is the file's own name, which is what a
+    /// reader looks for. An empty name is no name.
+    #[must_use]
+    pub fn in_file(mut self, path: impl Into<Box<str>>) -> Self {
+        let path = path.into();
+        let skip = path.chars().count().saturating_sub(Self::PATH);
+        let path = match path.char_indices().nth(skip) {
+            Some((at, _)) if skip > 0 => path.get(at..).unwrap_or_default().into(),
+            _ => path,
+        };
+        self.path = (!path.is_empty()).then_some(path);
+        self
+    }
+
+    /// The file this changed, when the tool that made it named one.
+    #[must_use]
+    pub fn path(&self) -> Option<&str> {
+        self.path.as_deref()
+    }
 
     /// Takes the lines a tool worked out, cut to [`Diff::LINES`].
     ///
@@ -199,6 +237,7 @@ impl Diff {
         }
 
         Self {
+            path: None,
             lines: kept.into_boxed_slice(),
             added,
             removed,
@@ -232,12 +271,14 @@ impl Diff {
 
     /// Bytes retained for drawing this change again.
     ///
-    /// The line text is the variable part; numbers, tags and the boxed slice are
-    /// fixed per bounded line and charged conservatively beside it. Used by the
-    /// renderer's retained-record ceiling, never as a serialized size.
+    /// The line text and the path are the variable part; numbers, tags and the
+    /// boxed slice are fixed per bounded line and charged conservatively beside
+    /// it. Used by the renderer's retained-record ceiling, never as a
+    /// serialized size.
     #[must_use]
     pub fn retained(&self) -> usize {
-        self.lines.iter().fold(0_usize, |held, line| {
+        let named = self.path.as_deref().map_or(0, str::len);
+        self.lines.iter().fold(named, |held, line| {
             held.saturating_add(line.text.len())
                 .saturating_add(std::mem::size_of::<Line>())
         })

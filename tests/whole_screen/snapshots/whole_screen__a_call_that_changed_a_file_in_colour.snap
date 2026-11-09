@@ -45,10 +45,11 @@ expression: window.picture_in_colour()
   3..6 bold
   7..19 fg=90
   80..80 fg=38;5;30
-|  ╭─ +1 −1                                                                     ┃|
+|  ╭─ release.yml +1 −1                                                         ┃|
   3..4 fg=90
-  6..7 fg=38;5;114 bg=48;5;22
-  9..10 fg=38;5;210 bg=48;5;52
+  6..16 fg=38;5;30
+  18..19 fg=38;5;114 bg=48;5;22
+  21..22 fg=38;5;210 bg=48;5;52
   80..80 fg=38;5;30
 |  │    1 - # trend data                                                        ●|
   3..3 fg=90
@@ -67,10 +68,13 @@ expression: window.picture_in_colour()
 |  │    2   budgets:                                                            ┃|
   3..3 fg=90
   5..10 fg=90
+  12..18 fg=38;5;148
   80..80 fg=38;5;30
 |  │    3     name: release budgets                                             ┃|
   3..3 fg=90
   5..10 fg=90
+  14..17 fg=38;5;148
+  20..34 fg=38;5;185
   80..80 fg=38;5;30
 |  ╰─                                                                           ┃|
   3..4 fg=90
