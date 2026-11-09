@@ -568,7 +568,7 @@ fn a_disk_ceiling_is_refused_where_a_run_could_write_to_the_host() {
     if skipped_without_enforcement(&service) {
         return;
     }
-    let sample = Sample::new("sandbox-disk-ceiling-writable-root");
+    let sample = Sample::new("sandbox-ceiling-on-a-writable-root");
     sample.write("shared/existing.txt", "before\n");
 
     // A writable workspace: its writes land on the host, where no mount this

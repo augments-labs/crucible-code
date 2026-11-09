@@ -7635,7 +7635,7 @@
       },
       "case": "linux::resource_tests::a_disk_ceiling_is_refused_where_a_run_could_write_to_the_host",
       "source": "crates/crucible-sandbox-local/src/linux/resource_tests.rs",
-      "body_sha256": "e3bba26fd688b85675808fd2816fa12b7b3489cf4a3e562f3a8cf1bd3acc0444",
+      "body_sha256": "cd6f8ee2b68d047853feef03ef3e1430cb3e8e940ebe4b1aeb1ad934ea19794c",
       "platforms": [
         "linux"
       ]
