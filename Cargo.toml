@@ -93,6 +93,7 @@ crucible-storage = { path = "crates/crucible-storage" }
 crucible-tools = { path = "crates/crucible-tools" }
 crucible-transport = { path = "crates/crucible-transport" }
 crucible-tui = { path = "crates/crucible-tui" }
+crucible-tui-diff = { path = "crates/crucible-tui-diff" }
 crucible-types = { path = "crates/crucible-types" }
 crucible-update = { path = "crates/crucible-update" }
 crucible-workspace = { path = "crates/crucible-workspace" }

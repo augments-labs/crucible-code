@@ -908,6 +908,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-tui-diff"
+version = "0.50.0"
+dependencies = [
+ "crucible-tui",
+ "insta",
+ "similar",
+ "thiserror",
+]
+
+[[package]]
 name = "crucible-types"
 version = "0.50.0"
 dependencies = [

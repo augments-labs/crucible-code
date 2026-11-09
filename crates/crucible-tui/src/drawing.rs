@@ -31,6 +31,13 @@ use crate::glyphs::Glyphs;
 use crate::markdown::Said;
 use crate::row::Row;
 
+/// The words that name the key an offer to show more is made with.
+///
+/// One action has one name: a drawer that folds what it was given offers the
+/// rest in these words, and so does a row that cut what came back, so the
+/// reader learns the key once.
+pub const EXPAND: &str = "ctrl+o to expand";
+
 /// What a drawer is handed to lay a block out in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Room {

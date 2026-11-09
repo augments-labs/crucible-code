@@ -1,0 +1,17 @@
+---
+source: crates/crucible-tui-diff/src/tests.rs
+expression: "dump(&drawn(&change, 64, ASCII), 64)"
+---
+<Quiet>+-</> <Path>src/parse.rs</> <AddedNumber>+3</> <RemovedNumber>-2</>                                           
+<Quiet>|</> <Quiet>  10  </>     <Keyword>let</> <Keyword>mut</> tree <Operator>=</> Tree::new();                        
+<Quiet>|</> <RemovedNumber>  11 -</> <Removed>    for </><RemovedWord>line</><Removed> in input.lines() {</><Removed>                        </>
+<Quiet>|</> <AddedNumber>  11 +</> <Added>    for </><AddedWord>(at, line)</><Added> in input.lines()</><AddedWord>.enumerate()</><Added> {</><Added>      </>
+<Quiet>|</> <AddedNumber>  12 +</> <Added>        tree.mark(at);</><Added>                                 </>
+<Quiet>|</> <Quiet>  13  </>         tree.push(line);                               
+<Quiet>|</><Quiet>  ...  26 lines between · fn parse  ...</>                        
+<Quiet>|</> <RemovedNumber>  40 -</> <Removed>    tree</><Removed>                                               </>
+<Quiet>|</> <AddedNumber>  40 +</> <Added>    tree</><AddedWord>.finish()</><Added>                                      </>
+<Quiet>+-</> <Path>README.md</> <AddedNumber>+1</>                                                 
+<Quiet>|</> <Quiet>   1  </> # <Name>parse</>                                                
+<Quiet>|</> <AddedNumber>   2 +</> <Added>A small parser.</><Added>                                        </>
+<Quiet>+-</>

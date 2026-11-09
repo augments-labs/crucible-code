@@ -1,0 +1,3 @@
+This is a paragraph of prose about a change, with no diff in it.
+- a list item
++ another

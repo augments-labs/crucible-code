@@ -1,0 +1,431 @@
+//! The look a change is drawn in, read back from the rows: the box, the
+//! numbers, the raised words, the fold and the gaps, and the pictures checked
+//! in beside the drawer.
+
+use crucible_tui::drawing::{Draws, Room};
+use crucible_tui::testing::dump;
+use crucible_tui::{Glyphs, Row, Slot};
+
+use crate::{Change, Changes, FOLD, File, Line, NotADiff, Side, read};
+
+const UNICODE: Glyphs = Glyphs::Unicode;
+const ASCII: Glyphs = Glyphs::Ascii;
+
+fn room(columns: usize, glyphs: Glyphs) -> Room {
+    Room { columns, glyphs }
+}
+
+fn drawn(change: &Change, columns: usize, glyphs: Glyphs) -> Vec<Row> {
+    Changes.draw(change, &room(columns, glyphs)).rows
+}
+
+fn lines_of(change: &Change) -> usize {
+    change.files().first().map_or(0, |file| file.lines().len())
+}
+
+fn texts(rows: &[Row]) -> Vec<String> {
+    rows.iter()
+        .map(|row| row.text().trim_end().to_owned())
+        .collect()
+}
+
+/// The approved mock's two files, as a unified diff.
+const TWO_FILES: &str = "diff --git a/src/parse.rs b/src/parse.rs
+--- a/src/parse.rs
++++ b/src/parse.rs
+@@ -10,3 +10,4 @@
+     let mut tree = Tree::new();
+-    for line in input.lines() {
++    for (at, line) in input.lines().enumerate() {
++        tree.mark(at);
+         tree.push(line);
+@@ -40,1 +40,1 @@ fn parse
+-    tree
++    tree.finish()
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -1,1 +1,2 @@
+ # parse
++A small parser.
+";
+
+/// A file a tool changed, numbered the way a tool numbers it: a removed line
+/// by where it was, every other line by where it is now.
+fn edited(path: Option<&str>, lines: usize) -> Change {
+    let mut numbered = Vec::new();
+    for at in 1..=lines {
+        let text = format!("line {at} of the file");
+        if at % 5 == 0 {
+            numbered.push((at, Side::Removed, text.clone()));
+            numbered.push((at, Side::Added, format!("line {at} of the changed file")));
+        } else {
+            numbered.push((at, Side::Kept, text));
+        }
+    }
+    Change::new(vec![File::numbered(
+        path,
+        numbered
+            .iter()
+            .map(|(at, side, text)| (*at, *side, text.as_str())),
+    )])
+}
+
+#[test]
+fn a_change_opens_with_its_path_and_counts_and_closes_its_box() {
+    let change = read(TWO_FILES).expect("the mock is a diff");
+    let rows = drawn(&change, 64, UNICODE);
+    let pictured = dump(&rows, 64);
+    let mut lines = pictured.lines();
+    assert_eq!(
+        lines.next().map(str::trim_end),
+        Some("<Quiet>╭─</> <Path>src/parse.rs</> <AddedNumber>+3</> <RemovedNumber>−2</>")
+    );
+    assert!(
+        pictured.contains("<Quiet>├─</> <Path>README.md</> <AddedNumber>+1</>"),
+        "{pictured}"
+    );
+    assert_eq!(lines.last().map(str::trim_end), Some("<Quiet>╰─</>"));
+    for row in rows.iter().skip(1).take(rows.len() - 2) {
+        assert!(
+            row.text().starts_with("│ ") || row.text().starts_with("├─"),
+            "{:?}",
+            row.text()
+        );
+    }
+}
+
+#[test]
+fn a_count_of_nothing_is_left_off_the_header() {
+    let change = read("--- a/x\n+++ b/x\n@@ -1,2 +1,1 @@\n a\n-b\n").expect("a diff");
+    let rows = drawn(&change, 64, UNICODE);
+    assert_eq!(texts(&rows).first().map(String::as_str), Some("╭─ x −1"));
+}
+
+#[test]
+fn every_line_wears_its_number_its_sign_and_its_ground() {
+    let change = read(TWO_FILES).expect("a diff");
+    let pictured = dump(&drawn(&change, 64, UNICODE), 64);
+    assert!(
+        pictured.contains("<Quiet>│</> <Quiet>  10  </> "),
+        "{pictured}"
+    );
+    assert!(
+        pictured.contains("<Quiet>│</> <AddedNumber>  12 +</> <Added>        tree.mark(at);"),
+        "{pictured}"
+    );
+    // A changed line carries its ground to the last column.
+    for row in drawn(&change, 64, UNICODE) {
+        if row
+            .kinds()
+            .any(|slot| slot == Slot::Added || slot == Slot::Removed)
+        {
+            assert_eq!(row.columns(), 64, "{:?}", row.text());
+        }
+    }
+}
+
+#[test]
+fn a_replaced_word_is_raised_on_both_lines_of_its_pair() {
+    // The removed line's word, and what replaced it on the added line.
+    let change = read(TWO_FILES).expect("a diff");
+    let pictured = dump(&drawn(&change, 64, UNICODE), 64);
+    assert!(
+        pictured.contains(
+            "<RemovedNumber>  11 -</> <Removed>    for </><RemovedWord>line</><Removed> in input.lines() {"
+        ),
+        "{pictured}"
+    );
+    assert!(
+        pictured.contains(
+            "<AddedNumber>  11 +</> <Added>    for </><AddedWord>(at, line)</><Added> in input.lines()</><AddedWord>.enumerate()</><Added> {"
+        ),
+        "{pictured}"
+    );
+    // An added line with nothing to pair with is raised nowhere.
+    assert!(
+        !pictured.contains("<AddedWord>        tree.mark"),
+        "{pictured}"
+    );
+    // Only the part of a word that changed: `tree` stays, `.finish()` is new.
+    assert!(
+        pictured.contains("<Added>    tree</><AddedWord>.finish()</>"),
+        "{pictured}"
+    );
+}
+
+#[test]
+fn two_lines_with_nothing_in_common_are_not_raised_word_by_word() {
+    let change =
+        read("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-alpha beta\n+gamma delta\n").expect("a diff");
+    let rows = drawn(&change, 64, UNICODE);
+    assert!(
+        rows.iter().all(|row| row
+            .kinds()
+            .all(|slot| slot != Slot::AddedWord && slot != Slot::RemovedWord)),
+        "{}",
+        dump(&rows, 64)
+    );
+}
+
+#[test]
+fn the_lines_between_two_hunks_are_one_quiet_row_with_their_count() {
+    // What the diff never held is counted, with the section it is in.
+    let change = read(TWO_FILES).expect("a diff");
+    let pictured = dump(&drawn(&change, 64, UNICODE), 64);
+    assert!(
+        pictured.contains("<Quiet>│</><Quiet>  ⋯  26 lines between · fn parse  ⋯</>"),
+        "{pictured}"
+    );
+    let ascii = dump(&drawn(&change, 64, ASCII), 64);
+    assert!(
+        ascii.contains("<Quiet>|</><Quiet>  ...  26 lines between · fn parse  ...</>"),
+        "{ascii}"
+    );
+}
+
+#[test]
+fn a_tool_s_lines_that_jump_are_parted_by_a_gap_row() {
+    let file = File::numbered(
+        Some("x"),
+        [
+            (3, Side::Kept, "a"),
+            (4, Side::Added, "b"),
+            (20, Side::Removed, "c"),
+            (20, Side::Kept, "d"),
+        ],
+    );
+    assert_eq!(
+        file.lines()
+            .iter()
+            .filter(|line| matches!(line, Line::Gap { .. }))
+            .count(),
+        1
+    );
+    let rows = texts(&drawn(&Change::new(vec![file]), 64, UNICODE));
+    assert!(
+        rows.contains(&"│  ⋯  15 lines between  ⋯".to_owned()),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_file_longer_than_the_fold_shows_its_head_and_tail_and_counts_the_rest() {
+    // The first twenty-four rows and the last four, one quiet row between.
+    let change = edited(Some("long.txt"), 40);
+    let total = lines_of(&change);
+    assert!(total > FOLD);
+    let rows = drawn(&change, 80, UNICODE);
+    // The header, twenty-four, the fold, four, and the close.
+    assert_eq!(rows.len(), 1 + 24 + 1 + 4 + 1, "{:#?}", texts(&rows));
+    let fold = rows.get(25).expect("a fold row");
+    assert_eq!(
+        fold.text().trim_end(),
+        format!("│  ⋯  {} lines folded · ctrl+o to expand  ⋯", total - 28)
+    );
+    // The key's words are what lights under the pointer and opens the rest.
+    assert!(
+        fold.spans()
+            .any(|(slot, text)| slot == Slot::Cut && text == "ctrl+o to expand")
+    );
+    // Every line it folded is still in the change.
+    assert_eq!(lines_of(&change), total);
+    let ascii = drawn(&change, 80, ASCII);
+    assert_eq!(
+        ascii
+            .get(25)
+            .map(|row| row.text().trim_end().to_owned())
+            .unwrap_or_default(),
+        format!(
+            "|  ...  {} lines folded · ctrl+o to expand  ...",
+            total - 28
+        )
+    );
+}
+
+#[test]
+fn a_file_of_exactly_the_fold_is_drawn_whole() {
+    let mut lines = Vec::new();
+    for at in 1..=FOLD {
+        lines.push((at, Side::Kept, "same"));
+    }
+    let change = Change::new(vec![File::numbered(Some("x"), lines)]);
+    assert_eq!(lines_of(&change), FOLD);
+    assert_eq!(drawn(&change, 80, UNICODE).len(), FOLD + 2);
+}
+
+#[test]
+fn lines_the_tool_never_kept_are_a_count_inside_the_box() {
+    let change = Change::new(vec![
+        File::numbered(Some("x"), [(1, Side::Added, "a")])
+            .counted(100, 100)
+            .dropping(136),
+    ]);
+    let rows = texts(&drawn(&change, 64, UNICODE));
+    assert_eq!(rows.first().map(String::as_str), Some("╭─ x +100 −100"));
+    assert_eq!(
+        rows.get(rows.len() - 2).map(String::as_str),
+        Some("│  ⋯  136 lines not shown  ⋯")
+    );
+}
+
+#[test]
+fn a_change_with_no_path_opens_on_its_counts_alone() {
+    let change = Change::new(vec![File::numbered(None, [(1, Side::Added, "a")])]);
+    assert_eq!(
+        texts(&drawn(&change, 64, UNICODE))
+            .first()
+            .map(String::as_str),
+        Some("╭─ +1")
+    );
+}
+
+#[test]
+fn a_known_extension_colours_the_lines_that_did_not_move() {
+    let change =
+        read("--- a/x.rs\n+++ b/x.rs\n@@ -1,2 +1,2 @@\n fn kept() {}\n-let a = 1;\n+let a = 2;\n")
+            .expect("a diff");
+    let rows = drawn(&change, 64, UNICODE);
+    let kept = rows.get(1).expect("a kept row");
+    assert!(
+        kept.kinds().any(|slot| slot == Slot::Keyword),
+        "{}",
+        dump(&rows, 64)
+    );
+    // A changed line wears its change: the ground carries it whole.
+    assert!(
+        rows.get(2)
+            .expect("a removed row")
+            .kinds()
+            .all(|slot| slot != Slot::Keyword)
+    );
+}
+
+#[test]
+fn every_row_fits_the_room_and_the_numbers_line_up() {
+    let change = read(TWO_FILES).expect("a diff");
+    for glyphs in [UNICODE, ASCII] {
+        for columns in 0..=80 {
+            for row in drawn(&change, columns, glyphs) {
+                assert!(row.columns() <= columns, "{columns}: {:?}", row.text());
+            }
+        }
+    }
+}
+
+#[test]
+fn a_glyph_set_changed_lays_the_same_change_out_in_the_new_one() {
+    let change = read(TWO_FILES).expect("a diff");
+    let unicode = texts(&drawn(&change, 64, UNICODE)).join("\n");
+    let ascii = texts(&drawn(&change, 64, ASCII)).join("\n");
+    assert!(unicode.contains('╭') && unicode.contains('│') && unicode.contains('⋯'));
+    for mark in ['╭', '├', '╰', '│', '⋯', '−'] {
+        assert!(!ascii.contains(mark), "{mark} left in ascii:\n{ascii}");
+    }
+    assert!(ascii.starts_with("+- src/parse.rs +3 -2"), "{ascii}");
+}
+
+#[test]
+fn a_change_is_drawn_the_same_however_the_window_reached_its_width() {
+    // Laid out once and again on resize, from wider and from narrower.
+    let change = read(TWO_FILES).expect("a diff");
+    for columns in 8..=160 {
+        let fresh = drawn(&change, columns, UNICODE);
+        for from in [160, 8] {
+            let _ = drawn(&change, from, UNICODE);
+            assert_eq!(
+                drawn(&change, columns, UNICODE),
+                fresh,
+                "{columns} from {from}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_drawer_takes_diff_and_patch_fences() {
+    assert_eq!(Changes.names(), &["diff", "patch"]);
+}
+
+#[test]
+fn a_fence_that_is_not_a_diff_is_shown_as_written_without_a_refusal() {
+    // Not drawn here, which is not a reason anything went wrong.
+    for source in [
+        "",
+        "just prose\nwith lines",
+        "@@ not a hunk",
+        "+ a list\n- of things",
+    ] {
+        assert_eq!(
+            read(source).map(|_| ()),
+            Err(NotADiff::Unread),
+            "{source:?}"
+        );
+        assert_eq!(
+            Changes
+                .block(source, &room(64, UNICODE))
+                .map(|laid| laid.rows.len()),
+            Err(crucible_tui::chrome::Undrawn::NotHere)
+        );
+    }
+}
+
+#[test]
+fn a_diff_past_its_caps_is_refused_before_it_is_read() {
+    let long = format!(
+        "--- a/x\n+++ b/x\n@@ -1 +1 @@\n{}",
+        "+x\n".repeat(crate::MOST_LINES)
+    );
+    assert_eq!(read(&long).map(|_| ()), Err(NotADiff::PastCap));
+    assert_eq!(
+        Changes
+            .block(&long, &room(64, UNICODE))
+            .map(|laid| laid.rows.len()),
+        Err(crucible_tui::chrome::Undrawn::PastCap)
+    );
+    let wide = format!(
+        "--- a/x\n+++ b/x\n@@ -1 +1 @@\n+{}\n",
+        "x".repeat(crate::MOST_BYTES)
+    );
+    assert_eq!(read(&wide).map(|_| ()), Err(NotADiff::PastCap));
+}
+
+#[test]
+fn a_laid_change_says_its_natural_size() {
+    let change = read(TWO_FILES).expect("a diff");
+    let laid = Changes.draw(&change, &room(20, UNICODE));
+    let wide = Changes.draw(&change, &room(400, UNICODE));
+    assert_eq!(laid.natural.1, laid.rows.len());
+    assert_eq!(laid.natural, wide.natural);
+    assert!(laid.natural.0 > 20);
+    assert!(laid.narrow.is_none());
+}
+
+// The pictures, at 64 columns, in both glyph sets.
+
+#[test]
+fn picture_of_a_tool_edit_with_a_fold() {
+    let change = edited(Some("src/parse.rs"), 40);
+    insta::assert_snapshot!(
+        "tool_edit_fold_unicode",
+        dump(&drawn(&change, 64, UNICODE), 64)
+    );
+    insta::assert_snapshot!("tool_edit_fold_ascii", dump(&drawn(&change, 64, ASCII), 64));
+}
+
+#[test]
+fn picture_of_a_word_level_change() {
+    let change = read(
+        "--- a/src/parse.rs\n+++ b/src/parse.rs\n@@ -7,3 +7,3 @@\n let width = 8;\n-let height = columns / 2;\n+let height = rows / 2;\n let depth = 1;\n",
+    )
+    .expect("a diff");
+    insta::assert_snapshot!("word_level_unicode", dump(&drawn(&change, 64, UNICODE), 64));
+    insta::assert_snapshot!("word_level_ascii", dump(&drawn(&change, 64, ASCII), 64));
+}
+
+#[test]
+fn picture_of_a_two_file_change() {
+    let change = read(TWO_FILES).expect("a diff");
+    insta::assert_snapshot!("two_files_unicode", dump(&drawn(&change, 64, UNICODE), 64));
+    insta::assert_snapshot!("two_files_ascii", dump(&drawn(&change, 64, ASCII), 64));
+}
