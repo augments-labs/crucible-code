@@ -619,6 +619,9 @@ crucible-tools.workspace = true
 # never names the file.
 crucible-session.workspace = true
 crucible-tui.workspace = true
+# What draws a tool's edit: the same box a `diff` fence in an answer is drawn
+# in, so the two cannot drift apart.
+crucible-tui-diff.workspace = true
 image.workspace = true
 # The hash an attachment is recorded under, taken here because this is where a
 # file is attached and the runner compares it on every request afterwards. Both

@@ -25,71 +25,38 @@ expression: window.picture()
 |› show me the corpus                                                            |
 |                                                                                |
 |● Edit(the-long-note.md)                                                        |
-|  ⎿ Added 100 lines, removed 100 lines (136 of them not shown)                  |
-|        1 -  the line that was here, number 1                                   |
-|        2 -  the line that was here, number 2                                   |
-|        3 -  the line that was here, number 3                                   |
-|        4 -  the line that was here, number 4                                   |
-|        5 -  the line that was here, number 5                                   |
-|        6 -  the line that was here, number 6                                   |
-|        7 -  the line that was here, number 7                                   |
-|        8 -  the line that was here, number 8                                   |
-|        9 -  the line that was here, number 9                                   |
-|       10 -  the line that was here, number 10                                  |
-|       11 -  the line that was here, number 11                                  |
-|       12 -  the line that was here, number 12                                  |
-|       13 -  the line that was here, number 13                                  |
-|       14 -  the line that was here, number 14                                  |
-|       15 -  the line that was here, number 15                                  |
-|       16 -  the line that was here, number 16                                  |
-|       17 -  the line that was here, number 17                                  |
-|       18 -  the line that was here, number 18                                  |
-|       19 -  the line that was here, number 19                                  |
-|       20 -  the line that was here, number 20                                  |
-|       21 -  the line that was here, number 21                                  |
-|       22 -  the line that was here, number 22                                  |
-|       23 -  the line that was here, number 23                                  |
-|       24 -  the line that was here, number 24                                  |
-|       25 -  the line that was here, number 25                                  |
-|       26 -  the line that was here, number 26                                  |
-|       27 -  the line that was here, number 27                                  |
-|       28 -  the line that was here, number 28                                  |
-|       29 -  the line that was here, number 29                                  |
-|       30 -  the line that was here, number 30                                  |
-|       31 -  the line that was here, number 31                                  |
-|       32 -  the line that was here, number 32                                  |
-|       33 -  the line that was here, number 33                                  |
-|       34 -  the line that was here, number 34                                  |
-|       35 -  the line that was here, number 35                                  |
-|       36 -  the line that was here, number 36                                  |
-|       37 -  the line that was here, number 37                                  |
-|       38 -  the line that was here, number 38                                  |
-|       39 -  the line that was here, number 39                                  |
-|       40 -  the line that was here, number 40                                  |
-|       41 -  the line that was here, number 41                                  |
-|       42 -  the line that was here, number 42                                  |
-|       43 -  the line that was here, number 43                                  |
-|       44 -  the line that was here, number 44                                  |
-|       45 -  the line that was here, number 45                                  |
-|       46 -  the line that was here, number 46                                  |
-|       47 -  the line that was here, number 47                                  |
-|       48 -  the line that was here, number 48                                  |
-|       49 -  the line that was here, number 49                                  |
-|       50 -  the line that was here, number 50                                  |
-|       51 -  the line that was here, number 51                                  |
-|       52 -  the line that was here, number 52                                  |
-|       53 -  the line that was here, number 53                                  |
-|       54 -  the line that was here, number 54                                  |
-|       55 -  the line that was here, number 55                                  |
-|       56 -  the line that was here, number 56                                  |
-|       57 -  the line that was here, number 57                                  |
-|       58 -  the line that was here, number 58                                  |
-|       59 -  the line that was here, number 59                                  |
-|       60 -  the line that was here, number 60                                  |
-|       61 -  the line that was here, number 61                                  |
-|       62 -  the line that was here, number 62                                  |
-|       63 -  the line that was here, number 63                                  |
-|       64 -  the line that was here, number 64                                  |
+|  ╭─ +100 −100                                                                  |
+|  │    1 - the line that was here, number 1                                     |
+|  │    2 - the line that was here, number 2                                     |
+|  │    3 - the line that was here, number 3                                     |
+|  │    4 - the line that was here, number 4                                     |
+|  │    5 - the line that was here, number 5                                     |
+|  │    6 - the line that was here, number 6                                     |
+|  │    7 - the line that was here, number 7                                     |
+|  │    8 - the line that was here, number 8                                     |
+|  │    9 - the line that was here, number 9                                     |
+|  │   10 - the line that was here, number 10                                    |
+|  │   11 - the line that was here, number 11                                    |
+|  │   12 - the line that was here, number 12                                    |
+|  │   13 - the line that was here, number 13                                    |
+|  │   14 - the line that was here, number 14                                    |
+|  │   15 - the line that was here, number 15                                    |
+|  │   16 - the line that was here, number 16                                    |
+|  │   17 - the line that was here, number 17                                    |
+|  │   18 - the line that was here, number 18                                    |
+|  │   19 - the line that was here, number 19                                    |
+|  │   20 - the line that was here, number 20                                    |
+|  │   21 - the line that was here, number 21                                    |
+|  │   22 - the line that was here, number 22                                    |
+|  │   23 - the line that was here, number 23                                    |
+|  │   24 - the line that was here, number 24                                    |
+|  │  ⋯  36 lines folded · ctrl+o to expand  ⋯                                   |
+|  │   61 - the line that was here, number 61                                    |
+|  │   62 - the line that was here, number 62                                    |
+|  │   63 - the line that was here, number 63                                    |
+|  │   64 - the line that was here, number 64                                    |
+|  │  ⋯  136 lines not shown  ⋯                                                  |
+|  ╰─                                                                            |
 |                                                                                |
 |The whole file is rewritten now, every line of it.                              |
 |                                                                                |
@@ -97,6 +64,39 @@ expression: window.picture()
 |whole of it.                                                                    |
 |                                                                                |
 |The corpus ends here.                                                           |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                                |
 |                                                                                |
 |                                                                                |
 |                                                                                |

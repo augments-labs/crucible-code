@@ -571,6 +571,7 @@ dependencies = [
  "crucible-storage",
  "crucible-tools",
  "crucible-tui",
+ "crucible-tui-diff",
  "crucible-types",
  "crucible-update",
  "crucible-workspace",

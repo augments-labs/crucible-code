@@ -108,7 +108,7 @@ fn a_result_that_changed_a_file_is_held_at_the_row_it_was_written_on() {
         vec![landing.actual],
         "one row names the key, and a click on it lands on the first line the result wrote"
     );
-    assert_eq!(landing.rows, changed().lines().len() + 1, "a header and the change");
+    assert_eq!(landing.rows, changed().lines().len() + 2, "a header, the change and the close");
 
     let under = landing.rows - 1;
     let stored = landing.kept.newest().next().and_then(Whole::at);
