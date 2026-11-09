@@ -47,11 +47,13 @@ const TERMINALS: [(u8, u8, u8); 7] = [
 ];
 
 /// The slots that take the ground, in the order a row of them is built.
-const DIFF: [Slot; 4] = [
+const DIFF: [Slot; 6] = [
     Slot::Removed,
     Slot::RemovedNumber,
+    Slot::RemovedWord,
     Slot::Added,
     Slot::AddedNumber,
+    Slot::AddedWord,
 ];
 
 /// Every slot there is.
@@ -59,7 +61,7 @@ const DIFF: [Slot; 4] = [
 /// The `match` below is what keeps this list honest: a slot added to the enum
 /// stops it compiling until it has been given a place here, which is to say
 /// until its colour has been checked against both grounds.
-fn all() -> [Slot; 40] {
+fn all() -> [Slot; 42] {
     /// Where a slot sits in the list.
     fn place(slot: Slot) -> usize {
         match slot {
@@ -103,6 +105,8 @@ fn all() -> [Slot; 40] {
             Slot::ArgumentPath => 37,
             Slot::ArgumentAddress => 38,
             Slot::ArgumentCommand => 39,
+            Slot::RemovedWord => 40,
+            Slot::AddedWord => 41,
         }
     }
 
@@ -147,6 +151,8 @@ fn all() -> [Slot; 40] {
         Slot::ArgumentPath,
         Slot::ArgumentAddress,
         Slot::ArgumentCommand,
+        Slot::RemovedWord,
+        Slot::AddedWord,
     ];
 
     for (index, slot) in slots.into_iter().enumerate() {
@@ -1065,4 +1071,59 @@ fn a_palette_nobody_chose_a_design_for_is_calm() {
         .design(),
         Design::Calm
     );
+}
+
+#[test]
+fn every_slot_has_a_class_of_its_own_that_a_picture_can_name() {
+    // A picture names its inks by class and the palette is applied when it is
+    // rasterised, so two slots sharing a class would be one ink there, and a
+    // class with anything but letters in it is not a name a stylesheet takes.
+    let classes: Vec<&str> = all().map(Slot::class).to_vec();
+    for (slot, class) in all().into_iter().zip(&classes) {
+        assert!(!class.is_empty(), "{slot:?} has no class");
+        assert!(
+            class.chars().all(|letter| letter.is_ascii_alphabetic()),
+            "{slot:?}'s class {class:?} is not letters alone"
+        );
+        assert_eq!(
+            *class,
+            format!("{slot:?}"),
+            "a class is the variant's own name"
+        );
+    }
+    let mut unique = classes.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(unique.len(), classes.len(), "two slots share a class");
+}
+
+#[test]
+fn a_word_a_change_raised_wears_its_lines_ground_in_weight_and_underline() {
+    // A word emphasised inside a changed line stays on that line's ground, so
+    // the line still reads as one change, and is raised by attributes alone:
+    // weight and a line under it, the same bytes at every rung.
+    for theme in THEMES {
+        for depth in [Depth::Exact, Depth::Indexed, Depth::Basic] {
+            let palette = wearing(depth, theme, None);
+            for (line, word) in [
+                (Slot::Removed, Slot::RemovedWord),
+                (Slot::Added, Slot::AddedWord),
+            ] {
+                let (line, word) = (palette.open(line), palette.open(word));
+                let (line, word) = (line.as_str(), word.as_str());
+                assert_eq!(
+                    sets(word),
+                    sets(line),
+                    "{theme:?} at {depth:?}: {word:?} is not on {line:?}'s ground and ink"
+                );
+                assert!(
+                    word.starts_with("\x1b[1;4;"),
+                    "{theme:?} at {depth:?}: {word:?} is not bold and underlined"
+                );
+            }
+        }
+    }
+    let off = wearing(Depth::Off, Theme::Dark, None);
+    assert_eq!(off.open(Slot::RemovedWord).as_str(), "");
+    assert_eq!(off.open(Slot::AddedWord).as_str(), "");
 }

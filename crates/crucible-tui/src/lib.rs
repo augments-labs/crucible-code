@@ -37,7 +37,8 @@ mod clipboard;
 mod color;
 #[cfg(test)]
 mod colour_rule;
-#[cfg(test)]
+pub mod drawing;
+#[cfg(any(test, feature = "testing"))]
 mod dump;
 mod editor;
 mod escape;
@@ -68,6 +69,8 @@ mod shelf;
 pub mod syntax;
 mod tab_row;
 mod terminal;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 mod timeline;
 mod title;
 mod welcome;
