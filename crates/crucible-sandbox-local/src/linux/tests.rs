@@ -1944,7 +1944,10 @@ fn planned(request: &SandboxRequest) -> Vec<String> {
 
 /// A read-only request on `root` with the standard ceilings, and `limits`
 /// changed on top of them.
-fn read_only_request(root: &std::path::Path, limits: SandboxResourceLimits) -> SandboxRequest {
+pub(super) fn read_only_request(
+    root: &std::path::Path,
+    limits: SandboxResourceLimits,
+) -> SandboxRequest {
     let policy = SandboxPolicy::new(
         true,
         [SandboxFilesystemRule::new(
@@ -2102,4 +2105,59 @@ fn a_request_without_a_disk_ceiling_is_planned_mount_for_mount_as_before() {
         )),
         expected
     );
+}
+
+/// `arguments` with the one run of `old` in it replaced by `new`.
+fn replaced(arguments: &[String], old: &[&str], new: &[&str]) -> Vec<String> {
+    let at: Vec<usize> = arguments
+        .windows(old.len())
+        .enumerate()
+        .filter(|(_, window)| window.iter().zip(old).all(|(left, right)| left == right))
+        .map(|(at, _)| at)
+        .collect();
+    assert_eq!(at.len(), 1, "{old:?} is not in {arguments:?} exactly once");
+    let at = at.first().copied().unwrap_or_default();
+    let mut changed = arguments.get(..at).unwrap_or_default().to_vec();
+    changed.extend(new.iter().map(|argument| (*argument).to_owned()));
+    changed.extend_from_slice(arguments.get(at + old.len()..).unwrap_or_default());
+    changed
+}
+
+#[test]
+fn a_disk_ceiling_sizes_the_one_root_every_writable_place_is_made_in() {
+    // The total is held by one sized mount: the root, with `/tmp` and the home
+    // made as directories inside it rather than as tmpfs mounts of their own,
+    // each of which would hold the ceiling again. `/dev` is a tmpfs Bubblewrap
+    // makes, so it is made read-only. Nothing else in the plan moves.
+    let sample = Sample::new("sandbox-plan-disk-ceiling");
+    let unbounded = planned(&read_only_request(
+        sample.root(),
+        SandboxResourceLimits::confining(),
+    ));
+    let mut expected = replaced(
+        &unbounded,
+        &["--tmpfs", "/"],
+        &["--size", "8388608", "--tmpfs", "/"],
+    );
+    expected = replaced(
+        &expected,
+        &["--dev", "/dev"],
+        &["--dev", "/dev", "--remount-ro", "/dev"],
+    );
+    expected = replaced(&expected, &["--tmpfs", "/tmp"], &["--dir", "/tmp"]);
+    expected = replaced(
+        &expected,
+        &["--tmpfs", "/crucible-home"],
+        &["--dir", "/crucible-home"],
+    );
+
+    let sized = planned(&read_only_request(
+        sample.root(),
+        SandboxResourceLimits {
+            disk_bytes: Some(8 * 1024 * 1024),
+            ..SandboxResourceLimits::confining()
+        },
+    ));
+
+    assert_eq!(sized, expected);
 }

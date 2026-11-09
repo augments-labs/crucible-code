@@ -1,4 +1,12 @@
 //! Exact Bubblewrap filesystem/namespace command planning.
+//!
+//! A disk ceiling is one total across everything a run can write. It is held
+//! by sizing the tmpfs Bubblewrap makes the root with and making `/tmp` and the
+//! home as directories inside it, with `/dev`, the one other tmpfs Bubblewrap
+//! makes, remounted read-only. A run with a writable host root, through a
+//! filesystem rule or a manifest mount, writes to the host's own filesystem,
+//! which no tmpfs size reaches, so such a run cannot be held to a ceiling and a
+//! request for one is refused before anything starts.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ffi::{OsStr, OsString};
@@ -225,8 +233,12 @@ pub(super) fn prepare(request: &SandboxRequest) -> Result<View, SandboxError> {
             feature: SandboxFeature::ProcessLimit,
         });
     }
+    if limits.disk_bytes.is_some() && writes_reach_the_host(request) {
+        return Err(SandboxError::Unsupported {
+            feature: SandboxFeature::DiskLimit,
+        });
+    }
     for (present, feature) in [
-        (limits.disk_bytes.is_some(), SandboxFeature::DiskLimit),
         (
             limits.session_time.is_some(),
             SandboxFeature::SessionTimeLimit,
@@ -387,6 +399,25 @@ pub(super) fn prepare(request: &SandboxRequest) -> Result<View, SandboxError> {
     })
 }
 
+/// Whether a run under `request` can write anywhere but its own root: through a
+/// writable filesystem rule or a writable manifest mount.
+///
+/// A disk ceiling is held by sizing the one tmpfs a run's own writes land in,
+/// and such a write lands outside it — on the host, or in an overlay nobody
+/// sized — so a request that has one cannot be held to the ceiling at all.
+fn writes_reach_the_host(request: &SandboxRequest) -> bool {
+    request
+        .policy()
+        .filesystem()
+        .iter()
+        .any(|rule| rule.access() == SandboxFilesystemAccess::ReadWrite)
+        || request
+            .manifest()
+            .entries()
+            .iter()
+            .any(|entry| entry.access() == Some(SandboxFilesystemAccess::ReadWrite))
+}
+
 fn validate_host(rules: &[SandboxFilesystemRule]) -> Result<(), SandboxError> {
     validate_host_for(rules, linux_host())
 }
@@ -482,6 +513,7 @@ pub(super) fn build(plan: Plan<'_>) -> Result<Command, SandboxError> {
     } = plan;
     let runtime = runtime_mounts();
     let directories = mount_directories(&runtime, view, materialization.is_some());
+    let disk_bytes = request.policy().limits().disk_bytes;
 
     let mut process = Command::new(backend.path());
     process.env_clear().args([
@@ -494,18 +526,31 @@ pub(super) fn build(plan: Plan<'_>) -> Result<Command, SandboxError> {
         "--unshare-uts",
         "--disable-userns",
         "--as-pid-1",
-        "--tmpfs",
-        "/",
     ]);
+    if let Some(bytes) = disk_bytes {
+        process.arg("--size").arg(bytes.to_string());
+    }
+    process.args(["--tmpfs", "/"]);
 
     for directory in directories {
         process.arg("--dir").arg(directory);
     }
-    process.args(["--dev", "/dev", "--proc", "/proc"]);
+    process.args(["--dev", "/dev"]);
+    if disk_bytes.is_some() {
+        process.args(["--remount-ro", "/dev"]);
+    }
+    process.args(["--proc", "/proc"]);
+    // Under a disk ceiling the scratch places are directories in the sized
+    // root, so they share its one total rather than each holding their own.
+    let scratch = if disk_bytes.is_some() {
+        "--dir"
+    } else {
+        "--tmpfs"
+    };
     process
-        .args(["--tmpfs", "/tmp", "--chmod", "1777", "/tmp"])
+        .args([scratch, "/tmp", "--chmod", "1777", "/tmp"])
         .args([
-            "--tmpfs",
+            scratch,
             "/crucible-home",
             "--chmod",
             "0700",

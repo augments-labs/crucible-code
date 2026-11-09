@@ -288,7 +288,7 @@ persistence and snapshot requests still require an enforcing implementation.
 | `materialization` | enforced | unsupported | unsupported | unsupported |
 | `cpu_limit` | enforced | unsupported | enforced | unsupported |
 | `memory_limit` | enforced | unsupported | unsupported | unsupported |
-| `disk_limit` | unsupported | unsupported | unsupported | unsupported |
+| `disk_limit` | enforced where Bubblewrap lists `--size` | unsupported | unsupported | unsupported |
 | `process_limit` | enforced on Linux 5.14 or newer | unsupported | unsupported | unsupported |
 | `open_file_limit` | enforced | enforced | unsupported | unsupported |
 | `command_time_limit` | enforced | enforced | enforced | enforced |
@@ -317,10 +317,16 @@ lives as long as the conversation, so it is held to no processor-time, command
 time or output ceiling; its account steps are. `memory_limit` is enforced but not asked for: the knob is the
 address space a process may map rather than the memory it uses, and runtimes
 that reserve enormously and touch little would be refused by any ceiling low
-enough to catch a real runaway. `disk_limit` is unsupported above, and a policy
-may not ask for a ceiling its backend cannot apply, which is also why disabling
-confinement takes the two confining ceilings off with it, rather than carrying
-numbers the compatibility backend would have to refuse.
+enough to catch a real runaway. `disk_limit` is one total across everything a
+run with no writable host root can write: its root, `/tmp` and its home share
+one sized mount, and `/dev` is read-only. A run that can write to the host,
+through a writable workspace or a writable manifest mount, would write where
+no such mount counts, so Linux refuses a ceiling for it, and on a host whose
+Bubblewrap does not list `--size` it claims none at all. Elsewhere
+`disk_limit` is unsupported, and a policy may not ask for a ceiling its backend
+cannot apply, which is also why disabling confinement takes the two confining
+ceilings off with it, rather than carrying numbers the compatibility backend
+would have to refuse.
 
 `process_limit` is the one ceiling a policy does not have to ask for. The broker
 is PID 1 of the namespace, and it caps the processes beneath it at 1024 whether
@@ -703,7 +709,7 @@ what a command would run under:
   manifest  sha256:72c169df3655f6857b163163b2618631ec65982557eea70b57ea1cb983ae0890
 
 not checked, since checking would start something:
-  whether Bubblewrap starts and can make its namespaces on this host, and whether each root passes the checks a command's preparation makes
+  whether Bubblewrap starts and can make its namespaces on this host, and whether each root passes the checks a command's preparation makes. A preparation also checks that Bubblewrap lists --size, which a disk ceiling is mounted with, so disk_limit is unsupported here until one does
 ```
 
 What only starting the backend could tell is reported as unverified, with the

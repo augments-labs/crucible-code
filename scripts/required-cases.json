@@ -7575,6 +7575,102 @@
         "macos",
         "windows"
       ]
+    },
+    {
+      "id": "CASE-SANDBOX-DISK-ONE-TOTAL",
+      "family": "files-and-sandbox",
+      "obligation": "A run writing into its root, /tmp and its home together stops at the disk ceiling in total, never at a ceiling per place.",
+      "package": "crucible-sandbox-local",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_sandbox_local"
+      },
+      "case": "linux::resource_tests::writes_across_the_root_tmp_and_home_stop_at_one_total",
+      "source": "crates/crucible-sandbox-local/src/linux/resource_tests.rs",
+      "body_sha256": "430dfc29a13e9d26fa32cb0d1ecfab274f6472aef2e80b8727dbe9e4467ec83e",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-SANDBOX-DISK-MANY-FILES",
+      "family": "files-and-sandbox",
+      "obligation": "Many small files written into every writable place at once never hold more than the disk ceiling.",
+      "package": "crucible-sandbox-local",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_sandbox_local"
+      },
+      "case": "linux::resource_tests::many_small_files_written_everywhere_at_once_stop_at_the_total",
+      "source": "crates/crucible-sandbox-local/src/linux/resource_tests.rs",
+      "body_sha256": "06f0f60bc857eca2bd2746baaf44c5a66b6ca4dcca240c874c3b941048aa3fa5",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-SANDBOX-DISK-DEV-READ-ONLY",
+      "family": "files-and-sandbox",
+      "obligation": "Under a disk ceiling /dev and /dev/shm refuse writes, and /dev/null accepts them and holds nothing.",
+      "package": "crucible-sandbox-local",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_sandbox_local"
+      },
+      "case": "linux::resource_tests::dev_refuses_writes_and_dev_null_holds_nothing",
+      "source": "crates/crucible-sandbox-local/src/linux/resource_tests.rs",
+      "body_sha256": "e4176328d636a8ad725d44da21aff503e5b3ea9eb2047fe3987f4932df35847e",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-SANDBOX-DISK-HOST-WRITES-REFUSED",
+      "family": "files-and-sandbox",
+      "obligation": "A disk ceiling is refused as unsupported for a run with a writable rule or a writable manifest mount, and taken for a run with neither.",
+      "package": "crucible-sandbox-local",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_sandbox_local"
+      },
+      "case": "linux::resource_tests::a_disk_ceiling_is_refused_where_a_run_could_write_to_the_host",
+      "source": "crates/crucible-sandbox-local/src/linux/resource_tests.rs",
+      "body_sha256": "e3bba26fd688b85675808fd2816fa12b7b3489cf4a3e562f3a8cf1bd3acc0444",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-SANDBOX-DISK-OBSERVED-UNSUPPORTED",
+      "family": "files-and-sandbox",
+      "obligation": "Observing claims no disk ceiling and says a preparation checks --size, while a preparation on the same host takes one.",
+      "package": "crucible-sandbox-local",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_sandbox_local"
+      },
+      "case": "linux::resource_tests::observing_claims_no_disk_ceiling_that_a_preparation_on_this_host_takes",
+      "source": "crates/crucible-sandbox-local/src/linux/resource_tests.rs",
+      "body_sha256": "193149cb0a31b9932ea37905bb3c2117289c5f46b7737800beb61ae0255d69ba",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-SANDBOX-DISK-COMMAND-TIME-RESET",
+      "family": "files-and-sandbox",
+      "obligation": "A run making files until its command time runs out is stopped by that time, and the next run starts with none of them.",
+      "package": "crucible-sandbox-local",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_sandbox_local"
+      },
+      "case": "linux::resource_tests::files_made_until_the_command_time_runs_out_are_gone_from_the_next_run",
+      "source": "crates/crucible-sandbox-local/src/linux/resource_tests.rs",
+      "body_sha256": "bc89a7784ba1f2b75b496dbaaae9b3a8c6ee5d3c1764d1017fad7b0552111eaa",
+      "platforms": [
+        "linux"
+      ]
     }
   ]
 }

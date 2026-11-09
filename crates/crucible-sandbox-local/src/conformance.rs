@@ -15,6 +15,12 @@
 //! because saying a claim was tested when nothing could test it is the same
 //! failure this module exists to catch.
 //!
+//! A claim is judged on a request the backend promises to hold. A disk ceiling
+//! is enforced only for a run with no writable host root, since a write to the
+//! host lands where no ceiling the sandbox mounts can count it, so it is
+//! offered with a read-only workspace; the same ceiling over a writable one is
+//! refused by name, which is that backend's answer to a different request.
+//!
 //! The answers are grouped into the families that are worth conforming in
 //! separately. A backend that isolates a filesystem perfectly and cannot bound
 //! a single byte of egress is not partially conformant; it holds one family and
@@ -517,12 +523,13 @@ fn asking(
     }
 
     let root = at.to_path_buf();
-    let rule = SandboxFilesystemRule::new(
-        &root,
-        SandboxFilesystemAccess::ReadWrite,
-        SandboxFilesystemProvenance::Workspace,
-    )
-    .ok()?;
+    let access = if feature == SandboxFeature::DiskLimit {
+        SandboxFilesystemAccess::ReadOnly
+    } else {
+        SandboxFilesystemAccess::ReadWrite
+    };
+    let rule =
+        SandboxFilesystemRule::new(&root, access, SandboxFilesystemProvenance::Workspace).ok()?;
     let policy = SandboxPolicy::new(enabled, [rule], root, network, limits)
         .ok()?
         .with_session_state(persistent, snapshots);
