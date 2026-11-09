@@ -160,12 +160,16 @@ pub fn decode(bytes: &[u8]) -> Result<Pixels, Refused> {
 /// parser only looks for a loop two elements long, and follows a longer one
 /// until its stack is gone, whatever size that stack is.
 ///
+/// The copies `<use>` elements ask for, and the copies within those, are
+/// counted before the parser makes any of them: copies that would take it more
+/// than 16 ms to make are refused, however few bytes ask for them.
+///
 /// # Errors
-/// [`Refused::TooLarge`] for an SVG past [`MOST_INPUT`] or a drawing past
-/// [`MOST_DECODED`], [`Refused::NotAnImage`] for bytes that are not an SVG, a
-/// zero width, a drawing the renderer panics on, a document whose references
-/// lead back to themselves or an ink that cannot be a class,
-/// [`Refused::OverTime`] when the decode slot stays busy.
+/// [`Refused::TooLarge`] for an SVG past [`MOST_INPUT`], copies past what the
+/// parser may make or a drawing past [`MOST_DECODED`], [`Refused::NotAnImage`]
+/// for bytes that are not an SVG, a zero width, a drawing the renderer panics
+/// on, a document whose references lead back to themselves or an ink that
+/// cannot be a class, [`Refused::OverTime`] when the decode slot stays busy.
 pub fn rasterise(svg: &[u8], width_px: u32, inks: &[(&str, [u8; 3])]) -> Result<Pixels, Refused> {
     if svg.len() > MOST_INPUT {
         return Err(Refused::TooLarge);
@@ -213,6 +217,11 @@ fn draw(svg: &[u8], width_px: u32, options: &Options<'_>) -> Result<Pixels, Refu
     let document = parse(svg).ok_or(Refused::NotAnImage)?;
     if leads_back(&document) {
         return Err(Refused::NotAnImage);
+    }
+    // The tree parser makes every copy a `<use>` asks for, and the copies
+    // within it, before anything else could be judged.
+    if copying(&document).is_none_or(|nanos| nanos > MOST_COPYING_NS) {
+        return Err(Refused::TooLarge);
     }
     let tree = Tree::from_xmltree(&document, options).map_err(|error| match error {
         UsvgError::ElementsLimitReached => Refused::TooLarge,
@@ -386,6 +395,218 @@ enum Walk {
     New,
     OnThePath,
     Done,
+}
+
+/// The most time the copies [`copying`] counts may take the tree parser to
+/// make: 16 ms, so that with the rest of the tree a picture is built within
+/// the 20 ms the dearest drawing takes.
+const MOST_COPYING_NS: u64 = 16_000_000;
+
+/// The time the tree parser takes to make a copy of one element, without what
+/// it holds, whether or not the copy is drawn: 200 ns.
+///
+/// A line of 200 groups and two levels used of five levels of ten were copied
+/// in the definitions, where nothing of them is drawn, at up to 180 ns a copy,
+/// the dearest measured.
+const COPY_MADE_NS: u64 = 200;
+
+/// The time the tree parser takes besides, for a copy that is drawn: 650 ns.
+///
+/// Five levels of ten uses of a rectangle off the page, 222 224 copies drawn of
+/// 469 130 made, took 281.6 ms to build, which is 580 ns a drawn copy past
+/// [`COPY_MADE_NS`] and [`COPIED_ATTRIBUTE_BYTE_NS`], the dearest measured.
+const COPY_DRAWN_NS: u64 = 650;
+
+/// The time the tree parser takes for one byte of the attributes of a copy
+/// that is drawn: 20 ns. Path data, among them, is read again for every copy.
+///
+/// Copies of a stroked path of 116 KB took up to 16.3 ns a byte of its
+/// attributes, the dearest measured.
+const COPIED_ATTRIBUTE_BYTE_NS: u64 = 20;
+
+/// The time the tree parser takes for one byte of the text of a copy that is
+/// drawn: 1.5 µs, since a copied text is shaped again.
+///
+/// A thousand letters were copied at up to 1.43 µs a byte, the dearest
+/// measured.
+const COPIED_LETTER_NS: u64 = 1_500;
+
+/// The time the tree parser would take making the copies that the `<use>`
+/// elements of `document` ask for, a copy within a copy counted as often as it
+/// is made, by [`COPY_MADE_NS`], [`COPY_DRAWN_NS`], [`COPIED_ATTRIBUTE_BYTE_NS`]
+/// and [`COPIED_LETTER_NS`]. `None` where a copy would come to hold itself.
+///
+/// A use names its element as the parser reads the name: an `href` with no
+/// namespace before an `xlink:href`, spaces before the `#` and the id up to the
+/// first space, and where an id is given twice, the first. A use in the
+/// definitions, or one that names what nothing draws, is copied all the same,
+/// and so counted. A copy is taken to be drawn unless it is in the definitions
+/// and outside every clip, mask, pattern, marker and filter there, which are
+/// drawn wherever they are named from.
+fn copying(document: &Document<'_>) -> Option<u64> {
+    let elements: Vec<Node<'_, '_>> = document.descendants().filter(Node::is_element).collect();
+    let position: HashMap<roxmltree::NodeId, usize> = elements
+        .iter()
+        .enumerate()
+        .map(|(at, element)| (element.id(), at))
+        .collect();
+    let mut named: HashMap<&str, usize> = HashMap::new();
+    for (at, element) in elements.iter().enumerate() {
+        if let Some(id) = element.attribute("id") {
+            named.entry(id).or_insert(at);
+        }
+    }
+    // Each element held, and the element a use copies, with whether it is
+    // drawn where the element itself is drawn and where it is not.
+    let edges: Vec<Vec<(usize, [bool; 2])>> = elements
+        .iter()
+        .map(|element| {
+            let held = [false, true].map(|drawn| holds_drawn(element, drawn));
+            let children = element
+                .children()
+                .filter(Node::is_element)
+                .filter_map(|child| position.get(&child.id()).copied())
+                .map(|child| (child, held));
+            let copied = (element.tag_name().name() == "use")
+                .then(|| used(element).and_then(|id| named.get(id).copied()))
+                .flatten()
+                .map(|target| (target, [false, true]));
+            children.chain(copied).collect()
+        })
+        .collect();
+    // Each element once, where the document puts it. Every element comes
+    // after its parent.
+    let mut drawn_once = vec![true; elements.len()];
+    for (at, element) in elements.iter().enumerate() {
+        let parent = element
+            .parent_element()
+            .and_then(|parent| position.get(&parent.id()).copied());
+        if let Some(parent) = parent {
+            let drawn = drawn_once.get(parent).copied().unwrap_or(true);
+            let held = elements
+                .get(parent)
+                .is_none_or(|parent| holds_drawn(parent, drawn));
+            if let Some(entry) = drawn_once.get_mut(at) {
+                *entry = held;
+            }
+        }
+    }
+    let once = elements
+        .iter()
+        .zip(&drawn_once)
+        .map(|(element, drawn)| made_alone(element, *drawn))
+        .fold(0, u64::saturating_add);
+
+    // What building each element takes, drawn or not, with all it holds and
+    // copies. Depth first, without recursing, each element and way once: a
+    // copy of a copy is counted by adding what its element was found to take.
+    // State `2 * at + drawn` is element `at`, drawn or not.
+    let states = elements.len().saturating_mul(2);
+    let mut built: Vec<Option<u64>> = vec![None; states];
+    let mut on_the_path = vec![false; states];
+    let next = |state: usize, taken: usize| {
+        let drawn = state % 2;
+        edges
+            .get(state / 2)
+            .and_then(|edges| edges.get(taken))
+            .map(|(to, held)| 2 * to + usize::from(held.get(drawn).copied().unwrap_or(true)))
+    };
+    let first = 1;
+    let mut path = vec![(first, 0_usize)];
+    if let Some(entry) = on_the_path.get_mut(first) {
+        *entry = true;
+    }
+    while let Some((state, taken)) = path.last().copied() {
+        let Some(to) = next(state, taken) else {
+            let held = (0..)
+                .map_while(|taken| next(state, taken))
+                .map(|to| built.get(to).copied().flatten().unwrap_or(0))
+                .fold(0, u64::saturating_add);
+            let alone = elements
+                .get(state / 2)
+                .map_or(0, |element| made_alone(element, state % 2 == 1));
+            if let Some(entry) = built.get_mut(state) {
+                *entry = Some(alone.saturating_add(held));
+            }
+            if let Some(entry) = on_the_path.get_mut(state) {
+                *entry = false;
+            }
+            path.pop();
+            continue;
+        };
+        if let Some((_, taken)) = path.last_mut() {
+            *taken += 1;
+        }
+        if on_the_path.get(to).copied().unwrap_or(false) {
+            return None;
+        }
+        if built.get(to).copied().flatten().is_none() {
+            if let Some(entry) = on_the_path.get_mut(to) {
+                *entry = true;
+            }
+            path.push((to, 0));
+        }
+    }
+    // The document itself is built once; all past it is copies.
+    Some(
+        built
+            .get(first)
+            .copied()
+            .flatten()
+            .unwrap_or(0)
+            .saturating_sub(once),
+    )
+}
+
+/// Whether what `element` holds is drawn, where `element` is drawn or not: not
+/// in the definitions, and again in a clip, mask, pattern, marker or filter.
+fn holds_drawn(element: &Node<'_, '_>, drawn: bool) -> bool {
+    match element.tag_name().name() {
+        "defs" => false,
+        "clipPath" | "mask" | "pattern" | "marker" | "filter" => true,
+        _ => drawn,
+    }
+}
+
+/// What making `element` takes, without what it holds: the copy, and where it
+/// is drawn its attributes and the text it holds where text is shaped.
+fn made_alone(element: &Node<'_, '_>, drawn: bool) -> u64 {
+    if !drawn {
+        return COPY_MADE_NS;
+    }
+    let attributes: usize = element
+        .attributes()
+        .map(|attribute| attribute.name().len() + attribute.value().len())
+        .sum();
+    let letters: usize = if matches!(element.tag_name().name(), "text" | "tspan" | "textPath") {
+        element
+            .children()
+            .filter_map(|child| child.text().filter(|_| child.is_text()))
+            .map(str::len)
+            .sum()
+    } else {
+        0
+    };
+    let bytes = |count: usize| u64::try_from(count).unwrap_or(u64::MAX);
+    COPY_MADE_NS
+        .saturating_add(COPY_DRAWN_NS)
+        .saturating_add(bytes(attributes).saturating_mul(COPIED_ATTRIBUTE_BYTE_NS))
+        .saturating_add(bytes(letters).saturating_mul(COPIED_LETTER_NS))
+}
+
+/// The id a `<use>` names, as the tree parser reads it.
+fn used<'a>(element: &Node<'a, '_>) -> Option<&'a str> {
+    const XLINK: &str = "http://www.w3.org/1999/xlink";
+    let href = |namespace: Option<&str>| {
+        element
+            .attributes()
+            .find(|attribute| attribute.name() == "href" && attribute.namespace() == namespace)
+    };
+    let value = href(None).or_else(|| href(Some(XLINK)))?.value();
+    let id = value
+        .trim_start_matches([' ', '\t', '\n', '\r'])
+        .strip_prefix('#')?;
+    id.split(' ').next().filter(|id| !id.is_empty())
 }
 
 /// The ids that `url(#id)` names in `value`, in a style attribute, a presentation

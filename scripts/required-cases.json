@@ -7155,7 +7155,7 @@
       },
       "case": "tests::a_merge_is_counted_by_the_inputs_it_draws",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "69902782357b592f3118d711bc3ae19ed67086d47c49b0ea23231a47ba0049d3",
+      "body_sha256": "677355607b3f0d500381087c30804acc5242c7f112e614b85df3418dbc1d7d85",
       "platforms": [
         "linux",
         "macos",
@@ -7173,7 +7173,7 @@
       },
       "case": "tests::a_shape_is_counted_by_the_pixels_it_covers_inside_the_canvas",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "8f8575ec12d5048a9dc00eddc903143e9465a477ac1f44d2c9231175f1b08e92",
+      "body_sha256": "34b2c922dcb34c33ced542cb5ba867316579248abc230b0b46e5327328be907b",
       "platforms": [
         "linux",
         "macos",
@@ -7209,7 +7209,7 @@
       },
       "case": "a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small",
       "source": "crates/crucible-raster/tests/hostile.rs",
-      "body_sha256": "5e60180e0a7c836b5172a4be5e9e75e417b20c7fe333725dec0df9fe6ad23495",
+      "body_sha256": "a6ead910b24da80cf4ba0194feff793f58d2814cc35e5ee9ec23decc072504af",
       "platforms": [
         "linux",
         "macos",
@@ -7263,7 +7263,151 @@
       },
       "case": "tests::a_dash_count_no_number_can_hold_is_refused",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "cccb22bdf89c9b9645f25887fc73ffd6395b0d715607e219fe93f7b205f0c28b",
+      "body_sha256": "cb95f38e3921bfa88f0792125f52c2d3314d9126079523c6e445f4d58968e337",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-CLIP-WORK",
+      "family": "transcript-pictures",
+      "obligation": "A path in a clip is counted by the pixels it fills on the clip's pixmap, drawn at the ceiling and refused one rectangle past it.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_path_in_a_clip_is_counted_by_the_pixels_it_fills",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "e33e37043f2b43dc1c04c5c5baff9d388c024b16c17d3fe75fcd3dd32ced955e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SHAPE-WORK-FLOOR",
+      "family": "transcript-pictures",
+      "obligation": "Every shape costs its overhead however little it covers, so shapes off the canvas are counted and a few nested uses of them are refused.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::every_shape_costs_its_overhead_whatever_it_covers",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "efc6ed7e9b414f2af0ec3a86fccdf8518d2d2513fa05145300e7924cd54e40f8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SHAPE-WORK-ROWS",
+      "family": "transcript-pictures",
+      "obligation": "A path is counted by the rows each segment crosses: edges along one row are drawn and as many crossing the page are refused.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_path_is_counted_by_the_rows_each_segment_crosses",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "bd56c5823d847f164ce76853292abd4ee0563de56e9c7427f39bb61849c9f785",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SHAPE-WORK-CROWDED-ROW",
+      "family": "transcript-pictures",
+      "obligation": "Edges crowded along a row are counted by the pixels each can walk: tens of thousands across a wide row are refused, and a thousand are drawn.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::edges_crowded_along_a_row_are_counted_by_the_pixels_each_can_walk",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "507c391de0ce946b4b88571384b812e53d246524deace9d4b9bf800fe1435d4e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SHAPE-WORK-DASH-SEGMENTS",
+      "family": "transcript-pictures",
+      "obligation": "A dashed stroke of many contours shorter than a pixel is counted by its segments across the rows of the stroke, not only by its few dashes, and refused as the solid stroke is.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_dashed_stroke_is_counted_by_its_segments_too",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "21df042a97bd96dc3e6591dae5f44c34008c7994c4578834ee8da7185bebafd0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SHAPE-WORK-GRADIENT-STOPS",
+      "family": "transcript-pictures",
+      "obligation": "A gradient is counted by its stops over the pixels it paints: a thousand stops over a large page are refused, and two are drawn.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_gradient_is_counted_by_its_stops_over_the_pixels_it_paints",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "e08edb9c7d6a5b8b353040c384bf7d25e0cce45b0ed5b20ffcaff54922d9b627",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-USE-COPIES",
+      "family": "transcript-pictures",
+      "obligation": "The copies nested uses would make are counted and refused before any is made, a use in the definitions among them, and a few levels are drawn.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::the_copies_uses_would_make_are_counted_before_any_is_made",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "3daec729d697bba1728a57ebdb28542516b71ab79f1cb23489d707c075092973",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-USE-COPIED-CONTENT",
+      "family": "transcript-pictures",
+      "obligation": "A copy is counted by the text and attribute bytes it copies: many copies of a long text or path are refused before any is made, and one is drawn.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_copy_is_counted_by_the_text_and_the_attributes_it_copies",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "2deced1289d8182b765be0e84aa21e6a19dd0b8db48c7ab4c452521d8206ea3b",
       "platforms": [
         "linux",
         "macos",

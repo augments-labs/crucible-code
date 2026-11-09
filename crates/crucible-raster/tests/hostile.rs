@@ -122,8 +122,11 @@ use Expect::{Drawn, Refused as No};
 /// of pixels, past `MOST_DECODED`. So are `many-results.svg` and the three
 /// `filter-work-*.svg` files, by the other half of that ceiling: each asks for
 /// a filter region so large that the pixmaps it would hold are past it before
-/// any step of work is priced. Only the five `work-*.svg` files are refused by
-/// the work the renderer would do and by nothing else, and the test after the
+/// any step of work is priced. Only the fifteen `work-*.svg` files and
+/// `worst.svg` are refused by the work drawing them would take and by nothing
+/// else: the two `work-copied-*.svg` and two `work-nested-uses*.svg` files by
+/// the copies the parser would make of what their uses name, and the rest by
+/// the work budget, the steps the renderer would take. The test after the
 /// corpus check draws each of them with that work made small.
 const ENTRIES: &[(&str, Expect)] = &[
     ("image/anim.gif", Drawn),
@@ -150,12 +153,22 @@ const ENTRIES: &[(&str, Expect)] = &[
     ("svg/many-results.svg", No(Refused::TooLarge)),
     ("svg/nested.svg", Drawn),
     ("svg/small.svg", Drawn),
+    ("svg/work-clip-shapes.svg", No(Refused::TooLarge)),
+    ("svg/work-copied-path.svg", No(Refused::TooLarge)),
+    ("svg/work-copied-text.svg", No(Refused::TooLarge)),
+    ("svg/work-crowded-row.svg", No(Refused::TooLarge)),
     ("svg/work-dashes.svg", No(Refused::TooLarge)),
+    ("svg/work-gradient-stops.svg", No(Refused::TooLarge)),
     ("svg/work-merge-inputs.svg", No(Refused::TooLarge)),
+    ("svg/work-nested-uses-deeper.svg", No(Refused::TooLarge)),
+    ("svg/work-nested-uses.svg", No(Refused::TooLarge)),
+    ("svg/work-paths-tiny.svg", No(Refused::TooLarge)),
+    ("svg/work-segment-rows.svg", No(Refused::TooLarge)),
     ("svg/work-shapes-filled.svg", No(Refused::TooLarge)),
     ("svg/work-shapes-stroked.svg", No(Refused::TooLarge)),
+    ("svg/work-shapes-tiny.svg", No(Refused::TooLarge)),
     ("svg/work-turbulence-octaves.svg", No(Refused::TooLarge)),
-    ("svg/worst.svg", Drawn),
+    ("svg/worst.svg", No(Refused::TooLarge)),
 ];
 
 fn corpus_files() -> Vec<String> {
@@ -275,14 +288,71 @@ fn a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small() {
         assert_eq!(one.matches(unit).count(), 1, "the copies are in a row");
         one
     };
-    // Each is refused for what the renderer does with every pixel, and the
-    // same file with that made small is drawn: the pixmaps it holds were never
-    // the reason.
+    // Each is refused for the copies the parser would make or for what the
+    // renderer does with every pixel, and the same file with that made small
+    // is drawn: the pixmaps it holds were never the reason.
     let merge = read("svg/work-merge-inputs.svg");
     let turbulence = read("svg/work-turbulence-octaves.svg");
     let filled = read("svg/work-shapes-filled.svg");
     let stroked = read("svg/work-shapes-stroked.svg");
     let dashes = read("svg/work-dashes.svg");
+    let clip = read("svg/work-clip-shapes.svg");
+    let uses = read("svg/work-nested-uses.svg");
+    let deeper = read("svg/work-nested-uses-deeper.svg");
+    let copied_path = read("svg/work-copied-path.svg");
+    let copied_text = read("svg/work-copied-text.svg");
+    let tiny = read("svg/work-shapes-tiny.svg");
+    let paths = read("svg/work-paths-tiny.svg");
+    let rows = read("svg/work-segment-rows.svg");
+    let stops = read("svg/work-gradient-stops.svg");
+    let crowded = read("svg/work-crowded-row.svg");
+    let worst = read("svg/worst.svg");
+    // The path with its first hundred edges and no more.
+    let fewer = |original: &str| {
+        let (head, data) = original.split_once(r#"<path d=""#).expect("a path");
+        let (data, tail) = data.split_once('"').expect("the end of its data");
+        let kept: Vec<&str> = data.split('L').take(100).collect();
+        assert!(
+            kept.len() < data.split('L').count(),
+            "more than a hundred edges"
+        );
+        format!(r#"{head}<path d="{}"{tail}"#, kept.join("L"))
+    };
+    // The gradient with its first stop and its last and none between.
+    let ends = |original: &str| {
+        let (head, rest) = original.split_once("<stop").expect("a stop");
+        let (stops, tail) = rest
+            .split_once("</linearGradient>")
+            .expect("the gradient's end");
+        let all: Vec<&str> = stops.split_inclusive("/>").collect();
+        assert!(all.len() > 2, "many stops");
+        let (first, last) = (all.first().expect("a stop"), all.last().expect("a stop"));
+        format!(
+            "{head}<stop{first}<stop{}</linearGradient>{tail}",
+            last.trim_start_matches("<stop")
+        )
+    };
+    // The uses with their first two levels and no more.
+    let two_levels = |original: &str| {
+        let (head, rest) = original
+            .split_once(r#"<g id="l3">"#)
+            .expect("a third level");
+        let (_, tail) = rest.split_once("</defs>").expect("the definitions' end");
+        let (_, tail) = tail.split_once("/>").expect("the use drawn");
+        format!(r##"{head}</defs><use xlink:href="#l2"/>{tail}"##)
+    };
+    // The picture with its lines and none of its text.
+    let lines = |original: &str| {
+        let mut kept = String::new();
+        let mut rest = original;
+        while let Some((before, after)) = rest.split_once("<text") {
+            kept.push_str(before);
+            rest = after.split_once("</text>").expect("the text's end").1;
+        }
+        kept.push_str(rest);
+        assert!(kept.len() < original.len(), "text to take out");
+        kept
+    };
     let small = [
         once(&merge, r#"<feMergeNode in="SourceGraphic"/>"#),
         turbulence.replace(r#"numOctaves="10""#, r#"numOctaves="1""#),
@@ -295,6 +365,17 @@ fn a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small() {
             r#"stroke-dasharray="0.01 0.01""#,
             r#"stroke-dasharray="512""#,
         ),
+        once(&clip, r#"<rect width="360" height="360"/>"#),
+        two_levels(&uses),
+        once(&tiny, r#"<rect width="1" height="1"/>"#),
+        once(&paths, r#"<path d="M0 0L1 1" stroke="black"/>"#),
+        fewer(&rows),
+        ends(&stops),
+        fewer(&crowded),
+        lines(&worst),
+        two_levels(&deeper),
+        once(&copied_path, r##"<use xlink:href="#copied" x="-200"/>"##),
+        once(&copied_text, r##"<use xlink:href="#copied" x="-200"/>"##),
     ];
     for (name, original, small) in [
         ("svg/work-merge-inputs.svg", &merge, &small[0]),
@@ -302,6 +383,17 @@ fn a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small() {
         ("svg/work-shapes-filled.svg", &filled, &small[2]),
         ("svg/work-shapes-stroked.svg", &stroked, &small[3]),
         ("svg/work-dashes.svg", &dashes, &small[4]),
+        ("svg/work-clip-shapes.svg", &clip, &small[5]),
+        ("svg/work-nested-uses.svg", &uses, &small[6]),
+        ("svg/work-shapes-tiny.svg", &tiny, &small[7]),
+        ("svg/work-paths-tiny.svg", &paths, &small[8]),
+        ("svg/work-segment-rows.svg", &rows, &small[9]),
+        ("svg/work-gradient-stops.svg", &stops, &small[10]),
+        ("svg/work-crowded-row.svg", &crowded, &small[11]),
+        ("svg/worst.svg", &worst, &small[12]),
+        ("svg/work-nested-uses-deeper.svg", &deeper, &small[13]),
+        ("svg/work-copied-path.svg", &copied_path, &small[14]),
+        ("svg/work-copied-text.svg", &copied_text, &small[15]),
     ] {
         assert_ne!(original, small, "{name}");
         assert_eq!(

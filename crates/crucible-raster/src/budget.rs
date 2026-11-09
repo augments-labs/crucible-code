@@ -14,15 +14,25 @@
 //! renderer frees early, the pixmap is counted as held. It is refused past
 //! [`MOST_DECODED`]. The second is the work: for each filter primitive the
 //! pixels of its region times what it does with each pixel, and for each shape
-//! the pixels it reaches on the pixmap it is drawn on, its fill and its stroke
-//! each on their own, all summed over the tree, and a dashed stroke by the
-//! dashes it is cut into instead of by the pixels it reaches. It is refused
-//! past [`MOST_WORK`].
+//! the largest of five prices, all summed over the tree. They are what any
+//! shape costs however little it covers; the pixels it reaches on the pixmap it
+//! is drawn on, its fill and its stroke each on their own, and a dashed stroke
+//! by the dashes it is cut into instead of by the pixels it reaches; every
+//! segment of its outline by the rows of that pixmap it crosses; every edge of
+//! a fill by the pixels along each of those rows it can walk past; and every
+//! stop of a gradient at every pixel the gradient paints. A shape in a clip is
+//! priced as the fill it is drawn as, on the clip's own pixmap. The work is
+//! refused past [`MOST_WORK`].
 
 use crate::{MOST_DECODED, Refused};
 use resvg::tiny_skia::{IntRect, PathSegment, Point, Rect, StrokeDash, Transform};
 use resvg::usvg::filter::{Filter, Kind};
 use resvg::usvg::{ClipPath, Group, Image, ImageKind, Mask, Node, Paint, Path, Stroke, Tree};
+
+/// The time a step stands for, in nanoseconds: 140.
+///
+/// [`MOST_WORK`] steps were about 20 ms for the slowest primitive measured.
+const STEP_NS: u64 = 140;
 
 /// The most work a drawing may ask for: 140 000 pixel-steps.
 ///
@@ -38,13 +48,62 @@ const MOST_WORK: u64 = 140_000;
 
 /// How many pixels of a shape count as one step: 16.
 ///
-/// A step is about 140 ns, the time the slowest primitive took per step at the
+/// A step is [`STEP_NS`], the time the slowest primitive took per step at the
 /// ceiling. A shape is painted at between a fifth of a nanosecond a pixel, for
-/// a plain colour, and seven, for a radial gradient, the slowest paint
-/// measured, which is 20 pixels to a step. Sixteen counts the shapes a little
-/// above what they cost, so a plain page-sized background does not use up a
-/// drawing's work.
+/// a plain colour, and seven, for a radial gradient of two stops, which is 20
+/// pixels to a step. Sixteen counts the shapes a little above what they cost,
+/// so a plain page-sized background does not use up a drawing's work. A
+/// gradient of many stops is slower than any of these, and is counted by its
+/// stops besides: [`PIXEL_STOPS_PER_STEP`].
 const PIXELS_PER_STEP: u64 = 16;
+
+/// The steps any shape costs however few pixels it reaches: 20.
+///
+/// The renderer builds and draws a shape that reaches no pixel, or only one:
+/// a mebibyte of rectangles a pixel square, or of paths a unit long, took 2.4
+/// microseconds a shape at the most, from the file read to the picture drawn,
+/// which is 17 steps. Twenty is 2.8 microseconds.
+const STEPS_PER_SHAPE: u64 = 20;
+
+/// The time each segment of a filled outline costs, in nanoseconds: 300.
+///
+/// A line along one row took 137 ns and a cubic curve 285 ns, the dearest
+/// measured; a move and the line that closes a contour are segments too.
+const SEGMENT_NS: u64 = 300;
+
+/// The time each segment of a stroked outline costs, in nanoseconds: 750.
+///
+/// The renderer outlines a stroke before it fills it: a line along one row,
+/// stroked two pixels wide or more, took 739 ns.
+const STROKED_SEGMENT_NS: u64 = 750;
+
+/// The time each row of the pixmap a segment crosses costs, in nanoseconds:
+/// 100.
+///
+/// The renderer walks every edge down every row it spans. A thousand edges
+/// each crossing 5 000 rows took 97 ns an edge and a row, the dearest
+/// measured; ten thousand crossing 100 rows, 31.
+const ROW_NS: u64 = 100;
+
+/// How many edge-rows of a fill, each times the pixels along its row it can
+/// walk past, count as one step: 128.
+///
+/// The renderer adds every span of a row to a run-length row of coverage,
+/// walking the runs from where the last span that covered a whole pixel ended,
+/// and starts that walk over at each of the four rows it samples a pixel row
+/// by. So when the edges of a fill are closer together than a pixel, every
+/// span walks the row again, as far as it is wide or as the runs four times
+/// the edges make. Thousands of edges across one row 500 to 9 300 pixels wide
+/// took up to 0.65 ns an edge-row and a pixel so counted, the dearest
+/// measured, which is 215 to a step.
+const RUNS_PER_STEP: u64 = 128;
+
+/// How many pixels and stops of a gradient count as one step: 512.
+///
+/// The renderer works out every stop at every pixel a gradient paints: a
+/// linear gradient of 100 stops over 250 000 pixels took 0.27 ns a pixel and
+/// a stop, the dearest measured, which is 527 to a step.
+const PIXEL_STOPS_PER_STEP: u64 = 512;
 
 /// The steps a dash costs however thin it is: 8.
 ///
@@ -274,7 +333,7 @@ impl Walk {
             self.filter(filter, inside, &inner, held)?;
         }
         if let Some(clip) = group.clip_path() {
-            self.clip(clip, layer_bytes, held)?;
+            self.clip(clip, inside, size, held)?;
         }
         if let Some(mask) = group.mask() {
             self.mask(mask, inside, &inner, layer_bytes, held)?;
@@ -327,32 +386,64 @@ impl Walk {
         Ok(())
     }
 
-    /// A clip is a pixmap of the layer's size, and a mask made from it. A
-    /// clipped child of a clip is drawn on one of its own, and clipped in turn.
-    fn clip(&mut self, clip: &ClipPath, layer: u64, held: u64) -> Result<(), Refused> {
+    /// A clip is a pixmap of the layer's size, and a mask made from it. Its
+    /// content is drawn on it under the clip's own transform, and a clip of
+    /// the clip under the transform the clip was given. A clipped child of a
+    /// clip is drawn on one of its own, and clipped in turn.
+    fn clip(
+        &mut self,
+        clip: &ClipPath,
+        transform: Transform,
+        pixmap: (u32, u32),
+        held: u64,
+    ) -> Result<(), Refused> {
+        let layer = bytes(pixmap.0, pixmap.1);
         let held = held.saturating_add(layer);
         self.hold(held.saturating_add(layer / 4))?;
-        self.clipped(clip.root(), layer, held)?;
+        self.clipped(
+            clip.root(),
+            transform.pre_concat(clip.transform()),
+            pixmap,
+            held,
+        )?;
         if let Some(inner) = clip.clip_path() {
-            self.clip(inner, layer, held)?;
+            self.clip(inner, transform, pixmap, held)?;
         }
         Ok(())
     }
 
-    fn clipped(&mut self, parent: &Group, layer: u64, held: u64) -> Result<(), Refused> {
+    /// The content of a clip: every path is filled, whatever paint the file
+    /// gave it, and an image is not drawn.
+    fn clipped(
+        &mut self,
+        parent: &Group,
+        transform: Transform,
+        pixmap: (u32, u32),
+        held: u64,
+    ) -> Result<(), Refused> {
         for node in parent.children() {
             match node {
-                Node::Group(group) => match group.clip_path() {
-                    Some(clip) => {
-                        let held = held.saturating_add(layer);
-                        self.hold(held)?;
-                        self.clipped(group, layer, held)?;
-                        self.clip(clip, layer, held)?;
+                Node::Group(group) => {
+                    let transform = transform.pre_concat(group.transform());
+                    match group.clip_path() {
+                        Some(clip) => {
+                            let held = held.saturating_add(bytes(pixmap.0, pixmap.1));
+                            self.hold(held)?;
+                            self.clipped(group, transform, pixmap, held)?;
+                            self.clip(clip, transform, pixmap, held)?;
+                        }
+                        None => self.clipped(group, transform, pixmap, held)?,
                     }
-                    None => self.clipped(group, layer, held)?,
-                },
-                Node::Text(text) => self.clipped(text.flattened(), layer, held)?,
-                Node::Path(_) | Node::Image(_) => {}
+                }
+                Node::Text(text) => {
+                    self.clipped(text.flattened(), transform, pixmap, held)?;
+                }
+                Node::Path(path) => {
+                    if path.is_visible() {
+                        self.work(clipping(path, transform, pixmap))?;
+                    }
+                }
+                Node::Image(_) => {}
             }
         }
         Ok(())
@@ -400,18 +491,7 @@ impl Walk {
         if !path.is_visible() {
             return Ok(());
         }
-        // Painting is a pass over every pixel it reaches, the fill and the
-        // stroke each on their own.
-        let canvas = IntRect::from_xywh(0, 0, context.pixmap.0, context.pixmap.1);
-        if path.fill().is_some() {
-            self.work(covered(path.bounding_box(), transform, canvas))?;
-        }
-        if let Some(stroke) = path.stroke() {
-            match dashing(stroke) {
-                Some(dash) => self.work(dashes(path, stroke, dash, transform, canvas)?)?,
-                None => self.work(covered(path.stroke_bounding_box(), transform, canvas))?,
-            }
-        }
+        self.work(shape(path, transform, context.pixmap)?)?;
         let paints = path
             .fill()
             .map(resvg::usvg::Fill::paint)
@@ -465,22 +545,243 @@ impl Walk {
     }
 }
 
-/// The steps a shape with this bounding box costs on a pixmap: one for each
-/// [`PIXELS_PER_STEP`] pixels it reaches as the renderer clips it, and at
-/// least one where it is on the pixmap at all.
-fn covered(bounds: Rect, transform: Transform, pixmap: Option<IntRect>) -> u64 {
-    let Some(pixmap) = pixmap else {
-        return 0;
+/// The steps drawing `path` costs on a pixmap `pixmap` wide and tall: the
+/// largest of what any shape costs, the pixels it reaches, its segments by the
+/// rows they cross, the pixels its fill's edges walk along those rows, and the
+/// stops of its gradients at the pixels they paint.
+///
+/// Painting is a pass over every pixel it reaches, the fill and the stroke
+/// each on their own, and a dashed stroke is counted by its dashes instead.
+/// The renderer builds the edges of the fill, and of the outline of the
+/// stroke, from every segment of the path, and walks each down every row it
+/// spans; a stroke spans half its width more each side. The edges of a fill
+/// also walk along each row they cross, as [`RUNS_PER_STEP`] says. A fill that
+/// reaches no pixel builds no edge, and a stroke that reaches none is still
+/// outlined.
+///
+/// # Errors
+/// [`Refused::TooLarge`] when the stroke is dashed and the length of the path
+/// is not a number.
+fn shape(path: &Path, transform: Transform, pixmap: (u32, u32)) -> Result<u64, Refused> {
+    let canvas = IntRect::from_xywh(0, 0, pixmap.0, pixmap.1);
+    let mut pixels = 0_u64;
+    let mut nanos = 0_u64;
+    let mut stops = 0_u64;
+    let mut runs = 0_u64;
+    if let Some(fill) = path.fill() {
+        let area = reaches(path.bounding_box(), transform, canvas);
+        let reach = area.map_or(0, pixels_of);
+        pixels = pixels.saturating_add(reach.div_ceil(PIXELS_PER_STEP));
+        stops = stops.saturating_add(reach.saturating_mul(gradient_stops(fill.paint())));
+        if let Some(area) = area.filter(|_| reach > 0 && filled(path)) {
+            let walked = FILL.of(path.data(), transform, pixmap.1);
+            nanos = nanos.saturating_add(walked.nanos);
+            runs = walked.runs(area.width());
+        }
+    }
+    if let Some(stroke) = path.stroke() {
+        let reach = reached(path.stroke_bounding_box(), transform, canvas);
+        pixels = pixels.saturating_add(match dashing(stroke) {
+            Some(dash) => dashes(path, stroke, dash, transform, canvas)?,
+            None => reach.div_ceil(PIXELS_PER_STEP),
+        });
+        stops = stops.saturating_add(reach.saturating_mul(gradient_stops(stroke.paint())));
+        let (sx, sy) = transform.get_scale();
+        let half = f64::from(stroke.width().get()) * f64::from(sx.max(sy)) / 2.0;
+        let outline = Edges {
+            each: STROKED_SEGMENT_NS,
+            half,
+            closes: false,
+        };
+        // Off the pixmap, the outline is made and no row is walked.
+        let rows = if reach > 0 { pixmap.1 } else { 0 };
+        nanos = nanos.saturating_add(outline.of(path.data(), transform, rows).nanos);
+    }
+    Ok(largest(pixels, nanos, stops, runs))
+}
+
+/// The edges of a fill: built from every segment, a contour left open closed
+/// by one more line.
+const FILL: Edges = Edges {
+    each: SEGMENT_NS,
+    half: 0.0,
+    closes: true,
+};
+
+/// The steps a path in a clip costs on the clip's pixmap: the renderer fills
+/// it black, strokes nothing, and skips a fill no wider or taller than a line,
+/// but the shape was still built.
+fn clipping(path: &Path, transform: Transform, pixmap: (u32, u32)) -> u64 {
+    let canvas = IntRect::from_xywh(0, 0, pixmap.0, pixmap.1);
+    let area = reaches(path.bounding_box(), transform, canvas);
+    let reach = area.map_or(0, pixels_of);
+    let Some(area) = area.filter(|_| path.fill().is_some() && filled(path) && reach > 0) else {
+        return STEPS_PER_SHAPE;
     };
+    let walked = FILL.of(path.data(), transform, pixmap.1);
+    largest(
+        reach.div_ceil(PIXELS_PER_STEP),
+        walked.nanos,
+        0,
+        walked.runs(area.width()),
+    )
+}
+
+/// Whether the renderer fills `path`: it skips one whose outline is no wider
+/// or no taller than a line.
+fn filled(path: &Path) -> bool {
+    let bounds = path.data().bounds();
+    bounds.width() > 0.0 && bounds.height() > 0.0
+}
+
+/// The steps of a shape: the largest of [`STEPS_PER_SHAPE`], its `pixels`
+/// in steps, the `nanos` its segments take, its pixels and `stops`, and the
+/// `runs` its edges walk.
+fn largest(pixels: u64, nanos: u64, stops: u64, runs: u64) -> u64 {
+    STEPS_PER_SHAPE
+        .max(pixels)
+        .max(nanos.div_ceil(STEP_NS))
+        .max(stops.div_ceil(PIXEL_STOPS_PER_STEP))
+        .max(runs.div_ceil(RUNS_PER_STEP))
+}
+
+/// The pixels a shape with this bounding box reaches on a pixmap, as the
+/// renderer clips it: none where it is off the pixmap.
+fn reached(bounds: Rect, transform: Transform, pixmap: Option<IntRect>) -> u64 {
+    reaches(bounds, transform, pixmap).map_or(0, pixels_of)
+}
+
+/// The part of a pixmap a shape with this bounding box reaches, as the
+/// renderer clips it: none where it is off the pixmap.
+fn reaches(bounds: Rect, transform: Transform, pixmap: Option<IntRect>) -> Option<IntRect> {
     bounds
         .transform(transform)
         .and_then(|rect| rect.round_out())
-        .and_then(|rect| within(rect, pixmap))
-        .map_or(0, |rect| {
-            u64::from(rect.width())
-                .saturating_mul(u64::from(rect.height()))
-                .div_ceil(PIXELS_PER_STEP)
-        })
+        .and_then(|rect| within(rect, pixmap?))
+}
+
+/// The pixels of `rect`.
+fn pixels_of(rect: IntRect) -> u64 {
+    u64::from(rect.width()).saturating_mul(u64::from(rect.height()))
+}
+
+/// What the edges of a path cost the renderer to build and walk.
+struct Edges {
+    /// The time each segment takes, in nanoseconds.
+    each: u64,
+    /// How far beyond the path the edges reach on each side, in pixels.
+    half: f64,
+    /// Whether a contour left open is closed by one more line.
+    closes: bool,
+}
+
+/// What the edges of a path were found to cost.
+struct Walked {
+    /// The time building and walking them takes, in nanoseconds.
+    nanos: u64,
+    /// The edges, a curve counted as many times as it can cross one row: a
+    /// quadratic twice, a cubic three times.
+    edges: u64,
+    /// Every row each edge crosses, summed.
+    edge_rows: u64,
+}
+
+impl Walked {
+    /// What the edges walk along their rows, on a span `width` pixels wide:
+    /// for every edge-row, the runs it can pass, no more than the width and no
+    /// more than four times the edges make. See [`RUNS_PER_STEP`].
+    fn runs(&self, width: u32) -> u64 {
+        let passed = u64::from(width).min(self.edges.saturating_mul(4));
+        self.edge_rows.saturating_mul(passed)
+    }
+}
+
+impl Edges {
+    /// The time building the edges of `data` and walking them down a pixmap
+    /// `height` rows tall takes: [`Edges::each`] for every segment, a move
+    /// and a closing line among them, and [`ROW_NS`] for every row it
+    /// crosses, as far as the pixmap reaches and at least one.
+    fn of(&self, data: &resvg::tiny_skia::Path, transform: Transform, height: u32) -> Walked {
+        let bottom = f64::from(height);
+        let rows = |points: &[Point]| {
+            let (mut top, mut low) = (f64::INFINITY, f64::NEG_INFINITY);
+            for point in points {
+                let mut point = *point;
+                transform.map_point(&mut point);
+                top = top.min(f64::from(point.y));
+                low = low.max(f64::from(point.y));
+            }
+            let top = (top - self.half).max(0.0).floor();
+            let low = (low + self.half).min(bottom).ceil();
+            whole(low - top).max(1)
+        };
+        let mut total = Walked {
+            nanos: 0,
+            edges: 0,
+            edge_rows: 0,
+        };
+        // A move is worked as a segment and makes no edge.
+        let mut add = |points: &[Point]| {
+            let crossed = rows(points);
+            let walked = crossed.saturating_mul(ROW_NS);
+            total.nanos = total.nanos.saturating_add(self.each.saturating_add(walked));
+            let pieces = match points.len() {
+                0 | 1 => 0,
+                2 => 1,
+                3 => 2,
+                _ => 3,
+            };
+            total.edges = total.edges.saturating_add(pieces);
+            total.edge_rows = total
+                .edge_rows
+                .saturating_add(crossed.saturating_mul(pieces));
+        };
+        let mut start = Point::zero();
+        let mut at = Point::zero();
+        let mut open = false;
+        for segment in data.segments() {
+            match segment {
+                PathSegment::MoveTo(to) => {
+                    if open && self.closes {
+                        add(&[at, start]);
+                    }
+                    add(&[to]);
+                    (start, at, open) = (to, to, true);
+                }
+                PathSegment::LineTo(to) => {
+                    add(&[at, to]);
+                    at = to;
+                }
+                PathSegment::QuadTo(control, to) => {
+                    add(&[at, control, to]);
+                    at = to;
+                }
+                PathSegment::CubicTo(first, second, to) => {
+                    add(&[at, first, second, to]);
+                    at = to;
+                }
+                PathSegment::Close => {
+                    add(&[at, start]);
+                    (at, open) = (start, false);
+                }
+            }
+        }
+        if open && self.closes {
+            add(&[at, start]);
+        }
+        total
+    }
+}
+
+/// The stops a paint works out at every pixel: none for a colour or a
+/// pattern, whose own content is walked on its own.
+fn gradient_stops(paint: &Paint) -> u64 {
+    let count = match paint {
+        Paint::LinearGradient(gradient) => gradient.stops().len(),
+        Paint::RadialGradient(gradient) => gradient.stops().len(),
+        Paint::Color(_) | Paint::Pattern(_) => 0,
+    };
+    u64::try_from(count).unwrap_or(u64::MAX)
 }
 
 /// The dash array of `stroke` if the renderer will cut it into dashes: the

@@ -1125,8 +1125,8 @@ fn a_merge_is_counted_by_the_inputs_it_draws() {
     let _alone = alone();
     // The renderer draws the whole region once for every input of a merge, and
     // the inputs are limited only by the size of the file. A region of 100
-    // pixels is 100 steps for each, and 7 more for the rectangle painted: 1 399
-    // inputs are 139 907 steps, and one more is past the ceiling.
+    // pixels is 100 steps for each, and 20 more for the rectangle painted:
+    // 1 399 inputs are 139 920 steps, and one more is past the ceiling.
     let merged = |inputs: usize| {
         let nodes = r#"<feMergeNode in="SourceGraphic"/>"#.repeat(inputs);
         filtered(&format!("<feMerge>{nodes}</feMerge>"), 1, 10, 10)
@@ -1170,15 +1170,17 @@ fn a_shape_is_counted_by_the_pixels_it_covers_inside_the_canvas() {
         rasterise(covered(161, beyond).as_bytes(), 100, &[]),
         Err(Refused::TooLarge)
     );
-    // A shape off the canvas covers nothing.
+    // A shape off the canvas covers nothing, and costs only what any shape
+    // does.
     let off = r#"<rect x="500" width="100" height="140"/>"#;
     assert!(rasterise(covered(1_000, off).as_bytes(), 100, &[]).is_ok());
-    // A shape that reaches one pixel is one step, not none.
+    // A shape that reaches one pixel is one step by its pixels, and the 20
+    // every shape costs.
     let dot = r#"<rect width="1" height="1"/>"#;
     let tree = usvg::Tree::from_str(&covered(100, dot), &usvg::Options::default())
         .expect("a page of dots");
     let cost = budget::cost(&tree, Transform::identity(), 100, 140).expect("within the ceilings");
-    assert_eq!(cost.work, 100);
+    assert_eq!(cost.work, 100 * 20);
 }
 
 #[test]
@@ -1258,6 +1260,261 @@ fn a_dash_count_no_number_can_hold_is_refused() {
     // rather than counted as nothing.
     assert_eq!(work_of(&dashed("1e30", 2, "1e-30")), Err(Refused::TooLarge));
     // A list that adds up to nothing is not a dash: the stroke is solid, and
-    // is counted by what it covers.
-    assert_eq!(work_of(&dashed("100", 2, "0 0")), Ok(13));
+    // is counted by what it covers, 13 steps, or by the 20 any shape costs.
+    assert_eq!(work_of(&dashed("100", 2, "0 0")), Ok(20));
+}
+
+/// A page 100 pixels square clipped by `count` rectangles the size of the
+/// page, with one rectangle drawn through the clip.
+fn clipped(count: usize) -> String {
+    let rectangles = r#"<rect width="100" height="100"/>"#.repeat(count);
+    format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><clipPath id="c">{rectangles}</clipPath><g clip-path="url(#c)"><rect width="100" height="100" fill="#000"/></g></svg>"##
+    )
+}
+
+#[test]
+fn a_path_in_a_clip_is_counted_by_the_pixels_it_fills() {
+    let _alone = alone();
+    // The clip is drawn on a pixmap the size of the layer, two pixels wider
+    // than the page each side, and each rectangle fills the 10 000 pixels of
+    // the page on it: 625 steps, as the rectangle drawn through it is.
+    let one = work_of(&clipped(1)).expect("one rectangle");
+    let two = work_of(&clipped(2)).expect("two rectangles");
+    assert_eq!(two - one, 625);
+    // So 223 rectangles in the clip and the one drawn are 140 000 steps, and
+    // one more is past the ceiling.
+    assert!(rasterise(clipped(223).as_bytes(), 100, &[]).is_ok());
+    assert_eq!(
+        rasterise(clipped(224).as_bytes(), 100, &[]),
+        Err(Refused::TooLarge)
+    );
+}
+
+#[test]
+fn every_shape_costs_its_overhead_whatever_it_covers() {
+    let _alone = alone();
+    // A shape off the canvas covers nothing and is still built and drawn:
+    // 20 steps each.
+    let off = r#"<rect x="500" width="100" height="100"/>"#.repeat(1_000);
+    let page =
+        format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">{off}</svg>"#);
+    assert_eq!(work_of(&page), Ok(20_000));
+    assert!(rasterise(page.as_bytes(), 100, &[]).is_ok());
+    // Five levels of ten uses of the level below are 100 000 shapes off the
+    // canvas from a file of 1 419 bytes.
+    let nested = nested_uses(5);
+    assert_eq!(nested.len(), 1_419);
+    assert_eq!(
+        rasterise(nested.as_bytes(), 100, &[]),
+        Err(Refused::TooLarge)
+    );
+    // Two levels are 100 shapes, and drawn.
+    assert!(rasterise(nested_uses(2).as_bytes(), 100, &[]).is_ok());
+}
+
+/// A page 100 pixels square whose `<defs>` hold a rectangle off the page and
+/// `levels` groups, each ten uses of the one before, and which uses the
+/// group of the level `used`.
+fn nested_uses_of(levels: u32, used: u32) -> String {
+    let mut defined = String::from(r#"<rect id="l0" x="-50" width="1" height="1"/>"#);
+    for level in 1..=levels {
+        let ten = format!(r##"<use xlink:href="#l{}"/>"##, level - 1).repeat(10);
+        let _ = write!(defined, r#"<g id="l{level}">{ten}</g>"#);
+    }
+    format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="100" height="100"><defs>{defined}</defs><use xlink:href="#l{used}"/></svg>"##
+    )
+}
+
+/// [`nested_uses_of`] using its last level.
+fn nested_uses(levels: u32) -> String {
+    nested_uses_of(levels, levels)
+}
+
+/// Longer than counting the copies of any file takes, and shorter than
+/// making those of the files counted here: 100 ms.
+const SOON_REFUSED: Duration = Duration::from_millis(100);
+
+/// What drawing `svg` 100 wide comes to, and how long it took to say so.
+fn refused_in(svg: &str) -> (Result<Pixels, Refused>, Duration) {
+    let began = Instant::now();
+    let drawn = rasterise(svg.as_bytes(), 100, &[]);
+    (drawn, began.elapsed())
+}
+
+#[test]
+fn the_copies_uses_would_make_are_counted_before_any_is_made() {
+    let _alone = alone();
+    // Five levels of ten uses are 111 110 copies, and six are 1 111 110, past
+    // the parser's own count of what it will make: both are refused before a
+    // copy is made, in a moment however many there would be.
+    for levels in [5, 6] {
+        let (drawn, took) = refused_in(&nested_uses(levels));
+        assert_eq!(drawn, Err(Refused::TooLarge), "{levels} levels");
+        assert!(
+            took < SOON_REFUSED,
+            "{levels} levels were copied before they were refused: {took:?}"
+        );
+    }
+    // A use in the definitions is copied whether or not anything draws it:
+    // five levels defined and the second used are refused too.
+    let (drawn, took) = refused_in(&nested_uses_of(5, 2));
+    assert_eq!(drawn, Err(Refused::TooLarge), "five defined, two used");
+    assert!(took < SOON_REFUSED, "copied first: {took:?}");
+    // Three levels are 1 110 copies, and drawn.
+    assert!(rasterise(nested_uses(3).as_bytes(), 100, &[]).is_ok());
+}
+
+/// A page 100 pixels square that uses `copies` times, off the page, the one
+/// element its `<defs>` hold.
+fn copied(element: &str, copies: usize) -> String {
+    let uses = r##"<use xlink:href="#copied" x="-200"/>"##.repeat(copies);
+    format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="100" height="100"><defs>{element}</defs>{uses}</svg>"#
+    )
+}
+
+#[test]
+fn a_copy_is_counted_by_the_text_and_the_attributes_it_copies() {
+    let _alone = alone();
+    // A thousand letters are shaped again for every copy of them: a hundred
+    // copies are refused, and one is drawn.
+    let letters = format!(
+        r#"<text id="copied" font-size="10">{}</text>"#,
+        "x".repeat(1_000)
+    );
+    let (drawn, took) = refused_in(&copied(&letters, 100));
+    assert_eq!(drawn, Err(Refused::TooLarge), "a hundred copies of text");
+    assert!(took < SOON_REFUSED, "shaped first: {took:?}");
+    assert!(rasterise(copied(&letters, 1).as_bytes(), 100, &[]).is_ok());
+    // A path's data is read again for every copy of it: fifty copies of
+    // 16 000 segments are refused, and one is drawn.
+    let mut data = String::from("M0 0");
+    for at in 0..16_000_u32 {
+        let _ = write!(data, "L{} {}", at % 100, at * 7 % 100);
+    }
+    let path = format!(r#"<path id="copied" d="{data}"/>"#);
+    let (drawn, took) = refused_in(&copied(&path, 50));
+    assert_eq!(drawn, Err(Refused::TooLarge), "fifty copies of a path");
+    assert!(took < SOON_REFUSED, "read first: {took:?}");
+    assert!(rasterise(copied(&path, 1).as_bytes(), 100, &[]).is_ok());
+}
+
+/// A page `rows` pixels tall and 100 wide holding one filled path of `edges`
+/// edges, each from the top of the page to the bottom or back.
+fn zigzag(edges: usize, rows: u32) -> String {
+    let mut data = String::from("M0 0");
+    for at in 0..edges {
+        #[allow(clippy::cast_precision_loss, reason = "a small count")]
+        let x = at as f64 * 100.0 / edges as f64;
+        let _ = write!(data, "L{x:.3} {}", if at % 2 == 0 { rows } else { 0 });
+    }
+    format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="{rows}" viewBox="0 0 100 {rows}"><path d="{data}"/></svg>"#
+    )
+}
+
+#[test]
+fn a_path_is_counted_by_the_rows_each_segment_crosses() {
+    let _alone = alone();
+    // Four segments, the move and the closing line among them, crossing 1,
+    // 100, 100 and 1 rows: 4 times 300 ns and 202 times 100, in steps of
+    // 140 ns, which is more than the 200 pixels it covers are worth.
+    let one = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><path d="M0 0L1 100L2 0"/></svg>"#;
+    assert_eq!(work_of(one), Ok(153));
+    // Ten thousand edges along one row are drawn, and two thousand that each
+    // cross a hundred rows are not, though they cover the same page.
+    let flat = zigzag(10_000, 1);
+    assert!(rasterise(flat.as_bytes(), 100, &[]).is_ok());
+    let tall = zigzag(2_000, 100);
+    assert_eq!(rasterise(tall.as_bytes(), 100, &[]), Err(Refused::TooLarge));
+}
+
+/// A page `width` pixels wide and one tall holding one filled path of `edges`
+/// edges across it, each from the top of the row to the bottom or back.
+fn along(edges: usize, width: u32) -> String {
+    let mut data = String::from("M0 0");
+    for at in 0..edges {
+        #[allow(clippy::cast_precision_loss, reason = "a small count")]
+        let x = at as f64 * f64::from(width) / edges as f64;
+        let _ = write!(data, "L{x:.3} {}", u8::from(at % 2 == 0));
+    }
+    format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="1"><path d="{data}"/></svg>"#
+    )
+}
+
+#[test]
+fn edges_crowded_along_a_row_are_counted_by_the_pixels_each_can_walk() {
+    let _alone = alone();
+    // Edges closer together than a pixel make spans that each start the
+    // renderer's walk along the row over again: 46 000 across a row 9 300
+    // wide, and 30 000 across one 6 000 wide, are refused.
+    let wide = along(46_000, 9_300);
+    assert_eq!(wide.len(), 500_594);
+    assert_eq!(
+        rasterise(wide.as_bytes(), 9_300, &[]),
+        Err(Refused::TooLarge)
+    );
+    let narrower = along(30_000, 6_000);
+    assert_eq!(narrower.len(), 324_536);
+    assert_eq!(
+        rasterise(narrower.as_bytes(), 6_000, &[]),
+        Err(Refused::TooLarge)
+    );
+    // A thousand across the wide row are drawn.
+    assert!(rasterise(along(1_000, 9_300).as_bytes(), 9_300, &[]).is_ok());
+}
+
+#[test]
+fn a_dashed_stroke_is_counted_by_its_segments_too() {
+    let _alone = alone();
+    // Ten thousand contours shorter than a pixel, stroked across the page,
+    // cut into a dash each: few dashes by the length of the path, and every
+    // segment worked across the rows of the stroke.
+    let contours = "M50 0h.01".repeat(10_000);
+    let solid = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><path d="{contours}" fill="none" stroke="#000" stroke-width="100"/></svg>"##
+    );
+    let dashed = solid.replace("/>", r#" stroke-dasharray="1000 1000"/>"#);
+    assert_eq!(
+        rasterise(dashed.as_bytes(), 100, &[]),
+        Err(Refused::TooLarge)
+    );
+    assert_eq!(
+        rasterise(solid.as_bytes(), 100, &[]),
+        Err(Refused::TooLarge)
+    );
+}
+
+/// A page `side` pixels square filled with a linear gradient of `count` stops.
+fn graded(count: usize, side: u32) -> String {
+    let stops = (0..count).fold(String::new(), |mut all, at| {
+        #[allow(clippy::cast_precision_loss, reason = "a small count")]
+        let offset = at as f64 / count as f64;
+        let _ = write!(
+            all,
+            r##"<stop offset="{offset:.6}" stop-color="#{:06x}"/>"##,
+            (at * 2_654_435_761) & 0x00ff_ffff
+        );
+        all
+    });
+    format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{side}" height="{side}"><linearGradient id="g">{stops}</linearGradient><rect width="{side}" height="{side}" fill="url(#g)"/></svg>"#
+    )
+}
+
+#[test]
+fn a_gradient_is_counted_by_its_stops_over_the_pixels_it_paints() {
+    let _alone = alone();
+    // The renderer works every stop at every pixel: 512 stops over the 10 000
+    // pixels of the page are 10 000 steps, where the pixels alone are 625.
+    assert_eq!(work_of(&graded(512, 100)), Ok(10_000));
+    // A thousand stops over 500 by 500 pixels are refused, and two are drawn.
+    assert_eq!(
+        rasterise(graded(1_000, 500).as_bytes(), 500, &[]),
+        Err(Refused::TooLarge)
+    );
+    assert!(rasterise(graded(2, 500).as_bytes(), 500, &[]).is_ok());
 }

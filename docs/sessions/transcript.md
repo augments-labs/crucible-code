@@ -203,12 +203,22 @@ bound is refused rather than shrunk or cut:
 - **What drawing an SVG computes.** The pixels each filter step's region
   holds, times what the step does with each pixel (a turbulence per octave, a
   morphology per cell of its window, a convolution per cell of its matrix, a
-  merge per input it draws), the pixels each fill or stroke covers inside
-  the picture, one step for every sixteen of them, and for a dashed stroke
-  each dash it is cut into, at least eight steps, however short and thin,
-  added up over the picture, are at most 140 000. That is about what a
-  drawing can finish in a fiftieth of a second. A picture past it is refused
-  before it is drawn.
+  merge per input it draws), and for each fill or stroke, a shape inside a
+  clip among them, the largest of: twenty steps, however small it is or far
+  off the picture; one step for every sixteen pixels it covers inside the
+  picture, or for a dashed stroke at least eight for each dash it is cut
+  into, however short and thin; the time its outline takes to build and to
+  sweep down the rows it crosses, longer for a stroke than for a fill; for a
+  fill whose edges crowd together along a row, how far along the row each
+  can walk; and for a gradient, its pixels times its stops. Added up over
+  the picture, these are at most 140 000 steps. That is about what a drawing
+  can finish in a fiftieth of a second. A picture past it is refused before
+  it is drawn.
+- **What the copies in an SVG take.** A `<use>` copies what it names, and a
+  copy can hold uses of its own, so a few hundred bytes can ask for millions
+  of copies. The time making them would take, by the elements, attributes
+  and text copied, is counted before the picture is built, and copies that
+  would take more than 16 ms are refused.
 - **A picture sent to the terminal.** Sent as PNG it is at most 1 MiB, and
   sent as Sixel it is at most 600 pixels wide.
 - **One at a time.** Only one picture is read or drawn at a time, wherever it
