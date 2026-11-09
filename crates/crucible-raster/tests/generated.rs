@@ -546,9 +546,11 @@ fn linked_svg(rng: &mut Rng) -> Input {
         }
         // A filter chain that asks for more than the canvas. It is blurs,
         // offsets and floods only: a turbulence or a morphology over a region
-        // this large is past the filter work a drawing may ask for and is
-        // refused, which the hostile corpus pins, so the chain here is one
-        // the drawing is let to finish or is refused for its size.
+        // this large is refused for the pixmaps it would hold, which the
+        // hostile corpus pins with its `filter-work` files, and a costly
+        // primitive over a smaller region is refused for its work, which the
+        // corpus pins with its `work` files. So the chain here is one the
+        // drawing is let to finish or is refused for its size.
         4 => {
             let steps = rng.between(1, 20);
             inner.push_str("<defs><filter id=\"f\" x=\"-1000%\" y=\"-1000%\" width=\"3000%\" height=\"3000%\">");

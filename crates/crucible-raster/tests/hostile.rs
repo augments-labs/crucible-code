@@ -119,7 +119,12 @@ use Expect::{Drawn, Refused as No};
 /// or a row left without its file, fails the check beside this table.
 ///
 /// The 800 by 800 pictures are `Refused::TooLarge`: they are 2 560 000 bytes
-/// of pixels, past `MOST_DECODED`.
+/// of pixels, past `MOST_DECODED`. So are `many-results.svg` and the three
+/// `filter-work-*.svg` files, by the other half of that ceiling: each asks for
+/// a filter region so large that the pixmaps it would hold are past it before
+/// any step of work is priced. Only the four `work-*.svg` files are refused by
+/// the work the renderer would do and by nothing else, and the test after the
+/// corpus check draws each of them with that work made small.
 const ENTRIES: &[(&str, Expect)] = &[
     ("image/anim.gif", Drawn),
     ("image/bomb.jpg", No(Refused::TooLarge)),
@@ -145,6 +150,10 @@ const ENTRIES: &[(&str, Expect)] = &[
     ("svg/many-results.svg", No(Refused::TooLarge)),
     ("svg/nested.svg", Drawn),
     ("svg/small.svg", Drawn),
+    ("svg/work-merge-inputs.svg", No(Refused::TooLarge)),
+    ("svg/work-shapes-filled.svg", No(Refused::TooLarge)),
+    ("svg/work-shapes-stroked.svg", No(Refused::TooLarge)),
+    ("svg/work-turbulence-octaves.svg", No(Refused::TooLarge)),
     ("svg/worst.svg", Drawn),
 ];
 
@@ -248,6 +257,54 @@ fn every_file_of_the_corpus_is_drawn_or_refused_as_recorded() {
 fn no_file_of_the_corpus_is_missing_from_the_record_or_the_record_from_the_corpus() {
     let recorded: Vec<String> = ENTRIES.iter().map(|(name, _)| (*name).to_owned()).collect();
     assert_eq!(corpus_files(), recorded);
+}
+
+#[test]
+fn a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small() {
+    let _alone = alone();
+    let read = |name: &str| {
+        String::from_utf8(fs::read(Path::new(CORPUS).join(name)).expect("a corpus file"))
+            .expect("a corpus file that is text")
+    };
+    // The file with every copy of `unit` but one taken out.
+    let once = |original: &str, unit: &str| {
+        let copies = original.matches(unit).count();
+        assert!(copies > 1, "many copies of {unit}");
+        let one = original.replacen(&unit.repeat(copies), unit, 1);
+        assert_eq!(one.matches(unit).count(), 1, "the copies are in a row");
+        one
+    };
+    // Each is refused for what the renderer does with every pixel, and the
+    // same file with that made small is drawn: the pixmaps it holds were never
+    // the reason.
+    let merge = read("svg/work-merge-inputs.svg");
+    let turbulence = read("svg/work-turbulence-octaves.svg");
+    let filled = read("svg/work-shapes-filled.svg");
+    let stroked = read("svg/work-shapes-stroked.svg");
+    let small = [
+        once(&merge, r#"<feMergeNode in="SourceGraphic"/>"#),
+        turbulence.replace(r#"numOctaves="10""#, r#"numOctaves="1""#),
+        once(&filled, r#"<rect width="100" height="100"/>"#),
+        once(
+            &stroked,
+            r#"<path d="M0 50H100" fill="none" stroke="black" stroke-width="100"/>"#,
+        ),
+    ];
+    for (name, original, small) in [
+        ("svg/work-merge-inputs.svg", &merge, &small[0]),
+        ("svg/work-turbulence-octaves.svg", &turbulence, &small[1]),
+        ("svg/work-shapes-filled.svg", &filled, &small[2]),
+        ("svg/work-shapes-stroked.svg", &stroked, &small[3]),
+    ] {
+        assert_ne!(original, small, "{name}");
+        assert_eq!(
+            rasterise(original.as_bytes(), WIDTH, INKS),
+            Err(Refused::TooLarge),
+            "{name}"
+        );
+        let drawn = rasterise(small.as_bytes(), WIDTH, INKS);
+        assert!(drawn.is_ok(), "{name} with its work made small: {drawn:?}");
+    }
 }
 
 // ---------------------------------------------------------------------------

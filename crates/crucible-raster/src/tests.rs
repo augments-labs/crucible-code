@@ -1079,11 +1079,12 @@ fn turbulent(count: u32, across: u32, down: u32) -> String {
 #[test]
 fn filter_work_is_refused_one_row_past_its_ceiling() {
     let _alone = alone();
-    // 14 000 pixels of 10 octaves: 140 000 steps. One more row of the region
-    // is 141 000.
-    let at = turbulent(1, 100, 140);
+    // The rectangle is painted too, at 100 pixels to 6.25 steps: 139 rows of
+    // 10 octaves are 139 000 steps and 869 of paint, which is within the
+    // ceiling, and 140 rows are 140 000 and 875, which is not.
+    let at = turbulent(1, 100, 139);
     assert!(rasterise(at.as_bytes(), 100, &[]).is_ok());
-    let past = turbulent(1, 100, 141);
+    let past = turbulent(1, 100, 140);
     assert_eq!(rasterise(past.as_bytes(), 100, &[]), Err(Refused::TooLarge));
 }
 
@@ -1115,4 +1116,85 @@ fn a_morphology_and_a_convolution_are_counted_by_the_window_each_pixel_reads() {
         10,
     );
     assert!(rasterise(convolved.as_bytes(), 10, &[]).is_ok());
+}
+
+#[test]
+fn a_merge_is_counted_by_the_inputs_it_draws() {
+    let _alone = alone();
+    // The renderer draws the whole region once for every input of a merge, and
+    // the inputs are limited only by the size of the file. A region of 100
+    // pixels is 100 steps for each, and 7 more for the rectangle painted: 1 399
+    // inputs are 139 907 steps, and one more is past the ceiling.
+    let merged = |inputs: usize| {
+        let nodes = r#"<feMergeNode in="SourceGraphic"/>"#.repeat(inputs);
+        filtered(&format!("<feMerge>{nodes}</feMerge>"), 1, 10, 10)
+    };
+    assert!(rasterise(merged(1_399).as_bytes(), 10, &[]).is_ok());
+    assert_eq!(
+        rasterise(merged(1_400).as_bytes(), 10, &[]),
+        Err(Refused::TooLarge)
+    );
+    // A merge with no input at all is still one step, not none.
+    assert!(rasterise(merged(0).as_bytes(), 10, &[]).is_ok());
+}
+
+/// A page 100 by 140 pixels with `count` copies of `shape` on it, one after
+/// the other: 14 000 pixels each when the shape covers the page, which is 875
+/// steps of work.
+fn covered(count: usize, shape: &str) -> String {
+    format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="140">{}</svg>"#,
+        shape.repeat(count)
+    )
+}
+
+#[test]
+fn a_shape_is_counted_by_the_pixels_it_covers_inside_the_canvas() {
+    let _alone = alone();
+    // One hundred and sixty shapes of 875 steps are 140 000 steps, and one
+    // more is past it.
+    let page = r#"<rect width="100" height="140"/>"#;
+    assert!(rasterise(covered(160, page).as_bytes(), 100, &[]).is_ok());
+    assert_eq!(
+        rasterise(covered(161, page).as_bytes(), 100, &[]),
+        Err(Refused::TooLarge)
+    );
+    // Only what is on the canvas counts: a shape far larger than the page
+    // covers the same 14 000 pixels, and the ceiling is reached at the same
+    // shape.
+    let beyond = r#"<rect x="-5000" y="-5000" width="10000" height="10000"/>"#;
+    assert!(rasterise(covered(160, beyond).as_bytes(), 100, &[]).is_ok());
+    assert_eq!(
+        rasterise(covered(161, beyond).as_bytes(), 100, &[]),
+        Err(Refused::TooLarge)
+    );
+    // A shape off the canvas covers nothing.
+    let off = r#"<rect x="500" width="100" height="140"/>"#;
+    assert!(rasterise(covered(1_000, off).as_bytes(), 100, &[]).is_ok());
+    // A shape that reaches one pixel is one step, not none.
+    let dot = r#"<rect width="1" height="1"/>"#;
+    let tree = usvg::Tree::from_str(&covered(100, dot), &usvg::Options::default())
+        .expect("a page of dots");
+    let cost = budget::cost(&tree, Transform::identity(), 100, 140).expect("within the ceilings");
+    assert_eq!(cost.work, 100);
+}
+
+#[test]
+fn a_stroke_and_a_fill_are_counted_apart() {
+    let _alone = alone();
+    // A stroke with no fill covers the pixels the stroke reaches.
+    let stroked = r#"<path d="M0 70H100" fill="none" stroke="black" stroke-width="140"/>"#;
+    assert!(rasterise(covered(160, stroked).as_bytes(), 100, &[]).is_ok());
+    assert_eq!(
+        rasterise(covered(161, stroked).as_bytes(), 100, &[]),
+        Err(Refused::TooLarge)
+    );
+    // A shape with both is counted twice: eighty are 140 000 steps, and one
+    // more is not.
+    let both = r#"<rect width="100" height="140" stroke="black"/>"#;
+    assert!(rasterise(covered(80, both).as_bytes(), 100, &[]).is_ok());
+    assert_eq!(
+        rasterise(covered(81, both).as_bytes(), 100, &[]),
+        Err(Refused::TooLarge)
+    );
 }

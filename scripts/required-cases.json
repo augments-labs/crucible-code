@@ -7101,7 +7101,7 @@
       },
       "case": "tests::filter_work_is_refused_one_row_past_its_ceiling",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "f16c8fb5d491204174bd41ede7d233d4dba6f6446eb503b24352a92a8c22ce33",
+      "body_sha256": "cb2927e8704efb4eca24ce56325471fcb7f0397e387ae736be3a6aa491a7113b",
       "platforms": [
         "linux",
         "macos",
@@ -7138,6 +7138,78 @@
       "case": "tests::a_morphology_and_a_convolution_are_counted_by_the_window_each_pixel_reads",
       "source": "crates/crucible-raster/src/tests.rs",
       "body_sha256": "466109e790eaa5792a48282e46d984f33daf98309844b562f6c09e1d68cfc395",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-FILTER-WORK-MERGE",
+      "family": "transcript-pictures",
+      "obligation": "A merge is counted by the inputs it draws, and drawn at its ceiling and refused one row past it.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_merge_is_counted_by_the_inputs_it_draws",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "69902782357b592f3118d711bc3ae19ed67086d47c49b0ea23231a47ba0049d3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SHAPE-WORK-CANVAS",
+      "family": "transcript-pictures",
+      "obligation": "A shape is counted by the pixels it covers inside the canvas, so one far off the page costs nothing.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_shape_is_counted_by_the_pixels_it_covers_inside_the_canvas",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "8f8575ec12d5048a9dc00eddc903143e9465a477ac1f44d2c9231175f1b08e92",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SHAPE-WORK-STROKE",
+      "family": "transcript-pictures",
+      "obligation": "A stroke and a fill of one path are counted apart.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_stroke_and_a_fill_are_counted_apart",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "e12ee04f60b01c0a0007ac6e2b68dee3cc41ed339446e8cd122b38f7d8284798",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-WORK-CORPUS-DRAWN-SMALL",
+      "family": "transcript-pictures",
+      "obligation": "A corpus file refused for its work is drawn once the work is made small, so the work budget is what refused it.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small",
+      "source": "crates/crucible-raster/tests/hostile.rs",
+      "body_sha256": "be5ec27b0d86714b86b8709c9fb809e73f91af00bcf5a72db300d0d512479f3a",
       "platforms": [
         "linux",
         "macos",

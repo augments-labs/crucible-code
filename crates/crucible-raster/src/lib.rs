@@ -557,7 +557,7 @@ pub fn sixel(pixels: &Pixels, palette: &SixelPalette) -> Result<Vec<u8>, Refused
 }
 
 /// How long an entry point waits for the decode slot. The work behind it is
-/// bounded by the caps on its input and pixels and by the memory and filter
+/// bounded by the caps on its input and pixels and by the memory and
 /// work a drawing is judged to need before it is drawn, so this is only the
 /// time a queue of pictures may take.
 const WAIT: Duration = Duration::from_secs(10);
@@ -615,7 +615,7 @@ impl Slot {
     /// Take the slot, waiting up to `within` for whoever holds it.
     ///
     /// The wait is for the slot only. What a holder does with it is bounded by
-    /// the caps on its input and its pixels and by the memory and filter work
+    /// the caps on its input and its pixels and by the memory and work
     /// a drawing is judged to need, not by a deadline.
     ///
     /// # Errors

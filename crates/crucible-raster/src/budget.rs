@@ -12,31 +12,45 @@
 //! The first is the bytes of pixmaps held at once, taken at each allocation
 //! with everything its ancestors still hold: where it is not known what the
 //! renderer frees early, the pixmap is counted as held. It is refused past
-//! [`MOST_DECODED`]. The second is the work of the filter primitives, each
-//! counted as the pixels of its region times what it does with each pixel,
-//! summed over the tree. It is refused past [`MOST_FILTER_WORK`].
+//! [`MOST_DECODED`]. The second is the work: for each filter primitive the
+//! pixels of its region times what it does with each pixel, and for each shape
+//! the pixels it reaches on the pixmap it is drawn on, its fill and its stroke
+//! each on their own, all summed over the tree. It is refused past
+//! [`MOST_WORK`].
 
 use crate::{MOST_DECODED, Refused};
-use resvg::tiny_skia::{IntRect, Transform};
+use resvg::tiny_skia::{IntRect, Rect, Transform};
 use resvg::usvg::filter::{Filter, Kind};
 use resvg::usvg::{ClipPath, Group, Image, ImageKind, Mask, Node, Paint, Path, Tree};
 
-/// The most filter work a drawing may ask for: 140 000 pixel-steps.
+/// The most work a drawing may ask for: 140 000 pixel-steps.
 ///
 /// A step is one pass over one pixel by the cheapest primitive; a primitive
 /// that does more with each pixel (a turbulence per octave, a morphology per
-/// window cell, a convolution per matrix cell) counts that many. The number is
-/// the largest total at which the slowest primitive measured still drew within
-/// 20 ms in a release build: over 140 000 pixels a drop shadow took 17 ms, a
-/// Gaussian blur 14 ms and a one-octave turbulence 19 ms.
-const MOST_FILTER_WORK: u64 = 140_000;
+/// window cell, a convolution per matrix cell, a merge per input) counts that
+/// many, and a shape counts [`PIXELS_PER_STEP`] of the pixels it reaches as
+/// one. The number is the largest total at which the slowest primitive
+/// measured still drew within 20 ms in a release build: over 140 000 pixels a
+/// drop shadow took 17 ms, a Gaussian blur 14 ms and a one-octave turbulence
+/// 19 ms. A merge input is a copy of the region and took 2 ms at that total.
+const MOST_WORK: u64 = 140_000;
+
+/// How many pixels of a shape count as one step: 16.
+///
+/// A step is about 140 ns, the time the slowest primitive took per step at the
+/// ceiling. A shape is painted at between a fifth of a nanosecond a pixel, for
+/// a plain colour, and seven, for a radial gradient, the slowest paint
+/// measured, which is 20 pixels to a step. Sixteen counts the shapes a little
+/// above what they cost, so a plain page-sized background does not use up a
+/// drawing's work.
+const PIXELS_PER_STEP: u64 = 16;
 
 /// What a drawing holds and does, as far as the walk can tell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Cost {
     /// The most bytes of pixmaps held at once.
     pub(crate) bytes: u64,
-    /// The filter work of every primitive, in pixel-steps.
+    /// The work of every filter primitive and shape, in pixel-steps.
     pub(crate) work: u64,
 }
 
@@ -45,7 +59,7 @@ pub(crate) struct Cost {
 ///
 /// # Errors
 /// [`Refused::TooLarge`] as soon as the bytes held pass [`MOST_DECODED`] or the
-/// work passes [`MOST_FILTER_WORK`].
+/// work passes [`MOST_WORK`].
 pub(crate) fn cost(
     tree: &Tree,
     scale: Transform,
@@ -136,10 +150,10 @@ impl Walk {
         Ok(())
     }
 
-    /// Filter work added and judged.
+    /// Work added and judged.
     fn work(&mut self, steps: u64) -> Result<(), Refused> {
         self.cost.work = self.cost.work.saturating_add(steps);
-        if self.cost.work > MOST_FILTER_WORK {
+        if self.cost.work > MOST_WORK {
             return Err(Refused::TooLarge);
         }
         Ok(())
@@ -370,6 +384,15 @@ impl Walk {
         if !path.is_visible() {
             return Ok(());
         }
+        // Painting is a pass over every pixel it reaches, the fill and the
+        // stroke each on their own.
+        let canvas = IntRect::from_xywh(0, 0, context.pixmap.0, context.pixmap.1);
+        if path.fill().is_some() {
+            self.work(covered(path.bounding_box(), transform, canvas))?;
+        }
+        if path.stroke().is_some() {
+            self.work(covered(path.stroke_bounding_box(), transform, canvas))?;
+        }
         let paints = path
             .fill()
             .map(resvg::usvg::Fill::paint)
@@ -423,6 +446,24 @@ impl Walk {
     }
 }
 
+/// The steps a shape with this bounding box costs on a pixmap: one for each
+/// [`PIXELS_PER_STEP`] pixels it reaches as the renderer clips it, and at
+/// least one where it is on the pixmap at all.
+fn covered(bounds: Rect, transform: Transform, pixmap: Option<IntRect>) -> u64 {
+    let Some(pixmap) = pixmap else {
+        return 0;
+    };
+    bounds
+        .transform(transform)
+        .and_then(|rect| rect.round_out())
+        .and_then(|rect| within(rect, pixmap))
+        .map_or(0, |rect| {
+            u64::from(rect.width())
+                .saturating_mul(u64::from(rect.height()))
+                .div_ceil(PIXELS_PER_STEP)
+        })
+}
+
 /// What a primitive does with each pixel of its region, in pixel-steps.
 fn steps(kind: &Kind, transform: Transform, region: IntRect) -> u64 {
     match kind {
@@ -442,6 +483,10 @@ fn steps(kind: &Kind, transform: Transform, region: IntRect) -> u64 {
                 .saturating_mul(u64::from(matrix.rows()))
                 .max(1)
         }
+        // The whole region is drawn once for every input.
+        Kind::Merge(merge) => u64::try_from(merge.inputs().len())
+            .unwrap_or(u64::MAX)
+            .max(1),
         _ => 1,
     }
 }
