@@ -37,6 +37,12 @@
 //! an ellipse, a rounded rectangle and an arc of a path into, more the larger
 //! the radius, and, for a shape stroked by what it or anything that holds or
 //! copies it says, the outline of that stroke, an edge or a curve at a time.
+//! A stroked shape the page can turn or skew, by a transform of its own or of
+//! anything that holds, copies or marks it, is outlined a second time at its
+//! size on the page: each curve of that second outline is priced at its size
+//! times the most that the views, the transforms and, for a marker, the
+//! stroke it is drawn on can enlarge it. A size past the largest measured
+//! refuses the picture as too large.
 
 use super::{
     ARC_OUTLINE_NS, CUBIC_MADE_NS, CURVE_OUTLINE_NS, Elements, Refused, STRAIGHT_OUTLINE_NS,
@@ -46,8 +52,8 @@ use resvg::usvg::roxmltree::{Document, Node};
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use svgtypes::{
-    FontShorthand, Length, LengthListParser, LengthUnit, PathParser, PathSegment, PointsParser,
-    Transform, ViewBox,
+    Angle, FontShorthand, Length, LengthListParser, LengthUnit, PathParser, PathSegment,
+    PointsParser, Transform, ViewBox,
 };
 
 /// The largest size a number of a picture's geometry may have, in user units:
@@ -374,7 +380,14 @@ fn sizes_within(elements: &Elements<'_, '_>) -> Option<Outlines> {
     let mut font = vec![FIRST_FONT_SIZE; count];
     let mut font_given = vec![Size::default(); count];
     let mut stroked = vec![false; count];
-    let mut outlines = vec![0; count];
+    // How many times larger on the page than in its own units each element
+    // can be, at the most, and whether what places it can turn or skew it.
+    let mut scale = vec![1.0_f64; count];
+    let mut turned = vec![false; count];
+    // For each element inside a marker, whether a marker holding it is sized
+    // by the stroke of the shape it is drawn on.
+    let mut marked: Vec<Option<bool>> = vec![None; count];
+    let mut widest_stroke = 1.0_f64;
 
     let parents = elements.parents();
     for &at in &order {
@@ -467,58 +480,239 @@ fn sizes_within(elements: &Elements<'_, '_>) -> Option<Outlines> {
         // A shape is stroked by the last `stroke` it is given, a declaration
         // of its style over its attribute, and otherwise by what holds or
         // copies it.
-        let stroke = own
-            .iter()
-            .rev()
-            .find(|(name, _)| *name == "stroke")
-            .map(|(_, value)| value.trim());
-        let is_stroked = match stroke {
-            Some("none") => false,
-            Some("inherit") | None => from
-                .iter()
-                .any(|&parent| stroked.get(parent).copied().unwrap_or(false)),
-            Some(_) => true,
-        };
+        let is_stroked = strokes(own, from, &stroked);
         if let Some(entry) = stroked.get_mut(at) {
             *entry = is_stroked;
         }
-        if let Some(entry) = outlines.get_mut(at) {
-            *entry = outline(elements.name(at), own, is_stroked, |length| {
-                Size::of(length, view).at(size)
-            });
+
+        // What a marker holds is placed by the shape it is drawn on, not by
+        // what holds the marker, and is worked out after every element.
+        let name = elements.name(at);
+        let (stretch, turns) = transformed(own);
+        let fitted = fitted(name, own, outermost, view, |length| {
+            Size::of(length, if outermost { around } else { view }).at(size)
+        });
+        let (above, turned_above, marked_above) = if name == "marker" {
+            marker_placed(own)
+        } else {
+            (
+                largest(&scale).unwrap_or(1.0),
+                from.iter()
+                    .any(|&parent| turned.get(parent).copied().unwrap_or(false)),
+                from.iter()
+                    .filter_map(|&parent| marked.get(parent).copied().flatten())
+                    .reduce(|one, other| one || other),
+            )
+        };
+        if let Some(entry) = scale.get_mut(at) {
+            *entry = above * stretch * fitted;
         }
+        if let Some(entry) = turned.get_mut(at) {
+            *entry = turned_above || turns;
+        }
+        if let Some(entry) = marked.get_mut(at) {
+            *entry = marked_above;
+        }
+        widest_stroke = own
+            .iter()
+            .filter(|(name, _)| *name == "stroke-width")
+            .filter_map(|(_, value)| Length::from_str(value).ok())
+            .map(|length| Size::of(length, view).at(size))
+            .fold(widest_stroke, f64::max);
     }
+
+    // A marker is placed by the shape it is drawn on, which may be anywhere
+    // outside the markers: as large as the largest of them, turned if any of
+    // them is, and in the units of the widest stroke where it says so.
+    let outside = || (0..count).filter(|&at| marked.get(at).is_some_and(Option::is_none));
+    let largest_outside = outside()
+        .filter_map(|at| scale.get(at).copied())
+        .fold(1.0_f64, f64::max);
+    let turned_outside = outside().any(|at| turned.get(at).copied().unwrap_or(false));
+    let outlines = (0..count)
+        .map(|at| {
+            let own = properties.get(at).map_or(&[][..], Vec::as_slice);
+            let font = font.get(at).copied().unwrap_or(FIRST_FONT_SIZE);
+            let mut placed = Placed {
+                stroked: stroked.get(at).copied().unwrap_or(false),
+                turned: turned.get(at).copied().unwrap_or(false),
+                scale: scale.get(at).copied().unwrap_or(1.0),
+            };
+            if let Some(Some(in_strokes)) = marked.get(at) {
+                placed.turned |= turned_outside;
+                placed.scale *= largest_outside * if *in_strokes { widest_stroke } else { 1.0 };
+            }
+            outline(elements.name(at), own, placed, |length| {
+                Size::of(length, view).at(font)
+            })
+        })
+        .collect();
     Some(Outlines(outlines))
 }
 
-/// What the parser builds of a shape: the curves it cuts its arcs into, and
-/// the time it takes to outline its stroke, past [`STROKED_SHAPE_NS`].
+/// How far the transforms `own` gives stretch an element at the most, and
+/// whether any of them turns or skews it.
+fn transformed(own: &[(&str, &str)]) -> (f64, bool) {
+    own.iter()
+        .filter(|(name, _)| *name == "transform")
+        .filter_map(|(_, value)| Transform::from_str(value).ok())
+        .fold((1.0_f64, false), |(most, turns), matrix| {
+            // The largest singular value of the matrix's linear part.
+            let sum = matrix.a * matrix.a
+                + matrix.b * matrix.b
+                + matrix.c * matrix.c
+                + matrix.d * matrix.d;
+            let determinant = matrix.a * matrix.d - matrix.b * matrix.c;
+            let spread = (sum * sum - 4.0 * determinant * determinant)
+                .max(0.0)
+                .sqrt();
+            let stretch = f64::midpoint(sum, spread).sqrt();
+            (
+                most.max(stretch),
+                turns || matrix.b != 0.0 || matrix.c != 0.0,
+            )
+        })
+}
+
+/// How many times the view box of the element `name` whose properties are
+/// `own` enlarges what it holds, at the most, by the size it is fitted to:
+/// that of the outermost `<svg>` and of a `<marker>` by the lengths `size`
+/// takes into user units, and `view`, the largest view any element sets, for
+/// a `<svg>` inside the picture and a `<symbol>`, which what draws them can
+/// size. One for an element with no view box.
+fn fitted(
+    name: &str,
+    own: &[(&str, &str)],
+    outermost: bool,
+    view: f64,
+    size: impl Fn(Length) -> f64,
+) -> f64 {
+    let Some(view_box) = own
+        .iter()
+        .filter(|(name, _)| *name == "viewBox")
+        .filter_map(|(_, value)| ViewBox::from_str(value).ok())
+        .find(|view_box| view_box.w > 0.0 && view_box.h > 0.0)
+    else {
+        return 1.0;
+    };
+    let given = |of: &str| {
+        own.iter()
+            .filter(|(name, _)| *name == of)
+            .filter_map(|(_, value)| Length::from_str(value).ok())
+            .next_back()
+    };
+    let (width, height) = match name {
+        // The outermost `<svg>` is as large as its view box unless it says.
+        "svg" if outermost => (
+            given("width").map_or(view_box.w, &size),
+            given("height").map_or(view_box.h, &size),
+        ),
+        "svg" | "symbol" => (view, view),
+        // A marker is three units square unless it says.
+        "marker" => (
+            given("markerWidth").map_or(3.0, &size),
+            given("markerHeight").map_or(3.0, &size),
+        ),
+        _ => return 1.0,
+    };
+    (width / view_box.w).max(height / view_box.h)
+}
+
+/// Whether a shape whose properties are `own` is stroked: by the last
+/// `stroke` it is given, and otherwise, or by `inherit`, by any of the
+/// elements `from` that hold or copy it.
+fn strokes(own: &[(&str, &str)], from: &[usize], stroked: &[bool]) -> bool {
+    let stroke = own
+        .iter()
+        .rev()
+        .find(|(name, _)| *name == "stroke")
+        .map(|(_, value)| value.trim());
+    match stroke {
+        Some("none") => false,
+        Some("inherit") | None => from
+            .iter()
+            .any(|&parent| stroked.get(parent).copied().unwrap_or(false)),
+        Some(_) => true,
+    }
+}
+
+/// How a marker whose properties are `own` places what it holds, before the
+/// shape it is drawn on: at its own size, turned if its `orient` turns it,
+/// and whether it is sized by the stroke of that shape.
+fn marker_placed(own: &[(&str, &str)]) -> (f64, bool, Option<bool>) {
+    let in_strokes = !own
+        .iter()
+        .any(|&(name, value)| name == "markerUnits" && value.trim() == "userSpaceOnUse");
+    (1.0, orient_turns(own), Some(in_strokes))
+}
+
+/// Whether a marker whose properties are `own` is turned along the shape it
+/// is drawn on, or by an angle it gives.
+fn orient_turns(own: &[(&str, &str)]) -> bool {
+    own.iter()
+        .filter(|(name, _)| *name == "orient")
+        .any(|(_, value)| match value.trim() {
+            "auto" | "auto-start-reverse" => true,
+            value => Angle::from_str(value).is_ok_and(|angle| angle.number != 0.0),
+        })
+}
+
+/// How a shape is placed on the page: whether it is stroked, whether what
+/// places it can turn or skew it, and how many times larger than in its own
+/// units it can be, at the most.
+#[derive(Clone, Copy)]
+struct Placed {
+    stroked: bool,
+    turned: bool,
+    scale: f64,
+}
+
+/// What the parser builds of a shape: the curves it cuts its arcs into, the
+/// time it takes to outline its stroke, past [`STROKED_SHAPE_NS`], and the
+/// time it takes to outline that stroke again at the shape's size on the page,
+/// which it does where what places the shape turns or skews it.
 #[derive(Clone, Copy, Default)]
 struct Built {
     curves: u64,
     stroke: u64,
+    again: u64,
 }
 
 impl Built {
-    /// The time it takes to build, stroked or not.
-    fn time(self, stroked: bool) -> u64 {
+    /// `edges` straight edges, outlined at the same cost at any size.
+    fn straight(edges: u64) -> Self {
+        let stroke = edges.saturating_mul(STRAIGHT_OUTLINE_NS);
+        Self {
+            curves: 0,
+            stroke,
+            again: stroke,
+        }
+    }
+
+    /// The time it takes to build, placed as `placed` says.
+    fn time(self, placed: Placed) -> u64 {
         let curves = self.curves.saturating_mul(CUBIC_MADE_NS);
-        if stroked {
-            curves
-                .saturating_add(STROKED_SHAPE_NS)
-                .saturating_add(self.stroke)
+        if !placed.stroked {
+            return curves;
+        }
+        let once = curves
+            .saturating_add(STROKED_SHAPE_NS)
+            .saturating_add(self.stroke);
+        if placed.turned {
+            once.saturating_add(STROKED_SHAPE_NS)
+                .saturating_add(self.again)
         } else {
-            curves
+            once
         }
     }
 }
 
 /// The time the parser takes to build the outline of the element `name` whose
-/// properties are `own`, with `size` the size of a length of it in user units.
-/// Nothing for an element that is not a shape, or a shape the parser skips:
-/// a circle, an ellipse or a rectangle with no size, and fewer than two
-/// points.
-fn outline(name: &str, own: &[(&str, &str)], stroked: bool, size: impl Fn(Length) -> f64) -> u64 {
+/// properties are `own`, placed as `placed` says, with `size` the size of a
+/// length of it in user units. Nothing for an element that is not a shape, or
+/// a shape the parser skips: a circle, an ellipse or a rectangle with no size,
+/// and fewer than two points.
+fn outline(name: &str, own: &[(&str, &str)], placed: Placed, size: impl Fn(Length) -> f64) -> u64 {
     let largest = |of: &str| {
         own.iter()
             .filter(|(name, _)| *name == of)
@@ -537,18 +731,18 @@ fn outline(name: &str, own: &[(&str, &str)], stroked: bool, size: impl Fn(Length
         own.iter()
             .filter(|(name, _)| *name == of)
             .filter_map(|(_, value)| built(value))
-            .map(|built| built.time(stroked))
+            .map(|built| built.time(placed))
             .max()
             .unwrap_or(0)
     };
     let built = match name {
         "circle" => {
             let radius = largest("r").unwrap_or(0.0);
-            (radius > 0.0).then(|| rounded(radius, radius))
+            (radius > 0.0).then(|| rounded(radius, radius, placed.scale))
         }
         "ellipse" => {
             let (rx, ry) = radii();
-            (rx > 0.0 && ry > 0.0).then(|| rounded(rx.max(ry), rx.max(ry)))
+            (rx > 0.0 && ry > 0.0).then(|| rounded(rx.max(ry), rx.max(ry), placed.scale))
         }
         "rect" => {
             let width = largest("width").unwrap_or(0.0);
@@ -557,49 +751,42 @@ fn outline(name: &str, own: &[(&str, &str)], stroked: bool, size: impl Fn(Length
             let (corner_x, corner_y) = (rx.min(width / 2.0), ry.min(height / 2.0));
             (width > 0.0 && height > 0.0).then(|| {
                 if corner_x > 0.0 {
-                    rounded(corner_x.max(corner_y), width.max(height))
+                    rounded(corner_x.max(corner_y), width.max(height), placed.scale)
                 } else {
-                    Built {
-                        curves: 0,
-                        stroke: 4 * STRAIGHT_OUTLINE_NS,
-                    }
+                    Built::straight(4)
                 }
             })
         }
-        "line" => Some(Built {
-            curves: 0,
-            stroke: STRAIGHT_OUTLINE_NS,
-        }),
+        "line" => Some(Built::straight(1)),
         "polyline" | "polygon" => {
             let closed = u64::from(name == "polygon");
             return each("points", &|points| {
                 let count = u64::try_from(PointsParser::from(points).count()).unwrap_or(u64::MAX);
-                (count >= 2).then(|| Built {
-                    curves: 0,
-                    stroke: (count - 1 + closed).saturating_mul(STRAIGHT_OUTLINE_NS),
-                })
+                (count >= 2).then(|| Built::straight(count - 1 + closed))
             });
         }
-        "path" => return each("d", &|data| Some(path_built(data))),
+        "path" => return each("d", &|data| Some(path_built(data, placed.scale))),
         _ => None,
     };
-    built.map_or(0, |built| built.time(stroked))
+    built.map_or(0, |built| built.time(placed))
 }
 
 /// A circle, an ellipse or a rectangle with rounded corners: four arcs of
-/// `radius`, and the outline of a stroke as long as `side`.
-fn rounded(radius: f64, side: f64) -> Built {
+/// `radius`, and the outline of a stroke as long as `side`, and as long as
+/// `scale` times that on the page.
+fn rounded(radius: f64, side: f64, scale: f64) -> Built {
     Built {
         curves: count((arc_curves(radius) / 4.0).ceil()).saturating_mul(4),
         stroke: priced(ARC_OUTLINE_NS, side),
+        again: priced(ARC_OUTLINE_NS, side * scale),
     }
 }
 
 /// What the parser builds of path data `data`: each arc cut into curves by its
 /// radius, and its stroke outlined a segment at a time, a curve by how far its
 /// points reach from where it starts, the control a smooth curve reflects
-/// among them.
-fn path_built(data: &str) -> Built {
+/// among them, and outlined again with each curve `scale` times as large.
+fn path_built(data: &str, scale: f64) -> Built {
     let mut built = Built::default();
     let (mut at, mut start) = ((0.0_f64, 0.0_f64), (0.0_f64, 0.0_f64));
     // The second control of the last cubic, and the control of the last
@@ -619,17 +806,21 @@ fn path_built(data: &str) -> Built {
                 .iter()
                 .map(|(x, y)| (x - at.0).abs().max((y - at.1).abs()))
                 .fold(0.0_f64, f64::max);
-            priced(CURVE_OUTLINE_NS, reach)
+            (
+                priced(CURVE_OUTLINE_NS, reach),
+                priced(CURVE_OUTLINE_NS, reach * scale),
+            )
         };
-        let (end, stroke) = match segment {
+        let straight = (STRAIGHT_OUTLINE_NS, STRAIGHT_OUTLINE_NS);
+        let (end, (stroke, again)) = match segment {
             PathSegment::MoveTo { x, y, .. } => {
                 start = point(x, y);
-                (start, 0)
+                (start, (0, 0))
             }
-            PathSegment::LineTo { x, y, .. } => (point(x, y), STRAIGHT_OUTLINE_NS),
-            PathSegment::HorizontalLineTo { x, .. } => ((from.0 + x, at.1), STRAIGHT_OUTLINE_NS),
-            PathSegment::VerticalLineTo { y, .. } => ((at.0, from.1 + y), STRAIGHT_OUTLINE_NS),
-            PathSegment::ClosePath { .. } => (start, STRAIGHT_OUTLINE_NS),
+            PathSegment::LineTo { x, y, .. } => (point(x, y), straight),
+            PathSegment::HorizontalLineTo { x, .. } => ((from.0 + x, at.1), straight),
+            PathSegment::VerticalLineTo { y, .. } => ((at.0, from.1 + y), straight),
+            PathSegment::ClosePath { .. } => (start, straight),
             PathSegment::CurveTo {
                 x1,
                 y1,
@@ -668,9 +859,15 @@ fn path_built(data: &str) -> Built {
                     built.curves = built
                         .curves
                         .saturating_add(count(arc_curves(radius).ceil()));
-                    (end, priced(ARC_OUTLINE_NS, radius))
+                    (
+                        end,
+                        (
+                            priced(ARC_OUTLINE_NS, radius),
+                            priced(ARC_OUTLINE_NS, radius * scale),
+                        ),
+                    )
                 } else {
-                    (end, STRAIGHT_OUTLINE_NS)
+                    (end, straight)
                 }
             }
         };
@@ -683,6 +880,7 @@ fn path_built(data: &str) -> Built {
             _ => (None, None),
         };
         built.stroke = built.stroke.saturating_add(stroke);
+        built.again = built.again.saturating_add(again);
         at = end;
     }
     built

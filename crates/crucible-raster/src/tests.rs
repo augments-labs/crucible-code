@@ -2367,6 +2367,158 @@ fn a_stroked_shape_is_counted_by_the_outline_of_its_stroke_at_its_size() {
 }
 
 #[test]
+fn a_stroked_shape_the_page_turns_is_outlined_again_at_its_size_there() {
+    // A stroked shape that what places it turns or skews is outlined a second
+    // time at its size on the page: another 2.4 µs, and its outline again at
+    // that size, scaled by the most any transform around it stretches it.
+    let ten = |around: &str, shape: &str| {
+        built(&page(&format!(
+            r#"<g transform="{around}">{}</g>"#,
+            shape.repeat(10)
+        )))
+    };
+    let circle = r##"<circle r="50" stroke="#000"/>"##;
+    let turned = [
+        ("rotate(30)", circle, 2_400 + 31_000),
+        ("rotate(90)", circle, 2_400 + 31_000),
+        ("skewX(10)", circle, 2_400 + 31_000),
+        ("matrix(1 0.5 0 1 0 0)", circle, 2_400 + 31_000),
+        ("rotate(30) scale(10)", circle, 2_400 + 181_100),
+        ("scale(10) rotate(30)", circle, 2_400 + 181_100),
+        ("rotate(30) scale(1000)", circle, 2_400 + 2_594_400),
+        (
+            "rotate(30) scale(10)",
+            r##"<path d="M0 0a50 50 0 1 1 1 0" stroke="#000"/>"##,
+            2_400 + 181_100,
+        ),
+        (
+            "rotate(30) scale(100)",
+            r##"<path d="M0 0C2e2 0 0 1 2 2" stroke="#000"/>"##,
+            2_400 + 154_400,
+        ),
+        (
+            "rotate(30) scale(1000)",
+            r##"<line x2="1e5" stroke="#000"/>"##,
+            2_400 + 1_400,
+        ),
+        (
+            "rotate(30) scale(1000)",
+            r##"<rect width="10" height="10" stroke="#000"/>"##,
+            2_400 + 4 * 1_400,
+        ),
+        // Neither a shape left unstroked, nor one only scaled or moved.
+        ("rotate(30)", r#"<circle r="50" stroke="none"/>"#, 0),
+        ("scale(1000)", circle, 0),
+        ("translate(5 5)", circle, 0),
+    ];
+    for (around, shape, again) in turned {
+        assert_eq!(
+            ten(around, shape) - ten("", shape),
+            10 * again,
+            "{around} {shape}"
+        );
+    }
+}
+
+#[test]
+fn a_shape_is_turned_and_sized_on_the_page_by_every_view_and_marker_that_places_it() {
+    let circle = r##"<circle r="50" stroke="#000"/>"##;
+    let svg = |size: &str, inner: &str| {
+        format!(r#"<svg xmlns="http://www.w3.org/2000/svg" {size}>{inner}</svg>"#)
+    };
+    // Turned, and held the same way, as long, but not turned: what a use or a
+    // marker copies is counted by its length too.
+    let rotated = |inner: &str| format!(r#"<g transform="rotate(30)">{inner}</g>"#);
+    let still = |inner: &str| format!(r#"<g transform="scale(1.0)">{inner}</g>"#);
+    let marked = |marker: &str, path: &str| {
+        page(&format!(
+            r#"<defs><marker id="m" overflow="visible"{marker}>{circle}</marker></defs>{path}"#
+        ))
+    };
+    let path = r#"<path d="M0 0L10 10" marker-end="url(#m)"/>"#;
+    // What a marker holds is counted where it is written as well as where it
+    // is drawn, so a marker drawn once is outlined again twice.
+    let placed = [
+        (
+            "the outermost view, ten times its box",
+            svg(
+                r#"width="1000" height="1000" viewBox="0 0 100 100""#,
+                &rotated(circle),
+            ),
+            svg(
+                r#"width="1000" height="1000" viewBox="0 0 100 100""#,
+                &still(circle),
+            ),
+            2_400 + 181_100,
+        ),
+        (
+            "a symbol a use draws a hundred times its box",
+            svg(
+                r#"width="20" height="20""#,
+                &format!(
+                    r##"<defs><symbol id="s" viewBox="0 0 10 10">{}</symbol></defs><use href="#s" width="1000" height="1000"/>"##,
+                    rotated(circle)
+                ),
+            ),
+            svg(
+                r#"width="20" height="20""#,
+                &format!(
+                    r##"<defs><symbol id="s" viewBox="0 0 10 10">{}</symbol></defs><use href="#s" width="1000" height="1000"/>"##,
+                    still(circle)
+                ),
+            ),
+            2_400 + 597_000,
+        ),
+        (
+            "a marker turned along its path",
+            marked(r#" orient="auto" markerUnits="userSpaceOnUse""#, path),
+            marked(r#" orient="0.00" markerUnits="userSpaceOnUse""#, path),
+            2 * (2_400 + 31_000),
+        ),
+        (
+            "a marker turned along its path and sized by its stroke",
+            marked(
+                r#" orient="auto""#,
+                r#"<path d="M0 0L10 10" stroke-width="10" marker-end="url(#m)"/>"#,
+            ),
+            marked(
+                r#" orient="0.00""#,
+                r#"<path d="M0 0L10 10" stroke-width="10" marker-end="url(#m)"/>"#,
+            ),
+            2 * (2_400 + 181_100),
+        ),
+        (
+            "a marker on a turned path",
+            marked("", &rotated(path)),
+            marked("", &still(path)),
+            2 * (2_400 + 31_000),
+        ),
+    ];
+    for (name, turned, plain, again) in placed {
+        assert_eq!(built(&turned) - built(&plain), again, "{name}");
+    }
+}
+
+#[test]
+fn a_stroked_shape_the_page_turns_past_the_largest_size_measured_is_refused_before_it_is_built() {
+    let _alone = alone();
+    // Forty circles of radius 100 stroked 100 000 wide, turned and scaled a
+    // hundred thousand times: each is outlined again ten million wide, which
+    // took the parser 8 ms, past any size measured.
+    let circles = |around: &str| {
+        format!(
+            r##"<g fill="none" stroke="#000" stroke-width="1e5"><g transform="{around}">{}</g></g>"##,
+            r#"<circle r="100"/>"#.repeat(40)
+        )
+    };
+    let (result, took) = refused_in_at(&page(&circles("rotate(30) scale(1e5)")), 20);
+    assert_eq!(result, Err(Refused::TooLarge));
+    assert!(took < SOON_REFUSED, "built first: {took:?}");
+    let result = rasterise(page(&circles("rotate(30)")).as_bytes(), 20, &[]);
+    assert!(result.is_ok(), "turned at its own size: {result:?}");
+}
+
+#[test]
 fn a_shape_is_stroked_as_it_or_what_holds_or_copies_it_says() {
     let circle = 2_400 + 2_594_400;
     let given = [
@@ -2430,19 +2582,26 @@ fn a_shape_is_stroked_as_it_or_what_holds_or_copies_it_says() {
 fn shapes_whose_outlines_take_longer_to_build_than_the_parser_may_are_refused_before_it_builds_them()
  {
     let _alone = alone();
-    // Ten stroked circles of radius 100 000 are 26 ms of outlines, and twenty
-    // thousand filled ones 26 ms of curves.
-    let stroked = r##"<circle r="1e5" fill="none" stroke="#000"/>"##;
-    let filled = r#"<circle r="1e5" fill="none"/>"#;
-    for (shape, refused, drawn) in [(stroked, 10, 5), (filled, 20_000, 1_000)] {
+    // Ten stroked circles of radius 100 000 are 26 ms of outlines, and
+    // twenty-five paths of a thousand arcs of radius 100 000 each, eleven
+    // curves an arc, 30 ms of curves. The curves are written as arcs, eleven
+    // to eighteen bytes, so that the file is read well within the time a
+    // debug build may take to refuse it.
+    let stroked = r##"<circle r="1e5" fill="none" stroke="#000"/>"##.to_owned();
+    let filled = format!(
+        r#"<path d="M0 0{}" fill="none"/>"#,
+        "a1e5 1e5 0 1 1 1 0".repeat(1000)
+    );
+    for (shape, refused, drawn) in [(&stroked, 10, 5), (&filled, 25, 5)] {
+        let named = shape.get(..40).unwrap_or(shape);
         let (result, took) = refused_in_at(&page(&shape.repeat(refused)), 20);
-        assert_eq!(result, Err(Refused::TooLarge), "{refused} of {shape}");
+        assert_eq!(result, Err(Refused::TooLarge), "{refused} of {named}");
         assert!(
             took < SOON_REFUSED,
-            "{refused} of {shape} built first: {took:?}"
+            "{refused} of {named} built first: {took:?}"
         );
         let result = rasterise(page(&shape.repeat(drawn)).as_bytes(), 20, &[]);
-        assert!(result.is_ok(), "{drawn} of {shape}: {result:?}");
+        assert!(result.is_ok(), "{drawn} of {named}: {result:?}");
     }
 }
 

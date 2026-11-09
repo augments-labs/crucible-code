@@ -7209,7 +7209,7 @@
       },
       "case": "a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small",
       "source": "crates/crucible-raster/tests/hostile.rs",
-      "body_sha256": "d13413952b867fbf2c0d5f58453c7c596ebf66e8f978629cc9e3ffb8470ebde9",
+      "body_sha256": "5f3b7eb5d00f9e8f74854ed1adaa95f4f532fd840c46665aa41ba81379caa31c",
       "platforms": [
         "linux",
         "macos",

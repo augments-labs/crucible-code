@@ -227,10 +227,12 @@ bound is refused rather than shrunk or cut:
   Every shape drawn, once or in each copy, has its outline built: a circle,
   an ellipse, a rounded rectangle or an arc is cut into more curves the
   larger it is, and a stroked shape has the outline of its stroke worked out,
-  which takes longer the larger its curves are. The time making them all
-  would take, by the elements, attributes, letters and outlines made, is
-  counted before the picture is built, and copies that would take more than
-  16 ms are refused.
+  which takes longer the larger its curves are. A stroked shape that is
+  turned or skewed, by its own transform or by what holds, copies or marks
+  it, has that outline worked out again at its size on the page. The time
+  making them all would take, by the elements, attributes, letters and
+  outlines made, is counted before the picture is built, and copies that
+  would take more than 16 ms are refused.
 - **A picture sent to the terminal.** Sent as PNG it is at most 1 MiB, and
   sent as Sixel it is at most 600 pixels wide.
 - **One at a time.** Only one picture is read or drawn at a time, wherever it

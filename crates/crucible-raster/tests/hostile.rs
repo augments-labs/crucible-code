@@ -133,20 +133,22 @@ use Expect::{Drawn, Refused as No};
 /// symbols, each sized in a percentage of the one around it; and circles whose
 /// radius is a percentage of a view the outermost `<svg>` sizes in a
 /// percentage, or a `<use>` sizes for the symbol it draws, past that largest
-/// size. The fourteen `work-*.svg` files, `worst.svg` and the other eleven
+/// size. The fourteen `work-*.svg` files, `worst.svg` and the other twelve
 /// `probe-*.svg` files are refused by the work drawing them would take and by
 /// nothing else: the two `work-copied-*.svg` and two `work-nested-uses*.svg`
 /// files, and the probes of copies, by the copies the parser would make of
-/// what their uses, markers, clips, text and gradient stops name; the three
+/// what their uses, markers, clips, text and gradient stops name; the four
 /// `probe-stroked-*.svg` files by the outlines the parser would build of their
-/// strokes; the two `probe-nested-*.svg` files by a marker inside a marker and
+/// strokes, one of them by the outline it builds again of a stroke the page
+/// turns, at its size on the page; the two `probe-nested-*.svg` files by a marker inside a marker and
 /// a clip inside a clip, whose copies no count bounds; and the rest by the
 /// work budget, the steps the renderer would take, a stroke reaching too far
 /// among them. The test after the corpus check draws each of them with that
 /// work made small, the one after it each file refused for an element with
 /// that element taken out, the one after that each file refused for what it
 /// says with that made plain, and the one after that the two refused for the
-/// size of their view with that view made plain and their circles made one.
+/// size of their view with that view made plain, with every circle and with
+/// one.
 const ENTRIES: &[(&str, Expect)] = &[
     ("image/anim.gif", Drawn),
     ("image/bomb.jpg", No(Refused::TooLarge)),
@@ -204,6 +206,10 @@ const ENTRIES: &[(&str, Expect)] = &[
     ("svg/probe-stops-user-space.svg", No(Refused::TooLarge)),
     ("svg/probe-stroked-circles-each.svg", No(Refused::TooLarge)),
     ("svg/probe-stroked-circles-most.svg", No(Refused::TooLarge)),
+    (
+        "svg/probe-stroked-circles-turned.svg",
+        No(Refused::TooLarge),
+    ),
     ("svg/probe-stroked-circles.svg", No(Refused::TooLarge)),
     ("svg/probe-style-copies.svg", No(Refused::NotAnImage)),
     ("svg/probe-svg-image.svg", No(Refused::NotAnImage)),
@@ -376,6 +382,7 @@ fn a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small() {
     let stroked_circles = read("svg/probe-stroked-circles.svg");
     let stroked_most = read("svg/probe-stroked-circles-most.svg");
     let stroked_each = read("svg/probe-stroked-circles-each.svg");
+    let stroked_turned = read("svg/probe-stroked-circles-turned.svg");
     let worst = read("svg/worst.svg");
     // The path with its first hundred edges and no more.
     let fewer = |original: &str| {
@@ -479,6 +486,9 @@ fn a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small() {
             &stroked_each,
             r##"<circle r="100000" fill="none" stroke="#000"/>"##,
         ),
+        stroked_turned
+            .replace("rotate(30) scale(100000)", "rotate(30)")
+            .replace(r#"stroke-width="100000""#, r#"stroke-width="1""#),
     ];
     for (name, original, small) in [
         ("svg/work-merge-inputs.svg", &merge, &small[0]),
@@ -519,6 +529,11 @@ fn a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small() {
             "svg/probe-stroked-circles-each.svg",
             &stroked_each,
             &small[26],
+        ),
+        (
+            "svg/probe-stroked-circles-turned.svg",
+            &stroked_turned,
+            &small[27],
         ),
     ] {
         assert_ne!(original, small, "{name}");
@@ -562,6 +577,7 @@ const REFUSED_SOON: &[(&str, Refused)] = &[
     ("svg/probe-stops-user-space.svg", Refused::TooLarge),
     ("svg/probe-stroked-circles-each.svg", Refused::TooLarge),
     ("svg/probe-stroked-circles-most.svg", Refused::TooLarge),
+    ("svg/probe-stroked-circles-turned.svg", Refused::TooLarge),
     ("svg/probe-stroked-circles.svg", Refused::TooLarge),
     ("svg/probe-style-copies.svg", Refused::NotAnImage),
     ("svg/probe-svg-image.svg", Refused::NotAnImage),
@@ -738,8 +754,7 @@ const REFUSED_FOR_A_VIEW: &[(&str, &str, &str, &str)] = &[
 ];
 
 #[test]
-fn a_file_refused_for_the_view_its_sizes_are_taken_of_is_drawn_once_that_and_its_count_are_made_small()
- {
+fn a_file_refused_for_the_view_its_sizes_are_taken_of_is_drawn_once_that_is_made_plain() {
     let _alone = alone();
     for (name, circle, view, plain) in REFUSED_FOR_A_VIEW {
         let original = fs::read_to_string(Path::new(CORPUS).join(name)).expect("a corpus file");
@@ -760,11 +775,12 @@ fn a_file_refused_for_the_view_its_sizes_are_taken_of_is_drawn_once_that_and_its
                 "{name}"
             );
         }
-        // With the view plain, so many circles are still more curves than the
-        // parser may cut, and one is drawn.
-        assert_eq!(
+        // With the view plain, so many circles are no longer refused for
+        // what they say, though copied by a use they are more work than
+        // the parser may do, and one is drawn.
+        assert_ne!(
             rasterise(original.replace(view, plain).as_bytes(), WIDTH, INKS),
-            Err(Refused::TooLarge),
+            Err(Refused::NotAnImage),
             "{name} with its view plain"
         );
         let drawn = rasterise(one.replace(view, plain).as_bytes(), WIDTH, INKS);
