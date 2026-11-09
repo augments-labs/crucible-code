@@ -122,7 +122,7 @@ use Expect::{Drawn, Refused as No};
 /// of pixels, past `MOST_DECODED`. So are `many-results.svg` and the three
 /// `filter-work-*.svg` files, by the other half of that ceiling: each asks for
 /// a filter region so large that the pixmaps it would hold are past it before
-/// any step of work is priced. Only the four `work-*.svg` files are refused by
+/// any step of work is priced. Only the five `work-*.svg` files are refused by
 /// the work the renderer would do and by nothing else, and the test after the
 /// corpus check draws each of them with that work made small.
 const ENTRIES: &[(&str, Expect)] = &[
@@ -150,6 +150,7 @@ const ENTRIES: &[(&str, Expect)] = &[
     ("svg/many-results.svg", No(Refused::TooLarge)),
     ("svg/nested.svg", Drawn),
     ("svg/small.svg", Drawn),
+    ("svg/work-dashes.svg", No(Refused::TooLarge)),
     ("svg/work-merge-inputs.svg", No(Refused::TooLarge)),
     ("svg/work-shapes-filled.svg", No(Refused::TooLarge)),
     ("svg/work-shapes-stroked.svg", No(Refused::TooLarge)),
@@ -281,6 +282,7 @@ fn a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small() {
     let turbulence = read("svg/work-turbulence-octaves.svg");
     let filled = read("svg/work-shapes-filled.svg");
     let stroked = read("svg/work-shapes-stroked.svg");
+    let dashes = read("svg/work-dashes.svg");
     let small = [
         once(&merge, r#"<feMergeNode in="SourceGraphic"/>"#),
         turbulence.replace(r#"numOctaves="10""#, r#"numOctaves="1""#),
@@ -289,12 +291,17 @@ fn a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small() {
             &stroked,
             r#"<path d="M0 50H100" fill="none" stroke="black" stroke-width="100"/>"#,
         ),
+        dashes.replace(
+            r#"stroke-dasharray="0.01 0.01""#,
+            r#"stroke-dasharray="512""#,
+        ),
     ];
     for (name, original, small) in [
         ("svg/work-merge-inputs.svg", &merge, &small[0]),
         ("svg/work-turbulence-octaves.svg", &turbulence, &small[1]),
         ("svg/work-shapes-filled.svg", &filled, &small[2]),
         ("svg/work-shapes-stroked.svg", &stroked, &small[3]),
+        ("svg/work-dashes.svg", &dashes, &small[4]),
     ] {
         assert_ne!(original, small, "{name}");
         assert_eq!(

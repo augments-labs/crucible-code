@@ -203,10 +203,12 @@ bound is refused rather than shrunk or cut:
 - **What drawing an SVG computes.** The pixels each filter step's region
   holds, times what the step does with each pixel (a turbulence per octave, a
   morphology per cell of its window, a convolution per cell of its matrix, a
-  merge per input it draws), and the pixels each fill or stroke covers inside
-  the picture, one step for every sixteen of them, added up over the picture,
-  are at most 140 000. That is about what a drawing can finish in a fiftieth
-  of a second. A picture past it is refused before it is drawn.
+  merge per input it draws), the pixels each fill or stroke covers inside
+  the picture, one step for every sixteen of them, and for a dashed stroke
+  each dash it is cut into, at least eight steps, however short and thin,
+  added up over the picture, are at most 140 000. That is about what a
+  drawing can finish in a fiftieth of a second. A picture past it is refused
+  before it is drawn.
 - **A picture sent to the terminal.** Sent as PNG it is at most 1 MiB, and
   sent as Sixel it is at most 600 pixels wide.
 - **One at a time.** Only one picture is read or drawn at a time, wherever it

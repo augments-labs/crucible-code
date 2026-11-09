@@ -15,13 +15,14 @@
 //! [`MOST_DECODED`]. The second is the work: for each filter primitive the
 //! pixels of its region times what it does with each pixel, and for each shape
 //! the pixels it reaches on the pixmap it is drawn on, its fill and its stroke
-//! each on their own, all summed over the tree. It is refused past
-//! [`MOST_WORK`].
+//! each on their own, all summed over the tree, and a dashed stroke by the
+//! dashes it is cut into instead of by the pixels it reaches. It is refused
+//! past [`MOST_WORK`].
 
 use crate::{MOST_DECODED, Refused};
-use resvg::tiny_skia::{IntRect, Rect, Transform};
+use resvg::tiny_skia::{IntRect, PathSegment, Point, Rect, StrokeDash, Transform};
 use resvg::usvg::filter::{Filter, Kind};
-use resvg::usvg::{ClipPath, Group, Image, ImageKind, Mask, Node, Paint, Path, Tree};
+use resvg::usvg::{ClipPath, Group, Image, ImageKind, Mask, Node, Paint, Path, Stroke, Tree};
 
 /// The most work a drawing may ask for: 140 000 pixel-steps.
 ///
@@ -44,6 +45,21 @@ const MOST_WORK: u64 = 140_000;
 /// above what they cost, so a plain page-sized background does not use up a
 /// drawing's work.
 const PIXELS_PER_STEP: u64 = 16;
+
+/// The steps a dash costs however thin it is: 8.
+///
+/// Building and drawing a dash across a stroke no wider than a pixel took 2
+/// steps at the most, whatever its length; 8 is four times that.
+const STEPS_PER_DASH: u64 = 8;
+
+/// The steps each pixel across a dash costs beyond the first, when that is
+/// more than the pixels the dash covers are worth: 32.
+///
+/// The renderer works every row across a dash whatever its length: a dash
+/// shorter than a pixel across a stroke 100 wide took 190 microseconds, which
+/// is 14 steps for each of the 100. That is the dearest measured, and 32 is
+/// more than twice it.
+const STEPS_PER_DASH_ROW: u64 = 32;
 
 /// What a drawing holds and does, as far as the walk can tell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -390,8 +406,11 @@ impl Walk {
         if path.fill().is_some() {
             self.work(covered(path.bounding_box(), transform, canvas))?;
         }
-        if path.stroke().is_some() {
-            self.work(covered(path.stroke_bounding_box(), transform, canvas))?;
+        if let Some(stroke) = path.stroke() {
+            match dashing(stroke) {
+                Some(dash) => self.work(dashes(path, stroke, dash, transform, canvas)?)?,
+                None => self.work(covered(path.stroke_bounding_box(), transform, canvas))?,
+            }
         }
         let paints = path
             .fill()
@@ -462,6 +481,108 @@ fn covered(bounds: Rect, transform: Transform, pixmap: Option<IntRect>) -> u64 {
                 .saturating_mul(u64::from(rect.height()))
                 .div_ceil(PIXELS_PER_STEP)
         })
+}
+
+/// The dash array of `stroke` if the renderer will cut it into dashes: the
+/// renderer draws a stroke solid when its array is not one it can use.
+fn dashing(stroke: &Stroke) -> Option<&[f32]> {
+    let array = stroke.dasharray()?;
+    StrokeDash::new(array.to_vec(), stroke.dashoffset()).map(|_| array)
+}
+
+/// The steps a stroke cut into dashes by `array` costs on a pixmap.
+///
+/// The renderer cuts the path itself, before any transform, into as many
+/// dashes as its length holds periods of the array, and builds and draws every
+/// one. So the most there can be is the length over the period, rounded up,
+/// for each entry of the array. Each costs what it can cover on the pixmap,
+/// at most as long as the longest entry and as wide as the stroke, or what
+/// working its width costs, whichever is more, and never less than
+/// [`STEPS_PER_DASH`].
+/// A count that no number can hold is refused.
+///
+/// # Errors
+/// [`Refused::TooLarge`] when the length of the path is not a number.
+fn dashes(
+    path: &Path,
+    stroke: &Stroke,
+    array: &[f32],
+    transform: Transform,
+    pixmap: Option<IntRect>,
+) -> Result<u64, Refused> {
+    let Some(pixmap) = pixmap else {
+        return Ok(0);
+    };
+    let period: f64 = array.iter().map(|entry| f64::from(*entry)).sum();
+    let length = length(path.data());
+    if !length.is_finite() || !period.is_finite() || period <= 0.0 {
+        return Err(Refused::TooLarge);
+    }
+    let entries = u64::try_from(array.len()).unwrap_or(u64::MAX);
+    let count = whole((length / period).ceil()).saturating_mul(entries);
+    let longest = array
+        .iter()
+        .fold(0.0_f64, |most, one| most.max(f64::from(*one)));
+    let width = f64::from(stroke.width().get());
+    let (sx, sy) = transform.get_scale();
+    let (sx, sy) = (f64::from(sx), f64::from(sy));
+    let reach = f64::from(pixmap.width()) * f64::from(pixmap.height());
+    let area = ((longest + width) * width * sx * sy).min(reach);
+    // Pixels across the stroke beyond the first, as far as the canvas is wide.
+    let across = (width * sx.max(sy) - 1.0)
+        .min(f64::from(pixmap.width()) + f64::from(pixmap.height()))
+        .max(0.0);
+    let each = whole(area.ceil()).div_ceil(PIXELS_PER_STEP).max(
+        STEPS_PER_DASH.saturating_add(whole(across.ceil()).saturating_mul(STEPS_PER_DASH_ROW)),
+    );
+    Ok(count.saturating_mul(each))
+}
+
+/// `value` as a count: a float saturates, and nothing is negative.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "saturates, and is judged against a ceiling"
+)]
+fn whole(value: f64) -> u64 {
+    value as u64
+}
+
+/// The length of `path` in its own units: every segment of every contour, a
+/// curve by the polygon of its control points, which is never shorter than the
+/// curve.
+fn length(path: &resvg::tiny_skia::Path) -> f64 {
+    let between = |from: Point, to: Point| {
+        (f64::from(to.x) - f64::from(from.x)).hypot(f64::from(to.y) - f64::from(from.y))
+    };
+    let mut total = 0.0;
+    let mut start = Point::zero();
+    let mut at = Point::zero();
+    for segment in path.segments() {
+        match segment {
+            PathSegment::MoveTo(to) => {
+                start = to;
+                at = to;
+            }
+            PathSegment::LineTo(to) => {
+                total += between(at, to);
+                at = to;
+            }
+            PathSegment::QuadTo(control, to) => {
+                total += between(at, control) + between(control, to);
+                at = to;
+            }
+            PathSegment::CubicTo(first, second, to) => {
+                total += between(at, first) + between(first, second) + between(second, to);
+                at = to;
+            }
+            PathSegment::Close => {
+                total += between(at, start);
+                at = start;
+            }
+        }
+    }
+    total
 }
 
 /// What a primitive does with each pixel of its region, in pixel-steps.

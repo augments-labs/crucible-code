@@ -6741,7 +6741,7 @@
       },
       "case": "tests::a_drawing_the_renderer_panics_on_is_refused_not_raised_to_the_caller",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "8a901b90b25cc9d3f24c0371ce237aa4e0ce93c1d08a38823f79086fae29c437",
+      "body_sha256": "4d815335f8deee1af0a2a224aebca786b1e14cac5cd5366fd36f3ab76965e4dc",
       "platforms": [
         "linux",
         "macos",
@@ -7209,7 +7209,61 @@
       },
       "case": "a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small",
       "source": "crates/crucible-raster/tests/hostile.rs",
-      "body_sha256": "be5ec27b0d86714b86b8709c9fb809e73f91af00bcf5a72db300d0d512479f3a",
+      "body_sha256": "5e60180e0a7c836b5172a4be5e9e75e417b20c7fe333725dec0df9fe6ad23495",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SHAPE-WORK-DASHES",
+      "family": "transcript-pictures",
+      "obligation": "A dashed stroke is counted by the dashes it is cut into, drawn at the ceiling and refused one dash past it.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_dashed_stroke_is_counted_by_the_dashes_it_makes",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "22c203a87e379114fb0acc669c488de61db68932a48858cd354bddf2810cff96",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SHAPE-WORK-DASH-WIDTH",
+      "family": "transcript-pictures",
+      "obligation": "A thin dash is counted by the width it is drawn across, and a long one by the pixels it covers.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_thin_dash_is_counted_by_the_width_it_is_drawn_across",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "6aa9556219eb1d7020d3a2d7fad0acfe65baa34bd1962b648f05e064227c5992",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SHAPE-WORK-DASH-UNBOUNDED",
+      "family": "transcript-pictures",
+      "obligation": "A dash count no number can hold is refused, and a dash array of zeros is drawn.",
+      "package": "crucible-raster",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_raster"
+      },
+      "case": "tests::a_dash_count_no_number_can_hold_is_refused",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "cccb22bdf89c9b9645f25887fc73ffd6395b0d715607e219fe93f7b205f0c28b",
       "platforms": [
         "linux",
         "macos",

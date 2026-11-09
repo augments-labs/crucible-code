@@ -983,8 +983,10 @@ fn a_ring_inside_a_nested_svg_is_dropped_and_the_page_around_it_is_drawn() {
 fn a_drawing_the_renderer_panics_on_is_refused_not_raised_to_the_caller() {
     let _alone = alone();
     // A stroke far wider than the picture, dashed, makes the renderer's
-    // anti-aliasing index past its own rows. Found by generated input.
-    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="756.131" height="1e400" viewBox="0 0 3803.823 3803.823"><g transform="scale(2215.33)"><path d="M0 0 L3803.823 3803.823" stroke="#000" stroke-width="413156971" stroke-dasharray="5em 5em" fill="none"/><circle cx="3803.823" cy="3803.823" r="756.131"/></g></svg>"##;
+    // anti-aliasing index past its own rows. Found by generated input. Its
+    // dashes are few, since a drawing cut into many would be refused before it
+    // was drawn.
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="756.131" height="1e400" viewBox="0 0 3803.823 3803.823"><g transform="scale(2215.33)"><path d="M0 0 L3803.823 3803.823" stroke="#000" stroke-width="413156971" stroke-dasharray="10000" fill="none"/><circle cx="3803.823" cy="3803.823" r="756.131"/></g></svg>"##;
     assert_eq!(
         rasterise(svg.as_bytes(), 583, &[]),
         Err(Refused::NotAnImage)
@@ -1197,4 +1199,65 @@ fn a_stroke_and_a_fill_are_counted_apart() {
         rasterise(covered(81, both).as_bytes(), 100, &[]),
         Err(Refused::TooLarge)
     );
+}
+
+/// A page 100 pixels square with one line across it, stroked `width` wide and
+/// dashed by `array`, as long as `length`.
+fn dashed(length: &str, width: u32, array: &str) -> String {
+    format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><path d="M0 50H{length}" fill="none" stroke="black" stroke-width="{width}" stroke-dasharray="{array}"/></svg>"#
+    )
+}
+
+/// The work of a drawing of `svg` on a canvas 100 pixels square, or why it is
+/// refused.
+fn work_of(svg: &str) -> Result<u64, Refused> {
+    let tree = usvg::Tree::from_str(svg, &usvg::Options::default()).expect("a drawing");
+    budget::cost(&tree, Transform::identity(), 100, 100).map(|cost| cost.work)
+}
+
+#[test]
+fn a_dashed_stroke_is_counted_by_the_dashes_it_makes() {
+    let _alone = alone();
+    // A line 100 long in dashes of 5 and gaps of 5 is ten periods of two
+    // entries. Each costs 8 steps, and 32 more for the second pixel across the
+    // stroke (2 wide), which is more than the 14 pixels one dash can cover is
+    // worth, and the bounding box of the stroke is not counted as well.
+    assert_eq!(work_of(&dashed("100", 2, "5 5")), Ok(10 * 2 * 40));
+    // An odd list is repeated, so its period and its entries double.
+    assert_eq!(work_of(&dashed("100", 2, "5")), Ok(10 * 2 * 40));
+    // A stroke no wider than a pixel is the 8 steps and no more.
+    assert_eq!(work_of(&dashed("100", 1, "5 5")), Ok(10 * 2 * 8));
+    // The line is counted whole, though most of it is off the canvas: 1 750
+    // periods are 140 000 steps, and one more is past the ceiling.
+    let at = dashed("17500", 2, "5 5");
+    assert_eq!(work_of(&at), Ok(1_750 * 2 * 40));
+    assert!(rasterise(at.as_bytes(), 100, &[]).is_ok());
+    let past = dashed("17501", 2, "5 5");
+    assert_eq!(work_of(&past), Err(Refused::TooLarge));
+    assert_eq!(rasterise(past.as_bytes(), 100, &[]), Err(Refused::TooLarge));
+}
+
+#[test]
+fn a_thin_dash_is_counted_by_the_width_it_is_drawn_across() {
+    let _alone = alone();
+    // Dashes of 0.3 across a stroke 10 wide cover 103 pixels each, which is
+    // 7 steps by their area, but the renderer works the whole width of each:
+    // 334 entries at 8 steps and 32 for each of the 9 pixels beyond the first.
+    assert_eq!(work_of(&dashed("100", 10, "0.3")), Ok(334 * 296));
+    // A dash long enough to cover more than that is counted by its area: 602
+    // by 2 pixels reaches the 10 000 of the canvas in 76 steps, not 40.
+    assert_eq!(work_of(&dashed("100", 2, "600")), Ok(2 * 76));
+}
+
+#[test]
+fn a_dash_count_no_number_can_hold_is_refused() {
+    let _alone = alone();
+    // Dashes of a thousand-millionth of a millionth along a line of a million
+    // millions are more than any count can say, and the drawing is refused
+    // rather than counted as nothing.
+    assert_eq!(work_of(&dashed("1e30", 2, "1e-30")), Err(Refused::TooLarge));
+    // A list that adds up to nothing is not a dash: the stroke is solid, and
+    // is counted by what it covers.
+    assert_eq!(work_of(&dashed("100", 2, "0 0")), Ok(13));
 }
