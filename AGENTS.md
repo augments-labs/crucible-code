@@ -175,8 +175,8 @@ pays for that.
   is weighed on that, its provenance and Proof rather than closed. A tick
   nobody gave is a false statement about a person.
 
-Finishing, review and publication follow [`CONTRIBUTING.md`](CONTRIBUTING.md)
-and [`RELEASING.md`](RELEASING.md).
+Only a maintainer, or an agent they authorized, merges or closes a pull request.
+Finishing, merging and publication follow `CONTRIBUTING.md` and `RELEASING.md`.
 
 ## Repository checks
 
