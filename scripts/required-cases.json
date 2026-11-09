@@ -1825,6 +1825,114 @@
       ]
     },
     {
+      "id": "CASE-TRANSCRIPT-CHANGE-BOX-HEADER",
+      "family": "transcript-blocks",
+      "obligation": "A change opens a box on each file's path and its added and removed counts, and closes it.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_change_opens_with_its_path_and_counts_and_closes_its_box",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "97e182c4f9d8c3956652ed550cccd413a5cb1cbd2bab0d02aa0d133d3b5a95b7",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-BOX-FOLD",
+      "family": "transcript-blocks",
+      "obligation": "A file of more than thirty-two rows draws its first twenty-four and last four around one row counting the rest and naming the key that shows them.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_file_longer_than_the_fold_shows_its_head_and_tail_and_counts_the_rest",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "2781550a6c98ae0150f99a8b45d86d39de5de1a785d8e9ae45c7eec7da12524b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-BOX-NOT-SHOWN",
+      "family": "transcript-blocks",
+      "obligation": "Lines a tool never kept are counted inside the box, and the header counts the change whole.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::lines_the_tool_never_kept_are_a_count_inside_the_box",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "24b73bbac471c874010c4e5665446ba774d1d2eb707c4551210960032d5e1a9f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-BOX-NO-PATH",
+      "family": "transcript-blocks",
+      "obligation": "A change recorded without a path opens on its counts alone.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_change_with_no_path_opens_on_its_counts_alone",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "8a9b5f3cecfd69bb37c3a90d1a95a5b6fe9457150a1822d234b67c15297c86f8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-PAST-CAPS",
+      "family": "transcript-blocks",
+      "obligation": "A diff past the reader's line or byte cap is refused before it is read.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_diff_past_its_caps_is_refused_before_it_is_read",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "69a944489464fd7582c73a8b91d607309d6a7e06d609b4052c7a52e088d9d54e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-MISLEADING-PATH",
+      "family": "transcript-blocks",
+      "obligation": "A path carrying bidirectional, isolate, control or private-use characters is drawn with each replaced.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_misleading_path_is_drawn_with_what_would_mislead_replaced",
+      "source": "crates/crucible-tui-diff/tests/hostile.rs",
+      "body_sha256": "0036e2d35559d857d9770f41b7c608e8f90ff866536efd85166e161c99aaa65f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
       "id": "CASE-TRANSCRIPT-PICTURE-TABLES-40-UNICODE",
       "family": "transcript-corpus",
       "obligation": "The corpus's tables answer lays out at 40 columns in the unicode glyph set as the picture accepted for it.",

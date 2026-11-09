@@ -318,34 +318,41 @@ Nothing about it is written to disk.
 ## What a change leaves on screen
 
 The answer `edit` and `write` send the model says what was done. What is drawn
-under the call is the change itself:
+under the call is the change itself, in a box:
 
 ```
-● Edit(.github/workflows/release.yml)
-  └ Added 2 lines, removed 1 line
-      303            scripts/sh/smoke.sh --no-provider
-      304
-      305 -  # Shared-runner numbers are trend data.
-      305 +  # What stops a tag whose build got slower
-      306 +  # is the budget below.
-      306    budgets:
-      307      name: release budgets
+● Edit(release.yml)
+  ╭─ release.yml +1 −1
+  │    1 - # trend data
+  │    1 + # what stops a tag
+  │    2   budgets:
+  │    3     name: release budgets
+  ╰─
 ```
 
-A line that went is marked `-` and one that came is marked `+`, each on ground
-saying which way; the lines around them did not move and are there to be read
-against. Every one carries the number it has in the file, and both sides of a
-replacement start at the same one, since one line stands where the other did.
+The box opens on the file as the call named it and the count of lines added
+and removed. A line that went is marked `-` and one that came is marked `+`,
+each on ground saying which way, and within a replaced line the words that
+changed are raised. The lines around them did not move and are there to be read
+against; they wear the colours of the file's language, read from its extension.
+Every line carries the number it has in the file, and both sides of a
+replacement start at the same one, since one line stands where the other did. A
+change drawn in a reply, from a diff the model wrote, is drawn in the same box.
 
-At most 64 lines are drawn, and a change longer than that is still counted whole
-on the row above, which then says how much of it is not below:
-`Added 300 lines, removed 12 lines (248 of them not shown)`.
+The tool keeps at most 64 lines of a change, and counts the rest whole on the
+box's first row. Inside the box, the lines it never kept are one quiet row,
+`⋯  136 lines not shown  ⋯`, and a change of more than 32 rows is folded to its
+first 24 and its last 4 around a row saying how many are folded:
+`⋯  36 lines folded · ctrl+o to expand  ⋯`. The key is the one under
+[results cut short](../reference/keys.md#results-cut-short).
 
 The protected session log retains this bounded preview for resume, including the
 omitted count. Each retained line is limited to 1024 characters. Preview bodies
 stay out of model context; they can contain sensitive file text and receive the
 same file protection as the conversation. Sessions recorded before preview
-persistence show only their original change counts when resumed.
+persistence show only their original change counts when resumed. A change
+recorded before the box named its file opens on its counts alone, and its lines
+are drawn without the language's colours.
 
 `write` is the one that can have nothing to show. It is handed the new file and
 has to read the one it is about to discard, so a file over 1000000 bytes or one
