@@ -19,15 +19,20 @@
 //! is drawn on, its fill and its stroke each on their own, a dashed stroke by
 //! the dashes it is cut into instead of by the pixels it reaches, and every
 //! stop of a gradient at every pixel the gradient paints added to them; every
-//! segment of its outline by the rows of that pixmap it crosses; and every
-//! edge of its fill, and of its stroke's outline, by the pixels along each of
-//! those rows it can walk past. A shape in a clip is priced as the fill it is
-//! drawn as, on the clip's own pixmap. The work is refused past [`MOST_WORK`].
+//! segment of its outline by the rows of that pixmap it crosses, with every
+//! stop of its gradients set up once for it; and every edge of its fill, and
+//! of its stroke's outline, by the pixels along each of those rows it can
+//! walk past. A shape in a clip is priced as the fill it is drawn as, on the
+//! clip's own pixmap. The work is refused past [`MOST_WORK`], and a stroke
+//! whose outline reaches past [`MOST_STROKED_REACH`] pixels from the origin is
+//! refused however little work it is counted as: the renderer cannot outline
+//! it as finely as it tries to. An image is never drawn: the parser is given
+//! none.
 
 use crate::{MOST_DECODED, Refused};
 use resvg::tiny_skia::{IntRect, PathSegment, Point, Rect, StrokeDash, Transform};
 use resvg::usvg::filter::{Filter, Kind};
-use resvg::usvg::{ClipPath, Group, Image, ImageKind, Mask, Node, Paint, Path, Stroke, Tree};
+use resvg::usvg::{ClipPath, Group, Mask, Node, Paint, Path, Stroke, Tree};
 
 /// The time a step stands for, in nanoseconds: 140.
 ///
@@ -107,6 +112,26 @@ const RUNS_PER_STEP: u64 = 128;
 /// to 15 ns a pixel all told, which the pixels and the stops counted together
 /// put at 13 to 22.
 const PIXEL_STOPS_PER_STEP: u64 = 512;
+
+/// The time the renderer takes to set up one stop of a gradient for a shape it
+/// paints, in nanoseconds: 32.
+///
+/// The renderer makes the stops of a gradient again for each shape it fills
+/// or strokes with it, before it knows whether any pixel is reached: a
+/// thousand to twenty thousand stops on 200 to 2 000 rectangles a pixel square
+/// took 29.7 to 31.7 ns a stop and a shape. A fill whose outline is no wider
+/// or taller than a line is not made.
+const STOP_SET_NS: u64 = 32;
+
+/// How far from the origin of the pixmap the outline of a stroke may reach, in
+/// pixels: a million.
+///
+/// The renderer outlines a stroke in the shape's own units, as finely as a
+/// quarter of a pixel once transformed, and past a few million pixels a float
+/// can no longer tell the points apart, so the outline is cut as finely as it
+/// goes. Every stroke measured within a million pixels drew in half a
+/// millisecond at most; past five million, from 400 to 700 ms.
+const MOST_STROKED_REACH: f32 = 1e6;
 
 /// The steps a dash costs however thin it is: 8.
 ///
@@ -248,7 +273,9 @@ impl Walk {
             match node {
                 Node::Group(group) => self.group(group, transform, context, held)?,
                 Node::Path(path) => self.path(path, transform, context, held)?,
-                Node::Image(image) => self.image(image, transform, context, held)?,
+                // An image is never built: the element is refused before the
+                // tree is, and the resolver hands the parser nothing to draw.
+                Node::Image(_) => {}
                 Node::Text(text) => self.group(text.flattened(), transform, context, held)?,
             }
         }
@@ -522,30 +549,6 @@ impl Walk {
         }
         Ok(())
     }
-
-    /// A picture nested in a picture is drawn onto a copy of the pixmap it is
-    /// drawn on. An image of any other kind is not drawn.
-    fn image(
-        &mut self,
-        image: &Image,
-        transform: Transform,
-        context: &Context,
-        held: u64,
-    ) -> Result<(), Refused> {
-        let ImageKind::SVG(nested) = image.kind() else {
-            return Ok(());
-        };
-        if !image.is_visible() {
-            return Ok(());
-        }
-        let held = held.saturating_add(bytes(context.pixmap.0, context.pixmap.1));
-        self.hold(held)?;
-        let inner = Context {
-            most: most_layer(context.pixmap.0, context.pixmap.1)?,
-            pixmap: context.pixmap,
-        };
-        self.nodes(nested.root(), transform, &inner, held)
-    }
 }
 
 /// The steps drawing `path` costs on a pixmap `pixmap` wide and tall: the
@@ -561,10 +564,13 @@ impl Walk {
 /// and the two edges of the stroke's outline beside each segment, also walk
 /// along each row they cross, as [`RUNS_PER_STEP`] says. A fill that reaches
 /// no pixel builds no edge, and a stroke that reaches none is still outlined.
+/// The stops of a gradient are set up for the fill and for the stroke, at
+/// [`STOP_SET_NS`] each, whether or not a pixel is reached.
 ///
 /// # Errors
 /// [`Refused::TooLarge`] when the stroke is dashed and the length of the path
-/// is not a number.
+/// is not a number, and when the outline of the stroke reaches past
+/// [`MOST_STROKED_REACH`] from the origin.
 fn shape(path: &Path, transform: Transform, pixmap: (u32, u32)) -> Result<u64, Refused> {
     let canvas = IntRect::from_xywh(0, 0, pixmap.0, pixmap.1);
     let mut pixels = 0_u64;
@@ -576,6 +582,9 @@ fn shape(path: &Path, transform: Transform, pixmap: (u32, u32)) -> Result<u64, R
         let reach = area.map_or(0, pixels_of);
         pixels = pixels.saturating_add(reach.div_ceil(PIXELS_PER_STEP));
         stops = stops.saturating_add(reach.saturating_mul(gradient_stops(fill.paint())));
+        if filled(path) {
+            nanos = nanos.saturating_add(STOP_SET_NS.saturating_mul(gradient_stops(fill.paint())));
+        }
         if let Some(area) = area.filter(|_| reach > 0 && filled(path)) {
             let walked = FILL.of(path.data(), transform, pixmap.1);
             nanos = nanos.saturating_add(walked.nanos);
@@ -583,6 +592,20 @@ fn shape(path: &Path, transform: Transform, pixmap: (u32, u32)) -> Result<u64, R
         }
     }
     if let Some(stroke) = path.stroke() {
+        let outline = path.stroke_bounding_box().transform(transform);
+        let near = outline.is_some_and(|outline| {
+            [
+                outline.left(),
+                outline.top(),
+                outline.right(),
+                outline.bottom(),
+            ]
+            .into_iter()
+            .all(|side| side.abs() <= MOST_STROKED_REACH)
+        });
+        if !near {
+            return Err(Refused::TooLarge);
+        }
         let area = reaches(path.stroke_bounding_box(), transform, canvas);
         let reach = area.map_or(0, pixels_of);
         pixels = pixels.saturating_add(match dashing(stroke) {
@@ -590,6 +613,7 @@ fn shape(path: &Path, transform: Transform, pixmap: (u32, u32)) -> Result<u64, R
             None => reach.div_ceil(PIXELS_PER_STEP),
         });
         stops = stops.saturating_add(reach.saturating_mul(gradient_stops(stroke.paint())));
+        nanos = nanos.saturating_add(STOP_SET_NS.saturating_mul(gradient_stops(stroke.paint())));
         let (sx, sy) = transform.get_scale();
         let half = f64::from(stroke.width().get()) * f64::from(sx.max(sy)) / 2.0;
         let outline = Edges {

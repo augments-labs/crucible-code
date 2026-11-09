@@ -1,5 +1,6 @@
 //! Pictures and image files as bounded pixels, and as PNG and Sixel payloads.
 
+mod admitted;
 mod budget;
 
 use icy_sixel::{EncodeOptions, SixelImage};
@@ -162,10 +163,21 @@ pub fn decode(bytes: &[u8]) -> Result<Pixels, Refused> {
 /// `<image>`, a `<foreignObject>`, a `<switch>`, a link, a `<tref>` and a
 /// `<textPath>` among them.
 ///
+/// A reference is let in only where a picture is drawn with one: an `href` on
+/// a `<use>` that names an element of the picture by `#id`, and on a filter's
+/// image step that names anything but an element. A gradient that takes its
+/// stops from another, an image step that draws an element and an `href` on
+/// any other element refuse the picture before the parser sees it, as do an
+/// id given to two elements or given in a namespace, and a number of the
+/// picture's geometry (a length, a coordinate, a radius, a number of path
+/// data, a view box, a factor of a transform, a width of a stroke or a font
+/// size) past 100 000 user units: the parser cuts an arc into curves by its
+/// radius, with no bound on how many.
+///
 /// Nothing outside the bytes is read, and the only font is the one this crate
 /// carries. A filter's image step that names a `data:` URL holding an SVG
 /// refuses the picture, since that SVG is not judged as this one is; one
-/// holding a raster image, or naming anything else, is drawn as nothing. The
+/// holding a raster image, or naming a file or a URL, is drawn as nothing. The
 /// height follows the SVG's own proportions, rounded up.
 ///
 /// A clip path, filter, marker or copy that comes to name itself through three
@@ -178,17 +190,26 @@ pub fn decode(bytes: &[u8]) -> Result<Pixels, Refused> {
 /// The copies the parser would make are counted before it makes any of them:
 /// what each `<use>` copies, and the copies within those; a marker's content
 /// at every vertex it is drawn on; a clip or a filter sized to each shape it is
-/// on; the letters of a text copied where it is not drawn; and every rule of
-/// the inks matched against every copy. Copies that would take it more than
-/// 16 ms to make are refused, however few bytes ask for them.
+/// on; the stops of a gradient in the units of a shape's bounding box, for
+/// every shape it paints; the letters of a text copied where it is not drawn;
+/// and every rule of the inks matched against every copy. Copies that would
+/// take it more than 16 ms to make are refused, however few bytes ask for them.
+///
+/// What the drawing would hold and compute is counted before it is drawn: a
+/// drawing that would hold more than [`MOST_DECODED`] bytes of pixmaps at once,
+/// or ask for more work than the renderer does in 20 ms, is refused, and so is
+/// a stroke whose outline reaches more than a million pixels from the origin,
+/// which the renderer outlines at a quarter pixel however long it is.
 ///
 /// # Errors
 /// [`Refused::TooLarge`] for an SVG past [`MOST_INPUT`], copies past what the
 /// parser may make, a marker inside a marker, a clip or a filter inside a clip,
-/// or a drawing past [`MOST_DECODED`]; [`Refused::NotAnImage`] for bytes that
-/// are not an SVG, a zero width, an element outside those drawn, an SVG inside
-/// a filter's image step, a drawing the renderer panics on, a document whose
-/// references lead back to themselves or an ink that cannot be a class;
+/// a drawing past [`MOST_DECODED`] or past the work it may ask for, or a stroke
+/// reaching too far; [`Refused::NotAnImage`] for bytes that are not an SVG, a
+/// zero width, an element outside those drawn, a reference where none is let
+/// in, an id given twice or in a namespace, a number past 100 000, an SVG
+/// inside a filter's image step, a drawing the renderer panics on, a document
+/// whose references lead back to themselves or an ink that cannot be a class;
 /// [`Refused::OverTime`] when the decode slot stays busy.
 pub fn rasterise(svg: &[u8], width_px: u32, inks: &[(&str, [u8; 3])]) -> Result<Pixels, Refused> {
     if svg.len() > MOST_INPUT {
@@ -255,6 +276,9 @@ fn draw(
     embedded: &AtomicBool,
 ) -> Result<Pixels, Refused> {
     let document = parse(svg).ok_or(Refused::NotAnImage)?;
+    // What a picture says is judged first: the elements, references, ids and
+    // sizes of numbers the parser would follow without counting.
+    admitted::admitted(&document)?;
     if leads_back(&document) {
         return Err(Refused::NotAnImage);
     }
@@ -321,18 +345,13 @@ fn parse(svg: &[u8]) -> Option<Document<'_>> {
 }
 
 /// Whether some element of `document` comes to refer to itself: through an
-/// attribute or a style sheet that names another element, or through the
-/// elements it holds.
+/// attribute that names another element, or through the elements it holds.
 ///
-/// Every `url(#id)` in an attribute, every `href` that is a `#id` (an `a` link
-/// is not drawn from), and every `url(#id)` in a `<style>` is a reference. A
-/// style sheet cannot say which element a rule reaches, so one that names
-/// anything but a gradient is taken to lead back, whether or not a loop is
-/// there: such a picture is refused, and a gradient is let through because it
-/// draws nothing that is drawn from another. Where an id is given twice, the
-/// parser takes a `url(#id)` to name the last element given it and a `<use>`
-/// to name the first; this takes the last for both, and [`copying`] finds a
-/// loop of copies through the first.
+/// Every `url(#id)` in an attribute and every `href` that is a `#id` is a
+/// reference. It is asked of a picture [`admitted`](admitted::admitted) has
+/// let through, so a style sheet has been refused, an `href` that names an
+/// element is on a `<use>`, and no id is given to two elements: which of two
+/// elements an id names, the first or the last, does not arise.
 fn leads_back(document: &Document<'_>) -> bool {
     let elements: Vec<Node<'_, '_>> = document.descendants().filter(Node::is_element).collect();
     let position: HashMap<roxmltree::NodeId, usize> = elements
@@ -346,25 +365,6 @@ fn leads_back(document: &Document<'_>) -> bool {
         .filter_map(|(at, element)| Some((element.attribute("id")?, at)))
         .collect();
 
-    let is_gradient = |at: &usize| {
-        elements.get(*at).is_some_and(|element| {
-            matches!(
-                element.tag_name().name(),
-                "linearGradient" | "radialGradient"
-            )
-        })
-    };
-    let styled_by_a_sheet = elements
-        .iter()
-        .filter(|element| element.tag_name().name() == "style")
-        .flat_map(|sheet| sheet.descendants().filter_map(|text| text.text()))
-        .flat_map(url_targets)
-        .filter_map(|target| named.get(target))
-        .any(|at| !is_gradient(at));
-    if styled_by_a_sheet {
-        return true;
-    }
-
     let edges: Vec<Vec<usize>> = elements
         .iter()
         .map(|element| {
@@ -373,7 +373,7 @@ fn leads_back(document: &Document<'_>) -> bool {
                 .filter(Node::is_element)
                 .filter_map(|child| position.get(&child.id()).copied());
             let named_by_attributes = element.attributes().flat_map(|attribute| {
-                let link = (attribute.name() == "href" && element.tag_name().name() != "a")
+                let link = (attribute.name() == "href")
                     .then(|| attribute.value().trim().strip_prefix('#'))
                     .flatten();
                 url_targets(attribute.value()).into_iter().chain(link)
@@ -475,6 +475,10 @@ const MATCH_NS: u64 = 7;
 /// Twenty thousand copies of a thousand letters in the definitions were made
 /// at 1.41 ns a letter past [`COPY_MADE_NS`], the dearest measured.
 const UNDRAWN_LETTER_NS: u64 = 2;
+
+/// The time the tree parser takes to copy one stop of a gradient in the units
+/// of a shape's bounding box, for each shape that gradient paints: 4 ns.
+const STOP_CLONED_NS: u64 = 4;
 
 /// The namespace of SVG. The parser reads an element in it or in none, and
 /// passes over one in any other with all it holds.
@@ -606,6 +610,53 @@ impl<'a, 'input> Elements<'a, 'input> {
         used(element).and_then(|id| self.first.get(id).copied())
     }
 
+    /// What each element takes what it inherits from: what holds it, and
+    /// every `<use>` that copies it, whose copy holds it.
+    fn parents(&self) -> Vec<Vec<usize>> {
+        let mut parents: Vec<Vec<usize>> = (0..self.all.len())
+            .map(|at| self.parent(at).into_iter().collect())
+            .collect();
+        for at in 0..self.all.len() {
+            if let Some(copied) = self.copied(at)
+                && let Some(entry) = parents.get_mut(copied)
+            {
+                entry.push(at);
+            }
+        }
+        parents
+    }
+
+    /// Every element after everything it inherits from, as [`Self::parents`]
+    /// gives it, or `None` where an element comes to hold or copy itself.
+    fn in_order(&self) -> Option<Vec<usize>> {
+        let parents = self.parents();
+        let mut waiting: Vec<usize> = parents.iter().map(Vec::len).collect();
+        let mut heirs: Vec<Vec<usize>> = vec![Vec::new(); self.all.len()];
+        for (at, from) in parents.iter().enumerate() {
+            for &parent in from {
+                if let Some(entry) = heirs.get_mut(parent) {
+                    entry.push(at);
+                }
+            }
+        }
+        let mut ready: Vec<usize> = (0..self.all.len())
+            .filter(|&at| waiting.get(at) == Some(&0))
+            .collect();
+        let mut order = Vec::with_capacity(self.all.len());
+        while let Some(at) = ready.pop() {
+            order.push(at);
+            for &heir in heirs.get(at).map_or(&[][..], Vec::as_slice) {
+                if let Some(entry) = waiting.get_mut(heir) {
+                    *entry = entry.saturating_sub(1);
+                    if *entry == 0 {
+                        ready.push(heir);
+                    }
+                }
+            }
+        }
+        (order.len() == self.all.len()).then_some(order)
+    }
+
     /// The elements the attribute `name` of the element at `at` names by
     /// `url(#id)`, or every attribute where `name` is `None`.
     fn linked(&self, at: usize, name: Option<&str>) -> Vec<usize> {
@@ -678,16 +729,18 @@ fn is_drawn_element(element: &Node<'_, '_>) -> bool {
 /// The time the tree parser would take making the copies that `document` asks
 /// for, a copy within a copy counted as often as it is made, by
 /// [`COPY_MADE_NS`], [`COPY_DRAWN_NS`], [`COPIED_ATTRIBUTE_BYTE_NS`],
-/// [`COPIED_LETTER_NS`] and [`UNDRAWN_LETTER_NS`], and by [`MATCH_NS`] for each
-/// of `rules` rules matched against each copy.
+/// [`COPIED_LETTER_NS`] and [`UNDRAWN_LETTER_NS`], by [`MATCH_NS`] for each
+/// of `rules` rules matched against each copy, and by [`STOP_CLONED_NS`] for
+/// each stop copied to paint a shape.
 ///
 /// Copies are what a `<use>` makes of the element it names; what a marker
-/// holds, made again at every place it is drawn on a shape; and a clip path or
-/// a filter sized to the shape it is on, made again for every shape that
-/// names it. A use names its element as the parser reads the name: an `href`
-/// with no namespace before an `xlink:href`, spaces before the `#` and the id
-/// up to the first space, and where an id is given twice, the first; a
-/// `url(#id)` names the last. A use in the definitions, or one that names what
+/// holds, made again at every place it is drawn on a shape; a clip path or a
+/// filter sized to the shape it is on, made again for every shape that names
+/// it; and the stops of a gradient in the units of a shape's box, made again
+/// for every shape drawn with it, the shapes drawn once among them. A use
+/// names its element as the parser reads the name: an `href` with no
+/// namespace before an `xlink:href`, spaces before the `#` and the id up to
+/// the first space. A use in the definitions, or one that names what
 /// nothing draws, is copied all the same, and so counted. A copy is taken to
 /// be drawn unless it is in the definitions and outside every clip, marker
 /// and filter there, which are drawn wherever they are named from. A shape is
@@ -696,14 +749,10 @@ fn is_drawn_element(element: &Node<'_, '_>) -> bool {
 /// have.
 ///
 /// # Errors
-/// [`Refused::NotAnImage`] for an element outside [`DRAWN_ELEMENTS`];
 /// [`Refused::TooLarge`] for a marker drawn inside a marker, a clip or a
 /// filter inside a clip, and a copy that would come to hold itself.
 fn copying(document: &Document<'_>, rules: usize) -> Result<u64, Refused> {
     let elements = Elements::of(document);
-    if !elements.all.iter().all(is_drawn_element) {
-        return Err(Refused::NotAnImage);
-    }
     let count = elements.all.len();
     let given: Vec<[Vec<usize>; MARKER_KINDS]> =
         (0..count).map(|at| elements.markers_given(at)).collect();
@@ -817,15 +866,26 @@ fn copying(document: &Document<'_>, rules: usize) -> Result<u64, Refused> {
             }
         }
     }
+    let stops = cloned_stops(&elements);
     let alone = |state: usize| {
-        elements
-            .all
-            .get(state / 2)
-            .map_or(0, |element| made_alone(element, state % 2 == 1, rules))
+        let (at, drawn) = (state / 2, state % 2 == 1);
+        let cloned = if drawn {
+            stops
+                .get(at)
+                .copied()
+                .unwrap_or(0)
+                .saturating_mul(STOP_CLONED_NS)
+        } else {
+            0
+        };
+        elements.all.get(at).map_or(0, |element| {
+            made_alone(element, drawn, rules).saturating_add(cloned)
+        })
     };
 
-    // Each element once, where the document puts it. Every element comes
-    // after its parent.
+    // Each element once, where the document puts it, and not the stops it
+    // is painted with, which are copied for it all the same. Every element
+    // comes after its parent.
     let mut drawn_once = vec![true; count];
     for at in 0..count {
         if let Some(parent) = elements.parent(at) {
@@ -842,7 +902,12 @@ fn copying(document: &Document<'_>, rules: usize) -> Result<u64, Refused> {
     let once = drawn_once
         .iter()
         .enumerate()
-        .map(|(at, &drawn)| alone(state(at, drawn)))
+        .map(|(at, &drawn)| {
+            elements
+                .all
+                .get(at)
+                .map_or(0, |element| made_alone(element, drawn, rules))
+        })
         .fold(0, u64::saturating_add);
 
     // What building each state takes, with all it makes. Depth first, without
@@ -905,6 +970,110 @@ fn copying(document: &Document<'_>, rules: usize) -> Result<u64, Refused> {
         .flatten()
         .unwrap_or(0)
         .saturating_sub(once))
+}
+
+/// The stops the tree parser copies to paint each element: for a shape or
+/// text, those of each gradient in the units of its box that its fill and its
+/// stroke name, and none for anything else. A fill or stroke an element does
+/// not give, or gives as `inherit`, is that of what holds or copies it, the
+/// one with the most stops where there are several.
+fn cloned_stops(elements: &Elements<'_, '_>) -> Vec<u64> {
+    const PAINTS: [&str; 2] = ["fill", "stroke"];
+    let count = elements.all.len();
+    // The stops each element holds when it is a gradient in the units of a
+    // shape's box, counted once however many shapes name it.
+    let held: Vec<u64> = elements
+        .all
+        .iter()
+        .map(|element| {
+            let in_box = matches!(
+                element.tag_name().name(),
+                "linearGradient" | "radialGradient"
+            ) && element
+                .attribute("gradientUnits")
+                .is_none_or(|units| units.trim() != "userSpaceOnUse");
+            if !in_box {
+                return 0;
+            }
+            let stops = element
+                .children()
+                .filter(|child| child.is_element() && child.tag_name().name() == "stop")
+                .count();
+            u64::try_from(stops).unwrap_or(u64::MAX)
+        })
+        .collect();
+    // The stops of the gradient `value` names, where it is in the units of a
+    // shape's box; `None` for `inherit`.
+    let stops_named = |value: &str| -> Option<u64> {
+        if value.trim() == "inherit" {
+            return None;
+        }
+        Some(
+            url_targets(value)
+                .first()
+                .and_then(|id| elements.last.get(id).copied())
+                .and_then(|at| held.get(at).copied())
+                .unwrap_or(0),
+        )
+    };
+    let given = |at: usize, paint: &str| -> Option<u64> {
+        let element = elements.all.get(at)?;
+        let declared = element
+            .attribute("style")
+            .into_iter()
+            .flat_map(simplecss::DeclarationTokenizer::from)
+            .filter(|declaration| declaration.name == paint)
+            .map(|declaration| declaration.value)
+            .last();
+        stops_named(declared.or_else(|| element.attribute(paint))?)
+    };
+    let parents = elements.parents();
+    let mut painted = vec![[0_u64; PAINTS.len()]; count];
+    for at in elements.in_order().unwrap_or_default() {
+        let above = |paint: usize| {
+            parents
+                .get(at)
+                .into_iter()
+                .flatten()
+                .filter_map(|&parent| painted.get(parent)?.get(paint).copied())
+                .max()
+                .unwrap_or(0)
+        };
+        let own: [u64; PAINTS.len()] = std::array::from_fn(|paint| {
+            PAINTS
+                .get(paint)
+                .and_then(|name| given(at, name))
+                .unwrap_or_else(|| above(paint))
+        });
+        if let Some(entry) = painted.get_mut(at) {
+            *entry = own;
+        }
+    }
+    painted
+        .iter()
+        .enumerate()
+        .map(|(at, stops)| {
+            let shape = matches!(
+                elements.name(at),
+                "path"
+                    | "rect"
+                    | "circle"
+                    | "ellipse"
+                    | "line"
+                    | "polyline"
+                    | "polygon"
+                    | "text"
+                    | "tspan"
+            );
+            if shape {
+                stops
+                    .iter()
+                    .fold(0_u64, |sum, &stops| sum.saturating_add(stops))
+            } else {
+                0
+            }
+        })
+        .collect()
 }
 
 /// Whether a marker is drawn inside a marker, or a clip or a filter inside a

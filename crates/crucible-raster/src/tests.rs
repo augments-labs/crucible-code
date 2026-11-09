@@ -1539,7 +1539,7 @@ fn edges_of_a_stroke_crowded_along_a_row_are_counted_by_the_pixels_each_can_walk
 // pictures past those it is counted making.
 
 /// Every element and filter primitive drawn, in one page 20 pixels square.
-const EVERY_DRAWN_ELEMENT: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="20" height="20"><title>all</title><desc>every element drawn</desc><metadata>none</metadata><defs><symbol id="s"><rect width="2" height="2"/></symbol><marker id="m" markerWidth="2" markerHeight="2"><circle cx="1" cy="1" r="1"/></marker><linearGradient id="lg"><stop offset="0" stop-color="#f00"/><stop offset="1" stop-color="#00f"/></linearGradient><radialGradient id="rg"><stop offset="0" stop-color="#0f0"/><stop offset="1" stop-color="#fff"/></radialGradient><clipPath id="c"><rect width="20" height="20"/></clipPath><filter id="f"><feFlood flood-color="#0f0" result="flood"/><feBlend in="SourceGraphic" in2="flood"/><feColorMatrix type="saturate" values="0.5"/><feComponentTransfer><feFuncR type="identity"/><feFuncG type="identity"/><feFuncB type="identity"/><feFuncA type="identity"/></feComponentTransfer><feComposite in2="flood" operator="over"/><feConvolveMatrix order="1" kernelMatrix="1"/><feDiffuseLighting><feDistantLight azimuth="45" elevation="45"/></feDiffuseLighting><feDisplacementMap in2="flood" scale="1"/><feDropShadow dx="1" dy="1" stdDeviation="1"/><feGaussianBlur stdDeviation="1"/><feImage xlink:href="#s"/><feMerge><feMergeNode in="flood"/><feMergeNode/></feMerge><feMorphology radius="1"/><feOffset dx="1"/><feSpecularLighting><fePointLight x="1" y="1" z="1"/></feSpecularLighting><feSpecularLighting><feSpotLight x="1" y="1" z="1"/></feSpecularLighting><feTile/><feTurbulence baseFrequency="0.1"/></filter></defs><g clip-path="url(#c)"><use xlink:href="#s"/><path d="M0 0L5 5L9 1" stroke="#000" fill="none" marker-end="url(#m)"/><rect x="10" width="4" height="4" fill="url(#lg)"/><circle cx="3" cy="15" r="2" fill="url(#rg)"/><ellipse cx="8" cy="15" rx="2" ry="1"/><line x1="0" y1="19" x2="19" y2="19" stroke="#000"/><polyline points="0 0 1 1 2 0" stroke="#000"/><polygon points="5 5 6 6 7 5"/><text x="1" y="12" font-size="4">a<tspan>b</tspan></text></g><rect x="15" y="15" width="4" height="4" filter="url(#f)"/></svg>"##;
+const EVERY_DRAWN_ELEMENT: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="20" height="20"><title>all</title><desc>every element drawn</desc><metadata>none</metadata><defs><symbol id="s"><rect width="2" height="2"/></symbol><marker id="m" markerWidth="2" markerHeight="2"><circle cx="1" cy="1" r="1"/></marker><linearGradient id="lg"><stop offset="0" stop-color="#f00"/><stop offset="1" stop-color="#00f"/></linearGradient><radialGradient id="rg"><stop offset="0" stop-color="#0f0"/><stop offset="1" stop-color="#fff"/></radialGradient><clipPath id="c"><rect width="20" height="20"/></clipPath><filter id="f"><feFlood flood-color="#0f0" result="flood"/><feBlend in="SourceGraphic" in2="flood"/><feColorMatrix type="saturate" values="0.5"/><feComponentTransfer><feFuncR type="identity"/><feFuncG type="identity"/><feFuncB type="identity"/><feFuncA type="identity"/></feComponentTransfer><feComposite in2="flood" operator="over"/><feConvolveMatrix order="1" kernelMatrix="1"/><feDiffuseLighting><feDistantLight azimuth="45" elevation="45"/></feDiffuseLighting><feDisplacementMap in2="flood" scale="1"/><feDropShadow dx="1" dy="1" stdDeviation="1"/><feGaussianBlur stdDeviation="1"/><feImage xlink:href="s.png"/><feMerge><feMergeNode in="flood"/><feMergeNode/></feMerge><feMorphology radius="1"/><feOffset dx="1"/><feSpecularLighting><fePointLight x="1" y="1" z="1"/></feSpecularLighting><feSpecularLighting><feSpotLight x="1" y="1" z="1"/></feSpecularLighting><feTile/><feTurbulence baseFrequency="0.1"/></filter></defs><g clip-path="url(#c)"><use xlink:href="#s"/><path d="M0 0L5 5L9 1" stroke="#000" fill="none" marker-end="url(#m)"/><rect x="10" width="4" height="4" fill="url(#lg)"/><circle cx="3" cy="15" r="2" fill="url(#rg)"/><ellipse cx="8" cy="15" rx="2" ry="1"/><line x1="0" y1="19" x2="19" y2="19" stroke="#000"/><polyline points="0 0 1 1 2 0" stroke="#000"/><polygon points="5 5 6 6 7 5"/><text x="1" y="12" font-size="4">a<tspan>b</tspan></text></g><rect x="15" y="15" width="4" height="4" filter="url(#f)"/></svg>"##;
 
 #[test]
 fn an_element_outside_those_drawn_is_refused_and_every_element_drawn_is_drawn() {
@@ -1811,4 +1811,305 @@ fn the_copies_markers_clips_and_text_ask_for_are_counted_before_any_is_made() {
     );
     assert!(rasterise(nested_uses(3).as_bytes(), 100, &[]).is_ok());
     assert!(rasterise(nested_uses(2).as_bytes(), 100, &inks).is_ok());
+}
+
+// ---------------------------------------------------------------------------
+// What a picture may say: where its references point, its ids, and the sizes
+// of its numbers.
+
+/// What drawing `inner` on a page 20 units square, 20 pixels wide, comes to.
+fn on_page(inner: &str) -> Result<Pixels, Refused> {
+    rasterise(page(inner).as_bytes(), 20, &[])
+}
+
+#[test]
+fn an_href_is_refused_anywhere_but_a_use_naming_an_element_or_a_filter_image_naming_outside() {
+    let _alone = alone();
+    let gradient = r##"<linearGradient id="g"><stop offset="0" stop-color="#000"/><stop offset="1" stop-color="#fff"/></linearGradient>"##;
+    let refused = [
+        (
+            "a gradient naming a gradient",
+            format!(
+                r##"{gradient}<linearGradient id="h" xlink:href="#g"/><rect width="9" height="9" fill="url(#h)"/>"##
+            ),
+        ),
+        (
+            "a gradient naming one with no namespace",
+            format!(
+                r##"{gradient}<radialGradient id="h" href="#g"/><rect width="9" height="9" fill="url(#h)"/>"##
+            ),
+        ),
+        (
+            "a filter image naming an element",
+            r##"<rect id="r" width="2" height="2"/><filter id="f"><feImage xlink:href="#r"/></filter><rect width="9" height="9" filter="url(#f)"/>"##.to_owned(),
+        ),
+        (
+            "a filter image naming an element after a space",
+            r#"<rect id="r" width="2" height="2"/><filter id="f"><feImage href=" #r"/></filter><rect width="9" height="9" filter="url(#f)"/>"#.to_owned(),
+        ),
+        (
+            "a use naming outside",
+            r#"<use xlink:href="other.svg#r"/>"#.to_owned(),
+        ),
+        (
+            "a shape carrying one",
+            r##"<rect id="r" width="2" height="2"/><rect width="9" height="9" xlink:href="#r"/>"##.to_owned(),
+        ),
+        (
+            "an href in the SVG namespace",
+            format!(
+                r##"{gradient}<linearGradient id="h" xmlns:s="http://www.w3.org/2000/svg" s:href="#g"/><rect width="9" height="9" fill="url(#h)"/>"##
+            ),
+        ),
+    ];
+    for (name, inner) in refused {
+        assert_eq!(on_page(&inner), Err(Refused::NotAnImage), "{name}");
+    }
+    let drawn = [
+        (
+            "a use naming an element",
+            r##"<defs><rect id="r" width="2" height="2"/></defs><use xlink:href="#r"/><use href="#r" x="4"/>"##.to_owned(),
+        ),
+        (
+            "a filter image naming outside",
+            r#"<filter id="f"><feImage xlink:href="other.png"/></filter><rect width="9" height="9" filter="url(#f)"/>"#.to_owned(),
+        ),
+        (
+            "a gradient named by a fill",
+            format!(r#"{gradient}<rect width="9" height="9" fill="url(#g)"/>"#),
+        ),
+    ];
+    for (name, inner) in drawn {
+        assert!(on_page(&inner).is_ok(), "{name}");
+    }
+}
+
+#[test]
+fn an_id_given_to_two_elements_or_in_a_namespace_is_refused() {
+    let _alone = alone();
+    let refused = [
+        (
+            "two rectangles",
+            r#"<rect id="a" width="2" height="2"/><rect id="a" x="4" width="2" height="2"/>"#,
+        ),
+        (
+            "a group and the rectangle it holds",
+            r#"<g id="a"><rect id="a" width="2" height="2"/></g>"#,
+        ),
+        (
+            "an id in the XML namespace",
+            r#"<rect xml:id="a" width="2" height="2"/>"#,
+        ),
+        (
+            "an id in the SVG namespace beside one with none",
+            r#"<rect id="a" xmlns:s="http://www.w3.org/2000/svg" s:id="b" width="2" height="2"/>"#,
+        ),
+    ];
+    for (name, inner) in refused {
+        assert_eq!(on_page(inner), Err(Refused::NotAnImage), "{name}");
+    }
+    assert!(
+        on_page(r#"<rect id="a" width="2" height="2"/><rect id="b" x="4" width="2" height="2"/>"#)
+            .is_ok(),
+        "ids given once each"
+    );
+}
+
+#[test]
+fn a_number_whose_size_is_past_the_limit_is_refused_and_one_at_it_is_drawn() {
+    let _alone = alone();
+    // Each pair is the same picture with a number past the limit of 100 000
+    // user units, and at or under it.
+    let pairs = [
+        (
+            "a radius",
+            r#"<circle r="100001"/>"#,
+            r#"<circle r="100000"/>"#,
+        ),
+        (
+            "a radius in a unit",
+            r#"<circle r="1042in"/>"#,
+            r#"<circle r="1041in"/>"#,
+        ),
+        (
+            "a coordinate",
+            r#"<rect x="-100001" width="2" height="2"/>"#,
+            r#"<rect x="-100000" width="2" height="2"/>"#,
+        ),
+        (
+            "a width",
+            r#"<rect width="1e6" height="2"/>"#,
+            r#"<rect width="1e5" height="2"/>"#,
+        ),
+        (
+            "a number of path data",
+            r#"<path d="M0 0L200001 0"/>"#,
+            r#"<path d="M0 0L100000 0"/>"#,
+        ),
+        (
+            "a point that relative path data reaches",
+            r#"<path d="M0 0l60000 0l60000 0"/>"#,
+            r#"<path d="M0 0l50000 0l50000 0"/>"#,
+        ),
+        (
+            "an arc's radius",
+            r#"<path d="M0 0A1e154 1 0 1 0 0 1"/>"#,
+            r#"<path d="M0 0A1e5 1 0 1 0 0 1"/>"#,
+        ),
+        (
+            "an arc's radius grown to reach its end",
+            r##"<path d="M-100000 -100000A1 1 0 0 0 100000 100000" fill="none" stroke="#000"/>"##,
+            r##"<path d="M-70000 -70000A1 1 0 0 0 70000 70000" fill="none" stroke="#000"/>"##,
+        ),
+        (
+            "the points of a polyline",
+            r#"<polyline points="0 0 1 1 300000 0"/>"#,
+            r#"<polyline points="0 0 1 1 3000 0"/>"#,
+        ),
+        (
+            "a stroke width given by a style",
+            r##"<rect width="2" height="2" stroke="#000" style="stroke-width: 2e5"/>"##,
+            r##"<rect width="2" height="2" stroke="#000" style="stroke-width: 2e3"/>"##,
+        ),
+        (
+            "a view box",
+            r#"<svg viewBox="0 0 2e5 2e5" width="20" height="20"><rect width="2" height="2"/></svg>"#,
+            r#"<svg viewBox="0 0 2e4 2e4" width="20" height="20"><rect width="2" height="2"/></svg>"#,
+        ),
+        (
+            "a factor of a transform",
+            r#"<rect width="2" height="2" transform="scale(1e5) scale(2)"/>"#,
+            r#"<rect width="2" height="2" transform="scale(1e5)"/>"#,
+        ),
+        (
+            "a factor of a gradient's transform",
+            r##"<linearGradient id="g" gradientTransform="translate(2e5)"><stop offset="0" stop-color="#000"/></linearGradient><rect width="2" height="2" fill="url(#g)"/>"##,
+            r##"<linearGradient id="g" gradientTransform="translate(2e4)"><stop offset="0" stop-color="#000"/></linearGradient><rect width="2" height="2" fill="url(#g)"/>"##,
+        ),
+        (
+            "a length in a percentage of the view",
+            r#"<circle r="1000001%"/>"#,
+            r#"<circle r="1000%"/>"#,
+        ),
+        (
+            "a font size",
+            r#"<text font-size="2e5" y="9">a</text>"#,
+            r#"<text font-size="2e3" y="9">a</text>"#,
+        ),
+        (
+            "a font size given by the font shorthand",
+            r#"<text style="font: 2e5px sans-serif" y="9">a</text>"#,
+            r#"<text style="font: 20px sans-serif" y="9">a</text>"#,
+        ),
+        (
+            "font sizes that compound",
+            r#"<g font-size="100em"><g font-size="100em"><circle r="1em"/></g></g>"#,
+            r#"<g font-size="10em"><g font-size="10em"><circle r="1em"/></g></g>"#,
+        ),
+        (
+            "a font size inherited again",
+            r#"<g font-size="100em"><g font-size="inherit"><circle r="1em"/></g></g>"#,
+            r#"<g font-size="10em"><g font-size="inherit"><circle r="1em"/></g></g>"#,
+        ),
+        (
+            "a font size compounded through a use",
+            r##"<defs><g id="s" font-size="100em"><circle r="1em"/></g></defs><g font-size="100em"><use href="#s"/></g>"##,
+            r##"<defs><g id="s" font-size="10em"><circle r="1em"/></g></defs><g font-size="10em"><use href="#s"/></g>"##,
+        ),
+        (
+            "a list of text positions",
+            r#"<text x="0 300000" y="9">ab</text>"#,
+            r#"<text x="0 3000" y="9">ab</text>"#,
+        ),
+    ];
+    for (name, past, at) in pairs {
+        assert_eq!(on_page(past), Err(Refused::NotAnImage), "{name}");
+        let drawn = on_page(at);
+        assert!(drawn.is_ok(), "{name} at the limit: {drawn:?}");
+    }
+}
+
+#[test]
+fn a_stroke_reaching_past_a_million_pixels_from_the_origin_is_refused() {
+    let _alone = alone();
+    // Small numbers under transforms that compound them: the renderer outlines
+    // the stroke at a tolerance it cannot resolve that far out.
+    let far = r##"<g transform="scale(1e5)"><g transform="scale(100)"><circle r="1" fill="none" stroke="#000" stroke-width="1"/></g></g>"##;
+    let (drawn, took) = refused_in_at(&page(far), 20);
+    assert_eq!(drawn, Err(Refused::TooLarge), "a stroke far out");
+    assert!(took < SOON_REFUSED, "drawn first: {took:?}");
+    // The same circle filled is drawn, and so is the stroke nearer in.
+    let filled = far.replace(r##"fill="none" stroke="#000" stroke-width="1""##, "");
+    assert!(on_page(&filled).is_ok(), "a fill far out");
+    let near = far.replace("scale(1e5)", "scale(1e3)");
+    assert!(on_page(&near).is_ok(), "a stroke nearer in");
+}
+
+/// A page 100 units square of `count` rectangles a unit square, each filled by
+/// one linear gradient of `stops` stops in `units`, each stop at an offset of
+/// its own.
+fn graded_shapes(count: usize, stops: usize, units: &str) -> String {
+    use std::fmt::Write as _;
+    let mut stop_list = String::new();
+    for at in 0..stops {
+        #[allow(clippy::cast_precision_loss, reason = "a small count")]
+        let offset = format!("{:.5}", at as f64 / stops as f64);
+        let _ = write!(
+            stop_list,
+            r##"<stop offset="{}" stop-color="#{:x}00"/>"##,
+            offset.trim_start_matches('0'),
+            at % 16
+        );
+    }
+    let stops = stop_list;
+    let mut shapes = String::new();
+    for at in 0..count {
+        let _ = write!(
+            shapes,
+            r#"<rect x="{}" y="{}" width="1" height="1" fill="url(#g)"/>"#,
+            at % 50,
+            at / 50
+        );
+    }
+    format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><defs><linearGradient id="g" gradientUnits="{units}" x2="100">{stops}</linearGradient></defs>{shapes}</svg>"#
+    )
+}
+
+#[test]
+fn the_stops_of_a_gradient_in_its_shapes_units_are_counted_copied_for_each_shape() {
+    // The tree parser copies every stop of a gradient in the units of the
+    // shape's bounding box for each shape it paints, and keeps the copies.
+    let copies = |units: &str| {
+        let svg = graded_shapes(100, 500, units);
+        let document = parse(svg.as_bytes()).expect("a document");
+        copying(&document, 0).expect("counted")
+    };
+    assert_eq!(
+        copies("objectBoundingBox") - copies("userSpaceOnUse"),
+        100 * 500 * STOP_CLONED_NS
+    );
+    let _alone = alone();
+    let svg = graded_shapes(2_000, 2_500, "objectBoundingBox");
+    assert!(svg.len() < MOST_INPUT, "{} bytes", svg.len());
+    let (drawn, took) = refused_in_at(&svg, 100);
+    assert_eq!(drawn, Err(Refused::TooLarge), "stops copied");
+    assert!(took < SOON_REFUSED, "copied first: {took:?}");
+}
+
+#[test]
+fn every_stop_of_a_gradient_is_set_up_again_for_each_shape_it_paints() {
+    let _alone = alone();
+    // The renderer makes the stops of a gradient again for every shape it
+    // paints, however few pixels the shape reaches: two hundred shapes a pixel
+    // square of 5 000 stops are refused, and a hundred drawn.
+    let (drawn, took) = refused_in_at(&graded_shapes(200, 5_000, "userSpaceOnUse"), 100);
+    assert_eq!(drawn, Err(Refused::TooLarge), "stops set up");
+    assert!(took < SOON_REFUSED, "drawn first: {took:?}");
+    let drawn = rasterise(
+        graded_shapes(100, 5_000, "userSpaceOnUse").as_bytes(),
+        100,
+        &[],
+    );
+    assert!(drawn.is_ok(), "{drawn:?}");
 }

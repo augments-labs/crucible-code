@@ -210,16 +210,20 @@ bound is refused rather than shrunk or cut:
   into, however short and thin; the time its outline takes to build and to
   sweep down the rows it crosses, longer for a stroke than for a fill; for a
   fill whose edges crowd together along a row, how far along the row each
-  can walk; and for a gradient, its pixels times its stops. Added up over
-  the picture, these are at most 140 000 steps. That is about what a drawing
-  can finish in a fiftieth of a second. A picture past it is refused before
-  it is drawn.
+  can walk; and for a gradient, its pixels times its stops, with every stop
+  set up again for each shape it paints. Added up over the picture, these
+  are at most 140 000 steps. That is about what a drawing can finish in a
+  fiftieth of a second. A picture past it is refused before it is drawn, and
+  so is one with a stroke reaching more than a million pixels from the
+  corner of the picture, which takes far longer to outline than its size
+  says.
 - **What the copies in an SVG take.** A `<use>` copies what it names, and a
   copy can hold uses of its own, so a few hundred bytes can ask for millions
   of copies. A marker's content is copied at every vertex it is drawn on, a
   clip or a filter sized to the shape it is on is made again for each shape,
-  a text copied where it is not drawn still has its letters laid out, and
-  each colour the picture is drawn in is matched against every copy. The
+  a gradient sized to the shape it paints has its stops copied for each
+  shape, a text copied where it is not drawn still has its letters laid out,
+  and each colour the picture is drawn in is matched against every copy. The
   time making them all would take, by the elements, attributes and letters
   copied, is counted before the picture is built, and copies that would take
   more than 16 ms are refused.
@@ -237,8 +241,14 @@ and `tspan`; `marker`; `linearGradient`, `radialGradient` and `stop`;
 picture holding any other element, such as a `<style>` sheet, a `<mask>`, a
 `<pattern>`, an `<image>`, a `<foreignObject>`, a `<switch>`, a link, a
 `<tref>` or a `<textPath>`, or an element in a namespace other than SVG's, is
-refused. A file, a URL or a font it names is not opened, followed or
-fetched, and the picture is drawn as if the reference were not there. Only
+refused. So is a reference anywhere but on a `<use>` naming an element of the
+picture or on a filter's image step naming something outside it: a gradient
+that takes its stops from another, or an image step that draws an element,
+is refused. So is an id given to two elements, and a number of the picture's
+geometry, such as a length, a coordinate, a radius or a factor of a
+transform, larger than 100 000. A file, a URL or a font it names is not
+opened, followed or fetched: a filter's image step naming one is drawn as if
+the reference were not there. Only
 one font is available, DejaVu Sans, so text in a script it has no letters for
 is drawn with gaps. A filter's image step holding a
 raster image, such as a PNG in a `data:` URL, is drawn as nothing; one

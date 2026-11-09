@@ -125,16 +125,22 @@ use Expect::{Drawn, Refused as No};
 /// any step of work is priced. The `form-*.svg` files are
 /// `Refused::NotAnImage`, each for the one element outside those drawn that
 /// it holds, and so are the `probe-*.svg` files that hold a mask, a style
-/// sheet, a reference to text or an image. The fourteen `work-*.svg` files,
-/// `worst.svg` and the other five `probe-*.svg` files are refused by the work
+/// sheet, a reference to text or an image. Nine more `probe-*.svg` files are
+/// `Refused::NotAnImage` for what they say: an arc, a circle and, through
+/// font sizes in `em` and `inherit`, a circle, each with a radius past the
+/// largest size a number may have; a filter image or a gradient that names an
+/// element; and an id given twice. The fourteen `work-*.svg` files,
+/// `worst.svg` and the other eight `probe-*.svg` files are refused by the work
 /// drawing them would take and by nothing else: the two `work-copied-*.svg`
 /// and two `work-nested-uses*.svg` files, and the probes of copies, by the
-/// copies the parser would make of what their uses, markers, clips and text
-/// name; the two `probe-nested-*.svg` files by a marker inside a marker and a
-/// clip inside a clip, whose copies no count bounds; and the rest by the work
-/// budget, the steps the renderer would take. The test after the corpus check
-/// draws each of them with that work made small, and the one after it each
-/// file refused for an element with that element taken out.
+/// copies the parser would make of what their uses, markers, clips, text and
+/// gradient stops name; the two `probe-nested-*.svg` files by a marker inside
+/// a marker and a clip inside a clip, whose copies no count bounds; and the
+/// rest by the work budget, the steps the renderer would take, a stroke
+/// reaching too far among them. The test after the corpus check draws each of
+/// them with that work made small, the one after it each file refused for an
+/// element with that element taken out, and the one after that each file
+/// refused for what it says with that made plain.
 const ENTRIES: &[(&str, Expect)] = &[
     ("image/anim.gif", Drawn),
     ("image/bomb.jpg", No(Refused::TooLarge)),
@@ -168,15 +174,27 @@ const ENTRIES: &[(&str, Expect)] = &[
     ("svg/garbage.svg", No(Refused::NotAnImage)),
     ("svg/many-results.svg", No(Refused::TooLarge)),
     ("svg/nested.svg", Drawn),
+    ("svg/probe-arc-huge.svg", No(Refused::NotAnImage)),
     ("svg/probe-box-clips.svg", No(Refused::TooLarge)),
+    ("svg/probe-circles-huge.svg", No(Refused::NotAnImage)),
+    ("svg/probe-em-compounded.svg", No(Refused::NotAnImage)),
+    ("svg/probe-feimage-chain.svg", No(Refused::NotAnImage)),
+    ("svg/probe-feimage-text.svg", No(Refused::NotAnImage)),
+    ("svg/probe-gradient-chain.svg", No(Refused::NotAnImage)),
+    ("svg/probe-inherit-compounded.svg", No(Refused::NotAnImage)),
     ("svg/probe-marker-copies.svg", No(Refused::TooLarge)),
     ("svg/probe-nested-clips.svg", No(Refused::TooLarge)),
     ("svg/probe-nested-markers.svg", No(Refused::TooLarge)),
     ("svg/probe-nested-masks.svg", No(Refused::NotAnImage)),
+    ("svg/probe-scaled-stroke.svg", No(Refused::TooLarge)),
+    ("svg/probe-stops-object-box.svg", No(Refused::TooLarge)),
+    ("svg/probe-stops-user-space.svg", No(Refused::TooLarge)),
     ("svg/probe-style-copies.svg", No(Refused::NotAnImage)),
     ("svg/probe-svg-image.svg", No(Refused::NotAnImage)),
     ("svg/probe-tref.svg", No(Refused::NotAnImage)),
+    ("svg/probe-twice-given-id.svg", No(Refused::NotAnImage)),
     ("svg/probe-undrawn-letters.svg", No(Refused::TooLarge)),
+    ("svg/probe-useloop-feimage.svg", No(Refused::NotAnImage)),
     ("svg/small.svg", Drawn),
     ("svg/work-clip-shapes.svg", No(Refused::TooLarge)),
     ("svg/work-copied-path.svg", No(Refused::TooLarge)),
@@ -336,6 +354,9 @@ fn a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small() {
     let marker_copies = read("svg/probe-marker-copies.svg");
     let box_clips = read("svg/probe-box-clips.svg");
     let letters = read("svg/probe-undrawn-letters.svg");
+    let object_box = read("svg/probe-stops-object-box.svg");
+    let user_space = read("svg/probe-stops-user-space.svg");
+    let scaled = read("svg/probe-scaled-stroke.svg");
     let worst = read("svg/worst.svg");
     // The path with its first hundred edges and no more.
     let fewer = |original: &str| {
@@ -430,6 +451,9 @@ fn a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small() {
         once(&marker_copies, r#"<rect x="-900" width="1" height="1"/>"#),
         once(&box_clips, r#"<rect x="-900" width="1" height="1"/>"#),
         letters.replace(&"x ".repeat(25_000), "x "),
+        ends(&object_box),
+        ends(&user_space),
+        scaled.replacen(r#"<g transform="scale(1e5)">"#, "<g>", 3),
     ];
     for (name, original, small) in [
         ("svg/work-merge-inputs.svg", &merge, &small[0]),
@@ -453,6 +477,9 @@ fn a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small() {
         ("svg/probe-marker-copies.svg", &marker_copies, &small[18]),
         ("svg/probe-box-clips.svg", &box_clips, &small[19]),
         ("svg/probe-undrawn-letters.svg", &letters, &small[20]),
+        ("svg/probe-stops-object-box.svg", &object_box, &small[21]),
+        ("svg/probe-stops-user-space.svg", &user_space, &small[22]),
+        ("svg/probe-scaled-stroke.svg", &scaled, &small[23]),
     ] {
         assert_ne!(original, small, "{name}");
         assert_eq!(
@@ -474,15 +501,27 @@ const SOON_REFUSED: Duration = Duration::from_millis(100);
 /// would otherwise have reached long after the ceiling.
 const REFUSED_SOON: &[(&str, Refused)] = &[
     ("svg/work-gradient-crossover.svg", Refused::TooLarge),
+    ("svg/probe-arc-huge.svg", Refused::NotAnImage),
     ("svg/probe-box-clips.svg", Refused::TooLarge),
+    ("svg/probe-circles-huge.svg", Refused::NotAnImage),
+    ("svg/probe-em-compounded.svg", Refused::NotAnImage),
+    ("svg/probe-feimage-chain.svg", Refused::NotAnImage),
+    ("svg/probe-feimage-text.svg", Refused::NotAnImage),
+    ("svg/probe-gradient-chain.svg", Refused::NotAnImage),
+    ("svg/probe-inherit-compounded.svg", Refused::NotAnImage),
     ("svg/probe-marker-copies.svg", Refused::TooLarge),
     ("svg/probe-nested-clips.svg", Refused::TooLarge),
     ("svg/probe-nested-markers.svg", Refused::TooLarge),
     ("svg/probe-nested-masks.svg", Refused::NotAnImage),
+    ("svg/probe-scaled-stroke.svg", Refused::TooLarge),
+    ("svg/probe-stops-object-box.svg", Refused::TooLarge),
+    ("svg/probe-stops-user-space.svg", Refused::TooLarge),
     ("svg/probe-style-copies.svg", Refused::NotAnImage),
     ("svg/probe-svg-image.svg", Refused::NotAnImage),
     ("svg/probe-tref.svg", Refused::NotAnImage),
+    ("svg/probe-twice-given-id.svg", Refused::NotAnImage),
     ("svg/probe-undrawn-letters.svg", Refused::TooLarge),
+    ("svg/probe-useloop-feimage.svg", Refused::NotAnImage),
 ];
 
 #[test]
@@ -524,7 +563,9 @@ fn a_file_refused_for_an_element_is_drawn_once_the_element_is_a_group() {
         let opened = format!("<{element}");
         let closed = format!("</{element}>");
         assert!(original.contains(&opened), "{name} holds {element}");
-        let grouped = original.replace(&opened, "<g").replace(&closed, "</g>");
+        // An element that pointed somewhere gives that up as a group: a
+        // reference is refused on anything but a use or a filter image.
+        let grouped = unlinked(&original.replace(&opened, "<g").replace(&closed, "</g>"));
         assert_eq!(
             rasterise(original.as_bytes(), WIDTH, INKS),
             Err(Refused::NotAnImage),
@@ -535,6 +576,82 @@ fn a_file_refused_for_an_element_is_drawn_once_the_element_is_a_group() {
             drawn.is_ok(),
             "{name} with its {element} a group: {drawn:?}"
         );
+    }
+}
+
+/// `svg` with the reference taken off each group that gives one.
+fn unlinked(svg: &str) -> String {
+    let mut pieces = svg.split("<g ");
+    let mut kept = pieces.next().unwrap_or_default().to_owned();
+    for piece in pieces {
+        kept.push_str("<g ");
+        match piece.split_once(r#"xlink:href=""#) {
+            Some((before, after)) if !before.contains('>') => {
+                let (_, after) = after.split_once('"').expect("the end of a reference");
+                kept.push_str(before);
+                kept.push_str(after);
+            }
+            _ => kept.push_str(piece),
+        }
+    }
+    kept
+}
+
+/// The files refused for what they say, each with what makes it plain: every
+/// replacement of the first text by the second.
+const REFUSED_FOR_SAYING: &[(&str, &[(&str, &str)])] = &[
+    ("svg/probe-arc-huge.svg", &[("A1e154 1", "A1 1")]),
+    (
+        "svg/probe-circles-huge.svg",
+        &[(r#"r="3e38""#, r#"r="30""#)],
+    ),
+    ("svg/probe-em-compounded.svg", &[(r#""1e4em""#, r#""1em""#)]),
+    (
+        "svg/probe-inherit-compounded.svg",
+        &[(r#""1e4em""#, r#""1em""#)],
+    ),
+    (
+        "svg/probe-feimage-chain.svg",
+        &[(r##"<feImage xlink:href="#"##, r#"<feImage xlink:href=""#)],
+    ),
+    (
+        "svg/probe-feimage-text.svg",
+        &[(r##"<feImage xlink:href="#"##, r#"<feImage xlink:href=""#)],
+    ),
+    (
+        "svg/probe-gradient-chain.svg",
+        &[(r##" xlink:href="#"##, r##" class="#"##)],
+    ),
+    (
+        "svg/probe-useloop-feimage.svg",
+        &[
+            (r##"xlink:href="#x""##, r#"xlink:href="x""#),
+            (r#"<rect id="z" width="10" height="10"/>"#, ""),
+        ],
+    ),
+    (
+        "svg/probe-twice-given-id.svg",
+        &[(r#"<rect id="a" x="20""#, r#"<rect id="b" x="20""#)],
+    ),
+];
+
+#[test]
+fn a_file_refused_for_what_it_says_is_drawn_once_that_is_made_plain() {
+    let _alone = alone();
+    for (name, plain) in REFUSED_FOR_SAYING {
+        let original = fs::read_to_string(Path::new(CORPUS).join(name)).expect("a corpus file");
+        let mut made_plain = original.clone();
+        for (said, instead) in *plain {
+            assert!(made_plain.contains(said), "{name} says {said}");
+            made_plain = made_plain.replace(said, instead);
+        }
+        assert_eq!(
+            rasterise(original.as_bytes(), WIDTH, INKS),
+            Err(Refused::NotAnImage),
+            "{name}"
+        );
+        let drawn = rasterise(made_plain.as_bytes(), WIDTH, INKS);
+        assert!(drawn.is_ok(), "{name} made plain: {drawn:?}");
     }
 }
 

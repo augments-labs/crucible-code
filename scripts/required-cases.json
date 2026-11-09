@@ -7209,7 +7209,7 @@
       },
       "case": "a_file_refused_for_its_work_is_drawn_once_the_work_is_made_small",
       "source": "crates/crucible-raster/tests/hostile.rs",
-      "body_sha256": "db63b4b659f138131b1ff4bc4b7375f6a007bb99ef1b6b340cb0a6f61efcf190",
+      "body_sha256": "f54c30d7064f58ea7f0b8e7f9cda9fb5c2b2c9c92f8c4630c76a7dfb1d2d4ff2",
       "platforms": [
         "linux",
         "macos",
@@ -7569,7 +7569,7 @@
       },
       "case": "a_file_refused_for_an_element_is_drawn_once_the_element_is_a_group",
       "source": "crates/crucible-raster/tests/hostile.rs",
-      "body_sha256": "5e5fe214b35f078a20ddde81063bcc51e267bd2a716990d7beaef581cfc046b0",
+      "body_sha256": "52c00a3b961acdeebac9a85d01cad94a4c9206e393a121bbbd818829dd4e14cd",
       "platforms": [
         "linux",
         "macos",
