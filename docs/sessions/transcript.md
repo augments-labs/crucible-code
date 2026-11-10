@@ -162,9 +162,9 @@ an item, so a wrapped one keeps the quote's bar and nothing more.
 
 A quote whose first line is nothing but `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`,
 `[!WARNING]` or `[!CAUTION]` is drawn as an alert, whatever the letter case of
-the kind. Each line of the quote that opens with `> ` has a quiet bar down its
-left, and the first holds the kind's mark and its word in bold, in place of the
-marker:
+the kind. Each row of the quote, a `> ` that opens the line or follows spaces,
+has a quiet bar down its left, and the first holds the kind's mark and its word
+in bold, in place of the marker:
 
 | Kind | Unicode | ASCII |
 | --- | --- | --- |
@@ -183,14 +183,15 @@ wraps shows it on every row it takes, in both
 [`output.screen`](../configuration/configuration.md#output) modes. Nothing of an
 alert is drawn until the end of its first line shows it was one.
 
-An alert ends where its quote does: at a blank line or at any line that does not
-open with `> `, a bare `>` among them, and so does a table, a heading written
-with an underline or a display formula. A quote row after any of them starts a
-quote of its own.
+An alert ends where its quote does: at a blank line or at any line that is not a
+row of it, a bare `>` among them, and so does a table written with outer bars, a
+heading written with an underline or a display formula. A quote row after any of
+them starts a quote of its own.
 
 A quote naming any other kind, with anything after the marker on its line, or
 with the marker on a later line, is an ordinary quote and shows the marker as
-written. So does a marker that is not in a quote, and one in a list item.
+written. So does a marker that is not in a quote, and one on the bullet's own
+line of a list item, as in `- > [!NOTE]`.
 
 ## What is shown as written
 
