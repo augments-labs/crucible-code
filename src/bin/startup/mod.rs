@@ -1854,7 +1854,8 @@ mod tests {
                 if seat == Seat::Terminal {
                     assert!(has(&heard, READY), "{name} drew no prompt: {said:?}");
                 }
-                for question in QUESTIONS {
+                // The background question as well as the exchange's.
+                for question in QUESTIONS.into_iter().chain(["\x1b]11;?"]) {
                     assert!(
                         !has(&heard, question),
                         "{name} asked {question:?}: {said:?}"
@@ -1864,10 +1865,14 @@ mod tests {
         }
 
         #[test]
-        fn no_answer_a_terminal_gives_becomes_a_key() {
-            // Each way of answering, with whether the picture's question is
-            // asked at all: only after a cursor position answered within the
-            // patience.
+        fn no_answer_given_at_once_late_out_of_order_or_split_becomes_a_key() {
+            // Each way the fake answers, with whether the picture's question
+            // is asked at all: only after a cursor position answered within
+            // the patience. Late is the fake's fifty milliseconds, past every
+            // patience, so late are only the cursor position and the device
+            // attributes, which are never keys; the fake never answers the
+            // background question, and a picture's answer after every wait is
+            // not among these.
             let cases = [
                 ("keys-at-once", Answering::AtOnce, true),
                 ("keys-never", Answering::Never, false),
