@@ -1,16 +1,18 @@
 //! Exact Bubblewrap filesystem/namespace command planning.
 //!
-//! A disk ceiling is one total across everything a run can write. It is held
-//! by sizing the tmpfs Bubblewrap makes the root with and making `/tmp` and the
+//! A disk ceiling is one total across everything a run can write. It is held by
+//! sizing the tmpfs Bubblewrap makes the root with and making `/tmp` and the
 //! home as directories inside it, with `/dev`, the one other tmpfs Bubblewrap
-//! makes, remounted read-only. tmpfs charges an extended attribute's value to
-//! its inodes, not to that size, so under a ceiling the broker is told to refuse
-//! every call that sets one, `io_uring` among them. A run with a writable host root, through a
-//! filesystem rule or a manifest mount, writes either to the host's own
-//! filesystem or into the overlay Bubblewrap lays over that root, which is
-//! sized by nothing this plan mounts. Neither is reached by the root's size, so
-//! such a run cannot be held to a ceiling and a request for one is refused
-//! before anything starts.
+//! makes, remounted read-only. tmpfs counts that size in whole pages and rounds
+//! it up, so the size is rounded down to the host's page instead, and a ceiling
+//! under one page, which would round to a size tmpfs reads as none, is refused.
+//! tmpfs charges an extended attribute's value to its inodes, not to that size,
+//! so under a ceiling the broker is told to refuse every call that sets one,
+//! `io_uring` among them. A run with a writable host root, through a filesystem
+//! rule or a manifest mount, writes either to the host's own filesystem or into
+//! the overlay Bubblewrap lays over that root, which is sized by nothing this
+//! plan mounts. Neither is reached by the root's size, so such a run cannot be
+//! held to a ceiling and a request for one is refused before anything starts.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ffi::{OsStr, OsString};
@@ -237,10 +239,13 @@ pub(super) fn prepare(request: &SandboxRequest) -> Result<View, SandboxError> {
             feature: SandboxFeature::ProcessLimit,
         });
     }
-    if limits.disk_bytes.is_some() && writes_reach_the_host(request) {
-        return Err(SandboxError::Unsupported {
-            feature: SandboxFeature::DiskLimit,
-        });
+    if let Some(bytes) = limits.disk_bytes {
+        if writes_reach_the_host(request) {
+            return Err(SandboxError::Unsupported {
+                feature: SandboxFeature::DiskLimit,
+            });
+        }
+        whole_pages(bytes)?;
     }
     for (present, feature) in [
         (
@@ -422,6 +427,34 @@ fn writes_reach_the_host(request: &SandboxRequest) -> bool {
             .any(|entry| entry.access() == Some(SandboxFilesystemAccess::ReadWrite))
 }
 
+/// The size the root is mounted with under `request`'s disk ceiling, if it has
+/// one.
+fn root_size(request: &SandboxRequest) -> Result<Option<u64>, SandboxError> {
+    request
+        .policy()
+        .limits()
+        .disk_bytes
+        .map(whole_pages)
+        .transpose()
+}
+
+/// The size a disk ceiling of `bytes` mounts the root with: the whole pages
+/// under it.
+///
+/// tmpfs rounds the size it is given up to a whole page, which would let a run
+/// hold up to a page less one byte past its ceiling, and it reads a size of zero
+/// as no size at all. A ceiling under one page therefore cannot be held, and is
+/// refused by name.
+fn whole_pages(bytes: u64) -> Result<u64, SandboxError> {
+    let page = u64::try_from(rustix::param::page_size()).unwrap_or(u64::MAX);
+    match bytes.checked_rem(page).map(|part| bytes - part) {
+        Some(held) if held > 0 => Ok(held),
+        _ => Err(SandboxError::Unsupported {
+            feature: SandboxFeature::DiskLimit,
+        }),
+    }
+}
+
 fn validate_host(rules: &[SandboxFilesystemRule]) -> Result<(), SandboxError> {
     validate_host_for(rules, linux_host())
 }
@@ -517,7 +550,7 @@ pub(super) fn build(plan: Plan<'_>) -> Result<Command, SandboxError> {
     } = plan;
     let runtime = runtime_mounts();
     let directories = mount_directories(&runtime, view, materialization.is_some());
-    let disk_bytes = request.policy().limits().disk_bytes;
+    let disk_bytes = root_size(request)?;
 
     let mut process = Command::new(backend.path());
     process.env_clear().args([

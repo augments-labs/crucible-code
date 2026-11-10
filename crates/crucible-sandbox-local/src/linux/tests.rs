@@ -2171,3 +2171,73 @@ fn a_disk_ceiling_sizes_the_one_root_every_writable_place_is_made_in() {
 
     assert_eq!(sized, expected);
 }
+
+/// This host's page size, which a tmpfs size is counted in.
+fn page() -> u64 {
+    u64::try_from(rustix::param::page_size()).expect("a page size that fits in u64")
+}
+
+#[test]
+fn a_disk_ceiling_that_is_not_whole_pages_is_held_to_the_pages_under_it() {
+    // tmpfs rounds the size it is given up to a whole page, which would let a
+    // run hold up to a page less one byte past its ceiling. The plan rounds it
+    // down instead, so a ceiling part way into a page is planned exactly as
+    // the whole pages under it are.
+    let sample = Sample::new("sandbox-plan-disk-pages");
+    let whole = 3 * page();
+    let at = |disk_bytes| {
+        planned(&read_only_request(
+            sample.root(),
+            SandboxResourceLimits {
+                disk_bytes: Some(disk_bytes),
+                ..SandboxResourceLimits::confining()
+            },
+        ))
+    };
+
+    let part_way = at(whole + 1);
+
+    assert!(
+        part_way
+            .windows(2)
+            .any(|pair| pair == ["--size".to_owned(), whole.to_string()]),
+        "{part_way:?}"
+    );
+    assert_eq!(part_way, at(whole));
+    assert_eq!(at(whole + page() - 1), at(whole));
+}
+
+#[test]
+fn a_disk_ceiling_under_one_page_is_refused_rather_than_left_unbounded() {
+    // Rounded down, a ceiling under one page is a size of zero, which tmpfs
+    // reads as no size at all. Nothing smaller than a page can be held, so the
+    // request is refused by name before anything starts.
+    let sample = Sample::new("sandbox-plan-disk-under-a-page");
+    for disk_bytes in [1, page() - 1] {
+        let refused = super::command::prepare(&read_only_request(
+            sample.root(),
+            SandboxResourceLimits {
+                disk_bytes: Some(disk_bytes),
+                ..SandboxResourceLimits::confining()
+            },
+        ));
+        assert!(
+            matches!(
+                refused,
+                Err(crucible_sandbox::SandboxError::Unsupported {
+                    feature: crucible_sandbox::SandboxFeature::DiskLimit
+                })
+            ),
+            "{disk_bytes}: {:?}",
+            refused.err()
+        );
+    }
+    let held = super::command::prepare(&read_only_request(
+        sample.root(),
+        SandboxResourceLimits {
+            disk_bytes: Some(page()),
+            ..SandboxResourceLimits::confining()
+        },
+    ));
+    assert!(held.is_ok(), "{:?}", held.err());
+}

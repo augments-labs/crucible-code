@@ -319,7 +319,9 @@ address space a process may map rather than the memory it uses, and runtimes
 that reserve enormously and touch little would be refused by any ceiling low
 enough to catch a real runaway. `disk_limit` is one total across everything a
 run with no writable host root can write: its root, `/tmp` and its home share
-one sized mount, and `/dev` is read-only. Under a ceiling, setting an extended
+one sized mount, and `/dev` is read-only. That mount is sized in whole pages,
+so the ceiling is held to the whole pages under it, rounded down, and one under
+a single page is refused. Under a ceiling, setting an extended
 attribute fails with a permission error, because the mount's size does not
 count an attribute's value, and so does `io_uring`, which could set one. A run
 that can write to any host path, through a writable filesystem rule (the
