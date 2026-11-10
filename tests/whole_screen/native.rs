@@ -555,7 +555,7 @@ fn settings_scrolls_inside_its_room_in_native_mode() {
     window.types_until("/settings\r", "esc to close");
     let opened = window.picture();
     assert!(opened.contains("› Theme"), "{opened}");
-    assert!(opened.contains("↓ 17 more"), "{opened}");
+    assert!(opened.contains("↓ 18 more"), "{opened}");
 
     window.types_until("\x1b[B", "› Syntax theme");
     let scrolled = window.picture();
@@ -578,7 +578,7 @@ fn settings_scrolls_inside_its_room_in_native_mode() {
         "{pushed} rows pushed into the scrollback:\n{scrolled}"
     );
     assert!(!scrolled.contains("› Theme"), "{scrolled}");
-    assert!(scrolled.contains("↓ 16 more"), "{scrolled}");
+    assert!(scrolled.contains("↓ 17 more"), "{scrolled}");
 
     window.types_until("\x1b", "ask mode on");
     window.assert_never_alternate();
@@ -1529,7 +1529,7 @@ fn settings_printed_is_laid_again_at_each_width_it_is_read_at() {
     // Every row the listing writes fits forty columns, so it is read at
     // thirty, which `Cache retention` and its value do not fit: a listing laid
     // once is cut there, where one laid again folds the value under its name.
-    assert_laid_again("settings-relaid", "/settings", "Persistent cache", [30, 80]);
+    assert_laid_again("settings-relaid", "/settings", "Images", [30, 80]);
 }
 
 #[test]
