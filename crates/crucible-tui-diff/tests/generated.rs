@@ -11,7 +11,7 @@
 #![allow(
     clippy::expect_used,
     clippy::panic,
-    reason = "a fixture that cannot be made, or a check that fails, is the test's failure; the clippy setting that allows both reaches only the functions marked as tests, not the helpers beside them"
+    reason = "a fixture not made or a check failed is the test's failure, in a helper too"
 )]
 
 use crucible_tui::chrome::Undrawn;

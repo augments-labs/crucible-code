@@ -33,9 +33,9 @@ use crate::row::Row;
 
 /// The words that name the key an offer to show more is made with.
 ///
-/// One action has one name: a drawer that folds what it was given offers the
-/// rest in these words, and so does a row that cut what came back, so the
-/// reader learns the key once.
+/// One action has one name: a row that cut what came back offers the rest in
+/// these words, so the reader learns the key once. A drawer that folds what
+/// it was given names no key, since nothing yet shows every line it kept.
 pub const EXPAND: &str = "ctrl+o to expand";
 
 /// What a drawer is handed to lay a block out in.

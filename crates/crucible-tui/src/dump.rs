@@ -67,10 +67,11 @@ pub fn dump(rows: &[Row], columns: usize) -> String {
 /// nothing.
 ///
 /// The slot's [`Slot::class`], the variant's own name, so the picture and the
-/// code that built it are read with one word. [`Slot::Plain`] is the one that is never written: it is the
-/// reader's own foreground, the palette writes no bytes for it, and most of
-/// every component is plain — tagged, the wordmark and the padding would arrive
-/// buried in markup that says only that they were left alone.
+/// code that built it are read with one word. [`Slot::Plain`] is the one that
+/// is never written: it is the reader's own foreground, the palette writes no
+/// bytes for it, and most of every component is plain — tagged, the wordmark
+/// and the padding would arrive buried in markup that says only that they were
+/// left alone.
 fn marked(slot: Slot) -> Option<&'static str> {
     match slot {
         Slot::Plain => None,

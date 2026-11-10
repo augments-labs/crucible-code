@@ -2,9 +2,10 @@
 //!
 //! The text is a fence the model wrote, so it is hostile: its bytes and lines
 //! are counted before a byte of it is parsed, and its files as they open, so
-//! one that names more than a change keeps is refused however its files open. What is read is what `git diff` and `diff -u`
-//! write: `diff --git` and `---`/`+++` headers, renames, binary notes, and
-//! hunks whose header counts say where each ends. Those counts are what tell a
+//! one that names more than a change keeps is refused however its files open.
+//! What is read is what `git diff` and `diff -u` write: `diff --git` and
+//! `---`/`+++` headers, renames, binary notes, and hunks whose header counts
+//! say where each ends. Those counts are what tell a
 //! removed line that begins `-- ` from the next file's `--- ` header, so a hunk
 //! ends when its counts run out, or at the first line that cannot be in one.
 //! Anything else (an `index` line, a mode, prose around the diff) is passed

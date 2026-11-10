@@ -5,8 +5,9 @@
 //! part that differs, cut only where a word may be (never between two
 //! letters), so `input.lines()` becoming `input.lines().enumerate()`
 //! raises `.enumerate()` and not the call before it. Two lines with no word in
-//! common, and no word that kept most of itself, are a rewrite rather than an edit, and nothing on either is raised:
-//! a line raised end to end says less than one that is not.
+//! common, and no word that kept most of itself, are a rewrite rather than an
+//! edit, and nothing on either is raised: a line raised end to end says less
+//! than one that is not.
 //!
 //! The work is bounded twice: a line of more than [`TOKENS`] runs is not
 //! compared, and one change compares at most [`PAIRS`] pairs of lines. Both

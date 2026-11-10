@@ -12,7 +12,7 @@
 #![allow(
     clippy::expect_used,
     clippy::panic,
-    reason = "a fixture that cannot be made, or a check that fails, is the test's failure; the clippy setting that allows both reaches only the functions marked as tests, not the helpers beside them"
+    reason = "a fixture not made or a check failed is the test's failure, in a helper too"
 )]
 
 use crucible_tui::chrome::Undrawn;
@@ -120,8 +120,9 @@ use Expect::{Drawn, Undrawn as Shown};
 /// A file that is not a diff, or holds headers and nothing under them, is
 /// shown as written with no refusal: it was never a change. One past a cap of
 /// lines or files is shown as written and says so, whether its files open with
-/// `diff --git` or `+++` and whether they hold lines or a binary note. Everything else is drawn, however its counts were forged or its hunks
-/// cut short: a hunk is read for what it holds, never for what it claims.
+/// `diff --git` or `+++` and whether they hold lines or a binary note.
+/// Everything else is drawn, however its counts were forged or its hunks cut
+/// short: a hunk is read for what it holds, never for what it claims.
 const ENTRIES: &[(&str, Expect)] = &[
     ("binary.diff", Drawn),
     ("empty.diff", Shown(Undrawn::NotHere)),
