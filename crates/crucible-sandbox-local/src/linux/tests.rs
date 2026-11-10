@@ -43,7 +43,10 @@ pub(super) fn command(script: &str) -> SandboxCommand {
     .expect("command")
 }
 
-fn direct(program: &str, arguments: impl IntoIterator<Item = OsString>) -> SandboxCommand {
+pub(super) fn direct(
+    program: &str,
+    arguments: impl IntoIterator<Item = OsString>,
+) -> SandboxCommand {
     SandboxCommand::new(program, arguments, SandboxEnvironment::empty()).expect("command")
 }
 
@@ -2128,7 +2131,9 @@ fn a_disk_ceiling_sizes_the_one_root_every_writable_place_is_made_in() {
     // The total is held by one sized mount: the root, with `/tmp` and the home
     // made as directories inside it rather than as tmpfs mounts of their own,
     // each of which would hold the ceiling again. `/dev` is a tmpfs Bubblewrap
-    // makes, so it is made read-only. Nothing else in the plan moves.
+    // makes, so it is made read-only. The broker is told to refuse attribute
+    // writes, whose values that root does not count. Nothing else in the plan
+    // moves.
     let sample = Sample::new("sandbox-plan-disk-ceiling");
     let unbounded = planned(&read_only_request(
         sample.root(),
@@ -2149,6 +2154,11 @@ fn a_disk_ceiling_sizes_the_one_root_every_writable_place_is_made_in() {
         &expected,
         &["--tmpfs", "/crucible-home"],
         &["--dir", "/crucible-home"],
+    );
+    expected = replaced(
+        &expected,
+        &["4096", "--", "/bin/sh"],
+        &["4096", "--refuse-xattr-writes", "--", "/bin/sh"],
     );
 
     let sized = planned(&read_only_request(

@@ -21,7 +21,7 @@ use crucible_sandbox::{
 };
 use crucible_types::{Ancestry, SandboxId, ToolId};
 
-use super::tests::{command, finish, read_only_request};
+use super::tests::{command, direct, finish, read_only_request};
 use crate::sample::{Sample, skipped_without_enforcement};
 
 /// What `/proc/self/limits` says the scope may hold, read back from inside it.
@@ -719,6 +719,15 @@ fn reported(output: &[u8]) -> std::collections::BTreeMap<String, u64> {
 /// Runs `script` held to [`DISK_CEILING`] with a read-only workspace, and
 /// returns what it reported.
 fn under_the_disk_ceiling(name: &str, script: &str) -> std::collections::BTreeMap<String, u64> {
+    held_by_the_disk_ceiling(name, command(script))
+}
+
+/// Runs `confined` held to [`DISK_CEILING`] with a read-only workspace, and
+/// returns what it reported.
+fn held_by_the_disk_ceiling(
+    name: &str,
+    confined: crucible_sandbox::SandboxCommand,
+) -> std::collections::BTreeMap<String, u64> {
     let service = crate::sample::service();
     let sample = Sample::new(name);
     let mut session = crucible_runtime::answered!(
@@ -726,9 +735,8 @@ fn under_the_disk_ceiling(name: &str, script: &str) -> std::collections::BTreeMa
     )
     .expect("a run held to a disk ceiling");
     crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
-    let (status, output, errors) = finish(
-        crucible_runtime::answered!(session.start(command(script))).expect("started command"),
-    );
+    let (status, output, errors) =
+        finish(crucible_runtime::answered!(session.start(confined)).expect("started command"));
     assert!(
         status.success(),
         "{status}: {}",
@@ -804,6 +812,88 @@ fn dev_refuses_writes_and_dev_null_holds_nothing() {
         [("dev", 0), ("shm", 0), ("null", 1), ("null-holds", 0)]
             .into_iter()
             .map(|(label, value)| (label.to_owned(), value))
+            .collect()
+    );
+}
+
+#[test]
+fn extended_attribute_writes_are_refused_under_a_disk_ceiling() {
+    if skipped_without_enforcement(&crate::sample::service()) {
+        return;
+    }
+    // A tmpfs charges an extended attribute's value to its inodes, not to the
+    // size it was mounted with, so a value set on a file in the sized root is
+    // held past the ceiling. Each call that sets one is tried until twice the
+    // ceiling is asked for; each reports the error it ended on (0 for none) and
+    // the bytes it left held. `setxattrat` has no Python binding, so it is the
+    // raw call, numbered 463 on both architectures the broker filters.
+    let script = r#"
+import ctypes, os, sys
+
+ceiling = int(sys.argv[1])
+value = b"x" * 65536
+libc = ctypes.CDLL(None, use_errno=True)
+libc.syscall.restype = ctypes.c_long
+
+class Arguments(ctypes.Structure):
+    _fields_ = [("value", ctypes.c_uint64), ("size", ctypes.c_uint32), ("flags", ctypes.c_uint32)]
+
+buffer = ctypes.create_string_buffer(value, len(value))
+
+def setxattrat(path, name):
+    arguments = Arguments(ctypes.addressof(buffer), len(value), 0)
+    if libc.syscall(ctypes.c_long(463), ctypes.c_long(-100), ctypes.c_char_p(path.encode()),
+                    ctypes.c_long(0), ctypes.c_char_p(name.encode()), ctypes.byref(arguments),
+                    ctypes.c_long(ctypes.sizeof(arguments))) != 0:
+        raise OSError(ctypes.get_errno(), "setxattrat")
+
+def fsetxattr(path, name):
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.setxattr(descriptor, name, value)
+    finally:
+        os.close(descriptor)
+
+ways = {
+    "setxattr": lambda path, name: os.setxattr(path, name, value),
+    "lsetxattr": lambda path, name: os.setxattr(path, name, value, follow_symlinks=False),
+    "fsetxattr": fsetxattr,
+    "setxattrat": setxattrat,
+}
+for way, call in ways.items():
+    held, ended, made = 0, 0, 0
+    while held <= 2 * ceiling and ended == 0:
+        path = f"/tmp/{way}-{made}"
+        made += 1
+        open(path, "wb").close()
+        for key in range(15):
+            try:
+                call(path, f"user.held{key}")
+            except OSError as problem:
+                ended = problem.errno
+                break
+            held += len(value)
+    print(way, ended)
+    print(f"{way}-held", held)
+"#;
+    let held = held_by_the_disk_ceiling(
+        "sandbox-disk-ceiling-xattr",
+        direct(
+            "/usr/bin/python3",
+            [
+                std::ffi::OsString::from("-c"),
+                std::ffi::OsString::from(script),
+                std::ffi::OsString::from(DISK_CEILING.to_string()),
+            ],
+        ),
+    );
+
+    let refused = u64::from(rustix::io::Errno::PERM.raw_os_error().unsigned_abs());
+    assert_eq!(
+        held,
+        ["setxattr", "lsetxattr", "fsetxattr", "setxattrat"]
+            .into_iter()
+            .flat_map(|way| [(way.to_owned(), refused), (format!("{way}-held"), 0)])
             .collect()
     );
 }

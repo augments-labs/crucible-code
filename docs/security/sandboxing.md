@@ -319,7 +319,9 @@ address space a process may map rather than the memory it uses, and runtimes
 that reserve enormously and touch little would be refused by any ceiling low
 enough to catch a real runaway. `disk_limit` is one total across everything a
 run with no writable host root can write: its root, `/tmp` and its home share
-one sized mount, and `/dev` is read-only. A run that can write to the host,
+one sized mount, and `/dev` is read-only. Under a ceiling, setting an extended
+attribute fails with a permission error, because the mount's size does not
+count an attribute's value, and so does io_uring, which could set one. A run that can write to the host,
 through a writable workspace or a writable manifest mount, would write where
 no such mount counts, so Linux refuses a ceiling for it, and on a host whose
 Bubblewrap does not list `--size` it claims none at all. Elsewhere

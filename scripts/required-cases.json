@@ -7671,6 +7671,22 @@
       "platforms": [
         "linux"
       ]
+    },
+    {
+      "id": "CASE-SANDBOX-DISK-XATTR-REFUSED",
+      "family": "files-and-sandbox",
+      "obligation": "Under a disk ceiling every call that sets an extended attribute (setxattr, lsetxattr, fsetxattr, setxattrat) is refused with EPERM, and no attribute value is held.",
+      "package": "crucible-sandbox-local",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_sandbox_local"
+      },
+      "case": "linux::resource_tests::extended_attribute_writes_are_refused_under_a_disk_ceiling",
+      "source": "crates/crucible-sandbox-local/src/linux/resource_tests.rs",
+      "body_sha256": "6c1f0fa904f2c3deca82430e350b5cbac9cbece2e794597b916c2854ccae4c05",
+      "platforms": [
+        "linux"
+      ]
     }
   ]
 }

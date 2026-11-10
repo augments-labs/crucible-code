@@ -3,7 +3,9 @@
 //! A disk ceiling is one total across everything a run can write. It is held
 //! by sizing the tmpfs Bubblewrap makes the root with and making `/tmp` and the
 //! home as directories inside it, with `/dev`, the one other tmpfs Bubblewrap
-//! makes, remounted read-only. A run with a writable host root, through a
+//! makes, remounted read-only. tmpfs charges an extended attribute's value to
+//! its inodes, not to that size, so under a ceiling the broker is told to refuse
+//! every call that sets one, `io_uring` among them. A run with a writable host root, through a
 //! filesystem rule or a manifest mount, writes either to the host's own
 //! filesystem or into the overlay Bubblewrap lays over that root, which is
 //! sized by nothing this plan mounts. Neither is reached by the root's size, so
@@ -693,6 +695,11 @@ pub(super) fn build(plan: Plan<'_>) -> Result<Command, SandboxError> {
     if matches!(request.policy().network(), SandboxNetworkPolicy::Domains(policy) if policy.allow_local_binding())
     {
         process.arg("--allow-local-binding");
+    }
+    // An extended attribute's value is charged to the root's inodes, not to the
+    // size it is mounted with, so under a ceiling the broker refuses setting one.
+    if disk_bytes.is_some() {
+        process.arg("--refuse-xattr-writes");
     }
     process
         .arg("--")
