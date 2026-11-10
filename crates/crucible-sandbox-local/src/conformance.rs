@@ -15,6 +15,12 @@
 //! because saying a claim was tested when nothing could test it is the same
 //! failure this module exists to catch.
 //!
+//! A claim is judged on a request the backend promises to hold. A disk ceiling
+//! is enforced only for a run with no writable host root, since a write to the
+//! host lands where no ceiling the sandbox mounts can count it, so it is
+//! offered with a read-only workspace; the same ceiling over a writable one is
+//! refused by name, which is that backend's answer to a different request.
+//!
 //! The answers are grouped into the families that are worth conforming in
 //! separately. A backend that isolates a filesystem perfectly and cannot bound
 //! a single byte of egress is not partially conformant; it holds one family and
@@ -462,6 +468,12 @@ async fn offered(
 /// of a session rather than of a policy, and a bare policy offered in their
 /// name would be accepted by every backend, which would read as five claims
 /// kept and prove nothing about any of them.
+///
+/// Each ceiling asked for is the smallest one, except the disk ceiling, which
+/// is asked for at one MiB. A backend that holds it with a tmpfs can hold only
+/// whole pages and rightly refuses one under a page, and one MiB is a whole
+/// number of pages on every page size Linux uses, so a refusal of it still
+/// reads as withheld.
 fn asking(
     at: &Path,
     feature: SandboxFeature,
@@ -498,7 +510,7 @@ fn asking(
         }
         SandboxFeature::CpuLimit => limits.cpu_seconds = Some(1),
         SandboxFeature::MemoryLimit => limits.memory_bytes = Some(1),
-        SandboxFeature::DiskLimit => limits.disk_bytes = Some(1),
+        SandboxFeature::DiskLimit => limits.disk_bytes = Some(1 << 20),
         SandboxFeature::ProcessLimit => limits.processes = Some(1),
         SandboxFeature::OpenFileLimit => limits.open_files = Some(1),
         SandboxFeature::CommandTimeLimit => limits.command_time = Some(Duration::from_secs(1)),
@@ -517,12 +529,13 @@ fn asking(
     }
 
     let root = at.to_path_buf();
-    let rule = SandboxFilesystemRule::new(
-        &root,
-        SandboxFilesystemAccess::ReadWrite,
-        SandboxFilesystemProvenance::Workspace,
-    )
-    .ok()?;
+    let access = if feature == SandboxFeature::DiskLimit {
+        SandboxFilesystemAccess::ReadOnly
+    } else {
+        SandboxFilesystemAccess::ReadWrite
+    };
+    let rule =
+        SandboxFilesystemRule::new(&root, access, SandboxFilesystemProvenance::Workspace).ok()?;
     let policy = SandboxPolicy::new(enabled, [rule], root, network, limits)
         .ok()?
         .with_session_state(persistent, snapshots);

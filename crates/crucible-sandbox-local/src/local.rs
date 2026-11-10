@@ -171,6 +171,11 @@ impl LocalSandbox {
 /// Built from the same claims a preparation negotiates against, so the matrix
 /// it carries is the one a command would be held to; never from running the
 /// backend, so it is not proof that the backend still works.
+///
+/// On Linux that means [`SandboxFeature::DiskLimit`] is claimed
+/// [`SandboxCapability::Unsupported`]: whether Bubblewrap can size the root a
+/// disk ceiling is held by is read from its `--help`, which starts it, so
+/// `observe` leaves it to a preparation to decide.
 #[derive(Debug)]
 pub struct SandboxObservation {
     id: SandboxBackendId,
