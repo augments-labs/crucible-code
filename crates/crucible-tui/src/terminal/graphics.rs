@@ -25,13 +25,22 @@
 //!
 //! **What is waited for is read before the keys are.** The exchange runs
 //! before the session reads a key, and reads every byte that arrives while it
-//! waits, parsing each by its shape: a complete sequence is consumed whatever
-//! it says, and a sequence that is still arriving when the wait runs out is
-//! read to its end, for at most the reply wait again. A yes that arrives behind
-//! its cursor position is read for the patience again and counts as a no.
-//! What arrives once the exchange has stopped reading goes to the key reader:
-//! a cursor position is one shape it drops itself, but a protocol's answer
-//! later than every wait is read as typing. One exchange reads at most 16 KiB,
+//! waits, parsing each by its shape, so a complete sequence is consumed
+//! whatever it says. A first cursor position the patience missed decides
+//! nothing but is still read: the exchange reads on until it has been
+//! consumed, for at most the reply wait after the first question, and asks
+//! nothing more. After the candidate's question everything is read under one
+//! ceiling, the reply wait after that question: the replies, a sequence still
+//! arriving, and a yes behind its cursor position, which is read for the
+//! patience within that ceiling and counts as a no. A wait that runs out
+//! inside a sequence is a no, and nothing is read past the ceiling, so an
+//! exchange waits at most the patience and the reply wait together.
+//!
+//! What the exchange has not read goes to the key reader, which can take it
+//! for typing: a first cursor position later than the reply wait; whatever a
+//! terminal that answered the first question sends after stalling for longer
+//! than the reply wait; and a protocol's answer later than every wait, which
+//! is read as Alt and a run of characters. One exchange reads at most 16 KiB,
 //! so a terminal that sends without end is left as soon as it has sent that
 //! much. What a user types while the exchange reads is consumed with the
 //! replies and never reaches the prompt.
@@ -535,19 +544,27 @@ fn outer(env: &dyn Fn(&str) -> Option<String>) -> Option<Outer> {
     }
 }
 
-/// How long the exchange waits.
+/// How long the exchange waits, each bound counted from the question it
+/// follows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Deadline {
-    /// For the first cursor position, which every terminal answers.
+    /// The deciding window: a first cursor position read whole within it lets
+    /// the candidate's question be asked, and one that is not decides that the
+    /// terminal draws text.
     pub patience: Duration,
-    /// For the candidate's reply and the cursor position behind it.
+    /// The ceiling on every read after that: on draining a first cursor
+    /// position the patience missed, counted from the first question, and on
+    /// the candidate's reply, the cursor position behind it, a sequence still
+    /// arriving and a yes behind that cursor position, counted from the
+    /// candidate's question.
     pub reply: Duration,
 }
 
 impl Deadline {
-    /// What a start waits: 8 ms for the cursor position alone, past which the
-    /// terminal is taken not to answer, and up to 2 s for the candidate's
-    /// reply and the cursor position behind it.
+    /// What a start waits: it decides within 8 ms whether the cursor position
+    /// was answered, and reads for at most 2 s after whichever question it
+    /// asked last, so a start waits at most 8 ms and 2 s in all: a first
+    /// answer the 8 ms missed ends the exchange without a second question.
     pub const STARTUP: Self = Self {
         patience: Duration::from_millis(8),
         reply: Duration::from_secs(2),
@@ -1005,11 +1022,15 @@ const fn says_yes(protocol: Protocol, shape: Shape) -> bool {
     )
 }
 
-/// The exchange, on the terminal `io`: the cursor position alone within the
-/// patience, then, only if that was answered, `protocol`'s question and the
-/// cursor position again within the reply wait. A yes counts only ahead of
-/// that cursor position; one behind it is read and consumed for the patience
-/// again. Any failure of the terminal is a no.
+/// The exchange, on the terminal `io`: the cursor position alone, decided on
+/// at the patience, then, only if it was read whole by then, `protocol`'s
+/// question and the cursor position again, all read under one ceiling, the
+/// reply wait after that question. A cursor position the patience missed is
+/// still read until it has been consumed, for at most the reply wait after the
+/// first question, and nothing more is asked. A yes counts only ahead of the
+/// second cursor position; one behind it is read and consumed for the
+/// patience again, within the same ceiling. A wait that runs out inside a
+/// sequence, and any failure of the terminal, is a no.
 #[cfg(unix)]
 fn exchanged<T: AsFd + io::Read + io::Write>(
     io: T,
@@ -1027,13 +1048,24 @@ fn exchanged<T: AsFd + io::Read + io::Write>(
     if say(&mut mode.io, CURSOR).is_err() {
         return false;
     }
-    let answered = ear.listen(
-        &mut mode.io,
-        started + deadline.patience,
-        started + deadline.reply,
-        |shape| shape == Shape::CursorPosition,
-    );
-    if answered != Heard::Decided {
+    let decided = started + deadline.patience;
+    let mut placed = false;
+    let answered = ear.listen(&mut mode.io, decided, decided, |shape| {
+        placed |= shape == Shape::CursorPosition;
+        placed
+    });
+    match answered {
+        Heard::Spent => return false,
+        Heard::Decided | Heard::Lapsed | Heard::Cut => {}
+    }
+    if !placed {
+        // Too late to decide anything, not too late to be read: what the
+        // terminal says before its cursor position is consumed with it, so
+        // none of it is left to be taken for a key.
+        let drained = started + deadline.reply;
+        ear.listen(&mut mode.io, drained, drained, |shape| {
+            shape == Shape::CursorPosition
+        });
         return false;
     }
 
@@ -1041,31 +1073,30 @@ fn exchanged<T: AsFd + io::Read + io::Write>(
     if say(&mut mode.io, &[question(protocol), CURSOR].concat()).is_err() {
         return false;
     }
+    let ceiling = asked + deadline.reply;
     let mut placed = false;
     let mut yes = false;
-    let heard = ear.listen(
-        &mut mode.io,
-        asked + deadline.reply,
-        asked + deadline.reply + deadline.reply,
-        |shape| {
-            if shape == Shape::CursorPosition {
-                placed = true;
-            } else if !placed && says_yes(protocol, shape) {
-                yes = true;
+    let heard = ear.listen(&mut mode.io, ceiling, ceiling, |shape| {
+        if shape == Shape::CursorPosition {
+            placed = true;
+        } else if !placed && says_yes(protocol, shape) {
+            yes = true;
+        }
+        placed
+    });
+    match heard {
+        Heard::Decided => {
+            if !yes {
+                let behind = (Instant::now() + deadline.patience).min(ceiling);
+                ear.listen(&mut mode.io, behind, ceiling, |shape| {
+                    says_yes(protocol, shape)
+                });
             }
-            placed
-        },
-    );
-    if heard == Heard::Decided && !yes {
-        let behind = Instant::now();
-        ear.listen(
-            &mut mode.io,
-            behind + deadline.patience,
-            behind + deadline.reply,
-            |shape| says_yes(protocol, shape),
-        );
+            yes
+        }
+        Heard::Lapsed => yes,
+        Heard::Cut | Heard::Spent => false,
     }
-    yes && heard != Heard::Spent
 }
 
 /// Writes a question whole.
@@ -1122,8 +1153,11 @@ enum Heard {
     Decided,
     /// The wait ran out between sequences.
     Lapsed,
-    /// The exchange is over: the ceiling on bytes or on time was reached, or
-    /// the terminal failed.
+    /// The wait ran out inside a sequence still arriving, which the next wait
+    /// reads on, or which is left where no wait follows.
+    Cut,
+    /// The exchange is over: the ceiling on bytes was reached, or the terminal
+    /// failed.
     Spent,
 }
 
@@ -1159,7 +1193,7 @@ impl Ear {
 
     /// Reads every byte that arrives until `decide` has said yes to a shape,
     /// or `until` has passed; a sequence still arriving then is read to its
-    /// end, until `ceiling` at the latest.
+    /// end, until `ceiling` at the latest, and no read waits past it.
     fn listen(
         &mut self,
         io: &mut impl io::Read,
@@ -1201,7 +1235,7 @@ impl Ear {
             }
             let limit = if between { until } else { ceiling };
             let Some(left) = limit.checked_duration_since(Instant::now()) else {
-                return if between { Heard::Lapsed } else { Heard::Spent };
+                return if between { Heard::Lapsed } else { Heard::Cut };
             };
             match self.poll.poll(&mut self.events, Some(left)) {
                 Ok(()) => {}
@@ -2203,9 +2237,7 @@ mod tests {
 
         use rustix::termios::{LocalModes, OptionalActions, SpecialCodeIndex};
 
-        use super::super::{
-            Deadline, Ear, Heard, Mode, Protocol, Replies, Shape, exchanged, question,
-        };
+        use super::super::{Deadline, Ear, Heard, Mode, Protocol, exchanged, question};
 
         /// A wait the cases can tell apart under a loaded machine: the
         /// patience is long enough to answer within, and the reply wait long
@@ -2223,6 +2255,9 @@ mod tests {
 
         /// The longest any case waits for the played terminal.
         const GIVE_UP: Duration = Duration::from_secs(10);
+
+        /// What a loaded machine may add to the end of a wait.
+        const SLACK: Duration = Duration::from_millis(250);
 
         /// A pseudo-terminal pair, as `(terminal, process)`: the side the test
         /// answers on, and the side the exchange reads.
@@ -2377,22 +2412,6 @@ mod tests {
             left
         }
 
-        /// Every key the session would read from what was left: whatever is
-        /// not a cursor position, which the key reader drops, and a sequence
-        /// left unfinished.
-        fn typed(left: &[u8]) -> Vec<Shape> {
-            let mut replies = Replies::new();
-            let mut typed: Vec<Shape> = left
-                .iter()
-                .filter_map(|byte| replies.feed(*byte))
-                .filter(|shape| *shape != Shape::CursorPosition)
-                .collect();
-            if !replies.between() {
-                typed.push(Shape::Other);
-            }
-            typed
-        }
-
         fn count(heard: &[u8], question: &[u8]) -> usize {
             heard
                 .windows(question.len())
@@ -2448,40 +2467,55 @@ mod tests {
                 );
                 assert!(ran.yes, "{protocol:?} answered yes and was not confirmed");
                 assert_eq!(count(&ran.heard, &asking(protocol)), 1, "{protocol:?}");
-                assert_eq!(
-                    typed(&ran.left),
-                    Vec::<Shape>::new(),
-                    "{protocol:?}: {:?}",
-                    ran.left
-                );
                 assert!(ran.left.is_empty(), "{protocol:?}: {:?}", ran.left);
             }
         }
 
         #[test]
-        fn a_cursor_position_after_the_patience_is_no_answer_and_nothing_more_is_asked() {
+        fn a_cursor_position_after_the_patience_is_drained_and_nothing_more_is_asked() {
             let ran = run(Protocol::Kitty, vec![turn(CURSOR, &[(350, CURSOR_AT)])]);
 
             assert!(!ran.yes);
             assert_eq!(count(&ran.heard, CURSOR), 1, "{:?}", ran.heard);
             assert_eq!(count(&ran.heard, question(Protocol::Kitty)), 0);
-            assert!(ran.took < Duration::from_millis(300), "{:?}", ran.took);
-            assert_eq!(
-                ran.left, CURSOR_AT,
-                "the late answer is the key reader's to drop"
+            // Read until it was consumed, not until the reply wait ran out.
+            assert!(ran.took >= Duration::from_millis(350), "{:?}", ran.took);
+            assert!(ran.took < WAIT.reply, "{:?}", ran.took);
+            assert!(
+                ran.left.is_empty(),
+                "left for the key reader: {:?}",
+                ran.left
             );
-            assert_eq!(typed(&ran.left), Vec::<Shape>::new());
         }
 
         #[test]
-        fn a_terminal_that_never_answers_costs_the_patience_alone() {
+        fn a_late_first_answer_split_after_its_escape_is_drained_whole() {
+            // The cut `crossterm` would read as Esc and typed characters,
+            // its two pieces far enough apart to arrive in two reads.
+            let ran = run(
+                Protocol::Kitty,
+                vec![turn(CURSOR, &[(250, b"\x1b"), (30, b"[12;40R")])],
+            );
+
+            assert!(!ran.yes);
+            assert_eq!(count(&ran.heard, question(Protocol::Kitty)), 0);
+            assert!(ran.took < WAIT.reply, "{:?}", ran.took);
+            assert!(
+                ran.left.is_empty(),
+                "left for the key reader: {:?}",
+                ran.left
+            );
+        }
+
+        #[test]
+        fn a_terminal_that_never_answers_is_read_for_the_reply_wait_and_no_longer() {
             let ran = run(Protocol::Kitty, vec![turn(CURSOR, &[])]);
 
             assert!(!ran.yes);
             assert_eq!(count(&ran.heard, CURSOR), 1, "{:?}", ran.heard);
             assert_eq!(count(&ran.heard, question(Protocol::Kitty)), 0);
-            assert!(ran.took >= WAIT.patience, "{:?}", ran.took);
-            assert!(ran.took < WAIT.reply, "{:?}", ran.took);
+            assert!(ran.took >= WAIT.reply, "{:?}", ran.took);
+            assert!(ran.took < WAIT.reply + SLACK, "{:?}", ran.took);
             assert!(ran.left.is_empty(), "{:?}", ran.left);
         }
 
@@ -2518,21 +2552,28 @@ mod tests {
         }
 
         #[test]
-        fn a_cursor_position_still_arriving_when_the_patience_ends_is_read_to_its_end() {
+        fn a_cursor_position_still_arriving_when_the_patience_ends_is_drained_and_decides_nothing()
+        {
             let ran = run(
                 Protocol::Kitty,
-                vec![
-                    turn(CURSOR, &[(0, b"\x1b["), (250, b"12;40R")]),
-                    turn(&asking(Protocol::Kitty), &[(0, KITTY_YES), (0, CURSOR_AT)]),
-                ],
+                vec![turn(CURSOR, &[(0, b"\x1b["), (250, b"12;40R")])],
             );
 
-            assert!(ran.yes, "a cursor position begun in time is an answer");
-            assert!(ran.left.is_empty(), "{:?}", ran.left);
+            assert!(!ran.yes);
+            assert_eq!(
+                count(&ran.heard, question(Protocol::Kitty)),
+                0,
+                "a cursor position finished after the patience let the question be asked"
+            );
+            assert!(
+                ran.left.is_empty(),
+                "left for the key reader: {:?}",
+                ran.left
+            );
         }
 
         #[test]
-        fn a_yes_still_arriving_when_the_reply_wait_ends_is_read_to_its_end() {
+        fn a_sequence_still_arriving_at_the_reply_wait_is_not_read_past_it() {
             let ran = run(
                 Protocol::Kitty,
                 vec![
@@ -2544,8 +2585,69 @@ mod tests {
                 ],
             );
 
-            assert!(ran.yes, "a yes begun in time is a yes");
-            assert_eq!(typed(&ran.left), Vec::<Shape>::new(), "{:?}", ran.left);
+            assert!(
+                !ran.yes,
+                "a yes unfinished when the reply wait ran out is no yes"
+            );
+            assert!(ran.took < WAIT.reply + SLACK, "{:?}", ran.took);
+            // What arrived past the ceiling is left, as from a terminal that
+            // stalled in the middle of the exchange.
+            assert_eq!(ran.left, [b"\\".as_slice(), CURSOR_AT].concat());
+        }
+
+        #[test]
+        fn a_lone_escape_after_the_yes_holds_the_wait_to_the_reply_wait_and_no_further() {
+            let ran = run(
+                Protocol::Kitty,
+                vec![
+                    turn(CURSOR, &[(0, CURSOR_AT)]),
+                    turn(&asking(Protocol::Kitty), &[(0, KITTY_YES), (0, b"\x1b")]),
+                ],
+            );
+
+            assert!(!ran.yes, "a wait that ran out inside a sequence is a no");
+            assert!(ran.took >= WAIT.reply, "{:?}", ran.took);
+            assert!(ran.took < WAIT.reply + SLACK, "{:?}", ran.took);
+            assert!(ran.left.is_empty(), "{:?}", ran.left);
+        }
+
+        #[test]
+        fn no_way_of_answering_holds_the_exchange_past_the_patience_and_the_reply_wait() {
+            // The slowest ending of each wait: the first answer never given
+            // or never finished, then a first answer in time followed by a
+            // lone escape, and by a yes cut short behind a late cursor
+            // position, whose listen behind it is under the same ceiling.
+            let cases = [
+                ("never answered", vec![turn(CURSOR, &[])]),
+                ("first answer cut", vec![turn(CURSOR, &[(0, b"\x1b[12")])]),
+                (
+                    "lone escape",
+                    vec![
+                        turn(CURSOR, &[(40, CURSOR_AT)]),
+                        turn(&asking(Protocol::Kitty), &[(0, b"\x1b")]),
+                    ],
+                ),
+                (
+                    "yes cut behind a late cursor position",
+                    vec![
+                        turn(CURSOR, &[(40, CURSOR_AT)]),
+                        turn(
+                            &asking(Protocol::Kitty),
+                            &[(450, CURSOR_AT), (0, b"\x1b_Gi=31;OK")],
+                        ),
+                    ],
+                ),
+            ];
+            for (name, turns) in cases {
+                let ran = run(Protocol::Kitty, turns);
+
+                assert!(!ran.yes, "{name}");
+                assert!(
+                    ran.took < WAIT.patience + WAIT.reply + SLACK,
+                    "{name}: {:?}",
+                    ran.took
+                );
+            }
         }
 
         #[test]
