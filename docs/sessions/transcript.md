@@ -162,8 +162,9 @@ an item, so a wrapped one keeps the quote's bar and nothing more.
 
 A quote whose first line is nothing but `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`,
 `[!WARNING]` or `[!CAUTION]` is drawn as an alert, whatever the letter case of
-the kind. Every row of it has a quiet bar down its left, and the first row
-holds the kind's mark and its word in bold, in place of the marker:
+the kind. Each line of the quote that opens with `> ` has a quiet bar down its
+left, and the first holds the kind's mark and its word in bold, in place of the
+marker:
 
 | Kind | Unicode | ASCII |
 | --- | --- | --- |
@@ -173,17 +174,23 @@ holds the kind's mark and its word in bold, in place of the marker:
 | Warning | `▲ Warning` | `! Warning` |
 | Caution | `✗ Caution` | `x Caution` |
 
-Of the alert's own parts only the mark has a colour, its kind's own; the bar
-and the word have none, and the body keeps whatever colour the answer gave its
-code spans and links. The bar is `▎` in the
-unicode glyph set and `|` in the ASCII one, and an alert that wraps shows it
-on every row it takes, in both [`output.screen`](../configuration/configuration.md#output)
-modes. Nothing of an alert is drawn until the end of its first line shows it
-was one.
+The mark is drawn in the ink of its kind: a colour for Note, Important and
+Caution, bold for Warning and a struck grey for Tip. The bar is drawn in the
+quiet grey and the word in bold, and neither takes a kind's colour; the body
+keeps whatever colour the answer gave its code spans and links. The bar is `▎`
+in the unicode glyph set and `|` in the ASCII one, and a line of an alert that
+wraps shows it on every row it takes, in both
+[`output.screen`](../configuration/configuration.md#output) modes. Nothing of an
+alert is drawn until the end of its first line shows it was one.
+
+An alert ends where its quote does: at a blank line or at any line that does not
+open with `> `, a bare `>` among them, and so does a table, a heading written
+with an underline or a display formula. A quote row after any of them starts a
+quote of its own.
 
 A quote naming any other kind, with anything after the marker on its line, or
 with the marker on a later line, is an ordinary quote and shows the marker as
-written. So does a marker that is not in a quote.
+written. So does a marker that is not in a quote, and one in a list item.
 
 ## What is shown as written
 

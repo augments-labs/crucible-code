@@ -4211,7 +4211,7 @@
       },
       "case": "render::tests::every_cut_of_an_answer_draws_what_the_whole_answer_draws",
       "source": "crates/crucible-tui/src/render/tests.rs",
-      "body_sha256": "3b5ea776adeadb068bfcd3ed1c57402963ee8e305e22629bfbfd9b6ecc46c501",
+      "body_sha256": "4eb27c8fb6b9c868f37f6bc52db5dbff1be24305d4706062fe59c7b7d973bc3e",
       "platforms": [
         "linux",
         "macos",
@@ -7777,15 +7777,15 @@
     {
       "id": "CASE-TRANSCRIPT-ALERT-ROWS",
       "family": "transcript-blocks",
-      "obligation": "A quote whose first line is `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]` draws a quiet bar on every row, with the kind's mark in its own slot and its word in bold on the first row, in the unicode and the ascii glyph set, and the marker itself is not drawn.",
+      "obligation": "A quote whose first line is `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]` draws a quiet bar on the marker's line and on each `> ` line after it, with the kind's mark in its own slot and its word in bold on the first row, in the unicode and the ascii glyph set, and the marker itself is not drawn.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "markdown::tests::an_alert_is_a_quiet_bar_on_every_row_with_its_mark_and_its_word_on_the_first",
+      "case": "markdown::tests::an_alert_is_a_quiet_bar_on_each_line_of_its_quote_with_its_mark_and_its_word_on_the_first",
       "source": "crates/crucible-tui/src/markdown/tests.rs",
-      "body_sha256": "41c71ea7520aaf80ef98c295ee57ecf470c1e64ffde0e4d59a085d617092d5aa",
+      "body_sha256": "0b598d39078650722080323e9252bd6aca4fadd9d735410e1a1015c6fa811251",
       "platforms": [
         "linux",
         "macos",
@@ -7893,7 +7893,7 @@
       },
       "case": "glyphs::tests::the_five_marks_of_an_alert_are_five_different_one_column_marks_in_both_sets",
       "source": "crates/crucible-tui/src/glyphs.rs",
-      "body_sha256": "3e6319be18999c70696c2708adaf088c20b08b9eff7410c64d81056f29a8bf1c",
+      "body_sha256": "3772504d912354ce55342f6b5cea8971245d33273295da88dc3ac57222cc960a",
       "platforms": [
         "linux",
         "macos",
@@ -7912,6 +7912,24 @@
       "case": "markdown::tests::an_alert_mark_carries_its_kinds_ink_and_its_word_only_weight_in_every_theme",
       "source": "crates/crucible-tui/src/markdown/tests.rs",
       "body_sha256": "b81b7697ab1f1b853f6d42c40288bd8454a5ef1a9a221205b1b154898854ade6",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-ENDS",
+      "family": "transcript-blocks",
+      "obligation": "An alert ends at a bare `>`, at a `>` with no space after it, at a table, at a heading's underline and at a display formula, and the quote line after any of them is drawn as a quote of its own, not as part of the alert.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::an_alert_ends_at_any_line_that_is_not_a_row_of_its_quote",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "4ef312b260bf749df05a2afcedccba9b0935f6767ca54dd2150061325cbbacc3",
       "platforms": [
         "linux",
         "macos",

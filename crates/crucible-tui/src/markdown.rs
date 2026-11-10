@@ -71,12 +71,16 @@
 //! nothing about where it wraps; the record that folds it asks.
 //!
 //! A quote whose first line is nothing but `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`,
-//! `[!WARNING]` or `[!CAUTION]`, in any case, is an alert: its rows are drawn
-//! behind a bar of their own, and the first holds the kind's mark and its word
-//! in place of the marker. What a first line is cannot be told until it ends,
-//! so the bar of a quote's first line is owed like a bullet's mark and nothing
-//! of a marker is drawn before its break. Every other quote, including one
-//! naming a kind that is not one of the five, is drawn as it always was.
+//! `[!WARNING]` or `[!CAUTION]`, in any letter case, is an alert: each line of
+//! it that opens with `> ` is drawn behind a bar of its own, and the first
+//! holds the kind's mark and its word in place of the marker. It ends at the
+//! first line that does not open with `> `, a bare `>` among them, and at a
+//! table, a heading's underline or a display formula, which take their lines
+//! whole; a quote line after any of them is a quote of its own. What a first
+//! line is cannot be told until it ends, so the bar of a quote's first line is
+//! owed like a bullet's mark and nothing of a marker is drawn before its break.
+//! Every other quote, including one naming a kind that is not one of the five,
+//! is drawn as it always was.
 //!
 //! On the way out, each settled run is told by the kind of thing it is, which
 //! is what a design colours: a span of code that names a file is a path, and a
@@ -514,11 +518,11 @@ pub(crate) struct Hang {
 /// or an item's mark.
 ///
 /// The bar of a quote or of an alert, the mark of a bullet or a task and the
-/// number of a numbered item are what this reader draws in front of an item's words, each
-/// followed by the space that parts it from them. Rows after the first stand
-/// the bar again where there was one and leave the columns of the rest blank,
-/// so a number of two digits hangs two columns further than one of one, and
-/// the indentation that nested the item is kept with it.
+/// number of a numbered item are what this reader draws in front of an item's
+/// words, each followed by the space that parts it from them. Rows after the
+/// first stand the bar again where there was one and leave the columns of the
+/// rest blank, so a number of two digits hangs two columns further than one of
+/// one, and the indentation that nested the item is kept with it.
 ///
 /// `None` for a line that opens with none of them: it wraps flush, as prose
 /// does. A mark with no space after it is not one.
@@ -1000,8 +1004,8 @@ impl Alert {
         }
     }
 
-    /// The slot the alert's mark wears, which is the only thing on its rows
-    /// that is not quiet or the answer's own.
+    /// The slot the alert's mark wears, which is what tells the kinds apart by
+    /// ink: the bar, the space and the word are the same for every kind.
     fn slot(self) -> Slot {
         match self {
             Self::Note => Slot::Link,
@@ -1734,6 +1738,7 @@ impl Markdown {
             // so that a line that opens like display math and is not is watched
             // from the character it opened with.
             if self.opens_title(character) {
+                self.leaves_quote(character);
                 self.table = Some(Table::bare());
             }
             if self.table.as_ref().is_some_and(Table::mirrors) && self.mirrored(character) {
@@ -1831,6 +1836,7 @@ impl Markdown {
                 run = next;
             } else if self.opens_table(character) {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
+                self.leaves_quote(character);
                 self.table = Some(Table::opening());
                 self.tabled(character, room, say);
                 run = next;
@@ -1944,6 +1950,7 @@ impl Markdown {
                 self.probe = Probe::Done;
                 // Display math is no paragraph line, whatever stood in front
                 // of it.
+                self.leaves_quote(character);
                 self.table = None;
                 self.gathering = Some(Gathering {
                     held: Held::DisplayMath,
@@ -2736,6 +2743,21 @@ impl Markdown {
         if self.line.quoted == Quoted::Owed {
             self.line.quoted = Quoted::Plain;
             self.bar(say);
+        }
+    }
+
+    /// Ends the quote the line before was part of, and an alert with it, when
+    /// `first` opens a line that is no row of one.
+    ///
+    /// Said by each place that opens a block taking its lines whole: those
+    /// lines never reach [`Markdown::end_line`], which is where a line says
+    /// what it was part of, so a quote row after the block would go on with a
+    /// quote that the block has already ended. A line that opens with a quote
+    /// mark is left alone: it is read from its mark, and the quote it goes on
+    /// with is the one still carried.
+    fn leaves_quote(&mut self, first: char) {
+        if first != '>' && self.line.quoted == Quoted::Not {
+            self.quoting = Quoted::Not;
         }
     }
 

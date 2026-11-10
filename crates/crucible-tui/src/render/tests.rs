@@ -3860,9 +3860,9 @@ fn every_cut_of_an_answer_draws_what_the_whole_answer_draws() {
     ];
 
     // Alerts, whose marker a cut can split anywhere and whose rows wrap at
-    // fifty columns. Each one is drawn behind the alert bar, so a reader that
-    // drew the marker as a quote would draw the same rows however they were
-    // cut and still fail here.
+    // fifty columns. Each whole answer is checked to be drawn behind the alert
+    // bar, because a reader that drew every marker as a plain quote would draw
+    // the same rows however they were cut and agree with itself.
     let alerts = [
         "> [!NOTE]\n> a body long enough that it has to wrap onto another row too\n\nafter\n",
         "> [!caution]\n> first\n> second *leant* and **loud**\n\n> [!TIP]\n",

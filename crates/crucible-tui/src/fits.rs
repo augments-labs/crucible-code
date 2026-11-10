@@ -108,7 +108,7 @@ fn a_fence_in_its_frame_fits_the_window_it_is_drawn_in() {
 #[test]
 fn an_alert_fits_the_window_it_is_drawn_in() {
     // The bar and the mark take their columns on every row of it, and the
-    // header's word is raised, so a window of any width has to hold the row
+    // header's word is bold, so a window of any width has to hold the row
     // each fixture is cut into: the words after the marker and the ones below.
     for kind in ["NOTE", "TIP", "IMPORTANT", "WARNING", "CAUTION"] {
         for body in [PROSE, LONG, WIDE, MARKED] {

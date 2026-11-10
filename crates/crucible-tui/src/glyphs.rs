@@ -465,11 +465,11 @@ impl Glyphs {
         }
     }
 
-    /// The bar down the left of an alert, on every row of it.
+    /// The bar down the left of an alert, on each line of it.
     ///
-    /// A quarter of the width of [`Glyphs::vertical`] where the set can draw
-    /// one, so an alert reads as a quote with a mark on it rather than as a
-    /// quote. The ascii set has one bar, which is also a quote's.
+    /// Not [`Glyphs::vertical`] where the set can draw another, so an alert
+    /// reads as a quote with a mark on it rather than as a quote. The ascii set
+    /// has one bar, which is also a quote's.
     #[must_use]
     pub(crate) fn alerted(self) -> &'static str {
         match self {
@@ -499,8 +499,7 @@ impl Glyphs {
 
     /// The mark of an alert that says something must not be missed.
     ///
-    /// Filled and square, the one of the five that is neither a point nor a
-    /// letter, so it reads apart from the others in both sets.
+    /// A filled square in the unicode set and `#` in the ascii one.
     #[must_use]
     pub(crate) fn urged(self) -> &'static str {
         match self {
@@ -813,10 +812,9 @@ mod tests {
     #[test]
     fn the_five_marks_of_an_alert_are_five_different_one_column_marks_in_both_sets() {
         // The mark and the word beside it are what name the kind where colour
-        // says nothing, so two kinds drawn alike are an alert that cannot be
-        // told from another on a terminal with none, in that set only. One
-        // column apiece, because the word after it starts in the column the
-        // header reserved for it.
+        // says nothing, so two kinds drawn alike in one set cannot be told
+        // apart on a terminal with no colour. One column apiece, because the
+        // word after the mark starts in the same column for every kind.
         for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
             let marks = [
                 glyphs.noted(),

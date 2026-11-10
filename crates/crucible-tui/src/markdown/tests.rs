@@ -3485,7 +3485,7 @@ fn ended_as(glyphs: Glyphs, deltas: &[&str]) -> Vec<(Slot, String)> {
 }
 
 #[test]
-fn an_alert_is_a_quiet_bar_on_every_row_with_its_mark_and_its_word_on_the_first() {
+fn an_alert_is_a_quiet_bar_on_each_line_of_its_quote_with_its_mark_and_its_word_on_the_first() {
     for (marker, word, slot, unicode, ascii) in ALERTS {
         for (glyphs, bar, mark) in [(Glyphs::Unicode, "▎", unicode), (Glyphs::Ascii, "|", ascii)]
         {
@@ -3593,6 +3593,10 @@ fn an_alert_marker_is_the_first_line_of_its_quote_only() {
 fn a_marker_outside_a_quote_is_prose() {
     assert_eq!(drawn(&ended("[!NOTE]\nbody\n")), "[!NOTE]\nbody\n");
     assert_eq!(drawn(&ended("- [!NOTE]\n")), "• [!NOTE]\n");
+    assert_eq!(
+        drawn(&ended("- > [!NOTE]\n  > a\n")),
+        "• > [!NOTE]\n  │ a\n"
+    );
 }
 
 #[test]
@@ -3606,8 +3610,29 @@ fn an_alert_ends_where_its_quote_does() {
 }
 
 #[test]
-fn the_words_of_an_alert_keep_the_weight_the_answer_gave_them() {
-    let said = ended("> [!NOTE]\n> a **loud** word and `code`\n");
+fn an_alert_ends_at_any_line_that_is_not_a_row_of_its_quote() {
+    // A bare `>` and a `>` with no space after it are not rows of a quote, and
+    // a table, a heading's rule and display math each take their lines whole:
+    // none of them is part of the alert, so the quote row after one is a quote
+    // of its own and draws the plain bar.
+    for between in [
+        ">\n",
+        ">a\n",
+        "| a | b |\n| - | - |\n| 1 | 2 |\n",
+        "Title\n===\n",
+        "$$\nx^2\n$$\n",
+    ] {
+        let answer = format!("> [!NOTE]\n> a\n{between}> b\n");
+        let text = drawn(&ended(&answer));
+
+        assert!(text.starts_with("▎ ◆ Note\n▎ a\n"), "{answer:?}: {text:?}");
+        assert!(text.ends_with("│ b\n"), "{answer:?}: {text:?}");
+    }
+}
+
+#[test]
+fn the_words_of_an_alert_keep_what_the_answer_gave_them() {
+    let said = ended("> [!NOTE]\n> a **loud** word, `code`, [the guide](https://a.io)\n");
 
     assert_eq!(
         slots(&said)
@@ -3622,8 +3647,15 @@ fn the_words_of_an_alert_keep_the_weight_the_answer_gave_them() {
             Slot::Bold,
             Slot::Plain,
             Slot::Code,
+            Slot::Plain,
+            Slot::Link,
             Slot::Plain
         ]
+    );
+    assert!(
+        said.iter()
+            .any(|(slot, text)| *slot == Slot::Link && text == "the guide"),
+        "{said:?}"
     );
 }
 
