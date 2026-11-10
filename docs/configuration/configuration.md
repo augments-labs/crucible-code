@@ -944,14 +944,17 @@ pixels wide and 16 high. Inside tmux not reached over SSH, where the protocol
 named is one the table draws behind tmux in the screen mode in force, crucible
 asks tmux, not the terminal, whether it passes sequences through: it runs `tmux
 display-message` against the server `TMUX` names, with none of crucible's
-environment, waits at most 100 ms, and counts only an `allow-passthrough` of
-`on` or `all` as a yes. It does so at start, and again when `/settings` names
-the protocol, until tmux has answered `on`, `all` or `off`; `auto` and `off`
-never run tmux. The `tmux` run is the first in a directory your `PATH` names
-from the root. An empty entry, `.` or a relative one such as `bin` is passed
-over, since it would be read against the working directory, and with no
-`PATH`, or no `tmux` found, nothing runs and every picture is text. To draw
-inside tmux, set `allow-passthrough` to `on` there and name the protocol.
+environment but `TMUX_PANE`, which names the pane crucible runs in, waits at
+most 100 ms, and counts only an `allow-passthrough` of `on` or `all` as a yes.
+It does so at start, and again when `/settings` names the protocol, until tmux
+has answered `on`, `all` or `off`; `auto` and `off` never run tmux. The `tmux`
+run is the first in a directory your `PATH` names from the root. An empty
+entry, `.` or a relative one such as `bin` is passed over, since it would be
+read against the working directory, and with no `PATH`, or no `tmux` found,
+nothing runs and every picture is text. With no `TMUX_PANE`, or one that is
+not `%` followed by one or more of `0` to `9`, the form tmux sets, none is
+passed on, and tmux answers for a pane of its own choosing. To draw inside
+tmux, set `allow-passthrough` to `on` there and name the protocol.
 
 On the `/settings` Images row, `auto` says `applies at next start`, since only
 a start asks the terminal, and a protocol or `off` changes the session at once.

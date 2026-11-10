@@ -8747,7 +8747,7 @@
       },
       "case": "terminal::graphics::tests::tmux::a_tmux_behind_entries_that_are_not_absolute_never_runs_and_the_absolute_one_answers",
       "source": "crates/crucible-tui/src/terminal/graphics.rs",
-      "body_sha256": "ab5304c4a6f51efc6c664f74e799d453ab6aeda0a4dff74fa77a9b66a35e533b",
+      "body_sha256": "77f4eb0afae32514bf429bc08b35269ce890fa04a3cf66c829b7c986fa49f745",
       "platforms": [
         "linux",
         "macos"
@@ -8764,7 +8764,7 @@
       },
       "case": "terminal::graphics::tests::tmux::a_tmux_reached_only_through_entries_that_are_not_absolute_never_runs",
       "source": "crates/crucible-tui/src/terminal/graphics.rs",
-      "body_sha256": "29a5e5a9c626424b38763edf17e83e696a366fce0ab15821d415a23fcdbb0fa1",
+      "body_sha256": "9be158d550eef006b0ffaf360641780f5ff8ee5ecb152ad9a8e8a8aaa144a378",
       "platforms": [
         "linux",
         "macos"
@@ -8781,7 +8781,7 @@
       },
       "case": "terminal::graphics::tests::tmux::with_no_path_no_tmux_is_looked_for_and_passthrough_is_unknown",
       "source": "crates/crucible-tui/src/terminal/graphics.rs",
-      "body_sha256": "186ed92541552459636f0424fb6bc007a3826f00747e228f922c6b6b0a76f67e",
+      "body_sha256": "587d8acb0deb749621416bcce060ea9ac09fd9bb3dea9f2d7d3b123f514a1164",
       "platforms": [
         "linux",
         "macos"
@@ -8790,7 +8790,7 @@
     {
       "id": "CASE-TERMINAL-TMUX-EMPTY-ENVIRONMENT",
       "family": "terminal",
-      "obligation": "tmux is started with no variable of this process, CARGO_MANIFEST_DIR among them: the environment it records, names and values, is exactly the one the same fake records when started with none, and it still answers on.",
+      "obligation": "Given no pane, tmux is started with no variable of this process, CARGO_MANIFEST_DIR among them: the environment it records, names and values, is exactly the one the same fake records when started with none, and it still answers on.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
@@ -8798,7 +8798,41 @@
       },
       "case": "terminal::graphics::tests::tmux::tmux_is_started_with_no_variable_of_this_process",
       "source": "crates/crucible-tui/src/terminal/graphics.rs",
-      "body_sha256": "1889bfa301f1af9209b64b3b7671515f6fe88efe93db4bf54656f4f03ff77366",
+      "body_sha256": "2cc1ee81a6ab609719e8d1efd22de8e30275edab0c7756bf5f31030e5de0ddf2",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-PANE",
+      "family": "terminal",
+      "obligation": "Inside tmux in Kitty with Kitty forced, a TMUX_PANE of %7 reaches tmux as %7, and it is the only variable beyond what tmux's shell sets by itself: the environment it records, that line set aside, is exactly the one the same fake records when started with none, CARGO_MANIFEST_DIR absent, and it answers on.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::a_pane_id_in_tmux_pane_reaches_tmux_and_no_other_variable_does",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "97feb70a18d0d6bc367674d788b520ea087b112933836106ef84aab93dbca593",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-PANE-MALFORMED",
+      "family": "terminal",
+      "obligation": "Inside tmux in Kitty with Kitty forced, a TMUX_PANE that is not % and one or more ASCII digits (empty, %, 7, %7x, %7;x, %-1, %+7, a space before or after %7, % and an Arabic-Indic seven, or %7, a newline and X=1) gives tmux no TMUX_PANE: the environment it records is exactly the one the same fake records when started with none, and it answers on.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::a_tmux_pane_not_percent_and_ascii_digits_adds_nothing",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "60b4e4d6ec918f7a63e7720722623d7e18e3d1d98d739777c5d1d68c49c453cb",
       "platforms": [
         "linux",
         "macos"

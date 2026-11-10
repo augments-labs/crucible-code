@@ -167,7 +167,8 @@ pub enum Wanted {
 }
 
 /// Whether tmux passes a program's escape sequences through to the terminal
-/// outside it, as its server says.
+/// outside it, as its server says for the pane crucible runs in where
+/// `TMUX_PANE` names it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Passthrough {
     /// `allow-passthrough` is `on` or `all`.
@@ -268,11 +269,14 @@ fn quiet(env: &dyn Fn(&str) -> Option<String>, setting: Setting) -> bool {
 ///
 /// The terminal is asked nothing: `tmux`, found only in the absolute
 /// directories of the `PATH` passed in, is run against the server `TMUX`
-/// names, with an empty environment, no input, its errors discarded, its
-/// output read to at most 64 bytes for at most 100 ms, and then it is ended
-/// and reaped. With no `PATH`, or no `tmux` in an absolute directory of it,
-/// nothing runs and the answer is [`Passthrough::Unknown`]. Only `on` or
-/// `all` is [`Passthrough::On`].
+/// names, with no variable but the `TMUX_PANE` passed in, no input, its
+/// errors discarded, its output read to at most 64 bytes for at most 100 ms,
+/// and then it is ended and reaped. `TMUX_PANE` names the pane to answer for
+/// and is passed on only in the form tmux sets, `%` and one or more ASCII
+/// digits; with none so formed, tmux answers for a pane it picks itself. With
+/// no `PATH`, or no `tmux` in an absolute directory of it, nothing runs and
+/// the answer is [`Passthrough::Unknown`]. Only `on` or `all` is
+/// [`Passthrough::On`].
 #[must_use]
 pub fn passthrough(
     env: &dyn Fn(&str) -> Option<String>,
@@ -294,7 +298,12 @@ pub fn passthrough(
         .and_then(|tmux| tmux.split(',').next().map(str::to_owned))
         .filter(|socket| !socket.is_empty());
     match socket {
-        Some(socket) => server_says(&socket, env("PATH").as_deref(), TMUX_WAIT),
+        Some(socket) => server_says(
+            &socket,
+            env("PATH").as_deref(),
+            env("TMUX_PANE").as_deref(),
+            TMUX_WAIT,
+        ),
         None => Passthrough::Unknown,
     }
 }
@@ -321,10 +330,23 @@ fn tmux_on(path: Option<&str>) -> Option<std::path::PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
-/// Runs the `tmux` found on `path` against `socket`, with an empty
-/// environment, and reads its answer.
+/// Whether `pane` is a pane id as tmux sets `TMUX_PANE`: `%` and one or more
+/// ASCII digits.
 #[cfg(unix)]
-fn server_says(socket: &str, path: Option<&str>, wait: Duration) -> Passthrough {
+fn a_pane_id(pane: &str) -> bool {
+    pane.strip_prefix('%')
+        .is_some_and(|id| !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+/// Runs the `tmux` found on `path` against `socket`, with no variable but a
+/// `pane` that [`a_pane_id`] accepts, as `TMUX_PANE`, and reads its answer.
+#[cfg(unix)]
+fn server_says(
+    socket: &str,
+    path: Option<&str>,
+    pane: Option<&str>,
+    wait: Duration,
+) -> Passthrough {
     use std::process::{Command, Stdio};
 
     let until = Instant::now() + wait;
@@ -332,10 +354,15 @@ fn server_says(socket: &str, path: Option<&str>, wait: Duration) -> Passthrough 
         return Passthrough::Unknown;
     };
     let mut command = Command::new(tmux);
-    // `-S` names the server, so tmux is given no variable: this process's
-    // environment can hold provider credentials.
+    // `-S` names the server, so tmux is given no variable but the one naming
+    // the pane to answer for: it has no terminal to find the pane by, and
+    // without `TMUX_PANE` it answers for a pane it picks itself. This
+    // process's environment can hold provider credentials.
+    command.env_clear();
+    if let Some(pane) = pane.filter(|pane| a_pane_id(pane)) {
+        command.env("TMUX_PANE", pane);
+    }
     command
-        .env_clear()
         .args([
             "-S",
             socket,
@@ -379,7 +406,7 @@ fn server_says(socket: &str, path: Option<&str>, wait: Duration) -> Passthrough 
 
 /// Windows draws text this release, so no tmux is asked.
 #[cfg(not(unix))]
-const fn server_says(_: &str, _: Option<&str>, _: Duration) -> Passthrough {
+const fn server_says(_: &str, _: Option<&str>, _: Option<&str>, _: Duration) -> Passthrough {
     Passthrough::Unknown
 }
 
@@ -2891,8 +2918,9 @@ mod tests {
                     // Written by a child of its own, so no descriptor open
                     // for writing on it is copied into a process another test
                     // starts, which would keep it from running.
-                    // It is started with no environment, so it names every
-                    // program it runs by its path, and `DIR` by the directory.
+                    // It is started with no variable but, at most,
+                    // `TMUX_PANE`, so it names every program it runs by its
+                    // path, and `DIR` by the directory.
                     let script = format!(
                         "#!/bin/sh\nDIR='{}'\nprintf '%s\\n' \"$@\" > \"$DIR/args\"\n{body}\n",
                         dir.display()
@@ -3146,7 +3174,7 @@ mod tests {
             let real = Fake::new("absolute-behind", Some("echo off"));
             let path = format!(":.:{}:bin:{}", relative(&planted.dir), real.dir.display());
             assert_eq!(
-                server_says(SOCKET, Some(&path), TMUX_WAIT),
+                server_says(SOCKET, Some(&path), None, TMUX_WAIT),
                 Passthrough::Off
             );
             assert_eq!(planted.args(), None, "the planted tmux ran");
@@ -3158,7 +3186,7 @@ mod tests {
             let planted = Fake::new("planted-only", Some("echo on"));
             let path = format!(":.:bin:{}", relative(&planted.dir));
             assert_eq!(
-                server_says(SOCKET, Some(&path), TMUX_WAIT),
+                server_says(SOCKET, Some(&path), None, TMUX_WAIT),
                 Passthrough::Unknown
             );
             assert_eq!(planted.args(), None, "the planted tmux ran");
@@ -3167,7 +3195,10 @@ mod tests {
         #[test]
         fn with_no_path_no_tmux_is_looked_for_and_passthrough_is_unknown() {
             assert_eq!(tmux_on(None), None);
-            assert_eq!(server_says(SOCKET, None, TMUX_WAIT), Passthrough::Unknown);
+            assert_eq!(
+                server_says(SOCKET, None, None, TMUX_WAIT),
+                Passthrough::Unknown
+            );
         }
 
         #[test]
@@ -3194,13 +3225,112 @@ mod tests {
             assert!(!names(&alone).contains("CARGO_MANIFEST_DIR"));
 
             let path = fake.dir.display().to_string();
-            assert_eq!(server_says(SOCKET, Some(&path), TMUX_WAIT), Passthrough::On);
+            assert_eq!(
+                server_says(SOCKET, Some(&path), None, TMUX_WAIT),
+                Passthrough::On
+            );
             let asked = std::fs::read_to_string(&recorded).expect("the fake ran");
             let reached: Vec<String> = names(&asked).difference(&names(&alone)).cloned().collect();
             assert_eq!(reached, Vec::<String>::new(), "variables that reached tmux");
             // Values are not printed: they are this process's, credentials
             // among them.
             assert!(asked == alone, "tmux saw a value its shell does not set");
+        }
+
+        /// A fake that records its environment, and apart from it the value of
+        /// `TMUX_PANE` it was given, then says `on`; and the environment it
+        /// records when started with none at all.
+        fn recording(name: &str) -> (Fake, String) {
+            let fake = Fake::new(
+                name,
+                Some(
+                    "export -p > \"$DIR/environment\"\n\
+                     printf '%s' \"${TMUX_PANE-}\" > \"$DIR/pane\"\n\
+                     echo on",
+                ),
+            );
+            let status = Command::new(fake.file("tmux"))
+                .env_clear()
+                .stdout(std::process::Stdio::null())
+                .status()
+                .expect("the fake run alone");
+            assert!(status.success());
+            let alone = taken(&fake.file("environment"));
+            assert_eq!(taken(&fake.file("pane")), "");
+            assert!(!names(&alone).contains("CARGO_MANIFEST_DIR"));
+            (fake, alone)
+        }
+
+        /// The record at `path`, removed so the next run writes it afresh.
+        fn taken(path: &Path) -> String {
+            let record = std::fs::read_to_string(path).expect("the fake recorded");
+            std::fs::remove_file(path).expect("the record removed");
+            record
+        }
+
+        /// Asks the server from a session inside tmux in Kitty, with Kitty
+        /// forced, whose `TMUX_PANE` is `pane`.
+        fn asked_from(fake: &Fake, pane: &str) -> Passthrough {
+            let mut pairs = TMUX_IN_KITTY.to_vec();
+            pairs.push(("TMUX_PANE", pane));
+            passthrough(&fake.environment(&pairs), Platform::Linux, kitty_forced())
+        }
+
+        #[test]
+        fn a_pane_id_in_tmux_pane_reaches_tmux_and_no_other_variable_does() {
+            let (fake, alone) = recording("pane");
+            assert!(
+                std::env::var_os("CARGO_MANIFEST_DIR").is_some(),
+                "cargo sets CARGO_MANIFEST_DIR for every test it runs"
+            );
+            assert_eq!(asked_from(&fake, "%7"), Passthrough::On);
+            let asked = taken(&fake.file("environment"));
+            let reached: Vec<String> = names(&asked).difference(&names(&alone)).cloned().collect();
+            assert_eq!(reached, ["TMUX_PANE"], "variables that reached tmux");
+            assert_eq!(taken(&fake.file("pane")), "%7");
+            // Values other than the pane's are not printed: they are this
+            // process's, credentials among them.
+            let rest: Vec<&str> = asked
+                .lines()
+                .filter(|line| !names(line).contains("TMUX_PANE"))
+                .collect();
+            assert!(
+                rest == alone.lines().collect::<Vec<_>>(),
+                "tmux saw a value its shell does not set"
+            );
+        }
+
+        #[test]
+        fn a_tmux_pane_not_percent_and_ascii_digits_adds_nothing() {
+            let (fake, alone) = recording("malformed-pane");
+            for pane in [
+                "",
+                "%",
+                "7",
+                "%7x",
+                "%7;x",
+                "%-1",
+                "%+7",
+                " %7",
+                "%7 ",
+                "%\u{0667}",
+                "%7\nX=1",
+            ] {
+                assert_eq!(asked_from(&fake, pane), Passthrough::On, "{pane:?}");
+                let asked = taken(&fake.file("environment"));
+                assert_eq!(taken(&fake.file("pane")), "", "{pane:?} reached tmux");
+                let reached: Vec<String> =
+                    names(&asked).difference(&names(&alone)).cloned().collect();
+                assert_eq!(
+                    reached,
+                    Vec::<String>::new(),
+                    "{pane:?}: variables that reached tmux"
+                );
+                assert!(
+                    asked == alone,
+                    "{pane:?}: tmux saw a value its shell does not set"
+                );
+            }
         }
     }
 }
