@@ -20,11 +20,14 @@
 //! **No reply becomes a key.** The exchange runs before the session reads a
 //! key, and reads every byte that arrives while it waits, parsing each by its
 //! shape ([`Replies`]): a complete sequence is consumed whatever it says, and a
-//! sequence that is still arriving when the wait runs out is read to its end.
-//! A cursor position that arrives after the exchange gave up is one shape the
-//! key reader drops itself. What a user types during the exchange is consumed
-//! with the replies, which costs at most the exchange's own few milliseconds of
-//! typing.
+//! sequence that is still arriving when the wait runs out is read to its end,
+//! for at most the reply wait again. A yes that arrives behind its cursor
+//! position is read for the patience again and counts as a no. A cursor
+//! position that arrives after the exchange gave up is one shape the key reader
+//! drops itself. One exchange reads at most 16 KiB, so a terminal that sends
+//! without end is left at once. What a user types during the exchange is
+//! consumed with the replies, which costs at most the exchange's own few
+//! milliseconds of typing.
 //!
 //! **The table is what was seen.** [`support`] holds the cells of the terminal
 //! support table that drew right in every step of their screen mode; every
@@ -33,7 +36,13 @@
 //! the table identified it by.
 
 use std::fmt;
+#[cfg(unix)]
+use std::io;
+#[cfg(unix)]
+use std::os::fd::AsFd;
 use std::time::Duration;
+#[cfg(unix)]
+use std::time::Instant;
 
 use crate::ScreenMode;
 
@@ -458,12 +467,15 @@ impl fmt::Debug for Payload {
 
 /// The longest sequence whose bytes are kept to be read. A longer one is still
 /// consumed to its end, and is read as no reply this exchange asked for.
+#[cfg(unix)]
 const LONGEST: usize = 1024;
 
 /// The image a Kitty query names, so its reply is told from any other.
+#[cfg(unix)]
 const QUERY_IMAGE: &str = "i=31";
 
 /// What a run of bytes from the terminal was, by its shape.
+#[cfg(unix)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Shape {
     /// A byte outside any sequence: something typed.
@@ -487,6 +499,7 @@ pub(crate) enum Shape {
 }
 
 /// Where the reader is inside a sequence.
+#[cfg(unix)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
     /// Outside one.
@@ -507,6 +520,7 @@ enum State {
 }
 
 /// Which string a reader is in.
+#[cfg(unix)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
     /// Operating system command, which `BEL` may end too.
@@ -522,6 +536,7 @@ enum Kind {
 /// Every byte belongs to exactly one shape or to the sequence still being
 /// read, so nothing is ever left over to be read as a key. Bounded: a
 /// sequence keeps at most [`LONGEST`] of its bytes, however long it runs.
+#[cfg(unix)]
 #[derive(Debug)]
 pub(crate) struct Replies {
     state: State,
@@ -529,6 +544,7 @@ pub(crate) struct Replies {
     spilled: bool,
 }
 
+#[cfg(unix)]
 impl Replies {
     pub(crate) const fn new() -> Self {
         Self {
@@ -728,12 +744,308 @@ impl Replies {
     }
 }
 
+#[cfg(unix)]
 const ESC: u8 = 0x1b;
+#[cfg(unix)]
 const BEL: u8 = 0x07;
 
 /// `CAN` and `SUB`, which call off any sequence they arrive inside.
+#[cfg(unix)]
 const fn cancels(byte: u8) -> bool {
     matches!(byte, 0x18 | 0x1a)
+}
+
+/// What the session draws pictures with, settled from the candidate [`select`]
+/// named: text for none; a forced protocol as it is, fitted to the window's
+/// cell or to [`Cell::FALLBACK`] where the window reports no pixels; and a
+/// candidate only where the window reports its pixels and the terminal answers
+/// the exchange with the candidate's yes.
+#[must_use]
+pub fn confirm(candidate: Candidate, deadline: Deadline) -> Capability {
+    confirmed(candidate, window_cell(), |protocol| {
+        asked(protocol, deadline)
+    })
+}
+
+/// The window's cell, from the pixel fields of its window-size report. Asks
+/// the terminal nothing; read again after a resize.
+#[must_use]
+pub fn window_cell() -> Option<Cell> {
+    crossterm::terminal::window_size()
+        .ok()
+        .and_then(|size| cell_of(&size))
+}
+
+/// The cell a window-size report gives.
+fn cell_of(size: &crossterm::terminal::WindowSize) -> Option<Cell> {
+    Cell::measured(size.columns, size.rows, size.width, size.height)
+}
+
+/// [`confirm`]'s rules, with the window's cell and the exchange passed in.
+fn confirmed(
+    candidate: Candidate,
+    cell: Option<Cell>,
+    ask: impl FnOnce(Protocol) -> bool,
+) -> Capability {
+    match candidate {
+        Candidate::None => Capability::Text,
+        Candidate::Forced(protocol) => Capability::Graphics {
+            protocol,
+            cell: cell.unwrap_or(Cell::FALLBACK),
+        },
+        Candidate::Asked(protocol) => match cell {
+            Some(cell) if ask(protocol) => Capability::Graphics { protocol, cell },
+            _ => Capability::Text,
+        },
+    }
+}
+
+/// Whether the terminal this process runs in says yes to `protocol`.
+#[cfg(unix)]
+fn asked(protocol: Protocol, deadline: Deadline) -> bool {
+    terminal_trx::terminal()
+        .is_ok_and(|mut terminal| exchanged(terminal.lock(), protocol, deadline))
+}
+
+/// Windows draws text this release, so its terminal is asked nothing.
+#[cfg(not(unix))]
+const fn asked(_: Protocol, _: Deadline) -> bool {
+    false
+}
+
+/// Bytes one exchange reads at most, whatever arrives: far more than the
+/// replies it asks for and a late answer to the background question come to,
+/// and few enough that a terminal sending without end is left at once.
+#[cfg(unix)]
+const HEARD: usize = 16 * 1024;
+
+/// The cursor-position question, which every terminal answers.
+#[cfg(unix)]
+const CURSOR: &[u8] = b"\x1b[6n";
+
+/// Each protocol's own question: Kitty's query of a one-pixel image named by
+/// [`QUERY_IMAGE`], iTerm2's request for its cell size, and the primary device
+/// attributes, which list Sixel where it is drawn.
+#[cfg(unix)]
+const fn question(protocol: Protocol) -> &'static [u8] {
+    match protocol {
+        Protocol::Kitty => b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\",
+        Protocol::Iterm2 => b"\x1b]1337;ReportCellSize\x07",
+        Protocol::Sixel => b"\x1b[c",
+    }
+}
+
+/// Whether `shape` is `protocol`'s yes.
+#[cfg(unix)]
+const fn says_yes(protocol: Protocol, shape: Shape) -> bool {
+    matches!(
+        (protocol, shape),
+        (Protocol::Kitty, Shape::Graphics { ok: true })
+            | (Protocol::Iterm2, Shape::CellSize)
+            | (Protocol::Sixel, Shape::Attributes { sixel: true })
+    )
+}
+
+/// The exchange, on the terminal `io`: the cursor position alone within the
+/// patience, then, only if that was answered, `protocol`'s question and the
+/// cursor position again within the reply wait. A yes counts only ahead of
+/// that cursor position; one behind it is read and consumed for the patience
+/// again. Any failure of the terminal is a no.
+#[cfg(unix)]
+fn exchanged<T: AsFd + io::Read + io::Write>(
+    io: T,
+    protocol: Protocol,
+    deadline: Deadline,
+) -> bool {
+    let Ok(Some(mut mode)) = Mode::enter(io) else {
+        return false;
+    };
+    let Ok(mut ear) = Ear::new(&mode.io) else {
+        return false;
+    };
+
+    let started = Instant::now();
+    if say(&mut mode.io, CURSOR).is_err() {
+        return false;
+    }
+    let answered = ear.listen(
+        &mut mode.io,
+        started + deadline.patience,
+        started + deadline.reply,
+        |shape| shape == Shape::CursorPosition,
+    );
+    if answered != Heard::Decided {
+        return false;
+    }
+
+    let asked = Instant::now();
+    if say(&mut mode.io, &[question(protocol), CURSOR].concat()).is_err() {
+        return false;
+    }
+    let mut placed = false;
+    let mut yes = false;
+    let heard = ear.listen(
+        &mut mode.io,
+        asked + deadline.reply,
+        asked + deadline.reply + deadline.reply,
+        |shape| {
+            if shape == Shape::CursorPosition {
+                placed = true;
+            } else if !placed && says_yes(protocol, shape) {
+                yes = true;
+            }
+            placed
+        },
+    );
+    if heard == Heard::Decided && !yes {
+        let behind = Instant::now();
+        ear.listen(
+            &mut mode.io,
+            behind + deadline.patience,
+            behind + deadline.reply,
+            |shape| says_yes(protocol, shape),
+        );
+    }
+    yes && heard != Heard::Spent
+}
+
+/// Writes a question whole.
+#[cfg(unix)]
+fn say(io: &mut impl io::Write, bytes: &[u8]) -> io::Result<()> {
+    io.write_all(bytes)?;
+    io.flush()
+}
+
+/// The terminal mode the exchange reads in: raw, so a reply arrives a byte at
+/// a time and nothing is echoed, and with no minimum and no timer, so a read of
+/// an empty queue returns at once. What was there before is put back from
+/// `Drop`, on every return; where `io` is not a terminal, nothing is set.
+#[cfg(unix)]
+struct Mode<T: AsFd> {
+    io: T,
+    before: rustix::termios::Termios,
+}
+
+#[cfg(unix)]
+impl<T: AsFd> Mode<T> {
+    fn enter(io: T) -> io::Result<Option<Self>> {
+        use rustix::termios::{OptionalActions, SpecialCodeIndex};
+
+        if !rustix::termios::isatty(&io) {
+            return Ok(None);
+        }
+        let before = rustix::termios::tcgetattr(&io)?;
+        let mut raw = before.clone();
+        raw.make_raw();
+        raw.special_codes[SpecialCodeIndex::VMIN] = 0;
+        raw.special_codes[SpecialCodeIndex::VTIME] = 0;
+        rustix::termios::tcsetattr(&io, OptionalActions::Now, &raw)?;
+        Ok(Some(Self { io, before }))
+    }
+}
+
+#[cfg(unix)]
+impl<T: AsFd> Drop for Mode<T> {
+    fn drop(&mut self) {
+        let _ = rustix::termios::tcsetattr(
+            &self.io,
+            rustix::termios::OptionalActions::Now,
+            &self.before,
+        );
+    }
+}
+
+/// How a wait for replies ended.
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Heard {
+    /// What was waited for arrived, and nothing is left half read.
+    Decided,
+    /// The wait ran out between sequences.
+    Lapsed,
+    /// The exchange is over: the ceiling on bytes or on time was reached, or
+    /// the terminal failed.
+    Spent,
+}
+
+/// What the exchange reads replies with: a readiness wait on the terminal and
+/// the reader that tells each reply by its shape, kept across the questions so
+/// a sequence split between them is read whole.
+#[cfg(unix)]
+struct Ear {
+    poll: mio::Poll,
+    events: mio::Events,
+    replies: Replies,
+    heard: usize,
+}
+
+#[cfg(unix)]
+impl Ear {
+    fn new(io: &impl AsFd) -> io::Result<Self> {
+        use std::os::fd::AsRawFd as _;
+
+        let poll = mio::Poll::new()?;
+        poll.registry().register(
+            &mut mio::unix::SourceFd(&io.as_fd().as_raw_fd()),
+            mio::Token(0),
+            mio::Interest::READABLE,
+        )?;
+        Ok(Self {
+            poll,
+            events: mio::Events::with_capacity(4),
+            replies: Replies::new(),
+            heard: 0,
+        })
+    }
+
+    /// Reads every byte that arrives until `decide` has said yes to a shape,
+    /// or `until` has passed; a sequence still arriving then is read to its
+    /// end, until `ceiling` at the latest.
+    fn listen(
+        &mut self,
+        io: &mut impl io::Read,
+        until: Instant,
+        ceiling: Instant,
+        mut decide: impl FnMut(Shape) -> bool,
+    ) -> Heard {
+        let mut decided = false;
+        let mut chunk = [0_u8; 512];
+        loop {
+            // A wakeup is for what is new, so what has arrived is read until
+            // the queue is empty.
+            loop {
+                match io.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(read) => {
+                        for byte in chunk.get(..read).unwrap_or_default() {
+                            if let Some(shape) = self.replies.feed(*byte) {
+                                decided |= decide(shape);
+                            }
+                        }
+                        self.heard = self.heard.saturating_add(read);
+                        if self.heard >= HEARD {
+                            return Heard::Spent;
+                        }
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                    Err(_) => return Heard::Spent,
+                }
+            }
+            let between = self.replies.between();
+            if decided && between {
+                return Heard::Decided;
+            }
+            let limit = if between { until } else { ceiling };
+            let Some(left) = limit.checked_duration_since(Instant::now()) else {
+                return if between { Heard::Lapsed } else { Heard::Spent };
+            };
+            match self.poll.poll(&mut self.events, Some(left)) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                Err(_) => return Heard::Spent,
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1148,435 +1460,977 @@ mod tests {
     // -----------------------------------------------------------------------
     // The reply parser: a hostile corpus, then generated input.
 
-    /// Every shape `bytes` makes, and the reader after them.
-    fn shapes(bytes: &[u8]) -> (Vec<Shape>, Replies) {
-        let mut replies = Replies::new();
-        let shapes = bytes
-            .iter()
-            .filter_map(|byte| replies.feed(*byte))
-            .collect();
-        (shapes, replies)
-    }
+    #[cfg(unix)]
+    mod replies {
+        use super::*;
 
-    /// Every shape `bytes` makes, which must end outside every sequence.
-    fn complete(bytes: &[u8]) -> Vec<Shape> {
-        let (shapes, replies) = shapes(bytes);
-        assert!(replies.between(), "{bytes:?} left a sequence open");
-        shapes
-    }
-
-    const OK: Shape = Shape::Graphics { ok: true };
-
-    #[test]
-    fn each_reply_the_exchange_asks_for_is_known_by_its_shape() {
-        assert_eq!(complete(b"\x1b[12;40R"), [Shape::CursorPosition]);
-        assert_eq!(complete(b"\x1b[1;1R"), [Shape::CursorPosition]);
-        assert_eq!(complete(b"\x1b_Gi=31;OK\x1b\\"), [OK]);
-        assert_eq!(complete(b"\x1b_Gi=31,q=0;OK\x1b\\"), [OK]);
-        assert_eq!(
-            complete(b"\x1b_Gi=31;ENOTSUPPORTED:no direct\x1b\\"),
-            [Shape::Graphics { ok: false }]
-        );
-        assert_eq!(
-            complete(b"\x1b]1337;ReportCellSize=22.0;10.0;1.0\x07"),
-            [Shape::CellSize]
-        );
-        assert_eq!(
-            complete(b"\x1b]1337;ReportCellSize=16;8\x1b\\"),
-            [Shape::CellSize]
-        );
-        assert_eq!(
-            complete(b"\x1b[?62;4;22c"),
-            [Shape::Attributes { sixel: true }]
-        );
-        assert_eq!(complete(b"\x1b[?4c"), [Shape::Attributes { sixel: true }]);
-        assert_eq!(
-            complete(b"\x1b[?62;22c"),
-            [Shape::Attributes { sixel: false }]
-        );
-        assert_eq!(
-            complete(b"\x1b[?64;44c"),
-            [Shape::Attributes { sixel: false }]
-        );
-        assert_eq!(complete(b"ab"), [Shape::Typed, Shape::Typed]);
-    }
-
-    #[test]
-    fn a_reply_nobody_asked_for_is_consumed_and_named_nothing() {
-        // The background colour, answered after its own wait gave up.
-        assert_eq!(
-            complete(b"\x1b]11;rgb:1c1c/1c1c/1c1c\x1b\\"),
-            [Shape::Other]
-        );
-        assert_eq!(complete(b"\x1b]11;rgb:1c1c/1c1c/1c1c\x07"), [Shape::Other]);
-        // Another image's reply, and Kitty's without its image.
-        assert_eq!(complete(b"\x1b_Gi=310;OK\x1b\\"), [Shape::Other]);
-        assert_eq!(complete(b"\x1b_Gi=3;OK\x1b\\"), [Shape::Other]);
-        assert_eq!(complete(b"\x1b_G;OK\x1b\\"), [Shape::Other]);
-        assert_eq!(complete(b"\x1b_Xi=31;OK\x1b\\"), [Shape::Other]);
-        // Shaped almost like a cursor position.
-        assert_eq!(complete(b"\x1b[?12;1R"), [Shape::Other]);
-        assert_eq!(complete(b"\x1b[R"), [Shape::Other]);
-        assert_eq!(complete(b"\x1b[12R"), [Shape::Other]);
-        assert_eq!(complete(b"\x1b[1;2;3R"), [Shape::Other]);
-        assert_eq!(complete(b"\x1b[;1R"), [Shape::Other]);
-        assert_eq!(complete(b"\x1b[62;4c"), [Shape::Other]);
-        assert_eq!(
-            complete(b"\x1b]1337;ReportVariable=abc\x07"),
-            [Shape::Other]
-        );
-        // A device control string is ended by `ST` alone.
-        assert_eq!(complete(b"\x1bP1$r0m\x1b\\"), [Shape::Other]);
-        assert_eq!(complete(b"\x1bPab\x07cd\x1b\\"), [Shape::Other]);
-        assert_eq!(
-            complete(b"\x1b^private\x1b\\\x1bXstart\x1b\\"),
-            [Shape::Other, Shape::Other]
-        );
-        // Keys, as a terminal spells them.
-        assert_eq!(complete(b"\x1ba"), [Shape::Other]);
-        assert_eq!(complete(b"\x1bOP"), [Shape::Other]);
-        assert_eq!(complete(b"\x1b(B"), [Shape::Other]);
-        assert_eq!(complete(b"\x1b[1;5A"), [Shape::Other]);
-    }
-
-    #[test]
-    fn an_escape_inside_a_sequence_ends_it_and_begins_the_next() {
-        assert_eq!(
-            complete(b"\x1b]11;rgb:1c1c\x1b[12;1R"),
-            [Shape::Other, Shape::CursorPosition]
-        );
-        assert_eq!(
-            complete(b"\x1b[12;\x1b[3;4R"),
-            [Shape::Other, Shape::CursorPosition]
-        );
-        assert_eq!(
-            complete(b"\x1b_Gi=31;OK\x1b_Gi=31;OK\x1b\\"),
-            [Shape::Other, OK]
-        );
-        // An escape in a string followed by a key is one thing cut short.
-        assert_eq!(complete(b"\x1b]abc\x1ba"), [Shape::Other]);
-        assert_eq!(
-            complete(b"\x1b]abc\x1b\x1b[1;1R"),
-            [Shape::Other, Shape::CursorPosition]
-        );
-    }
-
-    #[test]
-    fn a_cancel_ends_any_sequence_and_what_follows_is_typed() {
-        for open in [
-            &b"\x1b"[..],
-            b"\x1b[12",
-            b"\x1b]11;rgb",
-            b"\x1b_Gi=31",
-            b"\x1bP1$",
-            b"\x1b(",
-            b"\x1bO",
-            b"\x1b]x\x1b",
-        ] {
-            for cancel in [0x18_u8, 0x1a] {
-                let mut bytes = open.to_vec();
-                bytes.push(cancel);
-                bytes.push(b'a');
-                assert_eq!(complete(&bytes), [Shape::Other, Shape::Typed], "{bytes:?}");
-            }
-        }
-    }
-
-    #[test]
-    fn bytes_no_sequence_may_hold_end_it() {
-        assert_eq!(complete(b"\x1b[1\xffa"), [Shape::Other, Shape::Typed]);
-        // A control byte inside a sequence is carried out where it stands.
-        assert_eq!(complete(b"\x1b[1\x00;2R"), [Shape::CursorPosition]);
-        assert_eq!(complete(b"\x1b[1;2\x7fR"), [Shape::CursorPosition]);
-        // Not UTF-8, outside a sequence: typed, byte by byte.
-        assert_eq!(complete(b"\xc3\x28"), [Shape::Typed, Shape::Typed]);
-    }
-
-    #[test]
-    fn a_sequence_still_arriving_is_not_between() {
-        for open in [
-            &b"\x1b"[..],
-            b"\x1b[",
-            b"\x1b[12;",
-            b"\x1b]11;",
-            b"\x1b]11;x\x1b",
-            b"\x1b_G",
-            b"\x1bO",
-            b"\x1b(",
-        ] {
-            let (shapes, replies) = shapes(open);
-            assert!(shapes.is_empty(), "{open:?}");
-            assert!(!replies.between(), "{open:?}");
-        }
-        let (shapes, replies) = shapes(b"\x1b\x1b");
-        assert_eq!(shapes, [Shape::Other]);
-        assert!(!replies.between());
-    }
-
-    #[test]
-    fn a_sequence_of_any_length_is_held_to_its_ceiling_and_read_to_its_end() {
-        for (open, fill, close) in [
-            (&b"\x1b]11;"[..], b'x', &b"\x07"[..]),
-            (b"\x1b_Gi=31;", b'O', b"\x1b\\"),
-            (b"\x1bP", b'q', b"\x1b\\"),
-            (b"\x1b[", b'1', b"R"),
-            (b"\x1b[?", b'4', b"c"),
-            (b"\x1b(", b' ', b"B"),
-        ] {
+        /// Every shape `bytes` makes, and the reader after them.
+        fn shapes(bytes: &[u8]) -> (Vec<Shape>, Replies) {
             let mut replies = Replies::new();
-            let mut seen = Vec::new();
-            let body = std::iter::repeat_n(fill, 100_000);
-            for byte in open
+            let shapes = bytes
                 .iter()
-                .copied()
-                .chain(body)
-                .chain(close.iter().copied())
-            {
-                seen.extend(replies.feed(byte));
-                assert!(replies.held.len() <= LONGEST);
+                .filter_map(|byte| replies.feed(*byte))
+                .collect();
+            (shapes, replies)
+        }
+
+        /// Every shape `bytes` makes, which must end outside every sequence.
+        fn complete(bytes: &[u8]) -> Vec<Shape> {
+            let (shapes, replies) = shapes(bytes);
+            assert!(replies.between(), "{bytes:?} left a sequence open");
+            shapes
+        }
+
+        const OK: Shape = Shape::Graphics { ok: true };
+
+        #[test]
+        fn each_reply_the_exchange_asks_for_is_known_by_its_shape() {
+            assert_eq!(complete(b"\x1b[12;40R"), [Shape::CursorPosition]);
+            assert_eq!(complete(b"\x1b[1;1R"), [Shape::CursorPosition]);
+            assert_eq!(complete(b"\x1b_Gi=31;OK\x1b\\"), [OK]);
+            assert_eq!(complete(b"\x1b_Gi=31,q=0;OK\x1b\\"), [OK]);
+            assert_eq!(
+                complete(b"\x1b_Gi=31;ENOTSUPPORTED:no direct\x1b\\"),
+                [Shape::Graphics { ok: false }]
+            );
+            assert_eq!(
+                complete(b"\x1b]1337;ReportCellSize=22.0;10.0;1.0\x07"),
+                [Shape::CellSize]
+            );
+            assert_eq!(
+                complete(b"\x1b]1337;ReportCellSize=16;8\x1b\\"),
+                [Shape::CellSize]
+            );
+            assert_eq!(
+                complete(b"\x1b[?62;4;22c"),
+                [Shape::Attributes { sixel: true }]
+            );
+            assert_eq!(complete(b"\x1b[?4c"), [Shape::Attributes { sixel: true }]);
+            assert_eq!(
+                complete(b"\x1b[?62;22c"),
+                [Shape::Attributes { sixel: false }]
+            );
+            assert_eq!(
+                complete(b"\x1b[?64;44c"),
+                [Shape::Attributes { sixel: false }]
+            );
+            assert_eq!(complete(b"ab"), [Shape::Typed, Shape::Typed]);
+        }
+
+        #[test]
+        fn a_reply_nobody_asked_for_is_consumed_and_named_nothing() {
+            // The background colour, answered after its own wait gave up.
+            assert_eq!(
+                complete(b"\x1b]11;rgb:1c1c/1c1c/1c1c\x1b\\"),
+                [Shape::Other]
+            );
+            assert_eq!(complete(b"\x1b]11;rgb:1c1c/1c1c/1c1c\x07"), [Shape::Other]);
+            // Another image's reply, and Kitty's without its image.
+            assert_eq!(complete(b"\x1b_Gi=310;OK\x1b\\"), [Shape::Other]);
+            assert_eq!(complete(b"\x1b_Gi=3;OK\x1b\\"), [Shape::Other]);
+            assert_eq!(complete(b"\x1b_G;OK\x1b\\"), [Shape::Other]);
+            assert_eq!(complete(b"\x1b_Xi=31;OK\x1b\\"), [Shape::Other]);
+            // Shaped almost like a cursor position.
+            assert_eq!(complete(b"\x1b[?12;1R"), [Shape::Other]);
+            assert_eq!(complete(b"\x1b[R"), [Shape::Other]);
+            assert_eq!(complete(b"\x1b[12R"), [Shape::Other]);
+            assert_eq!(complete(b"\x1b[1;2;3R"), [Shape::Other]);
+            assert_eq!(complete(b"\x1b[;1R"), [Shape::Other]);
+            assert_eq!(complete(b"\x1b[62;4c"), [Shape::Other]);
+            assert_eq!(
+                complete(b"\x1b]1337;ReportVariable=abc\x07"),
+                [Shape::Other]
+            );
+            // A device control string is ended by `ST` alone.
+            assert_eq!(complete(b"\x1bP1$r0m\x1b\\"), [Shape::Other]);
+            assert_eq!(complete(b"\x1bPab\x07cd\x1b\\"), [Shape::Other]);
+            assert_eq!(
+                complete(b"\x1b^private\x1b\\\x1bXstart\x1b\\"),
+                [Shape::Other, Shape::Other]
+            );
+            // Keys, as a terminal spells them.
+            assert_eq!(complete(b"\x1ba"), [Shape::Other]);
+            assert_eq!(complete(b"\x1bOP"), [Shape::Other]);
+            assert_eq!(complete(b"\x1b(B"), [Shape::Other]);
+            assert_eq!(complete(b"\x1b[1;5A"), [Shape::Other]);
+        }
+
+        #[test]
+        fn an_escape_inside_a_sequence_ends_it_and_begins_the_next() {
+            assert_eq!(
+                complete(b"\x1b]11;rgb:1c1c\x1b[12;1R"),
+                [Shape::Other, Shape::CursorPosition]
+            );
+            assert_eq!(
+                complete(b"\x1b[12;\x1b[3;4R"),
+                [Shape::Other, Shape::CursorPosition]
+            );
+            assert_eq!(
+                complete(b"\x1b_Gi=31;OK\x1b_Gi=31;OK\x1b\\"),
+                [Shape::Other, OK]
+            );
+            // An escape in a string followed by a key is one thing cut short.
+            assert_eq!(complete(b"\x1b]abc\x1ba"), [Shape::Other]);
+            assert_eq!(
+                complete(b"\x1b]abc\x1b\x1b[1;1R"),
+                [Shape::Other, Shape::CursorPosition]
+            );
+        }
+
+        #[test]
+        fn a_cancel_ends_any_sequence_and_what_follows_is_typed() {
+            for open in [
+                &b"\x1b"[..],
+                b"\x1b[12",
+                b"\x1b]11;rgb",
+                b"\x1b_Gi=31",
+                b"\x1bP1$",
+                b"\x1b(",
+                b"\x1bO",
+                b"\x1b]x\x1b",
+            ] {
+                for cancel in [0x18_u8, 0x1a] {
+                    let mut bytes = open.to_vec();
+                    bytes.push(cancel);
+                    bytes.push(b'a');
+                    assert_eq!(complete(&bytes), [Shape::Other, Shape::Typed], "{bytes:?}");
+                }
             }
-            assert_eq!(seen, [Shape::Other], "{open:?}");
-            assert!(replies.between());
+        }
+
+        #[test]
+        fn bytes_no_sequence_may_hold_end_it() {
+            assert_eq!(complete(b"\x1b[1\xffa"), [Shape::Other, Shape::Typed]);
+            // A control byte inside a sequence is carried out where it stands.
+            assert_eq!(complete(b"\x1b[1\x00;2R"), [Shape::CursorPosition]);
+            assert_eq!(complete(b"\x1b[1;2\x7fR"), [Shape::CursorPosition]);
+            // Not UTF-8, outside a sequence: typed, byte by byte.
+            assert_eq!(complete(b"\xc3\x28"), [Shape::Typed, Shape::Typed]);
+        }
+
+        #[test]
+        fn a_sequence_still_arriving_is_not_between() {
+            for open in [
+                &b"\x1b"[..],
+                b"\x1b[",
+                b"\x1b[12;",
+                b"\x1b]11;",
+                b"\x1b]11;x\x1b",
+                b"\x1b_G",
+                b"\x1bO",
+                b"\x1b(",
+            ] {
+                let (shapes, replies) = shapes(open);
+                assert!(shapes.is_empty(), "{open:?}");
+                assert!(!replies.between(), "{open:?}");
+            }
+            let (shapes, replies) = shapes(b"\x1b\x1b");
+            assert_eq!(shapes, [Shape::Other]);
+            assert!(!replies.between());
+        }
+
+        #[test]
+        fn a_sequence_of_any_length_is_held_to_its_ceiling_and_read_to_its_end() {
+            for (open, fill, close) in [
+                (&b"\x1b]11;"[..], b'x', &b"\x07"[..]),
+                (b"\x1b_Gi=31;", b'O', b"\x1b\\"),
+                (b"\x1bP", b'q', b"\x1b\\"),
+                (b"\x1b[", b'1', b"R"),
+                (b"\x1b[?", b'4', b"c"),
+                (b"\x1b(", b' ', b"B"),
+            ] {
+                let mut replies = Replies::new();
+                let mut seen = Vec::new();
+                let body = std::iter::repeat_n(fill, 100_000);
+                for byte in open
+                    .iter()
+                    .copied()
+                    .chain(body)
+                    .chain(close.iter().copied())
+                {
+                    seen.extend(replies.feed(byte));
+                    assert!(replies.held.len() <= LONGEST);
+                }
+                assert_eq!(seen, [Shape::Other], "{open:?}");
+                assert!(replies.between());
+            }
+        }
+
+        #[test]
+        fn a_long_sequence_does_not_keep_its_spill_into_the_next() {
+            let mut bytes = b"\x1b]".to_vec();
+            bytes.extend(std::iter::repeat_n(b'x', 5000));
+            bytes.extend(b"\x07\x1b[3;4R");
+            assert_eq!(complete(&bytes), [Shape::Other, Shape::CursorPosition]);
+            let mut bytes = b"\x1b[".to_vec();
+            bytes.extend(std::iter::repeat_n(b'1', 5000));
+            bytes.extend(b"\x1b_Gi=31;OK\x1b\\");
+            assert_eq!(complete(&bytes), [Shape::Other, OK]);
+        }
+
+        // -----------------------------------------------------------------------
+        // Generated replies: every case is made from the seed and its index
+        // alone, so a failure names the case that reproduces it.
+
+        const SEED: u64 = 0x5eed_7e9c_ca11;
+        const DEFAULT_CASES: u64 = 4096;
+        const CASES_VARIABLE: &str = "CRUCIBLE_GENERATED_INPUTS";
+
+        fn cases() -> u64 {
+            std::env::var(CASES_VARIABLE)
+                .ok()
+                .and_then(|text| text.parse().ok())
+                .unwrap_or(DEFAULT_CASES)
+        }
+
+        #[derive(Debug, PartialEq, Eq)]
+        enum Ended<T> {
+            Returned(T),
+            Panicked,
+            Hung,
+        }
+
+        /// `work` on a thread of its own, given `deadline` to answer.
+        fn guarded<T: Send + 'static>(
+            deadline: Duration,
+            work: impl FnOnce() -> T + Send + 'static,
+        ) -> Ended<T> {
+            let (answer, heard) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = answer.send(work());
+            });
+            match heard.recv_timeout(deadline) {
+                Ok(value) => Ended::Returned(value),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ended::Hung,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Ended::Panicked,
+            }
+        }
+
+        #[test]
+        fn a_planted_panic_and_a_planted_hang_are_found_by_the_generated_runner() {
+            assert_eq!(
+                guarded(Duration::from_secs(5), || -> u8 { panic!("planted") }),
+                Ended::Panicked
+            );
+            let begun = std::time::Instant::now();
+            let ended = guarded(Duration::from_millis(200), move || {
+                while begun.elapsed() < Duration::from_secs(3) {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            });
+            assert_eq!(ended, Ended::Hung);
+        }
+
+        /// xorshift64*: small, and the same on every platform.
+        struct Rng(u64);
+
+        impl Rng {
+            fn for_case(index: u64) -> Self {
+                let mut rng = Rng(SEED ^ index.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
+                for _ in 0..4 {
+                    rng.next();
+                }
+                rng
+            }
+
+            fn next(&mut self) -> u64 {
+                self.0 ^= self.0 >> 12;
+                self.0 ^= self.0 << 25;
+                self.0 ^= self.0 >> 27;
+                self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
+            }
+
+            fn below(&mut self, bound: usize) -> usize {
+                let bound = u64::try_from(bound).unwrap_or(u64::MAX).max(1);
+                usize::try_from((self.next() >> 11) % bound).unwrap_or(0)
+            }
+
+            fn number(&mut self) -> String {
+                self.below(100_000).to_string()
+            }
+        }
+
+        /// One whole reply, with the shape it must be read as.
+        fn reply(rng: &mut Rng) -> (Vec<u8>, Shape) {
+            let st = if rng.below(2) == 0 { "\x07" } else { "\x1b\\" };
+            match rng.below(8) {
+                0 => (
+                    format!("\x1b[{};{}R", rng.number(), rng.number()).into_bytes(),
+                    Shape::CursorPosition,
+                ),
+                1 => (b"\x1b_Gi=31;OK\x1b\\".to_vec(), OK),
+                2 => (
+                    format!("\x1b_Gi=31;E{}\x1b\\", rng.number()).into_bytes(),
+                    Shape::Graphics { ok: false },
+                ),
+                3 => (
+                    format!(
+                        "\x1b]1337;ReportCellSize={};{}{st}",
+                        rng.number(),
+                        rng.number()
+                    )
+                    .into_bytes(),
+                    Shape::CellSize,
+                ),
+                4 => (
+                    format!("\x1b[?{};4;{}c", rng.number(), rng.number()).into_bytes(),
+                    Shape::Attributes { sixel: true },
+                ),
+                5 => (
+                    format!(
+                        "\x1b]11;rgb:{}/{}/{}{st}",
+                        rng.number(),
+                        rng.number(),
+                        rng.number()
+                    )
+                    .into_bytes(),
+                    Shape::Other,
+                ),
+                6 => (
+                    format!("\x1b[{};{}H", rng.number(), rng.number()).into_bytes(),
+                    Shape::Other,
+                ),
+                _ => (
+                    vec![b'a' + u8::try_from(rng.below(26)).unwrap_or(0)],
+                    Shape::Typed,
+                ),
+            }
+        }
+
+        /// A run of bytes no terminal would send on purpose.
+        fn noise(rng: &mut Rng) -> Vec<u8> {
+            const PIECES: &[&[u8]] = &[
+                b"\x1b",
+                b"\x1b[",
+                b"\x1b]",
+                b"\x1b_G",
+                b"\x1bP",
+                b"\x1b^",
+                b"\x1bX",
+                b"\x1bO",
+                b"\x1b(",
+                b"\x18",
+                b"\x1a",
+                b"\x07",
+                b"\x1b\\",
+                b";",
+                b"?",
+                b"R",
+                b"c",
+                b"i=31",
+                b"OK",
+                b"1337;ReportCellSize=",
+                b"\x00",
+                b"\x7f",
+                b"\x9b",
+                b"\xff",
+                b"\xc3",
+            ];
+            let mut bytes = Vec::new();
+            for _ in 0..rng.below(64) {
+                if rng.below(8) == 0 {
+                    let long = rng.below(3000);
+                    bytes.extend(std::iter::repeat_n(b'x', long));
+                } else if rng.below(4) == 0 {
+                    bytes.push(u8::try_from(rng.below(256)).unwrap_or(0));
+                } else if let Some(piece) = PIECES.get(rng.below(PIECES.len())) {
+                    bytes.extend_from_slice(piece);
+                }
+            }
+            bytes
+        }
+
+        /// What case `index` must hold to, or why it did not.
+        fn generated(index: u64) -> Result<(), String> {
+            let mut rng = Rng::for_case(index);
+
+            // Noise of any kind: read whole, held to the ceiling, and a cancel
+            // always brings the reader back outside every sequence.
+            let bytes = noise(&mut rng);
+            let mut replies = Replies::new();
+            let mut made = 0_usize;
+            for byte in &bytes {
+                made += usize::from(replies.feed(*byte).is_some());
+                if replies.held.len() > LONGEST {
+                    return Err(format!("held {} bytes", replies.held.len()));
+                }
+            }
+            if made > bytes.len() {
+                return Err(format!("{made} shapes from {} bytes", bytes.len()));
+            }
+            replies.feed(0x18);
+            if !replies.between() {
+                return Err(format!("a cancel after {bytes:?} left a sequence open"));
+            }
+
+            // Whole replies, one after another, are read back as exactly what
+            // they were, after any noise a cancel ended.
+            let mut stream = Vec::new();
+            let mut expected = Vec::new();
+            for _ in 0..rng.below(16) {
+                let (bytes, shape) = reply(&mut rng);
+                stream.extend(bytes);
+                expected.push(shape);
+            }
+            let read: Vec<Shape> = stream
+                .iter()
+                .filter_map(|byte| replies.feed(*byte))
+                .collect();
+            if read != expected || !replies.between() {
+                return Err(format!("{stream:?} read as {read:?}, not {expected:?}"));
+            }
+            Ok(())
+        }
+
+        #[test]
+        fn generated_replies_and_noise_are_read_whole_and_bounded() {
+            let total = cases();
+            println!("seed {SEED:#x}, {total} inputs ({CASES_VARIABLE} raises the count)");
+            for index in 0..total {
+                match guarded(Duration::from_secs(30), move || generated(index)) {
+                    Ended::Returned(Ok(())) => {}
+                    Ended::Returned(Err(why)) => panic!("case {index} (seed {SEED:#x}): {why}"),
+                    Ended::Panicked => panic!("case {index} (seed {SEED:#x}): panicked"),
+                    Ended::Hung => panic!("case {index} (seed {SEED:#x}): no answer in 30 s"),
+                }
+            }
         }
     }
 
     #[test]
-    fn a_long_sequence_does_not_keep_its_spill_into_the_next() {
-        let mut bytes = b"\x1b]".to_vec();
-        bytes.extend(std::iter::repeat_n(b'x', 5000));
-        bytes.extend(b"\x07\x1b[3;4R");
-        assert_eq!(complete(&bytes), [Shape::Other, Shape::CursorPosition]);
-        let mut bytes = b"\x1b[".to_vec();
-        bytes.extend(std::iter::repeat_n(b'1', 5000));
-        bytes.extend(b"\x1b_Gi=31;OK\x1b\\");
-        assert_eq!(complete(&bytes), [Shape::Other, OK]);
-    }
+    fn a_forced_protocol_is_used_unasked_in_the_windows_cell_or_eight_by_sixteen() {
+        let cell = Cell {
+            width: 9,
+            height: 18,
+        };
+        let unasked = |_: Protocol| -> bool { panic!("a forced protocol was asked about") };
 
-    // -----------------------------------------------------------------------
-    // Generated replies: every case is made from the seed and its index
-    // alone, so a failure names the case that reproduces it.
-
-    const SEED: u64 = 0x5eed_7e9c_ca11;
-    const DEFAULT_CASES: u64 = 4096;
-    const CASES_VARIABLE: &str = "CRUCIBLE_GENERATED_INPUTS";
-
-    fn cases() -> u64 {
-        std::env::var(CASES_VARIABLE)
-            .ok()
-            .and_then(|text| text.parse().ok())
-            .unwrap_or(DEFAULT_CASES)
-    }
-
-    #[derive(Debug, PartialEq, Eq)]
-    enum Ended<T> {
-        Returned(T),
-        Panicked,
-        Hung,
-    }
-
-    /// `work` on a thread of its own, given `deadline` to answer.
-    fn guarded<T: Send + 'static>(
-        deadline: Duration,
-        work: impl FnOnce() -> T + Send + 'static,
-    ) -> Ended<T> {
-        let (answer, heard) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = answer.send(work());
-        });
-        match heard.recv_timeout(deadline) {
-            Ok(value) => Ended::Returned(value),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ended::Hung,
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Ended::Panicked,
-        }
-    }
-
-    #[test]
-    fn a_planted_panic_and_a_planted_hang_are_found_by_the_generated_runner() {
         assert_eq!(
-            guarded(Duration::from_secs(5), || -> u8 { panic!("planted") }),
-            Ended::Panicked
+            confirmed(Candidate::Forced(Protocol::Kitty), Some(cell), unasked),
+            Capability::Graphics {
+                protocol: Protocol::Kitty,
+                cell
+            }
         );
-        let begun = std::time::Instant::now();
-        let ended = guarded(Duration::from_millis(200), move || {
-            while begun.elapsed() < Duration::from_secs(3) {
-                std::thread::sleep(Duration::from_millis(1));
+        assert_eq!(
+            confirmed(Candidate::Forced(Protocol::Sixel), None, unasked),
+            Capability::Graphics {
+                protocol: Protocol::Sixel,
+                cell: Cell::FALLBACK
             }
-        });
-        assert_eq!(ended, Ended::Hung);
-    }
-
-    /// xorshift64*: small, and the same on every platform.
-    struct Rng(u64);
-
-    impl Rng {
-        fn for_case(index: u64) -> Self {
-            let mut rng = Rng(SEED ^ index.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
-            for _ in 0..4 {
-                rng.next();
-            }
-            rng
-        }
-
-        fn next(&mut self) -> u64 {
-            self.0 ^= self.0 >> 12;
-            self.0 ^= self.0 << 25;
-            self.0 ^= self.0 >> 27;
-            self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
-        }
-
-        fn below(&mut self, bound: usize) -> usize {
-            let bound = u64::try_from(bound).unwrap_or(u64::MAX).max(1);
-            usize::try_from((self.next() >> 11) % bound).unwrap_or(0)
-        }
-
-        fn number(&mut self) -> String {
-            self.below(100_000).to_string()
-        }
-    }
-
-    /// One whole reply, with the shape it must be read as.
-    fn reply(rng: &mut Rng) -> (Vec<u8>, Shape) {
-        let st = if rng.below(2) == 0 { "\x07" } else { "\x1b\\" };
-        match rng.below(8) {
-            0 => (
-                format!("\x1b[{};{}R", rng.number(), rng.number()).into_bytes(),
-                Shape::CursorPosition,
-            ),
-            1 => (b"\x1b_Gi=31;OK\x1b\\".to_vec(), OK),
-            2 => (
-                format!("\x1b_Gi=31;E{}\x1b\\", rng.number()).into_bytes(),
-                Shape::Graphics { ok: false },
-            ),
-            3 => (
-                format!(
-                    "\x1b]1337;ReportCellSize={};{}{st}",
-                    rng.number(),
-                    rng.number()
-                )
-                .into_bytes(),
-                Shape::CellSize,
-            ),
-            4 => (
-                format!("\x1b[?{};4;{}c", rng.number(), rng.number()).into_bytes(),
-                Shape::Attributes { sixel: true },
-            ),
-            5 => (
-                format!(
-                    "\x1b]11;rgb:{}/{}/{}{st}",
-                    rng.number(),
-                    rng.number(),
-                    rng.number()
-                )
-                .into_bytes(),
-                Shape::Other,
-            ),
-            6 => (
-                format!("\x1b[{};{}H", rng.number(), rng.number()).into_bytes(),
-                Shape::Other,
-            ),
-            _ => (
-                vec![b'a' + u8::try_from(rng.below(26)).unwrap_or(0)],
-                Shape::Typed,
-            ),
-        }
-    }
-
-    /// A run of bytes no terminal would send on purpose.
-    fn noise(rng: &mut Rng) -> Vec<u8> {
-        const PIECES: &[&[u8]] = &[
-            b"\x1b",
-            b"\x1b[",
-            b"\x1b]",
-            b"\x1b_G",
-            b"\x1bP",
-            b"\x1b^",
-            b"\x1bX",
-            b"\x1bO",
-            b"\x1b(",
-            b"\x18",
-            b"\x1a",
-            b"\x07",
-            b"\x1b\\",
-            b";",
-            b"?",
-            b"R",
-            b"c",
-            b"i=31",
-            b"OK",
-            b"1337;ReportCellSize=",
-            b"\x00",
-            b"\x7f",
-            b"\x9b",
-            b"\xff",
-            b"\xc3",
-        ];
-        let mut bytes = Vec::new();
-        for _ in 0..rng.below(64) {
-            if rng.below(8) == 0 {
-                let long = rng.below(3000);
-                bytes.extend(std::iter::repeat_n(b'x', long));
-            } else if rng.below(4) == 0 {
-                bytes.push(u8::try_from(rng.below(256)).unwrap_or(0));
-            } else if let Some(piece) = PIECES.get(rng.below(PIECES.len())) {
-                bytes.extend_from_slice(piece);
-            }
-        }
-        bytes
-    }
-
-    /// What case `index` must hold to, or why it did not.
-    fn generated(index: u64) -> Result<(), String> {
-        let mut rng = Rng::for_case(index);
-
-        // Noise of any kind: read whole, held to the ceiling, and a cancel
-        // always brings the reader back outside every sequence.
-        let bytes = noise(&mut rng);
-        let mut replies = Replies::new();
-        let mut made = 0_usize;
-        for byte in &bytes {
-            made += usize::from(replies.feed(*byte).is_some());
-            if replies.held.len() > LONGEST {
-                return Err(format!("held {} bytes", replies.held.len()));
-            }
-        }
-        if made > bytes.len() {
-            return Err(format!("{made} shapes from {} bytes", bytes.len()));
-        }
-        replies.feed(0x18);
-        if !replies.between() {
-            return Err(format!("a cancel after {bytes:?} left a sequence open"));
-        }
-
-        // Whole replies, one after another, are read back as exactly what
-        // they were, after any noise a cancel ended.
-        let mut stream = Vec::new();
-        let mut expected = Vec::new();
-        for _ in 0..rng.below(16) {
-            let (bytes, shape) = reply(&mut rng);
-            stream.extend(bytes);
-            expected.push(shape);
-        }
-        let read: Vec<Shape> = stream
-            .iter()
-            .filter_map(|byte| replies.feed(*byte))
-            .collect();
-        if read != expected || !replies.between() {
-            return Err(format!("{stream:?} read as {read:?}, not {expected:?}"));
-        }
-        Ok(())
+        );
     }
 
     #[test]
-    fn generated_replies_and_noise_are_read_whole_and_bounded() {
-        let total = cases();
-        println!("seed {SEED:#x}, {total} inputs ({CASES_VARIABLE} raises the count)");
-        for index in 0..total {
-            match guarded(Duration::from_secs(30), move || generated(index)) {
-                Ended::Returned(Ok(())) => {}
-                Ended::Returned(Err(why)) => panic!("case {index} (seed {SEED:#x}): {why}"),
-                Ended::Panicked => panic!("case {index} (seed {SEED:#x}): panicked"),
-                Ended::Hung => panic!("case {index} (seed {SEED:#x}): no answer in 30 s"),
+    fn a_candidate_is_asked_about_only_where_the_window_reports_its_pixels() {
+        let cell = Cell {
+            width: 9,
+            height: 18,
+        };
+        let unasked = |_: Protocol| -> bool { panic!("a window with no pixels was asked about") };
+
+        assert_eq!(
+            confirmed(Candidate::Asked(Protocol::Kitty), None, unasked),
+            Capability::Text
+        );
+        assert_eq!(
+            confirmed(
+                Candidate::Asked(Protocol::Iterm2),
+                Some(cell),
+                |asked| asked == Protocol::Iterm2
+            ),
+            Capability::Graphics {
+                protocol: Protocol::Iterm2,
+                cell
             }
+        );
+        assert_eq!(
+            confirmed(Candidate::Asked(Protocol::Kitty), Some(cell), |_| false),
+            Capability::Text
+        );
+    }
+
+    #[test]
+    fn no_candidate_is_text_and_asks_nothing() {
+        let cell = Cell {
+            width: 9,
+            height: 18,
+        };
+        assert_eq!(
+            confirmed(Candidate::None, Some(cell), |_| panic!(
+                "nothing was to be asked"
+            )),
+            Capability::Text
+        );
+    }
+
+    #[test]
+    fn the_cell_is_read_from_the_pixel_fields_of_the_window_size_report() {
+        let report = |columns, rows, width, height| crossterm::terminal::WindowSize {
+            rows,
+            columns,
+            width,
+            height,
+        };
+
+        assert_eq!(
+            cell_of(&report(80, 24, 800, 480)),
+            Some(Cell {
+                width: 10,
+                height: 20
+            })
+        );
+        assert_eq!(cell_of(&report(80, 24, 0, 0)), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_kitty_question_names_the_image_its_reply_is_known_by() {
+        let asked = question(Protocol::Kitty);
+        assert!(
+            asked
+                .windows(QUERY_IMAGE.len())
+                .any(|part| part == QUERY_IMAGE.as_bytes()),
+            "{asked:?}"
+        );
+    }
+
+    /// The pseudo-terminal cases: each test owns a pty, plays the terminal on
+    /// its master side, and runs the exchange on the other.
+    #[cfg(unix)]
+    mod exchange {
+        use std::fs::File;
+        use std::io::{self, Read as _, Write as _};
+        use std::os::fd::AsFd;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, mpsc};
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        use rustix::termios::{LocalModes, OptionalActions, SpecialCodeIndex};
+
+        use super::super::{Deadline, Mode, Protocol, Replies, Shape, exchanged, question};
+
+        /// A wait the cases can tell apart under a loaded machine: the
+        /// patience is long enough to answer within, and the reply wait long
+        /// enough past it to tell which one ran out.
+        const WAIT: Deadline = Deadline {
+            patience: Duration::from_millis(100),
+            reply: Duration::from_millis(600),
+        };
+
+        const CURSOR: &[u8] = b"\x1b[6n";
+        const CURSOR_AT: &[u8] = b"\x1b[12;40R";
+        const KITTY_YES: &[u8] = b"\x1b_Gi=31;OK\x1b\\";
+        const ITERM2_YES: &[u8] = b"\x1b]1337;ReportCellSize=17.0;8.0\x1b\\";
+        const SIXEL_YES: &[u8] = b"\x1b[?62;4;22c";
+
+        /// The longest any case waits for the played terminal.
+        const GIVE_UP: Duration = Duration::from_secs(10);
+
+        /// A pseudo-terminal pair, as `(terminal, process)`: the side the test
+        /// answers on, and the side the exchange reads.
+        fn pty() -> (File, File) {
+            use std::os::unix::ffi::OsStrExt as _;
+            use std::os::unix::fs::OpenOptionsExt as _;
+
+            let master = rustix::pty::openpt(
+                rustix::pty::OpenptFlags::RDWR | rustix::pty::OpenptFlags::NOCTTY,
+            )
+            .expect("a pty");
+            rustix::pty::grantpt(&master).expect("the pty is granted");
+            rustix::pty::unlockpt(&master).expect("the pty is unlocked");
+            let name = rustix::pty::ptsname(&master, Vec::new()).expect("the pty's name");
+            let slave = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .custom_flags(libc::O_NOCTTY)
+                .open(std::ffi::OsStr::from_bytes(name.as_bytes()))
+                .expect("the pty's other side");
+            (File::from(master), slave)
+        }
+
+        /// The mode the session's key reader finds what is left in: raw, and a
+        /// read of an empty queue returning at once.
+        fn as_the_session_reads(slave: &File) {
+            let mut mode = rustix::termios::tcgetattr(slave).expect("the pty's mode");
+            mode.make_raw();
+            mode.special_codes[SpecialCodeIndex::VMIN] = 0;
+            mode.special_codes[SpecialCodeIndex::VTIME] = 0;
+            rustix::termios::tcsetattr(slave, OptionalActions::Now, &mode).expect("set");
+        }
+
+        /// One question the played terminal waits for, and its answers, each
+        /// after its own pause in milliseconds.
+        struct Turn {
+            asked: Vec<u8>,
+            answers: Vec<(u64, Vec<u8>)>,
+        }
+
+        fn turn(asked: &[u8], answers: &[(u64, &[u8])]) -> Turn {
+            Turn {
+                asked: asked.to_vec(),
+                answers: answers
+                    .iter()
+                    .map(|(pause, bytes)| (*pause, bytes.to_vec()))
+                    .collect(),
+            }
+        }
+
+        /// The candidate's question as the exchange writes it.
+        fn asking(protocol: Protocol) -> Vec<u8> {
+            [question(protocol), CURSOR].concat()
+        }
+
+        /// Reads what is waiting on `file`, which is non-blocking.
+        fn take(file: &mut File, into: &mut Vec<u8>) {
+            let mut chunk = [0_u8; 4096];
+            loop {
+                match file.read(&mut chunk) {
+                    Ok(0) => return,
+                    Ok(read) => into.extend_from_slice(chunk.get(..read).unwrap_or_default()),
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                    Err(_) => return,
+                }
+            }
+        }
+
+        /// Writes all of `bytes`, waiting while the pty is full.
+        fn tell(file: &mut File, mut bytes: &[u8], until: Instant) {
+            while !bytes.is_empty() && Instant::now() < until {
+                match file.write(bytes) {
+                    Ok(written) => bytes = bytes.get(written..).unwrap_or_default(),
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                    Err(error) => panic!("the played terminal could not answer: {error}"),
+                }
+            }
+        }
+
+        /// Plays a terminal on `master`: waits for each turn's question in
+        /// order and gives its answers, then hears on until the exchange is
+        /// done. Sends back everything it heard.
+        fn play(
+            mut master: File,
+            turns: Vec<Turn>,
+            said: Arc<AtomicBool>,
+            done: Arc<AtomicBool>,
+        ) -> mpsc::Receiver<Vec<u8>> {
+            let (send, heard) = mpsc::channel();
+            thread::spawn(move || {
+                rustix::fs::fcntl_setfl(&master, rustix::fs::OFlags::NONBLOCK)
+                    .expect("the played side does not block");
+                let until = Instant::now() + GIVE_UP;
+                let mut heard = Vec::new();
+                let mut from = 0;
+                for turn in turns {
+                    loop {
+                        take(&mut master, &mut heard);
+                        let found = heard
+                            .get(from..)
+                            .unwrap_or_default()
+                            .windows(turn.asked.len())
+                            .position(|part| part == turn.asked.as_slice());
+                        if let Some(at) = found {
+                            from += at + turn.asked.len();
+                            break;
+                        }
+                        if Instant::now() > until {
+                            said.store(true, Ordering::SeqCst);
+                            let _ = send.send(heard);
+                            return;
+                        }
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    for (pause, bytes) in turn.answers {
+                        thread::sleep(Duration::from_millis(pause));
+                        tell(&mut master, &bytes, until);
+                    }
+                }
+                said.store(true, Ordering::SeqCst);
+                while !done.load(Ordering::SeqCst) && Instant::now() < until {
+                    take(&mut master, &mut heard);
+                    thread::sleep(Duration::from_millis(5));
+                }
+                thread::sleep(Duration::from_millis(20));
+                take(&mut master, &mut heard);
+                let _ = send.send(heard);
+            });
+            heard
+        }
+
+        /// What the exchange left on `slave` for the key reader, read once the
+        /// played terminal has said everything and the pty has gone quiet.
+        fn left(slave: &mut File, said: &AtomicBool) -> Vec<u8> {
+            let until = Instant::now() + GIVE_UP;
+            let mut left = Vec::new();
+            let mut quiet = Instant::now();
+            while Instant::now() < until {
+                let before = left.len();
+                take(slave, &mut left);
+                if left.len() != before {
+                    quiet = Instant::now();
+                }
+                if said.load(Ordering::SeqCst) && quiet.elapsed() > Duration::from_millis(100) {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(2));
+            }
+            left
+        }
+
+        /// Every key the session would read from what was left: whatever is
+        /// not a cursor position, which the key reader drops, and a sequence
+        /// left unfinished.
+        fn keys(left: &[u8]) -> Vec<Shape> {
+            let mut replies = Replies::new();
+            let mut keys: Vec<Shape> = left
+                .iter()
+                .filter_map(|byte| replies.feed(*byte))
+                .filter(|shape| *shape != Shape::CursorPosition)
+                .collect();
+            if !replies.between() {
+                keys.push(Shape::Other);
+            }
+            keys
+        }
+
+        fn count(heard: &[u8], question: &[u8]) -> usize {
+            heard
+                .windows(question.len())
+                .filter(|part| *part == question)
+                .count()
+        }
+
+        /// One exchange against a terminal playing `turns`.
+        struct Ran {
+            yes: bool,
+            took: Duration,
+            heard: Vec<u8>,
+            left: Vec<u8>,
+        }
+
+        fn run(protocol: Protocol, turns: Vec<Turn>) -> Ran {
+            let (master, mut slave) = pty();
+            as_the_session_reads(&slave);
+            let said = Arc::new(AtomicBool::new(false));
+            let done = Arc::new(AtomicBool::new(false));
+            let heard = play(master, turns, Arc::clone(&said), Arc::clone(&done));
+
+            let started = Instant::now();
+            let yes = exchanged(&slave, protocol, WAIT);
+            let took = started.elapsed();
+            done.store(true, Ordering::SeqCst);
+
+            let left = left(&mut slave, &said);
+            let heard = heard
+                .recv_timeout(GIVE_UP)
+                .expect("the played terminal finished");
+            Ran {
+                yes,
+                took,
+                heard,
+                left,
+            }
+        }
+
+        #[test]
+        fn a_terminal_that_answers_confirms_its_candidate_and_leaves_nothing_to_read() {
+            for (protocol, yes) in [
+                (Protocol::Kitty, KITTY_YES),
+                (Protocol::Iterm2, ITERM2_YES),
+                (Protocol::Sixel, SIXEL_YES),
+            ] {
+                let ran = run(
+                    protocol,
+                    vec![
+                        turn(CURSOR, &[(0, CURSOR_AT)]),
+                        turn(&asking(protocol), &[(0, yes), (0, CURSOR_AT)]),
+                    ],
+                );
+                assert!(ran.yes, "{protocol:?} answered yes and was not confirmed");
+                assert_eq!(count(&ran.heard, &asking(protocol)), 1, "{protocol:?}");
+                assert_eq!(
+                    keys(&ran.left),
+                    Vec::<Shape>::new(),
+                    "{protocol:?}: {:?}",
+                    ran.left
+                );
+                assert!(ran.left.is_empty(), "{protocol:?}: {:?}", ran.left);
+            }
+        }
+
+        #[test]
+        fn a_cursor_position_after_the_patience_is_no_answer_and_nothing_more_is_asked() {
+            let ran = run(Protocol::Kitty, vec![turn(CURSOR, &[(350, CURSOR_AT)])]);
+
+            assert!(!ran.yes);
+            assert_eq!(count(&ran.heard, CURSOR), 1, "{:?}", ran.heard);
+            assert_eq!(count(&ran.heard, question(Protocol::Kitty)), 0);
+            assert!(ran.took < Duration::from_millis(300), "{:?}", ran.took);
+            assert_eq!(
+                ran.left, CURSOR_AT,
+                "the late answer is the key reader's to drop"
+            );
+            assert_eq!(keys(&ran.left), Vec::<Shape>::new());
+        }
+
+        #[test]
+        fn a_terminal_that_never_answers_costs_the_patience_alone() {
+            let ran = run(Protocol::Kitty, vec![turn(CURSOR, &[])]);
+
+            assert!(!ran.yes);
+            assert_eq!(count(&ran.heard, CURSOR), 1, "{:?}", ran.heard);
+            assert_eq!(count(&ran.heard, question(Protocol::Kitty)), 0);
+            assert!(ran.took >= WAIT.patience, "{:?}", ran.took);
+            assert!(ran.took < WAIT.reply, "{:?}", ran.took);
+            assert!(ran.left.is_empty(), "{:?}", ran.left);
+        }
+
+        #[test]
+        fn a_yes_behind_its_cursor_position_is_a_no_and_is_consumed() {
+            let ran = run(
+                Protocol::Kitty,
+                vec![
+                    turn(CURSOR, &[(0, CURSOR_AT)]),
+                    turn(&asking(Protocol::Kitty), &[(0, CURSOR_AT), (5, KITTY_YES)]),
+                ],
+            );
+
+            assert!(!ran.yes);
+            assert_eq!(count(&ran.heard, &asking(Protocol::Kitty)), 1);
+            assert!(ran.left.is_empty(), "{:?}", ran.left);
+        }
+
+        #[test]
+        fn a_reply_split_at_its_escape_within_the_wait_is_read_whole() {
+            let ran = run(
+                Protocol::Kitty,
+                vec![
+                    turn(CURSOR, &[(0, b"\x1b"), (30, b"[12;40R")]),
+                    turn(
+                        &asking(Protocol::Kitty),
+                        &[(0, b"\x1b_Gi=31;OK\x1b"), (30, b"\\"), (0, CURSOR_AT)],
+                    ),
+                ],
+            );
+
+            assert!(ran.yes);
+            assert!(ran.left.is_empty(), "{:?}", ran.left);
+        }
+
+        #[test]
+        fn a_cursor_position_still_arriving_when_the_patience_ends_is_read_to_its_end() {
+            let ran = run(
+                Protocol::Kitty,
+                vec![
+                    turn(CURSOR, &[(0, b"\x1b["), (250, b"12;40R")]),
+                    turn(&asking(Protocol::Kitty), &[(0, KITTY_YES), (0, CURSOR_AT)]),
+                ],
+            );
+
+            assert!(ran.yes, "a cursor position begun in time is an answer");
+            assert!(ran.left.is_empty(), "{:?}", ran.left);
+        }
+
+        #[test]
+        fn a_yes_still_arriving_when_the_reply_wait_ends_is_read_to_its_end() {
+            let ran = run(
+                Protocol::Kitty,
+                vec![
+                    turn(CURSOR, &[(0, CURSOR_AT)]),
+                    turn(
+                        &asking(Protocol::Kitty),
+                        &[(0, b"\x1b_Gi=31;OK\x1b"), (800, b"\\"), (0, CURSOR_AT)],
+                    ),
+                ],
+            );
+
+            assert!(ran.yes, "a yes begun in time is a yes");
+            assert_eq!(keys(&ran.left), Vec::<Shape>::new(), "{:?}", ran.left);
+        }
+
+        #[test]
+        fn a_late_background_answer_is_consumed_wherever_it_lands() {
+            let ran = run(
+                Protocol::Kitty,
+                vec![
+                    turn(
+                        CURSOR,
+                        &[(0, b"\x1b]11;rgb:0000/0000/0000\x1b\\"), (0, CURSOR_AT)],
+                    ),
+                    turn(
+                        &asking(Protocol::Kitty),
+                        &[
+                            (0, b"\x1b]11;rgb:ffff/ffff/ffff\x07"),
+                            (0, KITTY_YES),
+                            (0, CURSOR_AT),
+                        ],
+                    ),
+                ],
+            );
+
+            assert!(ran.yes);
+            assert!(ran.left.is_empty(), "{:?}", ran.left);
+        }
+
+        #[test]
+        fn a_terminal_that_sends_without_end_is_left_long_before_the_wait_runs_out() {
+            let mut flood = b"\x1b]".to_vec();
+            flood.extend(vec![b'a'; 64 * 1024]);
+            let ran = run(
+                Protocol::Kitty,
+                vec![Turn {
+                    asked: CURSOR.to_vec(),
+                    answers: vec![(0, flood)],
+                }],
+            );
+
+            assert!(!ran.yes);
+            assert_eq!(count(&ran.heard, CURSOR), 1);
+            assert!(ran.took < Duration::from_millis(500), "{:?}", ran.took);
+        }
+
+        #[test]
+        fn the_mode_is_put_back_when_the_exchange_returns_early() {
+            let (_master, slave) = pty();
+            let before = rustix::termios::tcgetattr(&slave).expect("the pty's mode");
+            let mut inside = None;
+
+            let returned = (|| -> io::Result<()> {
+                let _mode = Mode::enter(&slave)?
+                    .ok_or_else(|| io::Error::other("the pty is not a terminal"))?;
+                inside = Some(rustix::termios::tcgetattr(&slave)?);
+                let _: u8 = "an early return".parse().map_err(io::Error::other)?;
+                Ok(())
+            })();
+
+            assert!(returned.is_err(), "the case did not return early");
+            let inside = inside.expect("the mode was entered");
+            assert!(!inside.local_modes.contains(LocalModes::ICANON));
+            assert!(!inside.local_modes.contains(LocalModes::ECHO));
+            assert_eq!(inside.special_codes[SpecialCodeIndex::VMIN], 0);
+
+            let after = rustix::termios::tcgetattr(&slave).expect("the pty's mode");
+            assert_eq!(after.local_modes, before.local_modes);
+            assert_eq!(after.input_modes, before.input_modes);
+            assert_eq!(after.output_modes, before.output_modes);
+            assert_eq!(
+                after.special_codes[SpecialCodeIndex::VMIN],
+                before.special_codes[SpecialCodeIndex::VMIN]
+            );
+        }
+
+        #[test]
+        fn no_mode_is_set_where_the_other_end_is_not_a_terminal() {
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open("/dev/null")
+                .expect("the null device");
+            assert!(matches!(Mode::enter(file.as_fd()), Ok(None)));
         }
     }
 }
