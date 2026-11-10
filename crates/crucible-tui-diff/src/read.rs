@@ -162,11 +162,7 @@ fn body(reading: &mut Reading, hunk: &mut Hunk, line: &str) -> bool {
 /// Reads `line` as a header, answering the hunk it opens where it opens one.
 fn header(reading: &mut Reading, line: &str) -> Option<Hunk> {
     if let Some(paths) = line.strip_prefix("diff --git ") {
-        let mut file = File::new(None);
-        if let Some((_, new)) = paths.split_once(" b/") {
-            file.named(new);
-        }
-        reading.open(file);
+        reading.open(File::new(git_path(paths)));
         reading.headed = true;
         reading.old = None;
     } else if let Some(old) = line.strip_prefix("--- ") {
@@ -207,6 +203,17 @@ fn header(reading: &mut Reading, line: &str) -> Option<Hunk> {
         return Some(start);
     }
     None
+}
+
+/// The path a `diff --git a/P b/P` line names, where its two halves are the
+/// same path. A path can hold ` b/` itself, so the line is split at its
+/// middle rather than at the first ` b/`; halves that differ name no one
+/// path, and a `+++` or `rename to` line later names the file instead.
+fn git_path(paths: &str) -> Option<&str> {
+    let both = paths.strip_prefix("a/")?;
+    let half = both.len().checked_sub(" b/".len())? / 2;
+    let (old, new) = (both.get(..half)?, both.get(half..)?.strip_prefix(" b/")?);
+    (!new.is_empty() && old == new).then_some(new)
 }
 
 /// A `---` or `+++` line's path: the `a/` or `b/` git puts on it gone, and

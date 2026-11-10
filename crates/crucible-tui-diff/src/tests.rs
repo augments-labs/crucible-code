@@ -597,3 +597,96 @@ fn a_diff_of_more_files_than_a_change_keeps_is_refused_however_its_files_open() 
         Ok(crate::MOST_FILES)
     );
 }
+
+#[test]
+fn a_file_keeps_its_path_and_its_lines_out_of_debug() {
+    // Built as the tool path builds one, from a credential-shaped path.
+    let file = File::numbered(
+        Some("secrets/sk-ant-not-a-real-key.env"),
+        [
+            (1, Side::Kept, "TOKEN_KEPT=kept-line-text"),
+            (5, Side::Removed, "TOKEN=old-line-text"),
+            (5, Side::Added, "TOKEN=new-line-text"),
+        ],
+    );
+    // And as a diff builds one, renamed and with a named section in a gap.
+    let renamed = read(
+        "diff --git a/secrets/sk-ant-old.env b/secrets/sk-ant-new.env\n\
+         rename from secrets/sk-ant-old.env\nrename to secrets/sk-ant-new.env\n\
+         --- a/secrets/sk-ant-old.env\n+++ b/secrets/sk-ant-new.env\n\
+         @@ -1,1 +1,1 @@\n-gone-line-text\n+came-line-text\n\
+         @@ -40,1 +40,1 @@ fn sk_ant_section\n-gone-again\n+came-again\n",
+    )
+    .expect("a diff to read");
+    let gap = renamed.files().first().map(|file| file.lines().to_vec());
+    let said = [
+        format!("{file:?}"),
+        format!("{:?}", Change::new(vec![file.clone()])),
+        format!("{renamed:?}"),
+        format!("{:?}", file.lines()),
+        format!("{gap:?}"),
+    ];
+    for said in said {
+        for secret in ["sk-ant", "sk_ant", "line-text", "again"] {
+            assert!(!said.contains(secret), "{secret:?} in {said}");
+        }
+    }
+    // What is there to be counted still is.
+    let said = format!("{file:?}");
+    assert!(said.contains("path: Some(\"[redacted]\")"), "{said}");
+    assert!(said.contains("from: None"), "{said}");
+    let said = format!("{:?}", file.lines().first());
+    assert!(
+        said.contains("Kept") && said.contains("number: 1"),
+        "{said}"
+    );
+    let said = format!("{gap:?}");
+    assert!(said.contains("section: Some(\"[redacted]\")"), "{said}");
+    let said = format!("{renamed:?}");
+    assert!(said.contains("from: Some(\"[redacted]\")"), "{said}");
+}
+
+#[test]
+fn a_git_header_names_its_file_only_where_its_two_halves_agree() {
+    let path = |diff: &str| {
+        read(diff)
+            .expect("a diff to read")
+            .files()
+            .first()
+            .map(|file| file.path().map(str::to_owned))
+    };
+    // A binary file whose path holds ` b/`, with no `+++` to name it.
+    assert_eq!(
+        path(
+            "diff --git a/x b/y.png b/x b/y.png\nindex 0000000..1111111 100644\n\
+             Binary files a/x b/y.png and b/x b/y.png differ\n"
+        ),
+        Some(Some("x b/y.png".to_owned()))
+    );
+    // A binary patch, likewise.
+    assert_eq!(
+        path("diff --git a/run b/me.bin b/run b/me.bin\nGIT binary patch\nliteral 0\n"),
+        Some(Some("run b/me.bin".to_owned()))
+    );
+    // A change to its mode alone is no diff to draw, so it names nothing.
+    assert_eq!(
+        read("diff --git a/run b/me.sh b/run b/me.sh\nold mode 100644\nnew mode 100755\n"),
+        Err(NotADiff::Unread)
+    );
+    // Halves that differ, with nothing else to name it: no path, not a guess.
+    assert_eq!(
+        path(
+            "diff --git a/x b/y b/z\nindex 0000000..1111111 100644\n\
+             Binary files differ\n"
+        ),
+        Some(None)
+    );
+    // Where `+++` names it, that name is the one drawn.
+    assert_eq!(
+        path(
+            "diff --git a/x b/y b/x b/y\n--- a/x b/y\n+++ b/x b/y\n\
+             @@ -1,1 +1,1 @@\n-a\n+b\n"
+        ),
+        Some(Some("x b/y".to_owned()))
+    );
+}

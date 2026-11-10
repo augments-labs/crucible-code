@@ -334,7 +334,9 @@ The box opens on the file as the call named it and the count of lines added
 and removed. A line that went is marked `-` and one that came is marked `+`,
 each on ground saying which way, and within a replaced line the words that
 changed are raised. The lines around them did not move and are there to be read
-against; they wear the colours of the file's language, read from its extension.
+against; they alone wear the colours of the file's language, read from its
+extension. A line that changed keeps its side's colour, so an edit made only of
+changed lines shows no language colours at all.
 Every line carries the number it has in the file, and both sides of a
 replacement start at the same one, since one line stands where the other did.
 

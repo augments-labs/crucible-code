@@ -106,17 +106,21 @@ pub fn rooms() -> impl Iterator<Item = Room> {
 /// Asserts that `drawer` lays `source` out within every room of the sweep:
 /// its rows, and its narrow layout where it offers one.
 ///
-/// A block the drawer declines is not drawn, so it has nothing to fit.
+/// A block the drawer declines in a room is not drawn there, so it has
+/// nothing to fit; one it declines in every room proves nothing, and fails.
 ///
 /// # Panics
 ///
-/// When a row is wider than the room it was laid out for.
+/// When a row is wider than the room it was laid out for, or when the drawer
+/// laid `source` out in no room at all.
 #[track_caller]
 pub fn fits(what: &str, drawer: &dyn Draws, source: &str) {
+    let mut laid_out = 0_usize;
     for room in rooms() {
         let Ok(laid) = drawer.block(source, &room) else {
             continue;
         };
+        laid_out += 1;
         within(&laid.rows, room.columns, what, room.glyphs);
         if let Some(narrow) = &laid.narrow {
             within(
@@ -127,6 +131,7 @@ pub fn fits(what: &str, drawer: &dyn Draws, source: &str) {
             );
         }
     }
+    assert!(laid_out > 0, "{what} laid nothing out in any room");
 }
 
 #[cfg(test)]
@@ -184,6 +189,25 @@ mod tests {
                 narrow: None,
             })
         }
+    }
+
+    /// Declines every block, in every room.
+    struct Declines;
+
+    impl Draws for Declines {
+        fn names(&self) -> &'static [&'static str] {
+            &["declines"]
+        }
+
+        fn block(&self, _: &str, _: &Room) -> Result<Laid, Undrawn> {
+            Err(Undrawn::NotHere)
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "declines laid nothing out in any room")]
+    fn a_drawer_that_lays_nothing_out_in_any_room_fails_the_fit_check() {
+        fits("declines", &Declines, "a block it will not draw");
     }
 
     #[test]

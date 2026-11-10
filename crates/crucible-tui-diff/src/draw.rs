@@ -15,8 +15,10 @@
 //! left off. Each line is the number a reader would find it at, the sign that
 //! says which way it went, and the line. A line that moved is drawn on its
 //! change's ground carried to the last column, and the words that changed in
-//! it are raised on that ground; a line that did not move is on the reader's
-//! own ground, coloured as its file's language when the path names one. One
+//! it are raised on that ground: it wears its side's colour, never its
+//! language's. A line that did not move is on the reader's own ground,
+//! coloured as its file's language when the path names one, so an edit with
+//! no line that did not move shows no language's colour at all. One
 //! change reads at most [`SYNTAX_LINES`] lines and [`SYNTAX_BYTES`] bytes for
 //! their colours and compares at most [`PAIRS`] pairs of lines for their
 //! words; past either, the rest of its lines draw plain on their ground, so a

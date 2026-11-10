@@ -16,6 +16,9 @@ pub const HEAD: usize = 24;
 /// The rows a folded file draws after the row that counts the rest.
 pub const TAIL: usize = 4;
 
+// A folded file draws fewer rows than one drawn whole, with room for its count.
+const _: () = assert!(HEAD + TAIL < FOLD);
+
 /// The most lines one file keeps. Past it a line is counted as dropped.
 pub const MOST_LINES: usize = 2048;
 
@@ -43,7 +46,7 @@ pub enum Side {
 }
 
 /// One row of a file's body.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Line {
     /// A line of the file, with the number a reader would find it at.
     Text {
@@ -75,13 +78,33 @@ pub struct File {
     binary: bool,
 }
 
+impl std::fmt::Debug for Line {
+    /// By hand: a line is a file's contents, and a file can hold a credential,
+    /// so its text and a section's name are said to be there and never shown.
+    fn fmt(&self, into: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Text { side, number, text } => into
+                .debug_struct("Text")
+                .field("side", side)
+                .field("number", number)
+                .field("bytes", &text.len())
+                .finish(),
+            Self::Gap { lines, section } => into
+                .debug_struct("Gap")
+                .field("lines", lines)
+                .field("section", &section.as_ref().map(|_| "[redacted]"))
+                .finish(),
+        }
+    }
+}
+
 impl std::fmt::Debug for File {
-    /// By hand: the lines are a file's contents, and a test failure that
-    /// printed them all would bury the one row it is about.
+    /// By hand: a path can name a credential and the lines are the file's
+    /// contents, so the paths are said to be there and the lines counted.
     fn fmt(&self, into: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         into.debug_struct("File")
-            .field("path", &self.path)
-            .field("from", &self.from)
+            .field("path", &self.path.as_ref().map(|_| "[redacted]"))
+            .field("from", &self.from.as_ref().map(|_| "[redacted]"))
             .field("lines", &self.lines.len())
             .field("added", &self.added)
             .field("removed", &self.removed)
