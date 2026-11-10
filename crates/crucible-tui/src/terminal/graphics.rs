@@ -1171,9 +1171,14 @@ impl Ear {
         let mut chunk = [0_u8; 512];
         loop {
             // A wakeup is for what is new, so what has arrived is read until
-            // the queue is empty.
+            // the queue is empty; no read asks for more than the ceiling
+            // leaves.
             loop {
-                match io.read(&mut chunk) {
+                let room = HEARD.saturating_sub(self.heard).min(chunk.len());
+                let Some(into) = chunk.get_mut(..room).filter(|into| !into.is_empty()) else {
+                    return Heard::Spent;
+                };
+                match io.read(into) {
                     Ok(0) => break,
                     Ok(read) => {
                         for byte in chunk.get(..read).unwrap_or_default() {
@@ -2198,7 +2203,9 @@ mod tests {
 
         use rustix::termios::{LocalModes, OptionalActions, SpecialCodeIndex};
 
-        use super::super::{Deadline, Mode, Protocol, Replies, Shape, exchanged, question};
+        use super::super::{
+            Deadline, Ear, Heard, Mode, Protocol, Replies, Shape, exchanged, question,
+        };
 
         /// A wait the cases can tell apart under a loaded machine: the
         /// patience is long enough to answer within, and the reply wait long
@@ -2580,6 +2587,34 @@ mod tests {
             assert!(!ran.yes);
             assert_eq!(count(&ran.heard, CURSOR), 1);
             assert!(ran.took < Duration::from_millis(500), "{:?}", ran.took);
+        }
+
+        /// A terminal that never stops sending, in reads of an odd size, so a
+        /// read that crossed the ceiling would be seen past it.
+        struct Endless {
+            read: usize,
+        }
+
+        impl io::Read for Endless {
+            fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
+                let given = into.len().min(300);
+                into.iter_mut().take(given).for_each(|byte| *byte = b'a');
+                self.read += given;
+                Ok(given)
+            }
+        }
+
+        #[test]
+        fn an_exchange_reads_not_one_byte_past_sixteen_kib() {
+            let (_master, slave) = pty();
+            let mut ear = Ear::new(&slave).expect("the pty is waited on");
+            let mut endless = Endless { read: 0 };
+            let now = Instant::now();
+
+            let heard = ear.listen(&mut endless, now + GIVE_UP, now + GIVE_UP, |_| false);
+
+            assert_eq!(heard, Heard::Spent);
+            assert_eq!(endless.read, 16 * 1024);
         }
 
         #[test]
