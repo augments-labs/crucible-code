@@ -29,21 +29,25 @@
 //! whatever it says. A first cursor position the patience missed decides
 //! nothing but is still read: the exchange reads on until it has been
 //! consumed, for at most the reply wait after the first question, and asks
-//! nothing more. After the candidate's question everything is read under one
-//! ceiling, the reply wait after that question: the replies, a sequence still
-//! arriving, and a yes behind its cursor position, which is read for the
-//! patience within that ceiling and counts as a no. A wait that runs out
-//! inside a sequence is a no, and nothing is read past the ceiling, so an
-//! exchange waits at most the patience and the reply wait together.
+//! nothing more. A first cursor position read whole within the patience goes
+//! on to the candidate's question even when a sequence behind it is still
+//! arriving, and the wait after that question reads the sequence on. After the
+//! candidate's question everything is read under one ceiling, the reply wait
+//! after that question: the replies, a sequence still arriving, and a yes
+//! behind its cursor position, which is read for the patience within that
+//! ceiling and counts as a no. There, and in reading on a first cursor position
+//! the patience missed, a wait that runs out inside a sequence is a no, and
+//! nothing is read past the ceiling, so an exchange waits at most the patience
+//! and the reply wait together.
 //!
 //! What the exchange has not read goes to the key reader, which can take it
 //! for typing: a first cursor position later than the reply wait; whatever a
-//! terminal that answered the first question sends after stalling for longer
-//! than the reply wait; and a protocol's answer later than every wait, which
-//! is read as Alt and a run of characters. One exchange reads at most 16 KiB,
-//! so a terminal that sends without end is left as soon as it has sent that
-//! much. What a user types while the exchange reads is consumed with the
-//! replies and never reaches the prompt.
+//! terminal that answered the first question sends later than the reply wait
+//! after the candidate's question; and a protocol's answer later than every
+//! wait, which is read as Alt and a run of characters. One exchange reads at
+//! most 16 KiB, so a terminal that sends without end is left as soon as it has
+//! sent that much. What a user types while the exchange reads is consumed with
+//! the replies and never reaches the prompt.
 //!
 //! **The table is what was seen.** [`support`] holds the cells of the terminal
 //! support table that drew right in every step of their screen mode; every
@@ -1039,10 +1043,14 @@ const fn says_yes(protocol: Protocol, shape: Shape) -> bool {
 /// question and the cursor position again, all read under one ceiling, the
 /// reply wait after that question. A cursor position the patience missed is
 /// still read until it has been consumed, for at most the reply wait after the
-/// first question, and nothing more is asked. A yes counts only ahead of the
-/// second cursor position; one behind it is read and consumed for the
-/// patience again, within the same ceiling. A wait that runs out inside a
-/// sequence, and any failure of the terminal, is a no.
+/// first question, and nothing more is asked. A first cursor position read
+/// whole by the patience goes on to the question even when a sequence behind
+/// it is still arriving, which the wait after the question reads on. A yes
+/// counts only ahead of the second cursor position; one behind it is read and
+/// consumed for the patience again, within the same ceiling. Any failure of
+/// the terminal is a no, and so is a wait that runs out inside a sequence
+/// after the question, or while a cursor position the patience missed is read
+/// on.
 #[cfg(unix)]
 fn exchanged<T: AsFd + io::Read + io::Write>(
     io: T,

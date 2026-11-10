@@ -36,10 +36,10 @@
 //! characters. So a terminal still types what it says later than every wait
 //! [`crate::graphics`] and the background question allow: a first cursor
 //! position later than the exchange's reply wait, whatever a terminal that
-//! answered the first question sends after stalling for longer than that wait,
-//! a protocol's answer later than every wait, and, where no picture exchange
-//! follows to read it, a background answer later than the background
-//! question's patience.
+//! answered the first question sends later than that wait after the
+//! protocol's question, a protocol's answer later than every wait, and, where
+//! no picture exchange follows to read it, a background answer later than the
+//! background question's patience.
 
 use std::time::Duration;
 
