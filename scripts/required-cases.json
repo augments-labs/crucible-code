@@ -7911,7 +7911,7 @@
       },
       "case": "markdown::tests::an_alert_mark_carries_its_kinds_ink_and_its_word_only_weight_in_every_theme",
       "source": "crates/crucible-tui/src/markdown/tests.rs",
-      "body_sha256": "af5c0b4b3b217f82a34b880d8c002326b70a56b9a2acb2887159ae095d69a11a",
+      "body_sha256": "b81b7697ab1f1b853f6d42c40288bd8454a5ef1a9a221205b1b154898854ade6",
       "platforms": [
         "linux",
         "macos",

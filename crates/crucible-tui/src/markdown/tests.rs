@@ -3734,7 +3734,7 @@ fn an_alert_mark_carries_its_kinds_ink_and_its_word_only_weight_in_every_theme()
                     assert_eq!(ink(slot), ink(Slot::Bold), "{theme:?} {marker}");
                 }
                 "TIP" => assert_eq!(ink(slot), "\x1b[9;90m", "{theme:?} {marker}"),
-                _ => unreachable!("{marker} is not an alert kind"),
+                other => assert_eq!(other, "", "no ink is asked of the kind {other}"),
             }
         }
     }
