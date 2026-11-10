@@ -8773,15 +8773,15 @@
     {
       "id": "CASE-TERMINAL-TMUX-NO-PATH",
       "family": "terminal",
-      "obligation": "With no PATH, no tmux is found, the system's default search path included, and passthrough is not known.",
+      "obligation": "With no PATH, the tmux lookup finds nothing and passthrough is not known.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "terminal::graphics::tests::tmux::with_no_path_no_tmux_is_looked_for_and_passthrough_is_unknown",
+      "case": "terminal::graphics::tests::tmux::with_no_path_tmux_on_finds_nothing_and_passthrough_is_unknown",
       "source": "crates/crucible-tui/src/terminal/graphics.rs",
-      "body_sha256": "587d8acb0deb749621416bcce060ea9ac09fd9bb3dea9f2d7d3b123f514a1164",
+      "body_sha256": "4a1b3efd371110fb7d848a00a325da37b0f038132ec7d6e1d53c4cd9ee32ed74",
       "platforms": [
         "linux",
         "macos"

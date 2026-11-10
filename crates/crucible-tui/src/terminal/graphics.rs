@@ -3193,7 +3193,7 @@ mod tests {
         }
 
         #[test]
-        fn with_no_path_no_tmux_is_looked_for_and_passthrough_is_unknown() {
+        fn with_no_path_tmux_on_finds_nothing_and_passthrough_is_unknown() {
             assert_eq!(tmux_on(None), None);
             assert_eq!(
                 server_says(SOCKET, None, None, TMUX_WAIT),
