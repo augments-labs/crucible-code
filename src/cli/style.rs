@@ -4,9 +4,11 @@
 //! answers the drawing can read without asking anything: whether to write
 //! colour and how much of it, which characters to draw with, and how much of a
 //! line to show. None of those may be asked per event — two are syscalls and
-//! the third is a file.
+//! the third is a file. What the start learned of where pictures can be drawn
+//! is kept beside them for the same reason: tmux's answer is a process run.
 
 use crucible_config::{Color, Glyphs as Wanted, ThemeChoice, ToolDetail, TranscriptColours};
+use crucible_tui::graphics::{Passthrough, Platform};
 use crucible_tui::{Design, Glyphs, Ground, Palette, Theme};
 
 /// What the `output` block said, before the terminal and the environment have
@@ -91,6 +93,12 @@ pub(crate) struct Style {
     detail: ToolDetail,
     /// Which way the terminal said its ground goes, where it has said.
     ground: Option<Ground>,
+    /// The system the session runs on, which the terminal support table is
+    /// read for.
+    platform: Platform,
+    /// What tmux's server said of passing sequences through, where it was
+    /// asked.
+    passthrough: Passthrough,
 }
 
 impl Style {
@@ -187,6 +195,8 @@ impl Style {
             ground,
             glyphs: glyph_set(glyphs),
             detail: detail.unwrap_or_default(),
+            platform: Platform::current(),
+            passthrough: Passthrough::Unknown,
         }
     }
 
@@ -228,6 +238,25 @@ impl Style {
     /// terminal reported then.
     pub(crate) fn ground(self) -> Option<Ground> {
         self.ground
+    }
+
+    /// The system the session runs on.
+    pub(crate) fn platform(self) -> Platform {
+        self.platform
+    }
+
+    /// What tmux's server said of passing sequences through, where it was
+    /// asked; [`Passthrough::Unknown`] where it was not.
+    pub(crate) fn passthrough(self) -> Passthrough {
+        self.passthrough
+    }
+
+    /// The same style, knowing what tmux's server said.
+    pub(crate) fn passing(self, passthrough: Passthrough) -> Self {
+        Self {
+            passthrough,
+            ..self
+        }
     }
 
     /// The same style, reading code in a different syntax theme.
@@ -346,6 +375,12 @@ impl Style {
         Self::resolve(Output::default(), true, Some(background), None, &|name| {
             (name == "COLORTERM").then(|| "truecolor".to_owned())
         })
+    }
+
+    /// The same style, read as though the session ran on `platform`, so every
+    /// platform's answer is tested from any host.
+    pub(crate) fn running_on(self, platform: Platform) -> Self {
+        Self { platform, ..self }
     }
 }
 

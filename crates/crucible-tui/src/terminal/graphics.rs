@@ -910,6 +910,15 @@ pub fn confirm(candidate: Candidate, deadline: Deadline) -> Capability {
     })
 }
 
+/// What the session draws pictures with where the terminal may not be asked,
+/// as when a setting changes mid-session: a forced protocol as [`confirm`]
+/// draws it, and text for a candidate only the terminal's answer could
+/// confirm.
+#[must_use]
+pub fn unasked(candidate: Candidate, cell: Option<Cell>) -> Capability {
+    confirmed(candidate, cell, |_| false)
+}
+
 /// The window's cell, from the pixel fields of its window-size report. Asks
 /// the terminal nothing; read again after a resize.
 #[must_use]
@@ -2091,6 +2100,33 @@ mod tests {
             confirmed(Candidate::Asked(Protocol::Kitty), Some(cell), |_| false),
             Capability::Text
         );
+    }
+
+    #[test]
+    fn a_candidate_settled_unasked_is_what_was_forced_and_text_for_a_question() {
+        let cell = Cell {
+            width: 9,
+            height: 18,
+        };
+        assert_eq!(
+            unasked(Candidate::Forced(Protocol::Iterm2), Some(cell)),
+            Capability::Graphics {
+                protocol: Protocol::Iterm2,
+                cell
+            }
+        );
+        assert_eq!(
+            unasked(Candidate::Forced(Protocol::Kitty), None),
+            Capability::Graphics {
+                protocol: Protocol::Kitty,
+                cell: Cell::FALLBACK
+            }
+        );
+        assert_eq!(
+            unasked(Candidate::Asked(Protocol::Kitty), Some(cell)),
+            Capability::Text
+        );
+        assert_eq!(unasked(Candidate::None, Some(cell)), Capability::Text);
     }
 
     #[test]

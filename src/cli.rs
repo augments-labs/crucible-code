@@ -63,6 +63,7 @@ use crucible_runtime::Cancel;
 use crucible_tools::Revealed;
 use crucible_tui::{
     RawError, Renderer, ScreenError, SystemTerminal, TerminalError, Title, TitleError, Welcome,
+    graphics,
 };
 use crucible_types::SessionId;
 use crucible_workspace::Workspace;
@@ -1552,10 +1553,40 @@ fn watch_size<T: crucible_tui::Terminal>(_renderer: &mut Renderer<T>) {}
 ///
 /// Written out case by case so a third screen in the configuration is a
 /// decision here rather than a default.
-fn drawn_on(screen: crucible_config::ScreenMode) -> crucible_tui::ScreenMode {
+pub(crate) fn drawn_on(screen: crucible_config::ScreenMode) -> crucible_tui::ScreenMode {
     match screen {
         crucible_config::ScreenMode::Fullscreen => crucible_tui::ScreenMode::Fullscreen,
         crucible_config::ScreenMode::Native => crucible_tui::ScreenMode::Native,
+    }
+}
+
+/// What `output.images` asks pictures to be drawn with, written out case by
+/// case so a protocol added to the configuration is a decision here.
+pub(crate) const fn pictures_wanted(images: crucible_config::ImageOutput) -> graphics::Wanted {
+    use crucible_config::ImageOutput;
+    match images {
+        ImageOutput::Auto => graphics::Wanted::Auto,
+        ImageOutput::Kitty => graphics::Wanted::Forced(graphics::Protocol::Kitty),
+        ImageOutput::Iterm2 => graphics::Wanted::Forced(graphics::Protocol::Iterm2),
+        ImageOutput::Sixel => graphics::Wanted::Forced(graphics::Protocol::Sixel),
+        ImageOutput::Off => graphics::Wanted::Off,
+    }
+}
+
+/// What a session reading `settings` would draw pictures with, asking for
+/// `images`: on a terminal or not, and with what tmux said.
+pub(crate) fn picturing(
+    images: crucible_config::ImageOutput,
+    settings: &Settings,
+    terminal: bool,
+    passthrough: graphics::Passthrough,
+) -> graphics::Setting {
+    graphics::Setting {
+        images: pictures_wanted(images),
+        screen: drawn_on(settings.screen()),
+        colour: settings.color() != Some(crucible_config::Color::Never),
+        terminal,
+        passthrough,
     }
 }
 
