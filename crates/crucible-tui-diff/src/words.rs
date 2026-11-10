@@ -18,10 +18,10 @@ use std::ops::Range;
 use similar::{Algorithm, DiffTag, capture_diff_slices};
 
 /// The most runs a line is cut into and still compared.
-pub(crate) const TOKENS: usize = 128;
+pub const TOKENS: usize = 48;
 
 /// The most pairs of lines one change compares.
-pub(crate) const PAIRS: usize = 256;
+pub const PAIRS: usize = 8;
 
 /// The byte ranges raised on the old line and on the new one.
 #[derive(Debug, Default, PartialEq, Eq)]

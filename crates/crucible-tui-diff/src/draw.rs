@@ -16,13 +16,18 @@
 //! says which way it went, and the line. A line that moved is drawn on its
 //! change's ground carried to the last column, and the words that changed in
 //! it are raised on that ground; a line that did not move is on the reader's
-//! own ground, coloured as its file's language when the path names one. Lines
+//! own ground, coloured as its file's language when the path names one. One
+//! change reads at most [`SYNTAX_LINES`] lines and [`SYNTAX_BYTES`] bytes for
+//! their colours and compares at most [`PAIRS`] pairs of lines for their
+//! words; past either, the rest of its lines draw plain on their ground, so a
+//! change costs the same bounded time to lay out however much it holds. Lines
 //! the diff never held are one quiet row that counts them, and a file of more
 //! than [`FOLD`] rows draws its head and tail around a row that counts the
 //! rest and names the key that shows it.
 //!
-//! The rows are laid out once at their natural width and then clipped to the
-//! room: a line cut short ends in the glyph set's ellipsis, and a header that
+//! The rows are laid out once for the room and then clipped to it: no more of
+//! a line is laid out than the room shows, a line cut short ends in the glyph
+//! set's ellipsis, and a header that
 //! cannot hold its path and its counts shortens the path from its start, then
 //! leaves the counts off, rather than cut a number in half.
 
@@ -31,7 +36,7 @@ use std::ops::Range;
 use crucible_tui::chrome::Undrawn;
 use crucible_tui::drawing::{Draws, EXPAND, Laid, Room};
 use crucible_tui::syntax::Syntax;
-use crucible_tui::{Glyphs, Row, Slot, columns};
+use crucible_tui::{Glyphs, Row, Slot, clip, columns};
 
 use crate::change::{Change, FOLD, File, HEAD, Line, Side, TAIL};
 use crate::read::{NotADiff, read};
@@ -41,9 +46,18 @@ use crate::words::{PAIRS, Raised, raised};
 /// start their lines in the same place whatever part of a file each touched.
 const NUMBER: usize = 3;
 
-/// The most lines of one change read for their language's colours. Past it a
-/// line that did not move is drawn plain.
-const SYNTAX_LINES: usize = 512;
+/// The most bytes of one change read for their language's colours.
+///
+/// Reading a line for its colours takes time for the line and more for each
+/// byte of it, so both are counted. From the first line that would pass
+/// either, every line of the change is drawn plain: a line read after one that
+/// was skipped would wear the colours of a state that never saw the line
+/// before it.
+pub const SYNTAX_BYTES: usize = 128;
+
+/// The most lines of one change read for their language's colours, counted
+/// with [`SYNTAX_BYTES`].
+pub const SYNTAX_LINES: usize = 8;
 
 /// The columns a tab stands for in a line drawn here.
 const TAB: &str = "    ";
@@ -62,7 +76,7 @@ impl Changes {
     /// The one function a fence and a tool's edit are both drawn by.
     #[must_use]
     pub fn draw(&self, change: &Change, room: &Room) -> Laid {
-        let laid = natural(change, room.glyphs);
+        let laid = natural(change, room);
         let widest = laid.iter().map(Drawn::columns).max().unwrap_or(0);
         let rows: Vec<Row> = laid.into_iter().map(|drawn| drawn.fitted(room)).collect();
         Laid {
@@ -99,8 +113,16 @@ enum Drawn {
         name: Option<String>,
         counts: Option<Row>,
     },
-    /// Any other row, with the ground it is filled to the last column in.
-    Body { row: Row, ground: Option<Slot> },
+    /// Any other row, with the ground it is filled to the last column in and
+    /// the columns it would take with no limit on them.
+    Body {
+        row: Row,
+        ground: Option<Slot>,
+        columns: usize,
+    },
+    /// A row already cut to the room it was laid out for, with the columns
+    /// it would take with no limit on them.
+    Fitted { row: Row, columns: usize },
 }
 
 impl Drawn {
@@ -115,7 +137,7 @@ impl Drawn {
                     + name.as_deref().map_or(0, |name| 1 + columns(name))
                     + counts.as_ref().map_or(0, |counts| 1 + counts.columns())
             }
-            Self::Body { row, .. } => row.columns(),
+            Self::Body { columns, .. } | Self::Fitted { columns, .. } => *columns,
         }
     }
 
@@ -126,7 +148,22 @@ impl Drawn {
                 name,
                 counts,
             } => header(&corner, name.as_deref(), counts, room),
-            Self::Body { row, ground } => {
+            // A row known to fit is neither measured again nor cut; one
+            // that does not is cut, and its ground then filled to what is
+            // left.
+            Self::Body {
+                row,
+                ground,
+                columns,
+            } if columns <= room.columns => {
+                let mut row = row;
+                if let Some(ground) = ground {
+                    row.push(ground, " ".repeat(room.columns - columns));
+                }
+                row
+            }
+            Self::Fitted { row, .. } => row,
+            Self::Body { row, ground, .. } => {
                 let mut row = clipped(row, room, ground.unwrap_or(Slot::Quiet));
                 if let Some(ground) = ground {
                     row.fill(ground, room.columns);
@@ -137,13 +174,28 @@ impl Drawn {
     }
 }
 
-/// Every row of `change`, at its natural width.
-fn natural(change: &Change, glyphs: Glyphs) -> Vec<Drawn> {
+impl Drawn {
+    /// A row inside the box, measured as it stands.
+    fn body(row: Row, ground: Option<Slot>) -> Self {
+        let columns = row.columns();
+        Self::Body {
+            row,
+            ground,
+            columns,
+        }
+    }
+}
+
+/// Every row of `change`, each measured at its natural width. A line is
+/// laid out only as far as `room` could show it.
+fn natural(change: &Change, room: &Room) -> Vec<Drawn> {
+    let glyphs = room.glyphs;
     let mut drawn = Vec::new();
     let widest = numbered(change);
     let mut budget = Budget {
         pairs: PAIRS,
-        syntax: SYNTAX_LINES,
+        syntax: SYNTAX_BYTES,
+        lines: SYNTAX_LINES,
     };
 
     for (at, file) in change.files().iter().enumerate() {
@@ -157,66 +209,82 @@ fn natural(change: &Change, glyphs: Glyphs) -> Vec<Drawn> {
             name: named(file, glyphs),
             counts: counts(file, glyphs),
         });
-        body(file, widest, glyphs, &mut budget, &mut drawn);
+        body(file, widest, room, &mut budget, &mut drawn);
     }
 
     if !drawn.is_empty() {
-        drawn.push(Drawn::Body {
-            row: Row::new().then_structural(
+        drawn.push(Drawn::body(
+            Row::new().then_structural(
                 Slot::Quiet,
                 format!("{}{}", glyphs.bottom().0, glyphs.horizontal()),
             ),
-            ground: None,
-        });
+            None,
+        ));
     }
     drawn
 }
 
-/// What one change may still spend on raising words and on colour.
+/// What one change may still spend on raising words, in pairs, and on
+/// colour, in bytes and in lines.
 struct Budget {
     pairs: usize,
     syntax: usize,
+    lines: usize,
 }
 
 /// What one file's lines are drawn with: the column the numbers fill, the
-/// glyph set, the reader of the file's language, and what the change may
-/// still spend.
+/// room, the reader of the file's language, and what the change may still
+/// spend.
 struct Lining<'a> {
     widest: usize,
-    glyphs: Glyphs,
+    room: &'a Room,
     syntax: Option<Syntax>,
     budget: &'a mut Budget,
 }
 
 /// The rows under one file's header.
-fn body(file: &File, widest: usize, glyphs: Glyphs, budget: &mut Budget, drawn: &mut Vec<Drawn>) {
+fn body(file: &File, widest: usize, room: &Room, budget: &mut Budget, drawn: &mut Vec<Drawn>) {
+    let glyphs = room.glyphs;
     let lines = file.lines();
     let shown: Vec<bool> = (0..lines.len())
         .map(|at| lines.len() <= FOLD || at < HEAD || at >= lines.len() - TAIL)
         .collect();
     let raised = paired(lines, &shown, budget);
+    // The last line that wears its language's colours: a line after it would
+    // be read for a state nothing is drawn with.
+    let coloured_to = (0..lines.len()).rev().find(|&at| {
+        shown.get(at).copied().unwrap_or(false)
+            && matches!(
+                lines.get(at),
+                Some(Line::Text {
+                    side: Side::Kept,
+                    ..
+                })
+            )
+    });
     let mut lining = Lining {
         widest,
-        glyphs,
-        syntax: file.path().and_then(language).and_then(Syntax::of),
+        room,
+        syntax: (budget.lines > 0 && coloured_to.is_some())
+            .then(|| file.path().and_then(language).and_then(Syntax::of))
+            .flatten(),
         budget,
     };
 
     for (at, line) in lines.iter().enumerate() {
+        if coloured_to.is_none_or(|last| at > last) {
+            lining.syntax = None;
+        }
         if lines.len() > FOLD && at == HEAD {
-            drawn.push(Drawn::Body {
-                row: folded(lines.len() - HEAD - TAIL, glyphs),
-                ground: None,
-            });
+            drawn.push(Drawn::body(folded(lines.len() - HEAD - TAIL, glyphs), None));
         }
         if !shown.get(at).copied().unwrap_or(false) {
             continue;
         }
         let row = match line {
-            Line::Gap { lines, section } => Drawn::Body {
-                row: between(*lines, section.as_deref(), glyphs),
-                ground: None,
-            },
+            Line::Gap { lines, section } => {
+                Drawn::body(between(*lines, section.as_deref(), glyphs), None)
+            }
             Line::Text { side, number, text } => {
                 let marks = raised.get(at).and_then(Option::as_deref);
                 lining.text_row(*side, *number, text, marks)
@@ -226,17 +294,14 @@ fn body(file: &File, widest: usize, glyphs: Glyphs, budget: &mut Budget, drawn: 
     }
 
     if file.is_binary() {
-        drawn.push(Drawn::Body {
-            row: quiet_row("binary, not drawn", glyphs),
-            ground: None,
-        });
+        drawn.push(Drawn::body(quiet_row("binary, not drawn", glyphs), None));
     }
     if file.dropped() > 0 {
         let lines = if file.dropped() == 1 { "line" } else { "lines" };
-        drawn.push(Drawn::Body {
-            row: quiet_row(&format!("{} {lines} not shown", file.dropped()), glyphs),
-            ground: None,
-        });
+        drawn.push(Drawn::body(
+            quiet_row(&format!("{} {lines} not shown", file.dropped()), glyphs),
+            None,
+        ));
     }
 }
 
@@ -258,47 +323,100 @@ impl Lining<'_> {
         let widest = self.widest;
 
         let mut row = Row::new()
-            .then_structural(Slot::Quiet, self.glyphs.vertical())
+            .then_structural(Slot::Quiet, self.room.glyphs.vertical())
             .then(Slot::Plain, " ")
             .then(numbered, format!(" {number:>widest$} {sign}"))
             .then(Slot::Plain, " ");
+        let prefix = row.columns();
+        let columns = prefix + columns(&text);
 
         // The new side is read in order so a string or a comment opened on
         // one line is still open on the next; only the lines that did not
         // move wear its colours.
-        let coloured = match (side, self.syntax.as_mut()) {
-            (Side::Removed, _) | (_, None) => None,
-            (_, Some(_)) if self.budget.syntax == 0 => None,
-            (side, Some(reading)) => {
-                self.budget.syntax -= 1;
-                let mut runs = Vec::new();
-                reading.read(&text, &mut |slot, said| runs.push((slot, said.to_owned())));
-                (side == Side::Kept).then_some(runs)
-            }
+        let coloured = match side {
+            Side::Removed => None,
+            Side::Kept | Side::Added => self.coloured(&text, side),
         };
 
+        // No more of the line is laid out than the room shows. A line too
+        // long for it is cut here, after the number before it, and ends in
+        // the ellipsis as any row cut to the room does, so a line longer than
+        // the room costs no more than one as wide as it. Where the number
+        // itself does not fit, the line is cut to the room and the row is cut
+        // as a whole later.
+        let room = self.room.columns;
+        let more = self.room.glyphs.ellipsis();
+        let (shown, cut) = if columns <= room {
+            (text.len(), false)
+        } else if let Some(left) = room
+            .checked_sub(crucible_tui::columns(more))
+            .filter(|&left| left > 0 && left >= prefix)
+        {
+            (clip(&text, left - prefix).len(), true)
+        } else {
+            (clip(&text, room).len(), false)
+        };
         match (coloured, marks) {
             (Some(runs), _) => {
+                let mut at = 0;
                 for (slot, said) in runs {
-                    row.push(slot, said);
+                    if at >= shown {
+                        break;
+                    }
+                    let left = shown - at;
+                    at += said.len();
+                    row.push(slot, said.get(..left).unwrap_or(&said));
                 }
             }
             (None, Some(marks)) => {
                 let mut at = 0;
                 for mark in marks {
-                    row.push(ground, text.get(at..mark.start).unwrap_or_default());
-                    row.push(word, text.get(mark.clone()).unwrap_or_default());
-                    at = mark.end;
+                    let (start, end) = (mark.start.min(shown), mark.end.min(shown));
+                    row.push(ground, text.get(at..start).unwrap_or_default());
+                    row.push(word, text.get(start..end).unwrap_or_default());
+                    at = end;
                 }
-                row.push(ground, text.get(at..).unwrap_or_default());
+                row.push(ground, text.get(at..shown).unwrap_or_default());
             }
-            (None, None) => row.push(ground, text),
+            (None, None) => row.push(ground, text.get(..shown).unwrap_or_default()),
         }
 
+        if cut {
+            if side == Side::Kept {
+                row.push(Slot::Quiet, more);
+            } else {
+                row.push(ground, more);
+                row.fill(ground, room);
+            }
+            return Drawn::Fitted { row, columns };
+        }
         Drawn::Body {
             row,
             ground: (side != Side::Kept).then_some(ground),
+            columns,
         }
+    }
+}
+
+impl Lining<'_> {
+    /// The runs of `text` in its language's colours where it wears them, read
+    /// in either case so the next line is read in the state this one left.
+    /// Past what the change may still spend, nothing more of it is read.
+    fn coloured(&mut self, text: &str, side: Side) -> Option<Vec<(Slot, String)>> {
+        let reading = self.syntax.as_mut()?;
+        let (Some(bytes), Some(lines)) = (
+            self.budget.syntax.checked_sub(text.len()),
+            self.budget.lines.checked_sub(1),
+        ) else {
+            self.budget.lines = 0;
+            self.syntax = None;
+            return None;
+        };
+        self.budget.syntax = bytes;
+        self.budget.lines = lines;
+        let mut runs = Vec::new();
+        reading.read(text, &mut |slot, said| runs.push((slot, said.to_owned())));
+        (side == Side::Kept).then_some(runs)
     }
 }
 

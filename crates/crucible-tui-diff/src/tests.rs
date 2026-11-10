@@ -2,6 +2,8 @@
 //! numbers, the raised words, the fold and the gaps, and the pictures checked
 //! in beside the drawer.
 
+use std::fmt::Write as _;
+
 use crucible_tui::drawing::{Draws, Room};
 use crucible_tui::testing::dump;
 use crucible_tui::{Glyphs, Row, Slot};
@@ -301,6 +303,86 @@ fn a_known_extension_colours_the_lines_that_did_not_move() {
     );
 }
 
+fn keyworded(row: Option<&Row>) -> bool {
+    row.is_some_and(|row| row.kinds().any(|slot| slot == Slot::Keyword))
+}
+
+#[test]
+fn colour_stops_at_the_first_line_past_what_a_change_reads_and_the_rest_draw_plain() {
+    // A short line read, then one longer than what is left, then a short one
+    // again: from the line that passes, nothing is coloured, so no line wears
+    // a colour read from a state that skipped the line before it.
+    let long = "let a = 1; ".repeat(crate::SYNTAX_BYTES / 11 + 1);
+    let change = read(&format!(
+        "--- a/x.rs\n+++ b/x.rs\n@@ -1,3 +1,3 @@\n fn kept() {{}}\n {long}\n fn after() {{}}\n"
+    ))
+    .expect("a diff");
+    let rows = drawn(&change, 64, UNICODE);
+    let pictured = dump(&rows, 64);
+    assert!(keyworded(rows.get(1)), "{pictured}");
+    assert!(!keyworded(rows.get(2)), "{pictured}");
+    assert!(!keyworded(rows.get(3)), "{pictured}");
+}
+
+#[test]
+fn colour_stops_after_the_lines_a_change_reads() {
+    let mut source = format!(
+        "--- a/x.rs\n+++ b/x.rs\n@@ -1,{0} +1,{0} @@\n",
+        crate::SYNTAX_LINES + 1
+    );
+    for _ in 0..=crate::SYNTAX_LINES {
+        source.push_str(" fn a() {}\n");
+    }
+    let change = read(&source).expect("a diff");
+    let rows = drawn(&change, 64, UNICODE);
+    let pictured = dump(&rows, 64);
+    assert!(keyworded(rows.get(crate::SYNTAX_LINES)), "{pictured}");
+    assert!(!keyworded(rows.get(crate::SYNTAX_LINES + 1)), "{pictured}");
+}
+
+#[test]
+fn lines_after_the_last_coloured_one_are_not_charged_to_the_colour_a_change_reads() {
+    // A file of added lines only wears no colour, so reading it would spend
+    // what the next file's lines that did not move are coloured with.
+    let added = "let a = 1; ".repeat(crate::SYNTAX_BYTES / 11 / 8 + 1);
+    let mut source = format!("--- a/x.rs\n+++ b/x.rs\n@@ -0,0 +1,{FOLD} @@\n");
+    for _ in 0..FOLD {
+        let _ = writeln!(source, "+{added}");
+    }
+    source.push_str("--- a/y.rs\n+++ b/y.rs\n@@ -1,1 +1,1 @@\n fn kept() {}\n");
+    let change = read(&source).expect("a diff");
+    let rows = drawn(&change, 64, UNICODE);
+    let kept = rows.iter().rev().nth(1);
+    assert!(keyworded(kept), "{}", dump(&rows, 64));
+}
+
+#[test]
+fn pairs_past_what_a_change_compares_are_drawn_on_their_ground_alone() {
+    // Each file holds as many pairs as it shows without folding, and one
+    // file more holds the pair past the cap.
+    let per_file = FOLD / 2;
+    let files = crate::PAIRS / per_file + 1;
+    let mut source = String::new();
+    for file in 0..files {
+        let _ = write!(
+            source,
+            "--- a/{file}.txt\n+++ b/{file}.txt\n@@ -1,{per_file} +1,{per_file} @@\n"
+        );
+        for side in ['-', '+'] {
+            for at in 0..per_file {
+                let _ = writeln!(source, "{side}word {at} of {side}{file}");
+            }
+        }
+    }
+    let change = read(&source).expect("a diff");
+    let rows = drawn(&change, 64, UNICODE);
+    let raised = rows
+        .iter()
+        .filter(|row| row.kinds().any(|slot| slot == Slot::AddedWord))
+        .count();
+    assert_eq!(raised, crate::PAIRS, "{}", dump(&rows, 64));
+}
+
 #[test]
 fn every_row_fits_the_room_and_the_numbers_line_up() {
     let change = read(TWO_FILES).expect("a diff");
@@ -428,4 +510,22 @@ fn picture_of_a_two_file_change() {
     let change = read(TWO_FILES).expect("a diff");
     insta::assert_snapshot!("two_files_unicode", dump(&drawn(&change, 64, UNICODE), 64));
     insta::assert_snapshot!("two_files_ascii", dump(&drawn(&change, 64, ASCII), 64));
+}
+
+#[test]
+fn the_caps_the_user_docs_state_are_the_ones_a_change_is_drawn_to() {
+    use crate::{MOST_FILES, PAIRS, SYNTAX_BYTES, SYNTAX_LINES, TOKENS};
+    let documented = include_str!("../../../docs/tools/files.md");
+    let documented = documented.split_whitespace().collect::<Vec<_>>().join(" ");
+    for stated in [
+        format!("reads at most {SYNTAX_LINES} of its lines, and {SYNTAX_BYTES} bytes of them"),
+        format!("in at most {PAIRS} replaced lines, each of at most {TOKENS} words"),
+        format!("names more than {MOST_FILES} files"),
+        format!("keeps its first {MOST_FILES}."),
+    ] {
+        assert!(
+            documented.contains(&stated),
+            "docs/tools/files.md does not say {stated:?}"
+        );
+    }
 }

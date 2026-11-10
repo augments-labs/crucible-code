@@ -18,6 +18,11 @@
 //! - **Nothing folded is lost.** A file of more than [`FOLD`] rows draws its
 //!   first [`HEAD`] and last [`TAIL`] with a quiet row between that counts the
 //!   rest; the [`Change`] keeps every one of them.
+//! - **Bounded when it is drawn.** One change reads at most [`SYNTAX_LINES`]
+//!   lines and [`SYNTAX_BYTES`] bytes for their colours, compares at most
+//!   [`PAIRS`] pairs of lines of at most [`TOKENS`] words each, and lays out no
+//!   more of a line than the room shows. Past a cap its rows draw plain, never
+//!   wrong.
 //! - **Every row fits.** Each row is clipped to the room it was given, and a
 //!   header that cannot hold its counts leaves them off rather than cut them.
 
@@ -32,5 +37,6 @@ mod fits;
 mod tests;
 
 pub use change::{Change, FOLD, File, HEAD, Line, MOST_FILES, MOST_LINES, MOST_PATH, Side, TAIL};
-pub use draw::Changes;
+pub use draw::{Changes, SYNTAX_BYTES, SYNTAX_LINES};
 pub use read::{MOST_BYTES, NotADiff, read};
+pub use words::{PAIRS, TOKENS};

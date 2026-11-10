@@ -12,6 +12,6 @@ expression: "dump(&drawn(&change, 64, UNICODE), 64)"
 <Quiet>│</> <RemovedNumber>  40 -</> <Removed>    tree</><Removed>                                               </>
 <Quiet>│</> <AddedNumber>  40 +</> <Added>    tree</><AddedWord>.finish()</><Added>                                      </>
 <Quiet>├─</> <Path>README.md</> <AddedNumber>+1</>                                                 
-<Quiet>│</> <Quiet>   1  </> # <Name>parse</>                                                
+<Quiet>│</> <Quiet>   1  </> # parse                                                
 <Quiet>│</> <AddedNumber>   2 +</> <Added>A small parser.</><Added>                                        </>
 <Quiet>╰─</>

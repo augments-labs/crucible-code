@@ -20,7 +20,7 @@ pub const TAIL: usize = 4;
 pub const MOST_LINES: usize = 2048;
 
 /// The most files one change keeps. Past it a file is not kept.
-pub const MOST_FILES: usize = 64;
+pub const MOST_FILES: usize = 8;
 
 /// The most bytes of a path or a section name kept: a path keeps its end,
 /// where the file's name is, and a section name its start.

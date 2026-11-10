@@ -6,15 +6,18 @@
 //! largest one it accepts, which is the frame a reader waits on when a model
 //! hands over the biggest change the reader keeps.
 //!
-//! Each case is the most a drawer takes at once: a unified diff at the
-//! reader's line and byte caps with every removed line paired with an added
-//! one, so each pair is compared word by word; the same bytes spread over as
-//! many files as a change holds, so every file opens its own box and folds on
-//! its own; and a tool's edit with as many numbered lines as a file keeps. Each
-//! is laid out at a common terminal's width, at the narrowest a drawer is
-//! given, and in both glyph sets. Two milliseconds is the budget for text laid
-//! out on the drawing thread: a tenth of the first frame's twenty, so a block
-//! closing beside a streaming answer still leaves the frame its room.
+//! Each case is the most a drawer takes at once: a unified diff at the reader's
+//! line and byte caps; the same bytes spread over as many files as a change
+//! holds, so every file opens its own box and folds on its own; the longest
+//! lines a change holds, each wider than any room; as many word pairs as a
+//! change compares, each of as many words as a line may have and none in
+//! common; as many lines and bytes as a change reads for colour; every one of
+//! those caps reached in the one change; and a tool's edit with as many
+//! numbered lines as a file keeps. Each is laid out at a common terminal's
+//! width, at the narrowest a drawer is given, and in both glyph sets. Two
+//! milliseconds is the budget for text laid out on the drawing thread: a tenth
+//! of the first frame's twenty, so a block closing beside a streaming answer
+//! still leaves the frame its room.
 //!
 //! The reported number is the slowest case's 95th percentile, with each case's
 //! median and its slowest reading kept as evidence. Every reading is one call,
@@ -28,7 +31,10 @@ use std::time::{Duration, Instant};
 
 use crucible_tui::Glyphs;
 use crucible_tui::drawing::{Draws, Room};
-use crucible_tui_diff::{Change, Changes, File, MOST_BYTES, MOST_FILES, MOST_LINES, Side};
+use crucible_tui_diff::{
+    Change, Changes, FOLD, File, MOST_BYTES, MOST_FILES, MOST_LINES, PAIRS, SYNTAX_BYTES,
+    SYNTAX_LINES, Side, TOKENS,
+};
 
 /// The budget on a quiet machine, in milliseconds.
 const LIMIT: f64 = 2.0;
@@ -140,6 +146,109 @@ fn at_the_caps(files: usize) -> String {
     text
 }
 
+/// A diff whose lines are as long as the reader's bytes allow: a line that did
+/// not move, then one removed and the one that replaced it, each a third of
+/// the bytes, so each is coloured, compared and clipped at its longest.
+fn the_longest_lines() -> String {
+    let header = "--- a/at/the/caps.rs\n+++ b/at/the/caps.rs\n@@ -1,2 +1,2 @@\n";
+    let room = (MOST_BYTES - header.len()) / 3 - 2;
+    let mut text = String::with_capacity(MOST_BYTES);
+    text.push_str(header);
+    for side in [' ', '-', '+'] {
+        text.push(side);
+        text.push_str(&line(side, 0, room));
+        text.push('\n');
+    }
+    text
+}
+
+/// One file whose every shown pair has as many words as a pair is compared
+/// at, with no word in common, so each comparison walks its longest path.
+fn word_pairs(text: &mut String, file: usize, pairs: usize) {
+    let words = TOKENS / 2;
+    let _ = write!(
+        text,
+        "--- a/at/the/caps_{file}.txt\n+++ b/at/the/caps_{file}.txt\n@@ -1,{pairs} +1,{pairs} @@\n"
+    );
+    for side in ['-', '+'] {
+        for at in 0..pairs {
+            text.push(side);
+            for word in 0..words {
+                let _ = write!(text, "{side}{}", (at + word) % 10);
+                text.push(' ');
+            }
+            text.pop();
+            text.push('\n');
+        }
+    }
+}
+
+/// A diff of as many such files as hold the pairs a change compares, each
+/// with as many pairs as a box shows without folding.
+fn word_pairs_at_the_caps() -> String {
+    let mut text = String::with_capacity(MOST_BYTES);
+    for file in 0..PAIRS.div_ceil(FOLD / 2) {
+        word_pairs(&mut text, file, FOLD / 2);
+    }
+    text
+}
+
+/// One file of lines that did not move, in a language with colours, as many
+/// as a change reads for colour and as long as share the bytes it reads
+/// between them, so every one of them is read: a line costs its reading for
+/// itself and more for each byte, and this spends both.
+fn coloured(text: &mut String) {
+    let _ = write!(
+        text,
+        "--- a/at/the/colours.rs\n+++ b/at/the/colours.rs\n@@ -1,{SYNTAX_LINES} +1,{SYNTAX_LINES} @@\n"
+    );
+    for at in 0..SYNTAX_LINES {
+        text.push(' ');
+        text.push_str(&line(' ', at, SYNTAX_BYTES / SYNTAX_LINES));
+        text.push('\n');
+    }
+}
+
+/// A diff whose lines spend all of the colour a change reads.
+fn colour_at_the_caps() -> String {
+    let mut text = String::new();
+    coloured(&mut text);
+    text
+}
+
+/// Every cap spent in one change: the colour, then the word pairs, then as
+/// many files more as the reader takes, each as long as a box shows without
+/// folding, within the reader's lines and bytes.
+fn every_cap_at_once() -> String {
+    let mut text = String::with_capacity(MOST_BYTES);
+    coloured(&mut text);
+    let paired = PAIRS.div_ceil(FOLD / 2);
+    for file in 0..paired {
+        word_pairs(&mut text, 1 + file, FOLD / 2);
+    }
+    let rest = MOST_FILES.saturating_sub(1 + paired);
+    let newlines = text.matches('\n').count();
+    let written = text.len() + newlines;
+    let Some(lines) = (MOST_LINES - 1 - newlines).checked_div(rest) else {
+        return text;
+    };
+    let pairs = ((lines - 3) / 2).min(FOLD / 2);
+    let room = (MOST_BYTES - written) / rest / (pairs * 2).max(1) - 8;
+    for file in 0..rest {
+        let _ = write!(
+            text,
+            "--- a/at/the/rest_{file}.rs\n+++ b/at/the/rest_{file}.rs\n@@ -1,{pairs} +1,{pairs} @@\n"
+        );
+        for side in ['-', '+'] {
+            for at in 0..pairs {
+                text.push_str(&line(side, at, room));
+                text.push('\n');
+            }
+        }
+    }
+    text
+}
+
 /// A tool's edit keeping as many lines as a file holds: each removed line
 /// beside the line that took its place, as a tool numbers them.
 fn a_tools_edit() -> Change {
@@ -175,6 +284,22 @@ fn cases() -> Vec<Case> {
         Case {
             name: "every file a change holds",
             input: Input::Diff(at_the_caps(MOST_FILES)),
+        },
+        Case {
+            name: "the longest lines a change holds",
+            input: Input::Diff(the_longest_lines()),
+        },
+        Case {
+            name: "word pairs at the caps",
+            input: Input::Diff(word_pairs_at_the_caps()),
+        },
+        Case {
+            name: "colour at the caps",
+            input: Input::Diff(colour_at_the_caps()),
+        },
+        Case {
+            name: "every cap at once",
+            input: Input::Diff(every_cap_at_once()),
         },
         Case {
             name: "a tool's edit at the caps",

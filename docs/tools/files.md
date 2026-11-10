@@ -346,6 +346,16 @@ first 24 and its last 4 around a row saying how many are folded:
 `⋯  36 lines folded · ctrl+o to expand  ⋯`. The key is the one under
 [results cut short](../reference/keys.md#results-cut-short).
 
+A box is drawn in the same short time however much the change holds, so its
+colour and its raised words are bounded. One change reads at most 8 of its
+lines, and 128 bytes of them, for its language's colours, and raises the
+changed words in at most 8 replaced lines, each of at most 48 words and runs of
+spaces. Past either, the rest of the box is drawn plain: every sign, number and
+ground is still there, only the colours of the language or the raised words are
+left off. A line too long for the window is cut to it and ends in `…`. A diff
+in a reply that names more than 8 files is shown as the model wrote it, and a
+tool's change keeps its first 8.
+
 The protected session log retains this bounded preview for resume, including the
 omitted count. Each retained line is limited to 1024 characters. Preview bodies
 stay out of model context; they can contain sensitive file text and receive the
