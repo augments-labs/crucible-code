@@ -445,6 +445,7 @@ const fn takes(id: RowId) -> Takes {
         | RowId::CacheIsolation
         | RowId::CacheRetention
         | RowId::CachePersistent
+        | RowId::Images
         | RowId::ScreenMode => Takes::NextStart,
         RowId::UpdateCheck => Takes::NextUse,
     }
@@ -506,7 +507,8 @@ fn worn<T: Terminal>(
         | RowId::CacheMode
         | RowId::CacheIsolation
         | RowId::CacheRetention
-        | RowId::CachePersistent => false,
+        | RowId::CachePersistent
+        | RowId::Images => false,
     }
 }
 
@@ -547,7 +549,8 @@ const fn fullscreen_only(id: RowId) -> bool {
         | RowId::CacheMode
         | RowId::CacheIsolation
         | RowId::CacheRetention
-        | RowId::CachePersistent => false,
+        | RowId::CachePersistent
+        | RowId::Images => false,
     }
 }
 
@@ -576,7 +579,8 @@ impl Line {
             | RowId::CacheMode
             | RowId::CacheIsolation
             | RowId::CacheRetention
-            | RowId::CachePersistent => None,
+            | RowId::CachePersistent
+            | RowId::Images => None,
         };
         let settled = terms
             .settled

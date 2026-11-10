@@ -483,6 +483,13 @@ pub(crate) const SCREEN: &[&str] = &["fullscreen", "native"];
 /// the most.
 pub(crate) const TRANSCRIPT_COLOURS: &[&str] = &["calm", "balanced", "rich"];
 
+/// Every answer `output.images` accepts.
+///
+/// `auto` asks the terminal at the start, and only where its environment names
+/// a protocol; a protocol named here is used without asking, except where it
+/// is known to draw wrongly; `off` draws every picture as text.
+pub(crate) const IMAGES: &[&str] = &["auto", "kitty", "iterm2", "sixel", "off"];
+
 /// What the model is asked under, where the reader wants something else.
 ///
 /// Two hooks that look alike and are not. `append` adds to what crucible says;
@@ -613,6 +620,15 @@ const OUTPUT: &[Field] = &[
         // The bounds are the answers, and the schema writes them out.
         examples: &[],
         usual: Some("3"),
+        needed: false,
+        widens: false,
+    },
+    Field {
+        name: "images",
+        about: "How pictures are drawn: auto asks the terminal at start where its environment names a protocol; kitty, iterm2 or sixel uses that protocol without asking, except where it is known to draw wrongly; off draws text",
+        shape: Shape::Choice(IMAGES),
+        examples: &[],
+        usual: Some("auto"),
         needed: false,
         widens: false,
     },

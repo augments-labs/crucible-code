@@ -529,6 +529,18 @@
           ],
           "type": "string"
         },
+        "images": {
+          "default": "auto",
+          "description": "How pictures are drawn: auto asks the terminal at start where its environment names a protocol; kitty, iterm2 or sixel uses that protocol without asking, except where it is known to draw wrongly; off draws text",
+          "enum": [
+            "auto",
+            "kitty",
+            "iterm2",
+            "sixel",
+            "off"
+          ],
+          "type": "string"
+        },
         "pinAfterSeconds": {
           "default": 3,
           "description": "How many seconds a running tool call waits before it is drawn above the working row with its output and ctrl+b; one that finishes sooner is only written to the transcript, and 0 draws every call at once",

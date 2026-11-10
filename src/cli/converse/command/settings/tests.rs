@@ -388,7 +388,8 @@ fn running(
         | RowId::CacheMode
         | RowId::CacheIsolation
         | RowId::CacheRetention
-        | RowId::CachePersistent => None,
+        | RowId::CachePersistent
+        | RowId::Images => None,
     }
 }
 
