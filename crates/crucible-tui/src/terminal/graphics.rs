@@ -704,11 +704,23 @@ enum Kind {
 /// read, so nothing is ever left over to be read as a key. Bounded: a
 /// sequence keeps at most [`LONGEST`] of its bytes, however long it runs.
 #[cfg(unix)]
-#[derive(Debug)]
 pub(crate) struct Replies {
     state: State,
     held: Vec<u8>,
     spilled: bool,
+}
+
+// What is held can be keys a user typed while the exchange read, so a log
+// shows how much, never which.
+#[cfg(unix)]
+impl fmt::Debug for Replies {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Replies")
+            .field("state", &self.state)
+            .field("held", &self.held.len())
+            .field("spilled", &self.spilled)
+            .finish()
+    }
 }
 
 #[cfg(unix)]
@@ -1680,6 +1692,21 @@ mod tests {
         }
 
         const OK: Shape = Shape::Graphics { ok: true };
+
+        #[test]
+        fn what_the_reader_holds_stays_out_of_its_debug_form() {
+            // A sequence still being read holds its bytes, and those can be
+            // keys a user typed while the exchange read.
+            let mut replies = Replies::new();
+            for byte in b"\x1b]hunter2" {
+                assert_eq!(replies.feed(*byte), None);
+            }
+
+            assert_eq!(
+                format!("{replies:?}"),
+                "Replies { state: String(Osc), held: 7, spilled: false }"
+            );
+        }
 
         #[test]
         fn each_reply_the_exchange_asks_for_is_known_by_its_shape() {
