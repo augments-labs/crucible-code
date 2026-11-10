@@ -903,9 +903,9 @@ says.
 | In tmux, passing sequences through, in WezTerm or iTerm2 | `iterm2` | drawn | text |
 | Over SSH, from WezTerm or iTerm2 | `iterm2` | drawn | text |
 
-Everything else is text: the other protocol on each of these terminals,
-`sixel` everywhere, Kitty over SSH, which did not answer in time, `screen`,
-Zellij, tmux that does not pass sequences through, a multiplexer reached over
+Everything else is text: the other protocol on each of these terminals, `sixel`
+everywhere, Kitty over SSH, which did not answer in time, `screen`, Zellij,
+tmux that has not said it passes sequences through, a multiplexer reached over
 SSH, and every terminal not named here. A terminal is known only by the
 variables the table was judged by. Kitty is a `KITTY_WINDOW_ID`, a `TERM` with
 `kitty` or `ghostty` in it, or a `TERM_PROGRAM` of `ghostty`; WezTerm or iTerm2
@@ -934,18 +934,17 @@ you type while crucible waits is read with the answers and never reaches the
 prompt.
 
 A protocol named in `output.images` is used without asking the terminal, where
-the table draws it in the screen mode in force, and is text everywhere else,
-so a file that names one does nothing wrong on a terminal that cannot draw it.
+the table draws it in the screen mode in force, and is text everywhere else, so
+a file that names one does nothing wrong on a terminal that cannot draw it.
 Where the window does not report its size in pixels, a cell is taken to be 8
-pixels wide and 16 high. Inside tmux on this machine, where the protocol named
-is one the table draws behind tmux in the screen mode in force, crucible asks
-tmux, not the terminal, whether it passes sequences through: it runs `tmux
+pixels wide and 16 high. Inside tmux not reached over SSH, where the protocol
+named is one the table draws behind tmux in the screen mode in force, crucible
+asks tmux, not the terminal, whether it passes sequences through: it runs `tmux
 display-message`, found on your `PATH`, against the server `TMUX` names, waits
 at most 100 ms, and counts only an `allow-passthrough` of `on` or `all` as a
 yes. It does so at start, and again when `/settings` names the protocol, until
 tmux has answered `on`, `all` or `off`; `auto` and `off` never run tmux. To
-draw inside tmux, set `allow-passthrough` to `on` there and name the
-protocol.
+draw inside tmux, set `allow-passthrough` to `on` there and name the protocol.
 
 On the `/settings` Images row, `auto` says `applies at next start`, since only
 a start asks the terminal, and a protocol or `off` changes the session at once.

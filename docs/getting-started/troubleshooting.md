@@ -576,11 +576,11 @@ mode`, or `in fullscreen mode`, means the other screen mode draws it, and
 `output.screen` is read only at start. A bare `not available` means neither
 mode does: the terminal is not one the table names, or the table draws the
 other protocol on it; crucible is inside `screen` or Zellij, or inside tmux
-that does not pass sequences through; it is reached over SSH from anything but
-WezTerm or iTerm2; or it runs on Windows or FreeBSD, where every picture is
-text. `sixel` is never drawn. Once tmux has answered `off`, crucible does not
-ask it again, so after `set -g allow-passthrough on` in tmux, start crucible
-again. See [Where pictures are
+that has not said it passes sequences through; it is reached over SSH from
+anything but WezTerm or iTerm2; or it runs on Windows or FreeBSD, where every
+picture is text. `sixel` is never drawn. Once tmux has answered `off`, crucible
+does not ask it again, so after `set -g allow-passthrough on` in tmux, start
+crucible again. See [Where pictures are
 drawn](../configuration/configuration.md#where-pictures-are-drawn).
 
 ### Characters appear in the prompt as crucible starts

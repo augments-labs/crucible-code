@@ -8,8 +8,8 @@
 //!    no picture drawn ([`select`]).
 //! 2. **What the setting says.** `off` is text. A named protocol is used
 //!    without asking the terminal where the support table below enables its
-//!    cell, and is text everywhere else; inside tmux on this machine the cell
-//!    turns on whether tmux passes sequences through, which its server is
+//!    cell, and is text everywhere else; inside tmux not reached over SSH the
+//!    cell turns on whether tmux passes sequences through, which its server is
 //!    asked, on its command line, and only there ([`passthrough`]). `auto`
 //!    lets the environment name a candidate whose cell is enabled, and names
 //!    none inside tmux, `screen` or Zellij, nor for a terminal the table does
@@ -247,7 +247,7 @@ fn quiet(env: &dyn Fn(&str) -> Option<String>, setting: Setting) -> bool {
 }
 
 /// What tmux's server says of passing sequences through, asked only where the
-/// answer decides what is drawn: inside tmux on this machine, with
+/// answer decides what is drawn: inside tmux not reached over SSH, with
 /// `output.images` naming a protocol the table draws behind tmux that passes
 /// through. Everywhere else — `auto` or `off`, outside tmux, over SSH, on a
 /// platform the table does not cover, where nothing may be asked — nothing
@@ -461,7 +461,7 @@ const ENABLED: [(Row, Outer, ScreenMode, Protocol); 6] = [
 /// Where the session's terminal is, as far as a support-table row goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Row {
-    /// On this machine, drawn on directly.
+    /// Drawn on directly, with no multiplexer or SSH between.
     Here,
     /// Behind tmux, which passes sequences through.
     Tmux,
@@ -474,7 +474,7 @@ enum Row {
 enum Place {
     /// On the terminal itself.
     Here,
-    /// Inside tmux, on this machine.
+    /// Inside tmux, not reached over SSH.
     Tmux,
     /// Inside `screen` or Zellij.
     Multiplexed,
