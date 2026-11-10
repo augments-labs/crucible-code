@@ -141,7 +141,7 @@ pub(crate) enum Answering {
     AtOnce,
     /// Nothing is ever answered.
     Never,
-    /// Every answer arrives [`LATE`] after its question, long after the
+    /// Every answer arrives `LATE` after its question, long after the
     /// child decided without it, as over a slow link, and in the pieces a
     /// [`Answering::Split`] answer arrives in.
     Late,
@@ -149,7 +149,7 @@ pub(crate) enum Answering {
     /// answered first, which no terminal that answers in order does.
     OutOfOrder,
     /// Every answer arrives in pieces, cut before and after each escape
-    /// inside it, with [`SPLIT`] between them. The cut after an escape is the
+    /// inside it, with `SPLIT` between them. The cut after an escape is the
     /// one `crossterm` reads as Esc and typed characters when its read falls
     /// between the two.
     Split,
