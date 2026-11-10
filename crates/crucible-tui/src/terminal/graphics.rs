@@ -2075,7 +2075,10 @@ mod tests {
             confirmed(Candidate::Forced(Protocol::Sixel), None, unasked),
             Capability::Graphics {
                 protocol: Protocol::Sixel,
-                cell: Cell::FALLBACK
+                cell: Cell {
+                    width: 8,
+                    height: 16
+                }
             }
         );
     }
