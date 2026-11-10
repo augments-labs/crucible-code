@@ -167,7 +167,7 @@ pub enum Wanted {
 }
 
 /// Whether tmux passes a program's escape sequences through to the terminal
-/// outside it, as its server says for this pane.
+/// outside it, as its server says.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Passthrough {
     /// `allow-passthrough` is `on` or `all`.
@@ -309,10 +309,10 @@ const TMUX_SAYS: usize = 64;
 /// The `tmux` in the first absolute directory on `path` that holds one, and
 /// none with no `path`.
 ///
-/// Absolute is the whole of the check. An empty entry, `.` or a relative one
-/// is resolved against the working directory, which can be a checkout that
-/// put a `tmux` there and named a protocol in its own configuration. With no
-/// `path`, the system's default search path is not looked in either.
+/// An empty entry, `.` or a relative one is passed over: it would be read
+/// against the working directory, which can be a checkout that put a `tmux`
+/// there and named a protocol in its own configuration. With no `path`, the
+/// system's default search path is not looked in either.
 #[cfg(unix)]
 fn tmux_on(path: Option<&str>) -> Option<std::path::PathBuf> {
     std::env::split_paths(path?)
