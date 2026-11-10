@@ -16,12 +16,15 @@
 //! of it: [`system`] for the size and the handle, [`raw`] for the mode,
 //! [`keys`] for what arrives once the mode is raw. Beside them sit the modes
 //! that are asked for in plain ANSI and so name nothing — [`mouse`] for the
-//! pointer, [`keyboard`] for how a modified key is spelled — and [`ground`],
-//! which is the one question this process asks a terminal. [`suspend`] is the
+//! pointer, [`keyboard`] for how a modified key is spelled — and the two
+//! questions this process asks a terminal, both before it reads a key:
+//! [`ground`] for the colour of its background and [`graphics`] for whether it
+//! draws pictures. [`suspend`] is the
 //! one way every one of those is handed to a child and put back. Everything the
 //! renderer writes is plain ANSI, so what a swap would cost is the first
 //! three.
 
+pub mod graphics;
 pub(crate) mod ground;
 pub(crate) mod keyboard;
 pub(crate) mod keys;
