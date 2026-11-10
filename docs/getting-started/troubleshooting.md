@@ -595,9 +595,10 @@ decides in is still read, for up to 2 seconds after the question. What arrives
 after crucible has stopped waiting can be read as typing instead: a first
 answer more than 2 seconds late, whatever a terminal that answered sends after
 pausing for more than 2 seconds part way through, and the answer to the picture
-question more than 2 seconds after it was asked. Delete it; to stop the
-question being asked, set `output.images` to `off`, or to the protocol the
-terminal draws, which is used without asking the terminal. See [Where pictures
+question more than 2 seconds after it was asked, or more than 8 ms after the
+answer meant to follow it. Delete it; to stop the question being asked, set
+`output.images` to `off`, or to the protocol the terminal draws, which is used
+without asking the terminal. See [Where pictures
 are drawn](../configuration/configuration.md#where-pictures-are-drawn).
 
 ### `crucible: what you typed is longer than 1 MiB; no prompt was accepted`
