@@ -1742,8 +1742,10 @@ impl Markdown {
             // so that a line that opens like display math and is not is watched
             // from the character it opened with.
             if self.opens_title(character) {
-                // Spaces in front of a line say nothing of what it is: that is
-                // the first character after them, which `margin` reads.
+                // Spaces in front of a line do not say whether it leaves the
+                // quote. The first character after them says that: `margin`
+                // hands it to `leaves_quote`, or, when it is a quote mark, the
+                // mark reader decides.
                 if character != ' ' {
                     self.leaves_quote(character);
                 }
@@ -2110,9 +2112,9 @@ impl Markdown {
         // Worked out before anything below changes what it asks.
         let held = spaces > 0 && self.indents();
 
-        // Where a line indented by spaces says what it is: a quote mark here
-        // leaves the decision to the mark reader, and anything else is no row
-        // of the quote carried.
+        // Where a line indented by spaces says whether it is a row of the
+        // quote carried: a quote mark here leaves that to the mark reader, and
+        // anything else is no row of it.
         if spaces > 0 {
             self.leaves_quote(character);
         }
