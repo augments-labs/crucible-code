@@ -140,13 +140,16 @@ pub(crate) enum Answering {
     /// Nothing is ever answered.
     Never,
     /// Every answer arrives [`LATE`] after its question, long after the
-    /// child stopped waiting for it, as over a slow link.
+    /// child decided without it, as over a slow link, and in the pieces a
+    /// [`Answering::Split`] answer arrives in.
     Late,
     /// A question followed by a cursor-position query has the cursor position
     /// answered first, which no terminal that answers in order does.
     OutOfOrder,
-    /// Every answer arrives in pieces, cut before each escape inside it, with
-    /// [`SPLIT`] between them.
+    /// Every answer arrives in pieces, cut before and after each escape
+    /// inside it, with [`SPLIT`] between them. The cut after an escape is the
+    /// one `crossterm` reads as Esc and typed characters when its read falls
+    /// between the two.
     Split,
 }
 
@@ -168,22 +171,27 @@ fn paced(answering: Answering, said: Vec<u8>) -> Vec<(Duration, Vec<u8>)> {
     match answering {
         Answering::Never => Vec::new(),
         Answering::AtOnce | Answering::OutOfOrder => vec![(Duration::ZERO, said)],
-        Answering::Late => vec![(LATE, said)],
-        Answering::Split => {
-            let mut pieces: Vec<Vec<u8>> = Vec::new();
-            for byte in said {
-                match pieces.last_mut() {
-                    Some(piece) if byte != 0x1b => piece.push(byte),
-                    _ => pieces.push(vec![byte]),
-                }
-            }
-            pieces
-                .into_iter()
-                .zip(0_u32..)
-                .map(|(piece, at)| (SPLIT * at, piece))
-                .collect()
+        Answering::Late => pieces(said, LATE),
+        Answering::Split => pieces(said, Duration::ZERO),
+    }
+}
+
+/// `said` cut before and after each escape, the first piece `from` after the
+/// question and each next one [`SPLIT`] after it.
+#[cfg(target_os = "linux")]
+fn pieces(said: Vec<u8>, from: Duration) -> Vec<(Duration, Vec<u8>)> {
+    let mut pieces: Vec<Vec<u8>> = Vec::new();
+    for byte in said {
+        match pieces.last_mut() {
+            Some(piece) if byte != 0x1b && piece != b"\x1b" => piece.push(byte),
+            _ => pieces.push(vec![byte]),
         }
     }
+    pieces
+        .into_iter()
+        .zip(0_u32..)
+        .map(|(piece, at)| (from + SPLIT * at, piece))
+        .collect()
 }
 
 /// Whether the measured child is allowed to draw in colour.
@@ -1515,7 +1523,7 @@ mod tests {
         use super::super::{Answering, Answers, LATE, SPLIT, UNSENT, attributes_reply, paced};
 
         #[test]
-        fn a_late_terminal_answers_long_after_the_child_stopped_waiting() {
+        fn a_late_terminal_answers_in_pieces_long_after_the_child_decided_without_it() {
             // The child gives a terminal its patience for the cursor position
             // and the background question alike; an answer past both is late.
             assert!(LATE > crucible_tui::graphics::Deadline::STARTUP.patience * 2);
@@ -1525,7 +1533,7 @@ mod tests {
             assert_eq!(said, b"\x1b[1;1R".to_vec());
             assert_eq!(
                 paced(Answering::Late, said),
-                vec![(LATE, b"\x1b[1;1R".to_vec())]
+                vec![(LATE, b"\x1b".to_vec()), (LATE + SPLIT, b"[1;1R".to_vec())]
             );
         }
 
@@ -1554,16 +1562,19 @@ mod tests {
         }
 
         #[test]
-        fn a_split_terminal_cuts_each_answer_before_every_escape_inside_it() {
+        fn a_split_terminal_cuts_each_answer_before_and_after_every_escape_inside_it() {
             let mut answers = Answers::new(Answering::Split);
 
             let said = answers.feed(b"\x1b[6n\x1b_Gi=31,a=q;AAAA\x1b\\");
             assert_eq!(
                 paced(Answering::Split, said),
                 vec![
-                    (Duration::ZERO, b"\x1b[1;1R".to_vec()),
-                    (SPLIT, b"\x1b_Gi=31;OK".to_vec()),
-                    (SPLIT * 2, b"\x1b\\".to_vec()),
+                    (Duration::ZERO, b"\x1b".to_vec()),
+                    (SPLIT, b"[1;1R".to_vec()),
+                    (SPLIT * 2, b"\x1b".to_vec()),
+                    (SPLIT * 3, b"_Gi=31;OK".to_vec()),
+                    (SPLIT * 4, b"\x1b".to_vec()),
+                    (SPLIT * 5, b"\\".to_vec()),
                 ]
             );
         }
@@ -1868,11 +1879,16 @@ mod tests {
         fn no_answer_given_at_once_late_out_of_order_or_split_becomes_a_key() {
             // Each way the fake answers, with whether the picture's question
             // is asked at all: only after a cursor position answered within
-            // the patience. Late is the fake's fifty milliseconds, past every
-            // patience, so late are only the cursor position and the device
-            // attributes, which are never keys; the fake never answers the
-            // background question, and a picture's answer after every wait is
-            // not among these.
+            // the patience. Split and late answers both arrive cut right
+            // after each escape, which `crossterm` reads as Esc and typed
+            // characters when its read falls between the pieces: split ones
+            // within the patience, late ones at the fake's fifty
+            // milliseconds, past every patience, so the first cursor
+            // position and the device attributes ahead of it are late and
+            // drained by the exchange. What the run drew is what its key
+            // reader made of whatever was left, in the reads the fake made.
+            // The fake never answers the background question, and a
+            // picture's answer after every wait is not among these.
             let cases = [
                 ("keys-at-once", Answering::AtOnce, true),
                 ("keys-never", Answering::Never, false),
