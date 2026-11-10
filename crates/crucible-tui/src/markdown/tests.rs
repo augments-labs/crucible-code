@@ -3612,9 +3612,9 @@ fn an_alert_ends_where_its_quote_does() {
 #[test]
 fn an_alert_ends_at_any_line_that_is_not_a_row_of_its_quote() {
     // A bare `>` and a `>` with no space after it are not rows of a quote, and
-    // a table written with outer bars, a heading's rule and display math each
-    // take their lines whole, indented or not: none of them is part of the
-    // alert, so the quote row after one is a quote of its own and draws the
+    // neither is a table whose lines open with `|`, a heading's rule or display
+    // math, nor the same lines written after spaces: none of them is part of
+    // the alert, so the quote row after one is a quote of its own and draws the
     // plain bar.
     for between in [
         ">\n",
@@ -3631,6 +3631,34 @@ fn an_alert_ends_at_any_line_that_is_not_a_row_of_its_quote() {
 
         assert!(text.starts_with("▎ ◆ Note\n▎ a\n"), "{answer:?}: {text:?}");
         assert!(text.ends_with("│ b\n"), "{answer:?}: {text:?}");
+    }
+}
+
+#[test]
+fn a_quote_row_straight_after_a_table_not_opened_by_a_bar_is_a_row_of_it() {
+    // The one block that does not hand a quote row on as a quote of its own: a
+    // table drawn from lines that do not open with `|` goes on until a blank
+    // line, so the row is one more of its rows. A tab before a bar is such a
+    // line, and so are spaces before a header written without bars.
+    for (answer, text) in [
+        (
+            "> [!NOTE]\n> a\na | b\n- | -\n1 | 2\n> b\n",
+            "▎ ◆ Note\n▎ a\na   │ b\n────┼──\n1   │ 2\n│ b │  \n",
+        ),
+        (
+            "> [!NOTE]\n> a\n  a | b\n  - | -\n> b\n",
+            "▎ ◆ Note\n▎ a\na   │ b\n────┼──\n│ b │  \n",
+        ),
+        (
+            "> [!NOTE]\n> a\n\t| a | b |\n\t| - | - |\n> b\n",
+            "▎ ◆ Note\n▎ a\na   │ b\n────┼──\n│ b │  \n",
+        ),
+        (
+            "> [!NOTE]\n> a\na | b\n- | -\n1 | 2\n\n> b\n",
+            "▎ ◆ Note\n▎ a\na │ b\n──┼──\n1 │ 2\n\n│ b\n",
+        ),
+    ] {
+        assert_eq!(standing_text(&drawn(&ended(answer))), text, "{answer:?}");
     }
 }
 

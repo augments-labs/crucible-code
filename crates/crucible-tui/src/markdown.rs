@@ -77,9 +77,11 @@
 //! marker. It ends at the first line that is not such a row, a bare `>` among
 //! them, and at a table written with outer bars, a heading's underline or a
 //! display formula, which take their lines whole; a quote row after any of
-//! them is a quote of its own. What a first line is cannot be told until it
-//! ends, so the bar of a quote's first line is owed like a bullet's mark and
-//! nothing of a marker is drawn before its break.
+//! them is a quote of its own, but one straight after a table drawn from lines
+//! that do not open with `|`, such as `a | b` over `- | -`, is one more row of
+//! that table. What a first line is cannot be told until it ends, so the bar of
+//! a quote's first line is owed like a bullet's mark and nothing of a marker is
+//! drawn before its break.
 //! Every other quote, including one naming a kind that is not one of the five,
 //! is drawn as it always was.
 //!
