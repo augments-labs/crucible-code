@@ -300,6 +300,15 @@ pub enum Slot {
     /// looks for. Words that are none of these kinds, such as a question or a
     /// query, are [`Slot::Quiet`] and take no design's ink.
     ArgumentCommand,
+    /// A word a change took out of a line it also put back changed: the
+    /// removed line's own ground and ink, in weight and with a line under it.
+    ///
+    /// Attributes rather than a hue, so the line still reads as one change and
+    /// the word is found inside it at every rung, sixteen colours included.
+    RemovedWord,
+    /// A word a change put into a line in place of another: the added line's
+    /// own ground and ink, in weight and with a line under it.
+    AddedWord,
 }
 
 /// How many colours the transcript spends, and on which kinds of thing.
@@ -412,10 +421,15 @@ struct Tones {
     removed: Ink,
     /// Its number and sign.
     removed_number: Ink,
+    /// A word inside it the change replaced: its ground and ink, bold and
+    /// underlined. Spelled out for the reason a link is.
+    removed_word: Ink,
     /// A line a change put in.
     added: Ink,
     /// Its number and sign.
     added_number: Ink,
+    /// A word inside it that replaced another, as the removed one is.
+    added_word: Ink,
 }
 
 /// For a dark ground. Every value here is the one this project shipped before
@@ -493,6 +507,11 @@ const DARK: Tones = Tones {
         indexed: "\x1b[48;5;52;38;5;210m",
         basic: "\x1b[1;41;97m",
     },
+    removed_word: Ink {
+        exact: "\x1b[1;4;48;2;74;26;30;38;2;255;199;202m",
+        indexed: "\x1b[1;4;48;5;52;38;5;224m",
+        basic: "\x1b[1;4;41;97m",
+    },
     added: Ink {
         exact: "\x1b[48;2;19;61;36;38;2;198;245;214m",
         indexed: "\x1b[48;5;22;38;5;194m",
@@ -502,6 +521,11 @@ const DARK: Tones = Tones {
         exact: "\x1b[48;2;19;61;36;38;2;126;226;160m",
         indexed: "\x1b[48;5;22;38;5;114m",
         basic: "\x1b[1;42;97m",
+    },
+    added_word: Ink {
+        exact: "\x1b[1;4;48;2;19;61;36;38;2;198;245;214m",
+        indexed: "\x1b[1;4;48;5;22;38;5;194m",
+        basic: "\x1b[1;4;42;97m",
     },
 };
 
@@ -576,6 +600,11 @@ const LIGHT: Tones = Tones {
         indexed: "\x1b[1;48;5;224;38;5;52m",
         basic: "\x1b[1;41;97m",
     },
+    removed_word: Ink {
+        exact: "\x1b[1;4;48;2;255;227;229;38;2;92;17;22m",
+        indexed: "\x1b[1;4;48;5;224;38;5;52m",
+        basic: "\x1b[1;4;41;97m",
+    },
     added: Ink {
         exact: "\x1b[48;2;223;245;229;38;2;13;61;32m",
         indexed: "\x1b[48;5;194;38;5;22m",
@@ -585,6 +614,11 @@ const LIGHT: Tones = Tones {
         exact: "\x1b[48;2;223;245;229;38;2;24;107;51m",
         indexed: "\x1b[1;48;5;194;38;5;22m",
         basic: "\x1b[1;42;97m",
+    },
+    added_word: Ink {
+        exact: "\x1b[1;4;48;2;223;245;229;38;2;13;61;32m",
+        indexed: "\x1b[1;4;48;5;194;38;5;22m",
+        basic: "\x1b[1;4;42;97m",
     },
 };
 
@@ -665,6 +699,11 @@ const COLOURBLIND_DARK: Tones = Tones {
         indexed: "\x1b[1;48;5;58;38;5;223m",
         basic: "\x1b[1;43;30m",
     },
+    removed_word: Ink {
+        exact: "\x1b[1;4;48;2;74;42;16;38;2;255;224;194m",
+        indexed: "\x1b[1;4;48;5;58;38;5;223m",
+        basic: "\x1b[1;4;43;30m",
+    },
     added: Ink {
         exact: "\x1b[48;2;16;49;74;38;2;207;230;255m",
         indexed: "\x1b[48;5;18;38;5;153m",
@@ -674,6 +713,11 @@ const COLOURBLIND_DARK: Tones = Tones {
         exact: "\x1b[48;2;16;49;74;38;2;124;192;255m",
         indexed: "\x1b[48;5;18;38;5;75m",
         basic: "\x1b[1;44;97m",
+    },
+    added_word: Ink {
+        exact: "\x1b[1;4;48;2;16;49;74;38;2;207;230;255m",
+        indexed: "\x1b[1;4;48;5;18;38;5;153m",
+        basic: "\x1b[1;4;44;97m",
     },
 };
 
@@ -739,6 +783,11 @@ const COLOURBLIND_LIGHT: Tones = Tones {
         indexed: "\x1b[1;48;5;223;38;5;58m",
         basic: "\x1b[1;43;30m",
     },
+    removed_word: Ink {
+        exact: "\x1b[1;4;48;2;255;234;218;38;2;92;42;8m",
+        indexed: "\x1b[1;4;48;5;223;38;5;58m",
+        basic: "\x1b[1;4;43;30m",
+    },
     added: Ink {
         exact: "\x1b[48;2;220;234;248;38;2;13;44;71m",
         indexed: "\x1b[48;5;189;38;5;18m",
@@ -748,6 +797,11 @@ const COLOURBLIND_LIGHT: Tones = Tones {
         exact: "\x1b[48;2;220;234;248;38;2;23;82;136m",
         indexed: "\x1b[1;48;5;189;38;5;18m",
         basic: "\x1b[1;44;97m",
+    },
+    added_word: Ink {
+        exact: "\x1b[1;4;48;2;220;234;248;38;2;13;44;71m",
+        indexed: "\x1b[1;4;48;5;189;38;5;18m",
+        basic: "\x1b[1;4;44;97m",
     },
 };
 
@@ -815,6 +869,11 @@ const ANSI: Tones = Tones {
         indexed: "\x1b[1;41;97m",
         basic: "\x1b[1;41;97m",
     },
+    removed_word: Ink {
+        exact: "\x1b[1;4;41;97m",
+        indexed: "\x1b[1;4;41;97m",
+        basic: "\x1b[1;4;41;97m",
+    },
     added: Ink {
         exact: "\x1b[42;97m",
         indexed: "\x1b[42;97m",
@@ -824,6 +883,11 @@ const ANSI: Tones = Tones {
         exact: "\x1b[1;42;97m",
         indexed: "\x1b[1;42;97m",
         basic: "\x1b[1;42;97m",
+    },
+    added_word: Ink {
+        exact: "\x1b[1;4;42;97m",
+        indexed: "\x1b[1;4;42;97m",
+        basic: "\x1b[1;4;42;97m",
     },
 };
 
@@ -877,6 +941,61 @@ impl Theme {
 }
 
 impl Slot {
+    /// The name a picture gives this slot's ink: the variant's own name.
+    ///
+    /// The one source of these names. A drawer writes an SVG's inks as these
+    /// classes and never as colours, and whatever rasterises the picture
+    /// applies the palette in force to them, so a picture drawn once is worn
+    /// in every theme. The pictures a test checks in name each run by the
+    /// same word, so what a test reads and what a picture carries agree.
+    #[must_use]
+    pub const fn class(self) -> &'static str {
+        match self {
+            Self::Plain => "Plain",
+            Self::Accent => "Accent",
+            Self::Strong => "Strong",
+            Self::Bold => "Bold",
+            Self::Pointed => "Pointed",
+            Self::Quiet => "Quiet",
+            Self::Cut => "Cut",
+            Self::Link => "Link",
+            Self::Emphasis => "Emphasis",
+            Self::Struck => "Struck",
+            Self::Code => "Code",
+            Self::AllowEdits => "AllowEdits",
+            Self::FullAccess => "FullAccess",
+            Self::Doing => "Doing",
+            Self::DoingMark => "DoingMark",
+            Self::Done => "Done",
+            Self::DoneMark => "DoneMark",
+            Self::Trouble => "Trouble",
+            Self::Removed => "Removed",
+            Self::RemovedNumber => "RemovedNumber",
+            Self::Added => "Added",
+            Self::AddedNumber => "AddedNumber",
+            Self::Prompt => "Prompt",
+            Self::PromptMark => "PromptMark",
+            Self::Comment => "Comment",
+            Self::Keyword => "Keyword",
+            Self::Str => "Str",
+            Self::Number => "Number",
+            Self::Name => "Name",
+            Self::Operator => "Operator",
+            Self::Path => "Path",
+            Self::Revision => "Revision",
+            Self::Figure => "Figure",
+            Self::Heading => "Heading",
+            Self::Bullet => "Bullet",
+            Self::Ordinal => "Ordinal",
+            Self::Quote => "Quote",
+            Self::ArgumentPath => "ArgumentPath",
+            Self::ArgumentAddress => "ArgumentAddress",
+            Self::ArgumentCommand => "ArgumentCommand",
+            Self::RemovedWord => "RemovedWord",
+            Self::AddedWord => "AddedWord",
+        }
+    }
+
     /// What this slot is worth in `theme`, at each rung.
     ///
     /// `None` for the slots whose value is not in any table: the prompt band
@@ -964,6 +1083,8 @@ impl Slot {
             Self::RemovedNumber => tones.removed_number,
             Self::Added => tones.added,
             Self::AddedNumber => tones.added_number,
+            Self::RemovedWord => tones.removed_word,
+            Self::AddedWord => tones.added_word,
             // The band, and the six a syntax theme owns. Nothing in any table
             // could have written any of them down: one is blended off the
             // reader's own ground and the rest come out of somebody else's

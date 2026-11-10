@@ -1202,9 +1202,10 @@ impl<T: Terminal> Renderer<T> {
     /// arrive between two deltas of one answer and the scan has to go on where
     /// it was. A table, a rule or the rule under a heading already written is
     /// laid out again in this set now, since the record keeps the source it
-    /// was written as; other rows already written keep the characters they
-    /// were drawn with, except the opening, which the next resize lays out
-    /// again in this set.
+    /// was written as, and so is a block written through
+    /// [`Self::responsive_in`], such as a tool's change; other rows already
+    /// written keep the characters they were drawn with, except the opening,
+    /// which the next resize lays out again in this set.
     pub fn draws(&mut self, glyphs: Glyphs) {
         self.glyphs = glyphs;
         self.markdown.draws(glyphs);
@@ -1574,6 +1575,32 @@ impl<T: Terminal> Renderer<T> {
         }
 
         self.record.responsive(retained, lay);
+        self.draw()
+    }
+
+    /// Writes a responsive block drawn in a glyph set.
+    ///
+    /// As [`Self::responsive`], with the glyph set [`Self::draws`] last named
+    /// handed to the closure beside the width: the block is laid out again in
+    /// the set a reader switches to, as well as at each new width, so a change
+    /// a tool made is never left on the screen in characters they turned away
+    /// from.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be written to.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn responsive_in(
+        &mut self,
+        retained: usize,
+        lay: Box<dyn Fn(usize, Glyphs) -> Vec<Row>>,
+    ) -> Result<(), TerminalError> {
+        self.undoubted()?;
+        if !self.terminal.is_terminal() {
+            return self.present(&lay(self.transcript_columns(), self.glyphs));
+        }
+
+        self.record.responsive_in(retained, self.glyphs, lay);
         self.draw()
     }
 

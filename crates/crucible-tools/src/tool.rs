@@ -764,7 +764,9 @@ pub struct ToolOutput {
     text: Box<str>,
     failed: bool,
     capture: Option<CaptureElision>,
-    diff: Option<Diff>,
+    // Boxed, since few calls change a file and every run's answer carries
+    // this value across a thread.
+    diff: Option<Box<Diff>>,
     changed: Option<Changed>,
     attachments: Box<[Attachment]>,
     // Boxed and absent unless a vendor answered, as on the recorded value.
@@ -823,7 +825,7 @@ impl ToolOutput {
     /// things to the two readers of the same call.
     #[must_use]
     pub fn showing(mut self, diff: Diff) -> Self {
-        self.diff = Some(diff);
+        self.diff = Some(Box::new(diff));
         self
     }
 
@@ -941,7 +943,7 @@ impl ToolOutput {
     /// What the call changed, where it changed a file and said so.
     #[must_use]
     pub fn diff(&self) -> Option<&Diff> {
-        self.diff.as_ref()
+        self.diff.as_deref()
     }
 
     /// How much it changed, where the lines are no longer here to be counted.

@@ -1161,13 +1161,17 @@ fn an_agent_s_edit_is_drawn_as_the_change_it_made() {
         assert!(
             picture
                 .lines()
-                .any(|line| line.contains('\u{23BF}') && line.contains("Added 1 line")),
-            "{mode} counts the change under its call\n{picture}"
+                .any(|line| line.contains("\u{256D}\u{2500}") && line.contains("+1 \u{2212}1")),
+            "{mode} counts the change on the header of the box under its call\n{picture}"
         );
         for (mark, changed) in [("4 -", 'a'), ("4 +", 'b')] {
             assert!(
+                // The frame, and the scrollbar a screen that overflows draws
+                // beside the transcript.
                 picture.lines().any(|line| line.contains(mark)
-                    && line.trim_end_matches([' ', '|']).ends_with(changed)),
+                    && line
+                        .trim_end_matches([' ', '|', '\u{2503}', '\u{2502}', '\u{25CF}'])
+                        .ends_with(changed)),
                 "{mode} draws the changed line {mark} {changed}\n{picture}"
             );
         }
@@ -1255,7 +1259,10 @@ fn a_resumed_agent_session_draws_the_agent_s_calls_as_they_were_drawn() {
             "{mode} draws the agent's command and what it printed again\n{picture}"
         );
         assert!(
-            row(&format!("Edit({})", claude::EDITED)) && came_back("Added 1 line"),
+            row(&format!("Edit({})", claude::EDITED))
+                && picture
+                    .lines()
+                    .any(|line| line.contains("\u{256D}\u{2500}") && line.contains("+1 \u{2212}1")),
             "{mode} draws the agent's edit and its change again\n{picture}"
         );
         assert!(
