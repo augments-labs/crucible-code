@@ -527,8 +527,10 @@ fn worn<T: Terminal>(
         // A protocol or `off` is drawn with at once, never over a cell the
         // support table disables nor where the start found either side not a
         // terminal; inside tmux, a protocol named while whether tmux passes
-        // sequences through is still unknown asks it.
+        // sequences through is still unknown asks it. `auto` is a question
+        // only a start asks, so it is not worn here.
         RowId::Images => crucible_config::ImageOutput::read(word)
+            .filter(|images| *images != crucible_config::ImageOutput::Auto)
             .map(|images| {
                 let style = terms.style();
                 let from = &*terms.environment;

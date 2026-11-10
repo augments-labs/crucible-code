@@ -991,6 +991,38 @@ fn a_protocol_named_where_input_is_not_a_terminal_draws_text() {
 }
 
 #[test]
+fn an_images_auto_the_file_cannot_take_leaves_what_is_drawn() {
+    let sample = Sample::new("settings-images-auto-unwritable");
+    let terms = Terms {
+        environment: launched(&[("TERM", "xterm-kitty"), ("KITTY_WINDOW_ID", "1")]),
+        ..keeping(&sample)
+    };
+    // Something that is not a file stands where the file goes, so no write
+    // can land there whoever runs the test.
+    std::fs::create_dir_all(sample.user_file()).expect("a directory in the file's place");
+    let counted = counted();
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    // As a start leaves it where Kitty answered its question.
+    let drawn_with = crucible_tui::graphics::Capability::Graphics {
+        protocol: crucible_tui::graphics::Protocol::Kitty,
+        cell: crucible_tui::graphics::Cell {
+            width: 9,
+            height: 18,
+        },
+    };
+    renderer.images(drawn_with);
+    let mut panel = Panel::new(&terms, &counted);
+    let at = images_at(&panel);
+
+    panel.asked = Some((at, "auto".to_owned()));
+    settle(&mut renderer, &terms, &mut panel);
+    assert_eq!(renderer.capability(), drawn_with);
+    let note = panel.note.clone().unwrap_or_default();
+    assert!(note.starts_with("! not written: "), "{note}");
+    assert!(!note.contains("in force"), "{note}");
+}
+
+#[test]
 fn a_protocol_only_fullscreen_draws_says_it_is_not_available_in_native_mode() {
     let sample = Sample::new("settings-images-native");
     // WezTerm, drawn on directly: iTerm2's pictures drew right on a screen of
