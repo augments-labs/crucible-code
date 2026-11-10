@@ -1902,10 +1902,33 @@ mod tests {
         const CASES_VARIABLE: &str = "CRUCIBLE_GENERATED_INPUTS";
 
         fn cases() -> u64 {
-            std::env::var(CASES_VARIABLE)
-                .ok()
+            counted(std::env::var_os(CASES_VARIABLE)).unwrap_or_else(|why| panic!("{why}"))
+        }
+
+        /// How many inputs `value` asks for: [`DEFAULT_CASES`] where it is
+        /// unset, and a refusal naming the variable and what it holds where
+        /// that is not a count, so a typo is never a silent default.
+        fn counted(value: Option<std::ffi::OsString>) -> Result<u64, String> {
+            let Some(value) = value else {
+                return Ok(DEFAULT_CASES);
+            };
+            value
+                .to_str()
                 .and_then(|text| text.parse().ok())
-                .unwrap_or(DEFAULT_CASES)
+                .ok_or_else(|| {
+                    format!("{CASES_VARIABLE} is {value:?}, which is not a count of inputs")
+                })
+        }
+
+        #[test]
+        fn a_count_of_inputs_that_is_no_number_fails_the_run_and_says_so() {
+            assert_eq!(counted(None), Ok(DEFAULT_CASES));
+            assert_eq!(counted(Some("12".into())), Ok(12));
+            let refused = counted(Some("lots".into())).expect_err("lots is no count");
+            assert!(
+                refused.contains(CASES_VARIABLE) && refused.contains("\"lots\""),
+                "{refused}"
+            );
         }
 
         #[derive(Debug, PartialEq, Eq)]
