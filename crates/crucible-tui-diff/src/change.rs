@@ -1,7 +1,7 @@
 //! What a change to files is, however it arrived: files, each with its path,
 //! its counts and the lines a reader is shown.
 //!
-//! Built two ways. [`crate::read`] parses a unified diff into one, and a tool
+//! Built two ways. [`crate::read()`] parses a unified diff into one, and a tool
 //! that edited a file hands its lines over through [`File::numbered`], numbered
 //! as a tool numbers them: a removed line by where it was, every other line by
 //! where it is now. Both are held to the same bounds here, because a `File` is

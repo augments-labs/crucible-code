@@ -1,14 +1,14 @@
 //! A change to files drawn as boxed rows, read from a unified diff or handed over by a tool.
 //!
 //! One [`Change`] is drawn one way by [`Changes::draw`], whoever made it: a
-//! fence the model wrote (`diff` or `patch`), read by [`read`], and a file a
+//! fence the model wrote (`diff` or `patch`), read by [`read()`], and a file a
 //! tool edited, turned into a [`Change`] by the command line. Both arrive at
 //! the same box, so a reader who has learned what one edit looks like has
 //! learned the other.
 //!
 //! What this crate holds to:
 //!
-//! - **Bounded before it is read.** [`read`] counts bytes, lines and files
+//! - **Bounded before it is read.** [`read()`] counts bytes, lines and files
 //!   against [`MOST_BYTES`], [`MOST_LINES`] and [`MOST_FILES`] before it parses
 //!   a byte, and a [`File`] keeps at most [`MOST_LINES`] lines however it was
 //!   built. Past a cap the block is shown as written, and says why.
