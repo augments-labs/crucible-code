@@ -8720,6 +8720,91 @@
       ]
     },
     {
+      "id": "CASE-TERMINAL-TMUX-ABSOLUTE-ONLY",
+      "family": "terminal",
+      "obligation": "tmux is looked for only in the absolute entries of PATH: past ., a relative entry holding a tmux, bin, an empty entry and an absolute directory with none, the first absolute directory holding one is found; relative, . and empty entries alone, or an empty PATH, find none, and the relative tmux never runs.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::tmux_is_looked_for_only_in_the_absolute_directories_of_the_path",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "da13018b728ba99bd095228bbfa40d367e6a4edcfaf489d2e8aeaffc2301d2cd",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-RELATIVE-PASSED-OVER",
+      "family": "terminal",
+      "obligation": "With an empty entry, ., a relative entry holding a tmux that says on, and bin ahead of an absolute directory whose tmux says off, the server is off: the relative tmux never runs and the absolute one does.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::a_tmux_behind_entries_that_are_not_absolute_never_runs_and_the_absolute_one_answers",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "ab5304c4a6f51efc6c664f74e799d453ab6aeda0a4dff74fa77a9b66a35e533b",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-RELATIVE-NEVER-RUNS",
+      "family": "terminal",
+      "obligation": "A tmux that says on, reached only through an empty entry, ., bin and a relative entry, never runs, and passthrough is not known.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::a_tmux_reached_only_through_entries_that_are_not_absolute_never_runs",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "29a5e5a9c626424b38763edf17e83e696a366fce0ab15821d415a23fcdbb0fa1",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-NO-PATH",
+      "family": "terminal",
+      "obligation": "With no PATH, no tmux is found, the system's default search path included, and passthrough is not known.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::with_no_path_no_tmux_is_looked_for_and_passthrough_is_unknown",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "186ed92541552459636f0424fb6bc007a3826f00747e228f922c6b6b0a76f67e",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-EMPTY-ENVIRONMENT",
+      "family": "terminal",
+      "obligation": "tmux is started with no variable of this process, CARGO_MANIFEST_DIR among them: the environment it records, names and values, is exactly the one the same fake records when started with none, and it still answers on.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::tmux_is_started_with_no_variable_of_this_process",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "1889bfa301f1af9209b64b3b7671515f6fe88efe93db4bf54656f4f03ff77366",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
       "id": "CASE-TERMINAL-STARTUP-ORDER",
       "family": "terminal",
       "obligation": "In Kitty's environment the built program asks the background colour, then the cursor position, then Kitty's question, then draws the prompt.",

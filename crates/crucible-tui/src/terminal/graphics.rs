@@ -266,11 +266,13 @@ fn quiet(env: &dyn Fn(&str) -> Option<String>, setting: Setting) -> bool {
 /// platform the table does not cover, where nothing may be asked — nothing
 /// runs and the answer is [`Passthrough::Unknown`].
 ///
-/// The terminal is asked nothing: `tmux`, found on the `PATH` passed in or,
-/// with none, on the system's default search path, is run against the
-/// server `TMUX` names, with no input, its errors discarded, its output read
-/// to at most 64 bytes for at most 100 ms, and then it is ended and reaped.
-/// Only `on` or `all` is [`Passthrough::On`].
+/// The terminal is asked nothing: `tmux`, found only in the absolute
+/// directories of the `PATH` passed in, is run against the server `TMUX`
+/// names, with an empty environment, no input, its errors discarded, its
+/// output read to at most 64 bytes for at most 100 ms, and then it is ended
+/// and reaped. With no `PATH`, or no `tmux` in an absolute directory of it,
+/// nothing runs and the answer is [`Passthrough::Unknown`]. Only `on` or
+/// `all` is [`Passthrough::On`].
 #[must_use]
 pub fn passthrough(
     env: &dyn Fn(&str) -> Option<String>,
@@ -304,14 +306,36 @@ const TMUX_WAIT: Duration = Duration::from_millis(100);
 #[cfg(unix)]
 const TMUX_SAYS: usize = 64;
 
-/// Runs `tmux` against `socket`, found on `path`, and reads its answer.
+/// The `tmux` in the first absolute directory on `path` that holds one, and
+/// none with no `path`.
+///
+/// Absolute is the whole of the check. An empty entry, `.` or a relative one
+/// is resolved against the working directory, which can be a checkout that
+/// put a `tmux` there and named a protocol in its own configuration. With no
+/// `path`, the system's default search path is not looked in either.
+#[cfg(unix)]
+fn tmux_on(path: Option<&str>) -> Option<std::path::PathBuf> {
+    std::env::split_paths(path?)
+        .filter(|directory| directory.is_absolute())
+        .map(|directory| directory.join("tmux"))
+        .find(|candidate| candidate.is_file())
+}
+
+/// Runs the `tmux` found on `path` against `socket`, with an empty
+/// environment, and reads its answer.
 #[cfg(unix)]
 fn server_says(socket: &str, path: Option<&str>, wait: Duration) -> Passthrough {
     use std::process::{Command, Stdio};
 
     let until = Instant::now() + wait;
-    let mut command = Command::new("tmux");
+    let Some(tmux) = tmux_on(path) else {
+        return Passthrough::Unknown;
+    };
+    let mut command = Command::new(tmux);
+    // `-S` names the server, so tmux is given no variable: this process's
+    // environment can hold provider credentials.
     command
+        .env_clear()
         .args([
             "-S",
             socket,
@@ -322,10 +346,6 @@ fn server_says(socket: &str, path: Option<&str>, wait: Duration) -> Passthrough 
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    match path {
-        Some(path) => command.env("PATH", path),
-        None => command.env_remove("PATH"),
-    };
     let Ok(mut child) = command.spawn() else {
         return Passthrough::Unknown;
     };
@@ -2844,8 +2864,8 @@ mod tests {
         }
     }
 
-    /// The cases that ask tmux: each puts a fake `tmux` first on a `PATH` of
-    /// its own, in a directory of its own, and removes it after.
+    /// The cases that ask tmux: each fake `tmux` is put in a directory of its
+    /// own, named on a `PATH` the case writes, and removed after.
     #[cfg(unix)]
     mod tmux {
         use std::path::{Path, PathBuf};
@@ -2871,7 +2891,7 @@ mod tests {
                     // Written by a child of its own, so no descriptor open
                     // for writing on it is copied into a process another test
                     // starts, which would keep it from running.
-                    // Its `PATH` holds nothing else, so it names every
+                    // It is started with no environment, so it names every
                     // program it runs by its path, and `DIR` by the directory.
                     let script = format!(
                         "#!/bin/sh\nDIR='{}'\nprintf '%s\\n' \"$@\" > \"$DIR/args\"\n{body}\n",
@@ -2944,6 +2964,41 @@ mod tests {
 
         fn alive(pid: &str) -> bool {
             Path::new("/proc").join(pid.trim()).exists()
+        }
+
+        /// The socket the cases that run `tmux` directly name.
+        const SOCKET: &str = "/tmp/tmux-1000/default";
+
+        /// `dir` named without a root, from the working directory: as many
+        /// `..` as the working directory is deep, then `dir` below the root.
+        /// A `PATH` entry spelled so is relative, as a checkout's `bin` is, and
+        /// still reaches `dir`, so the working directory is never changed.
+        fn relative(dir: &Path) -> String {
+            let here = std::env::current_dir().expect("the working directory");
+            let mut relative = PathBuf::new();
+            for _ in here.components().skip(1) {
+                relative.push("..");
+            }
+            relative.push(dir.strip_prefix("/").expect("an absolute directory"));
+            assert!(relative.is_relative() && relative.join("tmux").is_file());
+            relative.display().to_string()
+        }
+
+        /// The names `export -p` declares in `record`, without their values.
+        fn names(record: &str) -> std::collections::BTreeSet<String> {
+            record
+                .lines()
+                .filter_map(|line| {
+                    let rest = line
+                        .strip_prefix("export ")
+                        .or_else(|| line.strip_prefix("declare -x "))?;
+                    let name: String = rest
+                        .chars()
+                        .take_while(|one| one.is_ascii_alphanumeric() || *one == '_')
+                        .collect();
+                    (!name.is_empty()).then_some(name)
+                })
+                .collect()
         }
 
         #[test]
@@ -3067,6 +3122,85 @@ mod tests {
                 );
                 assert_eq!(fake.args(), None, "{name} ran tmux");
             }
+        }
+
+        #[test]
+        fn tmux_is_looked_for_only_in_the_absolute_directories_of_the_path() {
+            let planted = Fake::new("looked-for-planted", Some("echo on"));
+            let empty = Fake::new("looked-for-empty", None);
+            let real = Fake::new("looked-for-real", Some("echo off"));
+            let planted_at = relative(&planted.dir);
+            let (empty_at, real_at) = (empty.dir.display(), real.dir.display());
+            assert_eq!(
+                tmux_on(Some(&format!(".:{planted_at}:bin::{empty_at}:{real_at}"))),
+                Some(real.file("tmux"))
+            );
+            assert_eq!(tmux_on(Some(&format!("{planted_at}:bin:.:"))), None);
+            assert_eq!(tmux_on(Some("")), None);
+            assert_eq!(planted.args(), None, "the planted tmux ran");
+        }
+
+        #[test]
+        fn a_tmux_behind_entries_that_are_not_absolute_never_runs_and_the_absolute_one_answers() {
+            let planted = Fake::new("planted-ahead", Some("echo on"));
+            let real = Fake::new("absolute-behind", Some("echo off"));
+            let path = format!(":.:{}:bin:{}", relative(&planted.dir), real.dir.display());
+            assert_eq!(
+                server_says(SOCKET, Some(&path), TMUX_WAIT),
+                Passthrough::Off
+            );
+            assert_eq!(planted.args(), None, "the planted tmux ran");
+            assert!(real.args().is_some(), "the absolute tmux did not run");
+        }
+
+        #[test]
+        fn a_tmux_reached_only_through_entries_that_are_not_absolute_never_runs() {
+            let planted = Fake::new("planted-only", Some("echo on"));
+            let path = format!(":.:bin:{}", relative(&planted.dir));
+            assert_eq!(
+                server_says(SOCKET, Some(&path), TMUX_WAIT),
+                Passthrough::Unknown
+            );
+            assert_eq!(planted.args(), None, "the planted tmux ran");
+        }
+
+        #[test]
+        fn with_no_path_no_tmux_is_looked_for_and_passthrough_is_unknown() {
+            assert_eq!(tmux_on(None), None);
+            assert_eq!(server_says(SOCKET, None, TMUX_WAIT), Passthrough::Unknown);
+        }
+
+        #[test]
+        fn tmux_is_started_with_no_variable_of_this_process() {
+            let fake = Fake::new(
+                "environment",
+                Some("export -p > \"$DIR/environment\"\necho on"),
+            );
+            let recorded = fake.file("environment");
+            // What the fake records started with no environment at all: only
+            // what its shell sets by itself.
+            let status = Command::new(fake.file("tmux"))
+                .env_clear()
+                .stdout(std::process::Stdio::null())
+                .status()
+                .expect("the fake run alone");
+            assert!(status.success());
+            let alone = std::fs::read_to_string(&recorded).expect("the fake recorded");
+            std::fs::remove_file(&recorded).expect("the record removed");
+            assert!(
+                std::env::var_os("CARGO_MANIFEST_DIR").is_some(),
+                "cargo sets CARGO_MANIFEST_DIR for every test it runs"
+            );
+            assert!(!names(&alone).contains("CARGO_MANIFEST_DIR"));
+
+            let path = fake.dir.display().to_string();
+            assert_eq!(server_says(SOCKET, Some(&path), TMUX_WAIT), Passthrough::On);
+            let asked = std::fs::read_to_string(&recorded).expect("the fake ran");
+            let reached: Vec<String> = names(&asked).difference(&names(&alone)).cloned().collect();
+            assert_eq!(reached, Vec::<String>::new(), "variables that reached tmux");
+            // Values are not printed: they are this process's, credentials
+            // among them.
+            assert!(asked == alone, "tmux saw a value its shell does not set");
         }
     }
 }
