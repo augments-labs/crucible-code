@@ -99,6 +99,9 @@ pub(crate) struct Style {
     /// What tmux's server said of passing sequences through, where it was
     /// asked.
     passthrough: Passthrough,
+    /// Whether the start found its input coming from a terminal, without
+    /// which no picture is drawn.
+    input: bool,
 }
 
 impl Style {
@@ -197,6 +200,8 @@ impl Style {
             detail: detail.unwrap_or_default(),
             platform: Platform::current(),
             passthrough: Passthrough::Unknown,
+            // Taken to be as the output is until the start has looked.
+            input: terminal,
         }
     }
 
@@ -255,6 +260,19 @@ impl Style {
     pub(crate) fn passing(self, passthrough: Passthrough) -> Self {
         Self {
             passthrough,
+            ..self
+        }
+    }
+
+    /// Whether the start found its input coming from a terminal.
+    pub(crate) fn input_terminal(self) -> bool {
+        self.input
+    }
+
+    /// The same style, knowing whether input comes from a terminal.
+    pub(crate) fn reading_from(self, terminal: bool) -> Self {
+        Self {
+            input: terminal,
             ..self
         }
     }

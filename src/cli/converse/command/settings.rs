@@ -525,8 +525,9 @@ fn worn<T: Terminal>(
             .map(|seconds| terms.pinning.set(Duration::from_secs(seconds)))
             .is_ok(),
         // A protocol or `off` is drawn with at once, never over a cell the
-        // support table disables; tmux is asked about passing sequences
-        // through the first time a protocol is named inside it.
+        // support table disables nor where the start found either side not a
+        // terminal; inside tmux, a protocol named while whether tmux passes
+        // sequences through is still unknown asks it.
         RowId::Images => crucible_config::ImageOutput::read(word)
             .map(|images| {
                 let style = terms.style();
@@ -534,7 +535,7 @@ fn worn<T: Terminal>(
                 let mut setting = crate::cli::picturing(
                     images,
                     &terms.settings,
-                    renderer.is_terminal(),
+                    renderer.is_terminal() && style.input_terminal(),
                     style.passthrough(),
                 );
                 if setting.passthrough == graphics::Passthrough::Unknown {

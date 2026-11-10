@@ -1281,11 +1281,15 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // so the two exchanges never interleave on the wire, and before raw mode and
     // the first frame, so every answer is read by the exchange that waits for it
     // and none is left to be taken for a key. Only a terminal on both sides is
-    // asked, and only where the configuration and the support table allow.
+    // asked, and only where the configuration and the support table allow;
+    // what the input was is kept, so `/settings` draws by the same rule.
+    terms
+        .style
+        .set(terms.style().reading_from(io::stdin().is_terminal()));
     let picturing_on = picturing(
         settings.images(),
         &settings,
-        renderer.is_terminal() && io::stdin().is_terminal(),
+        renderer.is_terminal() && terms.style().input_terminal(),
         graphics::Passthrough::Unknown,
     );
     let platform = terms.style().platform();

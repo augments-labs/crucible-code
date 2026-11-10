@@ -964,6 +964,33 @@ fn a_protocol_named_on_the_images_row_is_drawn_at_once_and_off_is_text_at_once()
 }
 
 #[test]
+fn a_protocol_named_where_input_is_not_a_terminal_draws_text() {
+    let sample = Sample::new("settings-images-no-input");
+    // Started with its input redirected, where a start asks nothing.
+    let terms = Terms {
+        style: std::cell::Cell::new(Style::plain().reading_from(false)),
+        environment: launched(&[("TERM", "xterm-kitty"), ("KITTY_WINDOW_ID", "1")]),
+        ..keeping(&sample)
+    };
+    let counted = counted();
+    let mut terminal = Recording::new(80, 24);
+    terminal.measures(Some(crucible_tui::graphics::Cell {
+        width: 9,
+        height: 18,
+    }));
+    let mut renderer = Renderer::new(terminal);
+    let mut panel = Panel::new(&terms, &counted);
+    let at = images_at(&panel);
+
+    panel.asked = Some((at, "kitty".to_owned()));
+    settle(&mut renderer, &terms, &mut panel);
+    assert_eq!(
+        renderer.capability(),
+        crucible_tui::graphics::Capability::Text
+    );
+}
+
+#[test]
 fn a_protocol_only_fullscreen_draws_says_it_is_not_available_in_native_mode() {
     let sample = Sample::new("settings-images-native");
     // WezTerm, drawn on directly: iTerm2's pictures drew right on a screen of
