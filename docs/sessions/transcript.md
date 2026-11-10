@@ -161,9 +161,9 @@ an item, so a wrapped one keeps the quote's bar and nothing more.
 ## Alerts
 
 A quote whose first line is nothing but `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`,
-`[!WARNING]` or `[!CAUTION]` is drawn as an alert, in either case. Every row
-of it has a quiet bar down its left, and the first row holds the kind's mark
-and its word in bold, in place of the marker:
+`[!WARNING]` or `[!CAUTION]` is drawn as an alert, whatever the letter case of
+the kind. Every row of it has a quiet bar down its left, and the first row
+holds the kind's mark and its word in bold, in place of the marker:
 
 | Kind | Unicode | ASCII |
 | --- | --- | --- |
@@ -173,8 +173,9 @@ and its word in bold, in place of the marker:
 | Warning | `▲ Warning` | `! Warning` |
 | Caution | `✗ Caution` | `x Caution` |
 
-The mark has a colour and nothing else does; the words are drawn as written,
-with the weight and emphasis the answer gave them. The bar is `▎` in the
+Of the alert's own parts only the mark has a colour, its kind's own; the bar
+and the word have none, and the body keeps whatever colour the answer gave its
+code spans and links. The bar is `▎` in the
 unicode glyph set and `|` in the ASCII one, and an alert that wraps shows it
 on every row it takes, in both [`output.screen`](../configuration/configuration.md#output)
 modes. Nothing of an alert is drawn until the end of its first line shows it

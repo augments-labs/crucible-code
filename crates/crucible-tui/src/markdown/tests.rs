@@ -3674,7 +3674,7 @@ fn nothing_of_an_alert_is_drawn_before_its_break_says_it_was_one() {
 }
 
 #[test]
-fn an_alert_spends_its_colour_on_its_mark_alone_in_every_theme() {
+fn an_alert_mark_carries_its_kinds_ink_and_its_word_only_weight_in_every_theme() {
     // The first row of each kind, as the slots it was said under: a bar and a
     // mark, then the word. Everything but the mark is quiet, plain or bold,
     // which are the same in every theme by design, so whatever differs from
@@ -3719,7 +3719,36 @@ fn an_alert_spends_its_colour_on_its_mark_alone_in_every_theme() {
             assert_ne!(ink(slot), ink(Slot::Plain), "{theme:?} {marker}");
             assert_ne!(ink(slot), ink(Slot::Quiet), "{theme:?} {marker}");
         }
+
+        // The design colours three of the marks: Note, Important and Caution
+        // each carry a foreground colour. Warning and Tip are not coloured by
+        // the selected design: Warning is the word's weight and nothing more,
+        // and Tip is a strike through the quiet grey.
+        for (marker, _, slot, ..) in ALERTS {
+            let hued = has_hue(&ink(slot));
+            match marker {
+                "NOTE" | "IMPORTANT" | "CAUTION" => {
+                    assert!(hued, "{theme:?} {marker} has no hue: {:?}", ink(slot));
+                }
+                "WARNING" => {
+                    assert_eq!(ink(slot), ink(Slot::Bold), "{theme:?} {marker}");
+                }
+                "TIP" => assert_eq!(ink(slot), "\x1b[9;90m", "{theme:?} {marker}"),
+                _ => unreachable!("{marker} is not an alert kind"),
+            }
+        }
     }
+}
+
+/// Whether an opening escape sets a foreground colour: one of the parameters
+/// 30 to 38, which excludes the weight, the strike, the underline and the
+/// quiet grey (90).
+fn has_hue(open: &str) -> bool {
+    open.trim_start_matches("\x1b[")
+        .trim_end_matches('m')
+        .split(';')
+        .filter_map(|part| part.parse::<u8>().ok())
+        .any(|part| (30..=38).contains(&part))
 }
 
 const ALERT_KINDS: &str = "> [!NOTE]\n> Useful information.\n\n> [!TIP]\n> A shortcut worth taking.\n\n\
