@@ -468,6 +468,12 @@ async fn offered(
 /// of a session rather than of a policy, and a bare policy offered in their
 /// name would be accepted by every backend, which would read as five claims
 /// kept and prove nothing about any of them.
+///
+/// Each ceiling asked for is the smallest one, except the disk ceiling, which
+/// is asked for at one MiB. A backend that holds it with a tmpfs can hold only
+/// whole pages and rightly refuses one under a page, and one MiB is a whole
+/// number of pages on every page size Linux uses, so a refusal of it still
+/// reads as withheld.
 fn asking(
     at: &Path,
     feature: SandboxFeature,
@@ -504,7 +510,7 @@ fn asking(
         }
         SandboxFeature::CpuLimit => limits.cpu_seconds = Some(1),
         SandboxFeature::MemoryLimit => limits.memory_bytes = Some(1),
-        SandboxFeature::DiskLimit => limits.disk_bytes = Some(1),
+        SandboxFeature::DiskLimit => limits.disk_bytes = Some(1 << 20),
         SandboxFeature::ProcessLimit => limits.processes = Some(1),
         SandboxFeature::OpenFileLimit => limits.open_files = Some(1),
         SandboxFeature::CommandTimeLimit => limits.command_time = Some(Duration::from_secs(1)),
