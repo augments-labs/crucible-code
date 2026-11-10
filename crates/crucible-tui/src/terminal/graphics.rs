@@ -1921,7 +1921,7 @@ mod tests {
         }
 
         #[test]
-        fn a_count_of_inputs_that_is_no_number_fails_the_run_and_says_so() {
+        fn a_count_of_inputs_that_is_no_number_is_refused_by_name_and_value() {
             assert_eq!(counted(None), Ok(DEFAULT_CASES));
             assert_eq!(counted(Some("12".into())), Ok(12));
             let refused = counted(Some("lots".into())).expect_err("lots is no count");
@@ -2662,11 +2662,11 @@ mod tests {
         }
 
         #[test]
-        fn no_way_of_answering_holds_the_exchange_past_the_patience_and_the_reply_wait() {
-            // The slowest ending of each wait: the first answer never given
-            // or never finished, then a first answer in time followed by a
-            // lone escape, and by a yes cut short behind a late cursor
-            // position, whose listen behind it is under the same ceiling.
+        fn silence_or_a_cut_ends_the_exchange_within_the_patience_and_the_reply_wait() {
+            // Each wait run to its ceiling: the first answer never given or
+            // never finished, then a first answer in time followed by a lone
+            // escape, or by a yes cut short behind a late cursor position,
+            // whose listen behind it is under the same ceiling.
             let cases = [
                 ("never answered", vec![turn(CURSOR, &[])]),
                 ("first answer cut", vec![turn(CURSOR, &[(0, b"\x1b[12")])]),
