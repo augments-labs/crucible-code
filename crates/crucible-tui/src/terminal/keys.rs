@@ -19,6 +19,19 @@
 //! control; provider and model bytes are rendered as text and never reach this
 //! parser. Replacing the terminal reader is what would change that trust
 //! boundary, rather than presenting this local assumption as a remote bound.
+//!
+//! Startup asks the terminal questions before the first key is read: where it
+//! draws in colour, its background colour followed by device attributes, and,
+//! where a picture protocol is a candidate, a cursor position, then the
+//! protocol's own question followed by a cursor position. A terminal answers in order, so
+//! each asker reads up to the answer to the question it put last, and while
+//! it waits it consumes every answer before that one. What reaches this
+//! reader is what arrived after an asker stopped waiting. A cursor position
+//! or device attributes is parsed by `crossterm` as its own reply, which
+//! [`event::read`] keeps out of what it returns, so neither becomes a key. A
+//! background or protocol answer is different: `crossterm` reads it as Alt
+//! and a run of characters, so a terminal that answers later than every wait
+//! [`crate::graphics`] and the background question allow still types it.
 
 use std::time::Duration;
 
