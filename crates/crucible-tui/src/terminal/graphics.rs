@@ -456,6 +456,286 @@ impl fmt::Debug for Payload {
     }
 }
 
+/// The longest sequence whose bytes are kept to be read. A longer one is still
+/// consumed to its end, and is read as no reply this exchange asked for.
+const LONGEST: usize = 1024;
+
+/// The image a Kitty query names, so its reply is told from any other.
+const QUERY_IMAGE: &str = "i=31";
+
+/// What a run of bytes from the terminal was, by its shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Shape {
+    /// A byte outside any sequence: something typed.
+    Typed,
+    /// A cursor position report, `CSI row ; column R`.
+    CursorPosition,
+    /// Kitty's reply to the query this exchange writes, saying it can or not.
+    Graphics {
+        /// Whether it said `OK`.
+        ok: bool,
+    },
+    /// iTerm2's report of its cell size.
+    CellSize,
+    /// The primary device attributes.
+    Attributes {
+        /// Whether they include Sixel.
+        sixel: bool,
+    },
+    /// Any other sequence, complete or cut short by what followed it.
+    Other,
+}
+
+/// Where the reader is inside a sequence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum State {
+    /// Outside one.
+    Ground,
+    /// After `ESC`.
+    Escape,
+    /// After `ESC` and an intermediate byte, such as the `(` that picks a
+    /// character set.
+    EscapeIntermediate,
+    /// After `ESC O`, which one more byte ends.
+    Shift,
+    /// After `CSI`.
+    Control,
+    /// Inside a string: an OSC, DCS, APC, PM or SOS.
+    String(Kind),
+    /// After an `ESC` inside a string, which `\` makes its end.
+    StringEscape(Kind),
+}
+
+/// Which string a reader is in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    /// Operating system command, which `BEL` may end too.
+    Osc,
+    /// Application program command.
+    Apc,
+    /// Device control string, privacy message or start of string.
+    Data,
+}
+
+/// Bytes from the terminal, read one at a time into [`Shape`]s.
+///
+/// Every byte belongs to exactly one shape or to the sequence still being
+/// read, so nothing is ever left over to be read as a key. Bounded: a
+/// sequence keeps at most [`LONGEST`] of its bytes, however long it runs.
+#[derive(Debug)]
+pub(crate) struct Replies {
+    state: State,
+    held: Vec<u8>,
+    spilled: bool,
+}
+
+impl Replies {
+    pub(crate) const fn new() -> Self {
+        Self {
+            state: State::Ground,
+            held: Vec::new(),
+            spilled: false,
+        }
+    }
+
+    /// Whether the reader is outside every sequence, so nothing read so far is
+    /// waiting on a byte still to come.
+    pub(crate) fn between(&self) -> bool {
+        self.state == State::Ground
+    }
+
+    /// Reads `byte`, and says what it ended, if anything.
+    pub(crate) fn feed(&mut self, byte: u8) -> Option<Shape> {
+        match self.state {
+            State::Ground if byte == ESC => self.enter(State::Escape),
+            State::Ground => Some(Shape::Typed),
+            State::Escape => self.escaped(byte),
+            State::EscapeIntermediate => match byte {
+                0x20..=0x2f => None,
+                0x30..=0x7e => Some(self.ended(Shape::Other)),
+                _ => Some(self.cut(byte)),
+            },
+            State::Shift if byte == ESC || cancels(byte) => Some(self.cut(byte)),
+            State::Shift => Some(self.ended(Shape::Other)),
+            State::Control => self.control(byte),
+            State::String(kind) => self.string(kind, byte),
+            State::StringEscape(kind) if byte == b'\\' => {
+                let shape = self.read(kind);
+                Some(self.ended(shape))
+            }
+            // The escape ended the string, and begins whatever comes next.
+            State::StringEscape(_) => {
+                self.clear();
+                self.state = State::Escape;
+                let next = self.escaped(byte);
+                // An escape and one byte is a sequence ended as soon as it
+                // began, so it is the same thing cut short as the string.
+                if next.is_some() && self.state == State::Ground {
+                    return next;
+                }
+                Some(Shape::Other)
+            }
+        }
+    }
+
+    /// After `ESC`.
+    fn escaped(&mut self, byte: u8) -> Option<Shape> {
+        match byte {
+            b'[' => self.enter(State::Control),
+            b']' => self.enter(State::String(Kind::Osc)),
+            b'_' => self.enter(State::String(Kind::Apc)),
+            b'P' | b'^' | b'X' => self.enter(State::String(Kind::Data)),
+            b'O' => self.enter(State::Shift),
+            0x20..=0x2f => self.enter(State::EscapeIntermediate),
+            // A lone escape: the next one may begin a sequence of its own.
+            ESC => Some(Shape::Other),
+            _ => Some(self.ended(Shape::Other)),
+        }
+    }
+
+    /// Inside `CSI`.
+    fn control(&mut self, byte: u8) -> Option<Shape> {
+        match byte {
+            0x20..=0x3f => {
+                self.hold(byte);
+                None
+            }
+            0x40..=0x7e => {
+                let shape = self.answered(byte);
+                Some(self.ended(shape))
+            }
+            ESC | 0x18 | 0x1a | 0x80..=0xff => Some(self.cut(byte)),
+            // Any other control byte is carried out where it stands, and is
+            // no part of the sequence.
+            _ => None,
+        }
+    }
+
+    /// Inside a string.
+    fn string(&mut self, kind: Kind, byte: u8) -> Option<Shape> {
+        match byte {
+            ESC => {
+                self.state = State::StringEscape(kind);
+                None
+            }
+            BEL if kind == Kind::Osc => {
+                let shape = self.read(kind);
+                Some(self.ended(shape))
+            }
+            0x18 | 0x1a => Some(self.cut(byte)),
+            _ => {
+                self.hold(byte);
+                None
+            }
+        }
+    }
+
+    /// A sequence cut short by `byte`: an escape begins the next one, and
+    /// anything else ends it.
+    fn cut(&mut self, byte: u8) -> Shape {
+        self.clear();
+        self.state = if byte == ESC {
+            State::Escape
+        } else {
+            State::Ground
+        };
+        Shape::Other
+    }
+
+    fn enter(&mut self, state: State) -> Option<Shape> {
+        self.clear();
+        self.state = state;
+        None
+    }
+
+    fn ended(&mut self, shape: Shape) -> Shape {
+        self.clear();
+        self.state = State::Ground;
+        shape
+    }
+
+    fn clear(&mut self) {
+        self.held.clear();
+        self.spilled = false;
+    }
+
+    fn hold(&mut self, byte: u8) {
+        if self.held.len() < LONGEST {
+            self.held.push(byte);
+        } else {
+            self.spilled = true;
+        }
+    }
+
+    /// What the `CSI` sequence held, ended by `last`, was.
+    fn answered(&self, last: u8) -> Shape {
+        if self.spilled {
+            return Shape::Other;
+        }
+        let held = self.held.as_slice();
+        let numbers = |text: &[u8]| !text.is_empty() && text.iter().all(u8::is_ascii_digit);
+        match (last, held.split_first()) {
+            (b'R', _) => match held.iter().position(|byte| *byte == b';') {
+                Some(at)
+                    if numbers(held.get(..at).unwrap_or_default())
+                        && numbers(held.get(at + 1..).unwrap_or_default()) =>
+                {
+                    Shape::CursorPosition
+                }
+                _ => Shape::Other,
+            },
+            (b'c', Some((b'?', rest))) if rest.split(|byte| *byte == b';').all(numbers) => {
+                Shape::Attributes {
+                    sixel: rest.split(|byte| *byte == b';').any(|part| part == b"4"),
+                }
+            }
+            _ => Shape::Other,
+        }
+    }
+
+    /// What the string held was.
+    fn read(&self, kind: Kind) -> Shape {
+        if self.spilled {
+            return Shape::Other;
+        }
+        let held = self.held.as_slice();
+        match kind {
+            Kind::Osc if held.starts_with(b"1337;ReportCellSize=") => Shape::CellSize,
+            Kind::Apc => match held.strip_prefix(b"G") {
+                Some(body) => {
+                    let (keys, message) = match body.iter().position(|byte| *byte == b';') {
+                        Some(at) => (
+                            body.get(..at).unwrap_or_default(),
+                            body.get(at + 1..).unwrap_or_default(),
+                        ),
+                        None => (body, &b""[..]),
+                    };
+                    if keys
+                        .split(|byte| *byte == b',')
+                        .any(|key| key == QUERY_IMAGE.as_bytes())
+                    {
+                        Shape::Graphics {
+                            ok: message == b"OK",
+                        }
+                    } else {
+                        Shape::Other
+                    }
+                }
+                None => Shape::Other,
+            },
+            Kind::Osc | Kind::Data => Shape::Other,
+        }
+    }
+}
+
+const ESC: u8 = 0x1b;
+const BEL: u8 = 0x07;
+
+/// `CAN` and `SUB`, which call off any sequence they arrive inside.
+const fn cancels(byte: u8) -> bool {
+    matches!(byte, 0x18 | 0x1a)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -863,5 +1143,440 @@ mod tests {
         assert_eq!(huge.cells(), (u16::MAX, u16::MAX));
         // Its bytes stay out of a log.
         assert!(!format!("{payload:?}").contains("[1, 2, 3]"));
+    }
+
+    // -----------------------------------------------------------------------
+    // The reply parser: a hostile corpus, then generated input.
+
+    /// Every shape `bytes` makes, and the reader after them.
+    fn shapes(bytes: &[u8]) -> (Vec<Shape>, Replies) {
+        let mut replies = Replies::new();
+        let shapes = bytes
+            .iter()
+            .filter_map(|byte| replies.feed(*byte))
+            .collect();
+        (shapes, replies)
+    }
+
+    /// Every shape `bytes` makes, which must end outside every sequence.
+    fn complete(bytes: &[u8]) -> Vec<Shape> {
+        let (shapes, replies) = shapes(bytes);
+        assert!(replies.between(), "{bytes:?} left a sequence open");
+        shapes
+    }
+
+    const OK: Shape = Shape::Graphics { ok: true };
+
+    #[test]
+    fn each_reply_the_exchange_asks_for_is_known_by_its_shape() {
+        assert_eq!(complete(b"\x1b[12;40R"), [Shape::CursorPosition]);
+        assert_eq!(complete(b"\x1b[1;1R"), [Shape::CursorPosition]);
+        assert_eq!(complete(b"\x1b_Gi=31;OK\x1b\\"), [OK]);
+        assert_eq!(complete(b"\x1b_Gi=31,q=0;OK\x1b\\"), [OK]);
+        assert_eq!(
+            complete(b"\x1b_Gi=31;ENOTSUPPORTED:no direct\x1b\\"),
+            [Shape::Graphics { ok: false }]
+        );
+        assert_eq!(
+            complete(b"\x1b]1337;ReportCellSize=22.0;10.0;1.0\x07"),
+            [Shape::CellSize]
+        );
+        assert_eq!(
+            complete(b"\x1b]1337;ReportCellSize=16;8\x1b\\"),
+            [Shape::CellSize]
+        );
+        assert_eq!(
+            complete(b"\x1b[?62;4;22c"),
+            [Shape::Attributes { sixel: true }]
+        );
+        assert_eq!(complete(b"\x1b[?4c"), [Shape::Attributes { sixel: true }]);
+        assert_eq!(
+            complete(b"\x1b[?62;22c"),
+            [Shape::Attributes { sixel: false }]
+        );
+        assert_eq!(
+            complete(b"\x1b[?64;44c"),
+            [Shape::Attributes { sixel: false }]
+        );
+        assert_eq!(complete(b"ab"), [Shape::Typed, Shape::Typed]);
+    }
+
+    #[test]
+    fn a_reply_nobody_asked_for_is_consumed_and_named_nothing() {
+        // The background colour, answered after its own wait gave up.
+        assert_eq!(
+            complete(b"\x1b]11;rgb:1c1c/1c1c/1c1c\x1b\\"),
+            [Shape::Other]
+        );
+        assert_eq!(complete(b"\x1b]11;rgb:1c1c/1c1c/1c1c\x07"), [Shape::Other]);
+        // Another image's reply, and Kitty's without its image.
+        assert_eq!(complete(b"\x1b_Gi=310;OK\x1b\\"), [Shape::Other]);
+        assert_eq!(complete(b"\x1b_Gi=3;OK\x1b\\"), [Shape::Other]);
+        assert_eq!(complete(b"\x1b_G;OK\x1b\\"), [Shape::Other]);
+        assert_eq!(complete(b"\x1b_Xi=31;OK\x1b\\"), [Shape::Other]);
+        // Shaped almost like a cursor position.
+        assert_eq!(complete(b"\x1b[?12;1R"), [Shape::Other]);
+        assert_eq!(complete(b"\x1b[R"), [Shape::Other]);
+        assert_eq!(complete(b"\x1b[12R"), [Shape::Other]);
+        assert_eq!(complete(b"\x1b[1;2;3R"), [Shape::Other]);
+        assert_eq!(complete(b"\x1b[;1R"), [Shape::Other]);
+        assert_eq!(complete(b"\x1b[62;4c"), [Shape::Other]);
+        assert_eq!(
+            complete(b"\x1b]1337;ReportVariable=abc\x07"),
+            [Shape::Other]
+        );
+        // A device control string is ended by `ST` alone.
+        assert_eq!(complete(b"\x1bP1$r0m\x1b\\"), [Shape::Other]);
+        assert_eq!(complete(b"\x1bPab\x07cd\x1b\\"), [Shape::Other]);
+        assert_eq!(
+            complete(b"\x1b^private\x1b\\\x1bXstart\x1b\\"),
+            [Shape::Other, Shape::Other]
+        );
+        // Keys, as a terminal spells them.
+        assert_eq!(complete(b"\x1ba"), [Shape::Other]);
+        assert_eq!(complete(b"\x1bOP"), [Shape::Other]);
+        assert_eq!(complete(b"\x1b(B"), [Shape::Other]);
+        assert_eq!(complete(b"\x1b[1;5A"), [Shape::Other]);
+    }
+
+    #[test]
+    fn an_escape_inside_a_sequence_ends_it_and_begins_the_next() {
+        assert_eq!(
+            complete(b"\x1b]11;rgb:1c1c\x1b[12;1R"),
+            [Shape::Other, Shape::CursorPosition]
+        );
+        assert_eq!(
+            complete(b"\x1b[12;\x1b[3;4R"),
+            [Shape::Other, Shape::CursorPosition]
+        );
+        assert_eq!(
+            complete(b"\x1b_Gi=31;OK\x1b_Gi=31;OK\x1b\\"),
+            [Shape::Other, OK]
+        );
+        // An escape in a string followed by a key is one thing cut short.
+        assert_eq!(complete(b"\x1b]abc\x1ba"), [Shape::Other]);
+        assert_eq!(
+            complete(b"\x1b]abc\x1b\x1b[1;1R"),
+            [Shape::Other, Shape::CursorPosition]
+        );
+    }
+
+    #[test]
+    fn a_cancel_ends_any_sequence_and_what_follows_is_typed() {
+        for open in [
+            &b"\x1b"[..],
+            b"\x1b[12",
+            b"\x1b]11;rgb",
+            b"\x1b_Gi=31",
+            b"\x1bP1$",
+            b"\x1b(",
+            b"\x1bO",
+            b"\x1b]x\x1b",
+        ] {
+            for cancel in [0x18_u8, 0x1a] {
+                let mut bytes = open.to_vec();
+                bytes.push(cancel);
+                bytes.push(b'a');
+                assert_eq!(complete(&bytes), [Shape::Other, Shape::Typed], "{bytes:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn bytes_no_sequence_may_hold_end_it() {
+        assert_eq!(complete(b"\x1b[1\xffa"), [Shape::Other, Shape::Typed]);
+        // A control byte inside a sequence is carried out where it stands.
+        assert_eq!(complete(b"\x1b[1\x00;2R"), [Shape::CursorPosition]);
+        assert_eq!(complete(b"\x1b[1;2\x7fR"), [Shape::CursorPosition]);
+        // Not UTF-8, outside a sequence: typed, byte by byte.
+        assert_eq!(complete(b"\xc3\x28"), [Shape::Typed, Shape::Typed]);
+    }
+
+    #[test]
+    fn a_sequence_still_arriving_is_not_between() {
+        for open in [
+            &b"\x1b"[..],
+            b"\x1b[",
+            b"\x1b[12;",
+            b"\x1b]11;",
+            b"\x1b]11;x\x1b",
+            b"\x1b_G",
+            b"\x1bO",
+            b"\x1b(",
+        ] {
+            let (shapes, replies) = shapes(open);
+            assert!(shapes.is_empty(), "{open:?}");
+            assert!(!replies.between(), "{open:?}");
+        }
+        let (shapes, replies) = shapes(b"\x1b\x1b");
+        assert_eq!(shapes, [Shape::Other]);
+        assert!(!replies.between());
+    }
+
+    #[test]
+    fn a_sequence_of_any_length_is_held_to_its_ceiling_and_read_to_its_end() {
+        for (open, fill, close) in [
+            (&b"\x1b]11;"[..], b'x', &b"\x07"[..]),
+            (b"\x1b_Gi=31;", b'O', b"\x1b\\"),
+            (b"\x1bP", b'q', b"\x1b\\"),
+            (b"\x1b[", b'1', b"R"),
+            (b"\x1b[?", b'4', b"c"),
+            (b"\x1b(", b' ', b"B"),
+        ] {
+            let mut replies = Replies::new();
+            let mut seen = Vec::new();
+            let body = std::iter::repeat_n(fill, 100_000);
+            for byte in open
+                .iter()
+                .copied()
+                .chain(body)
+                .chain(close.iter().copied())
+            {
+                seen.extend(replies.feed(byte));
+                assert!(replies.held.len() <= LONGEST);
+            }
+            assert_eq!(seen, [Shape::Other], "{open:?}");
+            assert!(replies.between());
+        }
+    }
+
+    #[test]
+    fn a_long_sequence_does_not_keep_its_spill_into_the_next() {
+        let mut bytes = b"\x1b]".to_vec();
+        bytes.extend(std::iter::repeat_n(b'x', 5000));
+        bytes.extend(b"\x07\x1b[3;4R");
+        assert_eq!(complete(&bytes), [Shape::Other, Shape::CursorPosition]);
+        let mut bytes = b"\x1b[".to_vec();
+        bytes.extend(std::iter::repeat_n(b'1', 5000));
+        bytes.extend(b"\x1b_Gi=31;OK\x1b\\");
+        assert_eq!(complete(&bytes), [Shape::Other, OK]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Generated replies: every case is made from the seed and its index
+    // alone, so a failure names the case that reproduces it.
+
+    const SEED: u64 = 0x5eed_7e9c_ca11;
+    const DEFAULT_CASES: u64 = 4096;
+    const CASES_VARIABLE: &str = "CRUCIBLE_GENERATED_INPUTS";
+
+    fn cases() -> u64 {
+        std::env::var(CASES_VARIABLE)
+            .ok()
+            .and_then(|text| text.parse().ok())
+            .unwrap_or(DEFAULT_CASES)
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum Ended<T> {
+        Returned(T),
+        Panicked,
+        Hung,
+    }
+
+    /// `work` on a thread of its own, given `deadline` to answer.
+    fn guarded<T: Send + 'static>(
+        deadline: Duration,
+        work: impl FnOnce() -> T + Send + 'static,
+    ) -> Ended<T> {
+        let (answer, heard) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = answer.send(work());
+        });
+        match heard.recv_timeout(deadline) {
+            Ok(value) => Ended::Returned(value),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ended::Hung,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Ended::Panicked,
+        }
+    }
+
+    #[test]
+    fn a_planted_panic_and_a_planted_hang_are_found_by_the_generated_runner() {
+        assert_eq!(
+            guarded(Duration::from_secs(5), || -> u8 { panic!("planted") }),
+            Ended::Panicked
+        );
+        let begun = std::time::Instant::now();
+        let ended = guarded(Duration::from_millis(200), move || {
+            while begun.elapsed() < Duration::from_secs(3) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        });
+        assert_eq!(ended, Ended::Hung);
+    }
+
+    /// xorshift64*: small, and the same on every platform.
+    struct Rng(u64);
+
+    impl Rng {
+        fn for_case(index: u64) -> Self {
+            let mut rng = Rng(SEED ^ index.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
+            for _ in 0..4 {
+                rng.next();
+            }
+            rng
+        }
+
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
+        }
+
+        fn below(&mut self, bound: usize) -> usize {
+            let bound = u64::try_from(bound).unwrap_or(u64::MAX).max(1);
+            usize::try_from((self.next() >> 11) % bound).unwrap_or(0)
+        }
+
+        fn number(&mut self) -> String {
+            self.below(100_000).to_string()
+        }
+    }
+
+    /// One whole reply, with the shape it must be read as.
+    fn reply(rng: &mut Rng) -> (Vec<u8>, Shape) {
+        let st = if rng.below(2) == 0 { "\x07" } else { "\x1b\\" };
+        match rng.below(8) {
+            0 => (
+                format!("\x1b[{};{}R", rng.number(), rng.number()).into_bytes(),
+                Shape::CursorPosition,
+            ),
+            1 => (b"\x1b_Gi=31;OK\x1b\\".to_vec(), OK),
+            2 => (
+                format!("\x1b_Gi=31;E{}\x1b\\", rng.number()).into_bytes(),
+                Shape::Graphics { ok: false },
+            ),
+            3 => (
+                format!(
+                    "\x1b]1337;ReportCellSize={};{}{st}",
+                    rng.number(),
+                    rng.number()
+                )
+                .into_bytes(),
+                Shape::CellSize,
+            ),
+            4 => (
+                format!("\x1b[?{};4;{}c", rng.number(), rng.number()).into_bytes(),
+                Shape::Attributes { sixel: true },
+            ),
+            5 => (
+                format!(
+                    "\x1b]11;rgb:{}/{}/{}{st}",
+                    rng.number(),
+                    rng.number(),
+                    rng.number()
+                )
+                .into_bytes(),
+                Shape::Other,
+            ),
+            6 => (
+                format!("\x1b[{};{}H", rng.number(), rng.number()).into_bytes(),
+                Shape::Other,
+            ),
+            _ => (
+                vec![b'a' + u8::try_from(rng.below(26)).unwrap_or(0)],
+                Shape::Typed,
+            ),
+        }
+    }
+
+    /// A run of bytes no terminal would send on purpose.
+    fn noise(rng: &mut Rng) -> Vec<u8> {
+        const PIECES: &[&[u8]] = &[
+            b"\x1b",
+            b"\x1b[",
+            b"\x1b]",
+            b"\x1b_G",
+            b"\x1bP",
+            b"\x1b^",
+            b"\x1bX",
+            b"\x1bO",
+            b"\x1b(",
+            b"\x18",
+            b"\x1a",
+            b"\x07",
+            b"\x1b\\",
+            b";",
+            b"?",
+            b"R",
+            b"c",
+            b"i=31",
+            b"OK",
+            b"1337;ReportCellSize=",
+            b"\x00",
+            b"\x7f",
+            b"\x9b",
+            b"\xff",
+            b"\xc3",
+        ];
+        let mut bytes = Vec::new();
+        for _ in 0..rng.below(64) {
+            if rng.below(8) == 0 {
+                let long = rng.below(3000);
+                bytes.extend(std::iter::repeat_n(b'x', long));
+            } else if rng.below(4) == 0 {
+                bytes.push(u8::try_from(rng.below(256)).unwrap_or(0));
+            } else if let Some(piece) = PIECES.get(rng.below(PIECES.len())) {
+                bytes.extend_from_slice(piece);
+            }
+        }
+        bytes
+    }
+
+    /// What case `index` must hold to, or why it did not.
+    fn generated(index: u64) -> Result<(), String> {
+        let mut rng = Rng::for_case(index);
+
+        // Noise of any kind: read whole, held to the ceiling, and a cancel
+        // always brings the reader back outside every sequence.
+        let bytes = noise(&mut rng);
+        let mut replies = Replies::new();
+        let mut made = 0_usize;
+        for byte in &bytes {
+            made += usize::from(replies.feed(*byte).is_some());
+            if replies.held.len() > LONGEST {
+                return Err(format!("held {} bytes", replies.held.len()));
+            }
+        }
+        if made > bytes.len() {
+            return Err(format!("{made} shapes from {} bytes", bytes.len()));
+        }
+        replies.feed(0x18);
+        if !replies.between() {
+            return Err(format!("a cancel after {bytes:?} left a sequence open"));
+        }
+
+        // Whole replies, one after another, are read back as exactly what
+        // they were, after any noise a cancel ended.
+        let mut stream = Vec::new();
+        let mut expected = Vec::new();
+        for _ in 0..rng.below(16) {
+            let (bytes, shape) = reply(&mut rng);
+            stream.extend(bytes);
+            expected.push(shape);
+        }
+        let read: Vec<Shape> = stream
+            .iter()
+            .filter_map(|byte| replies.feed(*byte))
+            .collect();
+        if read != expected || !replies.between() {
+            return Err(format!("{stream:?} read as {read:?}, not {expected:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn generated_replies_and_noise_are_read_whole_and_bounded() {
+        let total = cases();
+        println!("seed {SEED:#x}, {total} inputs ({CASES_VARIABLE} raises the count)");
+        for index in 0..total {
+            match guarded(Duration::from_secs(30), move || generated(index)) {
+                Ended::Returned(Ok(())) => {}
+                Ended::Returned(Err(why)) => panic!("case {index} (seed {SEED:#x}): {why}"),
+                Ended::Panicked => panic!("case {index} (seed {SEED:#x}): panicked"),
+                Ended::Hung => panic!("case {index} (seed {SEED:#x}): no answer in 30 s"),
+            }
+        }
     }
 }
