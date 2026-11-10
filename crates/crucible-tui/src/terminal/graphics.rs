@@ -21,7 +21,7 @@
 //!
 //! **No reply becomes a key.** The exchange runs before the session reads a
 //! key, and reads every byte that arrives while it waits, parsing each by its
-//! shape ([`Replies`]): a complete sequence is consumed whatever it says, and a
+//! shape: a complete sequence is consumed whatever it says, and a
 //! sequence that is still arriving when the wait runs out is read to its end,
 //! for at most the reply wait again. A yes that arrives behind its cursor
 //! position is read for the patience again and counts as a no. A cursor
