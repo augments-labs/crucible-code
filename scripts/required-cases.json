@@ -8167,7 +8167,7 @@
       },
       "case": "terminal::graphics::tests::exchange::a_terminal_that_answers_confirms_its_candidate_and_leaves_nothing_to_read",
       "source": "crates/crucible-tui/src/terminal/graphics.rs",
-      "body_sha256": "e6e469e921fe3cf537907699128d6336b7704af34ace6587d87cc20811dd5e0e",
+      "body_sha256": "7a998fdf513da720addd2e793bd872905aba45edeaed47ab9349def0db69ad02",
       "platforms": [
         "linux",
         "macos"
@@ -8176,15 +8176,15 @@
     {
       "id": "CASE-TERMINAL-EXCHANGE-SILENT",
       "family": "terminal",
-      "obligation": "A pseudo-terminal that never answers is asked the cursor position once and never the question, costs at least the patience and less than the reply wait, and leaves nothing to read.",
+      "obligation": "A pseudo-terminal that never answers is asked the cursor position once and never the question, is read for the reply wait and less than a quarter second past it, and leaves nothing to read.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "terminal::graphics::tests::exchange::a_terminal_that_never_answers_costs_the_patience_alone",
+      "case": "terminal::graphics::tests::exchange::a_terminal_that_never_answers_is_read_for_the_reply_wait_and_no_longer",
       "source": "crates/crucible-tui/src/terminal/graphics.rs",
-      "body_sha256": "aeaeb9536786b9516c45639a1966ce0f22e8669f538aa2a775333a668e2a0168",
+      "body_sha256": "24be3b02bded4625a2a940407ad371ec064ae31f0e6e69eab4ded456986f8fde",
       "platforms": [
         "linux",
         "macos"
@@ -8412,7 +8412,7 @@
     {
       "id": "CASE-TERMINAL-STARTUP-NO-KEY",
       "family": "terminal",
-      "obligation": "Answered at once, never, late, out of order or split at every escape, the built program asks the cursor position, asks Kitty's question only where a cursor position came within the patience, puts the typed key in the box and types none of the answers.",
+      "obligation": "Answered at once, never or out of order, or late or split with every answer cut before and after each escape, the cut after an escape being the one crossterm can read as Esc and typed characters, the built program asks the cursor position, asks Kitty's question only where a cursor position came within the patience, reads a late first cursor position to its end, puts the typed key in the box and types none of the answers.",
       "package": "crucible-code",
       "target": {
         "kind": "bin",
@@ -8420,7 +8420,7 @@
       },
       "case": "startup::tests::heard::no_answer_given_at_once_late_out_of_order_or_split_becomes_a_key",
       "source": "src/bin/startup/mod.rs",
-      "body_sha256": "b67ce69ae7b1e90352180f52995e2968a9c72f5006e807d1e631e6bcf796cdc1",
+      "body_sha256": "2516fdde4cb9bfcdd1889c143281d7e0c60e63753a7c05a907683a07c44b6dd2",
       "platforms": [
         "linux"
       ]
