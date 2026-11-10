@@ -531,7 +531,7 @@
         },
         "images": {
           "default": "auto",
-          "description": "How pictures are drawn: auto asks the terminal at start where its environment names a protocol; kitty, iterm2 or sixel uses that protocol without asking, except where it is known to draw wrongly; off draws text",
+          "description": "How pictures are drawn: auto asks the terminal at start, only where its environment names a terminal pictures were seen to draw right on and no multiplexer is in between; kitty, iterm2 or sixel uses that protocol without asking where it was seen to draw right, and text elsewhere; off draws text",
           "enum": [
             "auto",
             "kitty",

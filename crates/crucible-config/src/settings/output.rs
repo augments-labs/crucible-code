@@ -281,9 +281,10 @@ impl ScreenMode {
 
 /// How pictures are drawn.
 ///
-/// `Auto` asks the terminal, where its environment names a protocol; a
-/// protocol is used without asking, except where it is known to draw wrongly;
-/// `Off` draws every picture as text.
+/// `Auto` asks the terminal, only where its environment names a terminal
+/// pictures were seen to draw right on, with no multiplexer in between; a
+/// protocol is used without asking where it was seen to draw right, and is
+/// text elsewhere; `Off` draws every picture as text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ImageOutput {
     /// Whatever the terminal confirms at the start.

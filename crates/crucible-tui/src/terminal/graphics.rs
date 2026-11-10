@@ -1,35 +1,40 @@
-//! Whether the terminal can draw pictures, learned without a reply ever
-//! reaching the prompt.
+//! Whether the terminal can draw pictures, learned before the first key is
+//! read, so the replies the exchange waits for are not taken for typing.
 //!
 //! Three decisions, in this order, each able to end it:
 //!
 //! 1. **Where nothing may be asked.** Output redirected, input not a terminal,
-//!    `NO_COLOR`, or colour turned off: no question is written and no picture
-//!    drawn ([`select`]).
+//!    `NO_COLOR` set, or `output.color` at `never`: no question is written and
+//!    no picture drawn ([`select`]).
 //! 2. **What the setting says.** `off` is text. A named protocol is used
-//!    without asking the terminal, except where the support table below says
-//!    it draws wrongly; inside tmux that turns on whether tmux passes
-//!    sequences through, which its server is asked, on its command line, and
-//!    only there ([`passthrough`]). `auto` lets the environment name a
-//!    candidate, and names none inside a multiplexer or on Windows.
-//! 3. **What the terminal says.** A candidate is confirmed by an exchange
+//!    without asking the terminal where the support table below enables its
+//!    cell, and is text everywhere else; inside tmux on this machine the cell
+//!    turns on whether tmux passes sequences through, which its server is
+//!    asked, on its command line, and only there ([`passthrough`]). `auto`
+//!    lets the environment name a candidate whose cell is enabled, and names
+//!    none inside tmux, `screen` or Zellij, nor for a terminal the table does
+//!    not identify, nor on a platform it does not cover, Windows among them.
+//! 3. **What the terminal says.** A candidate is drawn only where the window
+//!    reports its size in pixels, and only once an exchange confirms it
 //!    ([`confirm`]): the cursor-position question alone, then — only if that
-//!    was answered — the candidate's own question followed by the cursor
-//!    position again. A terminal answers in order, so the candidate's reply
-//!    arriving before the second cursor position is a yes, and the cursor
-//!    position arriving first is a no that cost no wait.
+//!    was answered within the patience — the candidate's own question followed
+//!    by the cursor position again. A terminal answers in order, so the
+//!    candidate's yes arriving before the second cursor position is a yes, and
+//!    the cursor position arriving first is a no without waiting out the reply
+//!    wait.
 //!
-//! **No reply becomes a key.** The exchange runs before the session reads a
-//! key, and reads every byte that arrives while it waits, parsing each by its
-//! shape: a complete sequence is consumed whatever it says, and a
-//! sequence that is still arriving when the wait runs out is read to its end,
-//! for at most the reply wait again. A yes that arrives behind its cursor
-//! position is read for the patience again and counts as a no. A cursor
-//! position that arrives after the exchange gave up is one shape the key reader
-//! drops itself. One exchange reads at most 16 KiB, so a terminal that sends
-//! without end is left at once. What a user types during the exchange is
-//! consumed with the replies, which costs at most the exchange's own few
-//! milliseconds of typing.
+//! **What is waited for is read before the keys are.** The exchange runs
+//! before the session reads a key, and reads every byte that arrives while it
+//! waits, parsing each by its shape: a complete sequence is consumed whatever
+//! it says, and a sequence that is still arriving when the wait runs out is
+//! read to its end, for at most the reply wait again. A yes that arrives behind
+//! its cursor position is read for the patience again and counts as a no.
+//! What arrives once the exchange has stopped reading goes to the key reader:
+//! a cursor position is one shape it drops itself, but a protocol's answer
+//! later than every wait is read as typing. One exchange reads at most 16 KiB,
+//! so a terminal that sends without end is left as soon as it has sent that
+//! much. What a user types while the exchange reads is consumed with the
+//! replies and never reaches the prompt.
 //!
 //! **The table is what was seen.** [`support`] holds the cells of the terminal
 //! support table that drew right in every step of their screen mode; every
@@ -244,14 +249,15 @@ fn quiet(env: &dyn Fn(&str) -> Option<String>, setting: Setting) -> bool {
 /// What tmux's server says of passing sequences through, asked only where the
 /// answer decides what is drawn: inside tmux on this machine, with
 /// `output.images` naming a protocol the table draws behind tmux that passes
-/// through. Everywhere else — `auto`, outside tmux, over SSH, Windows, where
-/// nothing may be asked — nothing runs and the answer is
-/// [`Passthrough::Unknown`].
+/// through. Everywhere else — `auto` or `off`, outside tmux, over SSH, on a
+/// platform the table does not cover, where nothing may be asked — nothing
+/// runs and the answer is [`Passthrough::Unknown`].
 ///
-/// The terminal is asked nothing: the `tmux` on `PATH` is run once against
-/// the server `TMUX` names, with no input, its errors discarded, its output
-/// read to at most 64 bytes for at most 100 ms, and then it is ended and
-/// reaped. Only `on` or `all` is [`Passthrough::On`].
+/// The terminal is asked nothing: `tmux`, found on the `PATH` passed in or,
+/// with none, on the system's default search path, is run against the
+/// server `TMUX` names, with no input, its errors discarded, its output read
+/// to at most 64 bytes for at most 100 ms, and then it is ended and reaped.
+/// Only `on` or `all` is [`Passthrough::On`].
 #[must_use]
 pub fn passthrough(
     env: &dyn Fn(&str) -> Option<String>,
@@ -386,8 +392,9 @@ fn read_within(stdout: std::process::ChildStdout, until: Instant) -> Option<Vec<
 ///
 /// The cells of the terminal support table that drew right in every step of
 /// their mode. Every judgement in it was made on Linux, under a virtual X
-/// display, so a platform it does not cover is no cell, and neither is a
-/// terminal it does not identify.
+/// display; macOS, where the same terminals run, takes the same cells. Any
+/// other platform is no cell, and neither is a terminal the table does not
+/// identify.
 #[must_use]
 pub fn support(
     env: &dyn Fn(&str) -> Option<String>,
@@ -420,8 +427,8 @@ pub fn support(
 
 /// The cells that drew right: where, inside what, in which mode, with what.
 ///
-/// Kitty over SSH did not answer inside the patience, and `WezTerm` in native
-/// mode lost a picture's top after a resize, so neither is here.
+/// Among those left out, Kitty over SSH did not answer inside the patience,
+/// and `WezTerm` in native mode lost a picture's top after a resize.
 const ENABLED: [(Row, Outer, ScreenMode, Protocol); 6] = [
     (
         Row::Here,
@@ -538,9 +545,9 @@ pub struct Deadline {
 }
 
 impl Deadline {
-    /// What a start waits: a terminal that answers at all answers the cursor
-    /// position in well under 8 ms, and one that answers it may take longer
-    /// over the candidate's question, which a slow link pays once.
+    /// What a start waits: 8 ms for the cursor position alone, past which the
+    /// terminal is taken not to answer, and up to 2 s for the candidate's
+    /// reply and the cursor position behind it.
     pub const STARTUP: Self = Self {
         patience: Duration::from_millis(8),
         reply: Duration::from_secs(2),
