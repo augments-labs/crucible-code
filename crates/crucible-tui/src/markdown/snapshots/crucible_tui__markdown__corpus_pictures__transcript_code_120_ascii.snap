@@ -18,7 +18,9 @@ A fence that names nothing:
                                                                                                                         
 And a block indented four spaces, after a blank line:                                                                   
                                                                                                                         
-    let x = <Figure>1</>;                                                                                                          
-    let y = <Figure>2</>;                                                                                                          
+<Quiet>+-</>                                                                                                                      
+<Quiet>| </><Quiet>let x = 1;</>                                                                                                            
+<Quiet>| </><Quiet>let y = 2;</>                                                                                                            
+<Quiet>+-</>                                                                                                                      
                                                                                                                         
 The corpus ends here.

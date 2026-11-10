@@ -2834,6 +2834,28 @@ fn a_native_answer_cut_anywhere_draws_the_setext_heading_the_whole_answer_draws(
 }
 
 #[test]
+fn a_native_answer_cut_anywhere_draws_the_indented_block_the_whole_answer_draws() {
+    let answer = "para\n\n    let total = first_value + second_value;\n\n    done();\n---\n\nmore\n\n    code\n===\n";
+    let whole = kept_natively(40, Glyphs::Unicode, &[answer]);
+    for row in ["┌─", "│ done();", "└─", "│ code", "==="] {
+        assert!(
+            whole.iter().any(|kept| kept.trim_start() == row),
+            "{row:?} is not kept: {whole:#?}"
+        );
+    }
+    assert!(
+        whole.iter().any(|row| row.trim_start().starts_with('┆')),
+        "no wrapped code row: {whole:#?}"
+    );
+    assert!(!whole.iter().any(|row| row.contains('━')), "{whole:#?}");
+
+    for cut in 1..answer.len() {
+        let rows = kept_natively(40, Glyphs::Unicode, &[&answer[..cut], &answer[cut..]]);
+        assert_eq!(rows, whole, "cut at {cut} of {answer:?}");
+    }
+}
+
+#[test]
 fn a_native_title_that_proved_prose_reaches_the_scrollback_once_as_the_prose_it_was() {
     let rows = kept_natively(40, Glyphs::Unicode, &["Title\n", "not an underline\n"]);
     assert_eq!(rows, ["Title", "not an underline"]);
@@ -2870,6 +2892,39 @@ fn a_native_wrapped_quote_keeps_its_bar_on_every_row() {
         for row in &rows {
             assert!(row.starts_with("│ "), "{row:?} lost the quote bar");
         }
+    }
+}
+
+#[test]
+fn a_native_wrapped_alert_keeps_its_bar_on_every_row() {
+    let answer = format!("> [!NOTE]\n> a body {LONG_ITEM}\n");
+    for resized in [None, Some((30, 12))] {
+        let columns = if resized.is_some() { 60 } else { 30 };
+        let rows = answered_natively(&Window::new(columns, 12), &answer, resized);
+
+        assert!(rows.len() > 3, "{rows:#?}");
+        assert_eq!(rows.first().map(String::as_str), Some("▎ ◆ Note"));
+        for row in &rows {
+            assert!(row.starts_with("▎ "), "{row:?} lost the alert bar");
+        }
+    }
+}
+
+#[test]
+fn a_native_answer_cut_anywhere_draws_the_alert_the_whole_answer_draws() {
+    let answer = "> [!WARNING]\n> a body long enough that it has to wrap onto another row\n\n> [!tip]\n> more\n";
+    let whole = kept_natively(40, Glyphs::Unicode, &[answer]);
+    for row in ["▎ ▲ Warning", "▎ ✓ Tip", "▎ more"] {
+        assert!(
+            whole.iter().any(|kept| kept == row),
+            "{row:?} is not kept: {whole:#?}"
+        );
+    }
+    assert!(!whole.iter().any(|row| row.contains("[!")), "{whole:#?}");
+
+    for cut in 1..answer.len() {
+        let rows = kept_natively(40, Glyphs::Unicode, &[&answer[..cut], &answer[cut..]]);
+        assert_eq!(rows, whole, "cut at {cut} of {answer:?}");
     }
 }
 

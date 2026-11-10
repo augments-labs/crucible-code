@@ -465,6 +465,67 @@ impl Glyphs {
         }
     }
 
+    /// The bar down the left of an alert, on each line of it.
+    ///
+    /// Not [`Glyphs::vertical`] where the set can draw another, so an alert
+    /// reads as a quote with a mark on it rather than as a quote. The ascii set
+    /// has one bar, which is also a quote's.
+    #[must_use]
+    pub(crate) fn alerted(self) -> &'static str {
+        match self {
+            Self::Unicode => "\u{258e}",
+            Self::Ascii => "|",
+        }
+    }
+
+    /// The mark of a note, which is [`Glyphs::told`] as a shape and is its own
+    /// method so that neither follows the other.
+    #[must_use]
+    pub(crate) fn noted(self) -> &'static str {
+        match self {
+            Self::Unicode => "\u{25c6}",
+            Self::Ascii => "*",
+        }
+    }
+
+    /// The mark of a tip.
+    #[must_use]
+    pub(crate) fn advised(self) -> &'static str {
+        match self {
+            Self::Unicode => "\u{2713}",
+            Self::Ascii => "+",
+        }
+    }
+
+    /// The mark of an alert that says something must not be missed.
+    ///
+    /// A filled square in the unicode set and `#` in the ascii one.
+    #[must_use]
+    pub(crate) fn urged(self) -> &'static str {
+        match self {
+            Self::Unicode => "\u{25a0}",
+            Self::Ascii => "#",
+        }
+    }
+
+    /// The mark of a warning.
+    #[must_use]
+    pub(crate) fn warned(self) -> &'static str {
+        match self {
+            Self::Unicode => "\u{25b2}",
+            Self::Ascii => "!",
+        }
+    }
+
+    /// The mark of a caution.
+    #[must_use]
+    pub(crate) fn cautioned(self) -> &'static str {
+        match self {
+            Self::Unicode => "\u{2717}",
+            Self::Ascii => "x",
+        }
+    }
+
     /// The mark on a task nobody has started.
     #[must_use]
     pub fn open(self) -> &'static str {
@@ -745,6 +806,72 @@ mod tests {
                     "{glyphs:?}: {mark:?} twice"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn the_five_marks_of_an_alert_are_five_different_one_column_marks_in_both_sets() {
+        // The mark and the word beside it are what name the kind where colour
+        // says nothing, so two kinds drawn alike in one set cannot be told
+        // apart on a terminal with no colour. One column apiece, because the
+        // word after the mark starts in the same column for every kind.
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let marks = [
+                glyphs.noted(),
+                glyphs.advised(),
+                glyphs.urged(),
+                glyphs.warned(),
+                glyphs.cautioned(),
+            ];
+
+            for mark in marks {
+                assert_eq!(columns(mark), 1, "{glyphs:?}: {mark:?}");
+            }
+            for (at, mark) in marks.iter().enumerate() {
+                assert!(
+                    !marks.iter().skip(at + 1).any(|other| other == mark),
+                    "{glyphs:?}: {mark:?} twice"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_bar_of_an_alert_is_one_column_and_a_mark_of_none_of_its_kinds() {
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            assert_eq!(columns(glyphs.alerted()), 1, "{glyphs:?}");
+            for mark in [
+                glyphs.noted(),
+                glyphs.advised(),
+                glyphs.urged(),
+                glyphs.warned(),
+                glyphs.cautioned(),
+            ] {
+                assert_ne!(glyphs.alerted(), mark, "{glyphs:?}");
+            }
+        }
+        assert_ne!(Glyphs::Unicode.alerted(), Glyphs::Unicode.vertical());
+    }
+
+    #[test]
+    fn the_bar_and_the_five_marks_of_an_alert_are_exactly_these_in_both_sets() {
+        assert_eq!(Glyphs::Unicode.alerted(), "▎");
+        assert_eq!(Glyphs::Ascii.alerted(), "|");
+        for (glyphs, marks) in [
+            (Glyphs::Unicode, ["◆", "✓", "■", "▲", "✗"]),
+            (Glyphs::Ascii, ["*", "+", "#", "!", "x"]),
+        ] {
+            assert_eq!(
+                [
+                    glyphs.noted(),
+                    glyphs.advised(),
+                    glyphs.urged(),
+                    glyphs.warned(),
+                    glyphs.cautioned(),
+                ],
+                marks,
+                "{glyphs:?}"
+            );
         }
     }
 

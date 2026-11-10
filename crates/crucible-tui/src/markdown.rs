@@ -54,10 +54,36 @@
 //! past its cap says so in its top edge. `framed` reads such a row back by its
 //! gutter, and breaks it where the room runs out rather than at a space.
 //!
+//! A block indented four spaces after a blank line is code as well, outside an
+//! item of a list, and is drawn in the same frame with no name in its top
+//! edge. The spaces a line that could be one of its lines opens with are
+//! counted rather than read, until the first thing that is not a space says
+//! whether they were: four or more open or carry on the block, the rest past
+//! the fourth being the code's own, and fewer read again as the line they
+//! began. A blank line inside the block is counted too, since only the line
+//! after it says whether it was the block's or stood after it; the first line
+//! that is not blank and is indented less shuts the block with its bottom
+//! edge, and the end of the message shuts it as well.
+//!
 //! A quote's bar and an item's mark are drawn in slots of their own, and
 //! `hang` reads them back off a line to say what a row that line wraps onto
 //! stands in front of its words with. The reader decides where a line ends and
 //! nothing about where it wraps; the record that folds it asks.
+//!
+//! A quote whose first line is nothing but `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`,
+//! `[!WARNING]` or `[!CAUTION]`, in any letter case, is an alert: each row of
+//! it, a `> ` that opens the line or follows spaces, is drawn behind a bar of
+//! its own, and the first holds the kind's mark and its word in place of the
+//! marker. It ends at the first line that is not such a row, a bare `>` among
+//! them, and at a table whose first line opens with `|`, a heading's underline
+//! or a display formula, which take their lines whole; a quote row after any of
+//! them is a quote of its own, but one straight after a table whose first line
+//! does not open with `|`, such as `a | b` over `- | -` or over `| - | - |`, is
+//! one more row of that table. What a first line is cannot be told until it
+//! ends, so the bar of a quote's first line is owed like a bullet's mark and
+//! nothing of a marker is drawn before its break.
+//! Every other quote, including one naming a kind that is not one of the five,
+//! is drawn as it always was.
 //!
 //! On the way out, each settled run is told by the kind of thing it is, which
 //! is what a design colours: a span of code that names a file is a path, and a
@@ -494,12 +520,12 @@ pub(crate) struct Hang {
 /// How the line `row` hangs when it wraps, where it opens with a quote's bar
 /// or an item's mark.
 ///
-/// The bar of a quote, the mark of a bullet or a task and the number of a
-/// numbered item are what this reader draws in front of an item's words, each
-/// followed by the space that parts it from them. Rows after the first stand
-/// the bar again where there was one and leave the columns of the rest blank,
-/// so a number of two digits hangs two columns further than one of one, and
-/// the indentation that nested the item is kept with it.
+/// The bar of a quote or of an alert, the mark of a bullet or a task and the
+/// number of a numbered item are what this reader draws in front of an item's
+/// words, each followed by the space that parts it from them. Rows after the
+/// first stand the bar again where there was one and leave the columns of the
+/// rest blank, so a number of two digits hangs two columns further than one of
+/// one, and the indentation that nested the item is kept with it.
 ///
 /// `None` for a line that opens with none of them: it wraps flush, as prose
 /// does. A mark with no space after it is not one.
@@ -516,8 +542,9 @@ pub(crate) fn hang(row: &Row) -> Option<Hang> {
             columns += text.len();
         } else if slot == Slot::Quiet
             && [Glyphs::Unicode, Glyphs::Ascii]
-                .map(Glyphs::vertical)
-                .contains(&text)
+                .into_iter()
+                .flat_map(|glyphs| [glyphs.vertical(), glyphs.alerted()])
+                .any(|bar| bar == text)
         {
             spans.next();
             if spans.next_if(|&(_, next)| next == " ").is_none() {
@@ -919,6 +946,91 @@ enum Marked {
     Done,
 }
 
+/// What a line that opened with a quote mark is part of.
+///
+/// The bar of a quote's first line is owed, like a bullet's mark, because what
+/// the quote is cannot be told until its first line is over: `> [!NOTE]` with
+/// nothing after it is the header of an alert, and the bar down its left is
+/// not the bar of a plain quote. Every later line of a quote knows what it is
+/// part of and draws its bar at once.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Quoted {
+    /// The line opened with no quote mark.
+    #[default]
+    Not,
+    /// The first line of a quote, whose bar has not been drawn.
+    Owed,
+    /// A line of a quote, bar drawn or not owed.
+    Plain,
+    /// A line of an alert, which wears its bar on every row.
+    Alert,
+}
+
+/// The kinds of alert an answer can write, as `> [!KIND]` on the first line of
+/// a quote with nothing after it.
+///
+/// A closed set, as GitHub's own is: a quote naming anything else is a quote
+/// and shows what was written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Alert {
+    Note,
+    Tip,
+    Important,
+    Warning,
+    Caution,
+}
+
+impl Alert {
+    /// The kind a marker names, in any case, or `None` for words that are not
+    /// the whole of one: `[!NOTES]` is a bracket somebody wrote.
+    fn of(marker: &str) -> Option<Self> {
+        let kind = marker.strip_prefix('!')?;
+        [
+            Self::Note,
+            Self::Tip,
+            Self::Important,
+            Self::Warning,
+            Self::Caution,
+        ]
+        .into_iter()
+        .find(|alert| kind.eq_ignore_ascii_case(alert.word()))
+    }
+
+    /// The word the alert is shown under.
+    fn word(self) -> &'static str {
+        match self {
+            Self::Note => "Note",
+            Self::Tip => "Tip",
+            Self::Important => "Important",
+            Self::Warning => "Warning",
+            Self::Caution => "Caution",
+        }
+    }
+
+    /// The slot the alert's mark wears, which is what tells the kinds apart by
+    /// ink: the bar, the space and the word are the same for every kind.
+    fn slot(self) -> Slot {
+        match self {
+            Self::Note => Slot::Link,
+            Self::Tip => Slot::Done,
+            Self::Important => Slot::Accent,
+            Self::Warning => Slot::Doing,
+            Self::Caution => Slot::Trouble,
+        }
+    }
+
+    /// The mark in front of the word, out of the set being drawn with.
+    fn mark(self, glyphs: Glyphs) -> &'static str {
+        match self {
+            Self::Note => glyphs.noted(),
+            Self::Tip => glyphs.advised(),
+            Self::Important => glyphs.urged(),
+            Self::Warning => glyphs.warned(),
+            Self::Caution => glyphs.cautioned(),
+        }
+    }
+}
+
 /// What is open on the line being read.
 ///
 /// Most of it ends where the line does. Emphasis is the exception, because a
@@ -938,8 +1050,8 @@ struct Line {
     /// What the line's bullet is marked with, where it has one.
     marked: Marked,
     /// Whether the line opened with a quote mark, so the rest of it is
-    /// somebody else's words.
-    quoted: bool,
+    /// somebody else's words, and what kind of quote it is part of.
+    quoted: Quoted,
     emphasis: Emphasis,
     /// Whether the gutter of a line of code has gone out.
     ///
@@ -999,11 +1111,11 @@ enum Retract {
 
 /// What the scan is in the middle of, across lines.
 ///
-/// The fence is the one thing a line break does not end — that is what a fence
-/// is for, and a block of code is the one place where running past its end is
-/// less wrong than stopping at the first line of it. So one the model never
-/// closes does run to the end of the message; the message boundary is where it
-/// is cleared.
+/// A block of code is the one thing a line break does not end — that is what a
+/// fence is for, and a block of code is the one place where running past its
+/// end is less wrong than stopping at the first line of it. So one the model
+/// never closes does run to the end of the message; the message boundary is
+/// where it is cleared.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 enum Inside {
     #[default]
@@ -1014,7 +1126,62 @@ enum Inside {
     Fence,
     /// The rest of a closing fence's line.
     Closing,
+    /// A block indented four spaces after a blank line, until a line that is
+    /// not blank and is indented less than that ends it.
+    Indented,
 }
+
+/// How the line being read opened, as far as that has arrived.
+///
+/// Read once per line, at its first characters, because two things are
+/// decided there and nowhere else: whether the line is a line of an indented
+/// block of code, which its spaces say, and whether it opens an item numbered
+/// `1.` or `1)`, after which an indented line is the item's and not code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Lead {
+    /// Only spaces so far, this many of them.
+    Margin(usize),
+    /// Digits after the spaces, this many of them: the number of an item, if
+    /// a stop and a space follow.
+    Number(usize),
+    /// The stop after an item's number, waiting for the space that makes it
+    /// one.
+    Stopped,
+    /// The line has said what it opened with.
+    Read,
+}
+
+impl Default for Lead {
+    /// A line nothing of has arrived.
+    fn default() -> Self {
+        Self::Margin(0)
+    }
+}
+
+/// What the line before this one was, as far as a block indented four spaces
+/// cares: one may open only after a blank line.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Above {
+    /// Something was written on it, or there was none.
+    #[default]
+    Written,
+    Blank,
+}
+
+/// Whether an item of a list is open, across the lines under it.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Item {
+    #[default]
+    Shut,
+    Open,
+}
+
+/// The most digits an item's number is written with, as markdown allows: a
+/// longer run of digits opens no item.
+const NUMBERED: usize = 9;
+
+/// How many spaces in front of a line make it a line of code.
+const CODE: usize = 4;
 
 /// Which part of a link's shape is arriving.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -1299,6 +1466,35 @@ pub struct Markdown {
     /// Whether the fence on this line opened it, and how many marks it took,
     /// for the end of the line to rebuild it from where the block is held.
     fence: Option<(bool, usize)>,
+    /// How this line opened, as far as that has arrived.
+    ///
+    /// Where the line could be one of an indented block — inside one, or
+    /// after a blank line where a block may open — its spaces are held here
+    /// rather than read, until the first thing that is not a space says how
+    /// many of them were the block's.
+    lead: Lead,
+    /// Whether the line before this one was blank, so a block indented four
+    /// spaces may open on this one. Carried across a line, since it is a fact
+    /// about the line before.
+    above: Above,
+    /// Whether an item of a list is open, so a line indented under it is the
+    /// item's and not code.
+    ///
+    /// Opened by a bullet or a number at the start of a line and shut by a
+    /// line after a blank one that starts at the margin; carried across lines
+    /// until then.
+    item: Item,
+    /// What the line before this one was part of, so a line that opens with a
+    /// quote mark knows whether it starts a quote or goes on with one.
+    ///
+    /// Carried across a line like [`Markdown::above`]: a line that is no row
+    /// of the quote, whatever it is written with, ends it, and an alert with
+    /// it.
+    quoting: Quoted,
+    /// The blank lines inside an indented block that have not been drawn,
+    /// because the line after them decides whether they were the block's or
+    /// stood after it. Counted rather than kept: a blank line is a blank line.
+    gap: usize,
 }
 
 /// The most of one line of code that is held back to be read.
@@ -1519,6 +1715,14 @@ impl Markdown {
                 self.passing = None;
             }
 
+            // How the line opened: the spaces in front of what may be a line
+            // of an indented block are held until it is or it is not, and
+            // whatever opened the line is read before anything below sees it.
+            if self.leads(character, room, say) {
+                run = next;
+                continue;
+            }
+
             // The start of a line that could be display math is held until
             // it is or it is not.
             if self.probes(character) {
@@ -1538,6 +1742,13 @@ impl Markdown {
             // so that a line that opens like display math and is not is watched
             // from the character it opened with.
             if self.opens_title(character) {
+                // Spaces in front of a line do not say whether it leaves the
+                // quote. The first character after them says that: `margin`
+                // hands it to `leaves_quote`, or, when it is a quote mark, the
+                // mark reader decides.
+                if character != ' ' {
+                    self.leaves_quote(character);
+                }
                 self.table = Some(Table::bare());
             }
             if self.table.as_ref().is_some_and(Table::mirrors) && self.mirrored(character) {
@@ -1635,6 +1846,7 @@ impl Markdown {
                 run = next;
             } else if self.opens_table(character) {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
+                self.leaves_quote(character);
                 self.table = Some(Table::opening());
                 self.tabled(character, room, say);
                 run = next;
@@ -1748,6 +1960,7 @@ impl Markdown {
                 self.probe = Probe::Done;
                 // Display math is no paragraph line, whatever stood in front
                 // of it.
+                self.leaves_quote(character);
                 self.table = None;
                 self.gathering = Some(Gathering {
                     held: Held::DisplayMath,
@@ -1832,6 +2045,202 @@ impl Markdown {
         self.gathering = Some(gathering);
     }
 
+    /// Whether a line opening here may be a line of an indented block, so the
+    /// spaces in front of it are held until it is or it is not.
+    ///
+    /// Inside one, always. Otherwise only in prose after a blank line, since a
+    /// paragraph's next line is the paragraph's however far in it starts, and
+    /// not under an item of a list, whose lines are indented to be its own.
+    fn indents(&self) -> bool {
+        self.inside == Inside::Indented
+            || (self.inside == Inside::Prose
+                && self.above == Above::Blank
+                && self.item == Item::Shut
+                && self.passing.is_none())
+    }
+
+    /// Reads `character` into how the line opened. Answers whether it was
+    /// taken: held, or read already with the spaces held in front of it.
+    fn leads(
+        &mut self,
+        character: char,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) -> bool {
+        match self.lead {
+            Lead::Margin(spaces) if character == ' ' => {
+                self.lead = Lead::Margin(spaces.saturating_add(1));
+                self.indents()
+            }
+            Lead::Margin(spaces) => {
+                self.lead = Lead::Read;
+                self.margin(spaces, character, room, say)
+            }
+            Lead::Number(digits) => {
+                self.lead = match character {
+                    '0'..='9' if digits < NUMBERED => Lead::Number(digits.saturating_add(1)),
+                    '.' | ')' => Lead::Stopped,
+                    _ => Lead::Read,
+                };
+                false
+            }
+            Lead::Stopped => {
+                if character == ' ' {
+                    self.item = Item::Open;
+                }
+                self.lead = Lead::Read;
+                false
+            }
+            Lead::Read => false,
+        }
+    }
+
+    /// Reads the first character of a line that is not a space, with `spaces`
+    /// in front of it. Answers whether it was taken.
+    ///
+    /// Four spaces or more inside an indented block carry it on, and what is
+    /// past the fourth is the code's own; fewer end it on any line but a blank
+    /// one. After a blank line, four or more open one, its top edge said here
+    /// before anything on the line.
+    fn margin(
+        &mut self,
+        spaces: usize,
+        character: char,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) -> bool {
+        // Worked out before anything below changes what it asks.
+        let held = spaces > 0 && self.indents();
+
+        // Where a line indented by spaces says whether it is a row of the
+        // quote carried: a quote mark here leaves that to the mark reader, and
+        // anything else is no row of it.
+        if spaces > 0 {
+            self.leaves_quote(character);
+        }
+
+        if self.inside == Inside::Indented {
+            // Whether a blank line is the block's is the next line's to say.
+            if character == '\n' {
+                self.gap = self.gap.saturating_add(1);
+                self.lead = Lead::Margin(0);
+                return true;
+            }
+            if spaces >= CODE {
+                for _ in 0..std::mem::take(&mut self.gap) {
+                    say(Slot::Quiet, chrome::gutter(self.glyphs), None);
+                    say(Slot::Quiet, "\n", None);
+                }
+                self.indent = spaces - CODE;
+                return false;
+            }
+            self.shuts(say);
+        }
+        if self.inside != Inside::Prose {
+            return false;
+        }
+
+        if held && spaces >= CODE && character != '\n' {
+            let frame = Frame {
+                label: Label::new("", self.glyphs),
+                refusal: None,
+            };
+            say(Slot::Quiet, &frame.top(), None);
+            say(Slot::Quiet, "\n", None);
+            self.inside = Inside::Indented;
+            self.above = Above::Written;
+            self.indent = spaces - CODE;
+            return false;
+        }
+
+        if character != '\n' {
+            // A line at the margin after a blank one is no item's.
+            if self.above == Above::Blank && spaces == 0 {
+                self.item = Item::Shut;
+            }
+            self.above = Above::Written;
+        }
+        let taken = held && self.replays(spaces, character, room, say);
+        if character.is_ascii_digit() {
+            self.lead = Lead::Number(1);
+        }
+        taken
+    }
+
+    /// Reads `spaces` held in front of `character` again, as they would have
+    /// been read had nothing held them. Answers whether `character` was read
+    /// with them.
+    ///
+    /// A break is not: the spaces in front of one are a blank line's, which
+    /// nothing claims. Anything else is, because it decides what they were --
+    /// an item's indentation, or part of a rule's or a fence's line.
+    fn replays(
+        &mut self,
+        spaces: usize,
+        character: char,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) -> bool {
+        if character == '\n' {
+            self.blanks(spaces, room, say);
+            return false;
+        }
+        // Fewer than the four that would have opened a block.
+        let mut written = String::from(SPACES.get(..spaces).unwrap_or_default());
+        written.push(character);
+        self.scan(&written, room, say);
+        true
+    }
+
+    /// Reads `spaces` held at the start of a line again, with nothing after
+    /// them.
+    fn blanks(
+        &mut self,
+        spaces: usize,
+        room: usize,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) {
+        let mut left = spaces;
+        while left > 0 {
+            let some = left.min(SPACES.len());
+            self.scan(SPACES.get(..some).unwrap_or_default(), room, say);
+            left -= some;
+        }
+    }
+
+    /// Ends the indented block being read, on a line that is not its own: its
+    /// bottom edge, then the blank lines that stood between it and this line.
+    fn shuts(&mut self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        self.inside = Inside::Prose;
+        say(Slot::Quiet, chrome::bottom(self.glyphs), None);
+        say(Slot::Quiet, "\n", None);
+        let gap = std::mem::take(&mut self.gap);
+        for _ in 0..gap {
+            say(Slot::Plain, "\n", None);
+        }
+        self.above = if gap > 0 {
+            Above::Blank
+        } else {
+            Above::Written
+        };
+    }
+
+    /// Lets go of the spaces a line the message ended on opened with, and of
+    /// the indented block it ended in.
+    fn unindent(&mut self, room: usize, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        let Lead::Margin(spaces) = self.lead else {
+            return;
+        };
+        let held = spaces > 0 && self.indents();
+        self.lead = Lead::Read;
+        if self.inside == Inside::Indented {
+            self.shuts(say);
+        }
+        if held {
+            self.blanks(spaces, room, say);
+        }
+    }
+
     /// Whether `character` starts a run of markers where the scan stands.
     fn marks(&self, character: char) -> bool {
         match self.inside {
@@ -1839,7 +2248,9 @@ impl Markdown {
             // and only at the start of a line. Code is full of the others.
             Inside::Fence => character == self.fenced && !self.started,
             // A fence's own line is dropped whole; nothing on it marks anything.
-            Inside::Opening | Inside::Closing => false,
+            // An indented block has no fence to close it, and is code like any
+            // other.
+            Inside::Opening | Inside::Closing | Inside::Indented => false,
             Inside::Prose => match character {
                 '`' => true,
                 // Inside a span the backtick above is the only marker left,
@@ -1974,6 +2385,7 @@ impl Markdown {
             '-' | '+' | '*' if held.opened && held.count == 1 && next == ' ' => {
                 self.opens_block();
                 self.line.marked = Marked::Owed;
+                self.item = Item::Open;
                 true
             }
             // A quote is a bar down the left and the words beside it, which is
@@ -1981,12 +2393,21 @@ impl Markdown {
             // quiet, and the words are a quote's, which is quiet too unless
             // the design says otherwise: the point of a quote is that the
             // words are somebody else's.
+            //
+            // The first line of a quote owes its bar until its line says what
+            // the quote is: an alert's header has a bar of its own. A line
+            // that goes on with a quote knows already.
             '>' if held.opened && held.count == 1 && next == ' ' => {
                 self.opens_block();
-                self.line.quoted = true;
+                self.line.quoted = match self.quoting {
+                    Quoted::Plain => Quoted::Plain,
+                    Quoted::Alert => Quoted::Alert,
+                    Quoted::Not | Quoted::Owed => Quoted::Owed,
+                };
                 self.spend(say);
-                say(Slot::Quiet, self.glyphs.vertical(), None);
-                say(Slot::Quiet, " ", None);
+                if self.line.quoted != Quoted::Owed {
+                    self.bar(say);
+                }
                 true
             }
             // Exactly two, because that is the only run markdown has ever
@@ -2154,6 +2575,7 @@ impl Markdown {
             self.lays(&table, room, say);
             self.line = Line::default();
             self.started = false;
+            self.lead = Lead::default();
             return false;
         }
 
@@ -2293,6 +2715,7 @@ impl Markdown {
         self.previous = '\0';
         self.started = false;
         self.line = Line::default();
+        self.lead = Lead::default();
         self.probe = Probe::default();
         self.atx = None;
     }
@@ -2319,6 +2742,7 @@ impl Markdown {
     /// whole, a bracket that turned out not to be one, or the break of an item
     /// with nothing after its marker at all.
     fn pay(&mut self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        self.pay_bar(say);
         if self.line.marked != Marked::Owed {
             return;
         }
@@ -2326,6 +2750,66 @@ impl Markdown {
         self.line.marked = Marked::Drawn;
         say(Slot::Bullet, self.glyphs.bullet(), None);
         say(Slot::Quiet, " ", None);
+    }
+
+    /// Draws the bar of a quote's first line, where it is owed.
+    ///
+    /// Paid wherever a bullet's mark is, and before it: the bar is the
+    /// outermost thing on the row.
+    fn pay_bar(&mut self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        if self.line.quoted == Quoted::Owed {
+            self.line.quoted = Quoted::Plain;
+            self.bar(say);
+        }
+    }
+
+    /// Ends the quote the line before was part of, and an alert with it, when
+    /// `first` shows the line to be no row of one.
+    ///
+    /// `first` is what each caller has when it knows what the line is: the
+    /// first character of the line that is not a space for a header, a table
+    /// of bars and a line indented by spaces, and for display math the
+    /// character that completes its opener, the second `$` of `$$`, the `[` of
+    /// `\[` or the `}` of `\begin{…}`. Said by each place that opens a block
+    /// taking its lines whole: those lines never reach [`Markdown::end_line`],
+    /// which is where a line says what it was part of, so a quote row after the
+    /// block would go on with a quote that the block has already ended. A quote
+    /// mark is left alone: the mark reader decides whether the line is a row of
+    /// the quote still carried.
+    fn leaves_quote(&mut self, first: char) {
+        if first != '>' && self.line.quoted == Quoted::Not {
+            self.quoting = Quoted::Not;
+        }
+    }
+
+    /// Draws the bar down the left of a line of a quote, and the space that
+    /// parts it from the words.
+    fn bar(&mut self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        let bar = match self.line.quoted {
+            Quoted::Alert => self.glyphs.alerted(),
+            _ => self.glyphs.vertical(),
+        };
+        say(Slot::Quiet, bar, None);
+        say(Slot::Quiet, " ", None);
+    }
+
+    /// Whether what is held at a line's end is the whole of an alert's marker,
+    /// on the first line of a quote.
+    fn alerts(&self, link: &Link) -> Option<Alert> {
+        (self.line.quoted == Quoted::Owed && link.part == Part::Between)
+            .then(|| Alert::of(&link.label))
+            .flatten()
+    }
+
+    /// Draws the header row of an alert: its bar, its mark and its word.
+    ///
+    /// The marker is not shown; the row says what it meant.
+    fn headline(&mut self, alert: Alert, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        self.line.quoted = Quoted::Alert;
+        self.bar(say);
+        say(alert.slot(), alert.mark(self.glyphs), None);
+        say(Slot::Plain, " ", None);
+        say(Slot::Bold, alert.word(), None);
     }
 
     /// Whether what a bullet is holding is a task's box rather than a link.
@@ -2344,6 +2828,7 @@ impl Markdown {
     /// Draws a task's box in place of the bullet's mark, and says whether the
     /// task is one somebody has finished.
     fn tick(&mut self, label: &str, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        self.pay_bar(say);
         if matches!(label, "x" | "X") {
             self.line.marked = Marked::Done;
             say(Slot::DoneMark, self.glyphs.done(), None);
@@ -2390,6 +2875,16 @@ impl Markdown {
             }
             (Part::Label, held) if carries => link.label.push(held),
             (Part::Target, held) if carries => link.target.push(held),
+            // The marker of an alert is the whole of its line. The break
+            // is the character that says so, and is the caller's again: the
+            // header is drawn in place of the marker and the line ends as any
+            // other does.
+            (Part::Between, '\n') if self.alerts(&link).is_some() => {
+                if let Some(alert) = self.alerts(&link) {
+                    self.headline(alert, say);
+                }
+                return false;
+            }
             // A box takes the bullet's mark rather than following it, which is
             // why this stands above the arm that puts a bracket back: the
             // space after `]` is the marker's own and goes with it.
@@ -2618,6 +3113,8 @@ impl Markdown {
                 say(Said::Run { slot, text, link });
             });
         };
+        // Before what the rest of the line held, since the spaces came first.
+        self.unindent(room, &mut tell);
         self.close(room, &mut tell);
 
         // A fence's own line that the message ended in the middle of is a line
@@ -2625,6 +3122,13 @@ impl Markdown {
         // line that closes it whether or not a break follows.
         if matches!(self.inside, Inside::Opening | Inside::Closing) {
             self.end_line(room, &mut tell);
+        }
+
+        // So is a line of an indented block, and the block is shut after it,
+        // since nothing but a line of its own could have carried it on.
+        if self.inside == Inside::Indented {
+            self.end_line(room, &mut tell);
+            self.shuts(&mut tell);
         }
 
         // The heading the message ended in the middle of has its rule all the
@@ -2718,6 +3222,13 @@ impl Markdown {
         // arrived, so it was in front of nothing.
         if std::mem::take(&mut self.escaped) {
             self.say("\\", say);
+        }
+
+        // The end of the message is the break the marker of an alert was
+        // waiting for, and the header is drawn before the bar it owes is.
+        if let Some(alert) = self.link.as_ref().and_then(|link| self.alerts(link)) {
+            self.link = None;
+            self.headline(alert, say);
         }
 
         // After the settle above, so a fence at the very end of a message has
@@ -2827,8 +3338,8 @@ impl Markdown {
         let blocked = ready.is_some();
 
         *self = Self {
-            // The fence is the one thing carried over, and a fence's own line
-            // is where its effect begins or ends. The glyphs are not carried
+            // A block of code is the one thing carried over, and a fence's own
+            // line is where its effect begins or ends. The glyphs are not carried
             // over so much as never given up: they are what the terminal can
             // draw, which no line of an answer changes. Nor is whether blocks
             // are held, or a block that has just closed and not yet gone out,
@@ -2845,6 +3356,15 @@ impl Markdown {
             ready,
             gathering: held,
             passing: self.passing.take(),
+            // Nor what the line said about the next one: whether it was blank,
+            // and whether an item it was under is still open.
+            above: if ended == Inside::Prose && !self.started {
+                Above::Blank
+            } else {
+                Above::Written
+            },
+            item: self.item,
+            quoting: self.line.quoted,
             ..Self::default()
         };
 
@@ -2906,7 +3426,9 @@ impl Markdown {
     /// One run, so that whatever folds the row afterwards can tell it from
     /// the rest by what it says: see [`framed`].
     fn gutter(&mut self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
-        if self.inside == Inside::Fence && self.line.gutter == Gutter::Owed {
+        if matches!(self.inside, Inside::Fence | Inside::Indented)
+            && self.line.gutter == Gutter::Owed
+        {
             self.line.gutter = Gutter::Put;
             say(Slot::Quiet, chrome::gutter(self.glyphs), None);
         }
@@ -2956,7 +3478,7 @@ impl Markdown {
     fn slot(&self) -> Slot {
         if self.inside != Inside::Prose {
             Slot::Quiet
-        } else if self.line.quoted {
+        } else if matches!(self.line.quoted, Quoted::Owed | Quoted::Plain) {
             Slot::Quote
         } else if self.line.code {
             // Above everything a phrase can otherwise be: backticks say the

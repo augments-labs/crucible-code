@@ -3835,6 +3835,19 @@ fn a_wrapped_quote_keeps_its_bar_in_ascii_too() {
 }
 
 #[test]
+fn a_wrapped_alert_keeps_its_bar_on_every_row() {
+    for (glyphs, bar, mark) in [(Glyphs::Unicode, "▎ ", "▲"), (Glyphs::Ascii, "| ", "!")] {
+        let rows = drawn_at_thirty(&format!("> [!WARNING]\n> a body {LONG}\n"), glyphs);
+
+        assert!(rows.len() > 3, "{rows:#?}");
+        assert_eq!(first_of(&rows), format!("{bar}{mark} Warning"), "{rows:#?}");
+        for row in &rows {
+            assert!(row.starts_with(bar), "{row:?} lost the alert bar");
+        }
+    }
+}
+
+#[test]
 fn a_wrapped_item_is_drawn_again_under_its_words_at_a_new_width() {
     let answer = format!("- a bullet item {LONG}\n\n> a quote {LONG}\n");
     let mut drawn = reading(60, 12);
@@ -3902,14 +3915,51 @@ fn every_cut_of_an_answer_draws_what_the_whole_answer_draws() {
         "text\nname | what it does\n--|--\nalpha | first\n",
     ];
 
-    for answer in corpus.into_iter().chain(tables) {
+    // Blocks indented four spaces after a blank line, one with a line that
+    // wraps at fifty columns and a blank line inside it, under which a dashed
+    // row is a rule and a row of equals is prose. Each one is drawn in a
+    // frame, so a reader that read them as prose would draw the same rows
+    // however they were cut and still fail here.
+    let indented = [
+        "para\n\n    let total = first_value + second_value + third_value;\n\n    done();\n---\n",
+        "more\n\n    code\n===\nend\n",
+    ];
+
+    // Alerts, whose marker a cut can split anywhere and whose rows wrap at
+    // fifty columns. Each whole answer is checked to be drawn behind the alert
+    // bar, because a reader that drew every marker as a plain quote would draw
+    // the same rows however they were cut and agree with itself.
+    let alerts = [
+        "> [!NOTE]\n> a body long enough that it has to wrap onto another row too\n\nafter\n",
+        "> [!caution]\n> first\n> second *leant* and **loud**\n\n> [!TIP]\n",
+        "> [!IMPORTANT]",
+    ];
+
+    for answer in corpus
+        .into_iter()
+        .chain(tables)
+        .chain(indented)
+        .chain(alerts)
+    {
         let mut whole = reading(50, 30);
         whole.answer(answer);
         let expected = whole.rows();
+        if alerts.contains(&answer) {
+            assert!(
+                expected.iter().any(|row| row.starts_with("▎ ")),
+                "{answer:?} drew no alert: {expected:#?}"
+            );
+        }
         if tables.contains(&answer) {
             assert!(
                 expected.iter().any(|row| row.contains('│')),
                 "{answer:?} drew no table: {expected:#?}"
+            );
+        }
+        if indented.contains(&answer) {
+            assert!(
+                expected.iter().any(|row| row.contains("┌─")),
+                "{answer:?} drew no frame: {expected:#?}"
             );
         }
 
