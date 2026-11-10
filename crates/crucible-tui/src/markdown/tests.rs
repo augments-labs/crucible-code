@@ -1246,7 +1246,7 @@ fn an_address_a_link_names_is_still_the_link_it_names() {
 }
 
 /// Every shape this file reads, as one answer each.
-const SHAPES: [&str; 16] = [
+const SHAPES: [&str; 19] = [
     "**strong** and *leaning* words",
     "a [link](https://example.com) here",
     "| a | b |\n|---|---|\n| 1 | 2 |\n",
@@ -1263,6 +1263,9 @@ const SHAPES: [&str; 16] = [
     "~~struck~~ words",
     "# heading\n",
     "para\n\n    let x = 1;\n\n    y\n---\n",
+    "> [!WARNING]\n> a *loud* body\n> and more\n\nafter\n",
+    "> [!NOTE] not an alert\n> [!TIP]\n",
+    "> [!CAUTION]",
 ];
 
 #[test]
@@ -3454,4 +3457,282 @@ fn indented_code_64_unicode() {
 #[test]
 fn indented_code_64_ascii() {
     insta::assert_snapshot!(corpus_pictures::picture(INDENTED_CODE, 64, Glyphs::Ascii));
+}
+
+// GitHub alerts: a quote whose first line is nothing but `[!KIND]`.
+
+/// Each alert kind as written, the word it is shown as, the slot its mark
+/// wears, and that mark in the unicode set and in the ascii one.
+const ALERTS: [(&str, &str, Slot, &str, &str); 5] = [
+    ("NOTE", "Note", Slot::Link, "◆", "*"),
+    ("TIP", "Tip", Slot::Done, "✓", "+"),
+    ("IMPORTANT", "Important", Slot::Accent, "■", "#"),
+    ("WARNING", "Warning", Slot::Doing, "▲", "!"),
+    ("CAUTION", "Caution", Slot::Trouble, "✗", "x"),
+];
+
+/// One whole answer in `glyphs`, read as these deltas and then ended.
+fn ended_as(glyphs: Glyphs, deltas: &[&str]) -> Vec<(Slot, String)> {
+    let mut markdown = Markdown::new(glyphs);
+    let mut said = Vec::new();
+    for delta in deltas {
+        said.extend(read(&mut markdown, delta));
+    }
+    markdown.finish_runs(ROOM, &mut |slot, text, _| {
+        said.push((slot, text.to_owned()));
+    });
+    said
+}
+
+#[test]
+fn an_alert_is_a_quiet_bar_on_every_row_with_its_mark_and_its_word_on_the_first() {
+    for (marker, word, slot, unicode, ascii) in ALERTS {
+        for (glyphs, bar, mark) in [(Glyphs::Unicode, "▎", unicode), (Glyphs::Ascii, "|", ascii)]
+        {
+            let said = ended_as(glyphs, &[&format!("> [!{marker}]\n> first\n> second\n")]);
+            let run = |slot: Slot, text: &str| (slot, text.to_owned());
+
+            assert_eq!(
+                said,
+                vec![
+                    run(Slot::Quiet, bar),
+                    run(Slot::Quiet, " "),
+                    run(slot, mark),
+                    run(Slot::Plain, " "),
+                    run(Slot::Bold, word),
+                    run(Slot::Plain, "\n"),
+                    run(Slot::Quiet, bar),
+                    run(Slot::Quiet, " "),
+                    run(Slot::Plain, "first"),
+                    run(Slot::Plain, "\n"),
+                    run(Slot::Quiet, bar),
+                    run(Slot::Quiet, " "),
+                    run(Slot::Plain, "second"),
+                    run(Slot::Plain, "\n"),
+                ],
+                "{marker} in {glyphs:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_alert_never_shows_its_marker() {
+    for (marker, ..) in ALERTS {
+        let text = drawn(&ended(&format!("> [!{marker}]\n> body\n")));
+
+        assert!(!text.contains("[!") && !text.contains(marker), "{text:?}");
+    }
+}
+
+#[test]
+fn an_alert_is_known_by_its_kind_in_any_case() {
+    assert_eq!(drawn(&ended("> [!tip]\n> body\n")), "▎ ✓ Tip\n▎ body\n");
+    assert_eq!(
+        drawn(&ended("> [!Caution]\n> body\n")),
+        "▎ ✗ Caution\n▎ body\n"
+    );
+}
+
+#[test]
+fn an_alert_that_ends_the_message_has_its_header_and_no_break() {
+    assert_eq!(drawn(&ended("> [!WARNING]")), "▎ ▲ Warning");
+}
+
+#[test]
+fn an_alert_with_nothing_under_it_is_its_header_row() {
+    assert_eq!(drawn(&ended("> [!NOTE]\n\nafter\n")), "▎ ◆ Note\n\nafter\n");
+}
+
+#[test]
+fn an_empty_row_of_an_alert_keeps_its_bar() {
+    assert_eq!(
+        drawn(&ended("> [!NOTE]\n> one\n> \n> two\n")),
+        "▎ ◆ Note\n▎ one\n▎ \n▎ two\n"
+    );
+}
+
+#[test]
+fn a_quote_with_an_unknown_kind_or_more_on_its_line_stays_a_quote() {
+    for answer in [
+        "> [!SECRET]\n> body\n",
+        "> [!NOTES]\n> body\n",
+        "> [! NOTE]\n> body\n",
+        "> [!NOTE] with words after it\n> body\n",
+        "> [!NOTE]x\n> body\n",
+        "> [!]\n> body\n",
+        "> [NOTE]\n> body\n",
+        "> a [!NOTE] in a sentence\n> body\n",
+    ] {
+        let text = drawn(&ended(answer));
+
+        assert_eq!(text, answer.replace("> ", "│ "), "{answer:?}");
+    }
+}
+
+#[test]
+fn a_marker_with_an_address_after_it_is_the_link_it_was() {
+    let said = ended("> [!NOTE](https://example.com)\n");
+
+    assert_eq!(drawn(&said), "│ !NOTE\n");
+}
+
+#[test]
+fn an_alert_marker_is_the_first_line_of_its_quote_only() {
+    assert_eq!(
+        drawn(&ended("> some words\n> [!NOTE]\n> more\n")),
+        "│ some words\n│ [!NOTE]\n│ more\n"
+    );
+    assert_eq!(
+        drawn(&ended("> [!NOTE]\n> [!TIP]\n")),
+        "▎ ◆ Note\n▎ [!TIP]\n"
+    );
+}
+
+#[test]
+fn a_marker_outside_a_quote_is_prose() {
+    assert_eq!(drawn(&ended("[!NOTE]\nbody\n")), "[!NOTE]\nbody\n");
+    assert_eq!(drawn(&ended("- [!NOTE]\n")), "• [!NOTE]\n");
+}
+
+#[test]
+fn an_alert_ends_where_its_quote_does() {
+    let said = ended("> [!NOTE]\n> body\nplain again\n> second\n\n> [!TIP]\n> third\n");
+
+    assert_eq!(
+        drawn(&said),
+        "▎ ◆ Note\n▎ body\nplain again\n│ second\n\n▎ ✓ Tip\n▎ third\n"
+    );
+}
+
+#[test]
+fn the_words_of_an_alert_keep_the_weight_the_answer_gave_them() {
+    let said = ended("> [!NOTE]\n> a **loud** word and `code`\n");
+
+    assert_eq!(
+        slots(&said)
+            .into_iter()
+            .skip_while(|slot| *slot != Slot::Bold)
+            .collect::<Vec<_>>(),
+        [
+            Slot::Bold,
+            Slot::Plain,
+            Slot::Quiet,
+            Slot::Plain,
+            Slot::Bold,
+            Slot::Plain,
+            Slot::Code,
+            Slot::Plain
+        ]
+    );
+}
+
+#[test]
+fn an_alert_hangs_under_its_bar() {
+    for (glyphs, bar) in [(Glyphs::Unicode, "▎ "), (Glyphs::Ascii, "| ")] {
+        assert_eq!(
+            hung_under("> [!NOTE]\n", glyphs),
+            Some((bar.len(), 2, bar.to_owned())),
+            "{glyphs:?}"
+        );
+    }
+}
+
+#[test]
+fn an_alert_cut_anywhere_draws_what_the_whole_alert_draws() {
+    // Inside its marker, between the marker and its break, and in the rows
+    // under it: the marker is held until the break says it was alone on its
+    // line, so a cut is never drawn as a quote that turned out to be an alert.
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        for (marker, ..) in ALERTS {
+            let answer = format!("> [!{marker}]\n> body *words*\n\n> [!{marker}] no\n> after\n");
+            let whole = ended_as(glyphs, &[&answer]);
+            assert!(
+                drawn(&whole).starts_with(&format!("{} ", glyphs.alerted())),
+                "{marker} drew no alert: {whole:?}"
+            );
+
+            for cut in 1..answer.len() {
+                let (first, second) = answer.split_at(cut);
+                let said = ended_as(glyphs, &[first, second]);
+
+                assert_eq!(drawn(&said), drawn(&whole), "{marker} cut at {cut}");
+                assert_eq!(slots(&said), slots(&whole), "{marker} cut at {cut}");
+            }
+        }
+    }
+}
+
+#[test]
+fn nothing_of_an_alert_is_drawn_before_its_break_says_it_was_one() {
+    let mut markdown = Markdown::default();
+
+    for delta in ["> [", "!", "WARN", "ING", "]"] {
+        assert_eq!(drawn(&read(&mut markdown, delta)), "", "after {delta:?}");
+    }
+    assert_eq!(drawn(&read(&mut markdown, "\n")), "▎ ▲ Warning\n");
+}
+
+#[test]
+fn an_alert_spends_its_colour_on_its_mark_alone_in_every_theme() {
+    // The first row of each kind, as the slots it was said under: a bar and a
+    // mark, then the word. Everything but the mark is quiet, plain or bold,
+    // which are the same in every theme by design, so whatever differs from
+    // one kind to the next is the mark.
+    let mut rows = Vec::new();
+    for (marker, word, slot, ..) in ALERTS {
+        let said = whole(&format!("> [!{marker}]\n> body\n"));
+        let first: Vec<(Slot, &str)> = said
+            .iter()
+            .take_while(|(_, text)| text != "\n")
+            .map(|(slot, text)| (*slot, text.as_str()))
+            .collect();
+        assert_eq!(
+            first.iter().map(|(slot, _)| *slot).collect::<Vec<_>>(),
+            [Slot::Quiet, Slot::Quiet, slot, Slot::Plain, Slot::Bold],
+            "{marker}: {first:?}"
+        );
+        assert_eq!(first.last().map(|(_, text)| *text), Some(word));
+
+        let mut row = crate::row::Row::new();
+        for (slot, text) in &said {
+            if text != "\n" {
+                row.push(*slot, text);
+            }
+        }
+        rows.push(row);
+    }
+    crate::colour_rule::holds("an alert", &rows, |_| false);
+
+    for theme in [Theme::Dark, Theme::Light, Theme::Ansi] {
+        let palette = Palette::resolve(true, theme, None, &|name| {
+            (name == "COLORTERM").then(|| "truecolor".to_owned())
+        });
+        let ink = |slot| palette.open(slot).as_str().to_owned();
+
+        assert_eq!(ink(Slot::Bold), "\x1b[1m", "{theme:?}: weight and no hue");
+        assert!(
+            !ink(Slot::Plain).contains('3'),
+            "{theme:?}: plain has a hue"
+        );
+        for (marker, _, slot, ..) in ALERTS {
+            assert_ne!(ink(slot), ink(Slot::Plain), "{theme:?} {marker}");
+            assert_ne!(ink(slot), ink(Slot::Quiet), "{theme:?} {marker}");
+        }
+    }
+}
+
+const ALERT_KINDS: &str = "> [!NOTE]\n> Useful information.\n\n> [!TIP]\n> A shortcut worth taking.\n\n\
+> [!IMPORTANT]\n> Something that must not be missed.\n\n> [!WARNING]\n> Running `cargo clean` \
+deletes the build cache; the next build takes minutes.\n\n> [!CAUTION]\n> This deletes the session \
+log; it cannot be undone.\n";
+
+#[test]
+fn alerts_64_unicode() {
+    insta::assert_snapshot!(corpus_pictures::picture(ALERT_KINDS, 64, Glyphs::Unicode));
+}
+
+#[test]
+fn alerts_64_ascii() {
+    insta::assert_snapshot!(corpus_pictures::picture(ALERT_KINDS, 64, Glyphs::Ascii));
 }

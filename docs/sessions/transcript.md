@@ -158,6 +158,32 @@ the line, so a narrower window hangs them at its own width.
 A dash or a number that opens a line inside a quote is shown as written, not as
 an item, so a wrapped one keeps the quote's bar and nothing more.
 
+## Alerts
+
+A quote whose first line is nothing but `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`,
+`[!WARNING]` or `[!CAUTION]` is drawn as an alert, in either case. Every row
+of it has a quiet bar down its left, and the first row holds the kind's mark
+and its word in bold, in place of the marker:
+
+| Kind | Unicode | ASCII |
+| --- | --- | --- |
+| Note | `◆ Note` | `* Note` |
+| Tip | `✓ Tip` | `+ Tip` |
+| Important | `■ Important` | `# Important` |
+| Warning | `▲ Warning` | `! Warning` |
+| Caution | `✗ Caution` | `x Caution` |
+
+The mark has a colour and nothing else does; the words are drawn as written,
+with the weight and emphasis the answer gave them. The bar is `▎` in the
+unicode glyph set and `|` in the ASCII one, and an alert that wraps shows it
+on every row it takes, in both [`output.screen`](../configuration/configuration.md#output)
+modes. Nothing of an alert is drawn until the end of its first line shows it
+was one.
+
+A quote naming any other kind, with anything after the marker on its line, or
+with the marker on a later line, is an ordinary quote and shows the marker as
+written. So does a marker that is not in a quote.
+
 ## What is shown as written
 
 Some text is drawn exactly as the model wrote it, rather than as a block:

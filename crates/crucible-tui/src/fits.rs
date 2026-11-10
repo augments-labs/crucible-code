@@ -106,6 +106,20 @@ fn a_fence_in_its_frame_fits_the_window_it_is_drawn_in() {
 }
 
 #[test]
+fn an_alert_fits_the_window_it_is_drawn_in() {
+    // The bar and the mark take their columns on every row of it, and the
+    // header's word is raised, so a window of any width has to hold the row
+    // each fixture is cut into: the words after the marker and the ones below.
+    for kind in ["NOTE", "TIP", "IMPORTANT", "WARNING", "CAUTION"] {
+        for body in [PROSE, LONG, WIDE, MARKED] {
+            across("an alert", |columns, glyphs| {
+                laid(&format!("> [!{kind}]\n> {body}\n"), columns, glyphs)
+            });
+        }
+    }
+}
+
+#[test]
 fn the_welcome_card_fits_the_window_it_opens_on() {
     const SESSIONS: [Recent<'static>; 2] = [
         Recent {

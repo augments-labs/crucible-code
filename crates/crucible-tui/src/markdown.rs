@@ -70,6 +70,14 @@
 //! stands in front of its words with. The reader decides where a line ends and
 //! nothing about where it wraps; the record that folds it asks.
 //!
+//! A quote whose first line is nothing but `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`,
+//! `[!WARNING]` or `[!CAUTION]`, in any case, is an alert: its rows are drawn
+//! behind a bar of their own, and the first holds the kind's mark and its word
+//! in place of the marker. What a first line is cannot be told until it ends,
+//! so the bar of a quote's first line is owed like a bullet's mark and nothing
+//! of a marker is drawn before its break. Every other quote, including one
+//! naming a kind that is not one of the five, is drawn as it always was.
+//!
 //! On the way out, each settled run is told by the kind of thing it is, which
 //! is what a design colours: a span of code that names a file is a path, and a
 //! word of prose can be a version, a hash, a figure or a list's number. That
@@ -505,8 +513,8 @@ pub(crate) struct Hang {
 /// How the line `row` hangs when it wraps, where it opens with a quote's bar
 /// or an item's mark.
 ///
-/// The bar of a quote, the mark of a bullet or a task and the number of a
-/// numbered item are what this reader draws in front of an item's words, each
+/// The bar of a quote or of an alert, the mark of a bullet or a task and the
+/// number of a numbered item are what this reader draws in front of an item's words, each
 /// followed by the space that parts it from them. Rows after the first stand
 /// the bar again where there was one and leave the columns of the rest blank,
 /// so a number of two digits hangs two columns further than one of one, and
@@ -527,8 +535,9 @@ pub(crate) fn hang(row: &Row) -> Option<Hang> {
             columns += text.len();
         } else if slot == Slot::Quiet
             && [Glyphs::Unicode, Glyphs::Ascii]
-                .map(Glyphs::vertical)
-                .contains(&text)
+                .into_iter()
+                .flat_map(|glyphs| [glyphs.vertical(), glyphs.alerted()])
+                .any(|bar| bar == text)
         {
             spans.next();
             if spans.next_if(|&(_, next)| next == " ").is_none() {
@@ -930,6 +939,91 @@ enum Marked {
     Done,
 }
 
+/// What a line that opened with a quote mark is part of.
+///
+/// The bar of a quote's first line is owed, like a bullet's mark, because what
+/// the quote is cannot be told until its first line is over: `> [!NOTE]` with
+/// nothing after it is the header of an alert, and the bar down its left is
+/// not the bar of a plain quote. Every later line of a quote knows what it is
+/// part of and draws its bar at once.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Quoted {
+    /// The line opened with no quote mark.
+    #[default]
+    Not,
+    /// The first line of a quote, whose bar has not been drawn.
+    Owed,
+    /// A line of a quote, bar drawn or not owed.
+    Plain,
+    /// A line of an alert, which wears its bar on every row.
+    Alert,
+}
+
+/// The kinds of alert an answer can write, as `> [!KIND]` on the first line of
+/// a quote with nothing after it.
+///
+/// A closed set, as GitHub's own is: a quote naming anything else is a quote
+/// and shows what was written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Alert {
+    Note,
+    Tip,
+    Important,
+    Warning,
+    Caution,
+}
+
+impl Alert {
+    /// The kind a marker names, in any case, or `None` for words that are not
+    /// the whole of one: `[!NOTES]` is a bracket somebody wrote.
+    fn of(marker: &str) -> Option<Self> {
+        let kind = marker.strip_prefix('!')?;
+        [
+            Self::Note,
+            Self::Tip,
+            Self::Important,
+            Self::Warning,
+            Self::Caution,
+        ]
+        .into_iter()
+        .find(|alert| kind.eq_ignore_ascii_case(alert.word()))
+    }
+
+    /// The word the alert is shown under.
+    fn word(self) -> &'static str {
+        match self {
+            Self::Note => "Note",
+            Self::Tip => "Tip",
+            Self::Important => "Important",
+            Self::Warning => "Warning",
+            Self::Caution => "Caution",
+        }
+    }
+
+    /// The slot the alert's mark wears, which is the only thing on its rows
+    /// that is not quiet or the answer's own.
+    fn slot(self) -> Slot {
+        match self {
+            Self::Note => Slot::Link,
+            Self::Tip => Slot::Done,
+            Self::Important => Slot::Accent,
+            Self::Warning => Slot::Doing,
+            Self::Caution => Slot::Trouble,
+        }
+    }
+
+    /// The mark in front of the word, out of the set being drawn with.
+    fn mark(self, glyphs: Glyphs) -> &'static str {
+        match self {
+            Self::Note => glyphs.noted(),
+            Self::Tip => glyphs.advised(),
+            Self::Important => glyphs.urged(),
+            Self::Warning => glyphs.warned(),
+            Self::Caution => glyphs.cautioned(),
+        }
+    }
+}
+
 /// What is open on the line being read.
 ///
 /// Most of it ends where the line does. Emphasis is the exception, because a
@@ -949,8 +1043,8 @@ struct Line {
     /// What the line's bullet is marked with, where it has one.
     marked: Marked,
     /// Whether the line opened with a quote mark, so the rest of it is
-    /// somebody else's words.
-    quoted: bool,
+    /// somebody else's words, and what kind of quote it is part of.
+    quoted: Quoted,
     emphasis: Emphasis,
     /// Whether the gutter of a line of code has gone out.
     ///
@@ -1383,6 +1477,12 @@ pub struct Markdown {
     /// line after a blank one that starts at the margin; carried across lines
     /// until then.
     item: Item,
+    /// What the line before this one was part of, so a line that opens with a
+    /// quote mark knows whether it starts a quote or goes on with one.
+    ///
+    /// Carried across a line like [`Markdown::above`]: a line with no quote
+    /// mark on it ends the quote, and an alert with it.
+    quoting: Quoted,
     /// The blank lines inside an indented block that have not been drawn,
     /// because the line after them decides whether they were the block's or
     /// stood after it. Counted rather than kept: a blank line is a blank line.
@@ -2269,12 +2369,21 @@ impl Markdown {
             // quiet, and the words are a quote's, which is quiet too unless
             // the design says otherwise: the point of a quote is that the
             // words are somebody else's.
+            //
+            // The first line of a quote owes its bar until its line says what
+            // the quote is: an alert's header has a bar of its own. A line
+            // that goes on with a quote knows already.
             '>' if held.opened && held.count == 1 && next == ' ' => {
                 self.opens_block();
-                self.line.quoted = true;
+                self.line.quoted = match self.quoting {
+                    Quoted::Plain => Quoted::Plain,
+                    Quoted::Alert => Quoted::Alert,
+                    Quoted::Not | Quoted::Owed => Quoted::Owed,
+                };
                 self.spend(say);
-                say(Slot::Quiet, self.glyphs.vertical(), None);
-                say(Slot::Quiet, " ", None);
+                if self.line.quoted != Quoted::Owed {
+                    self.bar(say);
+                }
                 true
             }
             // Exactly two, because that is the only run markdown has ever
@@ -2609,6 +2718,7 @@ impl Markdown {
     /// whole, a bracket that turned out not to be one, or the break of an item
     /// with nothing after its marker at all.
     fn pay(&mut self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        self.pay_bar(say);
         if self.line.marked != Marked::Owed {
             return;
         }
@@ -2616,6 +2726,47 @@ impl Markdown {
         self.line.marked = Marked::Drawn;
         say(Slot::Bullet, self.glyphs.bullet(), None);
         say(Slot::Quiet, " ", None);
+    }
+
+    /// Draws the bar of a quote's first line, where it is owed.
+    ///
+    /// Paid wherever a bullet's mark is, and before it: the bar is the
+    /// outermost thing on the row.
+    fn pay_bar(&mut self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        if self.line.quoted == Quoted::Owed {
+            self.line.quoted = Quoted::Plain;
+            self.bar(say);
+        }
+    }
+
+    /// Draws the bar down the left of a line of a quote, and the space that
+    /// parts it from the words.
+    fn bar(&mut self, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        let bar = match self.line.quoted {
+            Quoted::Alert => self.glyphs.alerted(),
+            _ => self.glyphs.vertical(),
+        };
+        say(Slot::Quiet, bar, None);
+        say(Slot::Quiet, " ", None);
+    }
+
+    /// Whether what is held at a line's end is the whole of an alert's marker,
+    /// on the first line of a quote.
+    fn alerts(&self, link: &Link) -> Option<Alert> {
+        (self.line.quoted == Quoted::Owed && link.part == Part::Between)
+            .then(|| Alert::of(&link.label))
+            .flatten()
+    }
+
+    /// Draws the header row of an alert: its bar, its mark and its word.
+    ///
+    /// The marker is not shown; the row says what it meant.
+    fn headline(&mut self, alert: Alert, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        self.line.quoted = Quoted::Alert;
+        self.bar(say);
+        say(alert.slot(), alert.mark(self.glyphs), None);
+        say(Slot::Plain, " ", None);
+        say(Slot::Bold, alert.word(), None);
     }
 
     /// Whether what a bullet is holding is a task's box rather than a link.
@@ -2634,6 +2785,7 @@ impl Markdown {
     /// Draws a task's box in place of the bullet's mark, and says whether the
     /// task is one somebody has finished.
     fn tick(&mut self, label: &str, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        self.pay_bar(say);
         if matches!(label, "x" | "X") {
             self.line.marked = Marked::Done;
             say(Slot::DoneMark, self.glyphs.done(), None);
@@ -2680,6 +2832,16 @@ impl Markdown {
             }
             (Part::Label, held) if carries => link.label.push(held),
             (Part::Target, held) if carries => link.target.push(held),
+            // The marker of an alert is the whole of its line. The break
+            // is the character that says so, and is the caller's again: the
+            // header is drawn in place of the marker and the line ends as any
+            // other does.
+            (Part::Between, '\n') if self.alerts(&link).is_some() => {
+                if let Some(alert) = self.alerts(&link) {
+                    self.headline(alert, say);
+                }
+                return false;
+            }
             // A box takes the bullet's mark rather than following it, which is
             // why this stands above the arm that puts a bracket back: the
             // space after `]` is the marker's own and goes with it.
@@ -3019,6 +3181,13 @@ impl Markdown {
             self.say("\\", say);
         }
 
+        // The end of the message is the break the marker of an alert was
+        // waiting for, and the header is drawn before the bar it owes is.
+        if let Some(alert) = self.link.as_ref().and_then(|link| self.alerts(link)) {
+            self.link = None;
+            self.headline(alert, say);
+        }
+
         // After the settle above, so a fence at the very end of a message has
         // had its chance to take the spaces in front of it with it.
         self.spend(say);
@@ -3152,6 +3321,7 @@ impl Markdown {
                 Above::Written
             },
             item: self.item,
+            quoting: self.line.quoted,
             ..Self::default()
         };
 
@@ -3265,7 +3435,7 @@ impl Markdown {
     fn slot(&self) -> Slot {
         if self.inside != Inside::Prose {
             Slot::Quiet
-        } else if self.line.quoted {
+        } else if matches!(self.line.quoted, Quoted::Owed | Quoted::Plain) {
             Slot::Quote
         } else if self.line.code {
             // Above everything a phrase can otherwise be: backticks say the

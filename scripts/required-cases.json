@@ -4211,7 +4211,7 @@
       },
       "case": "render::tests::every_cut_of_an_answer_draws_what_the_whole_answer_draws",
       "source": "crates/crucible-tui/src/render/tests.rs",
-      "body_sha256": "9ba9d4af91d4bd404c16e0a643f53c039f720ba83a7149f1d352c43581b27032",
+      "body_sha256": "3b5ea776adeadb068bfcd3ed1c57402963ee8e305e22629bfbfd9b6ecc46c501",
       "platforms": [
         "linux",
         "macos",
@@ -7768,6 +7768,150 @@
       "case": "render::native::tests::a_native_answer_cut_anywhere_draws_the_indented_block_the_whole_answer_draws",
       "source": "crates/crucible-tui/src/render/native/tests.rs",
       "body_sha256": "b20e7ddf1ebad4b2948f9d1a1089dd6a15b4f2939adf1a97814db21cc7fc21be",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-ROWS",
+      "family": "transcript-blocks",
+      "obligation": "A quote whose first line is `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]` draws a quiet bar on every row, with the kind's mark in its own slot and its word in bold on the first row, in the unicode and the ascii glyph set, and the marker itself is not drawn.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::an_alert_is_a_quiet_bar_on_every_row_with_its_mark_and_its_word_on_the_first",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "41c71ea7520aaf80ef98c295ee57ecf470c1e64ffde0e4d59a085d617092d5aa",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-MARKER-HIDDEN",
+      "family": "transcript-blocks",
+      "obligation": "An alert's marker is never drawn: no row of any of the five kinds contains `[!` or the kind as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::an_alert_never_shows_its_marker",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "30a4d9d57438bfdd5933d18782c2b0e75aaa5cf3266f9efe9d196638dd6cff48",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-UNKNOWN-KIND",
+      "family": "transcript-blocks",
+      "obligation": "A quote that names no kind of alert, or has more on its line than the marker, is drawn as the quote it always was, with its text as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_quote_with_an_unknown_kind_or_more_on_its_line_stays_a_quote",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "6f9844897e2cfaaac582c701ac412c5286101e718552b9281cfa8eaf8d61b8e1",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-CUT",
+      "family": "transcript-blocks",
+      "obligation": "An alert cut at any byte, including inside its marker, draws the same runs as the whole alert, and nothing of it is drawn before its break says it was one.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::an_alert_cut_anywhere_draws_what_the_whole_alert_draws",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "c0d31e490a4132ff5a375a044fb63dd954bd14ff42086287d50d7808f71c8507",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-WRAP",
+      "family": "transcript-blocks",
+      "obligation": "An alert that wraps at thirty columns keeps its bar on every row it wraps onto, in the unicode and the ascii glyph set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_wrapped_alert_keeps_its_bar_on_every_row",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "dd95dc3500699acf567a3d0a689d8902bffcf0620d44afd36f029a307a0d27bf",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-CUT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "A native answer with alerts cut at any byte keeps the same rows in the scrollback as the whole answer, and never keeps a marker.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_answer_cut_anywhere_draws_the_alert_the_whole_answer_draws",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "ec49b62a1ef75375cd9b826f2108c8bd10a228d771c1ab11d2b1fce39e8f3501",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-MARKS",
+      "family": "transcript-blocks",
+      "obligation": "The five marks of an alert are five different one-column marks in each glyph set, and none is the bar or another mark's.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "glyphs::tests::the_five_marks_of_an_alert_are_five_different_one_column_marks_in_both_sets",
+      "source": "crates/crucible-tui/src/glyphs.rs",
+      "body_sha256": "3e6319be18999c70696c2708adaf088c20b08b9eff7410c64d81056f29a8bf1c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-COLOUR",
+      "family": "transcript-blocks",
+      "obligation": "The first row of each alert kind is a quiet bar, the kind's mark, a plain space and the kind's word in bold, and in the dark, light and ansi themes weight is the only ink the word has while the mark's ink differs from plain and from quiet.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::an_alert_spends_its_colour_on_its_mark_alone_in_every_theme",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "553defbbe61428c508ac53b7a819ad85a788b5c2cc53add2fe8a59876dccd800",
       "platforms": [
         "linux",
         "macos",
