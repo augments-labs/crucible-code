@@ -713,7 +713,7 @@ what a command would run under:
   manifest  sha256:72c169df3655f6857b163163b2618631ec65982557eea70b57ea1cb983ae0890
 
 not checked, since checking would start something:
-  whether Bubblewrap starts and can make its namespaces on this host, and whether each root passes the checks a command's preparation makes. A preparation also checks that Bubblewrap lists --size, which a disk ceiling is mounted with, so disk_limit is unsupported here until one does
+  whether Bubblewrap starts and can make its namespaces on this host, and whether each root passes the checks a command's preparation makes. Whether Bubblewrap lists --size, which a disk ceiling is mounted with, is read only by a preparation, so disk_limit shows unsupported here whatever this host's Bubblewrap lists, and a preparation decides it
 ```
 
 What only starting the backend could tell is reported as unverified, with the
