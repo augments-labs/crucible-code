@@ -1316,6 +1316,9 @@ section "a drawer or raster crate reaches no network"
 # target, and no package in it may be an HTTP, TLS or socket client, or an
 # async runtime that brings one, from the list below. One row per crate: each
 # new drawer or raster crate adds its own when it is added to the workspace.
+# Cargo reads the graph offline from the locked sources, so they must be
+# present (`cargo fetch --locked`, which the policy job runs first); without
+# them nothing is described, and that fails rather than passing.
 #
 # `mio` is the terminal's input poller, reached through `crucible-tui`, whose
 # contract every drawer implements; it is allowed there and nowhere nearer, so
