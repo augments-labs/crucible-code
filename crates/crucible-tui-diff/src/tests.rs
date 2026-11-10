@@ -627,8 +627,8 @@ fn a_file_keeps_its_path_and_its_lines_out_of_debug() {
         format!("{gap:?}"),
     ];
     for said in said {
-        for secret in ["sk-ant", "sk_ant", "line-text", "again"] {
-            assert!(!said.contains(secret), "{secret:?} in {said}");
+        for kept_out in ["sk-ant", "sk_ant", "line-text", "again"] {
+            assert!(!said.contains(kept_out), "{kept_out:?} in {said}");
         }
     }
     // What is there to be counted still is.
