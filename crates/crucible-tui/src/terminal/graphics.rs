@@ -2871,7 +2871,15 @@ mod tests {
             assert_eq!(inside.special_codes[SpecialCodeIndex::VMIN], 0);
 
             let after = rustix::termios::tcgetattr(&slave).expect("the pty's mode");
-            assert_eq!(after.local_modes, before.local_modes);
+            // macOS sets `PENDIN` whenever a mode written without a flush
+            // turns canonical input back on, whatever that mode asked (XNU
+            // `bsd/kern/tty.c`, the `TIOCSETA` case of `ttioctl_locked`), so
+            // the guard, which writes at once, cannot put that bit back as it
+            // was. Linux does not support the bit (`termios(3)`).
+            assert_eq!(
+                after.local_modes - LocalModes::PENDIN,
+                before.local_modes - LocalModes::PENDIN
+            );
             assert_eq!(after.input_modes, before.input_modes);
             assert_eq!(after.output_modes, before.output_modes);
             assert_eq!(

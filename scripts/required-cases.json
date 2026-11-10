@@ -8586,7 +8586,7 @@
     {
       "id": "CASE-TERMINAL-EXCHANGE-MODE-RESTORED",
       "family": "terminal",
-      "obligation": "Inside the guard a pseudo-terminal reads without line editing, echo or a minimum count, and after an early error return its local, input and output modes and minimum count are what they were.",
+      "obligation": "Inside the guard a pseudo-terminal reads without line editing, echo or a minimum count, and after an early error return its local modes, but for the PENDIN that macOS sets on its own, and its input and output modes and minimum count are what they were.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
@@ -8594,7 +8594,7 @@
       },
       "case": "terminal::graphics::tests::exchange::the_mode_is_put_back_when_the_exchange_returns_early",
       "source": "crates/crucible-tui/src/terminal/graphics.rs",
-      "body_sha256": "ee9d221734d0c12cafa7d4cd8c32155ef4315981aa08076d9062240640a07f46",
+      "body_sha256": "40f847fb672d5dd2caaccdcb54a302a51a4f0d1033fc0aba2aff028f96565c28",
       "platforms": [
         "linux",
         "macos"
