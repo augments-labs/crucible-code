@@ -701,7 +701,7 @@ enum Kind {
 /// Bytes from the terminal, read one at a time into [`Shape`]s.
 ///
 /// Every byte belongs to exactly one shape or to the sequence still being
-/// read, so nothing is ever left over to be read as a key. Bounded: a
+/// read, so nothing it has read is left over to be taken for a key. Bounded: a
 /// sequence keeps at most [`LONGEST`] of its bytes, however long it runs.
 #[cfg(unix)]
 pub(crate) struct Replies {

@@ -926,12 +926,15 @@ and never inside tmux, `screen` or Zellij, where the multiplexer answers some
 questions itself, so what it says is not what the terminal outside draws. It
 asks nothing where the window does not report its size in pixels, which is
 where a cell's size comes from. Elsewhere, before crucible reads a key, it asks
-where the cursor is and waits 8 ms for the answer; a terminal that answers is
-asked the protocol's own question, then where the cursor is again, and given
-up to 2 seconds. The protocol is drawn only when its yes arrives before the
-second answer. The cell's size is read again when the window is resized. What
-you type while crucible waits is read with the answers and never reaches the
-prompt.
+where the cursor is and gives the terminal 8 ms to answer. A terminal that
+answers in time is asked the protocol's own question, then where the cursor is
+again, and given up to 2 seconds; the protocol is drawn only when its yes
+arrives before the second answer. A terminal that does not answer in time is
+drawn as text and asked nothing more, and crucible reads on until its answer
+arrives, for up to 2 seconds, so the answer is not left to be typed. Either way
+crucible stops waiting 2 seconds and 8 ms after its first question at the
+latest. The cell's size is read again when the window is resized. What you type
+while crucible waits is read with the answers and never reaches the prompt.
 
 A protocol named in `output.images` is used without asking the terminal, where
 the table draws it in the screen mode in force, and is text everywhere else, so

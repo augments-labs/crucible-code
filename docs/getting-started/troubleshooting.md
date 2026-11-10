@@ -590,12 +590,15 @@ drawn](../configuration/configuration.md#where-pictures-are-drawn).
 With `output.images` at `auto`, on a terminal the support table names,
 crucible may ask the terminal whether it draws pictures before it reads a key.
 It reads every answer that arrives while it waits, and whatever you type then,
-so none of it reaches the prompt. The answer to the picture question itself,
-if it arrives after crucible has stopped waiting, such as more than 2 seconds
-after it was asked, is read as typing instead. Delete it; to stop the question
-being asked, set `output.images` to `off`, or to the protocol the terminal
-draws, which is used without asking the terminal. See [Where pictures are
-drawn](../configuration/configuration.md#where-pictures-are-drawn).
+so none of it reaches the prompt; a first answer too late for the 8 ms it
+decides in is still read, for up to 2 seconds after the question. What arrives
+after crucible has stopped waiting can be read as typing instead: a first
+answer more than 2 seconds late, whatever a terminal that answered sends after
+pausing for more than 2 seconds part way through, and the answer to the picture
+question more than 2 seconds after it was asked. Delete it; to stop the
+question being asked, set `output.images` to `off`, or to the protocol the
+terminal draws, which is used without asking the terminal. See [Where pictures
+are drawn](../configuration/configuration.md#where-pictures-are-drawn).
 
 ### `crucible: what you typed is longer than 1 MiB; no prompt was accepted`
 

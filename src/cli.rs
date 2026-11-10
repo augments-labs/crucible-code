@@ -1279,8 +1279,10 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
 
     // What pictures are drawn with, settled here: after the background question,
     // so the two exchanges never interleave on the wire, and before raw mode and
-    // the first frame, so every answer is read by the exchange that waits for it
-    // and none is left to be taken for a key. Only a terminal on both sides is
+    // the first frame, so what the terminal answers while the exchange waits,
+    // a first cursor position too late to decide anything included, is read
+    // before any key is; what it says later than every wait is left to the key
+    // reader, as `crucible_tui::graphics` says. Only a terminal on both sides is
     // asked, and only where the configuration and the support table allow;
     // what the input was is kept, so `/settings` draws by the same rule.
     terms

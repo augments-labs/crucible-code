@@ -25,13 +25,21 @@
 //! and where a picture protocol is a candidate, a cursor position, then the
 //! protocol's own question followed by a cursor position. A terminal answers
 //! in order, so each asker reads up to the answer to the question it put last,
-//! and while it waits it consumes every answer before that one. What reaches
-//! this reader is what arrived after an asker stopped waiting. A cursor
-//! position or device attributes is parsed by `crossterm` as its own reply,
-//! which [`event::read`] keeps out of what it returns, so neither becomes a
-//! key. A background or protocol answer is different: `crossterm` reads it as
-//! Alt and a run of characters, so a terminal that answers later than every
-//! wait [`crate::graphics`] and the background question allow still types it.
+//! and while it waits it consumes every answer before that one; the picture
+//! exchange also reads on, for at most its reply wait, until a first cursor
+//! position too late to decide anything has been consumed. What reaches this
+//! reader is what arrived after an asker stopped waiting, parsed by `crossterm`
+//! in the reads it makes. A cursor position or device attributes read whole is
+//! its own reply, which [`event::read`] keeps out of what it returns, but one
+//! cut right after its escape, with a read ending between the two, is Esc and
+//! typed characters; a background or protocol answer is Alt and a run of
+//! characters. So a terminal still types what it says later than every wait
+//! [`crate::graphics`] and the background question allow: a first cursor
+//! position later than the exchange's reply wait, whatever a terminal that
+//! answered the first question sends after stalling for longer than that wait,
+//! a protocol's answer later than every wait, and, where no picture exchange
+//! follows to read it, a background answer later than the background
+//! question's patience.
 
 use std::time::Duration;
 
