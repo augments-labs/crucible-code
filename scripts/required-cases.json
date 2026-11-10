@@ -7903,7 +7903,7 @@
     {
       "id": "CASE-TRANSCRIPT-ALERT-COLOUR",
       "family": "transcript-blocks",
-      "obligation": "The first row of each alert kind is a quiet bar, the kind's mark, a plain space and the kind's word in bold, and in the dark, light and ansi themes the word has only weight, each mark's ink differs from plain and from quiet, the Note, Important and Caution marks carry a foreground colour, the Warning mark is the word's weight alone and the Tip mark is a strike in the quiet grey.",
+      "obligation": "The first row of each alert kind is a quiet bar, the kind's mark, a plain space and the kind's word in bold, and in every theme, dark, light, colourblind dark, colourblind light and ansi, the word has only weight, each mark's ink differs from plain and from quiet, the Note, Important and Caution marks carry a foreground colour, the Warning mark is the word's weight alone and the Tip mark is a strike in the quiet grey.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
@@ -7911,7 +7911,7 @@
       },
       "case": "markdown::tests::an_alert_mark_carries_its_kinds_ink_and_its_word_only_weight_in_every_theme",
       "source": "crates/crucible-tui/src/markdown/tests.rs",
-      "body_sha256": "b81b7697ab1f1b853f6d42c40288bd8454a5ef1a9a221205b1b154898854ade6",
+      "body_sha256": "388e3e1a0bcf649fce2a5c2e741853ed27131c3bd1b2a6b491d239df2afab35b",
       "platforms": [
         "linux",
         "macos",

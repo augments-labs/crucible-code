@@ -3817,7 +3817,7 @@ fn an_alert_mark_carries_its_kinds_ink_and_its_word_only_weight_in_every_theme()
     }
     crate::colour_rule::holds("an alert", &rows, |_| false);
 
-    for theme in [Theme::Dark, Theme::Light, Theme::Ansi] {
+    for theme in every_theme() {
         let palette = Palette::resolve(true, theme, None, &|name| {
             (name == "COLORTERM").then(|| "truecolor".to_owned())
         });
@@ -3851,6 +3851,25 @@ fn an_alert_mark_carries_its_kinds_ink_and_its_word_only_weight_in_every_theme()
             }
         }
     }
+}
+
+/// Every theme there is, in the order the enum lists them.
+///
+/// Walked by a match with no wildcard, so a theme added to the enum stops this
+/// compiling until it is placed here, and a check over it cannot quietly cover
+/// only some of them.
+fn every_theme() -> Vec<Theme> {
+    let mut every = vec![Theme::Dark];
+    while let Some(next) = every.last().and_then(|theme| match theme {
+        Theme::Dark => Some(Theme::Light),
+        Theme::Light => Some(Theme::ColourblindDark),
+        Theme::ColourblindDark => Some(Theme::ColourblindLight),
+        Theme::ColourblindLight => Some(Theme::Ansi),
+        Theme::Ansi => None,
+    }) {
+        every.push(next);
+    }
+    every
 }
 
 /// Whether an opening escape sets a foreground colour: one of the parameters
