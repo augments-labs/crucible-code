@@ -118,20 +118,30 @@ mod tests {
             .unwrap_or_else(|| panic!("bench-first-input-colour declares no {name}"))
     }
 
+    /// `limit` as a whole number of milliseconds, refused rather than rounded
+    /// when it is not one: a whole `f64` displays with no point, so only then
+    /// does its text parse as an integer.
+    fn whole(limit: f64, what: &str) -> u128 {
+        limit.to_string().parse().unwrap_or_else(|_| {
+            panic!("{what} is {limit} ms, which is not a whole number of milliseconds")
+        })
+    }
+
     #[test]
     fn each_limit_is_the_startup_reply_wait_plus_the_answered_limit() {
-        let reply = crucible_tui::graphics::Deadline::STARTUP
-            .reply
-            .as_secs_f64()
-            * 1000.0;
+        // Whole milliseconds, because a wait in seconds as a float times a
+        // thousand is not always the whole number it was written as.
+        let reply = crucible_tui::graphics::Deadline::STARTUP.reply.as_millis();
 
         for (silent, name) in [
             (LIMIT, "LIMIT"),
             (SHARED_RUNNER_LIMIT, "SHARED_RUNNER_LIMIT"),
         ] {
-            let answered = answered(name);
-            assert!(
-                (silent - (reply + answered)).abs() < f64::EPSILON,
+            let silent = whole(silent, name);
+            let answered = whole(answered(name), &format!("the answered probe's {name}"));
+            assert_eq!(
+                silent,
+                reply + answered,
                 "{name} is {silent} ms, not the {reply} ms reply wait plus the answered \
                  probe's {answered} ms; a changed wait is a budget to choose, not one to follow"
             );
