@@ -7,9 +7,11 @@
 //!    `NO_COLOR`, or colour turned off: no question is written and no picture
 //!    drawn ([`select`]).
 //! 2. **What the setting says.** `off` is text. A named protocol is used
-//!    without asking, except where the support table below says it draws
-//!    wrongly. `auto` lets the environment name a candidate, and names none
-//!    inside a multiplexer or on Windows.
+//!    without asking the terminal, except where the support table below says
+//!    it draws wrongly; inside tmux that turns on whether tmux passes
+//!    sequences through, which its server is asked, on its command line, and
+//!    only there ([`passthrough`]). `auto` lets the environment name a
+//!    candidate, and names none inside a multiplexer or on Windows.
 //! 3. **What the terminal says.** A candidate is confirmed by an exchange
 //!    ([`confirm`]): the cursor-position question alone, then — only if that
 //!    was answered — the candidate's own question followed by the cursor
@@ -237,6 +239,147 @@ pub fn select(
 /// terminal, `NO_COLOR` set, or colour turned off.
 fn quiet(env: &dyn Fn(&str) -> Option<String>, setting: Setting) -> bool {
     !setting.terminal || !setting.colour || env("NO_COLOR").is_some_and(|set| !set.is_empty())
+}
+
+/// What tmux's server says of passing sequences through, asked only where the
+/// answer decides what is drawn: inside tmux on this machine, with
+/// `output.images` naming a protocol the table draws behind tmux that passes
+/// through. Everywhere else — `auto`, outside tmux, over SSH, Windows, where
+/// nothing may be asked — nothing runs and the answer is
+/// [`Passthrough::Unknown`].
+///
+/// The terminal is asked nothing: the `tmux` on `PATH` is run once against
+/// the server `TMUX` names, with no input, its errors discarded, its output
+/// read to at most 64 bytes for at most 100 ms, and then it is ended and
+/// reaped. Only `on` or `all` is [`Passthrough::On`].
+#[must_use]
+pub fn passthrough(
+    env: &dyn Fn(&str) -> Option<String>,
+    platform: Platform,
+    setting: Setting,
+) -> Passthrough {
+    let Wanted::Forced(protocol) = setting.images else {
+        return Passthrough::Unknown;
+    };
+    if quiet(env, setting)
+        || place(env) != Place::Tmux
+        || support(env, platform, setting.screen, protocol, Passthrough::On) != Support::Enabled
+    {
+        return Passthrough::Unknown;
+    }
+    // `TMUX` is the server's socket, the server's process and the session,
+    // separated by commas.
+    let socket = set(env, "TMUX")
+        .and_then(|tmux| tmux.split(',').next().map(str::to_owned))
+        .filter(|socket| !socket.is_empty());
+    match socket {
+        Some(socket) => server_says(&socket, env("PATH").as_deref(), TMUX_WAIT),
+        None => Passthrough::Unknown,
+    }
+}
+
+/// How long tmux's server has to answer.
+const TMUX_WAIT: Duration = Duration::from_millis(100);
+
+/// The most of tmux's answer read; `all` and its line end are far less.
+#[cfg(unix)]
+const TMUX_SAYS: usize = 64;
+
+/// Runs `tmux` against `socket`, found on `path`, and reads its answer.
+#[cfg(unix)]
+fn server_says(socket: &str, path: Option<&str>, wait: Duration) -> Passthrough {
+    use std::process::{Command, Stdio};
+
+    let until = Instant::now() + wait;
+    let mut command = Command::new("tmux");
+    command
+        .args([
+            "-S",
+            socket,
+            "display-message",
+            "-p",
+            "#{allow-passthrough}",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    match path {
+        Some(path) => command.env("PATH", path),
+        None => command.env_remove("PATH"),
+    };
+    let Ok(mut child) = command.spawn() else {
+        return Passthrough::Unknown;
+    };
+    let said = child
+        .stdout
+        .take()
+        .and_then(|stdout| read_within(stdout, until));
+    let exited = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if Instant::now() < until => {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Ok(None) | Err(_) => break None,
+        }
+    };
+    let Some(status) = exited else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Passthrough::Unknown;
+    };
+    match said {
+        Some(said) if status.success() => match said.trim_ascii() {
+            b"on" | b"all" => Passthrough::On,
+            b"off" => Passthrough::Off,
+            _ => Passthrough::Unknown,
+        },
+        _ => Passthrough::Unknown,
+    }
+}
+
+/// Windows draws text this release, so no tmux is asked.
+#[cfg(not(unix))]
+const fn server_says(_: &str, _: Option<&str>, _: Duration) -> Passthrough {
+    Passthrough::Unknown
+}
+
+/// What `stdout` says before it closes, if it closes by `until` having said
+/// at most [`TMUX_SAYS`] bytes.
+#[cfg(unix)]
+fn read_within(stdout: std::process::ChildStdout, until: Instant) -> Option<Vec<u8>> {
+    use std::io::Read as _;
+
+    let mut pipe = mio::unix::pipe::Receiver::from(stdout);
+    pipe.set_nonblocking(true).ok()?;
+    let mut poll = mio::Poll::new().ok()?;
+    poll.registry()
+        .register(&mut pipe, mio::Token(0), mio::Interest::READABLE)
+        .ok()?;
+    let mut events = mio::Events::with_capacity(2);
+    let mut said = Vec::with_capacity(TMUX_SAYS + 1);
+    let mut chunk = [0_u8; TMUX_SAYS + 1];
+    loop {
+        match pipe.read(&mut chunk) {
+            Ok(0) => return Some(said),
+            Ok(read) => {
+                said.extend_from_slice(chunk.get(..read)?);
+                if said.len() > TMUX_SAYS {
+                    return None;
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                let left = until.checked_duration_since(Instant::now())?;
+                match poll.poll(&mut events, Some(left)) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                    Err(_) => return None,
+                }
+            }
+            Err(_) => return None,
+        }
+    }
 }
 
 /// Whether `protocol` draws right in `screen` mode where this session runs.
@@ -2431,6 +2574,232 @@ mod tests {
                 .open("/dev/null")
                 .expect("the null device");
             assert!(matches!(Mode::enter(file.as_fd()), Ok(None)));
+        }
+    }
+
+    /// The cases that ask tmux: each puts a fake `tmux` first on a `PATH` of
+    /// its own, in a directory of its own, and removes it after.
+    #[cfg(unix)]
+    mod tmux {
+        use std::path::{Path, PathBuf};
+        use std::process::Command;
+        use std::time::{Duration, Instant};
+
+        use super::*;
+
+        /// A directory holding a fake `tmux` that runs `body`, and the
+        /// environment of a session inside tmux in Kitty whose `PATH` is that
+        /// directory alone.
+        struct Fake {
+            dir: PathBuf,
+        }
+
+        impl Fake {
+            fn new(name: &str, body: Option<&str>) -> Self {
+                let dir = std::env::temp_dir()
+                    .join(format!("crucible-fake-tmux-{}-{name}", std::process::id()));
+                let _ = std::fs::remove_dir_all(&dir);
+                std::fs::create_dir_all(&dir).expect("the fake's directory");
+                if let Some(body) = body {
+                    // Written by a child of its own, so no descriptor open
+                    // for writing on it is copied into a process another test
+                    // starts, which would keep it from running.
+                    // Its `PATH` holds nothing else, so it names every
+                    // program it runs by its path, and `DIR` by the directory.
+                    let script = format!(
+                        "#!/bin/sh\nDIR='{}'\nprintf '%s\\n' \"$@\" > \"$DIR/args\"\n{body}\n",
+                        dir.display()
+                    );
+                    let status = Command::new("/bin/sh")
+                        .args(["-c", "printf '%s' \"$1\" > \"$2\" && chmod 755 \"$2\""])
+                        .arg("sh")
+                        .arg(script)
+                        .arg(dir.join("tmux"))
+                        .status()
+                        .expect("the fake written");
+                    assert!(status.success());
+                }
+                Self { dir }
+            }
+
+            fn file(&self, name: &str) -> PathBuf {
+                self.dir.join(name)
+            }
+
+            /// What the fake was run with, one argument a line, if it ran.
+            fn args(&self) -> Option<String> {
+                std::fs::read_to_string(self.file("args")).ok()
+            }
+
+            fn environment(&self, pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+                let path = self.dir.display().to_string();
+                let mut held: Vec<(String, String)> = pairs
+                    .iter()
+                    .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+                    .collect();
+                held.push(("PATH".to_owned(), path));
+                move |wanted| {
+                    held.iter()
+                        .find(|(name, _)| name == wanted)
+                        .map(|(_, value)| value.clone())
+                }
+            }
+        }
+
+        impl Drop for Fake {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.dir);
+            }
+        }
+
+        /// Kitty forced in native mode, the cell enabled behind tmux that
+        /// passes through.
+        fn kitty_forced() -> Setting {
+            wanting(Wanted::Forced(Protocol::Kitty), ScreenMode::Native)
+        }
+
+        fn asked(fake: &Fake) -> Passthrough {
+            passthrough(
+                &fake.environment(TMUX_IN_KITTY),
+                Platform::Linux,
+                kitty_forced(),
+            )
+        }
+
+        /// A case where tmux must not be asked: its name, its environment,
+        /// its platform and its setting.
+        type Case = (
+            &'static str,
+            Vec<(&'static str, &'static str)>,
+            Platform,
+            Setting,
+        );
+
+        fn alive(pid: &str) -> bool {
+            Path::new("/proc").join(pid.trim()).exists()
+        }
+
+        #[test]
+        fn a_server_that_passes_through_is_on_and_is_asked_for_this_pane() {
+            let fake = Fake::new("on", Some("echo on"));
+            assert_eq!(asked(&fake), Passthrough::On);
+            assert_eq!(
+                fake.args().as_deref(),
+                Some("-S\n/tmp/tmux-1000/default\ndisplay-message\n-p\n#{allow-passthrough}\n")
+            );
+            let all = Fake::new("all", Some("echo all"));
+            assert_eq!(asked(&all), Passthrough::On);
+        }
+
+        #[test]
+        fn a_server_that_holds_sequences_back_is_off() {
+            let fake = Fake::new("off", Some("echo off"));
+            assert_eq!(asked(&fake), Passthrough::Off);
+        }
+
+        #[test]
+        fn anything_else_the_server_says_is_unknown() {
+            for (name, body) in [
+                ("garbage", "echo 'yes please'"),
+                ("empty", "echo"),
+                ("failed", "echo on; exit 1"),
+                ("long", "printf 'on%80s\\n' ''"),
+            ] {
+                let fake = Fake::new(name, Some(body));
+                assert_eq!(asked(&fake), Passthrough::Unknown, "{name}");
+            }
+        }
+
+        #[test]
+        fn a_server_that_does_not_answer_in_time_is_unknown_and_its_process_is_reaped() {
+            let fake = Fake::new("sleeps", Some("echo $$ > \"$DIR/pid\"\nexec /bin/sleep 3"));
+            let started = Instant::now();
+            assert_eq!(asked(&fake), Passthrough::Unknown);
+            assert!(
+                started.elapsed() < Duration::from_secs(1),
+                "{:?}",
+                started.elapsed()
+            );
+            let pid = std::fs::read_to_string(fake.file("pid")).expect("the fake ran");
+            if cfg!(target_os = "linux") {
+                assert!(!alive(&pid), "process {} is left", pid.trim());
+            }
+        }
+
+        #[test]
+        fn no_tmux_on_the_path_is_unknown() {
+            let fake = Fake::new("missing", None);
+            assert_eq!(asked(&fake), Passthrough::Unknown);
+        }
+
+        #[test]
+        fn tmux_is_asked_only_where_its_answer_decides_what_is_drawn() {
+            let fake = Fake::new("never", Some("echo on"));
+            let forced = kitty_forced();
+            let quiet = Setting {
+                colour: false,
+                ..forced
+            };
+            let redirected = Setting {
+                terminal: false,
+                ..forced
+            };
+            let sixel = wanting(Wanted::Forced(Protocol::Sixel), ScreenMode::Native);
+            let kitty_fullscreen = wanting(Wanted::Forced(Protocol::Kitty), ScreenMode::Fullscreen);
+            let mut tmux_over_ssh = TMUX_IN_KITTY.to_vec();
+            tmux_over_ssh.push(("SSH_TTY", "/dev/pts/3"));
+            let mut no_socket = TMUX_IN_KITTY.to_vec();
+            no_socket.retain(|(name, _)| *name != "TMUX");
+            no_socket.push(("TMUX", ",1234,0"));
+            let mut no_colour = TMUX_IN_KITTY.to_vec();
+            no_colour.push(("NO_COLOR", "1"));
+            let cases: Vec<Case> = vec![
+                (
+                    "auto",
+                    TMUX_IN_KITTY.to_vec(),
+                    Platform::Linux,
+                    wanting(Wanted::Auto, ScreenMode::Native),
+                ),
+                (
+                    "off",
+                    TMUX_IN_KITTY.to_vec(),
+                    Platform::Linux,
+                    wanting(Wanted::Off, ScreenMode::Native),
+                ),
+                ("outside tmux", KITTY.to_vec(), Platform::Linux, forced),
+                ("windows", TMUX_IN_KITTY.to_vec(), Platform::Windows, forced),
+                ("freebsd", TMUX_IN_KITTY.to_vec(), Platform::FreeBsd, forced),
+                ("over ssh", tmux_over_ssh, Platform::Linux, forced),
+                ("colour off", TMUX_IN_KITTY.to_vec(), Platform::Linux, quiet),
+                ("no colour", no_colour, Platform::Linux, forced),
+                (
+                    "redirected",
+                    TMUX_IN_KITTY.to_vec(),
+                    Platform::Linux,
+                    redirected,
+                ),
+                (
+                    "a disabled protocol",
+                    TMUX_IN_KITTY.to_vec(),
+                    Platform::Linux,
+                    sixel,
+                ),
+                (
+                    "a disabled mode",
+                    TMUX_IN_KITTY.to_vec(),
+                    Platform::Linux,
+                    kitty_fullscreen,
+                ),
+                ("no socket", no_socket, Platform::Linux, forced),
+            ];
+            for (name, pairs, platform, setting) in cases {
+                assert_eq!(
+                    passthrough(&fake.environment(&pairs), platform, setting),
+                    Passthrough::Unknown,
+                    "{name}"
+                );
+                assert_eq!(fake.args(), None, "{name} ran tmux");
+            }
         }
     }
 }
