@@ -1778,9 +1778,12 @@ fi
 # directory it reaches. `bench-drawing` names `crucible_tui_diff` for the
 # drawer whose worst block it times, and `crucible_tui` for the contract that
 # drawer is called through and the room it is handed, so what it times is the
-# call the drawing thread makes.
+# call the drawing thread makes. `bench-first-input-colour-silent` names
+# `crucible_tui` in its test alone, for the reply wait its budget is held to
+# the sum of, and measures the built binary like every other startup probe.
 probes='src/bin/bench-drawing.rs crucible_tui
 src/bin/bench-drawing.rs crucible_tui_diff
+src/bin/bench-first-input-colour-silent.rs crucible_tui
 src/bin/bench-grep.rs crucible_builtins
 src/bin/bench-grep.rs crucible_runtime
 src/bin/bench-grep.rs crucible_tools

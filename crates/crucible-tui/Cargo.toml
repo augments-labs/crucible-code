@@ -28,6 +28,10 @@ unicode-width.workspace = true
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 rustix = { workspace = true, features = ["process", "termios"] }
+# The timed read that confirms a terminal draws images, and the terminal it is
+# read from. Unix only: Windows draws text this release and is asked nothing.
+terminal-trx.workspace = true
+mio.workspace = true
 
 [lints]
 workspace = true

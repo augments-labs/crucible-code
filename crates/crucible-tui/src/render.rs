@@ -48,6 +48,7 @@ use crate::record::{Record, Source};
 use crate::row::Row;
 use crate::scroll_rail::{self, ScrollRail};
 use crate::select::{self, Place, Taken, View};
+use crate::terminal::graphics::Capability;
 use crate::terminal::keys::{Pressed, pressed, waiting};
 use crate::terminal::system::ResizeFlag;
 use crate::terminal::{Size, Terminal, TerminalError};
@@ -477,6 +478,11 @@ pub struct Renderer<T: Terminal> {
     recall: Option<Arc<dyn Recall>>,
     /// What says the window changed size, where anything does.
     resizes: Option<ResizeFlag>,
+    /// What the session draws pictures with.
+    ///
+    /// Text until [`Renderer::images`] says otherwise, so a renderer nobody
+    /// told — a preview, a test, a redirected run — draws no picture.
+    images: Capability,
 }
 
 impl<T: Terminal> Renderer<T> {
@@ -533,6 +539,7 @@ impl<T: Terminal> Renderer<T> {
             pointing: None,
             recall: None,
             resizes: None,
+            images: Capability::Text,
         }
     }
 
@@ -1313,6 +1320,22 @@ impl<T: Terminal> Renderer<T> {
         usize::try_from(self.notch).unwrap_or(1).max(1)
     }
 
+    /// Tells this renderer what the session draws pictures with.
+    ///
+    /// Said at startup, once the terminal was asked, and again whenever the
+    /// reader changes the setting. The cell is read again at each resize; a
+    /// window that stops reporting its pixels keeps the cell it had, and text
+    /// stays text.
+    pub fn images(&mut self, capability: Capability) {
+        self.images = capability;
+    }
+
+    /// What the session draws pictures with.
+    #[must_use]
+    pub const fn capability(&self) -> Capability {
+        self.images
+    }
+
     /// Tells this renderer whether the transcript has a scroll rail.
     ///
     /// Said at startup from the setting, and again whenever the reader changes
@@ -2011,12 +2034,20 @@ impl<T: Terminal> Renderer<T> {
     /// out the next one.
     ///
     /// A size the terminal could not report is no news of a size, and the one
-    /// already known is kept.
+    /// already known is kept; so is a cell, read again here where pictures are
+    /// drawn.
     ///
     /// # Errors
     ///
     /// [`TerminalError::Io`] if the terminal could not be written to.
     pub fn resized(&mut self) -> Result<(), TerminalError> {
+        // Read before the size is compared, since a window can keep its count
+        // of cells and change their pixels; text asks nothing.
+        if let Capability::Graphics { protocol, .. } = self.images
+            && let Some(cell) = self.terminal.cell()
+        {
+            self.images = Capability::Graphics { protocol, cell };
+        }
         let Ok(size) = self.terminal.size() else {
             return Ok(());
         };

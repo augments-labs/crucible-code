@@ -8137,6 +8137,754 @@
       "platforms": [
         "linux"
       ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SUPPORT-SIX-CELLS",
+      "family": "transcript-pictures",
+      "obligation": "On Linux, over every row of the support table, both screen modes and the three protocols, exactly R1-fullscreen-kitty, R1-native-kitty, R2-fullscreen-iterm2, R4K-native-kitty, R4W-fullscreen-iterm2 and R6W-fullscreen-iterm2 are enabled.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::the_support_table_enables_exactly_the_six_cells_that_drew_right",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "cb14001a586ac8d3a57805484af955aad9f8154fe6d34ee618ebe2e328fc85d1",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-UNCOVERED-PLATFORM-TEXT",
+      "family": "transcript-pictures",
+      "obligation": "On Windows, FreeBSD and any other system, Kitty's environment names no candidate in either mode under auto or any forced protocol, while kitty forced in native mode there on macOS is used.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::windows_freebsd_and_any_other_system_draw_text_even_when_a_protocol_is_forced",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "e9c2d006dfb9e0aed7227465412942dad2d088d978befd4e243736fbdd2b295f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-FORCED-DISABLED-TEXT",
+      "family": "transcript-pictures",
+      "obligation": "A protocol forced in any row of the support table and either mode is used unasked exactly where that cell is one of the six enabled, and names no candidate everywhere else.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::a_protocol_forced_over_a_disabled_cell_draws_text",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "c410a2e8b8091e58f87cee309055eb9fe0ed10fa082848fdd116b328dfd564a3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-QUIET-NO-CANDIDATE",
+      "family": "transcript-pictures",
+      "obligation": "Under auto or kitty forced, a session whose output or input is not a terminal, with NO_COLOR set or with colour off names no candidate, the same session with none of them does, and an empty NO_COLOR counts as unset.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::the_four_places_nothing_may_be_asked_name_no_candidate_whatever_is_wanted",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "c8ba05906e3428ca49521cb669ac0af5c8e001eb4df930a6019eb4efc16029c7",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-MULTIPLEXER-NO-AUTO",
+      "family": "transcript-pictures",
+      "obligation": "Under auto, Kitty inside tmux, screen (by STY or a screen TERM), Zellij or a tmux TERM names no candidate, whether tmux passes sequences through, holds them back or is not known to.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::auto_names_nothing_inside_a_multiplexer_whatever_tmux_would_pass",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "cecdb521fe248257c912ad4923c26317b144f8201b0f415732e7bb738554c521",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-TMUX-FORCED-ON-ONLY",
+      "family": "transcript-pictures",
+      "obligation": "kitty forced in tmux inside Kitty is used only where the server said passthrough is on, not where it is off or not known, and is never used inside screen or Zellij even with passthrough on.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux_passes_a_forced_protocol_only_where_its_server_said_on",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "000b1d91317e00d7654cf9dd2feaa3ab4a327420db5a4f05d2ba7f45c0ff1449",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-OFF-TEXT",
+      "family": "transcript-pictures",
+      "obligation": "off names no candidate in Kitty's environment in either screen mode.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::off_draws_text_wherever_a_picture_would_draw",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "d037b836b48dff9dd54ea67398642c603bbd786fda55d34ec6e7542ad5393017",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ASKED-NEEDS-PIXELS",
+      "family": "transcript-pictures",
+      "obligation": "A candidate is text without being asked where the window reports no pixels, is drawn at the window's cell where the terminal says yes, and is text where it says no.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::a_candidate_is_asked_about_only_where_the_window_reports_its_pixels",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "b82a25bf0c2864f933963a87bb4cbe5a75892ace2d3264420e472039ecab0eb2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-FORCED-CELL",
+      "family": "transcript-pictures",
+      "obligation": "A forced protocol is drawn without asking, at the window's 9 by 18 cell where the window reports pixels and at an 8 by 16 cell where it reports none.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::a_forced_protocol_is_used_unasked_in_the_windows_cell_or_eight_by_sixteen",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "7264164c7ffc96044e3e1d11dc412b1a96e965814f574a498d1cb7125e62a9a6",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-CELL-FROM-PIXELS",
+      "family": "transcript-pictures",
+      "obligation": "A window of 80 by 24 cells and 800 by 480 pixels has a 10 by 20 cell, and one reporting nought pixels has none.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::the_cell_is_read_from_the_pixel_fields_of_the_window_size_report",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "fbe5fc4a7b216f2b31fd4fb27884be3edf83e778e417282f60fb87f252328fb8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-RENDERER-TEXT-FIRST",
+      "family": "transcript-pictures",
+      "obligation": "A new renderer draws text, and draws with the capability it is handed after.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_renderer_draws_text_until_it_is_told_what_the_terminal_draws",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "9ed255f08a9ded7877fedeb028f9c8f53f2a028ea4fc8bde252e3e080f914bde",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-RESIZE-CELL",
+      "family": "transcript-pictures",
+      "obligation": "Kitty handed over at a 9 by 18 cell is drawn at 12 by 24 after a resize to a window whose cell is 12 by 24.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_resize_reads_the_windows_cell_again",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "a7576a987c45e3c9828beedffd3fa36145fa0ecb29b3ad089872845812340f2a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-CONFIG-VALUES",
+      "family": "transcript-pictures",
+      "obligation": "output.images is auto where no layer sets it and kitty, iterm2, sixel or off where a layer names it, and png is no value of it.",
+      "package": "crucible-config",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_config"
+      },
+      "case": "settings::output::tests::images_are_auto_unless_a_layer_names_a_protocol_or_off",
+      "source": "crates/crucible-config/src/settings/output.rs",
+      "body_sha256": "c2f8068903fd09085258b68fcf84782b4b6716a2d331d33b57998bb8346f6511",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-ROW-LAST",
+      "family": "transcript-pictures",
+      "obligation": "The last settings row is Images, for output.images, usually auto.",
+      "package": "crucible-config",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_config"
+      },
+      "case": "shape::rows::tests::the_images_row_is_the_last_so_no_row_before_it_moves",
+      "source": "crates/crucible-config/src/shape/rows/tests.rs",
+      "body_sha256": "b83e591b6e83da1f1f4137cf4b524014ece26deaf79344786bc8db7e2a846e3b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SETTINGS-AUTO-NEXT-START",
+      "family": "transcript-pictures",
+      "obligation": "The Images row at auto ends auto \u00b7 applies at next start.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::command::settings::tests::the_images_row_at_auto_says_it_applies_at_next_start",
+      "source": "src/cli/converse/command/settings/tests.rs",
+      "body_sha256": "f53795b1ad5fa81c115351ca3cefda36f8fec6458b53a3c5b813b555eda6fe46",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SETTINGS-AT-ONCE",
+      "family": "transcript-pictures",
+      "obligation": "In Kitty on Linux with a 9 by 18 cell, kitty chosen on the Images row draws Kitty at that cell at once and says Images set to kitty, and off then draws text at once and says Images set to off, each shown on the row.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::command::settings::tests::a_protocol_named_on_the_images_row_is_drawn_at_once_and_off_is_text_at_once",
+      "source": "src/cli/converse/command/settings/tests.rs",
+      "body_sha256": "1ae30397ff1ac5e405ef5e2f8844841cf24a4e7fa78a7bd8a1be6697f6cddc68",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SETTINGS-NO-INPUT",
+      "family": "transcript-pictures",
+      "obligation": "Where the start found its input not a terminal, kitty chosen on the Images row in Kitty on Linux leaves the drawing text.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::command::settings::tests::a_protocol_named_where_input_is_not_a_terminal_draws_text",
+      "source": "src/cli/converse/command/settings/tests.rs",
+      "body_sha256": "7ec2e37a6c29de3747c1c51510b709e89665580d2a1a9bd58e9e05804e10fb2e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SETTINGS-NOT-NATIVE",
+      "family": "transcript-pictures",
+      "obligation": "iterm2 in native mode in WezTerm on Linux ends iterm2 \u00b7 not available in native mode.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::command::settings::tests::a_protocol_only_fullscreen_draws_says_it_is_not_available_in_native_mode",
+      "source": "src/cli/converse/command/settings/tests.rs",
+      "body_sha256": "b34294bde737539ecf87d96d903f4b1ad5e284820ec9f1fbc06e3ad155a532ae",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SETTINGS-NOT-FULLSCREEN",
+      "family": "transcript-pictures",
+      "obligation": "kitty in fullscreen mode in tmux inside Kitty on Linux, with passthrough on, ends kitty \u00b7 not available in fullscreen mode.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::command::settings::tests::a_protocol_only_native_draws_says_it_is_not_available_in_fullscreen_mode",
+      "source": "src/cli/converse/command/settings/tests.rs",
+      "body_sha256": "e471f74baff06ec2353bb4e127ae87d5edd61b1d17a8b841890db2ca6ab07144",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-PICTURES-SETTINGS-NOT-ANYWHERE",
+      "family": "transcript-pictures",
+      "obligation": "kitty in Kitty on Windows ends kitty \u00b7 not available and names no mode.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::command::settings::tests::a_protocol_neither_mode_draws_says_it_is_not_available",
+      "source": "src/cli/converse/command/settings/tests.rs",
+      "body_sha256": "15e78a9d5ea725018d1725bedd7a49480b70dd829a60fc00bc766a4998c14e88",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-EXCHANGE-YES",
+      "family": "terminal",
+      "obligation": "For Kitty, iTerm2 and sixel, a pseudo-terminal that answers the cursor position, then the candidate's yes and a cursor position, confirms the candidate, is asked its question once, and leaves no byte to read.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::exchange::a_terminal_that_answers_confirms_its_candidate_and_leaves_nothing_to_read",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "7a998fdf513da720addd2e793bd872905aba45edeaed47ab9349def0db69ad02",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-EXCHANGE-SILENT",
+      "family": "terminal",
+      "obligation": "A pseudo-terminal that never answers is asked the cursor position once and never the question, is read for the reply wait and less than a quarter second past it, and leaves nothing to read.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::exchange::a_terminal_that_never_answers_is_read_for_the_reply_wait_and_no_longer",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "24be3b02bded4625a2a940407ad371ec064ae31f0e6e69eab4ded456986f8fde",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-EXCHANGE-OUT-OF-ORDER",
+      "family": "terminal",
+      "obligation": "A yes arriving after the cursor position that follows the question is a no, the question is asked once, and the yes is consumed.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::exchange::a_yes_behind_its_cursor_position_is_a_no_and_is_consumed",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "d04ac9b807311980f5cd9e8f52c0c8fb748941292bfe80867888a61082462d0f",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-EXCHANGE-LATE-BACKGROUND",
+      "family": "terminal",
+      "obligation": "Background colour answers arriving before the first cursor position and before the yes are consumed, the candidate is still confirmed, and nothing is left to read.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::exchange::a_late_background_answer_is_consumed_wherever_it_lands",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "15a5514f4e30d6e9f2af2580c5c59e1ed243835902b190afb38f803379c9b407",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-EXCHANGE-FLOOD",
+      "family": "terminal",
+      "obligation": "A pseudo-terminal answering the cursor position with an OSC that runs 64 KiB without end is a no, is asked the cursor position once, and is left in under 500 ms of a 600 ms reply wait.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::exchange::a_terminal_that_sends_without_end_is_left_long_before_the_wait_runs_out",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "5b08aa654c15bef10e4e46946fd01af09dac1223e17c83de442add76e758d080",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-EXCHANGE-MODE-RESTORED",
+      "family": "terminal",
+      "obligation": "Inside the guard a pseudo-terminal reads without line editing, echo or a minimum count, and after an early error return its local modes, but for the PENDIN that macOS sets on its own, and its input and output modes and minimum count are what they were.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::exchange::the_mode_is_put_back_when_the_exchange_returns_early",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "40f847fb672d5dd2caaccdcb54a302a51a4f0d1033fc0aba2aff028f96565c28",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-EXCHANGE-NOT-A-TERMINAL",
+      "family": "terminal",
+      "obligation": "The guard sets no mode, and returns none, on the null device.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::exchange::no_mode_is_set_where_the_other_end_is_not_a_terminal",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "a60512cf489d4f68dc2950676218f644e90f92c14699a3982ada6f70b14e70be",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-REPLIES-UNASKED",
+      "family": "terminal",
+      "obligation": "Background colour answers, another image's or an imageless Kitty reply, near-miss cursor positions and device attributes, another iTerm2 reply, device control and private strings, and keys are each read whole as sequences that name no reply.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::replies::a_reply_nobody_asked_for_is_consumed_and_named_nothing",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "a186a85af4e07d1c4ec17b5c08faa249664cf9868b9bd4919e1053c73642154e",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-REPLIES-CEILING",
+      "family": "terminal",
+      "obligation": "An OSC, APC, DCS, CSI, private CSI and character-set sequence each 100,000 bytes long is held to the ceiling while read, ends as one sequence naming no reply, and leaves the reader between sequences.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::replies::a_sequence_of_any_length_is_held_to_its_ceiling_and_read_to_its_end",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "86b4d92f5fc71a0b0ee3d252a766780e4a66f822c2aab1091ac5eca224c74eaf",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-REPLIES-GENERATED",
+      "family": "terminal",
+      "obligation": "Each of 4096 generated cases, or CRUCIBLE_GENERATED_INPUTS where set, from the printed seed, holds noise to the ceiling, is between sequences after a cancel and reads whole replies back as what they were, within 30 s and without a panic.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::replies::generated_replies_and_noise_are_read_whole_and_bounded",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "111c254d00b3f9758bd6db977d0618b21dc3f5d921231eb1fe60d671abdf76fc",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-ON",
+      "family": "terminal",
+      "obligation": "A tmux that says on or all is on, and is run as -S with the socket from TMUX, display-message -p '#{allow-passthrough}'.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::a_server_that_passes_through_is_on_and_is_asked_for_this_pane",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "06cac3257e68fe8cec8a4ec15aac67533471a5a1f775f87f0f5cb7f3e73c4759",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-UNANSWERED",
+      "family": "terminal",
+      "obligation": "A tmux that does not answer is not known in under a second, and on Linux its process is gone once the question returns.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::a_server_that_does_not_answer_in_time_is_unknown_and_its_process_is_reaped",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "73e8975ccc455df6211d07ce2e28ec274e1491ac35c33892cfbc2e7f541b2035",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-ASKED-ONLY-WHERE-IT-DECIDES",
+      "family": "terminal",
+      "obligation": "tmux is not run, and passthrough is not known, under auto or off, outside tmux, on Windows or FreeBSD, over SSH, with colour off or NO_COLOR set, with output redirected, for a protocol or mode no tmux cell enables, or with no socket in TMUX.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::tmux_is_asked_only_where_its_answer_decides_what_is_drawn",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "b54a18893b308d89345e4666db4980904141e85c9a19cbd355b6a1f569f6e546",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-ABSOLUTE-ONLY",
+      "family": "terminal",
+      "obligation": "tmux is looked for only in the absolute entries of PATH: past ., a relative entry holding a tmux, bin, an empty entry and an absolute directory with none, the first absolute directory holding one is found; relative, . and empty entries alone, or an empty PATH, find none, and the relative tmux never runs.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::tmux_is_looked_for_only_in_the_absolute_directories_of_the_path",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "da13018b728ba99bd095228bbfa40d367e6a4edcfaf489d2e8aeaffc2301d2cd",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-RELATIVE-PASSED-OVER",
+      "family": "terminal",
+      "obligation": "With an empty entry, ., a relative entry holding a tmux that says on, and bin ahead of an absolute directory whose tmux says off, the server is off: the relative tmux never runs and the absolute one does.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::a_tmux_behind_entries_that_are_not_absolute_never_runs_and_the_absolute_one_answers",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "77f4eb0afae32514bf429bc08b35269ce890fa04a3cf66c829b7c986fa49f745",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-RELATIVE-NEVER-RUNS",
+      "family": "terminal",
+      "obligation": "A tmux that says on, reached only through an empty entry, ., bin and a relative entry, never runs, and passthrough is not known.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::a_tmux_reached_only_through_entries_that_are_not_absolute_never_runs",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "9be158d550eef006b0ffaf360641780f5ff8ee5ecb152ad9a8e8a8aaa144a378",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-NO-PATH",
+      "family": "terminal",
+      "obligation": "With no PATH, the tmux lookup finds nothing and passthrough is not known.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::with_no_path_tmux_on_finds_nothing_and_passthrough_is_unknown",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "4a1b3efd371110fb7d848a00a325da37b0f038132ec7d6e1d53c4cd9ee32ed74",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-EMPTY-ENVIRONMENT",
+      "family": "terminal",
+      "obligation": "Given no pane, tmux is started with no variable of this process, CARGO_MANIFEST_DIR among them: the environment it records, names and values, is exactly the one the same fake records when started with none, and it still answers on.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::tmux_is_started_with_no_variable_of_this_process",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "2cc1ee81a6ab609719e8d1efd22de8e30275edab0c7756bf5f31030e5de0ddf2",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-PANE",
+      "family": "terminal",
+      "obligation": "Inside tmux in Kitty with Kitty forced, a TMUX_PANE of %7 reaches tmux as %7, and it is the only variable beyond what tmux's shell sets by itself: the environment it records, that line set aside, is exactly the one the same fake records when started with none, CARGO_MANIFEST_DIR absent, and it answers on.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::a_pane_id_in_tmux_pane_reaches_tmux_and_no_other_variable_does",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "97feb70a18d0d6bc367674d788b520ea087b112933836106ef84aab93dbca593",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-TMUX-PANE-MALFORMED",
+      "family": "terminal",
+      "obligation": "Inside tmux in Kitty with Kitty forced, a TMUX_PANE that is not % and one or more ASCII digits (empty, %, 7, %7x, %7;x, %-1, %+7, a space before or after %7, % and an Arabic-Indic seven, or %7, a newline and X=1) gives tmux no TMUX_PANE: the environment it records is exactly the one the same fake records when started with none, and it answers on.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "terminal::graphics::tests::tmux::a_tmux_pane_not_percent_and_ascii_digits_adds_nothing",
+      "source": "crates/crucible-tui/src/terminal/graphics.rs",
+      "body_sha256": "60b4e4d6ec918f7a63e7720722623d7e18e3d1d98d739777c5d1d68c49c453cb",
+      "platforms": [
+        "linux",
+        "macos"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-STARTUP-ORDER",
+      "family": "terminal",
+      "obligation": "In Kitty's environment the built program asks the background colour, then the cursor position, then Kitty's question, then draws the prompt.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-first-frame"
+      },
+      "case": "startup::tests::heard::a_named_terminal_is_asked_after_the_background_question_and_before_the_prompt",
+      "source": "src/bin/startup/mod.rs",
+      "body_sha256": "1f5220457dfa8a239c7192179528181fada27cfb08ae067e537ac097e88fc0c3",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-STARTUP-QUIET",
+      "family": "terminal",
+      "obligation": "Started with output redirected, input not a terminal, NO_COLOR set or output.color never, the built program writes no cursor-position, Kitty, iTerm2, device-attributes or background question, and the runs on a terminal reach the prompt.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-first-frame"
+      },
+      "case": "startup::tests::heard::where_nothing_may_be_asked_no_question_reaches_the_terminal",
+      "source": "src/bin/startup/mod.rs",
+      "body_sha256": "428fbba53d971a1308e6846d302786fa036a38d763cdcafc1c3c2a1eec0d7a88",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-TERMINAL-STARTUP-NO-KEY",
+      "family": "terminal",
+      "obligation": "Answered at once, never or out of order, or late or split with every answer cut before and after each escape, the cut after an escape being the one crossterm can read as Esc and typed characters, the built program asks the cursor position, asks Kitty's question only where a cursor position came within the patience, reads a late first cursor position to its end, puts the typed key in the box and types none of the answers.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "bench-first-frame"
+      },
+      "case": "startup::tests::heard::no_answer_given_at_once_late_out_of_order_or_split_becomes_a_key",
+      "source": "src/bin/startup/mod.rs",
+      "body_sha256": "2516fdde4cb9bfcdd1889c143281d7e0c60e63753a7c05a907683a07c44b6dd2",
+      "platforms": [
+        "linux"
+      ]
     }
   ]
 }

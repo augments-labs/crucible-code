@@ -75,6 +75,42 @@ fn walk_to(panel: &mut Panel, label: &str) {
     panic!("no row is labelled {label}");
 }
 
+/// An environment the launch was given holding exactly these variables.
+fn launched(pairs: &[(&str, &str)]) -> crucible_app::providers::Lookup {
+    let held: Vec<(String, String)> = pairs
+        .iter()
+        .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+        .collect();
+    Box::new(move |wanted| {
+        held.iter()
+            .find(|(name, _)| name == wanted)
+            .map(|(_, value)| value.clone())
+    })
+}
+
+/// The row labelled `label`, as the panel draws it.
+fn row_of(rows: &[String], label: &str) -> String {
+    rows.iter()
+        .find(|row| row.contains(label))
+        .cloned()
+        .unwrap_or_else(|| panic!("no {label} row in {rows:#?}"))
+}
+
+/// Where the pictures row is in `panel`.
+fn images_at(panel: &Panel) -> usize {
+    panel
+        .lines
+        .iter()
+        .position(|line| line.row.id() == crucible_config::RowId::Images)
+        .expect("a pictures row")
+}
+
+/// A style read as though the session ran on Linux, where the support table's
+/// cells were judged, so a test about a drawn cell holds on every host.
+fn on_linux() -> Style {
+    Style::plain().running_on(crucible_tui::graphics::Platform::Linux)
+}
+
 #[test]
 fn settings_tabs_switch_with_tab_shift_tab_and_the_arrows() {
     let terms = plain();
@@ -380,6 +416,7 @@ fn running(
         RowId::ToolDetail => Some(terms.style().args(1000).to_string()),
         RowId::Send => Some(format!("{:?}", terms.sending.get())),
         RowId::PinAfter => Some(terms.pinning.get().as_secs().to_string()),
+        RowId::Images => Some(format!("{:?}", renderer.capability())),
         RowId::Colour
         | RowId::ScreenMode
         | RowId::Tone
@@ -426,7 +463,12 @@ fn other(line: &Line) -> String {
 #[test]
 fn every_settings_row_that_applies_at_once_changes_the_running_value() {
     let sample = Sample::new("settings-live");
-    let terms = keeping(&sample);
+    // In Kitty, where a protocol named is drawn at once.
+    let terms = Terms {
+        style: std::cell::Cell::new(on_linux()),
+        environment: launched(&[("KITTY_WINDOW_ID", "1")]),
+        ..keeping(&sample)
+    };
     let counted = counted();
     let mut renderer = Renderer::new(Recording::new(80, 24));
     // As the start leaves it, where no file says otherwise: the rail on and
@@ -442,11 +484,11 @@ fn every_settings_row_that_applies_at_once_changes_the_running_value() {
     for at in 0..panel.lines.len() {
         let line = panel.lines.get(at).expect("a row is there");
         let (id, label) = (line.row.id(), line.row.label());
-        if takes(id) != Takes::Now {
+        let word = other(line);
+        if takes(id, &word) != Takes::Now {
             continue;
         }
         let before = running(id, &renderer, &terms);
-        let word = other(line);
         panel.asked = Some((at, word.clone()));
         settle(&mut renderer, &terms, &mut panel);
         let after = running(id, &renderer, &terms);
@@ -469,7 +511,8 @@ fn every_settings_row_that_applies_at_once_changes_the_running_value() {
 fn the_settings_rows_that_apply_at_once_are_these() {
     let live: Vec<&str> = crucible_config::rows()
         .iter()
-        .filter(|row| takes(row.id()) == Takes::Now)
+        // As a row first stands: pictures at `auto` wait for a start.
+        .filter(|row| takes(row.id(), row.usual().unwrap_or_default()) == Takes::Now)
         .map(crucible_config::Row::label)
         .collect();
     assert_eq!(
@@ -870,4 +913,186 @@ fn in_fullscreen_mode_the_scroll_rail_row_is_neither_locked_nor_said_to_be_nativ
         !rows.iter().any(|row| row.contains("fullscreen mode only")),
         "{rows:#?}"
     );
+}
+
+#[test]
+fn the_images_row_at_auto_says_it_applies_at_next_start() {
+    let terms = plain();
+    let counted = counted();
+    let mut panel = Panel::new(&terms, &counted);
+
+    let rows = drawn(&mut panel, 100, 40);
+    assert!(
+        row_of(&rows, "Images").ends_with("auto · applies at next start"),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_protocol_named_on_the_images_row_is_drawn_at_once_and_off_is_text_at_once() {
+    let sample = Sample::new("settings-images-at-once");
+    let terms = Terms {
+        style: std::cell::Cell::new(on_linux()),
+        environment: launched(&[("TERM", "xterm-kitty"), ("KITTY_WINDOW_ID", "1")]),
+        ..keeping(&sample)
+    };
+    let counted = counted();
+    let mut terminal = Recording::new(80, 24);
+    let cell = crucible_tui::graphics::Cell {
+        width: 9,
+        height: 18,
+    };
+    terminal.measures(Some(cell));
+    let mut renderer = Renderer::new(terminal);
+    let mut panel = Panel::new(&terms, &counted);
+    let at = images_at(&panel);
+
+    panel.asked = Some((at, "kitty".to_owned()));
+    let left = settle(&mut renderer, &terms, &mut panel);
+    assert_eq!(
+        renderer.capability(),
+        crucible_tui::graphics::Capability::Graphics {
+            protocol: crucible_tui::graphics::Protocol::Kitty,
+            cell
+        }
+    );
+    assert_eq!(left.as_deref(), Some("Images set to kitty"));
+    let rows = drawn(&mut panel, 100, 40);
+    assert!(row_of(&rows, "Images").ends_with("kitty"), "{rows:#?}");
+
+    panel.asked = Some((at, "off".to_owned()));
+    let left = settle(&mut renderer, &terms, &mut panel);
+    assert_eq!(
+        renderer.capability(),
+        crucible_tui::graphics::Capability::Text
+    );
+    assert_eq!(left.as_deref(), Some("Images set to off"));
+    let rows = drawn(&mut panel, 100, 40);
+    assert!(row_of(&rows, "Images").ends_with("off"), "{rows:#?}");
+}
+
+#[test]
+fn a_protocol_named_where_input_is_not_a_terminal_draws_text() {
+    let sample = Sample::new("settings-images-no-input");
+    // Started with its input redirected, where a start asks nothing.
+    let terms = Terms {
+        style: std::cell::Cell::new(on_linux().reading_from(false)),
+        environment: launched(&[("TERM", "xterm-kitty"), ("KITTY_WINDOW_ID", "1")]),
+        ..keeping(&sample)
+    };
+    let counted = counted();
+    let mut terminal = Recording::new(80, 24);
+    terminal.measures(Some(crucible_tui::graphics::Cell {
+        width: 9,
+        height: 18,
+    }));
+    let mut renderer = Renderer::new(terminal);
+    let mut panel = Panel::new(&terms, &counted);
+    let at = images_at(&panel);
+
+    panel.asked = Some((at, "kitty".to_owned()));
+    settle(&mut renderer, &terms, &mut panel);
+    assert_eq!(
+        renderer.capability(),
+        crucible_tui::graphics::Capability::Text
+    );
+}
+
+#[test]
+fn an_images_auto_the_file_cannot_take_leaves_what_is_drawn() {
+    let sample = Sample::new("settings-images-auto-unwritable");
+    let terms = Terms {
+        environment: launched(&[("TERM", "xterm-kitty"), ("KITTY_WINDOW_ID", "1")]),
+        ..keeping(&sample)
+    };
+    // Something that is not a file stands where the file goes, so no write
+    // can land there whoever runs the test.
+    std::fs::create_dir_all(sample.user_file()).expect("a directory in the file's place");
+    let counted = counted();
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    // As a start leaves it where Kitty answered its question.
+    let drawn_with = crucible_tui::graphics::Capability::Graphics {
+        protocol: crucible_tui::graphics::Protocol::Kitty,
+        cell: crucible_tui::graphics::Cell {
+            width: 9,
+            height: 18,
+        },
+    };
+    renderer.images(drawn_with);
+    let mut panel = Panel::new(&terms, &counted);
+    let at = images_at(&panel);
+
+    panel.asked = Some((at, "auto".to_owned()));
+    settle(&mut renderer, &terms, &mut panel);
+    assert_eq!(renderer.capability(), drawn_with);
+    let note = panel.note.clone().unwrap_or_default();
+    assert!(note.starts_with("! not written: "), "{note}");
+    assert!(!note.contains("in force"), "{note}");
+}
+
+#[test]
+fn a_protocol_only_fullscreen_draws_says_it_is_not_available_in_native_mode() {
+    let sample = Sample::new("settings-images-native");
+    // WezTerm, drawn on directly: iTerm2's pictures drew right on a screen of
+    // crucible's own and lost their top after a resize in the terminal's.
+    let terms = Terms {
+        style: std::cell::Cell::new(on_linux()),
+        settings: sample.user(r#"{"output": {"screen": "native", "images": "iterm2"}}"#),
+        environment: launched(&[("TERM", "xterm-256color"), ("TERM_PROGRAM", "WezTerm")]),
+        ..keeping(&sample)
+    };
+    let counted = counted();
+    let mut panel = Panel::new(&terms, &counted);
+
+    let rows = drawn(&mut panel, 100, 40);
+    assert!(
+        row_of(&rows, "Images").ends_with("iterm2 · not available in native mode"),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_protocol_only_native_draws_says_it_is_not_available_in_fullscreen_mode() {
+    let sample = Sample::new("settings-images-fullscreen");
+    // Kitty behind tmux that passes sequences through, which drew right only
+    // in the terminal's own buffer.
+    let terms = Terms {
+        style: std::cell::Cell::new(on_linux().passing(crucible_tui::graphics::Passthrough::On)),
+        settings: sample.user(r#"{"output": {"screen": "fullscreen", "images": "kitty"}}"#),
+        environment: launched(&[
+            ("TERM", "tmux-256color"),
+            ("TMUX", "/tmp/tmux-1000/default,1234,0"),
+            ("KITTY_WINDOW_ID", "1"),
+        ]),
+        ..keeping(&sample)
+    };
+    let counted = counted();
+    let mut panel = Panel::new(&terms, &counted);
+
+    let rows = drawn(&mut panel, 100, 40);
+    assert!(
+        row_of(&rows, "Images").ends_with("kitty · not available in fullscreen mode"),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_protocol_neither_mode_draws_says_it_is_not_available() {
+    let sample = Sample::new("settings-images-nowhere");
+    // Windows draws text this release, in either mode, whatever the terminal.
+    let terms = Terms {
+        style: std::cell::Cell::new(
+            Style::plain().running_on(crucible_tui::graphics::Platform::Windows),
+        ),
+        settings: sample.user(r#"{"output": {"images": "kitty"}}"#),
+        environment: launched(&[("TERM", "xterm-kitty"), ("KITTY_WINDOW_ID", "1")]),
+        ..keeping(&sample)
+    };
+    let counted = counted();
+    let mut panel = Panel::new(&terms, &counted);
+
+    let rows = drawn(&mut panel, 100, 40);
+    let row = row_of(&rows, "Images");
+    assert!(row.ends_with("kitty · not available"), "{rows:#?}");
+    assert!(!row.contains(" mode"), "{rows:#?}");
 }

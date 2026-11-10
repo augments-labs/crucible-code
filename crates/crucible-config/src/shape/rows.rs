@@ -18,7 +18,7 @@
 //! widening.
 
 use super::{
-    COLOR, COMPACTION_WHEN, DOCUMENT, Field, GLYPHS, PIN_AFTER, PROMPT_CACHE_ISOLATION,
+    COLOR, COMPACTION_WHEN, DOCUMENT, Field, GLYPHS, IMAGES, PIN_AFTER, PROMPT_CACHE_ISOLATION,
     PROMPT_CACHE_MODE, PROMPT_CACHE_PERSISTENT, PROMPT_CACHE_RETENTION, SCREEN, SCROLL_SPEED, SEND,
     THEME, TONE, TOOL_DETAIL, TRANSCRIPT_COLOURS, UPDATE_CHECK,
 };
@@ -88,6 +88,8 @@ pub enum RowId {
     CacheRetention,
     /// `promptCaching.persistentResources.mode`.
     CachePersistent,
+    /// `output.images`.
+    Images,
 }
 
 /// One setting a menu lists.
@@ -288,6 +290,13 @@ const ROWS: &[Row] = &[
         "promptCaching.persistentResources.mode",
         "Persistent cache",
         Values::Choice(PROMPT_CACHE_PERSISTENT),
+    ),
+    // After every other row, so adding it moved none of them.
+    Row::new(
+        RowId::Images,
+        "output.images",
+        "Images",
+        Values::Choice(IMAGES),
     ),
 ];
 

@@ -529,6 +529,18 @@
           ],
           "type": "string"
         },
+        "images": {
+          "default": "auto",
+          "description": "How pictures are drawn: auto asks the terminal at start, only where its environment names a terminal pictures were seen to draw right on and no multiplexer is in between; kitty, iterm2 or sixel uses that protocol without asking where it was seen to draw right, and text elsewhere; off draws text",
+          "enum": [
+            "auto",
+            "kitty",
+            "iterm2",
+            "sixel",
+            "off"
+          ],
+          "type": "string"
+        },
         "pinAfterSeconds": {
           "default": 3,
           "description": "How many seconds a running tool call waits before it is drawn above the working row with its output and ctrl+b; one that finishes sooner is only written to the transcript, and 0 draws every call at once",

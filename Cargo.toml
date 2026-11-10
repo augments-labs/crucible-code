@@ -140,6 +140,21 @@ similar = "=2.7.0"
 # this project guessed at.
 terminal-colorsaurus = "=1.0.3"
 
+# The terminal a question about images is asked of, found and held: whichever
+# of the standard streams is a terminal, or the controlling one, with the
+# standard streams locked so nothing else writes while a reply is read. `std`
+# can tell that a stream is a terminal but cannot reopen one read and write or
+# hold all three locks as one value. Already in the graph under
+# `terminal-colorsaurus`, so this compiles the same version once.
+terminal-trx = "=0.2.6"
+
+# Waits on a terminal for at most a deadline before a read, which is what lets
+# a terminal that never answers cost a bounded wait instead of a hung start.
+# `std` has no timed read on a file descriptor. Already in the graph under
+# `terminal-colorsaurus` and `tokio`; `os-ext` alone, for polling a descriptor
+# this process did not open through it.
+mio = { version = "=1.2.4", default-features = false, features = ["os-ext"] }
+
 # Parses fenced code so it can be drawn in more than one colour, and reads the
 # `.tmTheme` files that say what those colours are — which is the format every
 # syntax theme a reader already owns is written in. Default features are off on
@@ -533,11 +548,11 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
-# `cargo run` has six targets to choose between — this one and the five bench
-# probes under `src/bin/`, which cargo compiles as binaries of this package
-# whether or not a release ships them. Without this key it refuses to choose and
-# asks for `--bin`, which is a question about this repository's layout put to
-# somebody who only wanted to start crucible.
+# `cargo run` has more than one target to choose between — this one and every
+# binary under `src/bin/`, the bench probes among them, which cargo compiles as
+# binaries of this package whether or not a release ships them. Without this
+# key it refuses to choose and asks for `--bin`, which is a question about this
+# repository's layout put to somebody who only wanted to start crucible.
 default-run = "crucible"
 
 # One shipped binary. The short `cru` name is a symlink created by the

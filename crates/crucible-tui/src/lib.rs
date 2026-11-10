@@ -105,6 +105,7 @@ pub use running::{Command, Running};
 pub use sandbox_panel::{SandboxPanel, SandboxTab};
 pub use shelf::{Pane, Resting, Serving, Shelf, Stocked};
 pub use tab_row::TabRow;
+pub use terminal::graphics;
 pub use terminal::ground::asked;
 pub use terminal::keyboard::{Pasting, Spelling};
 pub use terminal::keys::{Characters, Pressed, characters, pressed, waiting};

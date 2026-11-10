@@ -1462,7 +1462,7 @@
         "Vendor::answering(&crate::a_long_answer())",
         "Watched::native(case, 80, 24, vendor)"
       ],
-      "sha256": "c1a0d368eed15e0799226f2a35dc5bf682de6b4165d14576d4a49c770d0dfd0e"
+      "sha256": "1a269185e70c2e5c78a393f7facccf0cbf40a3a8ae5d5ba205a71314d9b14171"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__a_resize_with_a_panel_open_80x16.snap",
@@ -1471,7 +1471,7 @@
         "Vendor::answering(&crate::a_long_answer())",
         "Watched::native(case, 80, 24, vendor)"
       ],
-      "sha256": "58326499502bcbae6cd1986db7794fc71e10daf9ee8eb7fefbc5506f4735fb69"
+      "sha256": "47f0df98d39a5e0eda1eb7d60e696d5882562465e09bae6e50d42cc1f92452d5"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__a_row_sealed_after_narrowing_is_folded_not_clipped_in_native_mode.snap",
@@ -1666,7 +1666,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::native(\"native-settings-tabs\", 80, 30, &vendor)"
       ],
-      "sha256": "12179c24bcbaa28716e550f76d4e2eac6b9015ce9ad5199d7d3b09e285bff49f"
+      "sha256": "697fc1e98d95580de6bacc8280e2a07c3682f321f12774292428c2f77b2b6ecc"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__settings_scrolls_inside_its_room_in_native_mode.snap",
@@ -1675,7 +1675,7 @@
         "Vendor::answering(&crate::a_long_answer())",
         "Watched::native(case, 80, 24, vendor)"
       ],
-      "sha256": "f2490344ed47865b27d3a752ed9594b638d5ba741f719cbd8830c42fba7d10e3"
+      "sha256": "9e6481d2f69f35d61ff071d0cf9b82a9023f61789c3880793a846674e2072461"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__settings_takes_at_most_half_the_window_in_native_mode.snap",
@@ -1684,7 +1684,7 @@
         "Vendor::answering(&crate::a_long_answer())",
         "Watched::native(case, 80, 24, vendor)"
       ],
-      "sha256": "41b4d8649b35a436d7a4072e39fabb0b595dda24c3f589f88ce4285b0d76af27"
+      "sha256": "1a3e612b122edf45e0c6965a2f7b398a6a20efe79439c954e693831fee7ebe84"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__native__slash_list_takes_at_most_half_the_window_in_native_mode.snap",
@@ -1988,7 +1988,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(&case, columns, 30, &vendor)"
       ],
-      "sha256": "6e630baba93d79973ec0ea42053bf0f8db0a674f4af66c5c2ec0e4128035c906"
+      "sha256": "6abeaff28c3bc0348d8aa3e74e4d7de15b8391c97206f8d562d3b201e8fb6cfd"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__settings_config_80.snap",
@@ -1997,7 +1997,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(&case, columns, 30, &vendor)"
       ],
-      "sha256": "c530563abeec4e706d02f1503253bb9b04cc4a0224567aedfc87796b25440ee6"
+      "sha256": "4fe8fed5c42f01d064243ff2b932d3272995f5b6b86b509e5123fc00b994978e"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__settings_search_40.snap",
