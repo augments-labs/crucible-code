@@ -7831,7 +7831,7 @@
     {
       "id": "CASE-TRANSCRIPT-ALERT-CUT",
       "family": "transcript-blocks",
-      "obligation": "An alert cut at any byte, including inside its marker, draws the same runs as the whole alert, and nothing of it is drawn before its break says it was one.",
+      "obligation": "An answer opening with an alert, cut in two at any byte, its marker included, draws the same text as the answer read whole and wears the same slots in the same order, a run of one slot counted once, for each of the five kinds in the unicode and the ascii glyph set.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
@@ -7840,6 +7840,24 @@
       "case": "markdown::tests::an_alert_cut_anywhere_draws_what_the_whole_alert_draws",
       "source": "crates/crucible-tui/src/markdown/tests.rs",
       "body_sha256": "c0d31e490a4132ff5a375a044fb63dd954bd14ff42086287d50d7808f71c8507",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-HELD",
+      "family": "transcript-blocks",
+      "obligation": "A `[!WARNING]` marker read as the deltas `> [`, `!`, `WARN`, `ING` and `]` draws no text until its line break, and the break draws exactly the alert's first row, `\u258e \u25b2 Warning`, in the default unicode glyph set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::nothing_of_an_alert_is_drawn_before_its_break_says_it_was_one",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "5a06633847d95aaa61ebd2876a3044b349f7af0d6b42b5d2aa1d6d684b50b318",
       "platforms": [
         "linux",
         "macos",
@@ -7885,7 +7903,7 @@
     {
       "id": "CASE-TRANSCRIPT-ALERT-MARKS",
       "family": "transcript-blocks",
-      "obligation": "The five marks of an alert are five different one-column marks in each glyph set, and none is the bar or another mark's.",
+      "obligation": "The five marks of an alert are five different one-column marks in the unicode and in the ascii glyph set.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
@@ -7894,6 +7912,24 @@
       "case": "glyphs::tests::the_five_marks_of_an_alert_are_five_different_one_column_marks_in_both_sets",
       "source": "crates/crucible-tui/src/glyphs.rs",
       "body_sha256": "3772504d912354ce55342f6b5cea8971245d33273295da88dc3ac57222cc960a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-BAR",
+      "family": "transcript-blocks",
+      "obligation": "In the unicode and in the ascii glyph set the bar of an alert is one column wide and is none of the five marks, and in the unicode set it is not `\u2502`, the bar of a plain quote.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "glyphs::tests::the_bar_of_an_alert_is_one_column_and_a_mark_of_none_of_its_kinds",
+      "source": "crates/crucible-tui/src/glyphs.rs",
+      "body_sha256": "561305a3770ecd5a31b664ce680739760ba27837f0c2986248261f4ba52ef5b0",
       "platforms": [
         "linux",
         "macos",
@@ -7911,7 +7947,7 @@
       },
       "case": "markdown::tests::an_alert_mark_carries_its_kinds_ink_and_its_word_only_weight_in_every_theme",
       "source": "crates/crucible-tui/src/markdown/tests.rs",
-      "body_sha256": "388e3e1a0bcf649fce2a5c2e741853ed27131c3bd1b2a6b491d239df2afab35b",
+      "body_sha256": "d867d46c660b836a308377913e8ecd6c762702e4cc47cc08db20921af4ff4819",
       "platforms": [
         "linux",
         "macos",

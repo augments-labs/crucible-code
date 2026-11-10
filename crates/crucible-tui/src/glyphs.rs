@@ -854,7 +854,7 @@ mod tests {
     }
 
     #[test]
-    fn the_marks_of_an_alert_are_the_ones_the_design_draws() {
+    fn the_bar_and_the_five_marks_of_an_alert_are_exactly_these_in_both_sets() {
         assert_eq!(Glyphs::Unicode.alerted(), "▎");
         assert_eq!(Glyphs::Ascii.alerted(), "|");
         for (glyphs, marks) in [

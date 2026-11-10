@@ -3871,10 +3871,12 @@ fn an_alert_mark_carries_its_kinds_ink_and_its_word_only_weight_in_every_theme()
             assert_ne!(ink(slot), ink(Slot::Quiet), "{theme:?} {marker}");
         }
 
-        // The design colours three of the marks: Note, Important and Caution
-        // each carry a foreground colour. Warning and Tip are not coloured by
-        // the selected design: Warning is the word's weight and nothing more,
-        // and Tip is a strike through the quiet grey.
+        // Of the four kinds the design draws, it gives the marks of Note and
+        // Caution a colour of their own. It draws no Important alert: the
+        // accent Important's mark wears is this crate's choice. Each of those
+        // three marks carries a foreground colour. The design gives Warning
+        // and Tip no colour of their own: Warning is the word's weight and
+        // nothing more, and Tip is a strike through the bar's quiet grey.
         for (marker, _, slot, ..) in ALERTS {
             let hued = has_hue(&ink(slot));
             match marker {
