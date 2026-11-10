@@ -3612,21 +3612,102 @@ fn an_alert_ends_where_its_quote_does() {
 #[test]
 fn an_alert_ends_at_any_line_that_is_not_a_row_of_its_quote() {
     // A bare `>` and a `>` with no space after it are not rows of a quote, and
-    // a table, a heading's rule and display math each take their lines whole:
-    // none of them is part of the alert, so the quote row after one is a quote
-    // of its own and draws the plain bar.
+    // a table written with outer bars, a heading's rule and display math each
+    // take their lines whole, indented or not: none of them is part of the
+    // alert, so the quote row after one is a quote of its own and draws the
+    // plain bar.
     for between in [
         ">\n",
         ">a\n",
         "| a | b |\n| - | - |\n| 1 | 2 |\n",
         "Title\n===\n",
         "$$\nx^2\n$$\n",
+        "  | a | b |\n  | - | - |\n",
+        "  Title\n  ===\n",
+        "  $$\n  x^2\n  $$\n",
     ] {
         let answer = format!("> [!NOTE]\n> a\n{between}> b\n");
         let text = drawn(&ended(&answer));
 
         assert!(text.starts_with("▎ ◆ Note\n▎ a\n"), "{answer:?}: {text:?}");
         assert!(text.ends_with("│ b\n"), "{answer:?}: {text:?}");
+    }
+}
+
+#[test]
+fn a_row_of_an_alert_after_spaces_is_still_a_row_of_its_quote() {
+    // The quote mark is the first character that is not a space, so an alert
+    // under a list item, an alert indented itself and a row indented more than
+    // its header each keep the alert bar on every row.
+    for (answer, text) in [
+        (
+            "- item\n  > [!NOTE]\n  > a\n  > b\n",
+            "• item\n  ▎ ◆ Note\n  ▎ a\n  ▎ b\n",
+        ),
+        (
+            "- item\n\n  > [!NOTE]\n  > a\n  > b\n",
+            "• item\n\n  ▎ ◆ Note\n  ▎ a\n  ▎ b\n",
+        ),
+        (
+            "1. item\n   > [!NOTE]\n   > a\n",
+            "1. item\n   ▎ ◆ Note\n   ▎ a\n",
+        ),
+        ("  > [!NOTE]\n  > a\n  > b\n", "  ▎ ◆ Note\n  ▎ a\n  ▎ b\n"),
+        ("> [!NOTE]\n  > a\n", "▎ ◆ Note\n  ▎ a\n"),
+        ("> [!NOTE]\n> a\n > b\n", "▎ ◆ Note\n▎ a\n ▎ b\n"),
+        ("> [!NOTE]\n> a\n  > b\n", "▎ ◆ Note\n▎ a\n  ▎ b\n"),
+        ("> [!NOTE]\n> a\n   > b\n", "▎ ◆ Note\n▎ a\n   ▎ b\n"),
+        ("> [!NOTE]\n> a\n    > b\n", "▎ ◆ Note\n▎ a\n    ▎ b\n"),
+    ] {
+        assert_eq!(drawn(&ended(answer)), text, "{answer:?}");
+    }
+}
+
+#[test]
+fn a_marker_on_an_indented_row_of_an_ordinary_quote_stays_as_written() {
+    // A marker is read on the first row of a quote only, so one on a later row
+    // is text however far the row is indented, and the quote keeps its plain
+    // bar.
+    for (answer, text) in [
+        ("> a\n  > [!NOTE]\n  > b\n", "│ a\n  │ [!NOTE]\n  │ b\n"),
+        ("> a\n > [!NOTE]\n", "│ a\n │ [!NOTE]\n"),
+        ("- a\n  > x\n  > [!NOTE]\n", "• a\n  │ x\n  │ [!NOTE]\n"),
+    ] {
+        assert_eq!(drawn(&ended(answer)), text, "{answer:?}");
+    }
+}
+
+#[test]
+fn an_alert_after_spaces_cut_anywhere_draws_what_the_whole_alert_draws() {
+    // What is drawn, and the slot of everything that shows. Spaces are left
+    // out of the slots: the indentation before a bar is said under the quote's
+    // slot when the answer arrives whole and the plain one when it is cut
+    // inside it, for a quote that is no alert as well, and no ink shows on it.
+    let shown = |said: &[(Slot, String)]| {
+        slots(
+            &said
+                .iter()
+                .filter(|(_, text)| !text.trim().is_empty())
+                .cloned()
+                .collect::<Vec<_>>(),
+        )
+    };
+
+    for answer in [
+        "> [!NOTE]\n> a\n  > b\n",
+        "- item\n  > [!NOTE]\n  > a\n  > b\n",
+        "> a\n  > [!NOTE]\n  > b\n",
+        "> [!NOTE]\n> a\n  Title\n  ===\n> b\n",
+    ] {
+        let whole = ended(answer);
+
+        for cut in 1..answer.len() {
+            let (first, second) = answer.split_at(cut);
+            let said = ended_in(&[first, second]);
+
+            assert_eq!(drawn(&said), drawn(&whole), "{answer:?} cut at {cut}");
+            assert_eq!(shown(&said), shown(&whole), "{answer:?} cut at {cut}");
+        }
     }
 }
 

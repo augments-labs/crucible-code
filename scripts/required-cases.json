@@ -7921,7 +7921,7 @@
     {
       "id": "CASE-TRANSCRIPT-ALERT-ENDS",
       "family": "transcript-blocks",
-      "obligation": "An alert ends at a bare `>`, at a `>` with no space after it, at a table, at a heading's underline and at a display formula, and the quote line after any of them is drawn as a quote of its own, not as part of the alert.",
+      "obligation": "An alert ends at a bare `>`, at a `>` with no space after it, at a table written with outer bars, at a heading's underline and at a display formula, the last three indented by spaces or not, and the quote line after any of them is drawn as a quote of its own, not as part of the alert.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
@@ -7929,7 +7929,43 @@
       },
       "case": "markdown::tests::an_alert_ends_at_any_line_that_is_not_a_row_of_its_quote",
       "source": "crates/crucible-tui/src/markdown/tests.rs",
-      "body_sha256": "4ef312b260bf749df05a2afcedccba9b0935f6767ca54dd2150061325cbbacc3",
+      "body_sha256": "5c89d35ee20c619427021df83474dddfe532f31de9ec72191f7f46cd4c610a88",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-INDENTED-ROWS",
+      "family": "transcript-blocks",
+      "obligation": "An alert whose quote marks follow spaces keeps its quiet bar on every row: under a bullet or a numbered item, indented on its own, and with a row indented one to four spaces more than its header.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_row_of_an_alert_after_spaces_is_still_a_row_of_its_quote",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "9fabf3c92f388c18b0c321dd92137c8df53528f5aac5c62164085a47ec9b7f2a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-INDENTED-MARKER",
+      "family": "transcript-blocks",
+      "obligation": "A marker on an indented later row of a quote that is not an alert is shown as written, and the rows of the quote keep the plain bar.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_marker_on_an_indented_row_of_an_ordinary_quote_stays_as_written",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "d009fc2999995583232627e0a13fab4e806d1d187736e2a39ead45a297e1eca0",
       "platforms": [
         "linux",
         "macos",

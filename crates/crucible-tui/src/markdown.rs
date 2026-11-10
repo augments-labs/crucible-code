@@ -71,14 +71,15 @@
 //! nothing about where it wraps; the record that folds it asks.
 //!
 //! A quote whose first line is nothing but `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`,
-//! `[!WARNING]` or `[!CAUTION]`, in any letter case, is an alert: each line of
-//! it that opens with `> ` is drawn behind a bar of its own, and the first
-//! holds the kind's mark and its word in place of the marker. It ends at the
-//! first line that does not open with `> `, a bare `>` among them, and at a
-//! table, a heading's underline or a display formula, which take their lines
-//! whole; a quote line after any of them is a quote of its own. What a first
-//! line is cannot be told until it ends, so the bar of a quote's first line is
-//! owed like a bullet's mark and nothing of a marker is drawn before its break.
+//! `[!WARNING]` or `[!CAUTION]`, in any letter case, is an alert: each row of
+//! it, a `> ` that opens the line or follows spaces, is drawn behind a bar of
+//! its own, and the first holds the kind's mark and its word in place of the
+//! marker. It ends at the first line that is not such a row, a bare `>` among
+//! them, and at a table written with outer bars, a heading's underline or a
+//! display formula, which take their lines whole; a quote row after any of
+//! them is a quote of its own. What a first line is cannot be told until it
+//! ends, so the bar of a quote's first line is owed like a bullet's mark and
+//! nothing of a marker is drawn before its break.
 //! Every other quote, including one naming a kind that is not one of the five,
 //! is drawn as it always was.
 //!
@@ -1484,8 +1485,9 @@ pub struct Markdown {
     /// What the line before this one was part of, so a line that opens with a
     /// quote mark knows whether it starts a quote or goes on with one.
     ///
-    /// Carried across a line like [`Markdown::above`]: a line with no quote
-    /// mark on it ends the quote, and an alert with it.
+    /// Carried across a line like [`Markdown::above`]: a line that is no row
+    /// of the quote, whatever it is written with, ends it, and an alert with
+    /// it.
     quoting: Quoted,
     /// The blank lines inside an indented block that have not been drawn,
     /// because the line after them decides whether they were the block's or
@@ -1738,7 +1740,12 @@ impl Markdown {
             // so that a line that opens like display math and is not is watched
             // from the character it opened with.
             if self.opens_title(character) {
-                self.leaves_quote(character);
+                // Spaces in front of a line say nothing of whether it is a row
+                // of a quote: that is the first character after them, which
+                // `margin` reads.
+                if character != ' ' {
+                    self.leaves_quote(character);
+                }
                 self.table = Some(Table::bare());
             }
             if self.table.as_ref().is_some_and(Table::mirrors) && self.mirrored(character) {
@@ -2101,6 +2108,12 @@ impl Markdown {
     ) -> bool {
         // Worked out before anything below changes what it asks.
         let held = spaces > 0 && self.indents();
+
+        // Where a line indented by spaces says what it is: a quote mark here
+        // is a row of the quote carried, and anything else is no row of it.
+        if spaces > 0 {
+            self.leaves_quote(character);
+        }
 
         if self.inside == Inside::Indented {
             // Whether a blank line is the block's is the next line's to say.
@@ -2747,14 +2760,15 @@ impl Markdown {
     }
 
     /// Ends the quote the line before was part of, and an alert with it, when
-    /// `first` opens a line that is no row of one.
+    /// `first`, the first character of the line that is not a space, opens a
+    /// line that is no row of one.
     ///
     /// Said by each place that opens a block taking its lines whole: those
     /// lines never reach [`Markdown::end_line`], which is where a line says
     /// what it was part of, so a quote row after the block would go on with a
-    /// quote that the block has already ended. A line that opens with a quote
-    /// mark is left alone: it is read from its mark, and the quote it goes on
-    /// with is the one still carried.
+    /// quote that the block has already ended. A line whose first character
+    /// after any spaces is a quote mark is left alone: it is read from its
+    /// mark, and the quote it goes on with is the one still carried.
     fn leaves_quote(&mut self, first: char) {
         if first != '>' && self.line.quoted == Quoted::Not {
             self.quoting = Quoted::Not;
