@@ -321,10 +321,12 @@ enough to catch a real runaway. `disk_limit` is one total across everything a
 run with no writable host root can write: its root, `/tmp` and its home share
 one sized mount, and `/dev` is read-only. Under a ceiling, setting an extended
 attribute fails with a permission error, because the mount's size does not
-count an attribute's value, and so does io_uring, which could set one. A run that can write to the host,
-through a writable workspace or a writable manifest mount, would write where
-no such mount counts, so Linux refuses a ceiling for it, and on a host whose
-Bubblewrap does not list `--size` it claims none at all. Elsewhere
+count an attribute's value, and so does `io_uring`, which could set one. A run
+that can write to any host path, through a writable filesystem rule (the
+workspace or any other writable directory a configuration grants) or a writable
+manifest mount, would write where no such mount counts, so Linux refuses a
+ceiling for it, and on a host whose Bubblewrap does not list `--size` it claims
+none at all. Elsewhere
 `disk_limit` is unsupported, and a policy may not ask for a ceiling its backend
 cannot apply, which is also why disabling confinement takes the two confining
 ceilings off with it, rather than carrying numbers the compatibility backend
