@@ -1,4 +1,4 @@
-//! The terminal, as four operations.
+//! The terminal, as five operations.
 //!
 //! Everything this process needs from a terminal goes through [`Terminal`].
 //! That keeps the one crate that talks to the operating system's terminal
@@ -123,6 +123,12 @@ pub trait Terminal {
     /// A redirected run must not emit cursor movement: the escape bytes would
     /// end up in whatever consumed the output.
     fn is_terminal(&self) -> bool;
+
+    /// The pixel size of one character cell, where the window reports its
+    /// pixels; `None` where it does not, or will not say.
+    fn cell(&self) -> Option<graphics::Cell> {
+        None
+    }
 }
 
 /// A terminal that keeps what was written instead of showing it.
@@ -136,6 +142,8 @@ pub struct Recording {
     is_terminal: bool,
     /// How many times [`Terminal::flush`] was called — one per frame.
     flushes: usize,
+    /// The cell the window reports, which is none until it is told one.
+    cell: Option<graphics::Cell>,
 }
 
 impl Recording {
@@ -147,6 +155,7 @@ impl Recording {
             size: Size { columns, rows },
             is_terminal: true,
             flushes: 0,
+            cell: None,
         }
     }
 
@@ -179,6 +188,12 @@ impl Recording {
     /// Changes the reported size, standing in for a window the user resized.
     pub fn resize(&mut self, columns: usize, rows: usize) {
         self.size = Size { columns, rows };
+    }
+
+    /// Changes the reported cell, standing in for a window whose font changed
+    /// or that stopped reporting its pixels.
+    pub fn measures(&mut self, cell: Option<graphics::Cell>) {
+        self.cell = cell;
     }
 
     /// The picture everything written so far would have left on this size.
@@ -358,6 +373,10 @@ impl Terminal for Recording {
 
     fn is_terminal(&self) -> bool {
         self.is_terminal
+    }
+
+    fn cell(&self) -> Option<graphics::Cell> {
+        self.cell
     }
 }
 

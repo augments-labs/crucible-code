@@ -14,7 +14,7 @@ use super::*;
 use crate::color::{Palette, Slot, Theme};
 use crate::prompt::Prompt;
 use crate::row::Row;
-use crate::terminal::{Picture, Recording};
+use crate::terminal::{Picture, Recording, graphics};
 
 /// A renderer on a window of the given size, and the screen it has drawn so
 /// far.
@@ -550,6 +550,72 @@ fn a_resize_that_changed_nothing_writes_nothing() {
     drawn.resized().unwrap();
 
     assert_eq!(drawn.render.terminal.written(), "");
+}
+
+// What the session draws pictures with.
+
+/// Kitty's protocol in a cell `width` by `height` pixels.
+fn kitty_in(width: u16, height: u16) -> graphics::Capability {
+    graphics::Capability::Graphics {
+        protocol: graphics::Protocol::Kitty,
+        cell: graphics::Cell { width, height },
+    }
+}
+
+#[test]
+fn a_renderer_draws_text_until_it_is_told_what_the_terminal_draws() {
+    let mut drawn = Drawn::new(40, 10);
+    assert_eq!(drawn.render.capability(), graphics::Capability::Text);
+
+    drawn.render.images(kitty_in(9, 18));
+
+    assert_eq!(drawn.render.capability(), kitty_in(9, 18));
+}
+
+#[test]
+fn a_resize_reads_the_windows_cell_again() {
+    // A font made larger: the window has fewer cells, each of more pixels.
+    let mut drawn = Drawn::new(40, 10);
+    drawn.render.terminal.measures(Some(graphics::Cell {
+        width: 9,
+        height: 18,
+    }));
+    drawn.render.images(kitty_in(9, 18));
+
+    drawn.render.terminal.resize(30, 8);
+    drawn.render.terminal.measures(Some(graphics::Cell {
+        width: 12,
+        height: 24,
+    }));
+    drawn.resized().unwrap();
+
+    assert_eq!(drawn.render.capability(), kitty_in(12, 24));
+}
+
+#[test]
+fn a_resize_the_window_reports_no_pixels_for_keeps_the_cell_it_had() {
+    let mut drawn = Drawn::new(40, 10);
+    drawn.render.images(kitty_in(9, 18));
+
+    drawn.render.terminal.resize(30, 8);
+    drawn.render.terminal.measures(None);
+    drawn.resized().unwrap();
+
+    assert_eq!(drawn.render.capability(), kitty_in(9, 18));
+}
+
+#[test]
+fn a_resize_leaves_text_as_text_whatever_the_window_reports() {
+    let mut drawn = Drawn::new(40, 10);
+    drawn.render.terminal.measures(Some(graphics::Cell {
+        width: 9,
+        height: 18,
+    }));
+
+    drawn.render.terminal.resize(30, 8);
+    drawn.resized().unwrap();
+
+    assert_eq!(drawn.render.capability(), graphics::Capability::Text);
 }
 
 #[test]
