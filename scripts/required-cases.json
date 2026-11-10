@@ -4211,7 +4211,7 @@
       },
       "case": "render::tests::every_cut_of_an_answer_draws_what_the_whole_answer_draws",
       "source": "crates/crucible-tui/src/render/tests.rs",
-      "body_sha256": "dce7141c02a14a3e9d1f46c6baafe8e84cfa94fb308b7e702e75b6128b77182d",
+      "body_sha256": "9ba9d4af91d4bd404c16e0a643f53c039f720ba83a7149f1d352c43581b27032",
       "platforms": [
         "linux",
         "macos",
@@ -7678,6 +7678,96 @@
       "case": "a_file_refused_for_an_element_is_drawn_once_the_element_is_a_group",
       "source": "crates/crucible-raster/tests/hostile.rs",
       "body_sha256": "52c00a3b961acdeebac9a85d01cad94a4c9206e393a121bbbd818829dd4e14cd",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-INDENTED-CODE-QUIET",
+      "family": "transcript-blocks",
+      "obligation": "A block indented four spaces after a blank line draws `\u250c\u2500`, `\u2502 let x = 1;`, `\u2502 let y = 2;` and `\u2514\u2500` between the paragraph and the line after it; no run wears the figure slot, and every run of its code is quiet.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_block_indented_after_a_blank_line_is_quiet_code_in_a_frame",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "41cf14316d39c4066ed107f593703e409026769e7d8f47e2af5febcfdd86021c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-INDENTED-CODE-DASHES",
+      "family": "transcript-blocks",
+      "obligation": "After a blank line, `    code` over `---` draws the code in its frame and hands the dashes on as a rule block, and the answer drawn whole puts that rule across the room under the frame: never a setext heading.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_dashed_row_under_an_indented_block_is_a_rule_across_the_room",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "ce4bd26c17b2fe1dd1ee2146af99afeab29436792352f48dbabe71085aed1090",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-INDENTED-CODE-EQUALS",
+      "family": "transcript-blocks",
+      "obligation": "After a blank line, `    code` over `===` draws the code in its frame and `===` as prose, with no block: never a setext heading.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_row_of_equals_under_an_indented_block_is_prose",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "c07777fdcc42afbfbb9194133725659c13c64fd15677c80f538e726d4edb74f1",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-INDENTED-CODE-LIST-QUOTE",
+      "family": "transcript-blocks",
+      "obligation": "A line indented four spaces after a blank line under a bulleted or numbered item (directly, after a lazy line, or under a deeper paragraph), inside a quote, or straight under a paragraph line is drawn as written, with no frame.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::an_indented_line_in_a_list_item_or_a_quote_or_a_paragraph_is_read_as_before",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "19ecc6ad60d3dccad94197c3bbe912e5fbef58b3e37d2cc4d11517bdeca98ce1",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-INDENTED-CODE-CUT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "An answer holding two indented blocks, one wrapping at 40 columns, cut into two deltas at every byte keeps the native scrollback the whole answer keeps: `\u250c\u2500`, `\u2502 done();`, `\u2514\u2500`, `\u2502 code`, `===`, a `\u2506` row and no `\u2501` heading rule.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_answer_cut_anywhere_draws_the_indented_block_the_whole_answer_draws",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "b20e7ddf1ebad4b2948f9d1a1089dd6a15b4f2939adf1a97814db21cc7fc21be",
       "platforms": [
         "linux",
         "macos",

@@ -2834,6 +2834,28 @@ fn a_native_answer_cut_anywhere_draws_the_setext_heading_the_whole_answer_draws(
 }
 
 #[test]
+fn a_native_answer_cut_anywhere_draws_the_indented_block_the_whole_answer_draws() {
+    let answer = "para\n\n    let total = first_value + second_value;\n\n    done();\n---\n\nmore\n\n    code\n===\n";
+    let whole = kept_natively(40, Glyphs::Unicode, &[answer]);
+    for row in ["┌─", "│ done();", "└─", "│ code", "==="] {
+        assert!(
+            whole.iter().any(|kept| kept.trim_start() == row),
+            "{row:?} is not kept: {whole:#?}"
+        );
+    }
+    assert!(
+        whole.iter().any(|row| row.trim_start().starts_with('┆')),
+        "no wrapped code row: {whole:#?}"
+    );
+    assert!(!whole.iter().any(|row| row.contains('━')), "{whole:#?}");
+
+    for cut in 1..answer.len() {
+        let rows = kept_natively(40, Glyphs::Unicode, &[&answer[..cut], &answer[cut..]]);
+        assert_eq!(rows, whole, "cut at {cut} of {answer:?}");
+    }
+}
+
+#[test]
 fn a_native_title_that_proved_prose_reaches_the_scrollback_once_as_the_prose_it_was() {
     let rows = kept_natively(40, Glyphs::Unicode, &["Title\n", "not an underline\n"]);
     assert_eq!(rows, ["Title", "not an underline"]);

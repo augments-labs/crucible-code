@@ -3836,7 +3836,17 @@ fn every_cut_of_an_answer_draws_what_the_whole_answer_draws() {
         "text\nname | what it does\n--|--\nalpha | first\n",
     ];
 
-    for answer in corpus.into_iter().chain(tables) {
+    // Blocks indented four spaces after a blank line, one with a line that
+    // wraps at fifty columns and a blank line inside it, under which a dashed
+    // row is a rule and a row of equals is prose. Each one is drawn in a
+    // frame, so a reader that read them as prose would draw the same rows
+    // however they were cut and still fail here.
+    let indented = [
+        "para\n\n    let total = first_value + second_value + third_value;\n\n    done();\n---\n",
+        "more\n\n    code\n===\nend\n",
+    ];
+
+    for answer in corpus.into_iter().chain(tables).chain(indented) {
         let mut whole = reading(50, 30);
         whole.answer(answer);
         let expected = whole.rows();
@@ -3844,6 +3854,12 @@ fn every_cut_of_an_answer_draws_what_the_whole_answer_draws() {
             assert!(
                 expected.iter().any(|row| row.contains('│')),
                 "{answer:?} drew no table: {expected:#?}"
+            );
+        }
+        if indented.contains(&answer) {
+            assert!(
+                expected.iter().any(|row| row.contains("┌─")),
+                "{answer:?} drew no frame: {expected:#?}"
             );
         }
 
