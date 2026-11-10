@@ -7921,7 +7921,7 @@
     {
       "id": "CASE-TRANSCRIPT-ALERT-ENDS",
       "family": "transcript-blocks",
-      "obligation": "An alert ends at a bare `>`, at a `>` with no space after it, at a table whose lines open with `|`, at a heading's underline, at a display formula and at each of those three written after spaces, and the quote line after any of them is drawn as a quote of its own, not as part of the alert.",
+      "obligation": "An alert ends at a bare `>`, at a `>` with no space after it, at a table whose first line opens with `|`, at a heading's underline and at a display formula, and at each of those three also written after spaces, where lines that open with `|` are drawn as the lines they are and not as a table; the quote line after any of them is drawn as a quote of its own, not as part of the alert.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
@@ -7929,7 +7929,7 @@
       },
       "case": "markdown::tests::an_alert_ends_at_any_line_that_is_not_a_row_of_its_quote",
       "source": "crates/crucible-tui/src/markdown/tests.rs",
-      "body_sha256": "117837a2822860f241247c76cb599e6afca864c2412c51959ea87cc2ce48cb1a",
+      "body_sha256": "cedf39e6eb00956d3de7bfb0c05822f65d1c5fec24b844988a58ed202d3bb511",
       "platforms": [
         "linux",
         "macos",
@@ -7975,7 +7975,7 @@
     {
       "id": "CASE-TRANSCRIPT-ALERT-TABLE-ROW",
       "family": "transcript-blocks",
-      "obligation": "A quote line straight after a table drawn from lines that do not open with `|`, one written without outer bars after spaces or not and one led by a tab, is one more row of that table, and after a blank line it is a quote of its own.",
+      "obligation": "A quote line straight after a table whose first line does not open with `|` is one more row of that table: a header written without outer bars, whether its delimiter row opens with `|` or not and with spaces before it or not, and one written with outer bars after a tab; after a blank line the quote line is a quote of its own.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
@@ -7983,7 +7983,7 @@
       },
       "case": "markdown::tests::a_quote_row_straight_after_a_table_not_opened_by_a_bar_is_a_row_of_it",
       "source": "crates/crucible-tui/src/markdown/tests.rs",
-      "body_sha256": "6f7d00ca6ee889f5df22d269000f7b106f858286c5d2fe85554ff504c001cf21",
+      "body_sha256": "2560996c644053f36b85413f1dcc373a3e3f1837d0dda9f4d58d30ff43b0f549",
       "platforms": [
         "linux",
         "macos",

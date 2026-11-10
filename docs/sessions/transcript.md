@@ -184,11 +184,11 @@ wraps shows it on every row it takes, in both
 alert is drawn until the end of its first line shows it was one.
 
 An alert ends where its quote does: at a blank line or at any line that is not a
-row of it, a bare `>` among them, and so does a table written with outer bars, a
-heading written with an underline or a display formula. A quote row after any of
-them starts a quote of its own, except one straight after a table drawn from
-lines that do not open with `|`, such as `a | b` over `- | -`: that table takes
-it as one more of its rows.
+row of it, a bare `>` among them, and so does a table whose first line opens
+with `|`, a heading written with an underline or a display formula. A quote row
+after any of them starts a quote of its own, except one straight after a table
+whose first line does not open with `|`, such as `a | b` over `- | -` or over
+`| - | - |`: that table takes it as one more of its rows.
 
 A quote naming any other kind, with anything after the marker on its line, or
 with the marker on a later line, is an ordinary quote and shows the marker as

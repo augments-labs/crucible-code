@@ -3612,10 +3612,11 @@ fn an_alert_ends_where_its_quote_does() {
 #[test]
 fn an_alert_ends_at_any_line_that_is_not_a_row_of_its_quote() {
     // A bare `>` and a `>` with no space after it are not rows of a quote, and
-    // neither is a table whose lines open with `|`, a heading's rule or display
-    // math, nor the same lines written after spaces: none of them is part of
-    // the alert, so the quote row after one is a quote of its own and draws the
-    // plain bar.
+    // neither is a table whose first line opens with `|`, a heading's rule or
+    // display math, each of them also written after spaces, where lines that
+    // open with `|` are drawn as the lines they are and not as a table: none of
+    // them is part of the alert, so the quote row after one is a quote of its
+    // own and draws the plain bar.
     for between in [
         ">\n",
         ">a\n",
@@ -3637,13 +3638,22 @@ fn an_alert_ends_at_any_line_that_is_not_a_row_of_its_quote() {
 #[test]
 fn a_quote_row_straight_after_a_table_not_opened_by_a_bar_is_a_row_of_it() {
     // The one block that does not hand a quote row on as a quote of its own: a
-    // table drawn from lines that do not open with `|` goes on until a blank
-    // line, so the row is one more of its rows. A tab before a bar is such a
-    // line, and so are spaces before a header written without bars.
+    // table whose first line does not open with `|` goes on until a blank line,
+    // so the row is one more of its rows, whatever its delimiter row opens
+    // with. Such a first line is a header written without outer bars, with or
+    // without spaces before it, or one written with them after a tab.
     for (answer, text) in [
         (
             "> [!NOTE]\n> a\na | b\n- | -\n1 | 2\n> b\n",
             "▎ ◆ Note\n▎ a\na   │ b\n────┼──\n1   │ 2\n│ b │  \n",
+        ),
+        (
+            "> [!NOTE]\n> a\na | b\n| - | - |\n> b\n",
+            "▎ ◆ Note\n▎ a\na   │ b\n────┼──\n│ b │  \n",
+        ),
+        (
+            "> [!NOTE]\n> a\na | b |\n| - | - |\n> b\n",
+            "▎ ◆ Note\n▎ a\na   │ b\n────┼──\n│ b │  \n",
         ),
         (
             "> [!NOTE]\n> a\n  a | b\n  - | -\n> b\n",
@@ -3881,11 +3891,12 @@ fn an_alert_mark_carries_its_kinds_ink_and_its_word_only_weight_in_every_theme()
     }
 }
 
-/// Every theme there is, in the order the enum lists them.
+/// Every theme the chain below names, in the order the enum lists them.
 ///
-/// Walked by a match with no wildcard, so a theme added to the enum stops this
-/// compiling until it is placed here, and a check over it cannot quietly cover
-/// only some of them.
+/// The match has no wildcard, so a theme added to the enum stops this
+/// compiling until it has an arm. It is walked only once an arm before it
+/// names it: a new theme given `None` compiles and is left out, so whoever adds
+/// one puts it in the chain.
 fn every_theme() -> Vec<Theme> {
     let mut every = vec![Theme::Dark];
     while let Some(next) = every.last().and_then(|theme| match theme {

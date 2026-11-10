@@ -75,13 +75,13 @@
 //! it, a `> ` that opens the line or follows spaces, is drawn behind a bar of
 //! its own, and the first holds the kind's mark and its word in place of the
 //! marker. It ends at the first line that is not such a row, a bare `>` among
-//! them, and at a table written with outer bars, a heading's underline or a
-//! display formula, which take their lines whole; a quote row after any of
-//! them is a quote of its own, but one straight after a table drawn from lines
-//! that do not open with `|`, such as `a | b` over `- | -`, is one more row of
-//! that table. What a first line is cannot be told until it ends, so the bar of
-//! a quote's first line is owed like a bullet's mark and nothing of a marker is
-//! drawn before its break.
+//! them, and at a table whose first line opens with `|`, a heading's underline
+//! or a display formula, which take their lines whole; a quote row after any of
+//! them is a quote of its own, but one straight after a table whose first line
+//! does not open with `|`, such as `a | b` over `- | -` or over `| - | - |`, is
+//! one more row of that table. What a first line is cannot be told until it
+//! ends, so the bar of a quote's first line is owed like a bullet's mark and
+//! nothing of a marker is drawn before its break.
 //! Every other quote, including one naming a kind that is not one of the five,
 //! is drawn as it always was.
 //!
@@ -1742,9 +1742,8 @@ impl Markdown {
             // so that a line that opens like display math and is not is watched
             // from the character it opened with.
             if self.opens_title(character) {
-                // Spaces in front of a line say nothing of whether it is a row
-                // of a quote: that is the first character after them, which
-                // `margin` reads.
+                // Spaces in front of a line say nothing of what it is: that is
+                // the first character after them, which `margin` reads.
                 if character != ' ' {
                     self.leaves_quote(character);
                 }
@@ -2112,7 +2111,8 @@ impl Markdown {
         let held = spaces > 0 && self.indents();
 
         // Where a line indented by spaces says what it is: a quote mark here
-        // is a row of the quote carried, and anything else is no row of it.
+        // leaves the decision to the mark reader, and anything else is no row
+        // of the quote carried.
         if spaces > 0 {
             self.leaves_quote(character);
         }
@@ -2762,15 +2762,18 @@ impl Markdown {
     }
 
     /// Ends the quote the line before was part of, and an alert with it, when
-    /// `first`, the first character of the line that is not a space, opens a
-    /// line that is no row of one.
+    /// `first` shows the line to be no row of one.
     ///
-    /// Said by each place that opens a block taking its lines whole: those
-    /// lines never reach [`Markdown::end_line`], which is where a line says
-    /// what it was part of, so a quote row after the block would go on with a
-    /// quote that the block has already ended. A line whose first character
-    /// after any spaces is a quote mark is left alone: it is read from its
-    /// mark, and the quote it goes on with is the one still carried.
+    /// `first` is what each caller has when it knows what the line is: the
+    /// first character of the line that is not a space for a header, a table
+    /// of bars and a line indented by spaces, and for display math the
+    /// character that completes its opener, the second `$` of `$$`, the `[` of
+    /// `\[` or the `}` of `\begin{…}`. Said by each place that opens a block
+    /// taking its lines whole: those lines never reach [`Markdown::end_line`],
+    /// which is where a line says what it was part of, so a quote row after the
+    /// block would go on with a quote that the block has already ended. A quote
+    /// mark is left alone: the mark reader decides whether the line is a row of
+    /// the quote still carried.
     fn leaves_quote(&mut self, first: char) {
         if first != '>' && self.line.quoted == Quoted::Not {
             self.quoting = Quoted::Not;
