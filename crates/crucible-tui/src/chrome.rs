@@ -60,6 +60,11 @@ impl Label {
 pub enum Undrawn {
     /// It ran past the most a block of its kind is held for.
     PastCap,
+    /// What draws blocks of its kind does not draw this one: a part of the
+    /// drawing contract a drawer left to its default, or a block that is not
+    /// what its fence says it is. Nothing went wrong, and it is shown as
+    /// written.
+    NotHere,
 }
 
 impl Undrawn {
@@ -68,6 +73,7 @@ impl Undrawn {
     pub fn words(self) -> &'static str {
         match self {
             Self::PastCap => "longer than this can hold",
+            Self::NotHere => "not drawn here",
         }
     }
 }

@@ -11,6 +11,7 @@
 #     scripts/sh/bench.sh grep         search, against the rg binary
 #     scripts/sh/bench.sh stream       rendered frames under a token burst
 #     scripts/sh/bench.sh live         turn-band redraws while a command prints
+#     scripts/sh/bench.sh drawing      a drawer laying out the worst block it takes
 #
 # Output is split by stream, so one run serves a human and a pipeline at once:
 #
@@ -32,9 +33,9 @@
 # wrapper validates and stores them as numbers under `evidence` in the JSON.
 #
 # The limit a probe prints is the one it was held to. `CRUCIBLE_BENCH_RUNNER=shared`,
-# set by the workflows that run this on a CI runner, holds the first frame and first
-# input to the shared-runner limits written beside theirs; unset, every probe holds
-# the budget below.
+# set by the workflows that run this on a CI runner, holds the first frame, the first
+# input and a drawer's layout to the shared-runner limits written beside theirs;
+# unset, every probe holds the budget below.
 #
 # `println!` is denied workspace-wide, so that line goes out through
 # `writeln!(io::stdout(), ...)` — which also makes the probe handle the write
@@ -67,9 +68,10 @@ readonly BUDGETS=(
     "grep|bench-grep|grep worst paired median within 1.25x the rg binary"
     "stream|bench-render-burst|rendered frames >= 30/s and sustained/opening pace >= 0.5"
     "live|bench-live-burst|turn-band redraws >= 30/s and sustained/opening pace >= 0.5"
+    "drawing|bench-drawing|a drawer's text layout at its caps <= 2 ms p95"
 )
 
-readonly MODES=(startup tools mem grep stream live)
+readonly MODES=(startup tools mem grep stream live drawing)
 
 # A probe's value and limit go into the JSON unquoted, so both must be numbers.
 readonly NUMERIC='^-?[0-9]+(\.[0-9]+)?$'

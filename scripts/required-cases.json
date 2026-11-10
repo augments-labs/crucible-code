@@ -1825,6 +1825,114 @@
       ]
     },
     {
+      "id": "CASE-TRANSCRIPT-CHANGE-BOX-HEADER",
+      "family": "transcript-blocks",
+      "obligation": "A change opens a box on each file's path and its added and removed counts, and closes it.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_change_opens_with_its_path_and_counts_and_closes_its_box",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "97e182c4f9d8c3956652ed550cccd413a5cb1cbd2bab0d02aa0d133d3b5a95b7",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-BOX-FOLD",
+      "family": "transcript-blocks",
+      "obligation": "A file of more than thirty-two rows draws its first twenty-four and last four around one row counting the rest, which names no key and offers nothing.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_file_longer_than_the_fold_shows_its_head_and_tail_and_counts_the_rest",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "68f66746ecebe298563f147bf7204b9ddcbab2c5caeca6a5384201559fb3d2fe",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-BOX-NOT-SHOWN",
+      "family": "transcript-blocks",
+      "obligation": "Lines a tool never kept are counted inside the box, and the header counts the change whole.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::lines_the_tool_never_kept_are_a_count_inside_the_box",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "24b73bbac471c874010c4e5665446ba774d1d2eb707c4551210960032d5e1a9f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-BOX-NO-PATH",
+      "family": "transcript-blocks",
+      "obligation": "A change recorded without a path opens on its counts alone.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_change_with_no_path_opens_on_its_counts_alone",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "8a9b5f3cecfd69bb37c3a90d1a95a5b6fe9457150a1822d234b67c15297c86f8",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-PAST-CAPS",
+      "family": "transcript-blocks",
+      "obligation": "A diff past the reader's line or byte cap is refused before it is read.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_diff_past_its_caps_is_refused_before_it_is_read",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "69a944489464fd7582c73a8b91d607309d6a7e06d609b4052c7a52e088d9d54e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-MISLEADING-PATH",
+      "family": "transcript-blocks",
+      "obligation": "A path carrying bidirectional, isolate, control or private-use characters is drawn with each replaced.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "test",
+        "name": "hostile"
+      },
+      "case": "a_misleading_path_is_drawn_with_what_would_mislead_replaced",
+      "source": "crates/crucible-tui-diff/tests/hostile.rs",
+      "body_sha256": "0036e2d35559d857d9770f41b7c608e8f90ff866536efd85166e161c99aaa65f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
       "id": "CASE-TRANSCRIPT-PICTURE-TABLES-40-UNICODE",
       "family": "transcript-corpus",
       "obligation": "The corpus's tables answer lays out at 40 columns in the unicode glyph set as the picture accepted for it.",
@@ -7664,6 +7772,118 @@
         "linux",
         "macos",
         "windows"
+      ]
+    },
+    {
+      "id": "CASE-SANDBOX-DISK-ONE-TOTAL",
+      "family": "files-and-sandbox",
+      "obligation": "A run writing into its root, /tmp and its home together stops at the disk ceiling in total, never at a ceiling per place.",
+      "package": "crucible-sandbox-local",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_sandbox_local"
+      },
+      "case": "linux::resource_tests::writes_across_the_root_tmp_and_home_stop_at_one_total",
+      "source": "crates/crucible-sandbox-local/src/linux/resource_tests.rs",
+      "body_sha256": "430dfc29a13e9d26fa32cb0d1ecfab274f6472aef2e80b8727dbe9e4467ec83e",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-SANDBOX-DISK-MANY-FILES",
+      "family": "files-and-sandbox",
+      "obligation": "Many small files written into every writable place at once never hold more than the disk ceiling.",
+      "package": "crucible-sandbox-local",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_sandbox_local"
+      },
+      "case": "linux::resource_tests::many_small_files_written_everywhere_at_once_stop_at_the_total",
+      "source": "crates/crucible-sandbox-local/src/linux/resource_tests.rs",
+      "body_sha256": "06f0f60bc857eca2bd2746baaf44c5a66b6ca4dcca240c874c3b941048aa3fa5",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-SANDBOX-DISK-DEV-READ-ONLY",
+      "family": "files-and-sandbox",
+      "obligation": "Under a disk ceiling /dev and /dev/shm refuse writes, and /dev/null accepts them and holds nothing.",
+      "package": "crucible-sandbox-local",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_sandbox_local"
+      },
+      "case": "linux::resource_tests::dev_refuses_writes_and_dev_null_holds_nothing",
+      "source": "crates/crucible-sandbox-local/src/linux/resource_tests.rs",
+      "body_sha256": "e4176328d636a8ad725d44da21aff503e5b3ea9eb2047fe3987f4932df35847e",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-SANDBOX-DISK-HOST-WRITES-REFUSED",
+      "family": "files-and-sandbox",
+      "obligation": "A disk ceiling is refused as unsupported for a run with a writable rule or a writable manifest mount, and taken for a run with neither.",
+      "package": "crucible-sandbox-local",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_sandbox_local"
+      },
+      "case": "linux::resource_tests::a_disk_ceiling_is_refused_where_a_run_could_write_to_the_host",
+      "source": "crates/crucible-sandbox-local/src/linux/resource_tests.rs",
+      "body_sha256": "cd6f8ee2b68d047853feef03ef3e1430cb3e8e940ebe4b1aeb1ad934ea19794c",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-SANDBOX-DISK-OBSERVED-UNSUPPORTED",
+      "family": "files-and-sandbox",
+      "obligation": "Observing claims no disk ceiling and says a preparation checks --size, while a preparation on the same host takes one.",
+      "package": "crucible-sandbox-local",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_sandbox_local"
+      },
+      "case": "linux::resource_tests::observing_claims_no_disk_ceiling_that_a_preparation_on_this_host_takes",
+      "source": "crates/crucible-sandbox-local/src/linux/resource_tests.rs",
+      "body_sha256": "193149cb0a31b9932ea37905bb3c2117289c5f46b7737800beb61ae0255d69ba",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-SANDBOX-DISK-COMMAND-TIME-RESET",
+      "family": "files-and-sandbox",
+      "obligation": "A run making files until its command time runs out is stopped by that time, and the next run starts with none of them.",
+      "package": "crucible-sandbox-local",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_sandbox_local"
+      },
+      "case": "linux::resource_tests::files_made_until_the_command_time_runs_out_are_gone_from_the_next_run",
+      "source": "crates/crucible-sandbox-local/src/linux/resource_tests.rs",
+      "body_sha256": "bc89a7784ba1f2b75b496dbaaae9b3a8c6ee5d3c1764d1017fad7b0552111eaa",
+      "platforms": [
+        "linux"
+      ]
+    },
+    {
+      "id": "CASE-SANDBOX-DISK-XATTR-REFUSED",
+      "family": "files-and-sandbox",
+      "obligation": "Under a disk ceiling every call that sets an extended attribute (setxattr, lsetxattr, fsetxattr, setxattrat) is refused with EPERM, and no attribute value is held.",
+      "package": "crucible-sandbox-local",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_sandbox_local"
+      },
+      "case": "linux::resource_tests::extended_attribute_writes_are_refused_under_a_disk_ceiling",
+      "source": "crates/crucible-sandbox-local/src/linux/resource_tests.rs",
+      "body_sha256": "6c1f0fa904f2c3deca82430e350b5cbac9cbece2e794597b916c2854ccae4c05",
+      "platforms": [
+        "linux"
       ]
     }
   ]

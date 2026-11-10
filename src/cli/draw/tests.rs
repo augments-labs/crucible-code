@@ -89,7 +89,7 @@ fn unicode() -> Glyphs {
 /// row takes its own marks off whatever that leaves.
 fn hung(output: &ToolOutput, window: usize, style: Style) -> String {
     let shown = Shown::live(output.clone());
-    finished(&shown, beyond(&shown), window, style, false)
+    finished_rows(&shown, window, style, false)
         .iter()
         .map(Row::text)
         .collect::<Vec<_>>()
@@ -1315,44 +1315,54 @@ fn changed() -> Diff {
 /// row is padded to is visible in the expected text rather than lost in space.
 const NARROW: usize = 48;
 
+/// The rows a call that made `diff` comes back as, in the plain style.
+fn boxed(diff: Diff, window: usize) -> Vec<Row> {
+    finished_rows(
+        &Shown::live(ToolOutput::ok("changed one.rs, 1 replacements").showing(diff)),
+        window,
+        Style::plain(),
+        false,
+    )
+}
+
+/// The text of each of `rows`, with the ground it is padded to the window with
+/// left off.
+fn texts(rows: &[Row]) -> Vec<String> {
+    rows.iter()
+        .map(|row| row.text().trim_end().to_owned())
+        .collect()
+}
+
 /// Where a block for a change at `number` starts, with the ground it is padded
 /// to the window with left off.
 fn starts(number: usize) -> String {
     let one = Diff::new([Line::new(number, Change::Removed, "old")]);
-    let rows = block(&one, 40, unicode());
-
-    rows.first()
-        .map(Row::text)
-        .unwrap_or_default()
-        .trim_end()
-        .to_owned()
+    texts(&boxed(one, 40)).get(1).cloned().unwrap_or_default()
 }
 
 #[test]
 fn the_lines_a_call_moved_are_drawn_where_the_file_puts_them() {
-    // The gutter is the number the reader would find the line at, the sign says
-    // which way it went, and what a line is indented by is left where it was --
-    // a block is read by comparing one row with the row above it, and where each
-    // of them starts is the first thing that comparison is made of.
-    let drawn: Vec<String> = block(&changed(), NARROW, unicode())
-        .iter()
-        .map(Row::text)
-        .collect();
-
+    // The box a `diff` fence is drawn in: a header that counts what moved, the
+    // number the reader would find each line at, the sign that says which way
+    // it went, and what a line is indented by left where it was -- a block is
+    // read by comparing one row with the row above it, and where each of them
+    // starts is the first thing that comparison is made of.
     assert_eq!(
-        drawn,
+        texts(&boxed(changed(), NARROW)),
         [
-            "      303            digest=$(<artifact/digest)",
-            "      304            scripts/smoke.sh",
-            "      305    ",
-            "      306 -  # trend data                       ",
-            "      307 -  # trend data                       ",
-            "      308 -  # trend data                       ",
-            "      306 +  # what stops a tag                 ",
-            "      307 +  # what stops a tag                 ",
-            "      308 +  # what stops a tag                 ",
-            "      309    budgets:",
-            "      310      name: release budgets",
+            "  ╭─ +3 −3",
+            "  │  303           digest=$(<artifact/digest)",
+            "  │  304           scripts/smoke.sh",
+            "  │  305",
+            "  │  306 - # trend data",
+            "  │  307 - # trend data",
+            "  │  308 - # trend data",
+            "  │  306 + # what stops a tag",
+            "  │  307 + # what stops a tag",
+            "  │  308 + # what stops a tag",
+            "  │  309   budgets:",
+            "  │  310     name: release budgets",
+            "  ╰─",
         ]
     );
 }
@@ -1363,23 +1373,71 @@ fn a_line_that_moved_is_carried_to_the_last_column_and_one_that_stayed_is_not() 
     // that stopped where its text stopped would have a ragged edge meaning
     // nothing. The lines around it are on the reader's own ground, so the eye
     // skips them on the way to the change -- which is what they are there for.
-    for row in block(&changed(), NARROW, unicode()) {
-        let moved = row.text().contains('-') || row.text().contains('+');
+    for row in boxed(changed(), NARROW) {
+        let moved = row.text().contains(" - ") || row.text().contains(" + ");
 
         assert_eq!(row.columns() == NARROW, moved, "{:?}", row.text());
     }
 }
 
 #[test]
-fn the_row_above_a_block_counts_the_change_rather_than_answering_the_model() {
+fn the_box_header_counts_the_change_rather_than_answering_the_model() {
     // Both are true of the same call and only one of them is about the file: the
     // model asked for a replacement and is told it was made; the reader is
-    // looking at what is in the file now.
+    // looking at what is in the file now. The box says it in its header, where
+    // a `diff` fence in an answer says it too.
     let output = ToolOutput::ok("changed one.rs, 1 replacements").showing(changed());
+    let said = hung(&output, WIDE, Style::plain());
+
+    assert_eq!(said.lines().next(), Some("  ╭─ +3 −3"), "{said}");
+    assert!(!said.contains("replacements"), "{said}");
+    assert!(!said.contains('\u{23bf}'), "{said}");
+}
+
+#[test]
+fn a_tools_change_names_the_file_it_changed_on_the_box_header() {
+    let rows = boxed(
+        Diff::new([
+            Line::new(1, Change::Kept, "fn kept() {}"),
+            Line::new(2, Change::Removed, "let a = 1;"),
+            Line::new(2, Change::Added, "let a = 2;"),
+        ])
+        .in_file("src/a.rs"),
+        NARROW,
+    );
 
     assert_eq!(
-        hung(&output, WIDE, Style::plain()),
-        "  ⎿ Added 3 lines, removed 3 lines"
+        texts(&rows).first().map(String::as_str),
+        Some("  ╭─ src/a.rs +1 −1")
+    );
+    // And its name says which language the lines that did not move are
+    // coloured as, as a fence's path does.
+    let kept = rows.get(1).expect("a kept row");
+    assert!(
+        kept.kinds().any(|slot| slot == Slot::Keyword),
+        "{:?}",
+        texts(&rows)
+    );
+}
+
+#[test]
+fn a_change_kept_before_it_named_its_file_opens_on_its_counts_without_colour() {
+    // What a session written before a change named its file gives back: the
+    // same box, with nothing to name and no language to colour it as.
+    let rows = boxed(
+        Diff::new([
+            Line::new(1, Change::Kept, "fn kept() {}"),
+            Line::new(2, Change::Added, "let a = 2;"),
+        ]),
+        NARROW,
+    );
+
+    assert_eq!(texts(&rows).first().map(String::as_str), Some("  ╭─ +1"));
+    let kept = rows.get(1).expect("a kept row");
+    assert!(
+        kept.kinds().all(|slot| slot != Slot::Keyword),
+        "{:?}",
+        texts(&rows)
     );
 }
 
@@ -1388,22 +1446,96 @@ fn a_change_in_one_direction_only_says_the_one_thing_that_happened() {
     let one = |change| ToolOutput::ok("wrote it").showing(Diff::new([Line::new(1, change, "a")]));
     let said = |output| hung(&output, WIDE, Style::plain());
 
-    assert_eq!(said(one(Change::Added)), "  ⎿ Added 1 line");
-    assert_eq!(said(one(Change::Removed)), "  ⎿ Removed 1 line");
+    assert_eq!(said(one(Change::Added)).lines().next(), Some("  ╭─ +1"));
+    assert_eq!(said(one(Change::Removed)).lines().next(), Some("  ╭─ −1"));
 }
 
 #[test]
-fn a_block_that_stopped_short_says_so_where_the_counts_are() {
+fn a_block_that_stopped_short_says_so_inside_the_box() {
     // A block that stopped without saying so reads as the whole of what happened.
-    // It is said beside the counts because those are the claim the reader is
-    // checking the block against.
+    // The header counts every line the call moved; the lines the tool never
+    // kept are one quiet row of the box, under the ones it did.
     let whole = (1..=Diff::LINES + 4).map(|at| Line::new(at, Change::Added, "line"));
-    let output = ToolOutput::ok("wrote it").showing(Diff::new(whole));
+    let rows = texts(&boxed(Diff::new(whole), WIDE));
 
-    let said = hung(&output, WIDE, Style::plain());
+    assert_eq!(rows.first().map(String::as_str), Some("  ╭─ +68"));
+    assert_eq!(
+        rows.iter().rev().nth(1).map(String::as_str),
+        Some("  │  ⋯  4 lines not shown  ⋯"),
+        "{rows:#?}"
+    );
+    assert!(rows.iter().all(|row| !row.contains("of them")), "{rows:#?}");
+}
 
-    assert!(said.contains("Added 68 lines"), "{said}");
-    assert!(said.contains("(4 of them not shown)"), "{said}");
+#[test]
+fn a_change_longer_than_the_fold_shows_its_start_and_end_and_counts_the_rest() {
+    // Sixty-four lines kept, so the box draws the first twenty-four and the
+    // last four around one row that counts the thirty-six between.
+    let whole = (1..=Diff::LINES).map(|at| Line::new(at, Change::Added, format!("line {at}")));
+    let rows = texts(&boxed(Diff::new(whole), WIDE));
+
+    let fold = "  │  ⋯  36 lines folded  ⋯";
+    assert_eq!(rows.get(25).map(String::as_str), Some(fold), "{rows:#?}");
+    assert_eq!(rows.get(24).map(String::as_str), Some("  │   24 + line 24"));
+    assert_eq!(rows.get(26).map(String::as_str), Some("  │   61 + line 61"));
+    assert_eq!(rows.len(), 1 + 24 + 1 + 4 + 1, "{rows:#?}");
+}
+
+#[test]
+fn the_words_that_changed_in_a_replaced_line_are_raised_on_both_sides() {
+    // One removed line paired with the added line that replaced it: the words
+    // that differ stand out on each side's ground, and the words they share
+    // do not.
+    let diff = Diff::new([
+        Line::new(5, Change::Removed, "let total = count + 1;"),
+        Line::new(5, Change::Added, "let total = count + 2;"),
+    ]);
+    let rows = boxed(diff, WIDE);
+
+    let raised = |slot: Slot| -> Vec<String> {
+        rows.iter()
+            .flat_map(Row::spans)
+            .filter(|(at, _)| *at == slot)
+            .map(|(_, text)| text.to_owned())
+            .collect()
+    };
+    assert_eq!(raised(Slot::RemovedWord), ["1"]);
+    assert_eq!(raised(Slot::AddedWord), ["2"]);
+}
+
+#[test]
+fn a_tools_change_and_the_same_change_as_a_fence_are_drawn_alike() {
+    // One look for both: the rows a call's change comes back as are the rows
+    // the fence that says the same change is drawn as, under the same indent.
+    let fence = "@@ -303,8 +303,8 @@\n         digest=$(<artifact/digest)\n         \
+                 scripts/smoke.sh\n \n-# trend data\n-# trend data\n-# trend data\n\
+                 +# what stops a tag\n+# what stops a tag\n+# what stops a tag\n budgets:\n   \
+                 name: release budgets\n";
+    let room = crucible_tui::drawing::Room {
+        columns: NARROW - 2,
+        glyphs: unicode(),
+    };
+    let read = crucible_tui_diff::read(fence).expect("the fence to read");
+    let drawn: Vec<Vec<(Slot, String)>> = crucible_tui_diff::Changes
+        .draw(&read, &room)
+        .rows
+        .iter()
+        .map(|row| {
+            std::iter::once((Slot::Plain, "  ".to_owned()))
+                .chain(row.spans().map(|(slot, text)| (slot, text.to_owned())))
+                .collect()
+        })
+        .collect();
+    let boxed: Vec<Vec<(Slot, String)>> = boxed(changed(), NARROW)
+        .iter()
+        .map(|row| {
+            row.spans()
+                .map(|(slot, text)| (slot, text.to_owned()))
+                .collect()
+        })
+        .collect();
+
+    assert_eq!(boxed, drawn);
 }
 
 #[test]
@@ -1411,8 +1543,8 @@ fn the_gutter_widens_for_a_long_file_and_never_narrows_below_three() {
     // Otherwise a change near the top of a file and one a thousand lines down
     // would start their text in different columns, and a reader comparing two
     // calls reads the shape of a block before its digits.
-    assert_eq!(starts(4), "        4 -  old");
-    assert_eq!(starts(12_345), "      12345 -  old");
+    assert_eq!(starts(4), "  │    4 - old");
+    assert_eq!(starts(12_345), "  │  12345 - old");
 }
 
 #[test]
@@ -1421,10 +1553,10 @@ fn a_line_too_wide_for_the_window_is_cut_inside_it() {
     // is one the terminal wraps itself -- a row the live tail never counted, and
     // a cursor a row off on every frame after it.
     let long = Diff::new([Line::new(9, Change::Added, "x".repeat(500))]);
+    let rows = boxed(long, 40);
 
-    for row in block(&long, 40, unicode()) {
-        assert_eq!(row.columns(), 40, "{:?}", row.text());
-    }
+    assert!(rows.iter().all(|row| row.columns() <= 40), "{rows:?}");
+    assert_eq!(rows.get(1).map(Row::columns), Some(40), "{rows:?}");
 }
 
 #[test]
@@ -1458,6 +1590,36 @@ fn a_change_is_laid_out_again_when_the_window_widens() {
         "{}",
         renderer.terminal().picture().row(1),
     );
+}
+
+#[test]
+fn a_change_is_laid_out_again_in_the_glyphs_the_reader_switches_to() {
+    // The box is drawn in the glyph set of the moment it is laid out, and a
+    // reader who switches sets is shown every change already on the screen in
+    // the set they chose rather than in two sets at once.
+    let output = ToolOutput::ok("changed one.rs, 1 replacements").showing(changed());
+    let mut renderer = Renderer::new(Resizing::new(NARROW, 20));
+    renderer.draws(Glyphs::Unicode);
+    came_back(
+        &mut renderer,
+        &mut Kept::default(),
+        &ToolId::new("a"),
+        Shown::live(output),
+        Style::plain(),
+    )
+    .expect("the change to draw");
+    assert!(
+        renderer.terminal().picture().row(0).starts_with("  ╭─"),
+        "{}",
+        renderer.terminal().picture().row(0)
+    );
+
+    renderer.draws(Glyphs::Ascii);
+    renderer.repaint().expect("the change to redraw");
+
+    let picture = renderer.terminal().picture();
+    assert!(picture.row(0).starts_with("  +-"), "{}", picture.row(0));
+    assert!(picture.row(1).starts_with("  |  303"), "{}", picture.row(1));
 }
 
 #[test]
@@ -1507,7 +1669,55 @@ fn a_call_that_changed_nothing_is_drawn_as_what_it_said() {
         hung(&output, WIDE, Style::plain()),
         "  ⎿ created one.rs, 0 lines"
     );
-    assert!(block(&Diff::new([]), 40, unicode()).is_empty());
+}
+
+#[test]
+fn a_session_that_kept_only_the_counts_still_says_them_on_one_row() {
+    // A log from before the lines were kept has a change's counts and nothing
+    // to draw in a box, so the row under the call says them as it always did.
+    let output = Shown::replayed(
+        RecordedToolOutput::ok("changed one.rs").counting(Changed::new(2, 1)),
+        None,
+    );
+
+    assert_eq!(
+        texts(&finished_rows(&output, WIDE, Style::plain(), false)),
+        ["  ⎿ Added 2 lines, removed 1 line"]
+    );
+}
+
+#[test]
+fn a_folded_change_names_no_key_and_its_call_is_not_kept_for_one() {
+    // Nothing yet opens the lines a fold hides, so the fold counts them and
+    // offers nothing, and a call whose only reason to be kept would have been
+    // its fold is answered like any other.
+    let whole = || (1..=Diff::LINES).map(|at| Line::new(at, Change::Added, "line"));
+    let rows = boxed(Diff::new(whole()), WIDE);
+    let said = texts(&rows);
+    assert!(
+        said.iter().any(|row| row == "  │  ⋯  36 lines folded  ⋯"),
+        "{said:#?}"
+    );
+    assert!(said.iter().all(|row| !row.contains("ctrl+o")), "{said:#?}");
+    for row in &rows {
+        assert!(row.kinds().all(|slot| slot != Slot::Cut), "{row:?}");
+    }
+
+    let output = ToolOutput::ok("changed one.rs, 1 replacements").showing(Diff::new(whole()));
+    let mut renderer = Renderer::new(Resizing::new(WIDE, 60));
+    let mut kept = Kept::default();
+    came_back(
+        &mut renderer,
+        &mut kept,
+        &ToolId::new("a"),
+        Shown::live(output),
+        Style::plain(),
+    )
+    .expect("the change to draw");
+    assert!(
+        kept.is_empty(),
+        "a folded call was kept for an offer it does not make"
+    );
 }
 
 #[test]
@@ -2339,7 +2549,7 @@ fn the_transcript_follows_the_colour_rule() {
         "\u{25cf} Read",
         "ctrl+o",
         "wait_for_index",
-        "+  # what stops",
+        "+ # what stops",
         "\u{25cf} Read 3",
     ] {
         assert!(
@@ -2349,7 +2559,8 @@ fn the_transcript_follows_the_colour_rule() {
     }
 
     // One span of each level, in the slot the rule gives it: a call's mark is
-    // the reader's own foreground, an added line carries its meaning, the path
+    // the reader's own foreground, the words an added line changed carry its
+    // meaning, the path
     // in passing is the call's path, quiet unless a design says otherwise,
     // and what the model says is plain.
     let slot_of = |text: &str| {
@@ -2359,7 +2570,11 @@ fn the_transcript_follows_the_colour_rule() {
             .map(|(slot, _)| slot)
     };
     assert_eq!(slot_of("\u{25cf}"), Some(Slot::Plain), "a call's mark");
-    assert_eq!(slot_of("# what stops"), Some(Slot::Added), "an added line");
+    assert_eq!(
+        slot_of("what stops"),
+        Some(Slot::AddedWord),
+        "the words an added line changed"
+    );
     assert_eq!(
         slot_of("src/cli/converse/resume.rs"),
         Some(Slot::ArgumentPath),
@@ -2518,9 +2733,10 @@ fn a_tools_name_is_weight_rather_than_the_theme_colour() {
 }
 
 #[test]
-fn the_figures_of_a_count_are_weight_rather_than_the_theme_colour() {
-    // "Added 3 lines, removed 3 lines".
-    assert_eq!(ruled_slots("3"), [Slot::Bold, Slot::Bold]);
+fn the_figures_of_a_change_wear_its_sides_rather_than_the_theme_colour() {
+    // "+3 −3" in the header of the change's box.
+    assert_eq!(ruled_slots("+3"), [Slot::AddedNumber]);
+    assert_eq!(ruled_slots("\u{2212}3"), [Slot::RemovedNumber]);
 }
 
 #[test]
@@ -2608,7 +2824,7 @@ fn with_colour_off_what_colour_draws_in_weight_reads_as_it_was_written() {
                 "| resume.rs | 3 |",
                 "",
                 "\u{25cf} Update(src/cli/converse/resume.rs)",
-                "  \u{23bf} Added 3 lines, removed 3 lines",
+                "  \u{256d}\u{2500} +3 \u{2212}3",
             ]
             .map(String::from)[..]
         ),

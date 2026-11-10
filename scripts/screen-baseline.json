@@ -12,7 +12,7 @@
         "Vendor::calling( \"edit\", r##\"{\"path\":\"release.yml\",\"find\":\"# trend data\",\"replace\":\"# what stops a tag\"}\"##, \"Renamed. Nothing else in the file moved.\", )",
         "Watched::in_default_colours( \"tool-called-in-colour\", (80, 24), Some(&vendor), Some(\"edit(*)\"), )"
       ],
-      "sha256": "6e261cd3734e1bd936f8252b9fb943deb77e951b48c13ac980946c8ade51a8a1"
+      "sha256": "c3e9986b318a34a0d758293c82df8b981207225d3201e9e8c2888427ada32e21"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_call_that_changed_a_file_is_drawn_with_the_change.snap",
@@ -21,7 +21,7 @@
         "Vendor::calling( \"edit\", r##\"{\"path\":\"release.yml\",\"find\":\"# trend data\",\"replace\":\"# what stops a tag\"}\"##, \"Renamed. Nothing else in the file moved.\", )",
         "Watched::allowing(\"tool-called\", 80, 24, &vendor, \"edit(*)\")"
       ],
-      "sha256": "f2dc66bb59889116ebee1c69d63c51c12886a9353f092731fa1944d1f47b43ad"
+      "sha256": "da126dc4c9a9ebe789748a485640a1cf399cc0079963244cffcd12d394be3078"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_click_on_a_cut_result_opens_it.snap",
@@ -2684,7 +2684,7 @@
         "Vendor::calling( \"edit\", &transcript::rewrite_input(), transcript::said(\"tool_edit\"), )",
         "Watched::in_default_colours( \"transcript-tool-edit-80-fullscreen\", (80, 120), Some(&vendor), Some(\"edit(*)\"), )"
       ],
-      "sha256": "676dee532879e541e01774c26f1b51826370c0c27326207bb7d7c0531e9e8b29"
+      "sha256": "5f29226b17bcb463a23b760232a81eb27054754ff95cea573e6d574bec676ea8"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_tool_edit_80_native.snap",
@@ -2693,7 +2693,7 @@
         "Vendor::calling( \"edit\", &transcript::rewrite_input(), transcript::said(\"tool_edit\"), )",
         "Watched::drawn_in_colour( \"transcript-tool-edit-80-native\", (80, 120), &vendor, Some(\"edit(*)\"), (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "dd2cad564514d418bfdd61c0d63986c22d1a9b02142cd75b9ba8cd72f00af5c3"
+      "sha256": "49632e7c3634ab88b5b141902a43c19a2993c89332d3bbc8bf82ae908191735e"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__usage_in_colour.snap",

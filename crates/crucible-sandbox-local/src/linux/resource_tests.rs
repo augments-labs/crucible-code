@@ -15,12 +15,13 @@ use std::os::unix::process::ExitStatusExt as _;
 use std::path::Path;
 
 use crucible_sandbox::{
-    SandboxCapability, SandboxError, SandboxFeature, SandboxManifest, SandboxNetworkPolicy,
+    SandboxCapability, SandboxError, SandboxFeature, SandboxFilesystemAccess,
+    SandboxFilesystemProvenance, SandboxManifest, SandboxManifestEntry, SandboxNetworkPolicy,
     SandboxPolicy, SandboxRequest, SandboxResourceLimits, SandboxService,
 };
 use crucible_types::{Ancestry, SandboxId, ToolId};
 
-use super::tests::{command, finish};
+use super::tests::{command, direct, finish, read_only_request};
 use crate::sample::{Sample, skipped_without_enforcement};
 
 /// What `/proc/self/limits` says the scope may hold, read back from inside it.
@@ -537,5 +538,362 @@ fn requested_cpu_limit_terminates_the_workload_scope() {
         status.signal(),
         Some(rustix::process::Signal::KILL.as_raw()),
         "CPU-bound workload escaped its ceiling: {status}"
+    );
+}
+
+/// The disk ceiling the tests below hold a run to.
+const DISK_CEILING: u64 = 8 * 1024 * 1024;
+
+/// The standard ceilings with a disk ceiling of [`DISK_CEILING`] on top.
+fn held_to_the_disk_ceiling() -> SandboxResourceLimits {
+    SandboxResourceLimits {
+        disk_bytes: Some(DISK_CEILING),
+        ..SandboxResourceLimits::confining()
+    }
+}
+
+/// Whether `problem` refuses the disk ceiling, by name.
+const fn refused_for_disk(problem: Option<&SandboxError>) -> bool {
+    matches!(
+        problem,
+        Some(SandboxError::Unsupported {
+            feature: SandboxFeature::DiskLimit
+        })
+    )
+}
+
+#[test]
+fn a_disk_ceiling_is_refused_where_a_run_could_write_to_the_host() {
+    let service = crate::sample::service();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-ceiling-on-a-writable-root");
+    sample.write("shared/existing.txt", "before\n");
+
+    // A writable workspace: its writes land on the host, where no mount this
+    // backend makes can count them.
+    let writable = SandboxPolicy::standard(&sample.workspace())
+        .expect("policy")
+        .with_limits(held_to_the_disk_ceiling())
+        .expect("a disk ceiling");
+    let prepared = crucible_runtime::answered!(service.prepare(SandboxRequest::new(
+        SandboxId::new(),
+        Ancestry::new(),
+        ToolId::new("disk-writable-rule"),
+        writable,
+        SandboxManifest::empty(),
+    )));
+    assert!(
+        refused_for_disk(prepared.as_ref().err()),
+        "{:?}",
+        prepared.err()
+    );
+
+    // A read-only workspace that a manifest mounts a writable directory into
+    // reaches the host the same way.
+    let read_only = read_only_request(sample.root(), held_to_the_disk_ceiling());
+    let manifest = SandboxManifest::new([SandboxManifestEntry::mount(
+        sample.root().join("shared"),
+        "mounted/shared",
+        SandboxFilesystemAccess::ReadWrite,
+        SandboxFilesystemProvenance::Manifest,
+    )
+    .expect("entry")])
+    .expect("manifest");
+    let prepared = crucible_runtime::answered!(service.prepare(SandboxRequest::new(
+        SandboxId::new(),
+        Ancestry::new(),
+        ToolId::new("disk-writable-mount"),
+        read_only.policy().clone(),
+        manifest,
+    )));
+    assert!(
+        refused_for_disk(prepared.as_ref().err()),
+        "{:?}",
+        prepared.err()
+    );
+
+    // The same read-only workspace with nothing writable mounted into it is
+    // the run a disk ceiling can hold, and it is taken.
+    let prepared = crucible_runtime::answered!(service.prepare(read_only));
+    assert!(prepared.is_ok(), "{:?}", prepared.err());
+}
+
+#[test]
+fn observing_claims_no_disk_ceiling_that_a_preparation_on_this_host_takes() {
+    let service = crate::sample::service();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-disk-ceiling-observed");
+    let request = read_only_request(sample.root(), held_to_the_disk_ceiling());
+
+    // Observing starts nothing, so it cannot read whether Bubblewrap lists
+    // `--size`; it says so rather than guessing.
+    let observed = crate::LocalSandbox::observe(&request).expect("an observation");
+    assert_eq!(
+        observed.capabilities().claim(SandboxFeature::DiskLimit),
+        SandboxCapability::Unsupported
+    );
+    assert!(
+        refused_for_disk(observed.refusal()),
+        "{:?}",
+        observed.refusal()
+    );
+    assert!(
+        observed
+            .unchecked()
+            .is_some_and(|left| left.contains("--size")),
+        "{:?}",
+        observed.unchecked()
+    );
+
+    let prepared = crucible_runtime::answered!(service.prepare(request));
+    assert!(prepared.is_ok(), "{:?}", prepared.err());
+}
+
+#[test]
+fn files_made_until_the_command_time_runs_out_are_gone_from_the_next_run() {
+    let service = crate::sample::service();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-disk-ceiling-empty-files");
+    let limits = SandboxResourceLimits {
+        command_time: Some(std::time::Duration::from_secs(1)),
+        ..held_to_the_disk_ceiling()
+    };
+    // Each run is a session of its own, so the second is a fresh launch.
+    let held = || {
+        let mut session =
+            crucible_runtime::answered!(service.prepare(read_only_request(sample.root(), limits)))
+                .expect("a run held to a disk ceiling");
+        crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+        session
+    };
+
+    // Empty files take no bytes from the ceiling, so nothing but the command
+    // time ends this run.
+    let (status, output, errors) = finish(
+        crucible_runtime::answered!(held().start(command(
+            "i=0; while :; do : > /made-$i; i=$((i+1)); \
+             if [ \"$i\" = 100 ]; then echo made; fi; done",
+        )))
+        .expect("started command"),
+    );
+    assert_eq!(
+        status.signal(),
+        Some(rustix::process::Signal::KILL.as_raw()),
+        "{status}: {}",
+        String::from_utf8_lossy(&errors)
+    );
+    assert_eq!(String::from_utf8_lossy(&output), "made\n");
+
+    let (status, output, errors) = finish(
+        crucible_runtime::answered!(held().start(command(
+            "for made in /made-*; do if [ -e \"$made\" ]; then echo kept; exit 71; fi; done; \
+             echo none",
+        )))
+        .expect("started command"),
+    );
+    assert!(
+        status.success(),
+        "{status}: {}",
+        String::from_utf8_lossy(&errors)
+    );
+    assert_eq!(String::from_utf8_lossy(&output), "none\n");
+}
+
+/// What a command that reports `<label> <bytes>` lines printed, as a map.
+fn reported(output: &[u8]) -> std::collections::BTreeMap<String, u64> {
+    String::from_utf8_lossy(output)
+        .lines()
+        .filter_map(|line| {
+            let (label, bytes) = line.split_once(' ')?;
+            Some((label.to_owned(), bytes.trim().parse().ok()?))
+        })
+        .collect()
+}
+
+/// Runs `script` held to [`DISK_CEILING`] with a read-only workspace, and
+/// returns what it reported.
+fn under_the_disk_ceiling(name: &str, script: &str) -> std::collections::BTreeMap<String, u64> {
+    held_by_the_disk_ceiling(name, command(script))
+}
+
+/// Runs `confined` held to [`DISK_CEILING`] with a read-only workspace, and
+/// returns what it reported.
+fn held_by_the_disk_ceiling(
+    name: &str,
+    confined: crucible_sandbox::SandboxCommand,
+) -> std::collections::BTreeMap<String, u64> {
+    let service = crate::sample::service();
+    let sample = Sample::new(name);
+    let mut session = crucible_runtime::answered!(
+        service.prepare(read_only_request(sample.root(), held_to_the_disk_ceiling()))
+    )
+    .expect("a run held to a disk ceiling");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let (status, output, errors) =
+        finish(crucible_runtime::answered!(session.start(confined)).expect("started command"));
+    assert!(
+        status.success(),
+        "{status}: {}",
+        String::from_utf8_lossy(&errors)
+    );
+    reported(&output)
+}
+
+#[test]
+fn writes_across_the_root_tmp_and_home_stop_at_one_total() {
+    if skipped_without_enforcement(&crate::sample::service()) {
+        return;
+    }
+    // Half the ceiling into each of three places: twelve MiB asked for in
+    // all, which fits if any of them is held to the ceiling on its own.
+    let held = under_the_disk_ceiling(
+        "sandbox-disk-ceiling-one-total",
+        "refused=0; for place in / /tmp/ /crucible-home/; do \
+             head -c 4194304 /dev/zero > \"${place}filled\" 2>/dev/null || refused=$((refused+1)); \
+         done; \
+         echo \"refused $refused\"; \
+         echo \"held $(cat /filled /tmp/filled /crucible-home/filled 2>/dev/null | wc -c)\"",
+    );
+
+    let total = held.get("held").copied().expect("a total");
+    assert!(total <= DISK_CEILING, "{total} held past {DISK_CEILING}");
+    assert!(total > DISK_CEILING / 2, "only {total} was written");
+    assert!(
+        held.get("refused").is_some_and(|refused| *refused > 0),
+        "{held:?}"
+    );
+}
+
+#[test]
+fn many_small_files_written_everywhere_at_once_stop_at_the_total() {
+    if skipped_without_enforcement(&crate::sample::service()) {
+        return;
+    }
+    // Sixty-four files of 64 KiB into each writable place at once, each far
+    // under any per-file bound, twelve MiB in all.
+    let held = under_the_disk_ceiling(
+        "sandbox-disk-ceiling-many-files",
+        "for place in / /tmp/ /crucible-home/; do \
+             ( i=0; while [ \"$i\" -lt 64 ]; do \
+                   head -c 65536 /dev/zero > \"${place}many-$i\" 2>/dev/null; i=$((i+1)); \
+               done ) & \
+         done; wait; \
+         echo \"held $(cat /many-* /tmp/many-* /crucible-home/many-* 2>/dev/null | wc -c)\"",
+    );
+
+    let total = held.get("held").copied().expect("a total");
+    assert!(total <= DISK_CEILING, "{total} held past {DISK_CEILING}");
+    assert!(total > DISK_CEILING / 2, "only {total} was written");
+}
+
+#[test]
+fn dev_refuses_writes_and_dev_null_holds_nothing() {
+    if skipped_without_enforcement(&crate::sample::service()) {
+        return;
+    }
+    // `/dev` and `/dev/shm` are where a run could otherwise write past the
+    // ceiling, since Bubblewrap makes `/dev` a tmpfs of its own.
+    let held = under_the_disk_ceiling(
+        "sandbox-disk-ceiling-dev",
+        "if printf x > /dev/crucible-probe 2>/dev/null; then echo 'dev 1'; else echo 'dev 0'; fi; \
+         if printf x > /dev/shm/crucible-probe 2>/dev/null; then echo 'shm 1'; else echo 'shm 0'; fi; \
+         if printf 'discarded' > /dev/null; then echo 'null 1'; else echo 'null 0'; fi; \
+         echo \"null-holds $(wc -c < /dev/null)\"",
+    );
+
+    assert_eq!(
+        held,
+        [("dev", 0), ("shm", 0), ("null", 1), ("null-holds", 0)]
+            .into_iter()
+            .map(|(label, value)| (label.to_owned(), value))
+            .collect()
+    );
+}
+
+#[test]
+fn extended_attribute_writes_are_refused_under_a_disk_ceiling() {
+    if skipped_without_enforcement(&crate::sample::service()) {
+        return;
+    }
+    // A tmpfs charges an extended attribute's value to its inodes, not to the
+    // size it was mounted with, so a value set on a file in the sized root is
+    // held past the ceiling. Each call that sets one is tried until twice the
+    // ceiling is asked for; each reports the error it ended on (0 for none) and
+    // the bytes it left held. `setxattrat` has no Python binding, so it is the
+    // raw call, numbered 463 on both architectures the broker filters.
+    let script = r#"
+import ctypes, os, sys
+
+ceiling = int(sys.argv[1])
+value = b"x" * 65536
+libc = ctypes.CDLL(None, use_errno=True)
+libc.syscall.restype = ctypes.c_long
+
+class Arguments(ctypes.Structure):
+    _fields_ = [("value", ctypes.c_uint64), ("size", ctypes.c_uint32), ("flags", ctypes.c_uint32)]
+
+buffer = ctypes.create_string_buffer(value, len(value))
+
+def setxattrat(path, name):
+    arguments = Arguments(ctypes.addressof(buffer), len(value), 0)
+    if libc.syscall(ctypes.c_long(463), ctypes.c_long(-100), ctypes.c_char_p(path.encode()),
+                    ctypes.c_long(0), ctypes.c_char_p(name.encode()), ctypes.byref(arguments),
+                    ctypes.c_long(ctypes.sizeof(arguments))) != 0:
+        raise OSError(ctypes.get_errno(), "setxattrat")
+
+def fsetxattr(path, name):
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.setxattr(descriptor, name, value)
+    finally:
+        os.close(descriptor)
+
+ways = {
+    "setxattr": lambda path, name: os.setxattr(path, name, value),
+    "lsetxattr": lambda path, name: os.setxattr(path, name, value, follow_symlinks=False),
+    "fsetxattr": fsetxattr,
+    "setxattrat": setxattrat,
+}
+for way, call in ways.items():
+    held, ended, made = 0, 0, 0
+    while held <= 2 * ceiling and ended == 0:
+        path = f"/tmp/{way}-{made}"
+        made += 1
+        open(path, "wb").close()
+        for key in range(15):
+            try:
+                call(path, f"user.held{key}")
+            except OSError as problem:
+                ended = problem.errno
+                break
+            held += len(value)
+    print(way, ended)
+    print(f"{way}-held", held)
+"#;
+    let held = held_by_the_disk_ceiling(
+        "sandbox-disk-ceiling-xattr",
+        direct(
+            "/usr/bin/python3",
+            [
+                std::ffi::OsString::from("-c"),
+                std::ffi::OsString::from(script),
+                std::ffi::OsString::from(DISK_CEILING.to_string()),
+            ],
+        ),
+    );
+
+    let refused = u64::from(rustix::io::Errno::PERM.raw_os_error().unsigned_abs());
+    assert_eq!(
+        held,
+        ["setxattr", "lsetxattr", "fsetxattr", "setxattrat"]
+            .into_iter()
+            .flat_map(|way| [(way.to_owned(), refused), (format!("{way}-held"), 0)])
+            .collect()
     );
 }
