@@ -1529,9 +1529,8 @@ pub(crate) fn withdraw<T: Terminal>(
 ///
 /// What [`finished`] and [`offer`] wrote for it goes: the key's name and the
 /// brackets it stood in, or the whole of a change's offer, which is a cut run
-/// of its own at the end of the row, or the key a fold names and the dot
-/// before it. A count of the lines the row could not show stays, because it
-/// is still true. What was cut stops wearing the slot that lights under the
+/// of its own at the end of the row. A count of the lines the row could not
+/// show stays, because it is still true. What was cut stops wearing the slot that lights under the
 /// pointer and reads as the row around it.
 fn unoffered(rows: &mut [Row]) {
     for row in rows {
@@ -1540,7 +1539,6 @@ fn unoffered(rows: &mut [Row]) {
             .map(|(slot, text)| (slot, text.to_owned()))
             .collect();
         let key = offered_at(&spans);
-        let fold = folded_at(&spans);
         // ` (+2 lines · ` keeps its count and loses the mark after it; a bare
         // ` (` was only ever the offer's.
         let counted = key
@@ -1563,15 +1561,6 @@ fn unoffered(rows: &mut [Row]) {
                     return counted.is_some().then(|| (slot, text.to_owned()));
                 }
             }
-            if let Some(fold) = fold {
-                if at == fold {
-                    return None;
-                }
-                if at + 1 == fold {
-                    let kept = text.strip_suffix(FOLD_DOT).unwrap_or(text);
-                    return Some((slot, kept.to_owned()));
-                }
-            }
             match slot {
                 Slot::Cut if at == last && change_offer(text) => None,
                 Slot::Cut => Some((Slot::Quiet, text.to_owned())),
@@ -1579,29 +1568,6 @@ fn unoffered(rows: &mut [Row]) {
             }
         });
     }
-}
-
-/// What parts a fold's count from the key it names.
-const FOLD_DOT: &str = " · ";
-
-/// Where the key a fold in a change's box names stands in `spans`, if it does.
-///
-/// The key alone in a cut run, straight after the quiet words that count the
-/// lines folded and end in the dot that parts them from it. Clipped to the
-/// room the row had, it may have lost its end.
-fn folded_at(spans: &[(Slot, String)]) -> Option<usize> {
-    spans.iter().enumerate().position(|(at, (slot, text))| {
-        let bare = text.trim_end_matches(['…', '.']);
-        *slot == Slot::Cut
-            && !bare.is_empty()
-            && EXPAND.starts_with(bare)
-            && at
-                .checked_sub(1)
-                .and_then(|counts| spans.get(counts))
-                .is_some_and(|(slot, counts)| {
-                    *slot == Slot::Quiet && counts.ends_with(&format!(" folded{FOLD_DOT}"))
-                })
-    })
 }
 
 /// Where the key's name stands in `spans`, if [`finished`] made an offer there.
@@ -1753,8 +1719,8 @@ fn count(row: &mut Row, word: &str, lines: usize) {
 /// number each line is found at, the sign that says which way it went, and a
 /// ground carried to the last column under each line that moved. A change
 /// longer than the fold draws its start and its end around a row that counts
-/// the rest and names the key that shows them; the lines the tool never kept
-/// are one quiet row under the ones it did.
+/// the rest, and names no key, since nothing shows them yet; the lines the
+/// tool never kept are one quiet row under the ones it did.
 ///
 /// Hung where the row under a call hangs, with a failure's cross in the call's
 /// own column. Clipped to the window rather than to the ceiling a result line

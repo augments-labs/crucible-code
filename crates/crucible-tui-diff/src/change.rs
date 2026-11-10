@@ -19,7 +19,8 @@ pub const TAIL: usize = 4;
 /// The most lines one file keeps. Past it a line is counted as dropped.
 pub const MOST_LINES: usize = 2048;
 
-/// The most files one change keeps. Past it a file is not kept.
+/// The most files one change keeps. Past it a file is counted as not shown,
+/// and a diff that names more is not read at all.
 pub const MOST_FILES: usize = 8;
 
 /// The most bytes of a path or a section name kept: a path keeps its end,
@@ -270,20 +271,29 @@ impl File {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Change {
     files: Vec<File>,
+    unshown: usize,
 }
 
 impl Change {
-    /// A change of `files`. Past [`MOST_FILES`] the rest are not kept.
+    /// A change of `files`. Past [`MOST_FILES`] the rest are not kept, and
+    /// are counted so the box can say how many it leaves out.
     #[must_use]
     pub fn new(mut files: Vec<File>) -> Self {
+        let unshown = files.len().saturating_sub(MOST_FILES);
         files.truncate(MOST_FILES);
-        Self { files }
+        Self { files, unshown }
     }
 
-    /// The files it touched.
+    /// The files it touched, as far as [`MOST_FILES`].
     #[must_use]
     pub fn files(&self) -> &[File] {
         &self.files
+    }
+
+    /// The files it touched past [`MOST_FILES`], which are not kept.
+    #[must_use]
+    pub const fn unshown(&self) -> usize {
+        self.unshown
     }
 }
 

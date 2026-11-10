@@ -223,12 +223,14 @@ fn a_file_longer_than_the_fold_shows_its_head_and_tail_and_counts_the_rest() {
     let fold = rows.get(25).expect("a fold row");
     assert_eq!(
         fold.text().trim_end(),
-        format!("│  ⋯  {} lines folded · ctrl+o to expand  ⋯", total - 28)
+        format!("│  ⋯  {} lines folded  ⋯", total - 28)
     );
-    // The key's words are what lights under the pointer and opens the rest.
+    // Nothing yet shows the folded lines, so the fold names no key and holds
+    // nothing that lights under the pointer as an offer would.
     assert!(
-        fold.spans()
-            .any(|(slot, text)| slot == Slot::Cut && text == "ctrl+o to expand")
+        fold.spans().all(|(slot, _)| slot != Slot::Cut),
+        "{:?}",
+        fold.spans().collect::<Vec<_>>()
     );
     // Every line it folded is still in the change.
     assert_eq!(lines_of(&change), total);
@@ -238,10 +240,7 @@ fn a_file_longer_than_the_fold_shows_its_head_and_tail_and_counts_the_rest() {
             .get(25)
             .map(|row| row.text().trim_end().to_owned())
             .unwrap_or_default(),
-        format!(
-            "|  ...  {} lines folded · ctrl+o to expand  ...",
-            total - 28
-        )
+        format!("|  ...  {} lines folded  ...", total - 28)
     );
 }
 
@@ -514,18 +513,87 @@ fn picture_of_a_two_file_change() {
 
 #[test]
 fn the_caps_the_user_docs_state_are_the_ones_a_change_is_drawn_to() {
-    use crate::{MOST_FILES, PAIRS, SYNTAX_BYTES, SYNTAX_LINES, TOKENS};
+    // The caps a tool's edit reaches; a diff the model writes in a reply is
+    // not drawn in a box yet, so the caps only it reaches are not stated.
+    use crate::{PAIRS, SYNTAX_BYTES, SYNTAX_LINES, TOKENS};
     let documented = include_str!("../../../docs/tools/files.md");
     let documented = documented.split_whitespace().collect::<Vec<_>>().join(" ");
     for stated in [
         format!("reads at most {SYNTAX_LINES} of its lines, and {SYNTAX_BYTES} bytes of them"),
         format!("in at most {PAIRS} replaced lines, each of at most {TOKENS} words"),
-        format!("names more than {MOST_FILES} files"),
-        format!("keeps its first {MOST_FILES}."),
     ] {
         assert!(
             documented.contains(&stated),
             "docs/tools/files.md does not say {stated:?}"
         );
     }
+}
+
+#[test]
+fn a_fold_counts_the_lines_it_hides_and_not_a_gap_among_them_as_one() {
+    // Thirty lines, a jump of 469, then forty-one more: one gap row sits
+    // among the rows the fold hides, and it is not a line of the file.
+    let mut lines: Vec<(usize, Side, String)> = (1..=30)
+        .map(|at| (at, Side::Kept, format!("line {at}")))
+        .collect();
+    lines.extend((500..=540).map(|at| (at, Side::Kept, format!("line {at}"))));
+    let file = File::numbered(
+        Some("x"),
+        lines
+            .iter()
+            .map(|(at, side, text)| (*at, *side, text.as_str())),
+    );
+    let rows = file.lines().len();
+    assert_eq!(rows, 30 + 1 + 41);
+    let text = texts(&drawn(&Change::new(vec![file]), 80, UNICODE));
+    let hidden = rows - 24 - 4 - 1;
+    assert_eq!(
+        text.get(25).map(String::as_str),
+        Some(format!("│  ⋯  {hidden} lines folded  ⋯").as_str()),
+        "{text:#?}"
+    );
+}
+
+#[test]
+fn files_past_what_a_change_keeps_are_counted_inside_the_box() {
+    let file = File::numbered(Some("x"), [(1, Side::Added, "a")]);
+    let change = Change::new(vec![file; crate::MOST_FILES + 3]);
+    assert_eq!(change.files().len(), crate::MOST_FILES);
+    let rows = texts(&drawn(&change, 64, UNICODE));
+    assert_eq!(
+        rows.get(rows.len() - 2).map(String::as_str),
+        Some("│  ⋯  3 files not shown  ⋯"),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_diff_of_more_files_than_a_change_keeps_is_refused_however_its_files_open() {
+    // `count` files, each written by `one`.
+    let files = |count: usize, one: fn(&mut String, usize) -> std::fmt::Result| {
+        let mut diff = String::new();
+        for at in 0..count {
+            one(&mut diff, at).expect("a string to take the file");
+        }
+        diff
+    };
+    // Each opened by its `+++` alone, the first on the diff's first line.
+    let headed =
+        |diff: &mut String, at: usize| write!(diff, "+++ b/f{at}.txt\n@@ -0,0 +1,1 @@\n+a\n");
+    // Each opened by `diff --git` and holding a binary note, with no `+++`.
+    let binary = |diff: &mut String, at: usize| {
+        write!(
+            diff,
+            "diff --git a/f{at}.png b/f{at}.png\nindex 0000000..1111111 100644\n\
+             Binary files a/f{at}.png and b/f{at}.png differ\n"
+        )
+    };
+    let past = crate::MOST_FILES + 1;
+    assert_eq!(read(&files(past, headed)), Err(NotADiff::PastCap));
+    assert_eq!(read(&files(past, binary)), Err(NotADiff::PastCap));
+    // As many as it keeps are read.
+    assert_eq!(
+        read(&files(crate::MOST_FILES, headed)).map(|change| change.files().len()),
+        Ok(crate::MOST_FILES)
+    );
 }

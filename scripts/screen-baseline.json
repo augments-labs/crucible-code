@@ -2684,7 +2684,7 @@
         "Vendor::calling( \"edit\", &transcript::rewrite_input(), transcript::said(\"tool_edit\"), )",
         "Watched::in_default_colours( \"transcript-tool-edit-80-fullscreen\", (80, 120), Some(&vendor), Some(\"edit(*)\"), )"
       ],
-      "sha256": "58a7132d0227dc0cd2a46f5f95744812e3f540848fdcec9322cac44ffcb5d5d0"
+      "sha256": "5f29226b17bcb463a23b760232a81eb27054754ff95cea573e6d574bec676ea8"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_tool_edit_80_native.snap",
@@ -2693,7 +2693,7 @@
         "Vendor::calling( \"edit\", &transcript::rewrite_input(), transcript::said(\"tool_edit\"), )",
         "Watched::drawn_in_colour( \"transcript-tool-edit-80-native\", (80, 120), &vendor, Some(\"edit(*)\"), (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "237fe1b315c1494e5e29cb1e88e02c7d4150b5f5e316ea1424feaf6c70896754"
+      "sha256": "49632e7c3634ab88b5b141902a43c19a2993c89332d3bbc8bf82ae908191735e"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__usage_in_colour.snap",

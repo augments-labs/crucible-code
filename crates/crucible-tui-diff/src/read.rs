@@ -1,7 +1,8 @@
 //! A unified diff read into a [`Change`].
 //!
-//! The text is a fence the model wrote, so it is hostile and it is counted
-//! before a byte of it is parsed. What is read is what `git diff` and `diff -u`
+//! The text is a fence the model wrote, so it is hostile: its bytes and lines
+//! are counted before a byte of it is parsed, and its files as they open, so
+//! one that names more than a change keeps is refused however its files open. What is read is what `git diff` and `diff -u`
 //! write: `diff --git` and `---`/`+++` headers, renames, binary notes, and
 //! hunks whose header counts say where each ends. Those counts are what tell a
 //! removed line that begins `-- ` from the next file's `--- ` header, so a hunk
@@ -45,6 +46,8 @@ struct Reading {
     next: Option<usize>,
     /// The old path a `---` line named, waiting for its `+++`.
     old: Option<String>,
+    /// Whether a file opened past the [`MOST_FILES`] already read.
+    past: bool,
 }
 
 impl Reading {
@@ -58,7 +61,11 @@ impl Reading {
         if let Some(file) = self.file.take()
             && !file.is_empty()
         {
-            self.files.push(file);
+            if self.files.len() < MOST_FILES {
+                self.files.push(file);
+            } else {
+                self.past = true;
+            }
         }
     }
 
@@ -71,14 +78,15 @@ impl Reading {
 ///
 /// # Errors
 ///
-/// [`NotADiff::PastCap`] where it is longer than [`MOST_BYTES`], holds more
-/// than [`crate::MOST_LINES`] lines or names more than [`MOST_FILES`] files,
-/// counted before it is parsed; [`NotADiff::Unread`] where it holds no hunk
-/// and no binary note.
+/// [`NotADiff::PastCap`] where it is longer than [`MOST_BYTES`] or holds more
+/// than [`crate::MOST_LINES`] lines, counted before it is parsed, or where it
+/// names more than [`MOST_FILES`] files, whether each opens with `diff --git`
+/// or `+++` and whether it holds lines or a binary note;
+/// [`NotADiff::Unread`] where it holds no hunk and no binary note.
 pub fn read(source: &str) -> Result<Change, NotADiff> {
     if source.len() > MOST_BYTES
         || source.bytes().filter(|&byte| byte == b'\n').count() >= crate::MOST_LINES
-        || source.matches("\n+++ ").count() > MOST_FILES
+        || source.matches("\n+++ ").count() + usize::from(source.starts_with("+++ ")) > MOST_FILES
     {
         return Err(NotADiff::PastCap);
     }
@@ -104,6 +112,9 @@ pub fn read(source: &str) -> Result<Change, NotADiff> {
     }
 
     reading.close();
+    if reading.past {
+        return Err(NotADiff::PastCap);
+    }
     if reading.files.is_empty() {
         return Err(NotADiff::Unread);
     }

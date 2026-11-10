@@ -336,15 +336,14 @@ each on ground saying which way, and within a replaced line the words that
 changed are raised. The lines around them did not move and are there to be read
 against; they wear the colours of the file's language, read from its extension.
 Every line carries the number it has in the file, and both sides of a
-replacement start at the same one, since one line stands where the other did. A
-change drawn in a reply, from a diff the model wrote, is drawn in the same box.
+replacement start at the same one, since one line stands where the other did.
 
 The tool keeps at most 64 lines of a change, and counts the rest whole on the
 box's first row. Inside the box, the lines it never kept are one quiet row,
 `⋯  136 lines not shown  ⋯`, and a change of more than 32 rows is folded to its
-first 24 and its last 4 around a row saying how many are folded:
-`⋯  36 lines folded · ctrl+o to expand  ⋯`. The key is the one under
-[results cut short](../reference/keys.md#results-cut-short).
+first 24 and its last 4 around a row saying how many of the file's lines are
+folded: `⋯  36 lines folded  ⋯`. The row names no key: the folded lines are not
+shown.
 
 A box is drawn in the same short time however much the change holds, so its
 colour and its raised words are bounded. One change reads at most 8 of its
@@ -352,9 +351,7 @@ lines, and 128 bytes of them, for its language's colours, and raises the
 changed words in at most 8 replaced lines, each of at most 48 words and runs of
 spaces. Past either, the rest of the box is drawn plain: every sign, number and
 ground is still there, only the colours of the language or the raised words are
-left off. A line too long for the window is cut to it and ends in `…`. A diff
-in a reply that names more than 8 files is shown as the model wrote it, and a
-tool's change keeps its first 8.
+left off. A line too long for the window is cut to it and ends in `…`.
 
 The protected session log retains this bounded preview for resume, including the
 omitted count. Each retained line is limited to 1024 characters. Preview bodies

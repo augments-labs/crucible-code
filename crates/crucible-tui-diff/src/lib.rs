@@ -8,10 +8,12 @@
 //!
 //! What this crate holds to:
 //!
-//! - **Bounded before it is read.** [`read()`] counts bytes, lines and files
-//!   against [`MOST_BYTES`], [`MOST_LINES`] and [`MOST_FILES`] before it parses
-//!   a byte, and a [`File`] keeps at most [`MOST_LINES`] lines however it was
-//!   built. Past a cap the block is shown as written, and says why.
+//! - **Bounded before it is kept.** [`read()`] counts bytes and lines against
+//!   [`MOST_BYTES`] and [`MOST_LINES`] before it parses a byte, and refuses a
+//!   diff that names more than [`MOST_FILES`] files however they open. Past a
+//!   cap the block is shown as written, and says why. A [`File`] keeps at most
+//!   [`MOST_LINES`] lines and a [`Change`] at most [`MOST_FILES`] files however
+//!   it was built, and the box counts what either left out.
 //! - **Hostile text drawn safe.** A path, a section name and every line are
 //!   text this process did not write: a path has its control, bidirectional
 //!   and private-use characters replaced before it is kept.

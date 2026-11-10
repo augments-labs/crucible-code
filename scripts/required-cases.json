@@ -1845,7 +1845,7 @@
     {
       "id": "CASE-TRANSCRIPT-CHANGE-BOX-FOLD",
       "family": "transcript-blocks",
-      "obligation": "A file of more than thirty-two rows draws its first twenty-four and last four around one row counting the rest and naming the key that shows them.",
+      "obligation": "A file of more than thirty-two rows draws its first twenty-four and last four around one row counting the rest, which names no key and offers nothing.",
       "package": "crucible-tui-diff",
       "target": {
         "kind": "lib",
@@ -1853,7 +1853,7 @@
       },
       "case": "tests::a_file_longer_than_the_fold_shows_its_head_and_tail_and_counts_the_rest",
       "source": "crates/crucible-tui-diff/src/tests.rs",
-      "body_sha256": "2781550a6c98ae0150f99a8b45d86d39de5de1a785d8e9ae45c7eec7da12524b",
+      "body_sha256": "68f66746ecebe298563f147bf7204b9ddcbab2c5caeca6a5384201559fb3d2fe",
       "platforms": [
         "linux",
         "macos",

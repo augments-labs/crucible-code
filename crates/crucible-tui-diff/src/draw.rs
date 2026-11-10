@@ -23,7 +23,8 @@
 //! change costs the same bounded time to lay out however much it holds. Lines
 //! the diff never held are one quiet row that counts them, and a file of more
 //! than [`FOLD`] rows draws its head and tail around a row that counts the
-//! rest and names the key that shows it.
+//! lines of the file it hides. Files past what a change keeps are one quiet
+//! row before the close that counts them.
 //!
 //! The rows are laid out once for the room and then clipped to it: no more of
 //! a line is laid out than the room shows, a line cut short ends in the glyph
@@ -34,7 +35,7 @@
 use std::ops::Range;
 
 use crucible_tui::chrome::Undrawn;
-use crucible_tui::drawing::{Draws, EXPAND, Laid, Room};
+use crucible_tui::drawing::{Draws, Laid, Room};
 use crucible_tui::syntax::Syntax;
 use crucible_tui::{Glyphs, Row, Slot, clip, columns};
 
@@ -212,6 +213,15 @@ fn natural(change: &Change, room: &Room) -> Vec<Drawn> {
         body(file, widest, room, &mut budget, &mut drawn);
     }
 
+    if change.unshown() > 0 && !drawn.is_empty() {
+        let noun = if change.unshown() == 1 {
+            "file"
+        } else {
+            "files"
+        };
+        let row = quiet_row(&format!("{} {noun} not shown", change.unshown()), glyphs);
+        drawn.push(Drawn::body(row, None));
+    }
     if !drawn.is_empty() {
         drawn.push(Drawn::body(
             Row::new().then_structural(
@@ -276,7 +286,15 @@ fn body(file: &File, widest: usize, room: &Room, budget: &mut Budget, drawn: &mu
             lining.syntax = None;
         }
         if lines.len() > FOLD && at == HEAD {
-            drawn.push(Drawn::body(folded(lines.len() - HEAD - TAIL, glyphs), None));
+            // The rows it hides may hold a gap, which is not a line of the
+            // file; the count is of the lines a reader would be shown.
+            let hidden = lines
+                .get(HEAD..lines.len() - TAIL)
+                .unwrap_or_default()
+                .iter()
+                .filter(|line| matches!(line, Line::Text { .. }))
+                .count();
+            drawn.push(Drawn::body(folded(hidden, glyphs), None));
         }
         if !shown.get(at).copied().unwrap_or(false) {
             continue;
@@ -637,16 +655,11 @@ fn between(lines: usize, section: Option<&str>, glyphs: Glyphs) -> Row {
     quiet_row(&format!("{lines} {noun} between{section}"), glyphs)
 }
 
-/// The row that stands for the lines a fold hides, naming the key that shows
-/// them.
+/// The row that stands for the lines a fold hides, counting them. Nothing
+/// shows them yet, so it names no key.
 fn folded(lines: usize, glyphs: Glyphs) -> Row {
-    let mark = elided(glyphs);
     let noun = if lines == 1 { "line" } else { "lines" };
-    Row::new()
-        .then_structural(Slot::Quiet, glyphs.vertical())
-        .then(Slot::Quiet, format!("  {mark}  {lines} {noun} folded · "))
-        .then(Slot::Cut, EXPAND)
-        .then(Slot::Quiet, format!("  {mark}"))
+    quiet_row(&format!("{lines} {noun} folded"), glyphs)
 }
 
 /// The mark that stands for lines not drawn.

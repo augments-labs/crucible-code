@@ -27,7 +27,7 @@ expression: "dump(&drawn(&change, 64, ASCII), 64)"
 <Quiet>|</> <Quiet>  19  </> line 19 of the file                                    
 <Quiet>|</> <RemovedNumber>  20 -</> <Removed>line 20 of the file</><Removed>                                    </>
 <Quiet>|</> <AddedNumber>  20 +</> <Added>line 20 of the </><AddedWord>changed</><Added> file</><Added>                            </>
-<Quiet>|</><Quiet>  ...  20 lines folded · </><Cut>ctrl+o to expand</><Quiet>  ...</>                 
+<Quiet>|</><Quiet>  ...  20 lines folded  ...</>                                    
 <Quiet>|</> <Quiet>  38  </> line 38 of the file                                    
 <Quiet>|</> <Quiet>  39  </> line 39 of the file                                    
 <Quiet>|</> <RemovedNumber>  40 -</> <Removed>line 40 of the file</><Removed>                                    </>

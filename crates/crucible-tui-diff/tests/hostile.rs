@@ -119,8 +119,8 @@ use Expect::{Drawn, Undrawn as Shown};
 ///
 /// A file that is not a diff, or holds headers and nothing under them, is
 /// shown as written with no refusal: it was never a change. One past a cap of
-/// lines or files is shown as written and says so, before a line of it is
-/// read. Everything else is drawn, however its counts were forged or its hunks
+/// lines or files is shown as written and says so, whether its files open with
+/// `diff --git` or `+++` and whether they hold lines or a binary note. Everything else is drawn, however its counts were forged or its hunks
 /// cut short: a hunk is read for what it holds, never for what it claims.
 const ENTRIES: &[(&str, Expect)] = &[
     ("binary.diff", Drawn),
@@ -134,6 +134,7 @@ const ENTRIES: &[(&str, Expect)] = &[
     ("new-and-deleted.diff", Drawn),
     ("no-newline-at-end.diff", Drawn),
     ("one-long-pair.diff", Drawn),
+    ("past-files-binary.diff", Shown(Undrawn::PastCap)),
     ("past-files.diff", Shown(Undrawn::PastCap)),
     ("past-lines.diff", Shown(Undrawn::PastCap)),
     ("path-bidi.diff", Drawn),

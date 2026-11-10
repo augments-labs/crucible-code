@@ -1470,12 +1470,11 @@ fn a_block_that_stopped_short_says_so_inside_the_box() {
 #[test]
 fn a_change_longer_than_the_fold_shows_its_start_and_end_and_counts_the_rest() {
     // Sixty-four lines kept, so the box draws the first twenty-four and the
-    // last four around one row that counts the thirty-six between and names
-    // the key that shows them.
+    // last four around one row that counts the thirty-six between.
     let whole = (1..=Diff::LINES).map(|at| Line::new(at, Change::Added, format!("line {at}")));
     let rows = texts(&boxed(Diff::new(whole), WIDE));
 
-    let fold = "  │  ⋯  36 lines folded · ctrl+o to expand  ⋯";
+    let fold = "  │  ⋯  36 lines folded  ⋯";
     assert_eq!(rows.get(25).map(String::as_str), Some(fold), "{rows:#?}");
     assert_eq!(rows.get(24).map(String::as_str), Some("  │   24 + line 24"));
     assert_eq!(rows.get(26).map(String::as_str), Some("  │   61 + line 61"));
@@ -1688,19 +1687,12 @@ fn a_session_that_kept_only_the_counts_still_says_them_on_one_row() {
 }
 
 #[test]
-fn a_fold_that_stops_offering_keeps_its_count_and_loses_the_key() {
-    // The fold names the key as a change's offer does; once the result behind
-    // it is let go, the row keeps saying how many lines it stands for and
-    // stops naming a key that would open nothing.
-    let whole = (1..=Diff::LINES).map(|at| Line::new(at, Change::Added, "line"));
-    let mut rows = boxed(Diff::new(whole), WIDE);
-    assert!(
-        rows.iter()
-            .any(|row| row.kinds().any(|slot| slot == Slot::Cut)),
-        "the fold made no offer; the test says nothing: {rows:?}"
-    );
-    unoffered(&mut rows);
-
+fn a_folded_change_names_no_key_and_its_call_is_not_kept_for_one() {
+    // Nothing yet opens the lines a fold hides, so the fold counts them and
+    // offers nothing, and a call whose only reason to be kept would have been
+    // its fold is answered like any other.
+    let whole = || (1..=Diff::LINES).map(|at| Line::new(at, Change::Added, "line"));
+    let rows = boxed(Diff::new(whole()), WIDE);
     let said = texts(&rows);
     assert!(
         said.iter().any(|row| row == "  │  ⋯  36 lines folded  ⋯"),
@@ -1710,6 +1702,22 @@ fn a_fold_that_stops_offering_keeps_its_count_and_loses_the_key() {
     for row in &rows {
         assert!(row.kinds().all(|slot| slot != Slot::Cut), "{row:?}");
     }
+
+    let output = ToolOutput::ok("changed one.rs, 1 replacements").showing(Diff::new(whole()));
+    let mut renderer = Renderer::new(Resizing::new(WIDE, 60));
+    let mut kept = Kept::default();
+    came_back(
+        &mut renderer,
+        &mut kept,
+        &ToolId::new("a"),
+        Shown::live(output),
+        Style::plain(),
+    )
+    .expect("the change to draw");
+    assert!(
+        kept.is_empty(),
+        "a folded call was kept for an offer it does not make"
+    );
 }
 
 #[test]
