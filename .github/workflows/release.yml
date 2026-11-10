@@ -574,10 +574,10 @@ jobs:
   # produced them, for whoever goes to the run to read the trend.
   # `ubuntu-latest`, and the label is the whole point: on `ubuntu-22.04` this
   # job ran `scripts/sh/bench.sh` for eighty-five minutes without finishing, twice,
-  # while CI's identical invocation on `ubuntu-latest` takes under three. Same
-  # script, same ripgrep, same inputs — only the image differed. Nothing here
-  # diagnoses why; what it does is stop shipping a release behind a probe that
-  # only hangs on the image nothing else uses.
+  # while CI's identical invocation on `ubuntu-latest` finishes inside its
+  # timeout. Same script, same ripgrep, same inputs — only the image differed.
+  # Nothing here diagnoses why; what it does is stop shipping a release behind a
+  # probe that only hangs on the image nothing else uses.
   budgets:
     name: release budgets
     needs: gate

@@ -70,8 +70,9 @@ const WINDOWS: usize = 9;
 
 /// Runs per reading.
 ///
-/// A launch costs a couple of milliseconds, so the whole probe still finishes
-/// well inside a second.
+/// A launch costs a few milliseconds, except on a picture candidate that never
+/// answers: each launch on one waits out the picture exchange's reply wait, so
+/// a batch of those takes at least `RUNS` times that wait.
 const RUNS: usize = WINDOWS * PER_WINDOW;
 
 /// A stuck launch is a failed measurement rather than a benchmark that hangs.

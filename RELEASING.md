@@ -60,11 +60,11 @@ same way afterwards.
      The first frame and first input are held there to 150 ms and 250 ms
      rather than 20 and 60: a runner that stalls launches through a whole
      measurement read 71.6 to 109.3 ms and 89.1 to 189.9 ms while its typical
-     launch stayed near 5 ms. The first input with colour from a terminal
-     that never answers is held there to 2250 ms rather than 2060: the 2
-     seconds crucible reads such a terminal for, added to the first input's
-     own. Those limits still stop a startup that got many times slower; a
-     smaller slowdown is this run's to catch.
+     launch stayed near 5 ms. The first input with colour from a
+     picture-candidate terminal that never answers is held there to 2250 ms
+     rather than 2060: the 2 seconds crucible reads such a candidate for,
+     added to the first input's own. Those limits still stop a startup that
+     got many times slower; a smaller slowdown is this run's to catch.
    - This run, here, on a quiet machine, is the authoritative one for the
      release. It is what decides whether the tag is cut.
    - The release workflow's staging run runs them again on a shared runner.
