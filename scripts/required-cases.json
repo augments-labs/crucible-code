@@ -8167,7 +8167,7 @@
       },
       "case": "terminal::graphics::tests::exchange::a_terminal_that_answers_confirms_its_candidate_and_leaves_nothing_to_read",
       "source": "crates/crucible-tui/src/terminal/graphics.rs",
-      "body_sha256": "7b93d8122284454120c31544ccb0565e0008f99cf0ca0e5d73295f4fbf670076",
+      "body_sha256": "e6e469e921fe3cf537907699128d6336b7704af34ace6587d87cc20811dd5e0e",
       "platforms": [
         "linux",
         "macos"

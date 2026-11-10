@@ -2380,17 +2380,17 @@ mod tests {
         /// Every key the session would read from what was left: whatever is
         /// not a cursor position, which the key reader drops, and a sequence
         /// left unfinished.
-        fn keys(left: &[u8]) -> Vec<Shape> {
+        fn typed(left: &[u8]) -> Vec<Shape> {
             let mut replies = Replies::new();
-            let mut keys: Vec<Shape> = left
+            let mut typed: Vec<Shape> = left
                 .iter()
                 .filter_map(|byte| replies.feed(*byte))
                 .filter(|shape| *shape != Shape::CursorPosition)
                 .collect();
             if !replies.between() {
-                keys.push(Shape::Other);
+                typed.push(Shape::Other);
             }
-            keys
+            typed
         }
 
         fn count(heard: &[u8], question: &[u8]) -> usize {
@@ -2449,7 +2449,7 @@ mod tests {
                 assert!(ran.yes, "{protocol:?} answered yes and was not confirmed");
                 assert_eq!(count(&ran.heard, &asking(protocol)), 1, "{protocol:?}");
                 assert_eq!(
-                    keys(&ran.left),
+                    typed(&ran.left),
                     Vec::<Shape>::new(),
                     "{protocol:?}: {:?}",
                     ran.left
@@ -2470,7 +2470,7 @@ mod tests {
                 ran.left, CURSOR_AT,
                 "the late answer is the key reader's to drop"
             );
-            assert_eq!(keys(&ran.left), Vec::<Shape>::new());
+            assert_eq!(typed(&ran.left), Vec::<Shape>::new());
         }
 
         #[test]
@@ -2545,7 +2545,7 @@ mod tests {
             );
 
             assert!(ran.yes, "a yes begun in time is a yes");
-            assert_eq!(keys(&ran.left), Vec::<Shape>::new(), "{:?}", ran.left);
+            assert_eq!(typed(&ran.left), Vec::<Shape>::new(), "{:?}", ran.left);
         }
 
         #[test]
