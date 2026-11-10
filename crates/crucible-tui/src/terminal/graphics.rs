@@ -2701,6 +2701,32 @@ mod tests {
         }
 
         #[test]
+        fn a_first_answer_whole_with_a_sequence_arriving_behind_it_asks_once_and_confirms() {
+            // The patience runs out inside the escape behind the cursor
+            // position, which was read whole in time, so the question is
+            // asked and the wait after it reads the escape on.
+            let ran = run(
+                Protocol::Kitty,
+                vec![
+                    turn(CURSOR, &[(0, b"\x1b[12;40R\x1b")]),
+                    turn(&asking(Protocol::Kitty), &[(0, KITTY_YES), (0, CURSOR_AT)]),
+                ],
+            );
+
+            assert_eq!(
+                count(&ran.heard, &asking(Protocol::Kitty)),
+                1,
+                "{:?}",
+                ran.heard
+            );
+            assert!(
+                ran.yes,
+                "a sequence behind a whole first answer took the decision from it"
+            );
+            assert!(ran.left.is_empty(), "{:?}", ran.left);
+        }
+
+        #[test]
         fn a_late_background_answer_is_consumed_wherever_it_lands() {
             let ran = run(
                 Protocol::Kitty,
