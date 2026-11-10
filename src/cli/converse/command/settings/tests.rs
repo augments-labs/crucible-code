@@ -105,6 +105,12 @@ fn images_at(panel: &Panel) -> usize {
         .expect("a pictures row")
 }
 
+/// A style read as though the session ran on Linux, where the support table's
+/// cells were judged, so a test about a drawn cell holds on every host.
+fn on_linux() -> Style {
+    Style::plain().running_on(crucible_tui::graphics::Platform::Linux)
+}
+
 #[test]
 fn settings_tabs_switch_with_tab_shift_tab_and_the_arrows() {
     let terms = plain();
@@ -459,6 +465,7 @@ fn every_settings_row_that_applies_at_once_changes_the_running_value() {
     let sample = Sample::new("settings-live");
     // In Kitty, where a protocol named is drawn at once.
     let terms = Terms {
+        style: std::cell::Cell::new(on_linux()),
         environment: launched(&[("KITTY_WINDOW_ID", "1")]),
         ..keeping(&sample)
     };
@@ -925,6 +932,7 @@ fn the_images_row_at_auto_says_it_applies_at_next_start() {
 fn a_protocol_named_on_the_images_row_is_drawn_at_once_and_off_is_text_at_once() {
     let sample = Sample::new("settings-images-at-once");
     let terms = Terms {
+        style: std::cell::Cell::new(on_linux()),
         environment: launched(&[("TERM", "xterm-kitty"), ("KITTY_WINDOW_ID", "1")]),
         ..keeping(&sample)
     };
@@ -968,7 +976,7 @@ fn a_protocol_named_where_input_is_not_a_terminal_draws_text() {
     let sample = Sample::new("settings-images-no-input");
     // Started with its input redirected, where a start asks nothing.
     let terms = Terms {
-        style: std::cell::Cell::new(Style::plain().reading_from(false)),
+        style: std::cell::Cell::new(on_linux().reading_from(false)),
         environment: launched(&[("TERM", "xterm-kitty"), ("KITTY_WINDOW_ID", "1")]),
         ..keeping(&sample)
     };
@@ -1028,6 +1036,7 @@ fn a_protocol_only_fullscreen_draws_says_it_is_not_available_in_native_mode() {
     // WezTerm, drawn on directly: iTerm2's pictures drew right on a screen of
     // crucible's own and lost their top after a resize in the terminal's.
     let terms = Terms {
+        style: std::cell::Cell::new(on_linux()),
         settings: sample.user(r#"{"output": {"screen": "native", "images": "iterm2"}}"#),
         environment: launched(&[("TERM", "xterm-256color"), ("TERM_PROGRAM", "WezTerm")]),
         ..keeping(&sample)
@@ -1048,9 +1057,7 @@ fn a_protocol_only_native_draws_says_it_is_not_available_in_fullscreen_mode() {
     // Kitty behind tmux that passes sequences through, which drew right only
     // in the terminal's own buffer.
     let terms = Terms {
-        style: std::cell::Cell::new(
-            Style::plain().passing(crucible_tui::graphics::Passthrough::On),
-        ),
+        style: std::cell::Cell::new(on_linux().passing(crucible_tui::graphics::Passthrough::On)),
         settings: sample.user(r#"{"output": {"screen": "fullscreen", "images": "kitty"}}"#),
         environment: launched(&[
             ("TERM", "tmux-256color"),
