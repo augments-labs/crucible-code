@@ -4211,7 +4211,7 @@
       },
       "case": "render::tests::every_cut_of_an_answer_draws_what_the_whole_answer_draws",
       "source": "crates/crucible-tui/src/render/tests.rs",
-      "body_sha256": "9ba9d4af91d4bd404c16e0a643f53c039f720ba83a7149f1d352c43581b27032",
+      "body_sha256": "4eb27c8fb6b9c868f37f6bc52db5dbff1be24305d4706062fe59c7b7d973bc3e",
       "platforms": [
         "linux",
         "macos",
@@ -7768,6 +7768,258 @@
       "case": "render::native::tests::a_native_answer_cut_anywhere_draws_the_indented_block_the_whole_answer_draws",
       "source": "crates/crucible-tui/src/render/native/tests.rs",
       "body_sha256": "b20e7ddf1ebad4b2948f9d1a1089dd6a15b4f2939adf1a97814db21cc7fc21be",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-ROWS",
+      "family": "transcript-blocks",
+      "obligation": "A quote whose first line is `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]` draws a quiet bar on the marker's line and on each `> ` line after it, with the kind's mark in its own slot and its word in bold on the first row, in the unicode and the ascii glyph set, and the marker itself is not drawn.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::an_alert_is_a_quiet_bar_on_each_line_of_its_quote_with_its_mark_and_its_word_on_the_first",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "0b598d39078650722080323e9252bd6aca4fadd9d735410e1a1015c6fa811251",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-MARKER-HIDDEN",
+      "family": "transcript-blocks",
+      "obligation": "An alert's marker is never drawn: no row of any of the five kinds contains `[!` or the kind as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::an_alert_never_shows_its_marker",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "30a4d9d57438bfdd5933d18782c2b0e75aaa5cf3266f9efe9d196638dd6cff48",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-UNKNOWN-KIND",
+      "family": "transcript-blocks",
+      "obligation": "A quote that names no kind of alert, or has more on its line than the marker, is drawn as the quote it always was, with its text as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_quote_with_an_unknown_kind_or_more_on_its_line_stays_a_quote",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "6f9844897e2cfaaac582c701ac412c5286101e718552b9281cfa8eaf8d61b8e1",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-CUT",
+      "family": "transcript-blocks",
+      "obligation": "An answer opening with an alert, cut in two at any byte, its marker included, draws the same text as the answer read whole and wears the same slots in the same order, a run of one slot counted once, for each of the five kinds in the unicode and the ascii glyph set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::an_alert_cut_anywhere_draws_what_the_whole_alert_draws",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "c0d31e490a4132ff5a375a044fb63dd954bd14ff42086287d50d7808f71c8507",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-HELD",
+      "family": "transcript-blocks",
+      "obligation": "A `[!WARNING]` marker read as the deltas `> [`, `!`, `WARN`, `ING` and `]` draws no text until its line break, and the break draws exactly the alert's first row, `\u258e \u25b2 Warning`, in the default unicode glyph set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::nothing_of_an_alert_is_drawn_before_its_break_says_it_was_one",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "5a06633847d95aaa61ebd2876a3044b349f7af0d6b42b5d2aa1d6d684b50b318",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-WRAP",
+      "family": "transcript-blocks",
+      "obligation": "An alert that wraps at thirty columns keeps its bar on every row it wraps onto, in the unicode and the ascii glyph set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::a_wrapped_alert_keeps_its_bar_on_every_row",
+      "source": "crates/crucible-tui/src/render/tests.rs",
+      "body_sha256": "dd95dc3500699acf567a3d0a689d8902bffcf0620d44afd36f029a307a0d27bf",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-CUT-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "A native answer with alerts cut at any byte keeps the same rows in the scrollback as the whole answer, and never keeps a marker.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_answer_cut_anywhere_draws_the_alert_the_whole_answer_draws",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "ec49b62a1ef75375cd9b826f2108c8bd10a228d771c1ab11d2b1fce39e8f3501",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-MARKS",
+      "family": "transcript-blocks",
+      "obligation": "The five marks of an alert are five different one-column marks in the unicode and in the ascii glyph set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "glyphs::tests::the_five_marks_of_an_alert_are_five_different_one_column_marks_in_both_sets",
+      "source": "crates/crucible-tui/src/glyphs.rs",
+      "body_sha256": "3772504d912354ce55342f6b5cea8971245d33273295da88dc3ac57222cc960a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-BAR",
+      "family": "transcript-blocks",
+      "obligation": "In the unicode and in the ascii glyph set the bar of an alert is one column wide and is none of the five marks, and in the unicode set it is not `\u2502`, the bar of a plain quote.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "glyphs::tests::the_bar_of_an_alert_is_one_column_and_a_mark_of_none_of_its_kinds",
+      "source": "crates/crucible-tui/src/glyphs.rs",
+      "body_sha256": "561305a3770ecd5a31b664ce680739760ba27837f0c2986248261f4ba52ef5b0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-COLOUR",
+      "family": "transcript-blocks",
+      "obligation": "The first row of each alert kind is a quiet bar, the kind's mark, a plain space and the kind's word in bold, and in every theme, dark, light, colourblind dark, colourblind light and ansi, the word has only weight, each mark's ink differs from plain and from quiet, the Note, Important and Caution marks carry a foreground colour, the Warning mark is the word's weight alone and the Tip mark is a strike in the quiet grey.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::an_alert_mark_carries_its_kinds_ink_and_its_word_only_weight_in_every_theme",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "d867d46c660b836a308377913e8ecd6c762702e4cc47cc08db20921af4ff4819",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-ENDS",
+      "family": "transcript-blocks",
+      "obligation": "An alert ends at a bare `>`, at a `>` with no space after it, at a table whose first line opens with `|`, at a heading's underline and at a display formula, and at each of those three also written after spaces, where lines that open with `|` are drawn as the lines they are and not as a table; the quote line after any of them is drawn as a quote of its own, not as part of the alert.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::an_alert_ends_at_any_line_that_is_not_a_row_of_its_quote",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "cedf39e6eb00956d3de7bfb0c05822f65d1c5fec24b844988a58ed202d3bb511",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-INDENTED-ROWS",
+      "family": "transcript-blocks",
+      "obligation": "An alert whose quote marks follow spaces keeps its quiet bar on every row: under a bullet or a numbered item, indented on its own, and with a row indented one to four spaces more than its header.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_row_of_an_alert_after_spaces_is_still_a_row_of_its_quote",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "9fabf3c92f388c18b0c321dd92137c8df53528f5aac5c62164085a47ec9b7f2a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-INDENTED-MARKER",
+      "family": "transcript-blocks",
+      "obligation": "A marker on an indented later row of a quote that is not an alert is shown as written, and the rows of the quote keep the plain bar.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_marker_on_an_indented_row_of_an_ordinary_quote_stays_as_written",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "d009fc2999995583232627e0a13fab4e806d1d187736e2a39ead45a297e1eca0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-ALERT-TABLE-ROW",
+      "family": "transcript-blocks",
+      "obligation": "A quote line straight after a table whose first line does not open with `|` is one more row of that table: a header written without outer bars, whether its delimiter row opens with `|` or not and with spaces before it or not, and one written with outer bars after a tab; after a blank line the quote line is a quote of its own.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::a_quote_row_straight_after_a_table_not_opened_by_a_bar_is_a_row_of_it",
+      "source": "crates/crucible-tui/src/markdown/tests.rs",
+      "body_sha256": "2560996c644053f36b85413f1dcc373a3e3f1837d0dda9f4d58d30ff43b0f549",
       "platforms": [
         "linux",
         "macos",

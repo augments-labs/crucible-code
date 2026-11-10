@@ -158,6 +158,43 @@ the line, so a narrower window hangs them at its own width.
 A dash or a number that opens a line inside a quote is shown as written, not as
 an item, so a wrapped one keeps the quote's bar and nothing more.
 
+## Alerts
+
+A quote whose first line is nothing but `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`,
+`[!WARNING]` or `[!CAUTION]` is drawn as an alert, whatever the letter case of
+the kind. Each row of the quote, a `> ` that opens the line or follows spaces,
+has a quiet bar down its left, and the first holds the kind's mark and its word
+in bold, in place of the marker:
+
+| Kind | Unicode | ASCII |
+| --- | --- | --- |
+| Note | `◆ Note` | `* Note` |
+| Tip | `✓ Tip` | `+ Tip` |
+| Important | `■ Important` | `# Important` |
+| Warning | `▲ Warning` | `! Warning` |
+| Caution | `✗ Caution` | `x Caution` |
+
+The mark is drawn in the ink of its kind: a colour for Note, Important and
+Caution, bold for Warning and a struck grey for Tip. The bar is drawn in the
+quiet grey and the word in bold, and neither takes a kind's colour; the body
+keeps whatever colour the answer gave its code spans and links. The bar is `▎`
+in the unicode glyph set and `|` in the ASCII one, and a line of an alert that
+wraps shows it on every row it takes, in both
+[`output.screen`](../configuration/configuration.md#output) modes. Nothing of an
+alert is drawn until the end of its first line shows it was one.
+
+An alert ends where its quote does: at a blank line or at any line that is not a
+row of it, a bare `>` among them, and so does a table whose first line opens
+with `|`, a heading written with an underline or a display formula. A quote row
+after any of them starts a quote of its own, except one straight after a table
+whose first line does not open with `|`, such as `a | b` over `- | -` or over
+`| - | - |`: that table takes it as one more of its rows.
+
+A quote naming any other kind, with anything after the marker on its line, or
+with the marker on a later line, is an ordinary quote and shows the marker as
+written. So does a marker that is not in a quote, and one on the bullet's own
+line of a list item, as in `- > [!NOTE]`.
+
 ## What is shown as written
 
 Some text is drawn exactly as the model wrote it, rather than as a block:

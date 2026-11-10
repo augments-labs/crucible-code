@@ -2171,7 +2171,7 @@
         "Vendor::answering(transcript::said(\"alerts\"))",
         "Watched::in_default_colours( \"transcript-alerts-80-fullscreen\", (80, 43), Some(&vendor), None, )"
       ],
-      "sha256": "7461658f750f334ca2b52a455e12f80c8a8b14ad72e9fcbfcc299b7d95e2e86e"
+      "sha256": "4193ad658c024cb623fd472140bd36cce72e5c59f963616aa5bb1842eebc4a42"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_alerts_80_native.snap",
@@ -2180,7 +2180,7 @@
         "Vendor::answering(transcript::said(\"alerts\"))",
         "Watched::drawn_in_colour( \"transcript-alerts-80-native\", (80, 43), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "00ebbcd4a295f635f82cf45fa526b62dbec036132ebcb3e706da23ca5afdfd07"
+      "sha256": "1980f63fa1ff57610e6ecba90f75ebd453225880c76fd5336e8adf1b2048287a"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_code_80_fullscreen.snap",

@@ -1,0 +1,19 @@
+---
+source: crates/crucible-tui/src/markdown/tests.rs
+expression: "corpus_pictures::picture(ALERT_KINDS, 64, Glyphs::Unicode)"
+---
+<Quiet>▎</><Quiet> </><Link>◆</> <Bold>Note</>                                                        
+<Quiet>▎</><Quiet> </>Useful information.                                           
+                                                                
+<Quiet>▎</><Quiet> </><Done>✓</> <Bold>Tip</>                                                         
+<Quiet>▎</><Quiet> </>A shortcut worth taking.                                      
+                                                                
+<Quiet>▎</><Quiet> </><Accent>■</> <Bold>Important</>                                                   
+<Quiet>▎</><Quiet> </>Something that must not be missed.                            
+                                                                
+<Quiet>▎</><Quiet> </><Doing>▲</> <Bold>Warning</>                                                     
+<Quiet>▎</><Quiet> </>Running <Code>cargo clean</> deletes the build cache; the next build   
+<Quiet>▎</><Quiet> </>takes minutes.                                                
+                                                                
+<Quiet>▎</><Quiet> </><Trouble>✗</> <Bold>Caution</>                                                     
+<Quiet>▎</><Quiet> </>This deletes the session log; it cannot be undone.
