@@ -126,6 +126,9 @@ fn main() -> ExitCode {
         match answering {
             Answering::AtOnce => answered = elapsed,
             Answering::Never => silent = elapsed,
+            // Ways of answering that the fake terminal's own tests use;
+            // `BOTH` names neither of them.
+            Answering::Late | Answering::OutOfOrder | Answering::Split => {}
         }
     }
 

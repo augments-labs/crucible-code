@@ -84,6 +84,11 @@ const COLUMNS: u16 = 80;
 #[cfg(target_os = "linux")]
 const ROWS: u16 = 24;
 
+/// The pixels of one cell the window reports, as a terminal that can draw
+/// pictures does.
+#[cfg(target_os = "linux")]
+const CELL: (u16, u16) = (8, 16);
+
 /// A placeholder, so the binary gets past the credential check and as far as
 /// drawing. Nothing is ever sent: standard input is closed, so no turn starts.
 #[cfg(target_os = "linux")]
@@ -134,6 +139,51 @@ pub(crate) enum Answering {
     AtOnce,
     /// Nothing is ever answered.
     Never,
+    /// Every answer arrives [`LATE`] after its question, long after the
+    /// child stopped waiting for it, as over a slow link.
+    Late,
+    /// A question followed by a cursor-position query has the cursor position
+    /// answered first, which no terminal that answers in order does.
+    OutOfOrder,
+    /// Every answer arrives in pieces, cut before each escape inside it, with
+    /// [`SPLIT`] between them.
+    Split,
+}
+
+/// How long after its question a [`Answering::Late`] answer arrives.
+#[cfg(target_os = "linux")]
+const LATE: Duration = Duration::from_millis(50);
+
+/// The pause between the pieces of a [`Answering::Split`] answer.
+#[cfg(target_os = "linux")]
+const SPLIT: Duration = Duration::from_millis(2);
+
+/// The writes a terminal answering this way makes of `said`, each with how
+/// long after the question it is made.
+#[cfg(target_os = "linux")]
+fn paced(answering: Answering, said: Vec<u8>) -> Vec<(Duration, Vec<u8>)> {
+    if said.is_empty() {
+        return Vec::new();
+    }
+    match answering {
+        Answering::Never => Vec::new(),
+        Answering::AtOnce | Answering::OutOfOrder => vec![(Duration::ZERO, said)],
+        Answering::Late => vec![(LATE, said)],
+        Answering::Split => {
+            let mut pieces: Vec<Vec<u8>> = Vec::new();
+            for byte in said {
+                match pieces.last_mut() {
+                    Some(piece) if byte != 0x1b => piece.push(byte),
+                    _ => pieces.push(vec![byte]),
+                }
+            }
+            pieces
+                .into_iter()
+                .zip(0_u32..)
+                .map(|(piece, at)| (SPLIT * at, piece))
+                .collect()
+        }
+    }
 }
 
 /// Whether the measured child is allowed to draw in colour.
@@ -486,6 +536,36 @@ fn once(
     answering: Answering,
     colour: Colour,
 ) -> Result<Duration, StartupError> {
+    let (mut running, started) = start(binary, home, answering, colour, Seat::Terminal)?;
+    running.until(measure, started)
+}
+
+/// Where the child's standard streams are, beside the terminal it controls.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Seat {
+    /// Every stream is the terminal, as when a person starts it.
+    Terminal,
+    /// Standard output goes to [`REDIRECTED`] in the home instead.
+    Redirected,
+    /// Standard input has nothing behind it.
+    NoInput,
+}
+
+/// The file a [`Seat::Redirected`] child writes its output to, in its home.
+#[cfg(target_os = "linux")]
+const REDIRECTED: &str = "redirected";
+
+/// Starts the child with the terminal as its controlling terminal, and the
+/// thread that reads and answers it, and says when the spawn began.
+#[cfg(target_os = "linux")]
+fn start(
+    binary: &Path,
+    home: &Path,
+    answering: Answering,
+    colour: Colour,
+    seat: Seat,
+) -> Result<(Running, Instant), StartupError> {
     let (terminal, inside) = pair()?;
     let reading = terminal.try_clone()?;
     let replying = terminal.try_clone()?;
@@ -496,21 +576,38 @@ fn once(
 
     let second = inside.try_clone()?;
     let third = inside.try_clone()?;
+    let output = if seat == Seat::Redirected {
+        Stdio::from(File::create(home.join(REDIRECTED))?)
+    } else {
+        Stdio::from(second)
+    };
     let started = Instant::now();
     let child = {
         let mut command = Command::new("setsid");
+        command.arg("--ctty");
+        if seat == Seat::NoInput {
+            // `setsid` takes the terminal from its own standard input, so the
+            // child's is taken away only after the terminal is its own.
+            command
+                .args(["/bin/sh", "-c", "exec \"$0\" </dev/null"])
+                .arg(binary);
+        } else {
+            command.arg(binary);
+        }
         command
-            .arg("--ctty")
-            .arg(binary)
             .current_dir(std::env::current_dir()?)
             .env_clear()
             .env("PATH", std::env::var_os("PATH").unwrap_or_default())
             .env("HOME", home)
             .env("TERM", "xterm-256color")
+            // A terminal that can draw pictures, so a run with colour asks
+            // the questions that confirm it; the window reports its pixels
+            // below for the same reason.
+            .env("KITTY_WINDOW_ID", "1")
             .env(crucible_config::HOME, home)
             .env("ANTHROPIC_API_KEY", KEY)
             .stdin(Stdio::from(inside))
-            .stdout(Stdio::from(second))
+            .stdout(output)
             .stderr(Stdio::from(third));
         if matches!(colour, Colour::Off) {
             command.env("NO_COLOR", "1");
@@ -522,13 +619,15 @@ fn once(
         command.spawn()?
     };
 
-    let mut running = Running {
-        terminal,
-        child,
-        bytes,
-        reader: Some(reader),
-    };
-    running.until(measure, started)
+    Ok((
+        Running {
+            terminal,
+            child,
+            bytes,
+            reader: Some(reader),
+        },
+        started,
+    ))
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -651,8 +750,8 @@ fn pair() -> Result<(File, File), StartupError> {
         Winsize {
             ws_row: ROWS,
             ws_col: COLUMNS,
-            ws_xpixel: 0,
-            ws_ypixel: 0,
+            ws_xpixel: COLUMNS * CELL.0,
+            ws_ypixel: ROWS * CELL.1,
         },
     )
     .map_err(io::Error::from)?;
@@ -667,21 +766,69 @@ fn pair() -> Result<(File, File), StartupError> {
 /// standard input; every byte the child wrote still goes to the waiting probe,
 /// answers or none.
 #[cfg(target_os = "linux")]
-fn read(mut terminal: File, mut reply: File, answering: Answering, sender: &Sender<Vec<u8>>) {
+fn read(mut terminal: File, reply: File, answering: Answering, sender: &Sender<Vec<u8>>) {
     let mut answers = Answers::new(answering);
     let mut buffer = [0_u8; 8192];
+    // A terminal that answers late or in pieces does it from a thread of its
+    // own, so the child's output is still read while an answer waits.
+    let (later, writer, mut direct) = if matches!(answering, Answering::Late | Answering::Split) {
+        let (later, due) = mpsc::channel::<(Instant, Vec<u8>)>();
+        let writer = std::thread::Builder::new()
+            .name("crucible-startup-answers".into())
+            .spawn(move || answer_when_due(reply, &due));
+        match writer {
+            Ok(writer) => (Some(later), Some(writer), None),
+            Err(_) => return,
+        }
+    } else {
+        (None, None, Some(reply))
+    };
+
     while let Ok(read) = terminal.read(&mut buffer) {
         if read == 0 {
             break;
         }
 
+        let asked = Instant::now();
         let bytes = buffer.get(..read).unwrap_or_default();
         let said = answers.feed(bytes);
-        if !said.is_empty() && reply.write_all(&said).and_then(|()| reply.flush()).is_err() {
+        let mut failed = false;
+        for (after, piece) in paced(answering, said) {
+            failed = match (&later, direct.as_mut()) {
+                (Some(later), _) => later.send((asked + after, piece)).is_err(),
+                (None, Some(reply)) => reply
+                    .write_all(&piece)
+                    .and_then(|()| reply.flush())
+                    .is_err(),
+                (None, None) => true,
+            };
+            if failed {
+                break;
+            }
+        }
+        if failed || sender.send(bytes.to_vec()).is_err() {
             break;
         }
+    }
 
-        if sender.send(bytes.to_vec()).is_err() {
+    drop(later);
+    if let Some(writer) = writer {
+        let _ = writer.join();
+    }
+}
+
+/// Writes each answer once its time has come, in the order they were given.
+#[cfg(target_os = "linux")]
+fn answer_when_due(mut reply: File, due: &Receiver<(Instant, Vec<u8>)>) {
+    for (at, piece) in due {
+        if let Some(wait) = at.checked_duration_since(Instant::now()) {
+            std::thread::sleep(wait);
+        }
+        if reply
+            .write_all(&piece)
+            .and_then(|()| reply.flush())
+            .is_err()
+        {
             break;
         }
     }
@@ -725,6 +872,9 @@ struct Asked {
 struct Answers {
     answering: Answering,
     pending: Vec<u8>,
+    /// What an [`Answering::OutOfOrder`] terminal has not said yet, held until
+    /// a cursor position is asked and answered ahead of it.
+    held: Vec<u8>,
 }
 
 #[cfg(target_os = "linux")]
@@ -733,6 +883,20 @@ impl Answers {
         Self {
             answering,
             pending: Vec::new(),
+            held: Vec::new(),
+        }
+    }
+
+    /// Says `reply`, or for a terminal answering out of order, holds every
+    /// answer but a cursor position's and says what it held after one.
+    fn say(&mut self, said: &mut Vec<u8>, asked: &Asked) {
+        if !matches!(self.answering, Answering::OutOfOrder) {
+            said.extend_from_slice(&asked.reply);
+        } else if asked.reply == CURSOR_REPLY {
+            said.extend_from_slice(&asked.reply);
+            said.append(&mut self.held);
+        } else if self.held.len() + asked.reply.len() <= UNSENT {
+            self.held.extend_from_slice(&asked.reply);
         }
     }
 
@@ -757,7 +921,7 @@ impl Answers {
                 return said;
             };
 
-            said.extend_from_slice(&asked.reply);
+            self.say(&mut said, &asked);
             from = end;
         }
 
@@ -774,7 +938,7 @@ fn asked(bytes: &[u8], from: usize) -> Option<Asked> {
     let cursor = find(bytes, b"\x1b[6n", from).map(|start| Asked {
         start,
         end: Some(start + b"\x1b[6n".len()),
-        reply: b"\x1b[1;1R".to_vec(),
+        reply: CURSOR_REPLY.to_vec(),
     });
     let attributes = find(bytes, b"\x1b[c", from)
         .map(|start| Asked {
@@ -798,6 +962,10 @@ fn asked(bytes: &[u8], from: usize) -> Option<Asked> {
         .chain(cell)
         .min_by_key(|asked| asked.start)
 }
+
+/// The terminal's answer to a cursor-position query: the top left corner.
+#[cfg(target_os = "linux")]
+const CURSOR_REPLY: &[u8] = b"\x1b[1;1R";
 
 /// The terminal's answer to a device-attributes query.
 ///
@@ -1082,13 +1250,15 @@ impl Scratch {
 
     /// The same, with `output.screen` set to `screen` when a probe names one.
     pub(crate) fn in_screen(name: &str, screen: Option<&str>) -> Result<Self, StartupError> {
-        let base = std::env::temp_dir().join(format!(
-            "crucible-bench-{}-{}",
-            name.trim().len(),
-            std::process::id()
-        ));
+        Self::holding(&name.trim().len().to_string(), &configuration(screen))
+    }
+
+    /// A home named `name` among this process's, configured by `document`.
+    fn holding(name: &str, document: &str) -> Result<Self, StartupError> {
+        let base =
+            std::env::temp_dir().join(format!("crucible-bench-{name}-{}", std::process::id()));
         fs::create_dir_all(&base)?;
-        fs::write(base.join("config.json"), configuration(screen))?;
+        fs::write(base.join("config.json"), document)?;
         let fixture = worked_in(&base.join("sessions"))?;
 
         Ok(Self {
@@ -1340,7 +1510,73 @@ mod tests {
     /// terminal, so its tests are built only there.
     #[cfg(target_os = "linux")]
     mod fake_terminal {
-        use super::super::{Answering, Answers, UNSENT, attributes_reply};
+        use std::time::Duration;
+
+        use super::super::{Answering, Answers, LATE, SPLIT, UNSENT, attributes_reply, paced};
+
+        #[test]
+        fn a_late_terminal_answers_long_after_the_child_stopped_waiting() {
+            // The child gives a terminal its patience for the cursor position
+            // and the background question alike; an answer past both is late.
+            assert!(LATE > crucible_tui::graphics::Deadline::STARTUP.patience * 2);
+            let mut answers = Answers::new(Answering::Late);
+
+            let said = answers.feed(b"\x1b[6n");
+            assert_eq!(said, b"\x1b[1;1R".to_vec());
+            assert_eq!(
+                paced(Answering::Late, said),
+                vec![(LATE, b"\x1b[1;1R".to_vec())]
+            );
+        }
+
+        #[test]
+        fn an_out_of_order_terminal_answers_the_cursor_position_ahead_of_the_question_before_it() {
+            let mut answers = Answers::new(Answering::OutOfOrder);
+            let mut asked = b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\".to_vec();
+            asked.extend_from_slice(b"\x1b[6n");
+
+            let said = answers.feed(&asked);
+            assert_eq!(said, b"\x1b[1;1R\x1b_Gi=31;OK\x1b\\".to_vec());
+            assert_eq!(
+                paced(Answering::OutOfOrder, said.clone()),
+                vec![(Duration::ZERO, said)]
+            );
+        }
+
+        #[test]
+        fn an_out_of_order_terminal_holds_an_answer_until_a_cursor_position_is_asked() {
+            let mut answers = Answers::new(Answering::OutOfOrder);
+
+            assert!(answers.feed(b"\x1b[c").is_empty());
+            let mut said = b"\x1b[1;1R".to_vec();
+            said.extend_from_slice(&attributes_reply());
+            assert_eq!(answers.feed(b"\x1b[6n"), said);
+        }
+
+        #[test]
+        fn a_split_terminal_cuts_each_answer_before_every_escape_inside_it() {
+            let mut answers = Answers::new(Answering::Split);
+
+            let said = answers.feed(b"\x1b[6n\x1b_Gi=31,a=q;AAAA\x1b\\");
+            assert_eq!(
+                paced(Answering::Split, said),
+                vec![
+                    (Duration::ZERO, b"\x1b[1;1R".to_vec()),
+                    (SPLIT, b"\x1b_Gi=31;OK".to_vec()),
+                    (SPLIT * 2, b"\x1b\\".to_vec()),
+                ]
+            );
+        }
+
+        #[test]
+        fn a_terminal_that_answers_at_once_or_never_makes_one_write_or_none() {
+            assert_eq!(
+                paced(Answering::AtOnce, b"\x1b[1;1R".to_vec()),
+                vec![(Duration::ZERO, b"\x1b[1;1R".to_vec())]
+            );
+            assert!(paced(Answering::Never, b"\x1b[1;1R".to_vec()).is_empty());
+            assert!(paced(Answering::Split, Vec::new()).is_empty());
+        }
 
         #[test]
         fn a_cursor_position_query_split_across_two_reads_is_answered_once() {
@@ -1431,6 +1667,233 @@ mod tests {
                 answers.feed(b"\x1b[6n\x1b[6n"),
                 b"\x1b[1;1R\x1b[1;1R".to_vec()
             );
+        }
+    }
+
+    /// The real binary, started under the fake terminal: what it writes to
+    /// the terminal it controls, wherever its own streams go.
+    #[cfg(target_os = "linux")]
+    mod heard {
+        use std::fs;
+        use std::io::Write as _;
+        use std::path::PathBuf;
+        use std::sync::mpsc::RecvTimeoutError;
+        use std::time::{Duration, Instant};
+
+        use super::super::{
+            Answering, CEILING, CONFIG, Colour, REDIRECTED, Scratch, Seat, StartupError, contains,
+            start,
+        };
+
+        /// The binary this test was built beside, one directory up from the
+        /// test itself.
+        fn built() -> Result<PathBuf, StartupError> {
+            let binary = std::env::current_exe()?
+                .parent()
+                .and_then(std::path::Path::parent)
+                .map(|directory| directory.join("crucible"))
+                .ok_or_else(|| std::io::Error::other("the test has no directory"))?;
+            if binary.is_file() {
+                Ok(binary)
+            } else {
+                Err(StartupError::Unbuilt(binary))
+            }
+        }
+
+        /// The program's name, which a run writes before anything else
+        /// wherever its output goes: in its window's title on a terminal, on
+        /// its opening line when its output is redirected.
+        const NAMED: &str = "crucible";
+
+        /// The prompt mark, written once the session reads keys, which is
+        /// after every question startup may ask.
+        const READY: &str = "\u{203a}";
+
+        /// A key nothing at startup writes, typed once the prompt is ready.
+        const TYPED: &str = "\u{00a7}";
+
+        /// How long the terminal is listened to after what was waited for.
+        const SETTLE: Duration = Duration::from_millis(200);
+
+        /// The questions the exchange writes: the cursor position and each
+        /// protocol's own.
+        const QUESTIONS: [&str; 4] = ["\x1b[6n", "\x1b_G", "\x1b]1337;ReportCellSize", "\x1b[c"];
+
+        /// Every answer the fake terminal gives, as it would read typed into
+        /// the box.
+        const ANSWERS: [&str; 4] = ["1;1R", "i=31;OK", "?62;4;6;9;15;22c", "ReportCellSize=16;8"];
+
+        /// One run of the real binary under the fake terminal.
+        struct Run<'a> {
+            /// Names its scratch home.
+            name: &'a str,
+            seat: Seat,
+            answering: Answering,
+            colour: Colour,
+            /// Its configuration file.
+            document: &'a str,
+            /// Whether [`TYPED`] is typed at its prompt.
+            typing: bool,
+        }
+
+        /// Everything the terminal received from `run`: on a terminal seat
+        /// until its prompt is drawn (and, when typing, until the key typed
+        /// there came back), elsewhere until it wrote [`NAMED`], or until it
+        /// ended; and for [`SETTLE`] after.
+        fn heard(run: &Run<'_>) -> Result<Vec<u8>, StartupError> {
+            let binary = built()?;
+            let home = Scratch::holding(run.name, run.document)?;
+            let (mut running, _) =
+                start(&binary, home.path(), run.answering, run.colour, run.seat)?;
+            let waited = if run.seat == Seat::Terminal {
+                READY
+            } else {
+                NAMED
+            };
+            let deadline = Instant::now() + CEILING;
+            let mut seen = Vec::new();
+            let mut settled: Option<Instant> = None;
+            let mut typed = false;
+            loop {
+                let now = Instant::now();
+                if settled.is_some_and(|at| now >= at) {
+                    return Ok(seen);
+                }
+                if now >= deadline {
+                    return Err(StartupError::Timeout(waited));
+                }
+                match running.bytes.recv_timeout(Duration::from_millis(10)) {
+                    Ok(bytes) => seen.extend_from_slice(&bytes),
+                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => return Ok(seen),
+                }
+                if settled.is_some() {
+                    continue;
+                }
+                let shown = if run.seat == Seat::Redirected {
+                    fs::read(home.path().join(REDIRECTED)).unwrap_or_default()
+                } else {
+                    seen.clone()
+                };
+                if !contains(&shown, waited) {
+                    continue;
+                }
+                if !run.typing {
+                    settled = Some(Instant::now() + SETTLE);
+                } else if !typed {
+                    running.terminal.write_all(TYPED.as_bytes())?;
+                    running.terminal.flush()?;
+                    typed = true;
+                } else if contains(&shown, TYPED) {
+                    settled = Some(Instant::now() + SETTLE);
+                }
+            }
+        }
+
+        fn has(heard: &[u8], text: &str) -> bool {
+            contains(heard, text)
+        }
+
+        /// Where `text` first sits in `heard`.
+        fn at(heard: &[u8], text: &str) -> Option<usize> {
+            heard
+                .windows(text.len())
+                .position(|window| window == text.as_bytes())
+        }
+
+        #[test]
+        fn a_named_terminal_is_asked_after_the_background_question_and_before_the_prompt() {
+            let heard = heard(&Run {
+                name: "asked",
+                seat: Seat::Terminal,
+                answering: Answering::AtOnce,
+                colour: Colour::On,
+                document: CONFIG,
+                typing: false,
+            })
+            .expect("a run");
+            let said = String::from_utf8_lossy(&heard);
+
+            let background = at(&heard, "\x1b]11;?").expect(&said);
+            let cursor = at(&heard, "\x1b[6n").expect(&said);
+            let picture = at(&heard, "\x1b_Gi=31,").expect(&said);
+            let prompt = at(&heard, READY).expect(&said);
+            assert!(background < cursor, "{said:?}");
+            assert!(cursor < picture, "{said:?}");
+            assert!(picture < prompt, "{said:?}");
+        }
+
+        #[test]
+        fn where_nothing_may_be_asked_no_question_reaches_the_terminal() {
+            let never = CONFIG.replacen(r#""color": "auto""#, r#""color": "never""#, 1);
+            assert_ne!(never, CONFIG);
+            let cases = [
+                ("quiet-redirected", Seat::Redirected, Colour::On, CONFIG),
+                ("quiet-no-input", Seat::NoInput, Colour::On, CONFIG),
+                ("quiet-no-color", Seat::Terminal, Colour::Off, CONFIG),
+                (
+                    "quiet-color-never",
+                    Seat::Terminal,
+                    Colour::On,
+                    never.as_str(),
+                ),
+            ];
+            for (name, seat, colour, document) in cases {
+                let heard = heard(&Run {
+                    name,
+                    seat,
+                    answering: Answering::AtOnce,
+                    colour,
+                    document,
+                    typing: false,
+                })
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+                let said = String::from_utf8_lossy(&heard);
+                // The run got as far as it goes before any question is
+                // judged absent.
+                if seat == Seat::Terminal {
+                    assert!(has(&heard, READY), "{name} drew no prompt: {said:?}");
+                }
+                for question in QUESTIONS {
+                    assert!(
+                        !has(&heard, question),
+                        "{name} asked {question:?}: {said:?}"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn no_answer_a_terminal_gives_becomes_a_key() {
+            // Each way of answering, with whether the picture's question is
+            // asked at all: only after a cursor position answered within the
+            // patience.
+            let cases = [
+                ("keys-at-once", Answering::AtOnce, true),
+                ("keys-never", Answering::Never, false),
+                ("keys-late", Answering::Late, false),
+                ("keys-out-of-order", Answering::OutOfOrder, true),
+                ("keys-split", Answering::Split, true),
+            ];
+            for (name, answering, pictured) in cases {
+                let heard = heard(&Run {
+                    name,
+                    seat: Seat::Terminal,
+                    answering,
+                    colour: Colour::On,
+                    document: CONFIG,
+                    typing: true,
+                })
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+                let said = String::from_utf8_lossy(&heard);
+                assert!(has(&heard, "\x1b[6n"), "{name}: {said:?}");
+                assert_eq!(has(&heard, "\x1b_Gi=31,"), pictured, "{name}: {said:?}");
+                // The key the test typed is the one that reached the box.
+                assert!(has(&heard, TYPED), "{name} lost the typed key: {said:?}");
+                for answer in ANSWERS {
+                    assert!(!has(&heard, answer), "{name} typed {answer:?}: {said:?}");
+                }
+            }
         }
     }
 }

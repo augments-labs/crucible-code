@@ -41,7 +41,7 @@ mod update;
 
 use std::cell::{Cell, RefCell};
 use std::ffi::OsString;
-use std::io::{self, Write as _};
+use std::io::{self, IsTerminal as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -1276,6 +1276,32 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         sessions: home.sessions().to_owned(),
         workspace: workspace.clone(),
     };
+
+    // What pictures are drawn with, settled here: after the background question,
+    // so the two exchanges never interleave on the wire, and before raw mode and
+    // the first frame, so every answer is read by the exchange that waits for it
+    // and none is left to be taken for a key. Only a terminal on both sides is
+    // asked, and only where the configuration and the support table allow.
+    let picturing_on = picturing(
+        settings.images(),
+        &settings,
+        renderer.is_terminal() && io::stdin().is_terminal(),
+        graphics::Passthrough::Unknown,
+    );
+    let platform = terms.style().platform();
+    let passthrough = graphics::passthrough(&from, platform, picturing_on);
+    terms.style.set(terms.style().passing(passthrough));
+    renderer.images(graphics::confirm(
+        graphics::select(
+            &from,
+            platform,
+            graphics::Setting {
+                passthrough,
+                ..picturing_on
+            },
+        ),
+        graphics::Deadline::STARTUP,
+    ));
 
     // Said once, now that the style is settled. It is what decides whether the
     // markers in the model's markdown are read or left where they are.
