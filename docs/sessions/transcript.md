@@ -185,6 +185,11 @@ with each cell folded into the room its column has, however narrow.
 
 ## Pictures and image files
 
+The transcript does not yet put a picture on the screen as pixels, whatever
+`output.images` says; which protocol a session would draw one with, and on
+which terminals, is under [Where pictures are
+drawn](../configuration/configuration.md#where-pictures-are-drawn).
+
 A picture the transcript turns into pixels, whether an SVG diagram or a PNG,
 JPEG, GIF or WebP file, is bounded before it is read, and a picture past any
 bound is refused rather than shrunk or cut:

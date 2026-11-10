@@ -54,10 +54,14 @@ The theme, syntax theme, transcript colours, glyphs, tool detail, scroll rail,
 scroll speed and the key that sends change at once, and the delay before a
 running call is pinned changes from the next turn. Colour, tone, compaction and the four prompt
 caching rows say `applies at next start`, and the update check is read at the
-next start anyway, so it says nothing. A row a project file or the environment
-sets is shown with who set it and cannot be changed there, since the user file
-would not win. A project file that says anything about `promptCaching` sets
-all four of its rows, because that block is checked as a whole. Providers,
+next start anyway, so it says nothing. The Images row changes at once when it
+names a protocol or `off`, and says `applies at next start` at `auto`, since
+only a start asks the terminal; a protocol not drawn where the session runs
+says `not available`, as [Where pictures are drawn](#where-pictures-are-drawn)
+has it. A row a project file or the environment sets is shown with who set it
+and cannot be changed there, since the user file would not win. A project file
+that says anything about `promptCaching` sets all four of its rows, because
+that block is checked as a whole. Providers,
 credentials, MCP servers, extensions, the system prompt, permission rules and
 the sandbox's policy are not rows; the sandbox and the permission mode are
 shown on the Status tab and changed with `/sandbox` and `/mode`.
@@ -729,6 +733,7 @@ you with no way to send at all.
 | `scrollRail` | `true`, `false` | Whether the transcript has a one-column scroll rail on its right edge; `true` by default. The rail shows which part of the transcript is on screen and a mark at each prompt, and while a turn runs it also stands beside what the turn is showing, which it counts as the end of the transcript; a click off the thumb scrolls there, a drag on its thumb scrolls with the pointer, and a click on a mark lands on that prompt. The prompt you are reading under has a larger mark, and a pointer on the rail lights the track and marks and enlarges the mark under it. Text wraps one column narrower while it is drawn, and a window too narrow to spare the column does not draw it. `false` gives the column back. |
 | `screen` | `fullscreen`, `native` | Where crucible draws; `fullscreen` by default, and read only at start. `fullscreen` takes a screen of its own, with its own scrollback, scroll rail and selection. `native` draws in your terminal's own buffer: what is finished is written once into the terminal's scrollback, only the part still changing at the foot is drawn again, and scrolling, selection, search and copy are your terminal's. The scroll rail, the mouse scroll speed and crucible's own selection are off there. The rest of what it changes, and what you do instead, is under [What native mode cannot do](#what-native-mode-cannot-do). |
 | `pinAfterSeconds` | `0` to `60` | How many seconds a running tool call waits before it is drawn above the row that says a turn is running, with the end of its output and `(ctrl+b to background)`; `3` by default. A call that finishes sooner is only written to the transcript, so the rows over the box do not appear and vanish on every quick command, and Ctrl+B still leaves a running command in the background before its row is shown. `0` draws every call the moment it is asked for. |
+| `images` | `auto`, `kitty`, `iterm2`, `sixel`, `off` | What pictures are drawn with; `auto` by default. `auto` asks the terminal at start, and only where its environment names a terminal pictures were seen to draw right on, in the screen mode in force, with no multiplexer in between. A protocol named here is used without asking where it was seen to draw right, and is text everywhere else; `sixel` was seen to draw right nowhere. `off` draws every picture as text. Under [Where pictures are drawn](#where-pictures-are-drawn). |
 
 `theme` is a table of what each colour on screen means, tuned to one background.
 `auto` asks the terminal what its background is and picks the dark or the light
@@ -874,6 +879,81 @@ rows it stood in are left blank between the transcript and the box.
 | **A click or a resting pointer in the transcript opens and lights nothing.** crucible does not ask for the mouse in native mode, so the wheel, a drag and a click are your terminal's. | Press **Ctrl+O** for cut results: **↑**/**↓** move a row, **PgUp**/**PgDn** a page, **←**/**→** step from result to result, and **Esc** closes. Press **Ctrl+B** for the list of commands left running; while a turn runs, it first leaves a running command in the background where there is one. |
 | **Rows a panel pushes off the top do not come back until the window is resized.** A panel standing over the box (`/settings`, `/model`, `/theme`, Ctrl+O, the `/` list) takes at most half the window, or the least it can be drawn in where that is more. A question asked before something changes, such as `/login`'s and `/catalog`' install, sign-in and add questions or `/logout`'s sign-out question, takes the whole window where it needs it, so every fact is read before the answer. Transcript rows a panel or a question pushes off the top of the window go into your terminal's scrollback, and when it closes the box stays at the foot of the window, and the rows the panel stood in are left blank between the transcript and the box. | Scroll up in your terminal to read those rows. A panel with more than its room scrolls inside. |
 | **A resize replaces your terminal's scrollback.** Once the window stops changing size, crucible clears the screen and the scrollback and writes the conversation again at the new width, so whatever your shell printed before crucible started goes too, and so does the transcript from before a `/clear` or `/resume`. A change of height alone, such as zooming a tmux pane or opening a pane above or below crucible, is a resize too, on purpose: on a terminal that rewraps its lines, a window made shorter would otherwise leave a second copy of the rows at its foot in the scrollback. A terminal that ignores the request to clear its scrollback keeps the old rows above the new ones. | Copy what you need from your shell's earlier output before resizing, or run crucible in a tab of its own. An earlier session is still there to `/resume`. |
+
+### Where pictures are drawn
+
+The transcript does not yet put a picture on the screen as pixels: whatever
+`output.images` says, what it shows in a picture's place is text. What the
+setting settles now is the protocol a session would draw pictures with, which
+is what *drawn* means below, whether crucible asks anything at start to find
+out, and what `/settings` says of a protocol.
+
+A protocol is drawn only on a terminal it was seen to draw right on, in every
+step of the screen mode in force. Every judgement in this table was made on
+Linux, each terminal running under a virtual X display (Xvfb); macOS, where the
+same terminals run, takes the same answers. On Windows, FreeBSD and any other
+system every picture is text and nothing is asked, whatever `output.images`
+says.
+
+| Where crucible runs | Protocol | `fullscreen` | `native` |
+| --- | --- | --- | --- |
+| In Kitty | `kitty` | drawn | drawn |
+| In WezTerm or iTerm2 | `iterm2` | drawn | text |
+| In tmux, passing sequences through, in Kitty | `kitty` | text | drawn |
+| In tmux, passing sequences through, in WezTerm or iTerm2 | `iterm2` | drawn | text |
+| Over SSH, from WezTerm or iTerm2 | `iterm2` | drawn | text |
+
+Everything else is text: the other protocol on each of these terminals,
+`sixel` everywhere, Kitty over SSH, which did not answer in time, `screen`,
+Zellij, tmux that does not pass sequences through, a multiplexer reached over
+SSH, and every terminal not named here. A terminal is known only by the
+variables the table was judged by. Kitty is a `KITTY_WINDOW_ID`, a `TERM` with
+`kitty` or `ghostty` in it, or a `TERM_PROGRAM` of `ghostty`; WezTerm or iTerm2
+is a `TERM_PROGRAM` of `WezTerm` or `iTerm.app`, or any `LC_TERMINAL`. Over
+SSH, only those that reach the session at the far end count. crucible takes
+itself to be inside tmux where `TMUX` is set, inside `screen` or Zellij where
+`STY` or `ZELLIJ` is set or `TERM` starts with `screen` or `tmux`, and over SSH
+where `SSH_TTY`, `SSH_CONNECTION` or `SSH_CLIENT` is set. A variable counts
+only when it is set and not empty.
+
+Nothing is asked, of the terminal or of tmux, and every picture is text, when
+the output is not a terminal, when the input is not a terminal, when `NO_COLOR`
+is set and not empty (even with `output.color` at `always`), or when
+`output.color` is `never`.
+
+`auto` asks only where one of the rows above draws in the screen mode in force,
+and never inside tmux, `screen` or Zellij, where the multiplexer answers some
+questions itself, so what it says is not what the terminal outside draws. It
+asks nothing where the window does not report its size in pixels, which is
+where a cell's size comes from. Elsewhere, before crucible reads a key, it asks
+where the cursor is and waits 8 ms for the answer; a terminal that answers is
+asked the protocol's own question, then where the cursor is again, and given
+up to 2 seconds. The protocol is drawn only when its yes arrives before the
+second answer. The cell's size is read again when the window is resized. What
+you type while crucible waits is read with the answers and never reaches the
+prompt.
+
+A protocol named in `output.images` is used without asking the terminal, where
+the table draws it in the screen mode in force, and is text everywhere else,
+so a file that names one does nothing wrong on a terminal that cannot draw it.
+Where the window does not report its size in pixels, a cell is taken to be 8
+pixels wide and 16 high. Inside tmux on this machine, where the protocol named
+is one the table draws behind tmux in the screen mode in force, crucible asks
+tmux, not the terminal, whether it passes sequences through: it runs `tmux
+display-message`, found on your `PATH`, against the server `TMUX` names, waits
+at most 100 ms, and counts only an `allow-passthrough` of `on` or `all` as a
+yes. It does so at start, and again when `/settings` names the protocol, until
+tmux has answered `on`, `all` or `off`; `auto` and `off` never run tmux. To
+draw inside tmux, set `allow-passthrough` to `on` there and name the
+protocol.
+
+On the `/settings` Images row, `auto` says `applies at next start`, since only
+a start asks the terminal, and a protocol or `off` changes the session at once.
+A protocol the table does not draw where the session runs says `not
+available`, or `not available in native mode` or `not available in fullscreen
+mode` where only the other mode draws it, and the session draws text. A
+session that started with its input not a terminal draws text whatever the row
+is set to.
 
 ### `updates`
 
