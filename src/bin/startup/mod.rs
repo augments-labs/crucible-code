@@ -339,6 +339,26 @@ pub(crate) fn readings_on(
     Ok(Readings::new(taken))
 }
 
+/// The first input with colour on, the fake terminal answering as `answering`.
+///
+/// One measurement for the probe a terminal answers and the one it never does,
+/// so the two readings differ only in the answers. The prompt mark is waited
+/// for alone, without the space the no-colour first input waits on: colour puts
+/// a reset between the mark and what follows it, so the plain pair is no longer
+/// contiguous in the terminal's bytes. The key sent is one uncommon character,
+/// absent from startup output and visible in the input box.
+pub(crate) fn coloured_input(answering: Answering) -> Result<Readings, StartupError> {
+    readings_on(
+        Measure::Input {
+            ready: "\u{203a}",
+            probe: "\u{00a7}",
+        },
+        None,
+        answering,
+        Colour::On,
+    )
+}
+
 /// Takes [`RUNS`] readings of a noninteractive argument that exits by itself.
 ///
 /// Unlike a screen measure, this deliberately uses pipes. `--help` and
