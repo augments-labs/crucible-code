@@ -2445,6 +2445,16 @@ mod tests {
             }
         }
 
+        /// Waits `pause` out by the clock. A sleep can wake long after its end
+        /// on a loaded macOS runner, where one of 30 ms has lasted 177, and
+        /// that moves an answer timed inside the patience past it.
+        fn wait_out(pause: Duration) {
+            let end = Instant::now() + pause;
+            while Instant::now() < end {
+                std::hint::spin_loop();
+            }
+        }
+
         /// Plays a terminal on `master`: waits for each turn's question in
         /// order and gives its answers, then hears on until the exchange is
         /// done. Sends back everything it heard.
@@ -2481,7 +2491,7 @@ mod tests {
                         thread::sleep(Duration::from_millis(1));
                     }
                     for (pause, bytes) in turn.answers {
-                        thread::sleep(Duration::from_millis(pause));
+                        wait_out(Duration::from_millis(pause));
                         tell(&mut master, &bytes, until);
                     }
                 }
