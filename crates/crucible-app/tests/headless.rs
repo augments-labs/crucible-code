@@ -127,6 +127,8 @@ struct Script {
     asked: Arc<AtomicUsize>,
     /// What the user had said, as each request carried it.
     sent: Arc<Mutex<Vec<Vec<String>>>>,
+    /// What each request told the model of the session, its context joined.
+    told: Arc<Mutex<Vec<String>>>,
     /// The plan windows every response says its vendor reported.
     limits: Option<PlanWindows>,
     /// What its plan answers when asked, where it has a source to ask.
@@ -156,6 +158,7 @@ impl Script {
             rounds: Mutex::new(rounds.into_iter()),
             asked: Arc::default(),
             sent: Arc::default(),
+            told: Arc::default(),
             limits: None,
             answering: None,
             limits_asked: Arc::default(),
@@ -243,10 +246,22 @@ impl Provider for Script {
                 _ => None,
             })
             .collect();
+        let context: String = request
+            .transcript
+            .messages()
+            .iter()
+            .filter_map(|message| match message {
+                Message::Context(fragment) => Some(fragment.text()),
+                _ => None,
+            })
+            .collect();
         Box::pin(async move {
             let before = self.asked.fetch_add(1, Ordering::Relaxed);
             if let Ok(mut sent) = self.sent.lock() {
                 sent.push(said);
+            }
+            if let Ok(mut told) = self.told.lock() {
+                told.push(context);
             }
             if let Some(meanwhile) = &self.meanwhile {
                 (meanwhile.0)(before);

@@ -89,7 +89,7 @@ pub mod usage;
 mod wire;
 
 pub use bounds::{Name, Said, Text};
-pub use command::{Command, Mode, Pace, Palette, Prompt, Replied, Rung, Theme};
+pub use command::{Author, Command, Mode, Pace, Palette, Prompt, Replied, Rung, Theme};
 pub use context::{Category, Context};
 pub use error::{ErrorCode, Refusal};
 pub use outcome::{

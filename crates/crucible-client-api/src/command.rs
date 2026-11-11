@@ -4,9 +4,10 @@
 //! terminal, and none besides: a command that does not ship has no arm, so
 //! there is no spelling a decoder could take for it.
 //!
-//! Nothing here reaches the host's files. A prompt is its words; what is
-//! attached to it is chosen on the host, by the front end standing there, and
-//! handed to the application beside the request rather than named inside it. A
+//! Nothing here reaches the host's files. A prompt is its words and who wrote
+//! them; what is attached to it is chosen on the host, by the front end
+//! standing there, and handed to the application beside the request rather
+//! than named inside it. A
 //! login names a provider and never the credential: the secret is stored on
 //! the host, and the command says only that it now can be read.
 //!
@@ -400,7 +401,7 @@ impl Command {
     pub(crate) fn written(&self) -> Value {
         let object = Writing::kind(self.kind());
         match self {
-            Self::Prompt(prompt) => object.with("text", prompt.as_str()),
+            Self::Prompt(prompt) => prompt.onto(object),
             Self::Decide(decision) => object.with("decision", decision.written()),
             Self::Answer { era, id, replies } => object
                 .with("era", era.written())
@@ -468,7 +469,7 @@ impl Command {
         let mut fields = Fields::of(value)?;
         let kind = fields.kind()?;
         let command = match kind.as_str() {
-            "prompt" => Self::Prompt(Prompt::new(&fields.string("text")?)?),
+            "prompt" => Self::Prompt(Prompt::read(&mut fields)?),
             "compact" => Self::Compact,
             "cancel" => Self::Cancel,
             "decide" => Self::Decide(Decision::read(fields.take("decision")?)?),
@@ -620,40 +621,112 @@ impl Replied {
     }
 }
 
-/// The words of a prompt: never empty, never over [`PROMPT_BYTES`].
+/// The words of a prompt, and who wrote them: never empty, never over
+/// [`PROMPT_BYTES`].
 ///
-/// Redacted from `Debug`, because they are a person's.
+/// Redacted from `Debug`, because they are a person's, or carry what a
+/// person's commands printed.
 #[derive(Clone, PartialEq, Eq)]
-pub struct Prompt(Box<str>);
+pub struct Prompt {
+    words: Box<str>,
+    author: Author,
+}
 
 impl Prompt {
-    /// A prompt saying `words`.
+    /// A prompt the person wrote, saying `words`.
     ///
     /// # Errors
     ///
     /// [`ErrorCode::TooLarge`] over [`PROMPT_BYTES`], checked before the words
     /// are copied; [`ErrorCode::InvalidArgument`] where there are none.
     pub fn new(words: &str) -> Result<Self, Refusal> {
+        Self::by(words, Author::Person)
+    }
+
+    /// A prompt the application wrote, saying `words`: a note of its own that
+    /// wakes the model, such as what commands left running printed before they
+    /// ended. It is taken as a turn as any prompt is, and is never kept as what
+    /// the person asked for.
+    ///
+    /// # Errors
+    ///
+    /// As [`Prompt::new`].
+    pub fn application(words: &str) -> Result<Self, Refusal> {
+        Self::by(words, Author::Application)
+    }
+
+    fn by(words: &str, author: Author) -> Result<Self, Refusal> {
         if words.len() > PROMPT_BYTES {
             return Err(ErrorCode::TooLarge.into());
         }
         if words.is_empty() {
             return Err(ErrorCode::InvalidArgument.into());
         }
-        Ok(Self(words.into()))
+        Ok(Self {
+            words: words.into(),
+            author,
+        })
     }
 
     /// The words.
     #[must_use]
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.words
+    }
+
+    /// Who wrote them.
+    #[must_use]
+    pub const fn author(&self) -> Author {
+        self.author
+    }
+
+    /// `object` with these words in it, and who wrote them where that is not
+    /// the person.
+    fn onto(&self, object: Writing) -> Writing {
+        let by = match self.author {
+            Author::Person => None,
+            Author::Application => Some("application"),
+        };
+        object.with("text", self.as_str()).maybe("by", by)
+    }
+
+    /// The prompt in `fields`: the person's where `by` is left out, the
+    /// application's where it says so, and refused where it says anything
+    /// else.
+    fn read(fields: &mut Fields) -> Result<Self, Refusal> {
+        let words = fields.string("text")?;
+        let author = match fields.maybe("by") {
+            None => Author::Person,
+            Some(Value::String(by)) if by == "application" => Author::Application,
+            Some(_) => return Err(ErrorCode::Malformed.into()),
+        };
+        Self::by(&words, author)
     }
 }
 
 impl fmt::Debug for Prompt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Prompt([redacted; {} bytes])", self.0.len())
+        write!(
+            f,
+            "Prompt([redacted; {} bytes], {:?})",
+            self.words.len(),
+            self.author
+        )
     }
+}
+
+/// Who wrote a [`Prompt`].
+///
+/// Told apart because what the person asked for is kept and said back to the
+/// model once the conversation no longer holds it, and words the application
+/// wrote are not the person's to be kept as theirs. On the wire the person is
+/// said by leaving `by` out, and the application by `"application"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Author {
+    /// The person at the front end.
+    Person,
+    /// The application, speaking for itself.
+    Application,
 }
 
 /// How hard a model is asked to think, as this protocol spells it.

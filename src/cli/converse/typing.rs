@@ -40,7 +40,7 @@ use std::time::{Duration, Instant};
 use crucible_app::Conversation;
 use crucible_app::Settled;
 use crucible_builtins::{Background, Ended};
-use crucible_client_api::Command;
+use crucible_client_api::{Author, Command};
 use crucible_models::Effort;
 use crucible_runtime::{Aside, Cancel};
 use crucible_tools::Mode;
@@ -157,7 +157,7 @@ pub(super) enum Asked {
     ///
     /// Nothing comes out of the box for it. Nobody typed this, so the half-
     /// written line somebody left there is still there afterwards.
-    Woke(String),
+    Woke(Woke),
     /// `Submit batch` in the dock: the answers to the questions the model
     /// asked without waiting, to be sent as the turn that delivers them.
     /// Nothing comes out of the box for it either.
@@ -172,6 +172,21 @@ pub(super) enum Asked {
 pub(super) struct Said {
     said: String,
     local: bool,
+}
+
+/// The note a turn nobody typed is over, and who wrote it.
+///
+/// The note stays private to this module so a caller cannot send it as the
+/// person's: the application wrote it, out of what commands printed, and
+/// [`Woke::into_parts`] hands it over only with that author.
+pub(super) struct Woke {
+    note: String,
+}
+
+impl Woke {
+    pub(super) fn into_parts(self) -> (String, Author) {
+        (self.note, Author::Application)
+    }
 }
 
 impl Said {
@@ -486,7 +501,11 @@ fn woken(ended: &[Ended], aside: &Aside) -> Option<Asked> {
     let mut notes = aside.take();
     notes.extend(standing::said(ended));
 
-    (!notes.is_empty()).then(|| Asked::Woke(notes.join("\n\n")))
+    (!notes.is_empty()).then(|| {
+        Asked::Woke(Woke {
+            note: notes.join("\n\n"),
+        })
+    })
 }
 
 /// Reads one prompt, drawing it as it arrives.

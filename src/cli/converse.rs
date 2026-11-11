@@ -58,7 +58,7 @@ use crucible_app::subscription::Subscriptions;
 use crucible_app::{Conversation, Settled};
 use crucible_auth::Store;
 use crucible_builtins::{Background, Ledger, Plan};
-use crucible_client_api::{AnswerOutcome, Command, ErrorCode, Outcome, Prompt, Refusal};
+use crucible_client_api::{AnswerOutcome, Author, Command, ErrorCode, Outcome, Prompt, Refusal};
 use crucible_context::Room;
 use crucible_runner::{Event, TurnError, Turned};
 use crucible_runtime::Cancel;
@@ -814,12 +814,19 @@ fn conversing<T: Terminal>(
             continue;
         }
 
-        let (prompt, local) = match asked {
+        let (prompt, local, author) = match asked {
             // Through the same door as a typed one, on purpose: a woken turn
             // still needs a model to be asked of, and the guards below are
-            // where that is answered.
-            Asked::Said(said) => said.into_parts(),
-            Asked::Woke(said) => (said, false),
+            // where that is answered. Its words are the application's, so it
+            // is sent as theirs and never kept as the person's task.
+            Asked::Said(said) => {
+                let (prompt, local) = said.into_parts();
+                (prompt, local, Author::Person)
+            }
+            Asked::Woke(woke) => {
+                let (note, author) = woke.into_parts();
+                (note, false, author)
+            }
             Asked::Ended => break,
 
             // The dock's answers, sent as the turn that delivers them.
@@ -843,7 +850,7 @@ fn conversing<T: Terminal>(
 
             Asked::Untyped => {
                 match unboxed(renderer, conversation.settled(), style, held.answers.input)? {
-                    Some(said) => (said, true),
+                    Some(said) => (said, true, Author::Person),
                     None => break,
                 }
             }
@@ -900,7 +907,7 @@ fn conversing<T: Terminal>(
             },
             terms.style(),
         )?;
-        let work = Work::Turn(prompt, attached);
+        let work = Work::Turn(prompt, attached, author);
         let (back, leaving) = ran(conversation, renderer, terms, work, &mut held)?;
         conversation = back;
 
@@ -1967,7 +1974,10 @@ fn sent(
         // prompt, the key that stops it — is what a reader waiting on a
         // compaction needs, and none of it is about a turn.
         let ended = match work {
-            Work::Turn(prompt, attached) => match Prompt::new(&prompt) {
+            Work::Turn(prompt, attached, author) => match match author {
+                Author::Person => Prompt::new(&prompt),
+                Author::Application => Prompt::application(&prompt),
+            } {
                 Ok(prompt) => {
                     let asked = Command::Prompt(prompt);
                     asking.turn(&mut conversation, asked, attached, &run).await
@@ -2066,9 +2076,9 @@ fn moved(held: &mut Held<'_>) {
 /// to reach a screen somebody is watching. What told them apart before was
 /// which of three loops was drawing, and two of the three were worse.
 enum Work {
-    /// One prompt, the files it named, and everything that follows from it
-    /// until the agent yields.
-    Turn(String, Box<[Attachment]>),
+    /// One prompt, the files it named, who wrote it, and everything that
+    /// follows from it until the agent yields.
+    Turn(String, Box<[Attachment]>, Author),
     /// Room, made for the reason it names.
     Room(Compacting),
     /// The dock's answers to questions the model asked without waiting,

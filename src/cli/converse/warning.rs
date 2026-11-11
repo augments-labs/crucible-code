@@ -264,7 +264,7 @@ pub(super) fn held<T: Terminal>(
         // A turn that would be refused before it started the agent, whatever
         // the answer, is not asked about: it goes on to be refused as it
         // would be after a yes, drawn as a failed turn is, and nothing starts.
-        if let Work::Turn(_, attached) = work
+        if let Work::Turn(_, attached, _) = work
             && conversation.unlaunchable(attached).is_err()
         {
             return Ok(false);
@@ -289,7 +289,7 @@ pub(super) fn held<T: Terminal>(
             Answer::Cramped => CRAMPED_SEND.to_owned(),
         };
     };
-    if let Work::Turn(prompt, _) = work {
+    if let Work::Turn(prompt, _, _) = work {
         held.editor.put(prompt);
     }
     renderer.commit(&said)?;

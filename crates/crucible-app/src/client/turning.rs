@@ -1,8 +1,8 @@
 //! The commands that take a turn's length, and the one that cuts it short.
 
 use crucible_client_api::{
-    Command, ErrorCode, Missing, Outcome, Problem, Refusal, Request, Response, RoomOutcome, Stop,
-    Text, TurnOutcome,
+    Author, Command, ErrorCode, Missing, Outcome, Problem, Refusal, Request, Response, RoomOutcome,
+    Stop, Text, TurnOutcome,
 };
 use crucible_context::Room;
 use crucible_runner::{RunContext, TurnError, Turned};
@@ -152,9 +152,18 @@ pub async fn turn(
     match request.command() {
         Command::Prompt(prompt) => {
             let mut ask = Deciding::new(front, request.capabilities());
-            let turned = conversation
-                .turn(prompt.as_str(), attached, &mut ask, run)
-                .await;
+            let turned = match prompt.author() {
+                Author::Person => {
+                    conversation
+                        .turn(prompt.as_str(), attached, &mut ask, run)
+                        .await
+                }
+                Author::Application => {
+                    conversation
+                        .noted(prompt.as_str(), attached, &mut ask, run)
+                        .await
+                }
+            };
             if delivers_after(&turned)
                 && let Some(delivered) = conversation.answering(&mut ask, run).await
             {

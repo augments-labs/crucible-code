@@ -799,7 +799,7 @@ fn a_session_picked_up_from_either_side_is_carried_on_from_the_same_place() {
         ]
     );
     assert!(
-        matches!(headless.last(), Some(Noted::Answered { standing, .. }) if standing.messages == 10),
+        matches!(headless.last(), Some(Noted::Answered { standing, .. }) if standing.messages == 11),
         "two messages picked up, and a prompt, what it was told and an answer since: {headless:?}"
     );
 }
