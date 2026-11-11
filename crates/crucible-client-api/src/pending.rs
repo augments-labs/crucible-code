@@ -160,6 +160,11 @@ pub struct Choice {
     /// `name` stays what is sent back to choose it, and only for the choice
     /// that is, so the others cost no value of the frame's ceiling.
     pub recommended: bool,
+    /// The rows showing what it would look like, in the order the question
+    /// wrote them, so a client can draw the specimen the terminal draws.
+    /// Empty where it shows none, and then it does not travel, so a choice
+    /// without one costs no value of the frame's ceiling.
+    pub shows: Vec<Text>,
 }
 
 /// One question a model put to the person.
@@ -419,6 +424,15 @@ impl Choice {
             .text("name", &self.name)
             .text("says", &self.says)
             .maybe("recommended", self.recommended.then_some(true))
+            .maybe(
+                "shows",
+                (!self.shows.is_empty()).then(|| {
+                    self.shows
+                        .iter()
+                        .map(crate::wire::written)
+                        .collect::<Vec<_>>()
+                }),
+            )
             .finish()
     }
 
@@ -432,6 +446,11 @@ impl Choice {
                 .map(|value| value.as_bool().ok_or(ErrorCode::Malformed))
                 .transpose()?
                 .unwrap_or(false),
+            shows: fields
+                .maybe_list("shows")?
+                .into_iter()
+                .map(crate::wire::text)
+                .collect::<Result<_, _>>()?,
         };
         fields.done()?;
         Ok(choice)

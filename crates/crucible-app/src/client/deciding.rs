@@ -18,9 +18,10 @@
 //! and it settles as it does where nobody answers, so a front end that is
 //! wrong for ever cannot hold a turn for ever.
 //!
-//! An action is put only where it can be put whole. Questions with more
-//! answers than a list holds, or an answer whose name would be cut, are
-//! declined without being put; a call whose tool, subject, or line or address
+//! An action is put only where each of its lists and names fits whole.
+//! Questions with more answers than a list holds, an answer whose name would
+//! be cut, or an answer showing more rows than a list holds, are declined
+//! without being put; a call whose tool, subject, or line or address
 //! as sent would be cut is denied without being put, unless the front end says
 //! it draws from the whole value it is lent ([`Front::draws_whole`]). Either
 //! way no identity is spent on an action nobody was shown.
@@ -547,10 +548,13 @@ async fn ruled(
 /// More than [`ITEMS`] questions are declined without being put, and the asker
 /// hears "nobody is there": one pending action holds no more, and half of them
 /// answered is not an answer. So is a question offering more than [`ITEMS`]
-/// answers, or an answer whose name would be cut: an answer left out cannot be
-/// chosen, and a name that was cut is not the one the asker reads back. The
-/// question tool refuses a call that long before it asks anything, so this is
-/// the floor under an asker that does not.
+/// answers, an answer whose name would be cut, or an answer showing more rows
+/// than a list holds: an answer left out cannot be chosen, a name that was cut
+/// is not the one the asker reads back, and rows left out are not what the
+/// asker showed. The question tool refuses a call that long before it asks
+/// anything, so this is the floor under an asker that does not. Rows are held
+/// per list and not against the frame as a whole, which the question tool's
+/// own ceilings keep every set it can ask well inside.
 pub async fn questions(
     capabilities: Capabilities,
     front: &mut dyn Front,
@@ -677,6 +681,7 @@ pub async fn confirmed(
             name: Text::cut(name),
             says: Text::cut(says),
             recommended: at == 0,
+            shows: Vec::new(),
         })
         .collect();
     let cut = asks.truncated()
@@ -717,8 +722,10 @@ pub async fn confirmed(
 }
 
 /// One question, as it is put to a client, or `None` where it cannot be put
-/// whole: more answers than a list here holds, or an answer's name longer than
-/// the words here carry.
+/// whole: more answers, or more rows an answer shows, than a list here holds,
+/// or an answer's name longer than the words here carry. A row longer than
+/// that is cut and says so, as what an answer says is: it is drawn, never sent
+/// back.
 fn put(question: &Question) -> Option<Asked> {
     if question.answers().len() > ITEMS {
         return None;
@@ -732,10 +739,11 @@ fn put(question: &Question) -> Option<Asked> {
             .answers()
             .map(|answer| {
                 let name = Text::cut(answer.answer());
-                (!name.truncated()).then(|| Choice {
+                (!name.truncated() && answer.shows().len() <= ITEMS).then(|| Choice {
                     name,
                     says: Text::cut(answer.says()),
                     recommended: answer.is_recommended(),
+                    shows: answer.shows().map(Text::cut).collect(),
                 })
             })
             .collect::<Option<_>>()?,
@@ -744,8 +752,8 @@ fn put(question: &Question) -> Option<Asked> {
 
 /// One question that waits, as a client is shown it: as [`put`] puts it. The
 /// registry bounds every text it holds below the words a client is handed, so
-/// none is cut here, and holds no more answers to a question than a list here
-/// carries.
+/// none is cut here, and holds no more answers to a question, nor rows to an
+/// answer, than a list here carries.
 pub(super) fn shown(question: &Question) -> Asked {
     Asked {
         heading: Text::cut(question.heading()),
@@ -757,6 +765,7 @@ pub(super) fn shown(question: &Question) -> Asked {
                 name: Text::cut(answer.answer()),
                 says: Text::cut(answer.says()),
                 recommended: answer.is_recommended(),
+                shows: answer.shows().map(Text::cut).collect(),
             })
             .collect(),
     }

@@ -30,10 +30,10 @@ impl Version {
     /// on an agent a login's connect can end on in their place, and the sixth
     /// the words answering questions without stopping brings: the command,
     /// the report of what waits, the outcome of an answer no turn was run for,
-    /// the two codes an answer is refused with, and the `by` that says a
-    /// prompt is the application's own. A test holds the number
-    /// and what the frames are made of together, so that one cannot move
-    /// without the other being looked at.
+    /// the two codes an answer is refused with, the `by` that says a prompt
+    /// is the application's own, and the rows a question's answer shows. A
+    /// test holds the number and what the frames are made of together, so
+    /// that one cannot move without the other being looked at.
     pub const CURRENT: Self = Self(6);
 
     /// The revision numbered `number`, spoken or not.

@@ -22,7 +22,7 @@ const MARKER: &str = "hunter2-marker";
 /// Every field name a frame may hold.
 ///
 /// An allow-list, so a field added to any value is a field somebody read here.
-const KEYS: [&str; 81] = [
+const KEYS: [&str; 82] = [
     "agent",
     "agents",
     "batches",
@@ -90,6 +90,7 @@ const KEYS: [&str; 81] = [
     "says",
     "session",
     "several",
+    "shows",
     "snapshot",
     "standing",
     "state",
@@ -297,6 +298,7 @@ fn asked() -> Asked {
             name: marked(),
             says: marked(),
             recommended: true,
+            shows: vec![marked(), marked()],
         }],
     }
 }
@@ -339,6 +341,7 @@ fn a_choice_marked_recommended_crosses_as_a_field_of_its_own_beside_its_unchange
         name: Text::cut(name),
         says: Text::cut(""),
         recommended,
+        shows: Vec::new(),
     };
     let pending = Pending::Questions {
         id: PendingId::new(8),
@@ -380,6 +383,51 @@ fn a_choice_marked_recommended_crosses_as_a_field_of_its_own_beside_its_unchange
     assert_eq!(Pending::read(odd).unwrap_err().code(), ErrorCode::Malformed);
 }
 
+#[test]
+fn the_rows_a_choice_shows_cross_in_order_and_a_choice_showing_none_carries_no_field() {
+    let pending = Pending::Questions {
+        id: PendingId::new(8),
+        questions: vec![Asked {
+            heading: Text::cut("h"),
+            asks: Text::cut("a"),
+            several: false,
+            choices: vec![
+                Choice {
+                    name: Text::cut("Table"),
+                    says: Text::cut(""),
+                    recommended: false,
+                    shows: vec![Text::cut("| a | b |"), Text::cut("| 1 | 2 |")],
+                },
+                Choice {
+                    name: Text::cut("List"),
+                    says: Text::cut(""),
+                    recommended: false,
+                    shows: Vec::new(),
+                },
+            ],
+        }],
+    };
+
+    let written = pending.written();
+    let first = "/questions/0/choices/0/shows";
+    assert_eq!(
+        written.pointer(&format!("{first}/1/text")),
+        Some(&json!("| 1 | 2 |"))
+    );
+    assert_eq!(written.pointer("/questions/0/choices/1/shows"), None);
+    assert_eq!(Pending::read(written.clone()).unwrap(), pending);
+
+    // Rows that are not a list of texts, and more rows than a list holds,
+    // refuse the frame.
+    let mut odd = written.clone();
+    *odd.pointer_mut(first).unwrap() = json!("| a | b |");
+    assert_eq!(Pending::read(odd).unwrap_err().code(), ErrorCode::Malformed);
+    let mut long = written;
+    *long.pointer_mut(first).unwrap() =
+        Value::Array(vec![crate::wire::written(&Text::cut("r")); ITEMS + 1]);
+    assert_eq!(Pending::read(long).unwrap_err().code(), ErrorCode::TooLarge);
+}
+
 fn warning() -> Pending {
     Pending::Warning {
         id: PendingId::new(9),
@@ -400,11 +448,13 @@ fn account() -> Pending {
                 name: marked(),
                 says: marked(),
                 recommended: true,
+                shows: Vec::new(),
             },
             Choice {
                 name: marked(),
                 says: marked(),
                 recommended: false,
+                shows: Vec::new(),
             },
         ],
     }
@@ -420,11 +470,13 @@ fn install() -> Pending {
                 name: marked(),
                 says: marked(),
                 recommended: true,
+                shows: Vec::new(),
             },
             Choice {
                 name: marked(),
                 says: marked(),
                 recommended: false,
+                shows: Vec::new(),
             },
         ],
     }
@@ -2218,6 +2270,7 @@ fn the_fullest_value_that_crosses_is_within_the_value_ceiling() {
         name: Text::cut("n"),
         says: Text::cut("s"),
         recommended,
+        shows: Vec::new(),
     };
     let asked = || Asked {
         heading: Text::cut("h"),
@@ -2254,6 +2307,21 @@ fn the_fullest_value_that_crosses_is_within_the_value_ceiling() {
     // Derived, not guessed: nothing the ceiling allows for is unused by half.
     assert!(needs * 2 > VALUES, "{needs}");
     assert_eq!(Snapshot::decode(&frame).unwrap(), fullest);
+
+    // Rows a choice shows are bounded by the list that holds them and not by
+    // this ceiling, so a value whose choices show full lists of them is
+    // refused whole rather than sent. One question's worth is already over.
+    let mut showing = fullest;
+    if let Some(Pending::Questions { questions, .. }) = &mut showing.pending {
+        for choice in questions
+            .iter_mut()
+            .take(1)
+            .flat_map(|asked| &mut asked.choices)
+        {
+            choice.shows = vec![Text::cut("r"); ITEMS];
+        }
+    }
+    assert_eq!(showing.encode().unwrap_err().code(), ErrorCode::TooLarge);
 
     for specimen in specimens() {
         let value: Value = serde_json::from_slice(&specimen.frame).unwrap();
@@ -2772,7 +2840,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // alone moves that number and this digest, and leaves the revision.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (6, 7_989_617_246_589_073_285),
+        (6, 10_123_205_418_745_546_033),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );

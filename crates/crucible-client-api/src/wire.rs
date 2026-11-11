@@ -112,11 +112,13 @@ impl Fields {
 
     /// A list field, refused over [`ITEMS`] entries before any is read.
     pub(crate) fn list(&mut self, key: &str) -> Result<Vec<Value>, Refusal> {
-        match self.take(key)? {
-            Value::Array(items) if items.len() <= ITEMS => Ok(items),
-            Value::Array(_) => Err(ErrorCode::TooLarge.into()),
-            _ => Err(ErrorCode::Malformed.into()),
-        }
+        items(self.take(key)?)
+    }
+
+    /// A list field that may be absent, and is then empty; bounded as
+    /// [`Self::list`] is.
+    pub(crate) fn maybe_list(&mut self, key: &str) -> Result<Vec<Value>, Refusal> {
+        self.maybe(key).map_or_else(|| Ok(Vec::new()), items)
     }
 
     /// Closes the object: a field nobody asked for refuses the frame.
@@ -126,6 +128,16 @@ impl Fields {
         } else {
             Err(ErrorCode::Malformed.into())
         }
+    }
+}
+
+/// The entries of the list `value` is, refused over [`ITEMS`] before any is
+/// read.
+fn items(value: Value) -> Result<Vec<Value>, Refusal> {
+    match value {
+        Value::Array(items) if items.len() <= ITEMS => Ok(items),
+        Value::Array(_) => Err(ErrorCode::TooLarge.into()),
+        _ => Err(ErrorCode::Malformed.into()),
     }
 }
 

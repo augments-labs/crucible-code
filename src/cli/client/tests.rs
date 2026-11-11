@@ -900,6 +900,7 @@ fn an_install_is_put_to_the_terminal_as_its_question_and_answered_with_the_choic
         name: Text::cut(name),
         says: Text::cut(""),
         recommended,
+        shows: Vec::new(),
     };
     let pending = Pending::Install {
         id: PendingId::new(7),
