@@ -98,8 +98,11 @@ creates isolated user, PID, IPC, UTS and network namespaces, drops capabilities,
 sets no-new-privileges through Bubblewrap, disables nested user namespaces,
 clears the environment, and closes every undeclared file descriptor. Closed
 networking has no usable host, loopback, Unix-socket, DNS, metadata-service or
-inherited-socket route. Killing the namespace owner also kills descendants that
-deliberately leave the original process group or session.
+inherited-socket route, and refuses binding and listening. The one exception is
+the probe of a program you named as your own agent, which may bind and listen
+on the namespace's private loopback; it still reaches nothing outside, and
+`io_uring` stays refused. Killing the namespace owner also kills descendants
+that deliberately leave the original process group or session.
 
 On macOS, the production backend uses the built-in Seatbelt framework through
 the fixed `/usr/bin/sandbox-exec` executable. The launcher must be root-owned
@@ -306,9 +309,13 @@ persistence and snapshot requests still require an enforcing implementation.
 | `usage` | observed | observed | observed | observed |
 
 A capability being enforced says what a backend *can* apply, not what the
-default policy asks for. With confinement enabled, Linux's standard policy states
-`cpu_limit` at one hour per process and `open_file_limit` at 4096. Windows
-states one hour of aggregate Job processor time and no handle-count limit.
+default policy asks for. `network_deny` stays enforced where the probe of your
+own agent may listen: on Linux that listening reaches only the network
+namespace's private loopback, and macOS and Windows ignore the allowance, so
+the probe there stays as closed as any other command. With confinement enabled,
+Linux's standard policy states `cpu_limit` at one hour per process and
+`open_file_limit` at 4096. Windows states one hour of aggregate Job processor
+time and no handle-count limit.
 macOS states only the open-file ceiling because its catchable CPU signal is not
 a hard boundary. `bash` adds
 `command_time_limit`, `output_limit` and `concurrency_limit` for the one command
