@@ -56,6 +56,7 @@ fn weekly() -> api::Usage {
             output: 38_100,
             cache_read: 1_210_000,
             cache_write: 0,
+            cache_write_extended: 0,
         },
         context: api::Context {
             model: Model::new("gpt-6-sol"),

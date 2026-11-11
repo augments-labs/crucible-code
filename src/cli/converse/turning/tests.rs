@@ -1672,7 +1672,7 @@ fn usage_a_turn_keeps_what_it_last_reported_for_the_panel_over_it() {
             .with(Window::Weekly, WindowReading::new(percent, None))
     };
     let seeded = Totals::new();
-    let mut turning = Turning::started(Breakdown::default()).using(seeded, Some(windows(10)));
+    let mut turning = Turning::started(Breakdown::default()).using(&seeded, Some(windows(10)));
     assert_eq!(turning.totals(), seeded);
     assert_eq!(turning.limits(), Some(windows(10)));
 
@@ -1708,7 +1708,7 @@ fn usage_over_an_agent_s_turn_keeps_what_it_last_reported() {
         );
         Totals::reported(tokens, SessionCost::Priced(cost), Instant::now())
     };
-    let mut turning = Turning::started(Breakdown::default()).using(Totals::new(), None);
+    let mut turning = Turning::started(Breakdown::default()).using(&Totals::new(), None);
     let (first, second) = (reported(100, 7), reported(250, 19));
 
     turning.saw(&Event::TurnStarted {

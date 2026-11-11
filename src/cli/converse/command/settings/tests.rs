@@ -19,6 +19,7 @@ fn counted() -> Counted {
                 output: 0,
                 cache_read: 0,
                 cache_write: 0,
+                cache_write_extended: 0,
             },
             context: Context {
                 model: Model::new("gpt-6-sol"),

@@ -220,7 +220,7 @@ impl Backend for Native<'_> {
                 .turn(turn.prompt(), Box::new([]), &mut asking, &run)
                 .await;
             self.ended();
-            if let Some(usage) = translating.usage(before) {
+            if let Some(usage) = translating.usage(&before) {
                 events.post(Event::Usage(Observation::live(usage, Scope::Session)));
             }
             match turned {
@@ -414,7 +414,7 @@ impl<'n, 'r> Translating<'n, 'r> {
 
     /// What the turn moved the session's totals by since `before`, where it
     /// started and moved them.
-    fn usage(&self, before: Totals) -> Option<Usage> {
+    fn usage(&self, before: &Totals) -> Option<Usage> {
         let turn = (*self.turn.lock().unwrap_or_else(PoisonError::into_inner))?;
         let after = (*self.used.lock().unwrap_or_else(PoisonError::into_inner))?;
         let moved = Usage::of(turn)
