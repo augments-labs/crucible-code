@@ -34,6 +34,10 @@ pub enum UsageError {
     /// A detail label was empty, unbounded, or not a safe static identifier.
     #[error("provider usage detail label was invalid")]
     InvalidDetailLabel,
+    /// A count reported in parts did not add up to the count it splits, or
+    /// arrived with part of the split missing.
+    #[error("a provider usage count's reported parts did not add up to it")]
+    SplitContradictsWhole,
     /// A subset arrived without the total it is part of.
     #[error("a prompt-cache usage subset arrived without the total it is part of")]
     SubsetWithoutTotal,
