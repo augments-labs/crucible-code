@@ -15,14 +15,16 @@
 //!   as the tilde it was, with what followed it, and nothing past the bound
 //!   is kept back.
 //! - No longer than the paragraph. A blank line, a line that opens a block of
-//!   its own, a table, a block being held, a block handed on, a line
-//!   taken back and the end of the message each let go of every opener still
-//!   open, and each is drawn as written.
+//!   its own, a numbered item, a table, a block being held, a block handed
+//!   on, a line taken back and the end of the message each let go of every
+//!   opener still open, and each is drawn as written. A pair of two tildes is
+//!   carried across a numbered item; a pair of one is not.
 //! - Nothing held reaches the record before it settles. The live foot shows
 //!   the last line of what is held, as written and clipped to the room, and
 //!   once it settles the record holds what the whole answer draws.
-//! - A struck phrase wears what a pair of two tildes gives the same words: the
-//!   one ranking in [`Markdown::slot`] decides both.
+//! - A single pair's strike outranks weight, emphasis and a heading's look,
+//!   and code, a link, a quote and a done task keep their own, as [`struck`]
+//!   ranks them.
 //!
 //! Only in prose: code, a key, a link's words and address, a bare address and
 //! a block drawn as written never see a single tilde as a marker.

@@ -327,9 +327,9 @@ table written without outer bars, nor the title of a heading underlined with
   as written (the reader's `STRIKE_CAP`) has followed it, counted in bytes: a
   phrase strikes only when what is written between its tildes is shorter than
   that. When more than one tilde waits, the count runs from the oldest. A
-  paragraph ends at a blank line, a line that opens
-  a block of its own, a table, a block held until it closes, a line that turns
-  out to be a table's header or a heading's title, and the end of the message.
+  paragraph ends at a blank line, a line that opens a block of its own, a
+  numbered item, a table, a block held until it closes, a line that turns out
+  to be a table's header or a heading's title, and the end of the message.
 - **Held until it settles.** What follows an opener is not drawn until its
   closer arrives or one of the limits above is reached. Meanwhile the foot of
   the transcript shows the last line of what is held, as it was written and
@@ -340,9 +340,9 @@ table written without outer bars, nor the title of a heading underlined with
 - **Where a tilde is never a marker.** In code, a key, a subscript or
   superscript, a link's words and address, a bare address, after a backslash
   (`\~`), and in a block drawn as written, a single tilde is a character.
-- **What a struck phrase looks like.** It takes the same look a pair of two
-  tildes gives the same words: the strike is drawn over weight, emphasis and a
-  heading's look, and code, a link, a quote and a done task keep theirs.
+- **What a struck phrase looks like.** The strike is drawn over weight,
+  emphasis and a heading's look, and code, a link, a quote and a done task keep
+  theirs.
 - **Weight with emphasis.** A run that is both bold and italic, as in
   `***both***`, the italic words of `**bold _italic_ bold**` or the bold words
   of `*leant **and raised** again*`, is drawn bold and italic together, in
