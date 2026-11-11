@@ -35,27 +35,66 @@ A case is rerun by exact name in the test binary the selection built, from its
 package's directory as cargo would run it, so the rerun is the code the suite
 ran and costs no build. Asking cargo for one package instead would resolve that
 package's features alone and build it again, different from what was tested.
+The binaries are rerun beside one another, no more binaries at once than there
+are processors, which stands in for nextest's one test per processor since each
+binary runs its own cases on threads of its own. Those holding a case of one of
+`.config/nextest.toml`'s test groups take turns.
 
     scripts/python/required-cases.py <artifacts> <doc-list> <doc-ignored-list> <selection>...
     scripts/python/required-cases.py --self-test  prove the source reader reads,
-                                                  and what a rerun runs
+                                                  what a rerun runs, and which
+                                                  reruns take turns
 """
 
+import contextlib
+import fnmatch
 import hashlib
+import io
 import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import threading
+import time
+import tomllib
+import warnings
+from concurrent.futures import ThreadPoolExecutor
 
 MANIFEST = "scripts/required-cases.json"
+NEXTEST = ".config/nextest.toml"
 
 PLATFORM = {"linux": "linux", "darwin": "macos", "win32": "windows"}.get(
     sys.platform, sys.platform
 )
 
 DOCTEST = re.compile(r"^(?P<source>.+?) - (?P<case>\S+) \(line (?P<line>\d+)\): test$")
+
+DEFINITION = re.compile(r"^(\s*)(?:pub\s+)?(?:async\s+)?fn\s+([^\s(<]+)\s*[(<]")
+
+FILTER = re.compile(
+    r"\s*(?:(?P<operator>[&|()])"
+    r"|(?P<predicate>[a-z_]+)\((?P<matcher>/(?:\\.|[^/\\])*/|[^()]*)\))"
+)
+
+# The predicates a test group may be written with, in the order selector() is
+# given a test's fields, each with the matcher nextest uses when none is written.
+PREDICATES = {"package": "#", "binary": "#", "test": "~"}
+
+
+def processors():
+    """The processors this process may run on.
+
+    Where the system can say, that is the processors the process is allowed,
+    which a container or `taskset` can make fewer than the machine has.
+    nextest counts with Rust's `available_parallelism`, which also lowers the
+    count to a cgroup's CPU quota, so in a container with a quota this can
+    count more than nextest does.
+    """
+    if hasattr(os, "sched_getaffinity"):
+        return len(os.sched_getaffinity(0))
+    return os.cpu_count() or 1
 
 
 def slashed(path):
@@ -104,28 +143,28 @@ def fenced_region(lines, index):
     return None
 
 
-def find_function(root, name):
-    """Every place `name` is defined below `root`, so an ambiguity can be told.
+def definitions(root):
+    """Every function defined below `root`, by name, so an ambiguity can be told.
 
-    A hidden directory holds no source of the workspace, but it can hold whole
-    other checkouts of it — a worktree, an archived copy — whose cases would
-    read as more definitions of the same name.
+    The tree is walked once and every case under it looks its name up here,
+    rather than walking it again for each case, which grows with the cases
+    times the files. A hidden directory holds no source of the workspace, but
+    it can hold whole other checkouts of it — a worktree, an archived copy —
+    whose cases would read as more definitions of the same name.
     """
-    opening = re.compile(
-        r"^(\s*)(?:pub\s+)?(?:async\s+)?fn\s+" + re.escape(name) + r"\s*[(<]"
-    )
-    found = []
+    found = {}
     for base, directories, files in os.walk(root):
         directories[:] = [one for one in directories if one != "target" and not one.startswith(".")]
         for file in files:
             if not file.endswith(".rs"):
                 continue
             path = os.path.join(base, file)
-            lines = open(path, encoding="utf-8").read().splitlines()
-            for index, line in enumerate(lines):
-                match = opening.match(line)
+            for index, line in enumerate(open(path, encoding="utf-8").read().splitlines()):
+                match = DEFINITION.match(line)
                 if match:
-                    found.append((slashed(path), index, match.group(1), lines))
+                    found.setdefault(match.group(2), []).append(
+                        (slashed(path), index, match.group(1))
+                    )
     return found
 
 
@@ -216,14 +255,302 @@ def self_test():
         print("    FAIL a rerun of the examples would not ask for the selection the suite ran")
         return 1
 
+    picks = selector(
+        "package(crucible-sandbox-local)\n"
+        "| (package(crucible-builtins) & test(/^bash::tests::/))\n"
+        "| (package(crucible-app) & binary(hosted_server))\n"
+    )
+    for test, expected in (
+        (("crucible-sandbox-local", "linux_network", "admits_one"), True),
+        (("crucible-sandbox-local-extra", "linux_network", "admits_one"), False),
+        (("crucible-builtins", "crucible_builtins", "bash::tests::runs_one"), True),
+        (("crucible-builtins", "crucible_builtins", "grep::tests::bash::tests::one"), False),
+        (("crucible-app", "hosted_server", "serves"), True),
+        (("crucible-app", "crucible_app", "serves"), False),
+    ):
+        if picks(*test) != expected:
+            verb = "missed" if expected else "also picked"
+            print(f"    FAIL the nextest filter reader {verb} {test}")
+            return 1
+    for expression, test, expected in (
+        ("test(=one)", ("a", "a", "one"), True),
+        ("test(=one)", ("a", "a", "one_more"), False),
+        ("test(~ne_m)", ("a", "a", "one_more"), True),
+        ("test(ne_m)", ("a", "a", "one_more"), True),
+        ("binary(#host*)", ("a", "hosted_server", "t"), True),
+        ("binary(host*)", ("a", "a_hosted_server", "t"), False),
+        ("package(=a) & (test(x) | test(y))", ("a", "a", "y"), True),
+        ("package(=a) & (test(x) | test(y))", ("b", "b", "y"), False),
+        (r"test(/\(a\/b\)/)", ("a", "a", "(a/b)"), True),
+        (r"test(/a\\</)", ("a", "a", "a\\<"), True),
+    ):
+        try:
+            picked = selector(expression)(*test)
+        except ValueError as error:
+            print(f"    FAIL the nextest filter reader refused {expression}, which nextest reads ({error})")
+            return 1
+        if picked != expected:
+            print(f"    FAIL the nextest filter reader read {expression} wrongly for {test}")
+            return 1
+    for expression in (
+        "not package(a)",
+        "package(a) - package(b)",
+        "kind(lib)",
+        "package(a) &",
+        "(package(a)",
+        ")",
+        r"test(a\,b)",
+        "package({pa,pb})",
+        "binary([^a]*)",
+        "test(/(/)",
+        "test(/[[:digit:]]x/)",
+        r"test(/\<a/)",
+        r"test(/\b{start}a/)",
+    ):
+        try:
+            selector(expression)
+        except ValueError:
+            continue
+        print(f"    FAIL the nextest filter reader guessed at {expression} instead of refusing it")
+        return 1
+
+    with tempfile.TemporaryDirectory() as root:
+        path = os.path.join(root, "nextest.toml")
+        with open(path, "w", encoding="utf-8") as file:
+            file.write(
+                "[test-groups]\nconfined = { max-threads = 1 }\n\n"
+                "[[profile.default.overrides]]\nfilter = 'package(a)'\nthreads-required = 1\ntest-group = 'confined'\n\n"
+                "[[profile.ci.overrides]]\nfilter = 'binary(b)'\ntest-group = 'confined'\n\n"
+                "[[profile.default.overrides]]\nfilter = 'package(z)'\nslow-timeout = '60s'\n\n"
+                "[[profile.default.overrides]]\nplatform = 'cfg(windows)'\ntest-group = 'serial'\n"
+            )
+        groups = confining(path)
+        if sorted(groups) != ["confined", "serial"]:
+            print(f"    FAIL the nextest group reader found {sorted(groups)}, not confined and serial")
+            return 1
+        for group, test, expected in (
+            ("confined", ("a", "x", "t"), True),
+            ("confined", ("y", "b", "t"), True),
+            ("confined", ("z", "z", "t"), False),
+            ("serial", ("z", "z", "t"), True),
+        ):
+            if groups[group](*test) != expected:
+                verb = "missed" if expected else "also picked"
+                print(f"    FAIL the nextest group reader {verb} {test} for {group}")
+                return 1
+        if confining(os.path.join(root, "absent.toml")) != {}:
+            print("    FAIL a checkout with no nextest configuration read as grouping tests")
+            return 1
+        with open(path, "w", encoding="utf-8") as file:
+            file.write("[test-groups]\nconfined = { max-threads = 1 }\n")
+        if confining(path) != {}:
+            print("    FAIL a test group no override fills read as grouping tests")
+            return 1
+        for written, said in (
+            (b"[test-groups\n", "is not TOML"),
+            (b"[test-groups]\nconfined = { max-threads = 1 } # \xff\n", "is not TOML"),
+            (b"[[profile.default.overrides]]\nfilter = 'kind(lib)'\ntest-group = 'confined'\n", "teach"),
+            (b"[[profile.default.overrides]]\nfilter = 5\ntest-group = 'confined'\n", "teach"),
+            (b"[[profile.default.overrides]]\nfilter = 'package(a)'\nthreads-required = 2\n", "teach"),
+            (b"[profile.ci]\ntest-threads = 4\n", "teach"),
+            (b"[profile.default]\nthreads-required = 2\n", "teach"),
+        ):
+            with open(path, "wb") as file:
+                file.write(written)
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                refused = test_groups(path)
+            if refused is not None or said not in printed.getvalue():
+                print(f"    FAIL a nextest configuration it cannot read was not refused with {said!r}")
+                return 1
+
+    if os.path.exists(NEXTEST):
+        real = test_groups(NEXTEST)
+        if real is None:
+            return 1
+        for test, expected in (
+            (("crucible-sandbox-local", "sandbox_admission", "admits"), True),
+            (("crucible-builtins", "crucible_builtins", "bash::tests::runs"), True),
+            (("crucible-app", "hosted_server", "serves"), True),
+            (("crucible-builtins", "crucible_builtins", "grep::tests::bash"), False),
+            (("crucible-app", "crucible_app", "serves"), False),
+        ):
+            if any(picks(*test) for picks in real.values()) != expected:
+                verb = "missed" if expected else "also picked"
+                print(
+                    f"    FAIL the test groups of {NEXTEST} as read here {verb} {test}; either"
+                    " confining() misreads it, or it changed on purpose and these rows in"
+                    " self_test() should say what it now groups"
+                )
+                return 1
+
+    jobs = schedule(
+        {
+            ("a", "lib", "a"): ["one"],
+            ("b", "lib", "b"): ["one"],
+            ("c", "lib", "c"): ["one"],
+            ("d", "lib", "d"): ["one"],
+            ("e", "lib", "e"): ["one"],
+            ("f", "lib", "f"): ["one"],
+            ("g", "lib", "g"): ["plain", "bash::tests::one"],
+            ("h", "lib", "h"): ["plain"],
+        },
+        {
+            "first": lambda package, binary, test: (
+                package in ("a", "d", "e") or test.startswith("bash::")
+            ),
+            "second": lambda package, binary, test: package in ("b", "c", "e"),
+        },
+    )
+    if sorted(sorted(job) for job in jobs) != [
+        [("a", "lib", "a"), ("b", "lib", "b"), ("c", "lib", "c")]
+        + [("d", "lib", "d"), ("e", "lib", "e"), ("g", "lib", "g")],
+        [("f", "lib", "f")],
+        [("h", "lib", "h")],
+    ]:
+        print(f"    FAIL reruns of one nextest group would run beside one another: {jobs}")
+        return 1
+    jobs = schedule(
+        {("a", "lib", "a"): ["one"], ("b", "lib", "b"): ["one"], ("c", "lib", "c"): ["one"]},
+        {
+            "first": lambda package, binary, test: package in ("a", "c"),
+            "second": lambda package, binary, test: package in ("a", "b"),
+        },
+    )
+    if jobs != [[("a", "lib", "a"), ("b", "lib", "b"), ("c", "lib", "c")]]:
+        print(f"    FAIL a binary in two groups let one group's reruns run beside it: {jobs}")
+        return 1
+
+    affinity, count = getattr(os, "sched_getaffinity", None), os.cpu_count
+    os.sched_getaffinity, os.cpu_count = (lambda pid: {0, 1}), (lambda: 5)
+    try:
+        allowed = processors()
+    finally:
+        os.cpu_count = count
+        if affinity is None:
+            del os.sched_getaffinity
+        else:
+            os.sched_getaffinity = affinity
+    if allowed != 2:
+        print(f"    FAIL {allowed} processors were counted where the process may run on 2 of 5")
+        return 1
+
+    guarded = threading.Lock()
+    going = set()
+    asked = []
+    overlaps = []
+    # One processor runs no two reruns at once, so only more can show them meeting.
+    meeting = threading.Barrier(2, timeout=5) if processors() > 1 else None
+
+    def answered(binary, names):
+        with guarded:
+            if binary in ("a", "b") and going & {"a", "b"}:
+                overlaps.append(binary)
+            going.add(binary)
+            asked.append(binary)
+        try:
+            if binary in ("c", "d") and meeting:
+                meeting.wait()
+            else:
+                time.sleep(0.02)
+        finally:
+            with guarded:
+                going.discard(binary)
+        return len(names) - (binary in ("b", "d"))
+
+    run = {
+        (package, kind, target): [(None, "one", None), (None, "two", None)]
+        for package, kind, target in (
+            ("a", "lib", "a"),
+            ("b", "lib", "b"),
+            ("c", "lib", "c"),
+            ("d", "test", "d"),
+            ("e", "doc", "e"),
+        )
+    }
+    printed = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(printed):
+            failed = rerun(
+                {key: key[2] for key in run},
+                run,
+                {"confined": lambda package, binary, test: binary in ("a", "b")},
+                answered,
+            )
+    except threading.BrokenBarrierError:
+        print("    FAIL reruns in no nextest group did not run beside one another")
+        return 1
+    if overlaps:
+        print("    FAIL two reruns of one nextest group ran beside one another")
+        return 1
+    if sorted(asked) != ["a", "b", "c", "d"]:
+        print(f"    FAIL the binary reruns asked {sorted(asked)}, not every binary but the examples")
+        return 1
+    lines = printed.getvalue().splitlines()
+    if failed != 1 or len(lines) != 2:
+        print(f"    FAIL two reruns that did not all pass were reported as {lines}, exit {failed}")
+        return 1
+    if " in b lib b " not in lines[0] or " in d test d " not in lines[1]:
+        print(f"    FAIL the two reruns that did not all pass were not named in one order: {lines}")
+        return 1
+
+    now = [0, 0]
+
+    def counted(binary, names):
+        with guarded:
+            now[0] += 1
+            now[1] = max(now)
+        time.sleep(0.02)
+        with guarded:
+            now[0] -= 1
+        return len(names)
+
+    many = {(name, "lib", name): [(None, "one", None)] for name in "abcde"}
+    with contextlib.redirect_stdout(io.StringIO()):
+        rerun({key: key[2] for key in many}, many, {}, counted, width=lambda: 2)
+    if now[1] > 2:
+        print(f"    FAIL {now[1]} binary reruns went at once where two processors allow two")
+        return 1
+
+    # Grouped with d, a reruns after b and c, and b is handed in before a, so
+    # lines printed as the reruns finished, in the order they were scheduled
+    # or in the order they were handed in would name b before a.
+    late = {(name, "lib", name): [(None, "one", None)] for name in "dbca"}
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        rerun(
+            {key: key[2] for key in late},
+            late,
+            {"confined": lambda package, binary, test: package in ("a", "d")},
+            lambda binary, names: len(names) - (binary in ("a", "b")),
+            width=lambda: 1,
+        )
+    lines = printed.getvalue().splitlines()
+    if len(lines) != 2 or " in a lib a " not in lines[0] or " in b lib b " not in lines[1]:
+        print(f"    FAIL reruns that did not all pass were not printed in name order: {lines}")
+        return 1
+
     with tempfile.TemporaryDirectory() as root:
         for where in ("tests", os.path.join(".worktrees", "other", "tests")):
             os.makedirs(os.path.join(root, where))
             with open(os.path.join(root, where, "main.rs"), "w", encoding="utf-8") as file:
-                file.write("fn a_named_case() {\n}\n")
-        found = [slashed(os.path.relpath(one[0], root)) for one in find_function(root, "a_named_case")]
+                file.write("fn a_named_case() {\n}\n\nfn twice() {\n}\n")
+        with open(os.path.join(root, "tests", "near.rs"), "w", encoding="utf-8") as file:
+            file.write("fn a_named_case_too() {\n}\n\nfn twice() {\n}\n")
+        defined = definitions(root)
+        found = [slashed(os.path.relpath(one[0], root)) for one in defined.get("a_named_case", [])]
+        if "tests/near.rs" in found:
+            print("    FAIL the required-case finder let a longer name answer for a case")
+            return 1
         if found != ["tests/main.rs"]:
             print("    FAIL the required-case finder read a checkout nested under a hidden directory")
+            return 1
+        found = sorted(slashed(os.path.relpath(one[0], root)) for one in defined.get("twice", []))
+        if found != ["tests/main.rs", "tests/near.rs"]:
+            print(
+                "    FAIL the required-case finder kept one definition of a name defined twice,"
+                " so an ambiguous case would read as unique"
+            )
             return 1
     return 0
 
@@ -352,6 +679,211 @@ def ran(built, names):
     )
 
 
+def selector(expression):
+    """The tests a nextest filter picks, as a predicate on (package, binary, test name).
+
+    Only the forms a test group here is written in are read: `package()`,
+    `binary()` and `test()`, joined by `&` and `|` and grouped in parentheses,
+    each with nextest's own matchers. Any other form is refused rather than
+    guessed at, since a guess could let two binaries of one group run at once.
+    """
+    if not isinstance(expression, str):
+        raise ValueError(f"the filter {expression!r} is not text")
+    text = expression.strip()
+    tokens = []
+    at = 0
+    while at < len(text):
+        token = FILTER.match(text, at)
+        if not token:
+            raise ValueError(f"cannot read {text[at:].strip()!r}")
+        tokens.append(token)
+        at = token.end()
+    position = 0
+
+    def operator():
+        return tokens[position].group("operator") if position < len(tokens) else None
+
+    def either():
+        nonlocal position
+        alternatives = [both()]
+        while operator() == "|":
+            position += 1
+            alternatives.append(both())
+        return lambda *test: any(alternative(*test) for alternative in alternatives)
+
+    def both():
+        nonlocal position
+        parts = [one()]
+        while operator() == "&":
+            position += 1
+            parts.append(one())
+        return lambda *test: all(part(*test) for part in parts)
+
+    def one():
+        nonlocal position
+        if position == len(tokens):
+            raise ValueError(f"{text!r} ends where a test was expected")
+        token = tokens[position]
+        position += 1
+        if token.group("operator") == "(":
+            inner = either()
+            if operator() != ")":
+                raise ValueError(f"{text!r} leaves a parenthesis open")
+            position += 1
+            return inner
+        if token.group("operator") or token.group("predicate") not in PREDICATES:
+            raise ValueError(f"cannot read {token.group(0).strip()!r}")
+        field = list(PREDICATES).index(token.group("predicate"))
+        matches = name_matcher(token.group("matcher").strip(), PREDICATES[token.group("predicate")])
+        return lambda *test: matches(test[field])
+
+    picks = either()
+    if position != len(tokens):
+        raise ValueError(f"cannot read {tokens[position].group(0).strip()!r}")
+    return picks
+
+
+def name_matcher(text, default):
+    """nextest's `=` equal, `~` contains, `#` glob and `/regex/`, or the predicate's own.
+
+    nextest reads an escape in the first three, and an alternation and a `[^`
+    negated class in a glob, which fnmatch would take as they stand, so all
+    three are refused, as is a regex Python cannot compile. So is one Python
+    warns it may read otherwise, which is where Rust's class syntax, such as
+    `[[:digit:]]` or `&&`, departs from Python's. Both read an escaped ASCII
+    punctuation mark as itself, except that Rust reads `\\<` and `\\>` as word
+    boundaries, and an escaped letter or digit, such as `\\b{start}`, can mean
+    something else in each, so a regex escaping any of these is refused too.
+    """
+    if len(text) > 1 and text.startswith("/") and text.endswith("/"):
+        if any(
+            not (escaped.isascii() and not escaped.isalnum()) or escaped in "<>"
+            for escaped in re.findall(r"\\(.)", text[1:-1], re.DOTALL)
+        ):
+            raise ValueError(f"cannot read {text!r} as a regex, as Rust may read an escape in it otherwise")
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", FutureWarning)
+                pattern = re.compile(text[1:-1])
+        except (re.error, FutureWarning) as error:
+            raise ValueError(f"cannot read {text!r} as a regex ({error})") from error
+        return lambda value: pattern.search(value) is not None
+    form, body = (text[0], text[1:]) if text[:1] in ("=", "~", "#") else (default, text)
+    if "\\" in body or (form == "#" and ("{" in body or "}" in body or "[^" in body)):
+        raise ValueError(f"cannot read {text!r} as it stands")
+    if form == "=":
+        return lambda value: value == body
+    if form == "~":
+        return lambda value: body in value
+    return lambda value: fnmatch.fnmatchcase(value, body)
+
+
+def confining(path):
+    """nextest's test groups, each as a test of which cases belong to it.
+
+    A group is read from the overrides of every profile and every platform,
+    since a test that one profile or platform groups cannot be told apart here
+    from one it does not, and an override naming only a platform groups every
+    test. A checkout with no nextest configuration declares no groups, so
+    nothing takes turns. A profile's `test-threads`, and a `threads-required`
+    other than 1 that a profile sets for every test or an override for some,
+    change how many tests nextest runs at once in a way no group says, so
+    either is refused rather than read as nothing.
+    """
+    try:
+        source = open(path, "rb")
+    except FileNotFoundError:
+        return {}
+    with source:
+        config = tomllib.load(source)
+    picked = {}
+    for name, profile in config.get("profile", {}).items():
+        if "test-threads" in profile:
+            raise ValueError(f"profile {name} sets test-threads")
+        if profile.get("threads-required", 1) != 1:
+            raise ValueError(f"profile {name} sets threads-required")
+        for override in profile.get("overrides", []):
+            if override.get("threads-required", 1) != 1:
+                raise ValueError(f"an override of profile {name} sets threads-required")
+            if "test-group" in override:
+                picks = selector(override["filter"]) if "filter" in override else lambda *test: True
+                picked.setdefault(override["test-group"], []).append(picks)
+    return {
+        group: (lambda *test, picks=picks: any(pick(*test) for pick in picks))
+        for group, picks in picked.items()
+    }
+
+
+def test_groups(path):
+    """The test groups `confining()` reads there, or None once it has said why it cannot."""
+    try:
+        return confining(path)
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as error:
+        print(f"    FAIL {path} is not TOML ({error}); nextest cannot read it either, so mend the file")
+    except ValueError as error:
+        print(
+            f"    FAIL {path} does not read as test groups here ({error});"
+            " teach confining() and selector() what it says, so reruns still take nextest's turns"
+        )
+    return None
+
+
+def schedule(reruns, groups):
+    """The binary reruns that may go at once, each a list taken in turn.
+
+    nextest runs no more of a group's tests at once than the group allows,
+    while a binary here runs every case it is asked for at once. So a binary
+    holding a case of a group takes its turn with every other binary that does,
+    as strictly as a group of one, and two groups that share a binary share
+    their turns. Every other binary goes beside them, as nextest runs it.
+    """
+    jobs = []
+    for key, names in sorted(reruns.items()):
+        package, _, binary = key
+        shared = {
+            group
+            for group, picks in groups.items()
+            if any(picks(package, binary, name) for name in names)
+        }
+        joined = [job for job in jobs if job[0] & shared]
+        for job in joined:
+            jobs.remove(job)
+            shared |= job[0]
+        jobs.append((shared, sorted([key, *(one for job in joined for one in job[1])])))
+    return [keys for _, keys in jobs]
+
+
+def rerun(built, run, groups, ran=ran, width=processors):
+    """Rerun every binary's required cases as `schedule()` allows, and say which did not all pass.
+
+    No more binaries go at once than `width()` processors, which stands in for
+    nextest's one test per processor rather than matching it, since each binary
+    runs its own cases on threads of its own. Every line is printed in one
+    order once all have answered, so the output does not depend on which
+    finished first.
+    """
+    reruns = {key: [name for _, name, _ in cases] for key, cases in run.items() if key[1] != "doc"}
+    with ThreadPoolExecutor(max_workers=width()) as pool:
+        passed = dict(
+            pair
+            for job in pool.map(
+                lambda keys: [(key, ran(built[key], reruns[key])) for key in keys],
+                schedule(reruns, groups),
+            )
+            for pair in job
+        )
+    failed = 0
+    for key, names in sorted(reruns.items()):
+        package, kind, target = key
+        if passed[key] != len(names):
+            print(
+                f"    FAIL {len(names)} required cases in {package} {kind} {target} did not all pass;"
+                " rerun that target and read the assertion"
+            )
+            failed = 1
+    return failed
+
+
 def reported(printed, source, name, line):
     """Whether that output says this one example ran and passed.
 
@@ -377,12 +909,16 @@ def check(stream, listing, silenced, selection):
     if not built:
         print("    FAIL the test selection built no test binary; this check measured nothing")
         return 1
+    groups = test_groups(NEXTEST)
+    if groups is None:
+        return 1
     documented = doctests(listing)
     ignored_examples = doctests(silenced)
 
     failed = 0
     run = {}
     inventory = {}
+    sources = {}
     for case in manifest:
         kind = case["target"]["kind"]
         key = (case["package"], kind, case["target"]["name"])
@@ -452,18 +988,20 @@ def check(stream, listing, silenced, selection):
                 continue
 
             root = "." if case["package"] == "crucible-code" else os.path.join("crates", case["package"])
-            found = find_function(root, name.split("::")[-1])
+            if root not in sources:
+                sources[root] = definitions(root)
+            found = sources[root].get(name.split("::")[-1], [])
             if len(found) != 1:
                 where = ", ".join(one[0] for one in found) or "nowhere"
                 print(f"    FAIL {case['id']} resolves to {len(found)} definitions ({where}); name it uniquely")
                 failed = 1
                 continue
-            path, index, indent, lines = found[0]
+            path, index, indent = found[0]
             if path != case["source"]:
                 print(f"    FAIL {case['id']} moved to {path}; update its source in {MANIFEST}")
                 failed = 1
                 continue
-            region = function_region(lines, index, indent)
+            region = function_region(open(path, encoding="utf-8").read().splitlines(), index, indent)
             if region is None:
                 print(f"    FAIL {case['id']} has no closing brace in its own column in {path}")
                 failed = 1
@@ -498,18 +1036,8 @@ def check(stream, listing, silenced, selection):
             print("    FAIL the run of the required examples failed; rerun it and read the first failure")
             failed = 1
 
-    for key, cases in sorted(run.items()):
-        package, kind, target = key
-        if kind == "doc":
-            continue
-        names = [name for _, name, _ in cases]
-        if ran(built[key], names) != len(names):
-            print(
-                f"    FAIL {len(names)} required cases in {package} {kind} {target} did not all pass;"
-                " rerun that target and read the assertion"
-            )
-            failed = 1
-
+    if rerun(built, run, groups):
+        failed = 1
     return failed
 
 
