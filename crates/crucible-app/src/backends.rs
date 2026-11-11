@@ -649,17 +649,7 @@ impl AgentRow {
     pub fn dialect(&self, mode: Mode, trust: Option<&Trust>, program: Option<&Path>) -> Wire {
         match self {
             Self::Built(row) => {
-                let unusable = trust
-                    .filter(|_| row.catalogued)
-                    .and_then(|trust| Some((trust.file(), trust.unusable()?)));
-                if let Some((file, why)) = unusable {
-                    return Err(Failure::new(&format!(
-                        "The catalog trust state at {} cannot be used ({why}), so no release of \
-                         {} is admitted. Repair or remove that file.",
-                        file.display(),
-                        row.driver.name()
-                    )));
-                }
+                unusable(row, trust)?;
                 (row.dialect)(mode, trust, program)
             }
             Self::Catalog(row) => Ok(row.dialect(mode)),
@@ -731,6 +721,90 @@ impl AgentRow {
             |dialect| dialect.program().to_owned(),
         )
     }
+
+    /// Every name its program is looked for under on `PATH`, in the order
+    /// tried, as its driver's own module lists them: Antigravity's, and for
+    /// every other row the one [`command`](Self::command) gives.
+    #[must_use]
+    pub fn commands(&self) -> Vec<String> {
+        match self {
+            Self::Built(row) => match row.driver {
+                Driver::Antigravity => antigravity::COMMANDS
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+                Driver::Claude | Driver::Catalog => vec![self.command()],
+            },
+            Self::Catalog(_) => vec![self.command()],
+        }
+    }
+
+    /// Its wire for the user's own `program`, one that lies outside
+    /// crucible's install store, fresh for a run in `mode`, as
+    /// [`dialect`](Self::dialect) makes it for a release: for Antigravity,
+    /// the driver's own program, admitted by what it answers; every other
+    /// row's wire is the same either way.
+    ///
+    /// # Errors
+    ///
+    /// As [`dialect`](Self::dialect).
+    pub fn own_dialect(&self, mode: Mode, trust: Option<&Trust>, program: &Path) -> Wire {
+        match self {
+            Self::Built(row) => match row.driver {
+                Driver::Antigravity => {
+                    unusable(row, trust)?;
+                    let offered = antigravity_offered(trust, Some(program))?;
+                    Ok(Box::new(Antigravity::own(
+                        program,
+                        allowing(mode),
+                        &offered,
+                    )))
+                }
+                Driver::Claude | Driver::Catalog => self.dialect(mode, trust, Some(program)),
+            },
+            Self::Catalog(_) => self.dialect(mode, trust, Some(program)),
+        }
+    }
+}
+
+/// Refuses `row`'s releases while `trust`, given, cannot be used, where they
+/// are the catalog's.
+fn unusable(row: &Row, trust: Option<&Trust>) -> Result<(), Failure> {
+    let unusable = trust
+        .filter(|_| row.catalogued)
+        .and_then(|trust| Some((trust.file(), trust.unusable()?)));
+    match unusable {
+        Some((file, why)) => Err(Failure::new(&format!(
+            "The catalog trust state at {} cannot be used ({why}), so no release of {} is \
+             admitted. Repair or remove that file.",
+            file.display(),
+            row.driver.name()
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// The releases of Antigravity `trust` offers that the program at `program`
+/// can be, as [`antigravity::started`] says; none given no trust state.
+///
+/// # Errors
+///
+/// Where the program is kept in a version's directory that the catalog does
+/// not offer.
+fn antigravity_offered(
+    trust: Option<&Trust>,
+    program: Option<&Path>,
+) -> Result<Vec<OwnedPin>, Failure> {
+    let offered = trust.map_or_else(Vec::new, antigravity::offered);
+    if let Some(version) = antigravity::unoffered(&offered, program) {
+        let listed: Vec<&str> = offered.iter().map(|pin| &*pin.version).collect();
+        return Err(Failure::new(&format!(
+            "Version {version} of the agent, where this program is kept, is a release the \
+             catalog does not offer; it offers {}.",
+            listed.join(", ")
+        )));
+    }
+    Ok(antigravity::started(offered, program))
 }
 
 /// The agents one build can run.
@@ -827,16 +901,7 @@ pub(crate) const ANTIGRAVITY: Row = Row {
     // The agent asks about every action itself, and what the
     // conversation's mode allows is answered yes without asking.
     dialect: |mode, trust, program| {
-        let offered = trust.map_or_else(Vec::new, antigravity::offered);
-        if let Some(version) = antigravity::unoffered(&offered, program) {
-            let listed: Vec<&str> = offered.iter().map(|pin| &*pin.version).collect();
-            return Err(Failure::new(&format!(
-                "Version {version} of the agent, where this program is kept, is a release the \
-                 catalog does not offer; it offers {}.",
-                listed.join(", ")
-            )));
-        }
-        let offered = antigravity::started(offered, program);
+        let offered = antigravity_offered(trust, program)?;
         Ok(Box::new(Antigravity::allowing(allowing(mode), &offered)))
     },
     profile_key: "profileDir",

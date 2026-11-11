@@ -133,6 +133,55 @@ fn every_row_agrees_with_its_driver_its_route_and_its_page() {
                 assert_eq!(dialect.program(), row.driver.name(), "{row:?}");
             }
         }
+        let commands = AgentRow::Built(row).commands();
+        let distinct: BTreeSet<&String> = commands.iter().collect();
+        assert_eq!(distinct.len(), commands.len(), "{row:?}: {commands:?}");
+        assert!(
+            commands.contains(&AgentRow::Built(row).command()),
+            "{row:?}: {commands:?}"
+        );
+    }
+}
+
+/// A built-in row is looked for as each command its driver's program is
+/// known by, the names its driver module lists, and is found as any one of
+/// them alone on `PATH` for an instance that names it by its command.
+#[test]
+fn every_row_looks_for_each_of_its_command_names() {
+    for row in REGISTRY.all() {
+        let commands = AgentRow::Built(row).commands();
+        match row.driver {
+            Driver::Antigravity => assert_eq!(commands, antigravity::COMMANDS, "{row:?}"),
+            Driver::Claude | Driver::Catalog => {
+                assert_eq!(commands, [AgentRow::Built(row).command()], "{row:?}");
+            }
+        }
+        for name in &commands {
+            let sample = Sample::new("backends-command-names");
+            let here = sample.root().join("bin");
+            let peer = fake_peer::install(&here, name, &fake_peer::Script::of([]))
+                .expect("the fake peer");
+            let route = Route::External {
+                serves: Serves::Provider("google"),
+                instance: "named".into(),
+                driver: row.driver,
+                executable: AgentRow::Built(row).command().into(),
+                profile: None,
+                model: None,
+                effort: None,
+                location: None,
+                enabled: true,
+            };
+            let agent = Agent::routed(&route, &REGISTRY, |variable| {
+                (variable == "PATH").then(|| here.clone().into_os_string())
+            })
+            .expect("a row");
+            assert!(
+                matches!(agent.discovery(), crucible_external_harnesses::Discovery::Found(found) if found.path() == peer),
+                "{row:?} as {name}: {:?}",
+                agent.discovery()
+            );
+        }
     }
 }
 

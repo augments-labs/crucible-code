@@ -1827,8 +1827,10 @@ fn would_run(
     steps: Option<&crate::launching::Steps>,
 ) -> String {
     let command = AgentRow::Built(row).command();
-    let by_hand =
-        steps.is_some_and(|steps| matches!(steps.discover(&command), Discovery::Found(_)));
+    let names = AgentRow::Built(row).commands();
+    let by_hand = steps.is_some_and(|steps| {
+        matches!(steps.discover(&command, &names), Discovery::Found(_))
+    });
     let managed = crate::installing::executable(home, row, trust).filter(|_| !by_hand);
     managed
         .as_deref()
@@ -1862,7 +1864,9 @@ fn unfound_in(desk: &Desk<'_>, row: &AgentRow, shown: &str) -> Option<[String; 2
             shown,
             &crate::catalog_fetch::trust_in(home),
         ),
-        None => Discovery::Missing.refusal(shown, &row.command()),
+        None => Discovery::Missing
+            .refusal(shown, &crate::launching::looked_for(row))
+            .map(|refused| crate::launching::renamed(&Discovery::Missing, refused)),
     }
 }
 

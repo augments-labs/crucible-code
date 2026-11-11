@@ -524,20 +524,15 @@ fn an_instance_needs_a_driver_and_an_executable() {
     }
 }
 
-/// An antigravity agent left to its usual home would share the sign-in the
-/// Antigravity IDE keeps there, so it is refused without a profile of its own.
+/// An antigravity agent with no profile of its own is read: whether it needs
+/// one depends on whether its program is a release from the store, which only
+/// its launch knows, and the user's own `agy` uses the sign-in it already has.
 #[test]
-fn an_antigravity_instance_needs_a_profile_of_its_own() {
-    let err =
-        mine(r#"{"externalAgents": {"mine": {"driver": "antigravity", "executable": "agy"}}}"#)
-            .unwrap_err();
-    let said = err.to_string();
-    assert!(matches!(err, ConfigError::Needed { .. }), "got {err:?}");
-    assert!(said.contains("profileDir"), "got {said}");
-    assert!(
-        mine(r#"{"externalAgents": {"mine": {"driver": "claude", "executable": "claude"}}}"#)
-            .is_ok()
-    );
+fn an_antigravity_instance_without_a_profile_is_read() {
+    let read =
+        mine(r#"{"externalAgents": {"mine": {"driver": "antigravity", "executable": "agy"}}}"#);
+
+    assert!(read.is_ok(), "got {read:?}");
 }
 
 /// The model is handed to the agent's program as an argument of its own, so

@@ -182,9 +182,12 @@ impl Driver {
         }
     }
 
-    /// Whether an instance must name its profile directory: one whose usual
-    /// home another program of the same vendor keeps its own sign-in in would
-    /// otherwise share it.
+    /// Whether a release of its agent from crucible's install store is started
+    /// only in a profile directory its instance names: one whose usual home
+    /// another program of the same vendor keeps its own sign-in in would
+    /// otherwise share it. The user's own program, outside the store, uses the
+    /// sign-in its user already gave it, so the launch, which knows where the
+    /// program lies, applies this rule and the configuration does not.
     #[must_use]
     pub const fn profile_needed(self) -> bool {
         match self {

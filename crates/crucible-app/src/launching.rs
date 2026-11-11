@@ -295,7 +295,7 @@ use tokio::runtime::Handle;
 
 use crate::access::Route;
 use crate::backends::{
-    AgentRow, Registry, Unbelieved, believed, believed_registry_row, believed_row,
+    AgentRow, Registry, Unbelieved, Wire, believed, believed_registry_row, believed_row,
 };
 use crate::content_use::{self, Consent, Unheld, Unstated, Warned, agent_route};
 use crate::external::External;
@@ -391,6 +391,22 @@ pub enum Unlaunched {
         file: PathBuf,
         /// Why it cannot be used.
         why: Unusable,
+    },
+    /// Its program is a release of an agent whose usual home another program
+    /// of its vendor keeps its own sign-in in, in crucible's install store, and
+    /// its instance names no profile directory for it, so it would sign in
+    /// where that other program does.
+    #[error(
+        "externalAgents.{instance} needs {key}: an {driver} agent keeps its sign-in in a profile \
+         directory of its own, so it is never one another Google product shares."
+    )]
+    Unprofiled {
+        /// The instance, quoted.
+        instance: String,
+        /// The driver, as the configuration names it.
+        driver: &'static str,
+        /// The key of its entry that names its profile directory.
+        key: &'static str,
     },
     /// Its instance sets a profile directory and its catalog entry names no
     /// variable the agent reads its home from, so the directory could not be
@@ -693,10 +709,11 @@ impl Agent {
             return None;
         };
         let (model, effort) = started(*driver, serves, model.as_deref(), *effort);
+        let row = registry.row(*driver, serves.agent())?;
         Some(Self {
             instance: instance.clone(),
-            row: registry.row(*driver, serves.agent())?,
-            discovery: discover(executable, lookup),
+            discovery: discover(executable, &row.commands(), lookup),
+            row,
             profile: profile.as_deref().map(PathBuf::from),
             model,
             effort,
@@ -721,10 +738,11 @@ impl Agent {
             agent.model(),
             agent.effort(),
         );
+        let row = registry.row(agent.driver(), agent.agent())?;
         Some(Self {
             instance: agent.name().into(),
-            row: registry.row(agent.driver(), agent.agent())?,
-            discovery: discover(agent.executable(), lookup),
+            discovery: discover(agent.executable(), &row.commands(), lookup),
+            row,
             profile: agent.profile().map(PathBuf::from),
             model,
             effort,
@@ -751,8 +769,8 @@ impl Agent {
         );
         Self {
             instance: agent.name().into(),
+            discovery: discover(agent.executable(), &row.commands(), lookup),
             row,
-            discovery: discover(agent.executable(), lookup),
             profile: agent.profile().map(PathBuf::from),
             model,
             effort,
@@ -902,8 +920,10 @@ impl Agent {
         match &self.discovery {
             Discovery::Found(_) => Ok(()),
             Discovery::Missing => Err(format!(
-                "no {} command on PATH and none at externalAgents.{instance}.executable",
-                self.row.command()
+                "no {} command on PATH and none at externalAgents.{instance}.executable; if it \
+                 is installed under another name, set externalAgents.{instance}.executable to \
+                 its path or name",
+                looked_for(&self.row)
             )),
             Discovery::NotExecutable(path) => Err(format!("{} is not executable", path.display())),
         }
@@ -964,6 +984,12 @@ impl Agent {
         match &self.discovery {
             Discovery::Found(program) => {
                 if let (Some(programs), AgentRow::Catalog(catalog)) = (&self.believed, row) {
+                    // A catalog row's program is held to the catalog wherever
+                    // it lies: one outside the store is no release of the
+                    // catalog's, and is refused as one not believed.
+                    match Origin::of(programs, program.path()) {
+                        Origin::Stored | Origin::Own => {}
+                    }
                     let store = Store::new(programs.clone());
                     if catalog.source() == ReleaseSource::Registry {
                         // A registry row is held to its own receipt: the probe
@@ -1058,8 +1084,9 @@ impl Agent {
             return Ok((program, None));
         };
         let store = Store::new(programs.to_path_buf());
-        let Some(owner) = stored_under(programs, program.path()) else {
-            return Ok((program, None));
+        let owner = match Origin::of(programs, program.path()) {
+            Origin::Own => return Ok((program, None)),
+            Origin::Stored => stored_under(programs, program.path()).unwrap_or_default(),
         };
         let unstored = |why: String| Unlaunched::Unstored {
             agent: key.to_string(),
@@ -1074,6 +1101,19 @@ impl Agent {
         let Some(version) = store.version_of(&key, program.path()) else {
             return Err(unstored("in no version the store keeps".to_owned()));
         };
+        // A release whose usual home another program of its vendor shares is
+        // started only in a profile of its own; the user's own program, which
+        // returned above, uses the sign-in its user already gave it.
+        if let AgentRow::Built(built) = &self.row
+            && built.driver.profile_needed()
+            && self.profile.is_none()
+        {
+            return Err(Unlaunched::Unprofiled {
+                instance: quoted(&self.instance),
+                driver: built.driver.name(),
+                key: built.profile_key,
+            });
+        }
         // A registry row is held to its own receipt's hash and probe record,
         // which `program` has already read; the signed catalog's trust state
         // says nothing about it and is not read for it.
@@ -1157,6 +1197,28 @@ impl Agent {
         ))
     }
 
+    /// Its wire, fresh for a run in `mode`, admitting the agent as the
+    /// releases `trust` offers: a release in the install store `programs` as
+    /// its row speaks to one, and the user's own program, named by where its
+    /// path leads, as its row speaks to that.
+    ///
+    /// # Errors
+    ///
+    /// Why the agent does not run in `mode`, or is not admitted.
+    pub(crate) fn dialect(&self, mode: Mode, trust: &Trust, programs: &Path) -> Wire {
+        let Some(installed) = self.installed() else {
+            return self.row.dialect(mode, Some(trust), None);
+        };
+        match Origin::of(programs, installed) {
+            Origin::Stored => self.row.dialect(mode, Some(trust), Some(installed)),
+            Origin::Own => {
+                let canonical = std::fs::canonicalize(installed);
+                let program = canonical.as_deref().unwrap_or(installed);
+                self.row.own_dialect(mode, Some(trust), program)
+            }
+        }
+    }
+
     /// The shape every start of it in `workspace` is given.
     fn shape<'a>(&'a self, resume: Option<&'a str>, workspace: &'a Path) -> Shape<'a> {
         Shape {
@@ -1205,6 +1267,28 @@ pub(crate) fn quoted(text: &str) -> String {
     let mut cut: String = escaped.chars().take(QUOTED).collect();
     cut.push('…');
     cut
+}
+
+/// Where an agent's program comes from, as the launch holds it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Origin {
+    /// It lies in crucible's install store, as a release the store keeps or
+    /// somewhere there no release of its own is, which is refused.
+    Stored,
+    /// It lies outside the store: the user's own program, found on `PATH` or
+    /// named by its path.
+    Own,
+}
+
+impl Origin {
+    /// Where the program at `program` comes from, judged as [`stored_under`]
+    /// places it beneath the install store `programs`: own only where it lies
+    /// nowhere in the store, so one in another agent's directory or in no
+    /// version is still the store's.
+    #[must_use]
+    pub fn of(programs: &Path, program: &Path) -> Self {
+        stored_under(programs, program).map_or(Self::Own, |_| Self::Stored)
+    }
 }
 
 /// Crucible's install store: `programs` in crucible's home, beside the
@@ -1510,19 +1594,41 @@ pub(crate) fn read_only(
 
 /// What a refusal over `discovery` says of `row`'s agent called `shown`, as the
 /// sentence and what to do next: for an agent built in whose release `trust`
-/// offers, that what to do is to run the command that installs it. Nothing for
-/// a program that was found.
+/// offers, that what to do is to run the command that installs it. A program
+/// not found is named by every command it was looked for as, and the sentence
+/// says how to name one installed under another. Nothing for a program that
+/// was found.
 pub(crate) fn unfound(
     row: &AgentRow,
     discovery: &Discovery,
     shown: &str,
     trust: &Trust,
 ) -> Option<[String; 2]> {
-    match row {
-        AgentRow::Built(built) => {
-            installing::refusal(built, discovery, shown, &row.command(), trust)
-        }
-        AgentRow::Catalog(_) => discovery.refusal(shown, &row.command()),
+    let looked_for = looked_for(row);
+    let refused = match row {
+        AgentRow::Built(built) => installing::refusal(built, discovery, shown, &looked_for, trust),
+        AgentRow::Catalog(_) => discovery.refusal(shown, &looked_for),
+    };
+    refused.map(|refused| renamed(discovery, refused))
+}
+
+/// Every command `row`'s program is looked for as, as a refusal names them.
+pub(crate) fn looked_for(row: &AgentRow) -> String {
+    row.commands().join(" or ")
+}
+
+/// What a refusal over `discovery` says, `refused`, with how to name a program
+/// installed under a name its row does not know, where none was found.
+pub(crate) fn renamed(discovery: &Discovery, refused: [String; 2]) -> [String; 2] {
+    let [said, next] = refused;
+    match discovery {
+        Discovery::Missing => [
+            format!(
+                "{said} If it is installed under another name, set executable to its path or name."
+            ),
+            next,
+        ],
+        Discovery::Found(_) | Discovery::NotExecutable(_) => [said, next],
     }
 }
 
@@ -1619,18 +1725,41 @@ pub fn startable(
 }
 
 /// What the program configured as `executable` is: the path as written when
-/// it is absolute, else what an absolute lookup on `PATH` finds.
-pub fn discover(executable: &str, lookup: impl Fn(&str) -> Option<OsString>) -> Discovery {
+/// it is absolute, else what an absolute lookup on `PATH` finds. An
+/// `executable` that is one of `names`, the commands its row is known by, is
+/// looked for as each of them in order, and the first found is taken; any
+/// other is looked for as written.
+pub fn discover(
+    executable: &str,
+    names: &[String],
+    lookup: impl Fn(&str) -> Option<OsString>,
+) -> Discovery {
     let written = Path::new(executable);
-    let found = if written.is_absolute() {
-        Some(written.to_path_buf())
+    if written.is_absolute() {
+        return Discovery::of(Some(written));
+    }
+    let known = names.iter().any(|name| name == executable);
+    let tried: Vec<&str> = if known {
+        names.iter().map(String::as_str).collect()
     } else {
-        crucible_builtins::program::on_path(
-            lookup,
-            &crucible_builtins::program::spelled(executable),
-        )
+        vec![executable]
     };
-    Discovery::of(found.as_deref())
+    // The first that can be run, else the first that is there at all.
+    let mut unrunnable = None;
+    for name in tried {
+        let found = crucible_builtins::program::on_path(
+            &lookup,
+            &crucible_builtins::program::spelled(name),
+        );
+        match Discovery::of(found.as_deref()) {
+            runnable @ Discovery::Found(_) => return runnable,
+            there @ Discovery::NotExecutable(_) => {
+                unrunnable.get_or_insert(there);
+            }
+            Discovery::Missing => {}
+        }
+    }
+    unrunnable.unwrap_or(Discovery::Missing)
 }
 
 /// The policy an agent's child runs under: `conversation`'s, with `profile`
@@ -4549,8 +4678,7 @@ impl Runs {
     fn dialect(&self, mode: Mode) -> Result<Box<dyn Dialect>, Failure> {
         let trust = Trust::load(&self.state, SystemTime::now());
         self.agent
-            .row()
-            .dialect(mode, Some(&trust), self.agent.installed())
+            .dialect(mode, &trust, &programs_beside(&self.state))
     }
 }
 
@@ -4704,10 +4832,10 @@ impl Steps {
     }
 
     /// What is installed as `executable`, looked for on the `PATH` every step
-    /// is.
+    /// is, as each of `names` where it is one of them.
     #[must_use]
-    pub fn discover(&self, executable: &str) -> Discovery {
-        discover(executable, |name| {
+    pub fn discover(&self, executable: &str, names: &[String]) -> Discovery {
+        discover(executable, names, |name| {
             (name == "PATH").then(|| self.path.clone()).flatten()
         })
     }
@@ -4881,10 +5009,7 @@ impl Steps {
         // The releases on offer as they are now, which the agent is admitted as.
         let trust = Trust::load(&self.state, SystemTime::now());
         let mut dialect =
-            match chosen
-                .row
-                .dialect(Mode::default(), Some(&trust), chosen.installed())
-            {
+            match chosen.dialect(Mode::default(), &trust, &programs_beside(&self.state)) {
                 Ok(dialect) => dialect,
                 Err(refused) => return Reading::Unreadable(refused),
             };
