@@ -433,3 +433,53 @@ fn an_answer_written_in_after_a_decline_is_sent_instead_of_the_decline() {
     let sent = replies(press(&mut docking, &[enter()]));
     assert_eq!(sent, vec![answered(&["Go"], ""), answered(&["bash"], "")]);
 }
+
+#[test]
+fn the_next_batch_opens_at_its_start_once_the_one_in_front_is_settled() {
+    let mut docking = opened(single(1));
+    press(&mut docking, &[enter()]);
+    docking.waiting(&era(), &[single(1), single(2)]);
+    let _ = replies(press(&mut docking, &[enter()]));
+    docking.answered(QuestionId::numbered(1), Ok(()));
+
+    docking.waiting(&era(), &[single(2)]);
+
+    assert!(docking.is_open() && docking.has_focus());
+    assert_eq!(docking.dock.phase, Phase::Answering);
+    press(&mut docking, &[enter()]);
+    match press(&mut docking, &[enter()]) {
+        Keyed::Submit(Submission { id, replies, .. }) => {
+            assert_eq!(id, QuestionId::numbered(2));
+            assert_eq!(replies, vec![answered(&["Rust"], "")]);
+        }
+        other => panic!("expected a submission, got {other:?}"),
+    }
+}
+
+#[test]
+fn what_became_of_a_submission_while_the_dock_was_closed_shows_on_reopening() {
+    let mut docking = opened(single(1));
+    press(&mut docking, &[enter()]);
+    let _ = replies(press(&mut docking, &[enter()]));
+    assert_eq!(press(&mut docking, &[Pressed::Escape]), Keyed::Closed);
+
+    docking.answered(QuestionId::numbered(1), Err("nothing was sent".to_owned()));
+
+    assert!(!docking.is_open());
+    assert_eq!(docking.toggled(), Toggled::Opened);
+    assert_eq!(
+        docking.dock.phase,
+        Phase::Refused("nothing was sent".to_owned())
+    );
+}
+
+#[test]
+fn what_became_of_a_batch_no_longer_in_front_changes_nothing() {
+    let mut docking = opened(single(1));
+    press(&mut docking, &[enter()]);
+    let _ = replies(press(&mut docking, &[enter()]));
+
+    docking.answered(QuestionId::numbered(2), Err("elsewhere".to_owned()));
+
+    assert_eq!(docking.dock.phase, Phase::Submitting);
+}
