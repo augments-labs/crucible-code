@@ -492,7 +492,8 @@ fn every_address_drawn_shorter_than_written_is_told_whole_and_no_other() {
     let here = "https://github.com/augments-labs/crucible-code";
     let answer = format!(
         "a {here}/pull/1 b [w]({here}/issues/2) c [d](https://example.com/docs/guide/intro) \
-         e [f](https://example.com/docs/guide) g #3 h https://example.com/x/y\n"
+         e [f](https://example.com/docs/guide) g #3 h https://example.com/x/y \
+         i [j](https://example.com/docs)\n"
     );
     assert_eq!(
         shortened(&answer, Some(forge())),
