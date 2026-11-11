@@ -5,13 +5,21 @@
 //! under it is more of the same paragraph. It is held with the break after it
 //! and the start of that line, until the start says what the line is, and is
 //! then given back as written or dropped. A blank line is the paragraph's end,
-//! and so is a line that opens a block of its own -- a heading, an item, a
-//! quote, a fence, a rule, a row of bars, display math, a `<details>` -- which
-//! the reader opens whether or not a backslash stood in front of it, so the
-//! backslash is drawn there as it was written. The break and the line go
-//! through the scan afterwards as if no backslash had stood in front of them,
-//! so everything that watches a line sees the same stream. The hold is the
-//! spaces and a few characters of the line, never more.
+//! and so is a line the reader opens a block with -- a heading, an item with a
+//! bullet or a number, a quote, a fence, a rule, a table, display math, a
+//! `<details>` or a `<summary>` -- or makes the title of the line above, or its
+//! table's delimiter row, which it does whether or not a backslash stood in
+//! front of it, so the backslash is drawn there as it was written. A line that
+//! only starts like one is more of the paragraph: a tab before a marker, a bar
+//! that opens no table, a `-` under an item, a number without its stop and
+//! blank. What the first characters say is read here, and what takes more of
+//! the line is read by the reader's own table and title readers, fed the
+//! characters of the line as the reader's are, so that they decide as those
+//! do. The break and the line go through the scan afterwards as if no
+//! backslash had stood in front of them, so everything that watches a line
+//! sees the same stream. The hold is the spaces and a few characters of the
+//! line, or as much of it as a header, a table or a tag takes to be read, which
+//! those readers bound.
 //! Where the backslash is not in prose -- code, a span, a heading -- it never
 //! reaches this module and is a character like any other, and a reader made
 //! with [`Markdown::unescaped`] reads neither it nor a reference: that is the
@@ -37,6 +45,7 @@
 
 use std::borrow::Cow;
 
+use super::table::{Sight, Table};
 use super::{Inside, MOST, Markdown, PLACEHOLDER, Quoted};
 use crate::color::Slot;
 use crate::row;
@@ -184,7 +193,7 @@ pub(super) fn decoded(text: &str) -> Cow<'_, str> {
 }
 
 /// What the start of the line under a held break says about it.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Verdict {
     /// It may still be either.
     Partly,
@@ -197,25 +206,67 @@ enum Verdict {
 
 /// The longest start of a line that is held to tell what it opens, which is a
 /// numbered item's, `123456789. `, or `\begin{smallmatrix*}` for display math.
+/// A line that starts a tag is held as far as a tag is read, and one the
+/// reader is still watching for a table or a title for as long as it watches.
 const START: usize = 24;
 
 /// A backslash that stands in front of a line break, held with the spaces that
 /// follow the break and as much of the line after them as it takes to tell
 /// what the line is.
-#[derive(Debug, Clone, Default)]
+///
+/// Most of what a line opens is told by its first characters, here. What takes
+/// the reader more than those is told by the reader's own readers, run on over
+/// what is held: the watch on the line above, which an underline or a
+/// delimiter row under it claims, and the block of bars that a line starting
+/// with one opens. They are fed the characters the reader's own are, so that
+/// they decide as those do.
+#[derive(Debug, Clone)]
 pub(super) struct Slashed {
-    /// The blanks after the break.
+    /// The blanks after the break, which are spaces: a tab is the line's.
     spaces: String,
     /// The first characters of the line, past [`START`] only while they are one
-    /// character repeated, the rest of which is counted in `more`.
+    /// character repeated, the rest of which is counted in `more`, or while a
+    /// reader is still reading them.
     text: String,
     /// How many more of the character `text` is made of followed it.
     more: usize,
+    /// The watch on the line above, where a line under it could make a table
+    /// or a title of that one, read on from the break.
+    watch: Option<Table>,
+    /// The block of bars that the line opened with one is, read on.
+    bars: Option<Table>,
+    /// What the watch or the bars settled, which nothing after it changes.
+    settled: Option<Verdict>,
 }
 
 impl Slashed {
-    /// Takes `character`, which is not one of the blanks that lead the line.
+    /// A backslash and its break, after a line that `watch` was watching, if
+    /// it was.
+    fn after(watch: Option<&Table>) -> Self {
+        let watch = watch.filter(|watch| watch.mirrors()).and_then(|watch| {
+            let mut watch = watch.clone();
+            // The break the line ends with: kept while it is still a header.
+            (watch.sees('\n') == Sight::Keep).then_some(watch)
+        });
+        Self {
+            spaces: String::new(),
+            text: String::new(),
+            more: 0,
+            watch,
+            bars: None,
+            settled: None,
+        }
+    }
+
+    /// Whether a reader of the line has yet to say what it is.
+    fn reading(&self) -> bool {
+        self.watch.is_some() || self.bars.is_some()
+    }
+
+    /// Takes `character`, which is not one of the spaces that lead the line,
+    /// into the readers that watch it, and into the start of the line.
     fn take(&mut self, character: char) {
+        self.watches(character);
         let first = self.text.chars().next();
         if self.text.len() >= START
             && first == Some(character)
@@ -224,6 +275,38 @@ impl Slashed {
             self.more = self.more.saturating_add(1);
         } else {
             self.text.push(character);
+        }
+    }
+
+    /// Feeds `character`, which the line has, to the reader's own readers.
+    fn watches(&mut self, character: char) {
+        if self.settled.is_some() {
+            return;
+        }
+        if let Some(mut watch) = self.watch.take() {
+            match watch.sees(character) {
+                // A delimiter row, or an underline: the line above is a header
+                // or a title, and the backslash is in it.
+                Sight::Under(_) => self.settled = Some(Verdict::Opens),
+                Sight::Keep if character == '\n' => self.settled = Some(Verdict::Opens),
+                Sight::Keep => self.watch = Some(watch),
+                Sight::Release | Sight::Over | Sight::Spill => {}
+            }
+        }
+        if self.text.is_empty() && self.more == 0 && character == '|' {
+            let mut bars = Table::opening();
+            bars.takes(character);
+            self.bars = Some(bars);
+        } else if let Some(mut bars) = self.bars.take() {
+            // The block goes on with a bar at the start of its second line,
+            // which is its delimiter row, or it is no table.
+            if (bars.fresh() && character != '|') || !bars.takes(character) || !bars.possible() {
+                self.settled = Some(Verdict::Continues);
+            } else if bars.delimited() {
+                self.settled = Some(Verdict::Opens);
+            } else {
+                self.bars = Some(bars);
+            }
         }
     }
 
@@ -239,18 +322,38 @@ impl Slashed {
         format!("\n{}{marks}{repeated}{rest}", self.spaces)
     }
 
-    /// What the line says it is, given whether the line above it was a quote's
-    /// and whether this reader opens display math.
+    /// What the line says it is, given whether the answer has ended, whether
+    /// the line above it was a quote's and whether this reader opens display
+    /// math.
     fn says(&self, ended: bool, quoted: bool, display: bool) -> Verdict {
+        if let Some(settled) = self.settled {
+            return settled;
+        }
+        if ended {
+            // The end of the answer is the break that ends the line, which an
+            // underline or a delimiter row complete at it is under.
+            let claimed = self
+                .watch
+                .clone()
+                .is_some_and(|mut watch| matches!(watch.sees('\n'), Sight::Keep | Sight::Under(_)));
+            if claimed {
+                return Verdict::Opens;
+            }
+        }
+        match self.opening(ended, quoted, display) {
+            Verdict::Continues if self.reading() && !ended => Verdict::Partly,
+            verdict => verdict,
+        }
+    }
+
+    /// What the first characters of the line say it opens, which is the whole
+    /// of it for a line that opens with a mark and a blank.
+    fn opening(&self, ended: bool, quoted: bool, display: bool) -> Verdict {
         let text = if ended {
-            // The end of the answer is the break that ends the line.
             format!("{}\n", self.text)
         } else {
             self.text.clone()
         };
-        if self.text.len() > START {
-            return Verdict::Continues;
-        }
         let Some(first) = text.chars().next() else {
             return if ended {
                 Verdict::Opens
@@ -258,6 +361,14 @@ impl Slashed {
                 Verdict::Partly
             };
         };
+        let limit = match first {
+            _ if self.reading() => usize::MAX,
+            '<' => super::TAG_CAP,
+            _ => START,
+        };
+        if self.text.len() > limit {
+            return Verdict::Continues;
+        }
         let run = text.chars().take_while(|c| *c == first).count();
         let after = text.chars().nth(run);
         let length = run + self.more;
@@ -269,58 +380,58 @@ impl Slashed {
             }
         };
         match (first, after) {
-            // A blank line, and a row of bars.
-            ('\n' | '|', _) => Verdict::Opens,
+            // A blank line.
+            ('\n', _) => Verdict::Opens,
             // The hashes of a heading.
             ('#', Some(after)) => by(after == ' '),
-            // A row of `=` is the underline of a title.
-            ('=', Some(after)) => by(after == '\n'),
-            // A bullet, a rule, an underline, or the delimiter of a table.
+            // A bullet, or a rule.
             ('-' | '+' | '*' | '_', Some(after)) => {
                 by((first != '_' && length == 1 && after == ' ')
-                    || (first != '+' && length >= 3 && after == '\n')
-                    || (first == '-' && matches!(after, '\n' | '|' | ':')))
+                    || (first != '+' && length >= 3 && after == '\n'))
             }
             // A fence.
             ('`' | '~', _) if length >= 3 => Verdict::Opens,
             // A quote opens one, and the line of a quote it is in goes on with
             // it.
             ('>', Some(after)) => by(length == 1 && after == ' ' && !quoted),
-            ('0'..='9', _) => {
-                let digits = text.chars().take_while(char::is_ascii_digit).count();
-                match (digits <= super::NUMBERED, text.chars().nth(digits)) {
-                    (true, None) => Verdict::Partly,
-                    (true, Some('.' | ')')) => match text.chars().nth(digits + 1) {
-                        None => Verdict::Partly,
-                        Some(blank) => by(blank == ' '),
-                    },
-                    (false, _) | (true, Some(_)) => Verdict::Continues,
-                }
-            }
+            // The number of an item, which the reader draws as one when a
+            // blank follows it.
+            ('0'..='9', _) => numbered(&text),
             ('$' | '\\', _) if display => match super::opener(&format!("{}{text}", self.spaces)) {
                 super::Opener::Partly => Verdict::Partly,
                 super::Opener::Whole(_) => Verdict::Opens,
                 super::Opener::Not => Verdict::Continues,
             },
-            ('<', _) => block_tag(&text),
+            ('<', _) => match super::shape(&self.text) {
+                super::Shape::Whole(tag) => by(matches!(
+                    tag.name,
+                    super::Name::Details | super::Name::Summary
+                )),
+                super::Shape::Partly => Verdict::Partly,
+                super::Shape::Not => Verdict::Continues,
+            },
             // Nothing but a run of one character so far.
-            ('#' | '=' | '-' | '+' | '*' | '_' | '>' | '`' | '~', None) => Verdict::Partly,
+            ('#' | '-' | '+' | '*' | '_' | '>' | '`' | '~', None) => Verdict::Partly,
             _ => Verdict::Continues,
         }
     }
 }
 
-/// What `text`, which starts with `<`, says about a line that opens with a
-/// `<details>` or a `<summary>`, either of them closing as well.
-fn block_tag(text: &str) -> Verdict {
-    const NAMES: [&str; 2] = ["details", "summary"];
-    let rest = text.strip_prefix('<').unwrap_or_default();
-    let rest = rest.strip_prefix('/').unwrap_or(rest);
-    let letters = rest.chars().take_while(char::is_ascii_alphabetic).count();
-    let name = rest.get(..letters).unwrap_or_default().to_ascii_lowercase();
-    match rest.chars().nth(letters) {
-        None if NAMES.iter().any(|known| known.starts_with(&name)) => Verdict::Partly,
-        Some(' ' | '>' | '/') if NAMES.contains(&name.as_str()) => Verdict::Opens,
+/// What `text`, which starts with a digit, says about a line: its first word
+/// is the number of an item when it is digits and a stop, and a blank, a tab or
+/// the line's end follows it.
+fn numbered(text: &str) -> Verdict {
+    let word = text.split(char::is_whitespace).next().unwrap_or_default();
+    if word.len() < text.len() {
+        return if super::kind::ordinal(word) {
+            Verdict::Opens
+        } else {
+            Verdict::Continues
+        };
+    }
+    let digits = word.chars().take_while(char::is_ascii_digit).count();
+    match word.get(digits..) {
+        Some("" | "." | ")") if digits <= super::NUMBERED => Verdict::Partly,
         _ => Verdict::Continues,
     }
 }
@@ -353,17 +464,14 @@ impl Markdown {
                 && self.passing.is_none()
             {
                 self.escaped = false;
-                self.slashed = Some(Slashed::default());
+                self.slashed = Some(Slashed::after(self.table.as_ref().filter(|_| !self.told)));
                 return true;
             }
             return false;
         };
-        if held.text.is_empty()
-            && held.more == 0
-            && matches!(character, ' ' | '\t')
-            && held.spaces.len() < MOST
-        {
+        if held.text.is_empty() && held.more == 0 && character == ' ' && held.spaces.len() < MOST {
             held.spaces.push(character);
+            held.watches(character);
             return true;
         }
         held.take(character);

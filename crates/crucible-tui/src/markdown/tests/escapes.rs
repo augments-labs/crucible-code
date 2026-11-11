@@ -155,7 +155,14 @@ fn a_backslash_before_a_line_the_answer_ends_in_the_middle_of_is_drawn_as_the_li
     // opens, and the answer's end is the line saying it opens nothing.
     assert_eq!(shown("first\\\n#"), "first\n#");
     assert!(shown("first\\\n-").starts_with("first\\"), "an underline");
-    assert_eq!(shown("first\\\n1."), "first\n1.");
+    // A number and its stop are the item's, and the end is the blank after.
+    assert_eq!(shown("first\\\n1."), "first\\\n1.");
+    assert_eq!(shown("first\\\n1.5"), "first\n1.5");
+    // A block of bars is a table with its delimiter row, whole.
+    assert_eq!(
+        shown("first\\\n| a | b |\n|---|---|"),
+        "first\n| a | b |\n|---|---|"
+    );
     assert_eq!(shown("first\\\n<det"), "first\n<det");
     assert_eq!(shown("first\\\n  "), "first\\\n  ");
 }
@@ -264,6 +271,181 @@ fn a_backslash_hard_break_is_the_same_cut_anywhere() {
             "{answer:?}"
         );
     }
+}
+
+/// A line and what is written under it, and whether the reader opens a block
+/// of its own there, which is where a backslash at the end of the first line
+/// stays. A line it goes on with, and a line that only starts like a block, is
+/// more of the paragraph.
+///
+/// What the reader does is read off the answer without the backslash: the
+/// bullet, the number, the heading, the rule, the quote, the fence, the table,
+/// the display math and the `<details>` are drawn or handed on as what they
+/// are, or the line above becomes a title; and the same answer with the
+/// backslash must draw the same, the backslash kept where the reader opened
+/// something and gone where it did not.
+const AGREEMENT: [(&str, &str, bool); 64] = [
+    // A numbered item: a stop and a blank or the end of the line after it.
+    ("first", "1. x\n", true),
+    ("first", "1) x\n", true),
+    ("first", "1.\tx\n", true),
+    ("first", "1.\n", true),
+    ("first", "1)\n", true),
+    ("first", "123456789. x\n", true),
+    ("- a", "1.\n", true),
+    ("first", "1.5 times\n", false),
+    ("first", "12)maybe\n", false),
+    ("first", "1.x\n", false),
+    ("first", "1234567890. x\n", false),
+    // A bullet and a heading, at the margin or after spaces, and not after a
+    // tab.
+    ("first", "- x\n", true),
+    ("first", "* x\n", true),
+    ("first", "+ x\n", true),
+    ("first", "   - x\n", true),
+    ("first", "    - x\n", true),
+    ("first", "    1. x\n", true),
+    ("first", "     ---\n", true),
+    ("first", "\t- x\n", false),
+    ("first", "# h\n", true),
+    ("first", "   # h\n", true),
+    ("first", "\t# h\n", false),
+    ("first", "#h\n", false),
+    ("first", "-x\n", false),
+    // An underline says what the first line is the title of, which a list
+    // item is not.
+    ("first", "-\n", true),
+    ("first", "=\n", true),
+    ("first", "---\n", true),
+    ("- a", "-\n", false),
+    ("- a", "- b\n", true),
+    // A row of bars is the start of a table only with its delimiter row.
+    ("first", "|\n", false),
+    ("first", "| not a table\n", false),
+    ("first", "|a|b|\n", false),
+    ("first", "| a | b |\n|---|---|\n| 1 | 2 |\n", true),
+    ("a | b", "| c | d\n", false),
+    ("a | b", "|---|---|\n", true),
+    ("a | b", "---|---\n", true),
+    ("a | b", "---|-x\n", false),
+    ("first", "-|-\n", false),
+    ("first", "-:\n", false),
+    ("first", "--:\n", false),
+    ("a | b", "-:|-:\n", true),
+    ("a | b", "- x\n", true),
+    ("a | b", "1.\n", true),
+    ("> q", "| a | b |\n|---|---|\n", true),
+    ("- a", "| a | b |\n|---|---|\n", true),
+    ("- a", "  | a | b |\n  |---|---|\n", false),
+    // A quote, a fence, a rule, display math and the tags of a block.
+    ("first", "> q\n", true),
+    ("first", ">q\n", false),
+    ("first", "```\ncode\n```\n", true),
+    ("first", "~~~\ncode\n~~~\n", true),
+    ("first", "***\n", true),
+    ("first", "___\n", true),
+    ("- a", "---\n", true),
+    ("first", "***  \n", false),
+    ("first", "---  \n", true),
+    ("first", "* * *\n", true),
+    ("first", "$$\nx\n$$\n", true),
+    ("first", "$5 and $6\n", false),
+    (
+        "first",
+        "<details>\n<summary>s</summary>\nb\n</details>\n",
+        true,
+    ),
+    ("first", "<details open>\n", true),
+    ("first", "<b>not a block</b>\n", false),
+    // Ordinary prose.
+    ("first", "second line\n", false),
+    ("first", "**bold** word\n", false),
+    ("first", "   \n", true),
+];
+
+/// What `head`, a backslash, a break and `line` draw, held to what is in
+/// [`AGREEMENT`] for it: `Some` says what is wrong.
+fn disagrees(head: &str, line: &str, opens: bool) -> Option<String> {
+    let with = format!("{head}\\\n{line}");
+    let without = format!("{head}\n{line}");
+    let plain = drawn(&standing(ended(&without)));
+    let said = drawn(&standing(ended(&with)));
+    // Where the reader opened a block the backslash stays among what is drawn,
+    // in the line it ended or in the title it is part of, and nothing else
+    // changes but the width of a rule under that title; where it did not,
+    // nothing of it is drawn.
+    let bare = |text: &str| -> String {
+        text.chars()
+            .filter(|c| !matches!(c, '\\' | '\u{2500}' | '\u{2501}' | '\u{253c}'))
+            .collect()
+    };
+    let agrees = if opens {
+        said.contains('\\') && bare(&said) == bare(&plain)
+    } else {
+        said == plain
+    };
+    if !agrees {
+        return Some(format!("{with:?} opens a block: {opens}, drew {said:?}"));
+    }
+    if slots(&standing(ended(&with))) != slots(&standing(ended(&without))) {
+        return Some(format!("{with:?} drew other slots than {without:?}"));
+    }
+    None
+}
+
+#[test]
+fn a_backslash_is_kept_exactly_where_the_reader_opens_a_block() {
+    let mut misses = Vec::new();
+    for (head, line, opens) in AGREEMENT {
+        // The line whole, and the answer ended in the middle of it, which is
+        // the break that ends it.
+        misses.extend(disagrees(head, line, opens));
+        let open = line.trim_end_matches('\n');
+        // A block of bars the answer ends in the delimiter row of is no table:
+        // that row is not whole, and the answer's end is no row.
+        let bars = head != "a | b" && open.ends_with("|---|---|");
+        if open != line && !open.is_empty() && !bars {
+            misses.extend(disagrees(head, open, opens));
+        }
+
+        // Cut anywhere, between the backslash and its break and after it among
+        // them, and a character at a time, it is drawn as whole.
+        let with = format!("{head}\\\n{line}");
+        drawn_the_same_cut_anywhere(&with);
+        assert_eq!(
+            drawn_a_character_at_a_time(&with),
+            drawn(&standing(ended(&with))),
+            "{with:?}"
+        );
+        let trimmed = with.trim_end_matches('\n');
+        if trimmed.len() > head.len() + 2 {
+            drawn_the_same_cut_anywhere(trimmed);
+        }
+    }
+    assert!(misses.is_empty(), "{misses:#?}");
+}
+
+#[test]
+fn a_backslash_hold_ends_where_the_reader_ends_what_it_reads() {
+    // A line of bars is read for a table no longer than a table is, a header
+    // no longer than a header is, and no other line is held past its start.
+    for (answer, held) in [
+        (format!("first\\\n|{}", "x".repeat(20_000)), false),
+        (format!("a | b\\\n{}", "-|".repeat(100)), false),
+        (format!("first\\\n{}", "x".repeat(200)), false),
+        (format!("first\\\n{}", "- ".repeat(5)), false),
+        ("first\\\n|a|b|".to_owned(), true),
+        ("a | b\\\n--".to_owned(), true),
+        ("first\\\n<details open".to_owned(), true),
+    ] {
+        let mut markdown = Markdown::default();
+        read(&mut markdown, &answer);
+        assert_eq!(markdown.slashed.is_some(), held, "{:?}", &answer[..20]);
+    }
+    let long = format!("first\\\n|{}\nsecond", "x".repeat(9_000));
+    let plain = format!("first\n|{}\nsecond", "x".repeat(9_000));
+    assert_eq!(shown(&long), plain);
+    assert_eq!(drawn_a_character_at_a_time(&long), plain);
 }
 
 /// What a whole answer says in the entities below, the way it is written and
