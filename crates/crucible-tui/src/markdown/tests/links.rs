@@ -346,3 +346,69 @@ fn every_address_drawn_shorter_than_written_is_told_whole_and_no_other() {
         ]
     );
 }
+
+#[test]
+fn an_image_is_its_alt_words_in_brackets_and_its_quiet_address() {
+    // Nothing is fetched: what a terminal can show of a picture is what the
+    // answer said it was, and where it is.
+    let cases = [
+        (
+            "see ![the screenshot](out/shot.png) now",
+            "see [image: the screenshot] (out/shot.png) now",
+            vec![("[image: the screenshot]", "out/shot.png")],
+        ),
+        (
+            "see ![](https://example.com/a.png) now",
+            "see [image] (example.com/a.png) now",
+            vec![("[image]", "https://example.com/a.png")],
+        ),
+        (
+            "see wow![a](b.png) now",
+            "see wow[image: a] (b.png) now",
+            vec![("[image: a]", "b.png")],
+        ),
+        // A bang that opens nothing is the bang it was.
+        ("see ![a] now!", "see ![a] now!", vec![]),
+        ("see ![a]\nnow", "see ![a]\nnow", vec![]),
+        ("see ! [a](b) now", "see ! a (b) now", vec![("a", "b")]),
+        ("see \\![a](b) now", "see \\!a (b) now", vec![("a", "b")]),
+        ("see `![a](b)` now", "see ![a](b) now", vec![]),
+    ];
+    for (answer, drawn, pointed) in cases {
+        let said = linked(answer, None);
+        assert_eq!(wrote(&said), drawn, "{answer:?}");
+        assert_eq!(points(&said), pointed, "{answer:?}");
+    }
+
+    // A picture in the checkout points at the file, as any link to a path.
+    let said = opened("see ![the screenshot](out/shot.png) now");
+    assert_eq!(
+        points(&said),
+        [("[image: the screenshot]", "file:///repo/out/shot.png")]
+    );
+}
+
+#[test]
+fn an_image_cut_anywhere_is_the_image_it_was() {
+    for answer in [
+        "see ![the screenshot](out/shot.png) now\n",
+        "see ![](https://example.com/a.png) now\n",
+        "wow! ![a](b) now!",
+        "![a] b!",
+    ] {
+        let whole = linked(answer, None);
+        for cut in (0..=answer.len()).filter(|&cut| answer.is_char_boundary(cut)) {
+            let (head, tail) = answer.split_at(cut);
+            let mut markdown = Markdown::default();
+            let mut said = Vec::new();
+            let mut into = |slot, text: &str, link: Option<&str>| {
+                said.push((slot, text.to_owned(), link.map(str::to_owned)));
+            };
+            markdown.read_runs(head, ROOM, &mut into);
+            markdown.read_runs(tail, ROOM, &mut into);
+            markdown.finish_runs(ROOM, &mut into);
+            assert_eq!(wrote(&said), wrote(&whole), "{answer:?} cut at {cut}");
+            assert_eq!(points(&said), points(&whole), "{answer:?} cut at {cut}");
+        }
+    }
+}

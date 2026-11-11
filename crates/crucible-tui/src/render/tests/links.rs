@@ -40,3 +40,23 @@ fn a_pull_request_address_is_drawn_as_its_reference() {
         "{rows:#?}"
     );
 }
+
+#[test]
+fn an_image_reference_keeps_its_words_and_drops_its_marker() {
+    let answer = "look at ![the screenshot](out/shot.png) here\n";
+    // Cut anywhere, the bang and its bracket included, the row is the same.
+    for cut in (0..=answer.len()).filter(|&cut| answer.is_char_boundary(cut)) {
+        let mut drawn = reading(100, 4);
+        drawn.answer_in_pieces(answer, &[cut]);
+        let rows = drawn.rows();
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("look at [image: the screenshot] (out/shot.png) here")),
+            "cut at {cut}: {rows:#?}"
+        );
+        assert!(
+            !rows.iter().any(|row| row.contains('!')),
+            "cut at {cut}: {rows:#?}"
+        );
+    }
+}

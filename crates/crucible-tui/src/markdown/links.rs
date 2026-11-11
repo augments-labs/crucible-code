@@ -12,6 +12,10 @@
 //!   past [`QUIET`] columns, its host and first segment and an ellipsis.
 //!   Nothing standing before the ellipsis is wider than [`QUIET`].
 //! - An address drawn as its own words has nothing after it.
+//! - An image, `![alt](target)`, is the words `[image: alt]`, or `[image]`
+//!   with no alt, followed by its quiet address; nothing is fetched. Only the
+//!   written-out form is one: a bang in front of any other bracket is the
+//!   character it was, as is a bang a backslash stood in front of.
 //!
 //! Invariants:
 //!
@@ -20,13 +24,16 @@
 //!   [`Said::Aside`], never as a run.
 //! - The whole of every address drawn shorter than it was written is told as
 //!   [`Said::Shortened`], so the record can list it; nothing else is.
-//! - A reader showing a block exactly as written draws every link as the base
-//!   reader did: its words and nothing after them.
+//! - A reader showing a block exactly as written draws a link as its words
+//!   and nothing after them, and reads no image.
+//! - A bang ending a delta is held until the next delta says whether a bracket
+//!   follows, and said the moment anything else does or the line or message
+//!   ends: one character, and never more.
 //! - The scan's own channel carries both as a run whose address is
 //!   [`UNLINKED`], which no link ever has, and [`said`] is the one place that
 //!   turns them back into what they are.
 
-use super::{Link, Markdown, Part, SCHEMES, Said, Spelled, WWW, escapes, spelled};
+use super::{Inside, Link, Markdown, Part, Retract, SCHEMES, Said, Spelled, WWW, escapes, spelled};
 use crate::color::Slot;
 use crate::forge::Reference;
 use crate::glyphs::Glyphs;
@@ -164,7 +171,19 @@ impl Markdown {
 
         let target = target(&link.target);
         let label = escapes::decoded(&link.label);
-        let words = if label.is_empty() { target } else { &label };
+        let pictured;
+        let words = if link.image {
+            pictured = if label.is_empty() {
+                String::from("[image]")
+            } else {
+                format!("[image: {label}]")
+            };
+            &pictured
+        } else if label.is_empty() {
+            target
+        } else {
+            &label
+        };
 
         let file = self.files.as_ref().and_then(|files| files.address(target));
         let address = file.as_deref().unwrap_or(target);
@@ -185,6 +204,93 @@ impl Markdown {
         let words = if words.is_empty() { address } else { &words };
         self.drew(words, address, Some(address), say);
         self.previous = words.chars().next_back().unwrap_or(']');
+    }
+
+    /// Whether a `!` ending a run where the scan stands could be an image's.
+    ///
+    /// Prose, as a link's bracket is; and not where the text is drawn as
+    /// written, a key, a script, or a block shown as its source.
+    pub(super) fn images(&self) -> bool {
+        self.inside == Inside::Prose
+            && !self.line.code
+            && !self.line.key
+            && self.script.is_none()
+            && !self.unescaped
+    }
+
+    /// Opens a link at a bracket, saying the run `before` it first: an
+    /// image's where that run ends in a bang or `banged` says the last delta
+    /// did, the bang being the image's and said nowhere.
+    pub(super) fn opens(
+        &mut self,
+        before: &str,
+        banged: bool,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) {
+        let image = banged || (banging(before) && self.images());
+        self.say(unbanged(before, image && !banged), say);
+        self.link = Some(Link {
+            first: !self.started,
+            image,
+            ..Link::default()
+        });
+        self.started = true;
+    }
+
+    /// Settles the bang the last delta ended in, before `character` is read.
+    /// Answers whether it opens an image with this bracket; anywhere else it
+    /// is the character it was, said in front of anything this one says.
+    pub(super) fn unbang(
+        &mut self,
+        character: char,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) -> bool {
+        if !std::mem::take(&mut self.bang) {
+            return false;
+        }
+        let banged = character == '[' && self.images();
+        if !banged {
+            self.say("!", say);
+        }
+        banged
+    }
+
+    /// Says what is left of a delta's run, `fresh` where the delta is one an
+    /// answer streamed rather than text read again.
+    ///
+    /// A bang it ends in may be an image's, and only the next delta can say:
+    /// it is held, the one character this reader holds across a delta's end
+    /// for no block, and only where nothing is owed first.
+    pub(super) fn ends(
+        &mut self,
+        rest: &str,
+        fresh: bool,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) {
+        let holds = fresh
+            && banging(rest)
+            && self.images()
+            && self.ready.is_none()
+            && self.retract != Retract::Owed;
+        self.say(unbanged(rest, holds), say);
+        // An empty delta settles nothing, and leaves a bang held as it was.
+        self.bang |= holds;
+    }
+
+    /// Says a bang a kept backslash stood in front of, with it, rather than
+    /// leaving it at the end of a run for a bracket to make an image of.
+    /// Answers whether `character` was that bang.
+    pub(super) fn kept_bang(
+        &mut self,
+        character: char,
+        say: &mut dyn FnMut(Slot, &str, Option<&str>),
+    ) -> bool {
+        if character != '!' {
+            return false;
+        }
+        self.say("!", say);
+        self.previous = character;
+        true
     }
 }
 
@@ -256,11 +362,30 @@ fn quiet(target: &str, glyphs: Glyphs) -> (String, bool) {
     )
 }
 
+/// Whether `run` ends in a `!` that could stand in front of an image's
+/// bracket. One a backslash stood in front of was said with it, and is in no
+/// run.
+fn banging(run: &str) -> bool {
+    run.ends_with('!')
+}
+
+/// `run` without the bang it ends in, where `drops` says it is an image's.
+fn unbanged(run: &str, drops: bool) -> &str {
+    if drops {
+        run.strip_suffix('!').unwrap_or(run)
+    } else {
+        run
+    }
+}
+
 /// Writes a link back as the characters it was written with.
 ///
 /// Exactly them, in order, so a bracket that was never a link costs the reader
 /// nothing at all.
 pub(super) fn spill(link: &Link, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+    if link.image {
+        say(Slot::Plain, "!", None);
+    }
     say(Slot::Plain, "[", None);
     if !link.label.is_empty() {
         say(Slot::Plain, &link.label, None);

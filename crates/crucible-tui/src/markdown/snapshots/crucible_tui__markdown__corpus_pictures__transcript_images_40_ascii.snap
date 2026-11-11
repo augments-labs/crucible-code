@@ -4,12 +4,12 @@ expression: "pictured(\"images\", 40, Glyphs::Ascii)"
 ---
 A picture from the checkout:            
                                         
-!<Link>the build passing</>                      
+<Link>[image: the build passing]</>              
 <Quiet>(docs/images/build.png)</>                 
                                         
 A picture from the network:             
                                         
-!<Link>a diagram of the flow</>                  
+<Link>[image: a diagram of the flow]</>          
 <Quiet>(example.com/flow.png)</>                  
                                         
 The corpus ends here.

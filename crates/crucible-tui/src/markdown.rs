@@ -1401,6 +1401,9 @@ struct Link {
     /// Whether the bracket opened the line, where a footnote's label is its
     /// definition rather than a reference to it.
     first: bool,
+    /// Whether a `!` stood in front of the bracket, which makes the link an
+    /// image: one written out in full, and nothing else a bracket can open.
+    image: bool,
 }
 
 impl Link {
@@ -1907,6 +1910,11 @@ pub struct Markdown {
     /// What lays out a block shown as written, display math among them: its
     /// words are source, and source is what was written.
     unescaped: bool,
+    /// Whether the delta ended in a `!` of prose that has not been said,
+    /// because the bracket that would make it an image's may open the next.
+    ///
+    /// One character, said the moment anything but that bracket arrives.
+    bang: bool,
     /// Why the fence being read was not drawn, where it is a held fence that
     /// ran past its cap, so the frame it opens says so.
     ///
@@ -2201,6 +2209,8 @@ impl Markdown {
         for (at, character) in delta.char_indices() {
             let next = at.saturating_add(character.len_utf8());
 
+            let banged = self.unbang(character, say);
+
             // A block closed on the character before this one, and goes out
             // before anything after it does; so does the line it takes back.
             if self.ready.is_some() || self.retract == Retract::Owed {
@@ -2374,6 +2384,10 @@ impl Markdown {
                 self.started = true;
                 self.previous = '\\';
                 kept = true;
+                if self.kept_bang(character, say) {
+                    run = next;
+                    continue;
+                }
             }
 
             if character == '\n' {
@@ -2406,12 +2420,7 @@ impl Markdown {
                 self.started = true;
                 run = next;
             } else if self.opens_link(character) {
-                self.say(delta.get(run..at).unwrap_or_default(), say);
-                self.link = Some(Link {
-                    first: !self.started,
-                    ..Link::default()
-                });
-                self.started = true;
+                self.opens(delta.get(run..at).unwrap_or_default(), banged, say);
                 run = next;
             } else if self.opens_table(character) {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
@@ -2476,7 +2485,7 @@ impl Markdown {
             }
         }
 
-        self.say(delta.get(run..).unwrap_or_default(), say);
+        self.ends(delta.get(run..).unwrap_or_default(), fresh, say);
         self.ready.is_some().then_some(delta.len())
     }
 
@@ -3455,10 +3464,10 @@ impl Markdown {
             (Part::Between, '(') if carries => link.part = Part::Target,
             // A second label only where there is a definition to name: with
             // none, the bracket after `]` is as ordinary as it ever was.
-            (Part::Between, '[') if carries && self.reads_definitions() => {
+            (Part::Between, '[') if carries && !link.image && self.reads_definitions() => {
                 link.part = Part::Second;
             }
-            (Part::Between, ':') if carries && self.opens_definition(&link) => {
+            (Part::Between, ':') if carries && !link.image && self.opens_definition(&link) => {
                 self.defining = Some(Defining {
                     label: link.label,
                     rest: String::new(),
@@ -3484,7 +3493,7 @@ impl Markdown {
             // is the character that says so, and is the caller's again: the
             // header is drawn in place of the marker and the line ends as any
             // other does.
-            (Part::Between, '\n') if self.alerts(&link).is_some() => {
+            (Part::Between, '\n') if !link.image && self.alerts(&link).is_some() => {
                 if let Some(alert) = self.alerts(&link) {
                     self.headline(alert, say);
                 }
@@ -3493,18 +3502,20 @@ impl Markdown {
             // A box takes the bullet's mark rather than following it, which is
             // why this stands above the arm that puts a bracket back: the
             // space after `]` is the marker's own and goes with it.
-            _ if self.boxed(&link, character) => {
+            _ if !link.image && self.boxed(&link, character) => {
                 self.tick(&link.label, say);
                 return true;
             }
             // `[TODO] fix this`, and every other bracket somebody meant,
             // where it is no footnote.
             _ => {
-                if let Some(taken) = self.cites(&link, character, say) {
-                    return taken;
-                }
-                if self.ties(&link, say) {
-                    return false;
+                if !link.image {
+                    if let Some(taken) = self.cites(&link, character, say) {
+                        return taken;
+                    }
+                    if self.ties(&link, say) {
+                        return false;
+                    }
                 }
                 self.pay(say);
                 spill(&link, say);
@@ -4445,6 +4456,10 @@ impl Markdown {
                 });
             }
         };
+        // The bang the line ended in came before whatever it held.
+        if std::mem::take(&mut self.bang) {
+            self.say("!", &mut tell);
+        }
         while let Some(table) = self.table.take_if(|table| table.pending()) {
             self.release(&table, room, &mut tell);
         }
@@ -4457,6 +4472,10 @@ impl Markdown {
     /// Lets go of whatever the scan was still holding, which a line's end does
     /// as well as a message's.
     fn close(&mut self, room: usize, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        // The bang the message ended in opens nothing now.
+        if std::mem::take(&mut self.bang) {
+            self.say("!", say);
+        }
         // The line the message ended in is as complete as a break would have
         // made it, and the `>` that would have ended an address never came.
         // First, since what they hand back is read again and may leave an
@@ -4549,8 +4568,7 @@ impl Markdown {
         // A footnote's label the end of the message came straight after is a
         // reference, as one a break came after is.
         if let Some(link) = self.link.take()
-            && self.cites(&link, '\n', say).is_none()
-            && !self.ties(&link, say)
+            && (link.image || (self.cites(&link, '\n', say).is_none() && !self.ties(&link, say)))
         {
             spill(&link, say);
         }
