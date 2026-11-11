@@ -20,7 +20,7 @@ use crucible_client_api::{
     Capabilities, ClearOutcome, Command, Correlation, Cost, Decision, ErrorCode, Forced, Lasting,
     Limit, LimitGroup, Limits, Missing, Mode, ModelOutcome, Name, NotesOutcome, Outcome, Palette,
     Pending, PendingId, Percent, Progress, Prompt, Reading, Refusal, Request, Response,
-    ResumeOutcome, Ruling, SettingOutcome, Snapshot, Stop, SummaryKind, Theme, TurnOutcome,
+    ResumeOutcome, Ruling, SettingOutcome, Snapshot, Stop, SummaryKind, Text, Theme, TurnOutcome,
     Window as LimitWindow,
 };
 use crucible_models::{Asked, Delta, ProviderError};
@@ -1016,7 +1016,7 @@ fn what_cannot_be_carried_out_is_refused_by_code_and_changes_nothing() -> Result
     Ok(())
 }
 
-/// The eight commands the agents door serves and no conversation does.
+/// The nine commands the agents door serves and no conversation does.
 fn installing() -> Result<Vec<Command>, Failed> {
     let agent = || Name::new("example-agent");
     Ok(vec![
@@ -1036,6 +1036,10 @@ fn installing() -> Result<Vec<Command>, Failed> {
         Command::SignInAgent {
             instance: Name::new("work")?,
             method: Name::new("oauth")?,
+        },
+        Command::TryOwnAgent {
+            agent: agent()?,
+            program: Text::cut("/usr/local/bin/example-agent"),
         },
     ])
 }
