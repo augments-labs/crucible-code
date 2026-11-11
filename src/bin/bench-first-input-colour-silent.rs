@@ -42,7 +42,7 @@ const LIMIT: f64 = 2060.0;
 const SHARED_RUNNER_LIMIT: f64 = 2250.0;
 
 /// The reply wait every launch here sits through, which the windows are
-/// spread across so that each start runs alone.
+/// spread across so that their starts rarely coincide.
 ///
 /// `crucible_tui::graphics::Deadline::STARTUP.reply`, written out because the
 /// probe measures the built binary and names its crates in the test alone,

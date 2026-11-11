@@ -48,9 +48,9 @@ use rustix::termios::{self, OptionalActions, Winsize};
 /// The percentile below is nearest-rank, so the size of what it is taken over
 /// decides how far into the tail it stands: over twenty readings the 95th is
 /// the second worst, which is one slow launch away from deciding a budget.
-/// Twenty-two puts it at the second worst still, and that is the point — a
-/// window is *meant* to be decidable by a stall, so that the median across
-/// windows can throw the stalled ones away.
+/// Twenty-two puts it at the second worst still, and that is the point — in
+/// windows taken in turn a window is *meant* to be decidable by a stall, so
+/// that the median across windows can throw the stalled ones away.
 const PER_WINDOW: usize = 22;
 
 /// Windows the runs are cut into.
@@ -371,28 +371,31 @@ pub(crate) fn coloured_input(answering: Answering) -> Result<Readings, StartupEr
 ///
 /// Taken in turn, such a batch is [`RUNS`] of those waits end to end, and
 /// nearly all of it is the probe asleep. Spread across the wait, the launches
-/// of one window fall between those of the next rather than on them, so no two
-/// children are starting at the same moment and each reading is the start a
-/// machine running one gives.
+/// of one window fall between those of the next rather than on them, so two
+/// children rarely start at the same moment and a reading is close to the
+/// start a machine running one gives. The windows begin a spacing apart and
+/// keep to it only roughly, since each launches again when its last child is
+/// done.
 ///
-/// What that gives up is the windows' own defence: a stretch the host stalled
-/// through now lands on every window at once rather than on one of them, so
-/// the median no longer sets it aside. [`best`] answers it instead, by taking a
-/// batch that went over again, and a batch costs one window's wall clock
-/// rather than all nine's.
+/// What that gives up is part of the windows' own defence. A stall shorter
+/// than a launch lands on about one reading in each window, which the second
+/// worst of twenty-two passes over; one that spans two launches lands on two in
+/// every window, and the median keeps it. [`best`] answers that instead, by
+/// taking a batch that went over again, and a batch costs one window's wall
+/// clock rather than all nine's.
 pub(crate) fn coloured_input_at_once(
     answering: Answering,
     wait: Duration,
 ) -> Result<Readings, StartupError> {
     let binary = beside("crucible")?;
-    let spacing = wait / u32::try_from(WINDOWS).unwrap_or(u32::MAX);
-    // Every home is planted before any window starts, so writing one window's
-    // fixture is not something another window's launch is timed beside.
+    // Planting the fixtures, the costly part, is done before any window
+    // starts: between its runs a window only removes the logs its last child
+    // added, in a home of its own.
     let homes = (0..WINDOWS)
         .map(|window| Scratch::in_window(COLOURED_INPUT.label(), window))
         .collect::<Result<Vec<_>, _>>()?;
 
-    overlapped(spacing, |window| {
+    overlapped(spacing(wait), |window| {
         let home = homes
             .get(window)
             .ok_or_else(|| io::Error::other("a window started that has no home"))?;
@@ -411,6 +414,12 @@ pub(crate) fn coloured_input_at_once(
 
         Ok(taken)
     })
+}
+
+/// How far apart the windows of a batch taken at once start, for a start that
+/// sits through `wait`.
+fn spacing(wait: Duration) -> Duration {
+    wait / u32::try_from(WINDOWS).unwrap_or(u32::MAX)
 }
 
 /// Takes [`RUNS`] readings of a noninteractive argument that exits by itself.
@@ -472,8 +481,9 @@ const AT_LIBERTY: usize = 3;
 /// It is not a way to pass. Nothing is thrown away that a second batch does not
 /// beat, and a startup that actually got slower is over budget in all three —
 /// which is the same claim the windows make, one layer up. A batch whose
-/// windows were taken at once has no stretch to sit outside at all, so for one
-/// of those this is the whole of the defence. What makes that hold is that
+/// windows were taken at once has no window that sits outside a stall longer
+/// than a launch, so against one of those this is the whole of the defence.
+/// What makes that hold is that
 /// `again` launches the binary afresh every call, from a scratch home it builds
 /// itself: a batch reading state a previous one left would open already slow,
 /// and the guarantee would invert.
@@ -509,7 +519,9 @@ pub(crate) fn best(
 /// that finished early waits for the ones started before it. A window that
 /// could not be measured is the batch's failure, as one run that could not be
 /// is in a batch taken in turn; one whose thread panicked is
-/// [`StartupError::Abandoned`] rather than a panic in the probe.
+/// [`StartupError::Abandoned`] rather than a panic in the probe. Every window
+/// started is joined before any is read, so the failure is the first in start
+/// order, and no panic is left behind for the scope to raise on its way out.
 fn overlapped(
     spacing: Duration,
     window: impl Fn(usize) -> Result<Vec<Duration>, StartupError> + Sync,
@@ -517,21 +529,26 @@ fn overlapped(
     let window = &window;
 
     std::thread::scope(|scope| {
-        let mut running = Vec::with_capacity(WINDOWS);
+        let mut started = Vec::with_capacity(WINDOWS);
         for (index, at) in (0..WINDOWS).zip(0_u32..) {
-            running.push(
+            started.push(
                 std::thread::Builder::new()
                     .name(format!("crucible-startup-window-{index}"))
                     .spawn_scoped(scope, move || {
                         std::thread::sleep(spacing * at);
                         window(index)
-                    })?,
+                    }),
             );
         }
 
+        let mut finished = Vec::with_capacity(WINDOWS);
+        for window in started {
+            finished.push(window.map(std::thread::ScopedJoinHandle::join));
+        }
+
         let mut taken = Vec::with_capacity(RUNS);
-        for handle in running {
-            taken.extend(handle.join().map_err(|_| StartupError::Abandoned)??);
+        for window in finished {
+            taken.extend(window?.map_err(|_| StartupError::Abandoned)??);
         }
 
         Ok(Readings::new(taken))
@@ -562,14 +579,15 @@ fn chosen<T>(runner: Option<&std::ffi::OsStr>, quiet: T, shared: T) -> Result<T,
     }
 }
 
-/// Every reading one probe took, in the order it took them.
+/// Every reading one probe took, window by window in the order the windows
+/// started.
 pub(crate) struct Readings(Vec<Duration>);
 
 impl Readings {
-    /// Kept in the order they arrived, which is the whole of what the windows
-    /// are about: a machine stalls for a stretch of wall clock, and a run
-    /// sorted on the way in has thrown away which readings were next to each
-    /// other. Everything below that wants an order statistic sorts a window.
+    /// Kept window by window, which is the whole of what the windows are
+    /// about: a run sorted on the way in has thrown away which readings shared
+    /// a window and, in windows taken in turn, which shared a stretch of wall
+    /// clock. Everything below that wants an order statistic sorts a window.
     fn new(taken: Vec<Duration>) -> Self {
         Self(taken)
     }
@@ -1380,10 +1398,12 @@ impl Scratch {
     /// window restore the fixture under another's running child, and be
     /// removed by whichever was dropped first.
     fn in_window(name: &str, window: usize) -> Result<Self, StartupError> {
-        Self::holding(
-            &format!("{}-{window}", name.trim().len()),
-            &configuration(None),
-        )
+        Self::holding(&Self::window_name(name, window), &configuration(None))
+    }
+
+    /// What the home of window `window` is named, among this process's.
+    fn window_name(name: &str, window: usize) -> String {
+        format!("{}-{window}", name.trim().len())
     }
 
     /// A home named `name` among this process's, configured by `document`.
@@ -1426,6 +1446,7 @@ impl Drop for Scratch {
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
+    use std::collections::HashSet;
     use std::ffi::OsStr;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1435,7 +1456,7 @@ mod tests {
 
     use super::{
         AT_LIBERTY, CONFIG, PER_WINDOW, RUNS, Readings, Scratch, StartupError, TITLE, USABLE,
-        WINDOWS, best, configuration, overlapped,
+        WINDOWS, best, configuration, overlapped, spacing,
     };
 
     /// One window's readings, every one of them `ms` long.
@@ -1552,6 +1573,39 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_window_that_panicked_behind_a_failed_one_is_no_panic_in_the_probe() {
+        // The first failure in start order is the batch's, and the windows
+        // after it still have to be joined: a scoped thread whose panic nobody
+        // took is a panic in the scope that started it.
+        let taken = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            overlapped(Duration::ZERO, |window| {
+                assert_ne!(window, 2, "the window this test stops");
+                if window == 1 {
+                    Err(StartupError::Nothing)
+                } else {
+                    Ok(window_of(1))
+                }
+            })
+        }));
+
+        assert!(
+            matches!(taken, Ok(Err(StartupError::Nothing))),
+            "a window that panicked behind a failed one panicked the probe"
+        );
+    }
+
+    #[test]
+    fn the_windows_divide_the_wait_between_their_starts() {
+        // A ninth of the wait apart, so the last window starts inside the
+        // first one's wait and each start sits as far from the next as one
+        // wait allows.
+        let apart = Duration::from_millis(100);
+        let wait = apart * u32::try_from(WINDOWS).expect("a small count");
+
+        assert_eq!(spacing(wait), apart);
+    }
+
     /// A full set of readings, stalled from end to end of the first `windows`
     /// windows and clean through the rest.
     fn stalled_in(windows: usize) -> Readings {
@@ -1614,8 +1668,8 @@ mod tests {
     #[test]
     fn the_spread_shows_a_middle_sitting_far_below_the_tail() {
         // What tells a program that got slower from a machine that stalled:
-        // the windows are printed in the order they ran, and the slow one is
-        // on its own at the front.
+        // the windows are printed in the order they started, and the slow one
+        // is on its own at the front.
         let said = stalled_in(1).spread();
 
         assert!(said.contains(&format!("{RUNS} runs")), "{said}");
@@ -1707,12 +1761,15 @@ mod tests {
 
     #[test]
     fn windows_taken_at_once_each_have_a_home_of_their_own() {
-        let first = Scratch::in_window("\u{00a7}", 0).expect("a benchmark home");
-        let second = Scratch::in_window("\u{00a7}", 1).expect("a benchmark home");
+        // A home's path is its name and this process's, so names apart are
+        // homes apart, and none has to be planted to show it.
+        let names = (0..WINDOWS)
+            .map(|window| Scratch::window_name("\u{00a7}", window))
+            .collect::<HashSet<_>>();
 
-        assert_ne!(
-            first.path(),
-            second.path(),
+        assert_eq!(
+            names.len(),
+            WINDOWS,
             "two windows taken at once share a home, so one restores the other's \
              fixture under a running child and the first dropped removes both"
         );
