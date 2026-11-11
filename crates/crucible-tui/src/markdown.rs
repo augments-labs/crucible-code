@@ -159,7 +159,7 @@ use crate::chrome::{self, Frame, Label, Undrawn};
 use crate::color::Slot;
 use crate::escape::Escapes;
 use crate::files::Files;
-use crate::forge::Forge;
+use crate::forge::{DIGITS, Forge, named};
 use crate::glyphs::Glyphs;
 use crate::row::Row;
 use crate::width;
@@ -1414,19 +1414,6 @@ struct Reference {
     slug: Option<Box<str>>,
     /// The digits after the hash, as far as they have arrived.
     number: String,
-}
-
-/// How many digits a number is read as, at most.
-///
-/// A forge counts in the thousands and this is room for a great deal more than
-/// that. The bound is here for the reason every other one in this file is:
-/// what is held comes off a wire, and a run of digits nobody meant to end is
-/// not a reason to grow a string without limit.
-const DIGITS: usize = 12;
-
-/// What a repository is named with, either side of the slash.
-fn named(character: char) -> bool {
-    character.is_alphanumeric() || matches!(character, '.' | '_' | '-')
 }
 
 /// The words an answer puts in front of a number to say what it counts.
