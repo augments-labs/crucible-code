@@ -446,7 +446,8 @@ pub enum SandboxPrivateLoopback {
     #[default]
     Refused,
     /// Binding and listening are allowed inside the process's own network
-    /// namespace; nothing outside it becomes reachable.
+    /// namespace, and only Unix, IP and netlink sockets can be opened, so
+    /// nothing outside it becomes reachable.
     Granted,
 }
 

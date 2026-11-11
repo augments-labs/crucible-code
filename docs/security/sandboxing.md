@@ -100,9 +100,10 @@ clears the environment, and closes every undeclared file descriptor. Closed
 networking has no usable host, loopback, Unix-socket, DNS, metadata-service or
 inherited-socket route, and refuses binding and listening. The one exception is
 the probe of a program you named as your own agent, which may bind and listen
-on the namespace's private loopback; it still reaches nothing outside, and
-`io_uring` stays refused. Killing the namespace owner also kills descendants
-that deliberately leave the original process group or session.
+on the namespace's private loopback; it can open only Unix, IP and netlink
+sockets, so it still reaches nothing outside, and `io_uring` stays refused.
+Killing the namespace owner also kills descendants that deliberately leave the
+original process group or session.
 
 On macOS, the production backend uses the built-in Seatbelt framework through
 the fixed `/usr/bin/sandbox-exec` executable. The launcher must be root-owned
