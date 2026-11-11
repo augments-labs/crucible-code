@@ -333,40 +333,39 @@ fn quiet(target: &str, glyphs: Glyphs) -> (String, bool) {
     let hosted = target.split_once("://").map(|(_, rest)| rest).or_else(|| {
         target
             .strip_prefix(WWW)
-            .is_some_and(|host| host.starts_with(|character: char| character.is_ascii_alphanumeric()))
+            .is_some_and(|host| {
+                host.starts_with(|character: char| character.is_ascii_alphanumeric())
+            })
             .then_some(target)
     });
 
-    let (mut kept, more) = match hosted {
-        Some(rest) => {
-            let parts = |text: &'_ str| text.find(['/', '?', '#']).unwrap_or(text.len());
-            let (host, path) = rest.split_at(parts(rest));
-            let segment = path
-                .strip_prefix('/')
-                .map_or("", |path| path.get(..parts(path)).unwrap_or(path));
-            let after = path
-                .get(
-                    segment
-                        .len()
-                        .saturating_add(usize::from(path.starts_with('/')))..,
-                )
-                .unwrap_or_default();
-            if after.is_empty() || after == "/" {
-                (rest.to_owned(), false)
-            } else {
-                let mut kept = host.to_owned();
-                if path.starts_with('/') {
-                    kept.push('/');
-                    kept.push_str(segment);
-                    kept.push('/');
-                }
-                (kept, true)
+    let (mut kept, more) = if let Some(rest) = hosted {
+        let parts = |text: &'_ str| text.find(['/', '?', '#']).unwrap_or(text.len());
+        let (host, path) = rest.split_at(parts(rest));
+        let segment = path
+            .strip_prefix('/')
+            .map_or("", |path| path.get(..parts(path)).unwrap_or(path));
+        let after = path
+            .get(
+                segment
+                    .len()
+                    .saturating_add(usize::from(path.starts_with('/')))..,
+            )
+            .unwrap_or_default();
+        if after.is_empty() || after == "/" {
+            (rest.to_owned(), false)
+        } else {
+            let mut kept = host.to_owned();
+            if path.starts_with('/') {
+                kept.push('/');
+                kept.push_str(segment);
+                kept.push('/');
             }
+            (kept, true)
         }
-        None => {
-            let written = target.strip_prefix(MAILTO).unwrap_or(target);
-            (written.to_owned(), width::columns(written) > QUIET)
-        }
+    } else {
+        let written = target.strip_prefix(MAILTO).unwrap_or(target);
+        (written.to_owned(), width::columns(written) > QUIET)
     };
 
     if width::columns(&kept) <= QUIET {
