@@ -2822,6 +2822,57 @@ fn more_unhashed_entries_on_path_than_a_listing_names_are_cut_and_login_still_as
     Ok(())
 }
 
+/// The agents door's listing whose only ACP Registry row is an entry with no
+/// SHA-256, listed as the user's own program, says where that row comes from:
+/// the day the index was read, and that it is not reviewed by Crucible.
+#[test]
+fn a_listing_whose_only_registry_row_is_your_own_says_its_source() -> Result<(), Failed> {
+    use crate::external::choosing::{goose_unhashed, listed_with_the_registry};
+
+    let tree = crate::Tree::new("registry-unhashed-source")?;
+    let (conversation, _) = goose_unhashed(&tree)?;
+
+    let listed = listed_with_the_registry(&tree, &conversation)?;
+    let Ok(Outcome::Catalog {
+        agents, registry, ..
+    }) = listed
+    else {
+        return Err(format!("the listing answered {listed:?}").into());
+    };
+    assert!(
+        agents.iter().any(|listed| listed.agent.as_str() == "goose"),
+        "the unhashed goose was not listed"
+    );
+    let line = registry.ok_or("the listing said no source")?;
+    assert!(
+        line.starts_with("Source: ACP Registry, read ")
+            && line.ends_with("not reviewed by Crucible."),
+        "{line}"
+    );
+    Ok(())
+}
+
+/// The same listing gives a list of only the agents crucible installs no
+/// source line to show: the one registry row it names is the user's own
+/// program, which that list leaves out.
+#[test]
+fn a_listing_whose_only_registry_row_is_your_own_gives_catalog_no_source() -> Result<(), Failed> {
+    use crate::external::choosing::{goose_unhashed, listed_with_the_registry};
+
+    let tree = crate::Tree::new("registry-unhashed-catalog-source")?;
+    let (conversation, _) = goose_unhashed(&tree)?;
+
+    let listed = listed_with_the_registry(&tree, &conversation)?;
+    let Ok(Outcome::Catalog { installable, .. }) = listed else {
+        return Err(format!("the listing answered {listed:?}").into());
+    };
+    assert!(
+        !installable.registry,
+        "a list of what crucible installs was given the registry line"
+    );
+    Ok(())
+}
+
 /// An ACP Registry entry with no SHA-256 for this machine, listed as the
 /// user's own program, offers no version, and `/login` offers nothing for it
 /// but trying that program: no install, update or roll back. Crucible's store

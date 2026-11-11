@@ -338,8 +338,24 @@ fn catalog_leaves_out_an_entry_crucible_does_not_install() {
 fn catalog_says_no_more_for_an_entry_crucible_does_not_install() {
     let goose = || vec![listed("goose", &["1.0.0"], "Apache-2.0", &[])];
 
-    let own_past = Listing::catalog(goose(), door::Installable { more: false }, None, None);
-    let offered_past = Listing::catalog(goose(), door::Installable { more: true }, None, None);
+    let own_past = Listing::catalog(
+        goose(),
+        door::Installable {
+            more: false,
+            ..door::Installable::default()
+        },
+        None,
+        None,
+    );
+    let offered_past = Listing::catalog(
+        goose(),
+        door::Installable {
+            more: true,
+            ..door::Installable::default()
+        },
+        None,
+        None,
+    );
 
     assert_eq!(
         said(&own_past, 400),
@@ -348,6 +364,47 @@ fn catalog_says_no_more_for_an_entry_crucible_does_not_install() {
     assert_eq!(
         said(&offered_past, 400),
         ["goose 1.0.0 · Apache-2.0 · not installed", MORE]
+    );
+}
+
+/// `/catalog` says where its rows come from only where that line stands
+/// beside the rows it keeps: the registry line the door gave for an agent it
+/// listed only as the user's own program is not shown, and one beside a
+/// registry row crucible installs is.
+#[test]
+fn catalog_says_the_registry_source_only_beside_what_it_keeps() {
+    let line = "Source: ACP Registry, read 2026-11-11; not reviewed by Crucible.";
+    let cursor = door::Listed {
+        unoffered: Some("the ACP Registry gives cursor no SHA-256".into()),
+        own: Some(std::path::PathBuf::from("/opt/tools/cursor-agent")),
+        registry: true,
+        ..listed("cursor", &[], "Proprietary", &[])
+    };
+    let goose = door::Listed {
+        registry: true,
+        ..listed("goose", &["1.0.0"], "Apache-2.0", &[])
+    };
+
+    let own_only = Listing::catalog(
+        vec![listed("aider", &["2.1.0"], "MIT", &[]), cursor],
+        door::Installable::default(),
+        None,
+        Some(line),
+    );
+    let offered = Listing::catalog(
+        vec![goose],
+        door::Installable {
+            registry: true,
+            ..door::Installable::default()
+        },
+        None,
+        Some(line),
+    );
+
+    assert_eq!(said(&own_only, 400), ["aider 2.1.0 · MIT · not installed"]);
+    assert_eq!(
+        said(&offered, 400),
+        ["goose 1.0.0 · Apache-2.0 · not installed", line]
     );
 }
 

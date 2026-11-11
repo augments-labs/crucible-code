@@ -274,14 +274,20 @@ struct Entry {
 impl Listing {
     /// The list over the catalog the door listed: `agents`, what a list of
     /// only what crucible installs says of them, why the catalog was
-    /// `unrefreshed`, and the `registry` line.
+    /// `unrefreshed`, and the `registry` line, shown only where it stands
+    /// beside a row the list keeps.
     fn catalog(
         agents: Vec<door::Listed>,
         installable: door::Installable,
         unrefreshed: Option<&FetchError>,
         registry: Option<&str>,
     ) -> Self {
-        Self::new(agents, installable.more, unrefreshed, registry)
+        Self::new(
+            agents,
+            installable.more,
+            unrefreshed,
+            registry.filter(|_| installable.registry),
+        )
     }
 
     /// The list over what the door listed: `agents`, whether there were

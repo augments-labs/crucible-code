@@ -393,6 +393,9 @@ pub struct Installable {
     /// Whether an agent crucible installs a version of was past the most a
     /// listing names.
     pub more: bool,
+    /// Whether the registry line stands beside those rows alone: one of them
+    /// is the ACP Registry's, or its index could not be read or verified.
+    pub registry: bool,
 }
 
 /// The user's own Antigravity, found on the `PATH` a conversation's steps
@@ -1287,6 +1290,7 @@ impl Door<'_> {
         // key it lists once is not listed twice, and a key a built-in driver
         // is spelled with gets no registry row.
         let mut from_registry = false;
+        let mut offered_from_registry = false;
         if let Some(view) = &self.registry {
             for (entry, offer) in view.index.listed() {
                 let key = &entry.id;
@@ -1311,6 +1315,7 @@ impl Door<'_> {
                         else {
                             continue;
                         };
+                        from_registry = true;
                         agents.push(Listed {
                             agent: key.clone(),
                             offered: Vec::new(),
@@ -1329,6 +1334,7 @@ impl Door<'_> {
                 };
                 let probed = self.probed(key, offer.version());
                 from_registry = true;
+                offered_from_registry = true;
                 agents.push(Listed {
                     agent: key.clone(),
                     offered: vec![offer.version().into()],
@@ -1347,10 +1353,13 @@ impl Door<'_> {
             }
         }
         // A failed read is said even where it lists no agent; an index that
-        // read but offered none keeps the signed screen as it was.
+        // read but listed none keeps the signed screen as it was, and so does
+        // a list of only what crucible installs where none of those is the
+        // registry's.
         let registry = (from_registry || self.registry_notice.is_some())
             .then(|| self.registry_line())
             .flatten();
+        installable.registry = offered_from_registry || self.registry_notice.is_some();
         Outcome::Catalog {
             agents,
             more,
