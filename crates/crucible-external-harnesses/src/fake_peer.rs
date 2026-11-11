@@ -7,9 +7,10 @@
 //! for, with its [`Script`] in a file named `script` beside it, and the path it
 //! returns is the executable the test configures. The peer reads that file
 //! through its own path and ignores its environment. It acts on an argument
-//! only when it comes first: `--stamp`, `--copy-to` with exactly one path
-//! after it, and `--linger` with the directory to beat in. Every other start
-//! plays its script, so the arguments a dialect builds and the empty
+//! only when it comes first: it answers `--stamp`, copies itself on
+//! `--copy-to` with exactly one path after it, beats in the directory after
+//! `--linger`, and fails on a `--linger` with nothing after it. Every other
+//! start plays its script, so the arguments a dialect builds and the empty
 //! environment a launch starts from reach it unchanged.
 //!
 //! A script is a sequence of [`Reply`] values, one for each start: a probe, an
