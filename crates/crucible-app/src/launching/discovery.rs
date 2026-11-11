@@ -97,8 +97,9 @@ pub(crate) fn renamed(discovery: &Discovery, refused: [String; 2]) -> [String; 2
 /// What the program configured as `executable` is: the path as written when
 /// it is absolute, else what an absolute lookup on `PATH` finds. An
 /// `executable` that is one of `names`, the commands its row is known by, is
-/// looked for as each of them in order, and the first found is taken; any
-/// other is looked for as written.
+/// looked for as each of them in order: the first that can be run is taken,
+/// else the first that is there but cannot be run. Any other is looked for as
+/// written.
 pub fn discover(
     executable: &str,
     names: &[String],
@@ -114,7 +115,7 @@ pub fn discover(
     } else {
         vec![executable]
     };
-    // The first that can be run, else the first that is there at all.
+    // A stale name that cannot be run must not hide a later one that can.
     let mut unrunnable = None;
     for name in tried {
         let found = crucible_builtins::program::on_path(
