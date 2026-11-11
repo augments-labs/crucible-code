@@ -512,10 +512,10 @@ the tail past the window on its own. Old bulky tool output is pruned first; if a
 completed active tool pass still cannot fit, automatic recovery may recap that
 complete pass at the safe boundary before the next request.
 
-Your own words are not left to the recap. What you asked for, and every
-instruction and answer you gave after it, is restated to the model word for
-word once the recap has replaced them, within the bounds [Your
-request](context.md#your-request) sets out.
+Your own words are not left to the recap. What you asked for, every
+instruction you gave after it and every answer to a question asked without
+waiting, is restated to the model word for word once the recap has replaced
+them, within the bounds [Your request](context.md#your-request) sets out.
 
 The result is reported in place:
 

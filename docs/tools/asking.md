@@ -163,9 +163,10 @@ while you type:
 ╰──────────────────────────────────────────────────────────────────────────────╯
 ```
 
-`/questions` opens them, and runs again to close them. Open, the dock shows the
-oldest batch, a question at a time, with every answer marked `( )` until you
-pick one:
+`/questions` opens them, and runs again to close them; with nothing waiting it
+says `no questions are waiting`. Open, the dock shows the oldest batch, a
+question at a time, with every answer marked `( )` until you pick one, or `[ ]`
+where several may be chosen:
 
 ```
 ╭──────────────────────────────────────────────────────────────────────────────╮
@@ -195,12 +196,12 @@ goes on under the dock while it is open.
 | --- | --- |
 | `↑` `↓` | Moves down the answers, or the actions on the last stop. |
 | `←` `→` | Steps to the next question in the batch, or the one before. |
-| `enter` | Chooses the marked answer and moves on. Where several answers may be chosen, it moves on and `space` does the choosing. On **Write your own answer**, it opens a line to write in. |
+| `enter` | Chooses the marked answer and moves on. Where several answers may be chosen, it moves on and `space` does the choosing. On **Write your own answer** with nothing written yet, it opens a line to write in. |
 | `space` | Where several answers may be chosen: chooses the marked one, or unchooses it. |
 | `n` | Adds a note of your own beside the answer. |
 | `tab` | Moves the keys between the dock and the prompt box, so you can type to the agent with the questions still open. The row under the dock says `tab questions` while the prompt box has them. |
 | `pgup` `pgdn` | Scrolls a question or a read-back taller than the room for it. |
-| `esc` | Leaves the line you are writing, with what you wrote kept. Anywhere else it closes the dock. |
+| `esc` | Leaves the line you are writing, with what you wrote kept. While a decline asks once more, it keeps the question. Anywhere else it closes the dock. |
 
 Closing the dock is not declining. Every answer you picked and every line you
 wrote stays where you left it, and `/questions` opens the dock on it again.
@@ -276,12 +277,12 @@ under another session's era is refused, and an answer in the same session,
 resumed, is accepted once its first turn has brought the questions back;
 before that it is refused as stale.
 
-Two refusals belong to answers, and neither settles anything:
+Two codes belong to answers, and neither settles anything:
 
 | Code | Means |
 | --- | --- |
-| `stale_questions` | The batch is not waiting: it was never asked, it was answered or cleared already, or it belongs to another era. |
-| `invalid_answer` | The batch is waiting and the replies do not fit it: the wrong number, or one its question cannot take. The batch still waits, and the reason says which reply did not fit. |
+| `stale_questions` | The command is refused, because the batch is not waiting: it was never asked, it was answered or cleared already, or it belongs to another era. |
+| `invalid_answer` | The command's outcome is `invalid`, with a problem under this code, rather than a refusal. The batch is waiting and the replies do not fit it: the wrong number, or one its question cannot take. The batch still waits, and the reason says which reply did not fit. |
 
 A request that did not claim `questions` is sent nothing of what waits, and an
 `answer` without it is refused as `needs_capability`.
@@ -295,6 +296,6 @@ running have ended. It is taken as a turn like any prompt, but is never kept as
 
 A run whose output is not a terminal has nobody to ask, so the tool is not
 registered at all, not even for `tool_search` to find. Piping crucible's output
-to a file is one of those runs. A program driving crucible with no terminal is
-the exception: one that holds questions for later is offered the tool, as
-above.
+to a file is one of those runs. A program driving crucible through its client
+protocol is the exception: one that holds questions for later is offered the
+tool, as above.

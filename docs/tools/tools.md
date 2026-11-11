@@ -27,12 +27,11 @@ that is [Permissions](../permissions/index.md).
 
 `ask_user` is always in the list, except in a run whose output is not a
 terminal: there is nobody to ask, so it is neither advertised nor held back. A
-program driving crucible with no terminal is the exception to that: one that
-holds questions for later is offered it, as [Asking
-you](asking.md#from-a-program-with-no-terminal) says. It is not deferred
-anywhere, because a model that cannot see it will not look it up
-at the moment it realises it should ask, and that moment is the only thing it is
-for.
+program driving crucible through its client protocol is the exception to that:
+one that holds questions for later is offered it, as [Asking
+you](asking.md#from-a-program-with-no-terminal) says. It is never held back,
+because a model that cannot see it will not look it up at the moment it
+realises it should ask, and that moment is the only thing it is for.
 
 `todo_write`, `web_search` and `web_fetch` are held back. You will see the agent
 call `tool_search` before it uses one, which costs a round trip the first time

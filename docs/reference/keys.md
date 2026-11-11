@@ -50,7 +50,7 @@ this page is the list. Slash commands are not keys: they are listed under
 | <kbd>Ctrl+W</kbd>, <kbd>Ctrl+Backspace</kbd>, <kbd>Alt-Backspace</kbd> | Rubs out the word behind the cursor. |
 | <kbd>Ctrl+U</kbd> | Rubs out from the cursor back to the start of its line. |
 | <kbd>Ctrl+K</kbd> | Rubs out from the cursor to the end of its line. |
-| <kbd>Tab</kbd> | Nothing. A tab inside pasted text becomes four spaces. |
+| <kbd>Tab</kbd> | Gives the keys to the [dock of questions](#answering-questions-asked-without-waiting) while it is open. Nothing otherwise. A tab inside pasted text becomes four spaces. |
 | <kbd>Ctrl+Y</kbd> | Copies everything in the box exactly as typed, by asking your terminal to put it on the clipboard. The row under the box says `line copied` once the request is sent. Nothing while the box is empty. |
 | <kbd>Ctrl+V</kbd> | Pastes an image from the clipboard and puts a marker such as `[Image #1]` in the box. When nothing readable is there, the reason is written under the box. |
 | <kbd>Ctrl+C</kbd> | Clears the box, every line of it. When the box is already empty the row says `press ctrl+c again to leave`, and a second press within two seconds ends the session. |
@@ -238,7 +238,7 @@ box once `/questions` opens it. While the dock has the keys:
 | <kbd>Tab</kbd> | Gives the keys to the box, with the dock left open; <kbd>Tab</kbd> in the box gives them back. |
 | <kbd>PgUp</kbd>, <kbd>PgDn</kbd> | Scrolls a question or a read-back taller than the room for it. |
 | <kbd>Esc</kbd> | Closes the dock with everything you picked and wrote kept, and does not stop the turn. |
-| <kbd>Ctrl+C</kbd>, <kbd>Ctrl+D</kbd>, the wheel, a click | What they do with the box focused. |
+| <kbd>Ctrl+C</kbd>, <kbd>Ctrl+D</kbd>, <kbd>Shift+Tab</kbd>, <kbd>Ctrl+B</kbd>, <kbd>Ctrl+E</kbd>, <kbd>Ctrl+O</kbd>, <kbd>Ctrl+T</kbd>, the wheel, a click | What they do with the box focused. |
 | Anything else | Nothing. |
 
 While you are writing a line, the editing keys edit it, and <kbd>Enter</kbd>
