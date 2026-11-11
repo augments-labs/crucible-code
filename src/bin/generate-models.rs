@@ -22,10 +22,12 @@
 //! the database says against what this build offers: a newer model in a family
 //! crucible offers, a coding model of a family crucible does not offer from a
 //! provider it does, an offered model gone or deprecated, rungs listed apart
-//! from the ones offered, and an offered model released or revised after its
-//! provider's `reviewed` day. It exits 0 with nothing to report, 1 with
-//! something, and 2 when the input could not be read. A scheduled workflow runs
-//! it, and what it reports is settled by hand from the vendors' own pages.
+//! from the ones offered, an offered model released or revised after its
+//! provider's `reviewed` day, and a model its vendor's terms count as a Preview
+//! model by its name that nothing holds or declines. It exits 0 with nothing to
+//! report, 1 with something, and 2 when the input could not be read. A
+//! scheduled workflow runs it, and what it reports is settled by hand from the
+//! vendors' own pages.
 //!
 //! Every model crucible offers is named here, against the key the database
 //! spells it with. The two are not always the same word: one vendor is asked
@@ -318,6 +320,14 @@ const PASSED_FAMILIES: &[(&str, &str, &str)] = &[
     ("zai", "glm-air", "not chosen"),
 ];
 
+/// The provider whose terms name a Preview model by the start of its name, and
+/// that start. Mistral's commercial terms (§4.3, read 2026-11-05) count among
+/// its Preview models "those identifiable by the prefix “labs”", and it may
+/// train on what one is sent; so every such model the database lists is
+/// reported, whatever it can do, until a warned route holds it or `PASSED`
+/// declines it by name. A family declined whole does not quiet one.
+const PREVIEW: (&str, &str) = ("mistral", "labs-");
+
 /// Offered models whose rungs crucible keeps apart from the database's, and
 /// why: the vendor's own pages are the authority, and the database is not.
 const KEPT: &[(&str, &str, &str)] = &[];
@@ -571,6 +581,9 @@ enum Finding {
         listed: Vec<Effort>,
         offered: Vec<Effort>,
     },
+    /// A model its vendor's terms count as a Preview model by its name, which
+    /// no warned route holds and nobody has declined.
+    Preview { provider: &'static str, key: String },
 }
 
 /// What the database says against what this build offers.
@@ -585,7 +598,10 @@ enum Finding {
 /// nobody has declined in `passed`.
 /// Rungs are compared only where the database lists effort at all, since one
 /// that lists none says nothing either way, only in the words crucible's
-/// ladder has, and not for a model whose difference is `kept`.
+/// ladder has, and not for a model whose difference is `kept`. A model named as
+/// a [`PREVIEW`] model is reported whether or not a coding session could ask
+/// for it, unless the hold `crucible_app::content_use` builds already warns of
+/// its route or `passed` declines it by name.
 // Seven inputs of one comparison, each a different kind of thing and each named
 // at its two call sites; a struct holding them would only rename them.
 #[allow(clippy::too_many_arguments)]
@@ -708,6 +724,27 @@ fn drift(
             }
         }
     }
+
+    let (provider, prefix) = PREVIEW;
+    let held = crucible_app::content_use::Routes::production();
+    if let Some(models) = database
+        .get(listed(provider))
+        .and_then(|provider| provider.get("models"))
+        .and_then(Value::as_object)
+    {
+        for key in models.keys().filter(|key| key.starts_with(prefix)) {
+            let declined = passed
+                .iter()
+                .any(|(of, declined, _)| *of == provider && declined == key);
+            let route = crucible_app::content_use::model_route(provider, key);
+            if !declined && held.warned(&route).is_none() {
+                found.push(Finding::Preview {
+                    provider,
+                    key: key.clone(),
+                });
+            }
+        }
+    }
     found
 }
 
@@ -824,6 +861,12 @@ fn reported(found: &[Finding]) -> String {
                 "- {provider}: `{model}` lists {}; crucible offers {}.",
                 spelled(listed),
                 spelled(offered)
+            ),
+            Finding::Preview { provider, key } => writeln!(
+                out,
+                "- {provider}: `{}` is a Preview model by its vendor's terms, and nothing \
+                 asks before it is sent: hold it by name in `WARNED` or decline it in `PASSED`.",
+                shown(key)
             ),
         };
     }
@@ -1265,6 +1308,22 @@ mod tests {
     }
 
     #[test]
+    fn drift_writes_a_labs_finding_and_says_to_hold_or_decline_it() {
+        let report = reported(&[Finding::Preview {
+            provider: "mistral",
+            key: String::from("labs-x"),
+        }]);
+
+        assert!(
+            report.contains(
+                "- mistral: `labs-x` is a Preview model by its vendor's terms, and nothing \
+                 asks before it is sent: hold it by name in `WARNED` or decline it in `PASSED`.\n"
+            ),
+            "{report}"
+        );
+    }
+
+    #[test]
     fn drift_leaves_a_family_declined_whole_unreported() {
         // `kimi` is declined whole for qwen and not for moonshot: a family is
         // its provider's, and the same name under another provider is another
@@ -1371,6 +1430,72 @@ mod tests {
             Vec::new(),
             "an image model, a model that calls no tools, a retired one and one \
              already declined are all quiet"
+        );
+    }
+
+    #[test]
+    fn drift_reports_a_labs_model_no_coding_session_could_be_asked() {
+        let offered: [Offer; 2] = [
+            ("mistral", "mistral-large-4", Some("mistral-large-4"), None),
+            (
+                "anthropic",
+                "claude-opus-5-5",
+                Some("claude-opus-5-5"),
+                None,
+            ),
+        ];
+        let database = json!({
+            "mistral": { "models": {
+                "mistral-large-4": listing("mistral-large", "2026-09-01", RUNGS),
+                "labs-x": with(listing("devstral", "2026-10-01", RUNGS), "/tool_call", json!(false)),
+                "labs-y": with(listing("devstral", "2026-10-02", RUNGS), "/status", json!("deprecated")),
+                "labs-z": with(
+                    listing("devstral", "2026-10-03", RUNGS),
+                    "/modalities/output",
+                    json!(["text", "image"]),
+                ),
+                "labs-devstral-small-2512": listing("devstral", "2025-12-01", RUNGS),
+                "mistral-labs-w": listing("mistral-labs", "2026-10-04", RUNGS),
+                "labs-u": listing("devstral", "2026-10-05", RUNGS),
+                "labs-t": listing("leanstral", "2026-10-06", RUNGS),
+            } },
+            "anthropic": { "models": {
+                "claude-opus-5-5": listing("claude-opus", "2026-09-01", RUNGS),
+                "labs-v": listing("claude-labs", "2026-10-07", RUNGS),
+            } },
+        });
+        let passed = [("mistral", "labs-u", "fabricated")];
+        let families = [("mistral", "leanstral", "fabricated")];
+
+        let mut shown: Vec<_> = drift(
+            &database,
+            &offered,
+            &passed,
+            &families,
+            &[],
+            &every,
+            &unreviewed,
+        )
+        .into_iter()
+        .filter_map(|one| match one {
+            Finding::Preview { provider, key } => Some((provider, key)),
+            _ => None,
+        })
+        .collect();
+        shown.sort();
+
+        assert_eq!(
+            shown,
+            vec![
+                ("mistral", String::from("labs-t")),
+                ("mistral", String::from("labs-x")),
+                ("mistral", String::from("labs-y")),
+                ("mistral", String::from("labs-z")),
+            ],
+            "a labs model with no tools, a retired one, one not answering in text \
+             alone and one of a family declined whole are reported; one already held, \
+             a name with labs inside it, another provider's labs model and one declined \
+             by name are not"
         );
     }
 

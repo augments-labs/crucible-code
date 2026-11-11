@@ -131,11 +131,11 @@ Labs and Preview models. That section also names as Preview models those
 database lists, `labs-devstral-small-2512` and `labs-leanstral-1-5-1`, are
 asked about by those exact names, though crucible offers neither. A `labs`
 model the database adds later is asked about only once crucible names it as a
-route of its own in this table. The model drift check reports a new model only
-when it can call tools, answers in text alone and is not marked deprecated, so
-a later `labs` model may never be reported. The Mistral key row is not asked
-about: the same key serves Mistral's other models, which that section does not
-cover.
+route of its own in this table. The model drift check reports every `labs`
+model of Mistral the database lists that is neither named here nor declined by
+name, whatever it can do, so a later one is found and added the same way. The
+Mistral key row is not asked about: the same key serves Mistral's other models,
+which that section does not cover.
 
 These are not asked about, because their vendors' terms say what is sent is
 not used for training unless you agree:
