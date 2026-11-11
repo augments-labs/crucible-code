@@ -278,18 +278,19 @@ table written without outer bars, nor the title of a heading underlined with
   a `\` just before the line break breaks the line and is not drawn, once more
   of the same paragraph follows. When the message ends there, a blank line comes
   next, or the next line opens a block, the backslash is drawn as written and
-  the block opens as it would have. The lines that open a block are those led
-  by a heading mark, a bullet (`-`, `+` or `*`) or a quote mark and then a
-  space; a number with a `.` or `)` and then a space, a tab or the line's end;
-  a fence; a rule of three or more marks; `$$` or `\[` display math;
-  `<details>` or `<summary>`; and a row of bars with a delimiter row under it,
-  which is a table. A `-` or `=` under a line, and a delimiter row under a
-  header, make that line a heading or a table header, with the backslash in
-  it. A line that only starts like one is more of the paragraph, and the
-  backslash breaks it: a marker after a tab or with no space after it, a
-  number such as `1.5`, a row of bars with no delimiter row under it, and a
-  `-` under a list item. In code, a code span, a heading, display math and a
-  block drawn as written it is an ordinary character.
+  the block opens as it would have. The lines that open a block are those led by
+  a heading mark, a bullet (`-`, `+` or `*`) or a quote mark and then a space; a
+  number with a `.` or `)` and then a space, a tab or the line's end; a fence; a
+  rule of three or more marks; `$$` or `\[` display math; `<details>` or
+  `<summary>`; and a row of bars with a delimiter row under it, which is a
+  table. A `-` or `=` under a line, and a delimiter row under a header that its
+  line break ends, make that line a heading or a table header, with the
+  backslash in it. A line that only starts like one is more of the paragraph,
+  and the backslash breaks it: a marker after a tab or with no space after it, a
+  number such as `1.5`, a row of bars with no delimiter row under it, a
+  delimiter row under a header when the answer ends there, which opens no table,
+  and a `-` under a list item. In code, a code span, a heading, display math and
+  a block drawn as written it is an ordinary character.
 - **Entities.** Outside code, `&name;` for the names below and every numeric
   reference, `&#169;` or `&#xA9;` with up to seven digits, is drawn as the
   character it names. What it names is text, never read again: `&lt;details&gt;`
