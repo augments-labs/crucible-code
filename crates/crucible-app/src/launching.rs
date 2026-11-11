@@ -302,7 +302,7 @@ use crate::external::External;
 use crate::outside::Relaunch;
 use crate::providers;
 
-mod discovery;
+pub(crate) mod discovery;
 #[cfg(unix)]
 mod terminal;
 
@@ -340,6 +340,9 @@ pub enum Unlaunched {
     /// one it was found with.
     #[error("{0}.")]
     Unbelieved(#[from] Unbelieved),
+    /// The directory the user's own program lies in is not given to an agent.
+    #[error("{0}.")]
+    Unowned(#[from] crate::own_program::Unowned),
     /// Its route is not one this build warns about.
     #[error("{0} is not an agent route this build knows, so nothing is started on it.")]
     Unknown(String),
@@ -805,6 +808,14 @@ impl Agent {
         let (Driver::Catalog, Some(key)) = (agent.driver(), agent.agent()) else {
             return Err(Unbelieved::NoLaunch);
         };
+        if let Some(own) = crate::own_program::believed(agent, key, state, &lookup) {
+            let (row, program) = own?;
+            return Ok(Self {
+                believed: Some(programs_beside(state)),
+                discovery: Discovery::Found(program),
+                ..Self::of_row(agent, AgentRow::Catalog(row), lookup)
+            });
+        }
         let programs = programs_beside(state);
         let store = Store::new(programs.clone());
         let executable = Path::new(agent.executable());
@@ -987,13 +998,13 @@ impl Agent {
         }
         match &self.discovery {
             Discovery::Found(program) => {
-                if let (Some(programs), AgentRow::Catalog(catalog)) = (&self.believed, row) {
-                    // A catalog row's program is held to the catalog wherever
-                    // it lies: one outside the store is no release of the
-                    // catalog's, and is refused as one not believed.
-                    match Origin::of(programs, program.path()) {
-                        Origin::Stored | Origin::Own => {}
-                    }
+                // A catalog row's program is held to the catalog wherever it
+                // lies: one outside the store is no release of the catalog's,
+                // and is refused as one not believed, unless its row is that
+                // of the user's own program, held to its probe record.
+                if let (Some(programs), AgentRow::Catalog(catalog)) = (&self.believed, row)
+                    && !(catalog.is_own() && Origin::of(programs, program.path()) == Origin::Own)
+                {
                     let store = Store::new(programs.clone());
                     if catalog.source() == ReleaseSource::Registry {
                         // A registry row is held to its own receipt: the probe
@@ -1277,7 +1288,7 @@ pub(crate) fn quoted(text: &str) -> String {
 
 /// Crucible's install store: `programs` in crucible's home, beside the
 /// directory `state` the trust state is kept under.
-fn programs_beside(state: &Path) -> PathBuf {
+pub(crate) fn programs_beside(state: &Path) -> PathBuf {
     state.parent().unwrap_or(state).join("programs")
 }
 
@@ -3419,6 +3430,14 @@ impl<'a> Launcher<'a> {
                 led(updating_off(request, stored.updater_off.as_ref()), leading),
                 stored.bin.as_deref(),
             );
+        } else if Origin::of(&programs_beside(self.state), program.path()) == Origin::Own {
+            let home = child_home(&request, false).or_else(|| self.home.clone());
+            let places = crate::own_program::Places {
+                home: home.as_deref().unwrap_or_else(|| Path::new("/")),
+                crucible,
+                sessions: self.sessions,
+            };
+            policy = crate::own_program::launched(&policy, row, program.path(), &places)?;
         }
         for root in &kept {
             // Made only where the child may write it, as the profile is, and

@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use crucible_config::Serves;
+use crucible_config::{ExternalAgent, Serves};
 use crucible_external_harnesses::catalog::{Trust, fixture};
 use crucible_external_harnesses::fake_peer::{self, scripts};
 use crucible_external_harnesses::{Control, Shape};
@@ -636,4 +636,85 @@ fn a_catalog_agent_s_row_is_the_one_listed_for_its_key() {
         Some(AgentRow::Built(row)) if row.driver == Driver::Claude
     ));
     assert!(registry.row(Driver::Antigravity, None).is_none());
+}
+
+/// A registry index listing `goose` for this machine, started as `./goose`.
+fn goose_listed() -> Value {
+    json!({
+        "version": "1.0.0",
+        "agents": [{
+            "id": "goose",
+            "name": "Goose",
+            "version": "1.0.0",
+            "license": "MIT",
+            "distribution": {"binary": {platform_here(): {
+                "archive": "https://downloads.example.com/goose.tar.gz",
+                "cmd": "./goose",
+                "sha256": "a".repeat(64),
+                "args": ["acp"],
+            }}},
+        }],
+    })
+}
+
+/// A program lying in crucible's install store is never taken for the user's
+/// own, though the registry proposes it by the same name: it stays held to
+/// its receipt and the hash it was installed with. The same program outside
+/// the store is the user's own, and is refused until it is tried.
+#[test]
+#[allow(clippy::panic)]
+fn a_program_inside_the_store_is_still_held_by_its_receipt_and_hash() {
+    let sample = Sample::new("own-inside-store");
+    let home = sample.home();
+    let registry = crate::catalog_fetch::registry_in(&home);
+    std::fs::create_dir_all(&registry).unwrap_or_else(|why| panic!("{why}"));
+    std::fs::write(registry.join("registry.json"), goose_listed().to_string())
+        .unwrap_or_else(|why| panic!("{why}"));
+    let state = crate::catalog_fetch::state_in(&home);
+    let key = AgentKey::new("goose").unwrap_or_else(|why| panic!("{why}"));
+    let placed = |directory: &Path| {
+        std::fs::create_dir_all(directory).unwrap_or_else(|why| panic!("{why}"));
+        let program = directory.join("goose");
+        std::fs::write(&program, b"#!/bin/sh\n").unwrap_or_else(|why| panic!("{why}"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755))
+                .unwrap_or_else(|why| panic!("{why}"));
+        }
+        program
+    };
+    let instance = |program: &Path| {
+        ExternalAgent::unwritten(
+            "work",
+            Driver::Catalog,
+            &program.to_string_lossy(),
+            None,
+            Some(&key),
+        )
+        .unwrap_or_else(|| panic!("a catalog instance"))
+    };
+    let lookup = |_: &str| None;
+
+    let stored = placed(&home.join("programs").join("goose").join("1.0.0"));
+    assert!(
+        crate::own_program::believed(&instance(&stored), &key, &state, lookup).is_none(),
+        "a program in the store was taken for the user's own"
+    );
+    let refused = Agent::believing(&instance(&stored), &REGISTRY, &state, lookup)
+        .err()
+        .unwrap_or_else(|| panic!("a stored program with no receipt was believed"));
+    assert!(
+        !matches!(refused, Unbelieved::OwnUnprobed { .. }),
+        "a stored program was refused as the user's own: {refused}"
+    );
+
+    let own = placed(&sample.root().join("tools"));
+    assert!(
+        matches!(
+            crate::own_program::believed(&instance(&own), &key, &state, lookup),
+            Some(Err(Unbelieved::OwnUnprobed { .. }))
+        ),
+        "a program outside the store was not the user's own"
+    );
 }

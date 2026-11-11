@@ -1527,3 +1527,99 @@ fn a_probe_for_another_platform_is_not_shown_or_launched() -> Result<(), Failed>
     assert!(said.contains("crucible agents probe"), "{said}");
     Ok(())
 }
+
+/// The configuration naming the instance `work` of `goose` started as
+/// `executable`, written as a command to look for on `PATH`.
+fn configure_command(home: &Home, executable: &str) -> Result<(), Failed> {
+    let document = json!({
+        "externalAgents": {
+            "work": {"driver": "catalog", "agent": "goose", "executable": executable}
+        }
+    });
+    fs::write(
+        crucible_config::user(home),
+        serde_json::to_vec_pretty(&document)?,
+    )?;
+    Ok(())
+}
+
+/// A registry agent whose program the user installed on `PATH` is refused,
+/// naming the command that tries it, until it is tried; trying it starts it
+/// once, confined with the network closed and its directory read-only, and
+/// keeps what it answered, and a later session then runs it as the user's own
+/// program without starting it.
+#[test]
+fn a_registry_agent_on_path_is_run_as_the_users_own_program_once_probed() -> Result<(), Failed> {
+    use crucible_app::own_program::{self, Places};
+    use crucible_external_harnesses::fake_peer::scripts::acp;
+    use crucible_external_harnesses::fake_peer::{Reply as Said, Script};
+
+    let bench = Bench::new("registry-own-on-path")?;
+    cache(&bench.home, &registry_json("1.0.0"));
+    let tools = bench.tree.0.join("tools");
+    let program = fake_peer::install(
+        &tools,
+        "goose",
+        &Script::once(
+            Said::new()
+                .hear(1)
+                .say(acp::offering("goose-acp", "1.2.3", &json!([]))),
+        ),
+    )?;
+    configure_command(&bench.home, "goose")?;
+    let configured = instance(&bench.home, "work")?;
+    let state = catalog_fetch::state_in(bench.home.path());
+    let path = tools.clone().into_os_string();
+    let lookup = |name: &str| (name == "PATH").then(|| path.clone());
+
+    let unprobed = Agent::believing(&configured, &REGISTRY, &state, lookup)
+        .expect_err("an own program with no probe record was believed");
+    assert!(
+        matches!(unprobed, Unbelieved::OwnUnprobed { .. }),
+        "{unprobed}"
+    );
+    assert!(
+        unprobed.to_string().contains("crucible agents try goose"),
+        "{unprobed}"
+    );
+    assert_eq!(fake_peer::played(&tools), 0, "belief started the program");
+
+    let user = bench.tree.0.join("user");
+    let record = own_program::tried(
+        &Places {
+            home: &user,
+            crucible: bench.home.path(),
+            sessions: bench.home.sessions(),
+        },
+        &configured,
+        &["work"],
+        lookup,
+        &crucible_app::probing::local,
+        Duration::from_secs(20),
+    )
+    .map_err(|why| why.to_string())?;
+    assert_eq!(record.name(), "goose-acp");
+    assert_eq!(record.version(), "1.2.3");
+    // The peer counts its starts in its own directory, which the probe gives
+    // it to read alone.
+    assert_eq!(
+        fake_peer::played(&tools),
+        0,
+        "the probed program wrote into its own directory"
+    );
+
+    let agent =
+        Agent::believing(&configured, &REGISTRY, &state, lookup).map_err(|why| why.to_string())?;
+    let AgentRow::Catalog(row) = agent.row() else {
+        panic!("not a catalog row");
+    };
+    assert!(row.is_own(), "the program was taken for a release");
+    assert!(row.warned().is_ok());
+    assert_eq!(
+        agent.installed(),
+        Some(program.as_path()),
+        "the instance was not started as the program found on PATH"
+    );
+    assert_eq!(fake_peer::played(&tools), 0, "belief started the program");
+    Ok(())
+}

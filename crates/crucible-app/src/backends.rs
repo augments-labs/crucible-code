@@ -58,7 +58,8 @@ use crucible_external_harnesses::acp::{Acp, Allowing};
 use crucible_external_harnesses::antigravity::{self, Antigravity};
 use crucible_external_harnesses::catalog::registry::{RegistryIndex, Unoffered};
 use crucible_external_harnesses::catalog::{
-    AuthMethod, CatalogError, CatalogProfile, Entry, Offer, Target, Trust, Unprofiled, Unusable,
+    AuthMethod, CatalogError, CatalogProfile, Entry, Offer, OwnEntry, Target, Trust, Unprofiled,
+    Unusable,
 };
 use crucible_external_harnesses::claude::Claude;
 use crucible_external_harnesses::release::OwnedPin;
@@ -150,6 +151,9 @@ pub struct CatalogRow {
     /// statement of content use, from the registry's generic warning where a
     /// registry entry gives none, or why no warning can be given.
     warned: Result<Box<Warned>, Unstated>,
+    /// Whether it runs a program the user installed, outside crucible's
+    /// store, rather than a release the store keeps.
+    own: bool,
 }
 
 impl CatalogRow {
@@ -166,6 +170,7 @@ impl CatalogRow {
             source: ReleaseSource::Catalog,
             read: None,
             warned: stated(entry).map(Box::new),
+            own: false,
         })
     }
 
@@ -191,7 +196,52 @@ impl CatalogRow {
             source: ReleaseSource::Registry,
             read: Some(read),
             warned,
+            own: false,
         })
+    }
+
+    /// The row of the program the user installed for `key`, started with what
+    /// `own` proposes and signed in by `methods`, the ones its probe record
+    /// answered. `entry` is the entry it stands for, where one can be read,
+    /// whose statement of content use it is held under; a registry row, read on `read`, holds the
+    /// registry's generic warning where its entry states none, as
+    /// [`CatalogRow::registry`] does.
+    ///
+    /// # Errors
+    ///
+    /// [`Unprofiled`] where the entry's hosts give no profile to run it under.
+    pub fn own(
+        key: AgentKey,
+        own: &OwnEntry,
+        entry: Option<&Entry>,
+        read: Option<Box<str>>,
+        methods: Vec<AuthMethod>,
+    ) -> Result<Self, Unprofiled> {
+        let warned = match (entry.map_or(Err(Unstated::Missing), stated), &read) {
+            (Ok(warned), _) => Ok(Box::new(warned)),
+            (Err(Unstated::Missing), Some(read)) => Ok(Box::new(generic(key.as_str(), read))),
+            (Err(why), _) => Err(why),
+        };
+        Ok(Self {
+            route: agent_route(key.as_str()),
+            profile: CatalogProfile::from_own(key.clone(), own, entry, methods)?,
+            source: if read.is_some() {
+                ReleaseSource::Registry
+            } else {
+                ReleaseSource::Catalog
+            },
+            key,
+            read,
+            warned,
+            own: true,
+        })
+    }
+
+    /// Whether it runs a program the user installed rather than a release
+    /// crucible's store keeps.
+    #[must_use]
+    pub const fn is_own(&self) -> bool {
+        self.own
     }
 
     /// Where its entry came from.
@@ -386,6 +436,17 @@ pub enum Unbelieved {
     /// The install store could not be read.
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// The program the user installed for it has no probe record that holds
+    /// for this instance as it is now configured, and belief never probes.
+    #[error(
+        "{key} runs as your own program, which has not been tried as this instance starts it; \
+         run `crucible agents try {key}`, or `crucible agents install {key}` to run a release \
+         crucible keeps instead"
+    )]
+    OwnUnprobed {
+        /// The key, as the instance names it.
+        key: AgentKey,
+    },
 }
 
 /// Whether a catalog key spells a word a built-in driver or the native runner

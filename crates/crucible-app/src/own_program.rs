@@ -23,28 +23,34 @@
 //! had when it was probed. At most [`RECORDS`] are kept, once those of
 //! instances that are gone are dropped.
 
+use std::ffi::OsString;
 use std::fs;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crucible_config::ExternalAgent;
 use crucible_execution::Failure;
 use crucible_external_harnesses::acp::Initialized;
+use crucible_external_harnesses::catalog::registry::platform;
 use crucible_external_harnesses::catalog::{AuthMethod, Method, Route, Variable};
+use crucible_external_harnesses::catalog::{Entry, OwnEntry, Trust};
 use crucible_external_harnesses::{
-    Account, Control, Dialect, Held, Host, Launch, Program, Reading, Refusal, Shape,
+    Account, Control, Dialect, Discovery, Held, Host, Launch, Program, Reading, Refusal, Shape,
 };
 use crucible_sandbox::{
     SandboxFilesystemProvenance, SandboxPolicy, SandboxPolicyError, SandboxService,
 };
+use crucible_types::AgentKey;
 use serde_json::{Map, Value, json};
 use sha2::{Digest as _, Sha256};
 use tokio::runtime::Handle;
 
 use crucible_tools::Mode;
 
-use crate::backends::{AgentRow, Wire};
+use crate::backends::{AgentRow, CatalogRow, Unbelieved, Wire, kept_word};
+use crate::launching::discovery::{Origin, discover};
 use crate::launching::{
     Guarded, Overlap, PROBING, Reach, Sandbox, beneath, guarded, is_beneath, overlap, read_only,
     unclosable,
@@ -631,6 +637,12 @@ pub enum Unowned {
     /// The record could not be written.
     #[error("the probe record could not be kept in {}", .0.display())]
     Unkept(PathBuf, #[source] std::io::Error),
+    /// The instance names no program the user installed for its entry.
+    #[error(transparent)]
+    Unbelieved(#[from] Unbelieved),
+    /// Its program lies in crucible's store, or was not found.
+    #[error("{0} is not run as a program you installed")]
+    NotOwn(Box<str>),
 }
 
 /// An empty directory only its owner may reach, made fresh under the system's
@@ -709,6 +721,33 @@ pub(crate) fn launch_policy(
         Root::Grant(granted) => Ok(read_only(conversation, granted)?),
         Root::NoRule => Ok(conversation.clone()),
     }
+}
+
+/// `conversation`'s policy as a launch of the user's own `program` of `row`'s
+/// agent is started under, with its directory decided against `places` as
+/// the probe's was: a catalog agent's own program and Antigravity's. Every
+/// other row's program is started under `conversation` unchanged.
+///
+/// # Errors
+///
+/// [`Unowned::Unreachable`] where the program cannot be followed, else as
+/// [`launch_policy`].
+pub(crate) fn launched(
+    conversation: &SandboxPolicy,
+    row: &AgentRow,
+    program: &Path,
+    places: &Places<'_>,
+) -> Result<SandboxPolicy, Unowned> {
+    let decided = match row {
+        AgentRow::Catalog(catalog) => catalog.is_own(),
+        AgentRow::Built(built) => built.driver == crucible_config::Driver::Antigravity,
+    };
+    if !decided {
+        return Ok(conversation.clone());
+    }
+    let canonical =
+        fs::canonicalize(program).map_err(|why| Unowned::Unreachable(program.to_owned(), why))?;
+    launch_policy(conversation, &places.root(&canonical))
 }
 
 /// Probes `instance`'s own program at `program` through `dialect`, in the
@@ -817,4 +856,187 @@ pub fn dialect(row: &AgentRow, program: &Path) -> Wire {
 #[must_use]
 pub fn unadmitted(failure: &Failure) -> Unowned {
     Unowned::Unadmitted(failure.reason().as_str().into())
+}
+
+/// What an entry proposes for the program the user installed for a catalog
+/// key, and where that program was found.
+struct Proposed {
+    /// The program, its arguments and its environment, as the entry proposes.
+    own: OwnEntry,
+    /// The entry it stands for, where one can be read.
+    entry: Option<Entry>,
+    /// The day the ACP Registry was read, for a program a registry row
+    /// proposes.
+    read: Option<Box<str>>,
+    /// Where it was found.
+    program: Program,
+}
+
+impl Proposed {
+    /// What the catalog instance `agent` of `key` is started as, where its
+    /// executable is found, as the entry's guessed name or as written,
+    /// outside the install store beside the trust state in `state`: the ACP
+    /// Registry's row where the cached registry lists the key, as belief
+    /// judges a release, else the signed catalog's offer. Nothing where no
+    /// entry proposes a program of its own, or the program lies in the store
+    /// or is not found, which belief then judges as a release.
+    fn of(
+        agent: &ExternalAgent,
+        key: &AgentKey,
+        state: &Path,
+        lookup: impl Fn(&str) -> Option<OsString>,
+    ) -> Option<Result<Self, Unbelieved>> {
+        if kept_word(key.as_str()) {
+            return None;
+        }
+        let home = state.parent().unwrap_or(state);
+        let unreadable = |why| Unbelieved::Unreadable {
+            key: key.clone(),
+            why,
+        };
+        let registry = crate::catalog_fetch::cached_registry(home).ok();
+        let listed = registry
+            .as_ref()
+            .and_then(|view| Some((view, view.index.entry(key)?)));
+        let (own, entry, read) = if let Some((view, listed)) = listed {
+            let own = match OwnEntry::registry(listed, &platform()) {
+                Ok(own) => own?,
+                Err(why) => return Some(Err(unreadable(why))),
+            };
+            let entry = view
+                .index
+                .offer(key)
+                .ok()
+                .and_then(|offer| offer.provisional().ok());
+            (own, entry, Some(view.index.read_date().into()))
+        } else {
+            let offer = Trust::load(state, SystemTime::now())
+                .offers(Some(key))
+                .into_iter()
+                .next()?;
+            match OwnEntry::catalog(&offer.entry) {
+                Ok(own) => (own?, Some(offer.entry), None),
+                Err(why) => return Some(Err(unreadable(why))),
+            }
+        };
+        let Discovery::Found(program) =
+            discover(agent.executable(), &[own.guess().to_owned()], lookup)
+        else {
+            return None;
+        };
+        let programs = crate::launching::programs_beside(state);
+        (Origin::of(&programs, program.path()) == Origin::Own).then_some(Ok(Self {
+            own,
+            entry,
+            read,
+            program,
+        }))
+    }
+
+    /// The instance `agent` of `key` started as this proposes, as its probe
+    /// record is kept for.
+    fn instance<'a>(&'a self, agent: &'a ExternalAgent, key: &'a AgentKey) -> Instance<'a> {
+        Instance {
+            name: agent.name(),
+            driver: agent.driver().name(),
+            agent: Some(key.as_str()),
+            args: self.own.args(),
+            env: self.own.env(),
+        }
+    }
+
+    /// Its row, signed in by `methods`.
+    fn row(&self, key: &AgentKey, methods: Vec<AuthMethod>) -> Result<CatalogRow, Unbelieved> {
+        CatalogRow::own(
+            key.clone(),
+            &self.own,
+            self.entry.as_ref(),
+            self.read.clone(),
+            methods,
+        )
+        .map_err(|why| Unbelieved::Unprofiled {
+            key: key.clone(),
+            why,
+        })
+    }
+}
+
+/// The row the catalog instance `agent` of `key` runs as where its program is
+/// the user's own, as [`Proposed`] finds it beside the trust state in
+/// `state`, and where that program was found: signed in by the methods its
+/// probe record answered. Belief never probes, so an own program with no
+/// record that holds for the instance as it is configured now is refused.
+/// Nothing where its program is not the user's own.
+///
+/// # Errors
+///
+/// [`Unbelieved::OwnUnprobed`] where no record holds, and
+/// [`Unbelieved::Unreadable`] or [`Unbelieved::Unprofiled`] where its entry
+/// cannot be run.
+pub(crate) fn believed(
+    agent: &ExternalAgent,
+    key: &AgentKey,
+    state: &Path,
+    lookup: impl Fn(&str) -> Option<OsString>,
+) -> Option<Result<(CatalogRow, Program), Unbelieved>> {
+    let proposed = match Proposed::of(agent, key, state, lookup)? {
+        Ok(proposed) => proposed,
+        Err(why) => return Some(Err(why)),
+    };
+    let home = state.parent().unwrap_or(state);
+    let Some(record) = read(home, &proposed.instance(agent, key)) else {
+        return Some(Err(Unbelieved::OwnUnprobed { key: key.clone() }));
+    };
+    Some(
+        proposed
+            .row(key, record.methods())
+            .map(|row| (row, proposed.program)),
+    )
+}
+
+/// Tries the program the user installed that the catalog instance `agent`
+/// runs as, among the configured `instances`: probes it as [`probe`] does, in
+/// the sandbox `sandbox` makes, on a runtime of its own, and keeps its record
+/// under `places`' crucible home, the one a later launch of `agent` reads. It
+/// is given `within` to answer.
+///
+/// # Errors
+///
+/// [`Unowned::NotOwn`] where `agent` runs no program the user installed, else
+/// as [`probe`].
+// Each is an input of its own to the probe, as for `probe`, which it passes on.
+#[allow(clippy::too_many_arguments)]
+pub fn tried(
+    places: &Places<'_>,
+    agent: &ExternalAgent,
+    instances: &[&str],
+    lookup: impl Fn(&str) -> Option<OsString>,
+    sandbox: &dyn Fn(Handle) -> Arc<dyn SandboxService>,
+    within: Duration,
+) -> Result<Record, Unowned> {
+    let not_own = || Unowned::NotOwn(agent.name().into());
+    let key = agent.agent().ok_or_else(not_own)?;
+    let state = crate::catalog_fetch::state_in(places.crucible);
+    let proposed = Proposed::of(agent, key, &state, lookup).ok_or_else(not_own)??;
+    let dialect = proposed.row(key, Vec::new())?.dialect(Mode::Ask);
+    let instance = proposed.instance(agent, key);
+    let (record, unfinished) = crate::services::serving(|services| {
+        let runtime = services
+            .runtime()
+            .handle()
+            .map_err(|why| Unowned::Probe(why.into()))?;
+        runtime.block_on(probe(
+            sandbox(runtime.clone()),
+            runtime.clone(),
+            places,
+            &instance,
+            instances,
+            proposed.program.clone(),
+            dialect,
+            within,
+        ))
+    });
+    let record = record?;
+    unfinished.map_err(|why| Unowned::Probe(why.into()))?;
+    Ok(record)
 }
