@@ -3939,6 +3939,30 @@ fn alerts_64_ascii() {
     insta::assert_snapshot!(corpus_pictures::picture(ALERT_KINDS, 64, Glyphs::Ascii));
 }
 
+const SMALL_CONSTRUCTS: &str = "Crucible bounds every buffer it keeps[^1] and draws nothing a model \
+wrote as an\nescape[^2]. Press <kbd>Ctrl</kbd>+<kbd>O</kbd> to see a cut result; H<sub>2</sub>O and \
+x<sup>2</sup> read as written.\n\n<details>\n<summary>Why the record is bounded</summary>\nA store \
+that grew with the session would spend the RSS budget.\n</details>\n\n[^1]: CLAUDE.md, \"Everything \
+kept is bounded\"\n[^2]: markdown.rs, the rule the reader opens with\n";
+
+#[test]
+fn small_constructs_80_unicode() {
+    insta::assert_snapshot!(corpus_pictures::picture(
+        SMALL_CONSTRUCTS,
+        80,
+        Glyphs::Unicode
+    ));
+}
+
+#[test]
+fn small_constructs_80_ascii() {
+    insta::assert_snapshot!(corpus_pictures::picture(
+        SMALL_CONSTRUCTS,
+        80,
+        Glyphs::Ascii
+    ));
+}
+
 /// The slots the runs written exactly `text` were said under, in order.
 fn worn(said: &[(Slot, String)], text: &str) -> Vec<Slot> {
     said.iter()
