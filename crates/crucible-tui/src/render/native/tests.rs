@@ -3650,3 +3650,102 @@ fn a_native_hostile_entity_writes_no_escape_nor_a_picture_cell_and_is_drawn_as_w
         assert!(rows.contains(words), "{rows:?} lost {words:?}");
     }
 }
+
+#[test]
+fn a_native_struck_phrase_wears_the_strike_and_a_path_stays_as_written() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let rows = kept_natively(80, glyphs, &["~one~ and ~/Projects and cd ~/a and ~/b\n"]);
+        assert!(
+            rows.iter()
+                .any(|row| row == "one and ~/Projects and cd ~/a and ~/b"),
+            "{glyphs:?}: {rows:#?}"
+        );
+
+        let rows = kept_natively(80, glyphs, &["between ~/a and ~/b\n"]);
+        assert!(
+            rows.iter().any(|row| row == "between ~/a and ~/b"),
+            "{glyphs:?}: {rows:#?}"
+        );
+
+        let window = Window::new(80, 12);
+        answered_natively_in(&window, glyphs, "~one~ and ~/Projects\n", None);
+        let worn = colourful().open(Slot::Struck);
+        let written = window.written();
+        assert!(
+            written.contains(&format!("{}one", worn.as_str())),
+            "{glyphs:?}: {written:?}"
+        );
+        assert!(
+            !written.contains(&format!("{}/Projects", worn.as_str())),
+            "{glyphs:?}: {written:?}"
+        );
+    }
+}
+
+#[test]
+fn a_native_run_under_three_markers_is_drawn_bold_and_italic_together() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let window = Window::new(80, 12);
+        let rows = answered_natively_in(&window, glyphs, "a ***both*** b\n", None);
+        assert!(
+            rows.iter().any(|row| row.trim_end() == "a both b"),
+            "{glyphs:?}: {rows:#?}"
+        );
+        let written = window.written();
+        assert!(
+            written.contains("\u{1b}[1;3mboth"),
+            "{glyphs:?}: {written:?}"
+        );
+    }
+}
+
+#[test]
+fn a_native_held_phrase_is_told_of_in_the_foot_and_joins_the_scrollback_once_settled() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let window = Window::new(64, 12);
+        let mut render = native(&window);
+        render.draws(glyphs);
+        render.wears(colourful());
+        stands(&mut render);
+        render.stream("look in ~/Projects").unwrap();
+
+        let rows = window.all();
+        assert!(
+            rows.iter().any(|row| row.trim_end() == "~/Projects"),
+            "{glyphs:?}: {rows:#?}"
+        );
+        assert!(
+            !window
+                .scrollback()
+                .iter()
+                .any(|row| row.contains("~/Projects")),
+            "{glyphs:?}: the held phrase reached the scrollback"
+        );
+
+        render.stream("\n\nnext\n").unwrap();
+        render.settle().unwrap();
+        stands(&mut render);
+        render.seal().unwrap();
+
+        let rows: Vec<String> = window
+            .all()
+            .into_iter()
+            .map(|row| row.trim_end().to_owned())
+            .collect();
+        assert!(
+            !rows.iter().any(|row| row == "~/Projects"),
+            "{glyphs:?}: {rows:#?}"
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|row| *row == "look in ~/Projects")
+                .count(),
+            1,
+            "{glyphs:?}: {rows:#?}"
+        );
+        assert!(
+            rows.iter().any(|row| row == "next"),
+            "{glyphs:?}: {rows:#?}"
+        );
+    }
+}
