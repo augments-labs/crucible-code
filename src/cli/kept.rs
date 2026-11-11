@@ -51,12 +51,18 @@
 //! that arrives with no row to keep a place for takes its place when it comes
 //! rather than leaving it for a later call of the same name.
 //!
-//! One kind of cut is not here and cannot be. A call that changed a file is
-//! shown as the change itself, and a change too long for the block is cut down
-//! where the change is built rather than where it is drawn — those lines never
-//! reach this process's drawing thread, so there is nothing held back from the
-//! reader to hand over. The row says how many went, which is the whole of what
-//! is still true about them.
+//! A call that changed a file is shown as the change itself, and what is held
+//! for it is the change written out, every line the tool kept, by the crate
+//! that draws it: held where the box folded its middle or the call's line was
+//! cut, under the same ceiling as any result. The log holds the sentence the
+//! model was sent and not the change, so one let go of under the ceiling is
+//! read back as that sentence.
+//!
+//! One kind of cut is not here and cannot be. A change too long to keep is cut
+//! down where the change is built rather than where it is drawn — those lines
+//! never reach this process's drawing thread, so there is nothing held back
+//! from the reader to hand over. The row says how many went, which is the
+//! whole of what is still true about them.
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;

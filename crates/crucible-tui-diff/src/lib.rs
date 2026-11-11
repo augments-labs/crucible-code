@@ -22,7 +22,10 @@
 //!   counts the rest: a file can hold a credential, and a path can name one.
 //! - **Nothing folded is lost.** A file of more than [`FOLD`] rows draws its
 //!   first [`HEAD`] and last [`TAIL`] with a quiet row between that counts the
-//!   rest; the [`Change`] keeps every one of them.
+//!   rest and names the key that shows them; the [`Change`] keeps every one of
+//!   them, and [`Changes::written`] writes every one out, in the words the box
+//!   is drawn in. [`unoffered`] takes the key out of a fold's row that nothing
+//!   answers any more.
 //! - **Bounded when it is drawn.** One change reads at most [`SYNTAX_LINES`]
 //!   lines and [`SYNTAX_BYTES`] bytes for their colours, compares at most
 //!   [`PAIRS`] pairs of lines of at most [`TOKENS`] words each, and lays out no
@@ -42,6 +45,6 @@ mod fits;
 mod tests;
 
 pub use change::{Change, FOLD, File, HEAD, Line, MOST_FILES, MOST_LINES, MOST_PATH, Side, TAIL};
-pub use draw::{Changes, SYNTAX_BYTES, SYNTAX_LINES};
+pub use draw::{Changes, SYNTAX_BYTES, SYNTAX_LINES, unoffered};
 pub use read::{MOST_BYTES, NotADiff, read};
 pub use words::{PAIRS, TOKENS};
