@@ -291,6 +291,7 @@ def self_test():
         (r"test(/a\\</)", ("a", "a", "a\\<"), True),
         (r"test(/^bash\\/?::tests::/)", ("a", "a", "bash::tests::runs_one"), True),
         (r"test(/^a\\/?\(b\)/)", ("a", "a", "a(b)"), True),
+        (r"test(/^a\/b\\/c$/)", ("a", "a", "a/b/c"), True),
     ):
         try:
             picked = selector(expression)(*test)
@@ -318,6 +319,8 @@ def self_test():
         r"test(/a\€/)",
         r"test(/a\\/)",
         "test(/a/b/)",
+        "test(/a)",
+        "test(/)",
     ):
         try:
             selector(expression)
@@ -774,7 +777,10 @@ def name_matcher(text, default):
     """
     if text.startswith("/"):
         if not REGEX.fullmatch(text):
-            raise ValueError(f"cannot read {text!r} as one regex: nextest ends a regex at its first / not written \\/")
+            raise ValueError(
+                f"cannot read {text!r} as one regex: nextest reads a regex from its opening / to the first"
+                " / after it not written \\/, and that / must end the matcher"
+            )
         body = text[1:-1].replace("\\/", "/")
         if any(
             not (escaped.isascii() and not escaped.isalnum()) or escaped in "<>"
