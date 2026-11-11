@@ -24,7 +24,7 @@ can only be about the whole tool: `deny ask_user` refuses every call to it.
 | `several` | Whether more than one of its answers may be chosen. Left out means one. |
 | `answers` | The answers it offers, best first. Required, at least 2 and at most 8, and no two the same. |
 | `answer` | What one answer is called. Required, at most 500 bytes, and on one line, with no line break or control character, since what you choose is said back under it. |
-| `says` | One line saying what choosing it means, where the name does not say it. At most 500 bytes. |
+| `says` | What choosing it means, where the name does not say it. At most 500 bytes. |
 | `recommended` | Marks the one answer the agent would pick. At most one per question, and the first listed; a call that marks two, or one that is not first, is refused so the agent can correct it. |
 | `shows` | What the answer would look like, row by row. At most 10 rows of at most 500 bytes each. |
 | `mode` | `blocking`, the default, waits for the answer. `deferred` returns at once and the answer comes later; see [Asking without waiting](#asking-without-waiting). |
@@ -253,8 +253,7 @@ questions and **Close** leaves it waiting.
   later, the agent cannot ask without waiting, and the call is refused rather
   than waiting instead. A resumed session whose questions cannot be shown is
   told they will not be answered, and that it should ask again if it still
-  needs to. So is one whose kept questions break a limit above, as a session
-  kept by an earlier version can.
+  needs to.
 
 ## From a program with no terminal
 

@@ -1139,6 +1139,24 @@ fn text_past_its_bound_or_a_label_off_its_line_is_refused_whether_registered_or_
                 }
             )
         }),
+        (asking("H", "Q?", "a\u{2028}b", "", ""), |e| {
+            matches!(
+                e,
+                Misshapen::Control {
+                    question: 1,
+                    field: "answer"
+                }
+            )
+        }),
+        (asking("H\u{85}x", "Q?", "a", "", ""), |e| {
+            matches!(
+                e,
+                Misshapen::Control {
+                    question: 1,
+                    field: "heading"
+                }
+            )
+        }),
         (asking("H", "Q?", "a\u{1b}[2J", "", ""), |e| {
             matches!(
                 e,

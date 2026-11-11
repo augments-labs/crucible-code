@@ -18,7 +18,7 @@ schema
         "properties": {
           "heading": {
             "type": "string",
-            "description": "Two or three words naming the question, in one row with the others. At most 24 bytes."
+            "description": "Two or three words on one line, naming the question beside the others. At most 24 bytes."
           },
           "question": {
             "type": "string",
@@ -37,11 +37,11 @@ schema
               "properties": {
                 "answer": {
                   "type": "string",
-                  "description": "The answer's name, in a few words. At most 500 bytes."
+                  "description": "The answer's name: a few words on one line. At most 500 bytes."
                 },
                 "says": {
                   "type": "string",
-                  "description": "One line on what choosing it means, where the name does not say it."
+                  "description": "What choosing it means, where the name does not say it."
                 },
                 "recommended": {
                   "type": "boolean",

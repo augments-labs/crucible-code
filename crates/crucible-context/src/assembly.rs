@@ -398,7 +398,7 @@ mod tests {
         let recorded = patch.apply(&prior).expect("the patch applies");
         let state = recorded.get(QuestionsSection::ID).expect("still recorded");
 
-        assert_eq!(state.get("next"), Some(&json!(2)));
+        assert_eq!(Deferred::saved_next(state), Some(2));
         assert_eq!(ids(state), ["q0", "q1"]);
         assert_eq!(recorded.sections().len(), 1, "only the questions changed");
         assert_eq!(
@@ -422,7 +422,12 @@ mod tests {
             .apply(&ContextSnapshot::new())
             .expect("the patch applies");
         let state = recorded.get(QuestionsSection::ID).expect("recorded");
-        assert_eq!(state.get("waiting"), held.state().get("waiting"));
+        let now = held.state();
+        assert_eq!(Deferred::saved_waiting(&now).len(), 1, "{now}");
+        assert_eq!(
+            Deferred::saved_waiting(state),
+            Deferred::saved_waiting(&now)
+        );
         assert_eq!(state.get("told"), Some(&json!([])), "nothing was told yet");
 
         let resumed = Deferred::default();

@@ -665,17 +665,18 @@ fn a_front_end_that_never_fits_its_answer_is_asked_a_few_times_and_then_no_more(
 }
 
 #[test]
-fn a_waiting_batch_whose_answer_is_too_long_to_carry_is_still_shown() {
-    // A restored batch is bounded by the registry's total alone, so an answer
-    // name may be longer than the words a client is handed. The batch is
-    // shown with that name cut and saying so, not left out: a client that
-    // could not see it could neither answer nor decline it.
-    let long = "a".repeat(TEXT_BYTES + 1);
+fn every_text_a_waiting_batch_may_hold_is_carried_to_a_client_whole() {
+    // The registry bounds each text it holds, on register and restore alike,
+    // below the words a client is handed, so no name of a waiting batch is cut
+    // for a client and every answer stays one it can choose.
+    use crucible_tools::{MOST_HEADING_BYTES, MOST_TEXT_BYTES};
+    const { assert!(MOST_HEADING_BYTES <= TEXT_BYTES && MOST_TEXT_BYTES <= TEXT_BYTES) };
+    let long = "a".repeat(MOST_TEXT_BYTES);
     let held = super::Questions::new();
     held.held()
         .register(vec![Question::new(
-            "Language",
-            "Which language?",
+            "H".repeat(MOST_HEADING_BYTES),
+            "q".repeat(MOST_TEXT_BYTES),
             [Answer::new(long.as_str()), Answer::new("Rust")],
         )])
         .expect("the registry holds it");
@@ -700,10 +701,8 @@ fn a_waiting_batch_whose_answer_is_too_long_to_carry_is_still_shown() {
         .iter()
         .map(|choice| (choice.name.truncated(), choice.name.as_str()))
         .collect();
-    assert!(
-        matches!(names.as_slice(), [(true, _), (false, "Rust")]),
-        "{names:?}"
-    );
+    assert_eq!(names, [(false, long.as_str()), (false, "Rust")]);
+    assert!(!question.asks.truncated() && !question.heading.truncated());
 }
 
 #[test]

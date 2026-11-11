@@ -67,10 +67,20 @@ pub const MOST_ANSWERS: usize = 8;
 pub const MOST_SHOWS: usize = 10;
 
 /// The most bytes one heading may be.
+///
+/// Every heading is drawn on one row across the top of the panel, so what
+/// bounds this is not what a heading needs but what the row can hold: four of
+/// them at eighty columns leaves about fifteen each, marks and gaps included.
+/// Past this the row gives way to a count, and a heading nobody ever sees is a
+/// heading the model spent tokens on for nothing.
 pub const MOST_HEADING_BYTES: usize = 24;
 
 /// The most bytes a question, an answer, what it says or one row it shows may
 /// be.
+///
+/// An answer is folded across the panel the way the question above it is, so
+/// what bounds it is the reader's patience rather than a row, and a specimen
+/// row past the panel's width is clipped, which its own description says.
 pub const MOST_TEXT_BYTES: usize = 500;
 
 /// The keys of the saved form: the number of the next batch, the batches

@@ -15,7 +15,7 @@
 //! listing them is recorded last. A log that ends anywhere in between either
 //! holds the answer or brings its batch back as waiting, so the person may be
 //! asked twice and is never ignored. The one exception is a record the
-//! registry would refuse to read back, too many batches or too many bytes,
+//! registry would refuse to read back, such as one of too many batches or bytes,
 //! from which `asked` drops the oldest it no longer lists so the rest still
 //! come back. A batch asked during a tool pass is recorded, with the next id,
 //! before the result naming it ([`Runner::asked_since`]), so a log that holds
@@ -76,6 +76,10 @@ impl Runner {
                 .as_ref()
                 .and_then(|saved| saved.get(QuestionsSection::ID))
             {
+                // Read and then replaced under two locks, which is safe only
+                // because nothing registers between them: this runs in a
+                // pass's assembly, while none of the tools that register is
+                // running.
                 let empty = held.waiting().is_empty() && !held.any_settled();
                 if !empty {
                     held.continue_from(saved);

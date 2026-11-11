@@ -116,7 +116,7 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
                     Field {
                         name: HEADING,
                         about: format!(
-                            "Two or three words naming the question, in one row with the others. \
+                            "Two or three words on one line, naming the question beside the others. \
                              At most {MOST_HEADING_BYTES} bytes."
                         ),
                         needed: true,
@@ -150,16 +150,16 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
                                 Field {
                                     name: ANSWER,
                                     about: format!(
-                                        "The answer's name, in a few words. At most {MOST_TEXT_BYTES} \
-                                         bytes."
+                                        "The answer's name: a few words on one line. At most \
+                                         {MOST_TEXT_BYTES} bytes."
                                     ),
                                     needed: true,
                                     shape: Shape::Text,
                                 },
                                 Field {
                                     name: SAYS,
-                                    about: "One line on what choosing it means, where the name \
-                                            does not say it."
+                                    about: "What choosing it means, where the name does not say \
+                                            it."
                                         .into(),
                                     needed: false,
                                     shape: Shape::Text,
@@ -177,7 +177,8 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
                                     about: format!(
                                         "For an answer that is a shape, such as a layout, a \
                                          format or a line of output: its rows, drawn as given \
-                                         under it. At most {MOST_SHOWS} rows of {MOST_TEXT_BYTES} bytes."
+                                         under it. At most {MOST_SHOWS} rows of \
+                                         {MOST_TEXT_BYTES} bytes."
                                     ),
                                     needed: false,
                                     shape: Shape::List {
@@ -473,9 +474,9 @@ fn answer(args: &Args) -> Result<Answer, ToolError> {
 /// counted in bytes.
 ///
 /// Length and nothing else; whether a label stays on its line is [`label`]'s.
-/// Whether a field may be blank is already answered
-/// where it is read — a heading and a question are required and a blank one is
-/// a missing one, while **a blank row of a specimen is a blank line in what the
+/// Whether a field may be blank is already answered where it is read — a
+/// heading and a question are required and a blank one is a missing one, while
+/// **a blank row of a specimen is a blank line in what the
 /// answer would look like**, which is a row somebody wrote on purpose.
 fn bounded<'a>(args: &Args, field: &str, text: &'a str, most: usize) -> Result<&'a str, ToolError> {
     if text.len() > most {
@@ -525,7 +526,10 @@ fn repeated<'a>(every: impl Iterator<Item = &'a str>) -> Option<&'a str> {
 /// The question is repeated rather than referred to by number, because the
 /// answer is read in a transcript where the call's own arguments are not on
 /// screen — a line saying *3 → Rust* would need the reader to go and find what
-/// three was.
+/// three was. It is read back on one line, whatever line breaks it shows the
+/// person: one line per question is what lets the model tell which words are
+/// an answer, and a question written to carry a line shaped like one would
+/// otherwise read back as an answer nobody gave.
 fn said(asked: &[Question], given: &[Answered]) -> String {
     let mut text = String::new();
 
@@ -537,7 +541,8 @@ fn said(asked: &[Question], given: &[Answered]) -> String {
             chosen.join(", ")
         };
 
-        let _ = writeln!(text, "{} → {chosen}", question.question());
+        let asked = flattened(question.question());
+        let _ = writeln!(text, "{asked} → {chosen}");
         if !answered.note().is_empty() {
             let _ = writeln!(text, "    they added: {}", answered.note());
         }
@@ -555,4 +560,17 @@ fn said(asked: &[Question], given: &[Answered]) -> String {
     }
 
     text
+}
+
+/// `text` on one line, each character that would break it read as a space.
+fn flattened(text: &str) -> String {
+    text.chars()
+        .map(|one| {
+            if is_one_line(one.encode_utf8(&mut [0; 4])) {
+                one
+            } else {
+                ' '
+            }
+        })
+        .collect()
 }
