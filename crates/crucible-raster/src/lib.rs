@@ -277,6 +277,16 @@ pub fn rasterise(svg: &[u8], width_px: u32, inks: &[(&str, [u8; 3])]) -> Result<
 /// the pages a drawing touches are ever backed by memory.
 const DRAWING_STACK: usize = 32 << 20;
 
+/// How many times [`draw`] has gone on to build a tree: what the tests read to
+/// tell a picture refused before that work from one refused after it, which no
+/// clock can tell on every machine.
+#[cfg(test)]
+static BUILT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// How many times [`draw`] has gone on to draw a tree it built, read as
+/// [`BUILT`] is.
+#[cfg(test)]
+static DRAWN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// [`rasterise`] once the slot is held and the drawing has the stack it needs,
 /// with `rules` rules in the inks' style sheet and `embedded` set by the image
 /// resolver of `options` when it is handed an SVG.
@@ -300,6 +310,8 @@ fn draw(
     if copying(&document, &outlines, rules)? > MOST_COPYING_NS {
         return Err(Refused::TooLarge);
     }
+    #[cfg(test)]
+    BUILT.fetch_add(1, Ordering::Relaxed);
     let tree = Tree::from_xmltree(&document, options).map_err(|error| match error {
         UsvgError::ElementsLimitReached => Refused::TooLarge,
         _ => Refused::NotAnImage,
@@ -331,6 +343,8 @@ fn draw(
     // What the renderer would hold and compute is judged before it holds or
     // computes any of it: the canvas is not the only pixmap it makes.
     budget::cost(&tree, scale, width_px, height)?;
+    #[cfg(test)]
+    DRAWN.fetch_add(1, Ordering::Relaxed);
     let mut canvas = Pixmap::new(width_px, height).ok_or(Refused::TooLarge)?;
     resvg::render(&tree, scale, &mut canvas.as_mut());
     let straight = canvas

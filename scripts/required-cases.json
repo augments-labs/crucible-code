@@ -7497,7 +7497,7 @@
       },
       "case": "tests::the_copies_uses_would_make_are_counted_before_any_is_made",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "3daec729d697bba1728a57ebdb28542516b71ab79f1cb23489d707c075092973",
+      "body_sha256": "fdc93b2886c8c1c31194bc2b642f1d946390c5da7cea5494a42063753d4b5a22",
       "platforms": [
         "linux",
         "macos",
@@ -7515,7 +7515,7 @@
       },
       "case": "tests::a_copy_is_counted_by_the_text_and_the_attributes_it_copies",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "f1ba0ea058dad90f9119af1829cd8cf2d11077e6788c3496cc2c04e0690743a5",
+      "body_sha256": "fb594ac8a117c7ee164ffbbeac4f347800b8866b6cedbd89d8c28bfd8e7205c5",
       "platforms": [
         "linux",
         "macos",
@@ -7533,7 +7533,7 @@
       },
       "case": "tests::a_gradient_costs_its_pixels_and_its_stops_together",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "5ad804abebf48113928e85faa6a6aac5fe51150230c0ffb21b2a042fbc390e3e",
+      "body_sha256": "c8b50e83c61b6264ec43c11bc04249465089bcbf0fae65ec1dd85b1419651c03",
       "platforms": [
         "linux",
         "macos",
@@ -7551,7 +7551,7 @@
       },
       "case": "tests::edges_of_a_stroke_crowded_along_a_row_are_counted_by_the_pixels_each_can_walk",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "af01799158e87097b9d44f793dfa6aa62b9e749d4af7c306903bf90683e027e8",
+      "body_sha256": "f05099e7854cde98bab568b2a0f2ab9e4fae2a8c1006d370bd74372e02e96700",
       "platforms": [
         "linux",
         "macos",
@@ -7605,7 +7605,7 @@
       },
       "case": "tests::a_marker_drawn_inside_a_marker_is_refused_before_the_tree_is_built",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "90911e09113645218adc41db70b27153a98c0c1b0ff26deaa092bdd80e2993cf",
+      "body_sha256": "64090e1ed498811fa53d9a2ffed56ec2a8f6941edfc3a138f16ee21b8e4cb95b",
       "platforms": [
         "linux",
         "macos",
@@ -7623,7 +7623,7 @@
       },
       "case": "tests::a_clip_or_filter_inside_a_clip_is_refused_before_the_tree_is_built",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "745b5bad188e0c714f2bc554b2d706f4cb32300ff0e973fa616d7a6519bfd478",
+      "body_sha256": "5f85d7414d8cf9a59827796fb09adc57b0cbf57d4ca686c8ef11b76f40485f2e",
       "platforms": [
         "linux",
         "macos",
@@ -7641,7 +7641,7 @@
       },
       "case": "tests::the_copies_markers_clips_and_text_ask_for_are_counted_before_any_is_made",
       "source": "crates/crucible-raster/src/tests.rs",
-      "body_sha256": "1dd698ede2eee44c5be9a3e54a62359f2e524c91673863f9cfcb5466d8aea4e4",
+      "body_sha256": "ae63eef33dbe05158f8f6cab7139a2951a165f3a7239c7d6c34861ac396a7182",
       "platforms": [
         "linux",
         "macos",
@@ -7651,15 +7651,15 @@
     {
       "id": "CASE-TRANSCRIPT-PICTURES-CORPUS-REFUSED-SOON",
       "family": "transcript-pictures",
-      "obligation": "Each corpus file whose drawing or tree build would take long, by nesting, copies, an element outside those drawn or a gradient's stops, is refused as recorded within the time a refusal may take.",
+      "obligation": "Each corpus file whose drawing or tree build would take long, by nesting, copies, an element outside those drawn or a gradient's stops, is refused as recorded before its tree is built or, for those recorded so, before a pixel is drawn.",
       "package": "crucible-raster",
       "target": {
-        "kind": "test",
-        "name": "hostile"
+        "kind": "lib",
+        "name": "crucible_raster"
       },
-      "case": "a_file_refused_for_its_work_is_refused_before_the_work_is_done",
-      "source": "crates/crucible-raster/tests/hostile.rs",
-      "body_sha256": "79bcedd8d62b146f03c1ac3d586baf74aaae0a42bf38b9dc66291b05fe9795bc",
+      "case": "tests::a_file_refused_for_its_work_is_refused_before_the_work_is_done",
+      "source": "crates/crucible-raster/src/tests.rs",
+      "body_sha256": "50aa522c773e2348cb21b29351da617e7e384b497ef6634e9aa93cc2b4ca57a3",
       "platforms": [
         "linux",
         "macos",
