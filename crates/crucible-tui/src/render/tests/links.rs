@@ -108,6 +108,24 @@ fn every_address_drawn_shorter_is_listed_whole_newest_first_after_the_blocks() {
     assert!(drawn.sources().all(|source| source.line < bound));
 }
 
+#[test]
+fn the_list_of_addresses_drawn_shorter_keeps_the_newest_sixty_four() {
+    let address = |index: usize| format!("https://example.com/section-{index}/guide/intro");
+    let answer: String = (0..70)
+        .map(|index| format!("[w]({}) ", address(index)))
+        .chain(["\n".to_owned()])
+        .collect();
+    let mut drawn = reading(100, 20);
+    drawn.answer(&answer);
+
+    let listed: Vec<String> = drawn
+        .sources()
+        .map(|source| source.text.to_owned())
+        .collect();
+    let newest: Vec<String> = (6..70).rev().map(address).collect();
+    assert_eq!(listed, newest);
+}
+
 /// Forge addresses, worded links, images and a table cell as a model might
 /// write them to carry an escape, a control, a reordering or an invisible
 /// character, in the words, the address and the path.
