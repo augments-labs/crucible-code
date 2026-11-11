@@ -135,6 +135,32 @@ fn noted(warned: bool, rungs: &[Effort], form: FastForm) -> &'static str {
     if warned { TRAINS } else { note(rungs, form) }
 }
 
+/// One model's row on the shelf, listed by the name the registry lists it by,
+/// with its window and its note already worked out, and its provider named on
+/// it while `only` names none.
+fn stocked<'a>(
+    one: &Selected,
+    window: &'a str,
+    note: &'a str,
+    now: bool,
+    only: Option<&str>,
+) -> Stocked<'a> {
+    Stocked {
+        name: one.model.listed,
+        // Who serves it, until the shelf is one provider's — at which point
+        // the pane beside it is already saying so, once rather than on every
+        // row.
+        by: if only.is_none() {
+            one.provider.shown
+        } else {
+            ""
+        },
+        window,
+        note,
+        now,
+    }
+}
+
 /// The models of `all` each provider's credential in use serves, from
 /// `using`, the credential each provider is sent with.
 fn narrowed(all: Vec<Selected>, using: &BTreeMap<&str, InUse>) -> Vec<Selected> {
@@ -605,18 +631,8 @@ fn stood<T: Terminal>(
                     };
                     (one, window, now, form)
                 })
-                .map(|(one, window, now, form)| Stocked {
-                    name: one.model.name,
-                    // Who serves it, until the shelf is one provider's — at
-                    // which point the pane beside it is already saying so, once
-                    // rather than on every row.
-                    by: if only.is_none() {
-                        one.provider.shown
-                    } else {
-                        ""
-                    },
-                    window,
-                    note: noted(
+                .map(|(one, window, now, form)| {
+                    let note = noted(
                         routes
                             .warned(&crucible_app::content_use::model_route(
                                 one.provider.name,
@@ -625,8 +641,8 @@ fn stood<T: Terminal>(
                             .is_some(),
                         one.model.rungs,
                         form,
-                    ),
-                    now,
+                    );
+                    stocked(one, window, note, now, only)
                 })
                 .collect();
 
