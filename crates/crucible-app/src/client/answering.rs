@@ -39,7 +39,7 @@
 //! permission engine or the content-use hold.
 
 use std::fmt;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use crucible_builtins::AskUser;
@@ -59,16 +59,23 @@ pub struct Questions(Arc<Shared>);
 
 /// What every clone of one [`Questions`] shares.
 struct Shared {
-    /// The session the registry's batches belong to. Locked around every
-    /// change of era, every settling and every read of what waits, so each
-    /// sees the era and the registry as they stood together.
-    era: Mutex<Era>,
-    /// The batches. Its own lock is taken per call and inside `era`'s.
+    /// The era and the claim. Locked around every change of either, every
+    /// settling and every read of what waits, so each sees them and the
+    /// registry as they stood together.
+    state: Mutex<State>,
+    /// The batches. Its own lock is taken per call and inside `state`'s.
     held: Deferred,
-    /// Whether a conversation holds the handle: set by the [`Hold`] it keeps,
-    /// and cleared when that is dropped, under `era`'s lock, so a settling
-    /// that saw it set finished before the holder let go.
-    claimed: AtomicBool,
+}
+
+/// What [`Shared::state`] guards.
+struct State {
+    /// The session the registry's batches belong to.
+    era: Era,
+    /// Whether a conversation holds the handle: taken by
+    /// [`Questions::claim`] and given up when the [`Hold`] it built is
+    /// dropped, so a settling that saw it taken finished before the holder
+    /// let go.
+    claimed: bool,
 }
 
 impl Questions {
@@ -77,9 +84,11 @@ impl Questions {
     #[must_use]
     pub fn new() -> Self {
         Self(Arc::new(Shared {
-            era: Mutex::new(stint()),
+            state: Mutex::new(State {
+                era: stint(),
+                claimed: false,
+            }),
             held: Deferred::default(),
-            claimed: AtomicBool::new(false),
         }))
     }
 
@@ -108,12 +117,13 @@ impl Questions {
     /// would empty it. The claim lasts as long as the [`Hold`], so a refused
     /// claim builds none: dropping one would end the holder's.
     pub(crate) fn claim(self, incoming: Option<&SessionId>) -> Option<Hold> {
-        let mut era = self.era();
-        if self.0.claimed.swap(true, Ordering::SeqCst) {
+        let mut state = self.state();
+        if state.claimed {
             return None;
         }
-        self.moving(&mut era, incoming);
-        drop(era);
+        state.claimed = true;
+        self.moving(&mut state.era, incoming);
+        drop(state);
         Some(Hold(self))
     }
 
@@ -125,20 +135,22 @@ impl Questions {
     }
 
     /// The era and every batch waiting, oldest first, as they stood together.
+    /// While no conversation holds the handle, what is reported is what the
+    /// last holder left, and none of it can be answered.
     #[must_use]
     pub fn waiting(&self) -> (Era, Vec<Batch>) {
-        let era = self.era();
-        (Era::clone(&era), self.0.held.waiting())
+        let state = self.state();
+        (Era::clone(&state.era), self.0.held.waiting())
     }
 
     /// Moves the questions to the session `incoming` names, or to a stint of
     /// its own where it records nothing: the era becomes the incoming
     /// session's and every batch, waiting or settled, is forgotten, together.
     pub(crate) fn moved(&self, incoming: Option<&SessionId>) {
-        self.moving(&mut self.era(), incoming);
+        self.moving(&mut self.state().era, incoming);
     }
 
-    /// [`Self::moved`], with `era`'s lock already taken.
+    /// [`Self::moved`], with the state's lock already taken.
     fn moving(&self, era: &mut Era, incoming: Option<&SessionId>) {
         *era = incoming.map_or_else(stint, |session| Era::Session(session.clone()));
         self.0.held.clear();
@@ -146,8 +158,8 @@ impl Questions {
 
     /// Whether a batch of `era` numbered `id` waits.
     pub(crate) fn waits(&self, era: &Era, id: QuestionId) -> bool {
-        let current = self.era();
-        *current == *era && self.0.held.waiting().iter().any(|batch| batch.id() == id)
+        let state = self.state();
+        state.era == *era && self.0.held.waiting().iter().any(|batch| batch.id() == id)
     }
 
     /// Settles the batch of `era` numbered `id` with `replies`, as the
@@ -155,17 +167,17 @@ impl Questions {
     /// conversation holds the handle, is [`Unsettled::Stale`], and nothing
     /// changes.
     fn settle(&self, era: &Era, id: QuestionId, replies: Vec<Reply>) -> Result<(), Unsettled> {
-        let current = self.era();
-        if !self.0.claimed.load(Ordering::SeqCst) || *current != *era {
+        let state = self.state();
+        if !state.claimed || state.era != *era {
             return Err(Unsettled::Stale(id));
         }
         self.0.held.settle(id, replies)
     }
 
-    /// The era, whether or not a thread came apart while holding it: an era
-    /// is set whole, so there is no half of one to find.
-    fn era(&self) -> MutexGuard<'_, Era> {
-        self.0.era.lock().unwrap_or_else(PoisonError::into_inner)
+    /// The era and the claim, whether or not a thread came apart while
+    /// holding them: each is set whole, so there is no half of one to find.
+    fn state(&self) -> MutexGuard<'_, State> {
+        self.0.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -179,7 +191,7 @@ impl fmt::Debug for Questions {
     /// The era only: what waits is the model's words and the person's.
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         out.debug_struct("Questions")
-            .field("era", &*self.era())
+            .field("era", &self.state().era)
             .finish_non_exhaustive()
     }
 }
@@ -198,8 +210,7 @@ impl Hold {
 
 impl Drop for Hold {
     fn drop(&mut self) {
-        let _settling = self.0.era();
-        self.0.0.claimed.store(false, Ordering::SeqCst);
+        self.0.state().claimed = false;
     }
 }
 

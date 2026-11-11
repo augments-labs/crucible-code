@@ -281,7 +281,7 @@ Two codes belong to answers, and neither settles anything:
 
 | Code | Means |
 | --- | --- |
-| `stale_questions` | The command is refused, because the batch is not waiting: it was never asked, it was answered or cleared already, it belongs to another era, or the conversation it was asked in has ended, so nothing would deliver it. |
+| `stale_questions` | The command is refused, because nothing would deliver the answer: the batch was never asked, it was answered or cleared already, it belongs to another era, or the conversation it was asked in has ended. |
 | `invalid_answer` | The command's outcome is `invalid`, with a problem under this code, rather than a refusal. The batch is waiting and the replies do not fit it: the wrong number, or one its question cannot take. The batch still waits, and the problem's `message` says what did not fit. |
 
 A request that did not claim `questions` is sent nothing of what waits, and an
