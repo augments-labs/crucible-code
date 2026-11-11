@@ -8251,8 +8251,8 @@
         "kind": "lib",
         "name": "crucible_tui"
       },
-      "case": "render::tests::a_hostile_tag_key_or_footnote_label_writes_no_escape_nor_a_tag_or_label_a_picture_cell",
-      "source": "crates/crucible-tui/src/render/tests.rs",
+      "case": "render::tests::notes::a_hostile_tag_key_or_footnote_label_writes_no_escape_nor_a_tag_or_label_a_picture_cell",
+      "source": "crates/crucible-tui/src/render/tests/notes.rs",
       "body_sha256": "5845f83f319f43ddfae15f6f84d5f6aafe2496a23bd8e828ffb58eab455f5057",
       "platforms": [
         "linux",
