@@ -401,6 +401,28 @@ fn a_forge_address_drawn_as_its_own_words_is_drawn_as_its_reference() {
             "augments-labs/crucible-code#5",
             "https://gitlab.com/augments-labs/crucible-code/-/issues/5".to_owned(),
         ),
+        // Words that are the reference, short or naming its repository, are
+        // the address as a person writes it, and nothing follows them.
+        (
+            format!("see [#1324]({here}/pull/1324) now"),
+            "#1324",
+            format!("{here}/pull/1324"),
+        ),
+        (
+            format!("see [augments-labs/crucible-code#5]({here}/issues/5) now"),
+            "#5",
+            format!("{here}/issues/5"),
+        ),
+        (
+            "see [someone/else#5](https://github.com/someone/else/issues/5) now".to_owned(),
+            "someone/else#5",
+            "https://github.com/someone/else/issues/5".to_owned(),
+        ),
+        (
+            format!("see [abcdef1]({here}/commit/abcdef1234) now"),
+            "abcdef1",
+            format!("{here}/commit/abcdef1234"),
+        ),
     ];
     for (answer, short, address) in cases {
         let said = linked(&answer, Some(forge()));

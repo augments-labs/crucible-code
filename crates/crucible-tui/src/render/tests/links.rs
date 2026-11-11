@@ -184,9 +184,13 @@ fn every_shape_of_link_cut_anywhere_is_drawn_as_it_is_whole() {
     // Each shape the reader settles, and the rows it is drawn as: a cut at
     // any character boundary, inside the address, the brackets or the cell,
     // is drawn as the answer streamed whole is.
-    let shapes: [(&str, &[&str]); 6] = [
+    let shapes: [(&str, &[&str]); 7] = [
         (
             "a https://github.com/augments-labs/crucible-code/pull/1324 b\n",
+            &["a #1324 b"],
+        ),
+        (
+            "a [#1324](https://github.com/augments-labs/crucible-code/pull/1324) b\n",
             &["a #1324 b"],
         ),
         (

@@ -13,7 +13,9 @@
 //!   and first segment and an ellipsis where anything follows them, and one
 //!   with no host cut once it is past [`QUIET`] columns. Nothing standing
 //!   before the ellipsis is wider than [`QUIET`].
-//! - An address drawn as its own words has nothing after it.
+//! - An address drawn as its own words has nothing after it, and nor has a
+//!   forge address whose words are its reference, short or naming its
+//!   repository: it is drawn as the reference.
 //! - An image, `![alt](target)`, is the words `[image: alt]`, or `[image]`
 //!   with no alt, followed by its quiet address; nothing is fetched. Only the
 //!   written-out form is one: a bang in front of any other bracket is the
@@ -99,7 +101,9 @@ impl Markdown {
 
         if let Some(reference) = Reference::read(target, self.forge.as_ref()) {
             let short = reference.short(self.forge.as_ref());
-            if own {
+            // Words that are the reference, as it is drawn or naming its
+            // repository, are its address as a person writes it.
+            if own || words == short || words == reference.short(None) {
                 say(Slot::Link, &short, link);
             } else {
                 say(Slot::Link, words, link);

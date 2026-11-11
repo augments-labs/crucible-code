@@ -275,8 +275,9 @@ an anchor, it ends in an ellipsis, `…`, or `...` in the ASCII glyph set:
 columns and keeps what fits. Nothing before the ellipsis is wider than 24
 columns, and a wide character that would cross that bound is left out. Words
 that link to a pull request, an issue or a commit are followed by its
-reference instead, as in `the fix (#1324)`. The quiet address is not a link,
-and a drag in the full screen copies the words without it.
+reference instead, as in `the fix (#1324)`, and words that are its reference
+already, such as `#1324`, have nothing after them. The quiet address is not a
+link, and a drag in the full screen copies the words without it.
 
 An image, `![the build passing](https://example.com/build.png)`, is drawn as
 the link `[image: the build passing]`, or `[image]` with no words, followed by
