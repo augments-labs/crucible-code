@@ -109,9 +109,10 @@ pub(in crate::cli::converse) fn around<'a>(
 /// off the screen. How much of the window the two may take together is the
 /// renderer's to say ([`Renderer::room`]): the whole of it on the full screen,
 /// half in native mode, where a transcript row given up is gone for good. The
-/// open dock is the one exception, through [`reach`]: it is a question being
-/// answered, so it may take the window in native mode as a question asked
-/// before the turn goes on does. Both bands reach the renderer together so the
+/// dock is the one exception, through [`reach`]: closed, by its row and the
+/// blank over it, so a question waiting is never left unsaid; open, it is a
+/// question being answered, so it may take the window in native mode as a
+/// question asked before the turn goes on does. Both bands reach the renderer together so the
 /// prompt, status and map control come from one frame.
 pub(in crate::cli::converse) fn draw<T: Terminal>(
     renderer: &mut Renderer<T>,
@@ -190,8 +191,8 @@ pub(super) fn over(
     );
 
     // The blank over the panel's rule, and the one the box is owed under a
-    // plan, which the panel's own closing row stands in for only when it is
-    // the last thing over the box.
+    // plan or the dock, which the panel's own closing row stands in for only
+    // when it is the last thing over the box.
     let owed = usize::from(!(opened || (planned.is_empty() && docked.is_empty())));
     let left = room.saturating_sub(listed.len() + docked.len() + planned.len() + 1 + owed);
     let panel = queueing::panel(around.queued, columns, left, style);
@@ -203,10 +204,10 @@ pub(super) fn over(
         over.push(Row::new());
         over.extend(panel);
     }
-    let planning = !planned.is_empty() || !docked.is_empty();
+    let under_panel = !planned.is_empty() || !docked.is_empty();
     over.append(&mut planned);
     over.append(&mut docked);
-    if !opened && (!paneled || planning) {
+    if !opened && (!paneled || under_panel) {
         over.push(Row::new());
     }
     over.append(&mut listed);

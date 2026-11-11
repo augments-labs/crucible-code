@@ -2,7 +2,8 @@
 //! uses what is sent to it.
 //!
 //! Asked on the drawing thread, before the work is handed to a worker, so
-//! the message is still this side's to give back; a message that would start
+//! the message is still this side's to give back, and the dock's answers stay
+//! in the dock, refused with their drafts kept; a message that would start
 //! an installed agent is asked about on that agent's own route, and says
 //! what starting it runs, unless the start would be refused whatever the
 //! answer: that message is not asked about, and goes on to be refused as a
@@ -274,7 +275,9 @@ pub(super) fn unanswered(warned: &Warned) -> Box<str> {
 /// conversation's provider is held by, or on an installed agent's route, the
 /// agent's own where the turn would start it. Room is not made on an agent's
 /// route, so nothing is started for it. The dock's answers that reach this
-/// are asked about as a turn would be; ones with nothing left to settle were
+/// are asked about as a turn would be, save that an answer whose turn would
+/// be refused before it started the agent is asked about all the same, since
+/// it is sent nowhere without a yes. Ones with nothing left to settle were
 /// refused before it. Both are read from the yes the question writes to, so a
 /// route answered here is not asked again.
 fn unsent(conversation: &Conversation, terms: &Terms, work: &Work) -> Option<Warned> {

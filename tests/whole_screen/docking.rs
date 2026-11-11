@@ -637,6 +637,9 @@ fn clearing_the_session_empties_the_dock() {
     }
 }
 
+/// A question asked without waiting, in a session a new process resumes, is
+/// not docked when the session is: nothing is drawn of it until the first turn
+/// reports what waits.
 #[test]
 fn a_resumed_session_s_waiting_question_docks_once_its_first_turn_reports_it() {
     for (native, mode) in MODES {
@@ -659,14 +662,9 @@ fn a_resumed_session_s_waiting_question_docks_once_its_first_turn_reports_it() {
     }
 }
 
-/// A submission the conversation cannot settle yet is refused in the dock,
-/// with the draft kept and `Retry submission` offered, and the retry is
-/// accepted once it can.
-///
-/// The session the batch came from is resumed: the batch stays docked with
-/// its draft, since it belongs to the same session, but the session is not
-/// given back its questions until its first turn, so submitting before then
-/// is refused as stale.
+/// A question that takes one answer, left with none, is refused in the dock
+/// with the draft kept and `Retry submission` offered; retried as it stands it
+/// is refused again, and once an answer is chosen it is accepted.
 #[test]
 fn a_refused_submission_keeps_the_draft_and_offers_retry() {
     for (native, mode) in MODES {

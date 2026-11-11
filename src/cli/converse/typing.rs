@@ -19,9 +19,10 @@
 //! the same in [`ask`] as in [`during`], because a key that meant one thing
 //! between turns and another during one would have to be relearned at exactly
 //! the moment there is something to lose. Esc belongs to whatever is standing:
-//! the command list a `/`-started line has open, in either loop; then the
-//! questions dock while it has the keys, which it closes or whose editor it
-//! leaves; otherwise nothing between turns, and the turn itself while one runs.
+//! the questions dock while it has the keys, which it closes, or whose editor
+//! or waiting decline it leaves; then the command list a `/`-started line has
+//! open, in either loop; otherwise nothing between turns, and the turn itself
+//! while one runs.
 //!
 //! It is one of the two places the mode changes — `/mode` is the other — which
 //! is why the runner is a parameter here. The mode is a fact about the session
@@ -617,7 +618,7 @@ pub(crate) fn ask<T: Terminal>(
                 owed = true;
                 continue;
             }
-            Some(Keyed::Submit(command)) => return Ok(Asked::Answer(command)),
+            Some(Keyed::Submit(submission)) => return Ok(Asked::Answer(submission)),
         }
 
         // Whether this key left the box looking like anything other than what
@@ -1194,8 +1195,9 @@ pub(super) fn during<T: Terminal>(
         }
 
         // While the view stands it has the keyboard, the way whatever is
-        // standing has it everywhere else in a session: Esc closes it rather
-        // than stopping the turn, and Ctrl-C reaches it before it reaches the
+        // standing has it everywhere else in a session: Esc is its own, to
+        // close it or to leave its editor or a waiting decline, rather than
+        // stopping the turn, and Ctrl-C reaches it before it reaches the
         // line. The turn goes on writing above it either way, which is the
         // whole reason the view is worth standing there.
         if opened.is_open() {
@@ -1231,7 +1233,7 @@ pub(super) fn during<T: Terminal>(
                     moved = true;
                     continue;
                 }
-                Keyed::Submit(command) => return Ok(Meanwhile::Answer(command)),
+                Keyed::Submit(submission) => return Ok(Meanwhile::Answer(submission)),
             }
         }
 

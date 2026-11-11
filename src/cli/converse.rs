@@ -823,12 +823,12 @@ fn conversing<T: Terminal>(
             Asked::Ended => break,
 
             // The dock's answers, sent as the turn that delivers them.
-            Asked::Answer(command) => {
+            Asked::Answer(submission) => {
                 let (back, leaving) = ran(
                     conversation,
                     renderer,
                     terms,
-                    Work::Answer(command),
+                    Work::Answer(submission),
                     &mut held,
                 )?;
                 conversation = back;
@@ -1563,7 +1563,7 @@ impl Turn<'_, '_> {
                         *self.drawn = stop_if_failed(ran, &self.terms.cancel);
                     }
                 }
-                Ok(typing::Meanwhile::Answer(command)) => self.answer(command),
+                Ok(typing::Meanwhile::Answer(submission)) => self.answer(submission),
                 Ok(typing::Meanwhile::Nothing) => {}
                 Err(problem) => *self.drawn = stop_if_failed(Err(problem), &self.terms.cancel),
             }

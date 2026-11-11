@@ -517,8 +517,9 @@ pub(super) fn live<T: Terminal>(
             Ok(())
         }
         // The classifier decides which commands reach here, and does nothing
-        // for any other. `/questions` is one: the turn's own loop opens or
-        // closes the dock before it asks the classifier.
+        // for any other. `/questions` is `Live` too, but never arrives: the
+        // turn's own loop opens or closes the dock before it asks the
+        // classifier.
         _ => Ok(()),
     }
 }
