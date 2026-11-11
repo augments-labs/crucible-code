@@ -476,7 +476,6 @@ fn usage_fits_every_width_down_to_one_column() {
             with_a_group(),
             with_more(),
             counted_only(),
-            kept_longer(),
         ] {
             for columns in 1..=120 {
                 for row in panel(
@@ -1176,6 +1175,28 @@ fn kept_longer() -> api::Usage {
     usage.used.cache_write = 100;
     usage.used.cache_write_extended = 70;
     usage
+}
+
+#[test]
+fn usage_with_a_part_of_its_cache_writes_kept_longer_fits_every_width() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        for columns in 1..=120 {
+            for row in panel(
+                "openai · ChatGPT sign-in",
+                &kept_longer(),
+                Some("openai"),
+                columns,
+                glyphs,
+                &clock(),
+            ) {
+                assert!(
+                    row.columns() <= columns,
+                    "{:?} is wider than {columns} columns",
+                    row.text()
+                );
+            }
+        }
+    }
 }
 
 #[test]
