@@ -1397,7 +1397,7 @@
         "Watched::native(case, columns, rows, vendor)",
         "Watched::answering(case, columns, rows, vendor)"
       ],
-      "sha256": "7a6daaa47efc8f3843848568cd2c61faba3fcea5f4db9625c1178e6169cbd628"
+      "sha256": "faadaf303f531ca2fea694a347a3938e74a32dcccb79b90a82dd3e75f8beb238"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__docking__review_native.snap",
@@ -1407,7 +1407,7 @@
         "Watched::native(case, columns, rows, vendor)",
         "Watched::answering(case, columns, rows, vendor)"
       ],
-      "sha256": "9f1be01c6a1f83139ec72dc97bc2574aa058734afd96a081cb51eab8530c831e"
+      "sha256": "058d65ac46529dd8fb06cce9f5e16545f35ff8dd3d4a6b460c5c0f0aba1e0007"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__docking__tall_top_fullscreen.snap",
