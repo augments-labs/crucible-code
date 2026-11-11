@@ -107,3 +107,56 @@ fn every_address_drawn_shorter_is_listed_whole_newest_first_after_the_blocks() {
     let bound = drawn.sourced();
     assert!(drawn.sources().all(|source| source.line < bound));
 }
+
+/// Forge addresses, worded links, images and a table cell as a model might
+/// write them to carry an escape, a control, a reordering or an invisible
+/// character, in the words, the address and the path.
+const HOSTILE_LINKS: [&str; 6] = [
+    "https://github.com/augments-labs/crucible-code/pull/1\u{1b}]0;t\u{7} and https://github.com/o/r/commit/abcdef1\u{9b}31m\n",
+    "[fix\u{1b}]0;t\u{7}](https://github.com/o/r/pull/12) and [x](https://github.com/o/r/pull/12\u{85})\n",
+    "[guide](https://example.com/\u{1b}]8;;https://evil.invalid\u{1b}\\/a/b) and [g](https://example.com/\u{202e}\u{200b}x/y/z)\n",
+    "![alt\u{1b}]0;t\u{7}](out/\u{1b}_Gi=1;AAAA\u{1b}\\shot.png) and ![a](https://x.test/\u{202e}gnp.exe\u{9c})\n",
+    "[write](mailto:a\u{1b}]0;t\u{7}@b.test) and [w](mailto:a@b.test\u{8}\u{9b}2J)\n",
+    "| a |\n|---|\n| [g](https://example.com/\u{1b}]0;t\u{7}/x) https://github.com/o/r/pull/3\u{85} |\n",
+];
+
+#[test]
+fn a_hostile_forge_address_worded_link_or_image_writes_no_escape() {
+    for answer in HOSTILE_LINKS {
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let mut drawn = Drawn::new(64, 12);
+            drawn.wears(colourful().addressing(true));
+            drawn.render.images(kitty_in(9, 18));
+            drawn.render.draws(glyphs);
+            drawn.render.counts(Some(here()));
+            drawn.answer(answer);
+
+            let (written, sequences) = super::notes::without_links(drawn.render.terminal.written());
+            for sequence in sequences {
+                assert!(
+                    sequence.bytes().all(|byte| byte.is_ascii_graphic()),
+                    "a link sequence carried {sequence:?} for {answer:?} with {glyphs:?}"
+                );
+            }
+            for hostile in [
+                "\u{1b}]",
+                "\u{1b}P",
+                "\u{1b}_",
+                "\u{1b}[31",
+                "\u{1b}[2J",
+                "\u{7}",
+                "\u{8}",
+                "\u{85}",
+                "\u{9b}",
+                "\u{9c}",
+                "\u{202e}",
+                "\u{200b}",
+            ] {
+                assert!(
+                    !written.contains(hostile),
+                    "{hostile:?} reached the terminal for {answer:?} with {glyphs:?}"
+                );
+            }
+        }
+    }
+}

@@ -58,7 +58,7 @@ const HOSTILE_ADDRESSES: [&str; 5] = [
 /// What `written` says with the hyperlink sequences it carries taken out, and
 /// the sequences: what each holds between its opening and the string
 /// terminator that ends it.
-fn without_links(written: &str) -> (String, Vec<String>) {
+pub(super) fn without_links(written: &str) -> (String, Vec<String>) {
     let mut rest = written;
     let mut kept = String::new();
     let mut sequences = Vec::new();
