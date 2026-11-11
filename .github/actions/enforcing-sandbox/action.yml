@@ -15,11 +15,12 @@ runs:
     # The backend needs Bubblewrap 0.11.0 for temporary overlays, and Ubuntu
     # 24.04 packages 0.9.0, so the Ubuntu 25.04 package is installed and
     # checked against a pinned digest. It depends only on glibc 2.38, libcap2
-    # and libselinux1, all present here. It comes from the Ubuntu archive's
-    # pool, which runners reach over IPv4, and from Launchpad's permanent
-    # archive once the pool no longer carries it, since Launchpad has gone
-    # unreachable over IPv4, the only way a runner reaches it. Either copy
-    # must match the digest.
+    # and libselinux1, all present here. It is taken from the Ubuntu archive's
+    # pool, then from old-releases, where the pool's files move once their
+    # release is retired, then from Launchpad, which once failed to resolve
+    # from runners and so is tried last. Any failure moves on to the next
+    # source, and whichever answers must match the digest. A new version
+    # changes the file name and both digests together.
     - name: bubblewrap 0.11, for the enforcing sandbox tests
       shell: bash
       run: |
@@ -34,6 +35,7 @@ runs:
         deb="$RUNNER_TEMP/bubblewrap.deb"
         file="bubblewrap_0.11.0-2_${arch}.deb"
         for url in "$pool/pool/main/b/bubblewrap/$file" \
+          "https://old-releases.ubuntu.com/ubuntu/pool/main/b/bubblewrap/$file" \
           "https://launchpad.net/ubuntu/+archive/primary/+files/$file"; do
           if curl --fail --silent --show-error --location --retry 3 --connect-timeout 20 \
             --output "$deb" "$url"; then
