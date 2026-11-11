@@ -14,11 +14,25 @@
 //! is a deterministic loopback fixture in this parent process; no request can
 //! leave the machine and no production-only seam is involved.
 //!
-//! Each turn asks the real read tool to read a planted file, then receives a
-//! streamed answer that ends in a table. A table is kept as the source it was
-//! written as beside the rows it was laid out as, so a session of them holds
-//! more than a session of prose the same length, and the fill below rolls
-//! every one of them out past the ceiling with its source. RSS and proportional set size come from `smaps_rollup` at
+//! Each turn asks the real read tool to read a planted file and the real edit
+//! tool to rewrite the twenty lines of a second one, then receives a streamed
+//! answer that ends in a table and the diff of that rewrite in a fence. A table
+//! is kept as the source it was written as beside the rows it was laid out as,
+//! and so is a diff, which is drawn as a change; the edit's own change is drawn
+//! too, and being folded is kept written out for the key that shows it whole.
+//! So a session of them holds more than a session of prose the same length, and
+//! the fill below rolls every one of them out past the ceiling with its source.
+//! The measurement is refused if the second file does not end as the last edit
+//! leaves it, since a session whose edits were turned away drew no change of a
+//! tool's.
+//!
+//! One cost of a change is not in this reading. A line of a change that did not
+//! move is drawn in the colours of its file's language, and the first such line
+//! of a session loads the syntax definitions, which are megabytes kept for the
+//! rest of it. Every edit here takes out every line of its file, and the diff
+//! in the answer says the same, so no change of this session holds a line that
+//! stayed and none loads them. RSS and
+//! proportional set size come from `smaps_rollup` at
 //! startup and after turns one, five and twenty; `VmHWM` supplies the child's
 //! peak, including spikes between samples. Thread, descriptor and process-tree
 //! counts are emitted beside the budget so a flat total cannot hide a growing
@@ -98,6 +112,16 @@ const DELTAS: usize = 400;
 /// Rows of the table that ends every measured answer, a row a delta.
 #[cfg(target_os = "linux")]
 const TABLE_ROWS: usize = 24;
+
+/// Lines of the file every measured turn's edit rewrites, and its answer then
+/// writes the diff of: with as many taken out as put in, more rows than the box
+/// of a change shows before it folds.
+#[cfg(target_os = "linux")]
+const EDITED: usize = 20;
+
+/// Requests in a measured turn: the read, the edit, and the answer.
+#[cfg(target_os = "linux")]
+const REQUESTS: usize = 3;
 
 /// Turns after the sampled twenty, each of them all line endings.
 #[cfg(target_os = "linux")]
@@ -201,6 +225,14 @@ enum ProbeError {
     )]
     Unattached { largest: u64 },
 
+    #[cfg(target_os = "linux")]
+    #[error(
+        "bench-session-rss-colour: the file the session's edits rewrite did not end as the \
+         last of them leaves it -- the changes were not made and the reading measures a \
+         session that drew none"
+    )]
+    Unedited,
+
     #[cfg(not(target_os = "linux"))]
     #[error("bench-session-rss-colour: shipped-process RSS measurement requires Linux")]
     Unsupported,
@@ -262,6 +294,14 @@ fn measure() -> Result<Measurement, ProbeError> {
 
     drop(running);
     vendor.finish()?;
+
+    // Asked of the file rather than of the screen: an edit the session turned
+    // away leaves a refusal where the change would be drawn, and a session of
+    // refusals would be read as one that holds twenty changes for nothing.
+    let left = fs::read_to_string(scratch.workspace.join(REWRITTEN))?;
+    if left.strip_suffix('\n') != Some(left_by(TURNS).as_str()) {
+        return Err(ProbeError::Unedited);
+    }
 
     let pictures = carrying()?;
 
@@ -354,6 +394,9 @@ struct Scratch {
 
 #[cfg(target_os = "linux")]
 impl Scratch {
+    /// A rule lets the session's edits through, as a user who had been asked
+    /// once would have it: a question would stop the turn at a prompt nobody
+    /// is there to answer.
     fn new(endpoint: &str, model: &str) -> Result<Self, io::Error> {
         let base = std::env::temp_dir().join(format!("crucible-bench-rss-{}", std::process::id()));
         let home = base.join("home");
@@ -367,15 +410,13 @@ impl Scratch {
              \"provider\": \"anthropic\",\n  \"providers\": {{\n    \
              \"anthropic\": {{\"model\": \"{model}\", \"baseUrl\": \"{endpoint}\", \
              \"defaultContextWindow\": 1000000}}\n  \
-             }},\n  \"output\": {{\"color\": \"auto\"}}\n}}\n"
+             }},\n  \"output\": {{\"color\": \"auto\"}},\n  \
+             \"permissions\": {{\"allow\": [\"edit(*)\"]}}\n}}\n"
         );
         fs::write(home.join("config.json"), config)?;
 
-        let mut planted = String::with_capacity(PLANTED * 48);
-        for line in 0..PLANTED {
-            let _ = writeln!(planted, "    let field_{line} = compute(&state, {line})?;");
-        }
-        fs::write(workspace.join("big.rs"), planted)?;
+        fs::write(workspace.join("big.rs"), planted())?;
+        fs::write(workspace.join(REWRITTEN), format!("{}\n", left_by(0)))?;
 
         Ok(Self {
             base,
@@ -417,6 +458,23 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.base);
     }
+}
+
+/// Line `at` of a planted file, calling `call`.
+#[cfg(target_os = "linux")]
+fn row(at: usize, call: &str) -> String {
+    format!("    let field_{at} = {call}(&state, {at})?;")
+}
+
+/// The planted file as a session finds it.
+#[cfg(target_os = "linux")]
+fn planted() -> String {
+    let mut planted = String::with_capacity(PLANTED * 48);
+    for line in 0..PLANTED {
+        planted.push_str(&row(line, "compute"));
+        planted.push('\n');
+    }
+    planted
 }
 
 /// A deterministic Anthropic-compatible provider on the loopback interface.
@@ -494,19 +552,7 @@ fn serve(
                 connection.set_read_timeout(Some(CEILING))?;
                 largest.fetch_max(request(&mut connection)?, Ordering::AcqRel);
                 requests += 1;
-                // A measured turn is two requests -- the tool call, then the
-                // answer that follows its result. A fill turn is one, because
-                // the planted file has been read twenty times already and
-                // reading it ten more would measure the tool rather than the
-                // record.
-                let body = match requests {
-                    request if request > TURNS * 2 => {
-                        answer(TURNS + request - TURNS * 2, LINES, true)
-                    }
-                    request if request % 2 == 1 => tool().to_owned(),
-                    request => answer(request / 2, DELTAS, false),
-                };
-                respond(&mut connection, &body)?;
+                respond(&mut connection, &replied(requests))?;
             }
             Err(problem) if problem.kind() == io::ErrorKind::WouldBlock => {
                 std::thread::sleep(Duration::from_millis(1));
@@ -515,6 +561,27 @@ fn serve(
         }
     }
     Ok(())
+}
+
+/// What the fixture answers the `request`th request of a session with.
+///
+/// A measured turn is three requests -- the call that reads the file, the
+/// call that changes it, then the answer that follows their results. A fill
+/// turn is one, because the planted file has been read and changed twenty
+/// times already and doing so ten more would measure the tools rather than
+/// the record.
+#[cfg(target_os = "linux")]
+fn replied(request: usize) -> String {
+    let measured = TURNS * REQUESTS;
+    if request > measured {
+        return answer(TURNS + request - measured, LINES, true);
+    }
+    let turn = request.div_ceil(REQUESTS);
+    match request % REQUESTS {
+        1 => tool().to_owned(),
+        2 => edit(turn),
+        _ => answer(turn, DELTAS, false),
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -584,6 +651,52 @@ fn tool() -> &'static str {
     )
 }
 
+/// The file every measured turn's edit rewrites.
+#[cfg(target_os = "linux")]
+const REWRITTEN: &str = "rewritten.rs";
+
+/// The file an edit rewrites as `turn` leaves it, its last line not ended:
+/// as it is planted, for turn zero. Every line names the turn, so no line of
+/// it is the same after another turn.
+#[cfg(target_os = "linux")]
+fn left_by(turn: usize) -> String {
+    (0..EDITED)
+        .map(|at| row(at, &format!("settled_{turn}")))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// `text` as the inside of a JSON string.
+#[cfg(target_os = "linux")]
+fn quoted(text: &str) -> String {
+    text.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+}
+
+/// The call that rewrites [`REWRITTEN`] from what the turn before left to
+/// what `turn` leaves.
+///
+/// The edit tool is given the text to find and what to put there, so the call
+/// quotes every line of the file whole.
+#[cfg(target_os = "linux")]
+fn edit(turn: usize) -> String {
+    let input = format!(
+        "{{\"path\":\"{REWRITTEN}\",\"find\":\"{}\",\"replace\":\"{}\"}}",
+        quoted(&left_by(turn.saturating_sub(1))),
+        quoted(&left_by(turn)),
+    );
+    format!(
+        "event: message_start\ndata: {{\"type\":\"message_start\",\"message\":{{\"id\":\"msg_edit\"}}}}\n\n\
+         event: content_block_start\ndata: {{\"index\":0,\"content_block\":{{\"type\":\"tool_use\",\"id\":\"toolu_2\",\"name\":\"edit\",\"input\":{{}}}}}}\n\n\
+         event: content_block_delta\ndata: {{\"index\":0,\"delta\":{{\"type\":\"input_json_delta\",\"partial_json\":\"{}\"}}}}\n\n\
+         event: content_block_stop\ndata: {{\"index\":0}}\n\n\
+         event: message_delta\ndata: {{\"delta\":{{\"stop_reason\":\"tool_use\"}}}}\n\n\
+         event: message_stop\ndata: {{\"type\":\"message_stop\"}}\n\n",
+        quoted(&input),
+    )
+}
+
 /// One completed answer: `deltas` pieces of text and the marker that ends them.
 ///
 /// `lines` is what separates the two phases. A measured turn streams prose that
@@ -591,7 +704,10 @@ fn tool() -> &'static str {
 /// takes; a fill turn ends every delta, so every delta is a line. Lines are what
 /// the record bounds, so filling it is a question of how many endings arrive
 /// rather than of how much text does. A measured turn's prose is followed by a
-/// table, streamed a row at a time, which the blank line after it closes.
+/// table, streamed a row at a time, which the blank line after it closes, and
+/// then by the change the turn's edit made, written as the unified diff of it
+/// in a fence and streamed a line at a time, which the fence's last line
+/// closes.
 #[cfg(target_os = "linux")]
 fn answer(turn: usize, deltas: usize, lines: bool) -> String {
     // Two bytes into the JSON, where they are the escape a line ending is
@@ -600,7 +716,7 @@ fn answer(turn: usize, deltas: usize, lines: bool) -> String {
     let ending = if lines { "\\n" } else { "" };
     let mut body = String::with_capacity(
         deltas
-            .saturating_add(TABLE_ROWS + 2)
+            .saturating_add(TABLE_ROWS + 2 + EDITED * 2 + 2)
             .saturating_mul(112)
             .saturating_add(512),
     );
@@ -628,6 +744,21 @@ fn answer(turn: usize, deltas: usize, lines: bool) -> String {
         body.push_str(
             "event: content_block_delta\ndata: {\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"\\n\"}}\n\n",
         );
+
+        let mut diff = vec![format!(
+            "```diff\n--- a/{REWRITTEN}\n+++ b/{REWRITTEN}\n@@ -1,{EDITED} +1,{EDITED} @@\n"
+        )];
+        let (was, now) = (left_by(turn.saturating_sub(1)), left_by(turn));
+        diff.extend(was.lines().map(|line| format!("-{line}\n")));
+        diff.extend(now.lines().map(|line| format!("+{line}\n")));
+        diff.push("```\n\n".to_owned());
+        for line in diff {
+            let _ = write!(
+                body,
+                "event: content_block_delta\ndata: {{\"index\":0,\"delta\":{{\"type\":\"text_delta\",\"text\":\"{}\"}}}}\n\n",
+                quoted(&line),
+            );
+        }
     }
     let _ = write!(
         body,
@@ -970,4 +1101,151 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+#[cfg(target_os = "linux")]
+mod tests {
+    use super::*;
+
+    /// What a response the fixture wrote says: the tool it calls, the input it
+    /// calls it with, and the text its deltas add up to.
+    struct Said {
+        tool: Option<String>,
+        input: String,
+        text: String,
+    }
+
+    /// The text at `pointer` in `value`.
+    fn at<'a>(value: &'a serde_json::Value, pointer: &str) -> Option<&'a str> {
+        value.pointer(pointer).and_then(serde_json::Value::as_str)
+    }
+
+    fn said(body: &str) -> Said {
+        let mut said = Said {
+            tool: None,
+            input: String::new(),
+            text: String::new(),
+        };
+        for data in body.lines().filter_map(|line| line.strip_prefix("data: ")) {
+            let event: serde_json::Value = serde_json::from_str(data).expect("an event in JSON");
+            if let Some(name) = at(&event, "/content_block/name") {
+                said.tool = Some(name.to_owned());
+            }
+            if let Some(part) = at(&event, "/delta/partial_json") {
+                said.input.push_str(part);
+            }
+            if let Some(text) = at(&event, "/delta/text") {
+                said.text.push_str(text);
+            }
+        }
+        said
+    }
+
+    #[test]
+    fn a_measured_turn_is_a_read_an_edit_and_an_answer_and_a_fill_turn_an_answer() {
+        for turn in 1..=TURNS {
+            let first = (turn - 1) * REQUESTS + 1;
+            assert_eq!(
+                said(&replied(first)).tool.as_deref(),
+                Some("read"),
+                "turn {turn}"
+            );
+            assert_eq!(
+                said(&replied(first + 1)).tool.as_deref(),
+                Some("edit"),
+                "turn {turn}"
+            );
+            let answer = said(&replied(first + 2));
+            assert_eq!(answer.tool, None, "turn {turn}");
+            assert!(answer.text.ends_with(&marker(turn)), "turn {turn}");
+        }
+
+        let measured = TURNS * REQUESTS;
+        for fill in 1..=FILL {
+            let answer = said(&replied(measured + fill));
+            assert_eq!(answer.tool, None, "fill {fill}");
+            assert!(answer.text.ends_with(&marker(TURNS + fill)), "fill {fill}");
+        }
+    }
+
+    #[test]
+    fn every_edit_rewrites_the_whole_of_its_file_and_leaves_no_line_of_it_as_it_was() {
+        let mut file = format!("{}\n", left_by(0));
+        for turn in 1..=TURNS {
+            let call = said(&edit(turn));
+            assert_eq!(call.tool.as_deref(), Some("edit"), "turn {turn}");
+            let input: serde_json::Value =
+                serde_json::from_str(&call.input).expect("the input in JSON");
+            assert_eq!(at(&input, "/path"), Some(REWRITTEN), "turn {turn}");
+            let find = at(&input, "/find").expect("the text to find");
+            let replace = at(&input, "/replace").expect("the text to put");
+
+            // The tool refuses text it finds twice or not at all.
+            assert_eq!(file.matches(find).count(), 1, "turn {turn}");
+            // Every line of the file goes, and none comes back as it was: a
+            // line that stayed would be kept in the change to read the others
+            // against, and be read for its language's colours.
+            assert_eq!(format!("{find}\n"), file, "turn {turn}");
+            assert_eq!(find.lines().count(), EDITED, "turn {turn}");
+            assert_eq!(replace.lines().count(), EDITED, "turn {turn}");
+            assert!(
+                find.lines()
+                    .zip(replace.lines())
+                    .all(|(was, now)| was != now),
+                "turn {turn}"
+            );
+            file = file.replacen(find, replace, 1);
+        }
+
+        assert_eq!(file, format!("{}\n", left_by(TURNS)));
+        // The file the read tool reads is another, and no edit touches it.
+        assert_ne!(REWRITTEN, "big.rs");
+    }
+
+    #[test]
+    fn a_measured_answer_ends_in_the_diff_of_its_turn_and_a_fill_answer_holds_none() {
+        let text = said(&answer(3, DELTAS, false)).text;
+        let (_, fence) = text.split_once("\n```diff\n").expect("a diff fence");
+        let (diff, after) = fence.split_once("```\n").expect("the fence closed");
+        assert_eq!(after, format!("\n{}", marker(3)));
+
+        // A unified diff of what the third turn's edit does: the file it is
+        // made to, and a hunk whose counts are the lines under it, every line
+        // the second turn left taken out and every line the third leaves put.
+        let mut lines = diff.lines();
+        assert_eq!(lines.next(), Some("--- a/rewritten.rs"));
+        assert_eq!(lines.next(), Some("+++ b/rewritten.rs"));
+        assert_eq!(lines.next(), Some("@@ -1,20 +1,20 @@"));
+        let lines: Vec<&str> = lines.collect();
+        let (out, put) = lines.split_at(EDITED);
+        assert_eq!(
+            out.first().copied(),
+            Some("-    let field_0 = settled_2(&state, 0)?;")
+        );
+        assert_eq!(
+            out.last().copied(),
+            Some("-    let field_19 = settled_2(&state, 19)?;")
+        );
+        assert!(out.iter().all(|line| line.starts_with('-')), "{out:?}");
+        assert_eq!(put.len(), EDITED);
+        assert_eq!(
+            put.first().copied(),
+            Some("+    let field_0 = settled_3(&state, 0)?;")
+        );
+        assert_eq!(
+            put.last().copied(),
+            Some("+    let field_19 = settled_3(&state, 19)?;")
+        );
+        assert!(put.iter().all(|line| line.starts_with('+')), "{put:?}");
+
+        // The table is still there, before it.
+        assert!(
+            text.contains("| 3 | field 23 | 23 |\n\n```diff\n"),
+            "{text}"
+        );
+
+        let fill = said(&answer(TURNS + 1, 8, true)).text;
+        assert!(!fill.contains("```"), "{fill}");
+    }
 }

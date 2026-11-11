@@ -31,6 +31,10 @@
 //! fast in the first second and hopeless in the hundredth, and the ratio is
 //! where that shows. The reported number is the *sustained* rate, since a
 //! session is long and the opening frames are not the ones a user is waiting on.
+//!
+//! The renderer is handed the drawer a session's is, so the diff fences in the
+//! burst are read and drawn as the changes a session draws them as, and not
+//! shown as the text they were written as, which costs less than a user pays.
 
 // A binary may not reach into another's tree, so the driver the two burst probes
 // share is a module beside them. Where the bounded pipe below is unavailable this
@@ -42,7 +46,11 @@ mod burst;
 use burst::{Burst, SUSTAINED_FRACTION};
 use crucible_tui::TerminalError;
 #[cfg(target_os = "linux")]
-use crucible_tui::{Renderer, Size, Terminal};
+use crucible_tui::drawing::Drawers;
+#[cfg(target_os = "linux")]
+use crucible_tui::{Palette, Renderer, Size, Terminal, Theme};
+#[cfg(target_os = "linux")]
+use crucible_tui_diff::Changes;
 #[cfg(target_os = "linux")]
 use rustix::pipe::{PipeFlags, pipe_with};
 use std::fmt::Write as _;
@@ -52,6 +60,8 @@ use std::fs::File;
 use std::io::Read as _;
 use std::io::{self, Write as _};
 use std::process::ExitCode;
+#[cfg(target_os = "linux")]
+use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use std::thread::JoinHandle;
 
@@ -195,7 +205,9 @@ fn streamed() -> Vec<String> {
         "\"tool\" } ",
     ];
 
-    let mut deltas = Vec::with_capacity(258 + HELD.len().div_ceil(5));
+    let answers = burst::answers();
+    let after: usize = answers.iter().map(String::len).sum();
+    let mut deltas = Vec::with_capacity(258 + (HELD.len() + after).div_ceil(5) + answers.len());
     deltas.push(opening);
 
     for (index, word) in words.iter().cycle().take(256).enumerate() {
@@ -216,14 +228,24 @@ fn streamed() -> Vec<String> {
     // is drawn, with one row saying so in the meantime, and then kept with its
     // source so a resize can lay it out again, and a burst that never reached
     // one would leave that work unmeasured.
-    let held: Vec<char> = HELD.chars().collect();
-    deltas.extend(held.chunks(5).map(|chunk| chunk.iter().collect::<String>()));
+    //
+    // Last come the answers both burst probes hold, two changes more: one to
+    // two files and one long enough to fold, so the burst draws every kind of
+    // row a change has.
+    for text in std::iter::once(HELD).chain(answers.iter().map(String::as_str)) {
+        let held: Vec<char> = text.chars().collect();
+        deltas.extend(held.chunks(5).map(|chunk| chunk.iter().collect::<String>()));
+    }
 
     deltas
 }
 
 /// What follows the code in every cycle of the burst: a table, a formula, a
 /// diagram and a diff, each closed before the next opens.
+///
+/// The diff is one a drawer reads, with the file it is made to and a hunk that
+/// counts its lines: one that is not is shown as written, and would be timed as
+/// code.
 #[cfg(target_os = "linux")]
 const HELD: &str = "\n```\n\n\
     | probe | budget | measured | verdict |\n\
@@ -245,28 +267,43 @@ const HELD: &str = "\n```\n\n\
     ```\n\
     \n\
     ```diff\n\
-    - let rows = lay(text);\n\
-    + let rows = lay(&block, columns);\n\
+    --- a/src/record.rs\n\
+    +++ b/src/record.rs\n\
+    @@ -7,3 +7,3 @@\n\
+    \x20let block = held(text);\n\
+    -let rows = lay(text);\n\
+    +let rows = lay(&block, columns);\n\
+    \x20keep(block, rows);\n\
     ```\n\
     \n";
+
+/// The drawers the renderer is handed, as a session's is: the one that draws a
+/// change, for the diff fences of the burst.
+#[cfg(target_os = "linux")]
+fn drawers() -> Drawers {
+    Drawers::default().with(Arc::new(Changes))
+}
+
+/// A palette that writes every hue it has.
+///
+/// Without one the renderer takes the early path in `stream` and never reads
+/// the markdown at all — so the markers, the fences, the highlighter and the
+/// drawers behind them would all go unmeasured, and this probe would report a
+/// budget held for a path nobody ran. A real terminal has colour; so does this.
+#[cfg(target_os = "linux")]
+fn palette() -> Palette {
+    Palette::resolve(true, Theme::Dark, Some((13, 13, 16)), &|name| {
+        (name == "COLORTERM").then(|| "truecolor".to_owned())
+    })
+}
 
 #[cfg(target_os = "linux")]
 fn measure() -> Result<Burst, ProbeError> {
     let deltas = streamed();
     let (sink, drain) = PipeSink::open()?;
     let mut render = Renderer::new(sink);
-
-    // A palette that writes every hue it has. Without one the renderer takes
-    // the early path in `stream` and never reads the markdown at all — so the
-    // markers, the fence and the highlighter behind it would all go unmeasured,
-    // and this probe would report a budget held for a path nobody ran. A real
-    // terminal has colour; so does this.
-    render.wears(crucible_tui::Palette::resolve(
-        true,
-        crucible_tui::Theme::Dark,
-        Some((13, 13, 16)),
-        &|name| (name == "COLORTERM").then(|| "truecolor".to_owned()),
-    ));
+    render.wears(palette());
+    render.drawers(drawers());
 
     let measured = burst::measure(|index| -> Result<(), ProbeError> {
         let delta = deltas.get(index % deltas.len()).map_or("", String::as_str);
@@ -383,4 +420,74 @@ fn main() -> ExitCode {
     }
 
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+#[cfg(target_os = "linux")]
+mod tests {
+    use crucible_tui::Recording;
+
+    use super::*;
+
+    /// One cycle of the burst as a window tall enough for all of it shows it,
+    /// drawn by a renderer handed `drawers`.
+    fn cycle(drawers: Drawers) -> Vec<String> {
+        let mut render = Renderer::new(Recording::new(COLUMNS, 400));
+        render.wears(palette());
+        render.drawers(drawers);
+        for delta in streamed() {
+            render.stream(&delta).expect("a delta drawn");
+        }
+        render.settle().expect("the answer settled");
+        render
+            .terminal()
+            .picture()
+            .rows()
+            .iter()
+            .map(|row| row.trim_end().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn every_diff_fence_of_the_burst_is_drawn_as_the_change_a_session_draws() {
+        let rows = cycle(drawers());
+        for opening in [
+            "╭─ src/record.rs · Added 1 line, removed 1 line",
+            "╭─ src/reader.rs · Added 2 lines, removed 1 line",
+            "├─ src/window.rs · Added 1 line, removed 1 line",
+            "╭─ budgets.txt · Added 40 lines",
+        ] {
+            assert!(
+                rows.iter().any(|row| row.trim_start() == opening),
+                "no row {opening:?} in {rows:#?}"
+            );
+        }
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("lines folded · ctrl+o to expand")),
+            "the long change did not fold: {rows:#?}"
+        );
+        for written in ["┌─ diff", "┌─ patch", "@@ "] {
+            assert!(
+                !rows.iter().any(|row| row.contains(written)),
+                "a diff fence was shown as written, with {written:?}: {rows:#?}"
+            );
+        }
+
+        // What the assertions above tell apart: handed no drawer, the same
+        // burst shows each fence as the text it was written as.
+        let undrawn = cycle(Drawers::default());
+        assert!(
+            undrawn.iter().any(|row| row.contains("┌─ diff")),
+            "{undrawn:#?}"
+        );
+        assert!(
+            undrawn.iter().any(|row| row.contains("┌─ patch")),
+            "{undrawn:#?}"
+        );
+        assert!(
+            !undrawn.iter().any(|row| row.contains("╭─ ")),
+            "{undrawn:#?}"
+        );
+    }
 }

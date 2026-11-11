@@ -54,7 +54,12 @@
 //! The floor stays the middle window and stays a rate, because thirty a second is
 //! a claim about somebody watching, and somebody watching sees the machine they
 //! have rather than the machine at liberty.
+//!
+//! One thing here is not timing: [`answers`], the changes a burst's transcript
+//! holds. Both probes take them from here so that what one streams is what the
+//! other stands its band over.
 
+use std::fmt::Write as _;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
@@ -138,6 +143,56 @@ pub(crate) const AT_LIBERTY: f64 = 0.8;
 /// Three because a reading is a fraction of a second and the second and third
 /// are only ever taken when the first landed under [`AT_LIBERTY`].
 const LIBERTY: usize = 3;
+
+/// Lines the second of the [`answers`] adds: more than the box of a change
+/// draws before it folds, so the row that counts a fold is one a burst draws.
+const ADDED: usize = 40;
+
+/// The answers a burst's transcript holds: two changes, each written as the
+/// unified diff a model writes one as, in a fence a drawer takes by its name.
+///
+/// The first is made to two files and the second is long enough to fold, so
+/// the rows a drawer lays them out as are the kinds a session's are: a file's
+/// line, a second file's, a hunk, changed lines and context, and a fold. Each
+/// ends after its fence has closed, since only a closed fence is a drawer's.
+///
+/// Which drawer draws them is each probe's to say in its own file, where what
+/// a probe names is read and held against the list of what it may name.
+pub(crate) fn answers() -> Vec<String> {
+    let two = "The reader keeps the block, and the window asks for its rows:\n\n\
+        ```diff\n\
+        diff --git a/src/reader.rs b/src/reader.rs\n\
+        --- a/src/reader.rs\n\
+        +++ b/src/reader.rs\n\
+        @@ -12,4 +12,5 @@\n\
+        \x20fn close(&mut self) {\n\
+        -    self.rows = lay(&self.text);\n\
+        +    let block = self.held.take();\n\
+        +    self.rows = lay(&block, self.columns);\n\
+        \x20}\n\
+        \x20fn open(&mut self) {\n\
+        diff --git a/src/window.rs b/src/window.rs\n\
+        --- a/src/window.rs\n\
+        +++ b/src/window.rs\n\
+        @@ -40,3 +41,3 @@\n\
+        \x20let band = self.band();\n\
+        -let rows = self.record.fold(band);\n\
+        +let rows = self.record.view(band);\n\
+        \x20self.paint(&rows);\n\
+        ```\n\n";
+
+    let mut long = String::from("And every probe is listed beside its budget:\n\n```patch\n");
+    let _ = write!(
+        long,
+        "--- a/budgets.txt\n+++ b/budgets.txt\n@@ -0,0 +1,{ADDED} @@\n"
+    );
+    for probe in 1..=ADDED {
+        let _ = writeln!(long, "+probe {probe} is held to the budget it prints");
+    }
+    long.push_str("```\n\n");
+
+    vec![two.to_owned(), long]
+}
 
 /// The best of [`LIBERTY`] readings, by how much of the opening pace is left.
 ///
