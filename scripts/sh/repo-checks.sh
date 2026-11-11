@@ -1381,6 +1381,7 @@ removable=(
     # the writes, the start-up arm, the switch, and the refusals they raise.
     crates/crucible-app/src/{access,backends,launching,external,outside,own_program,probing}.rs
     crates/crucible-app/src/launching/{discovery,keyed,own,terminal}.rs
+    crates/crucible-app/src/own_program/trying.rs
     crates/crucible-app/src/{proof,content_use,remember,startup,switching}.rs
     crates/crucible-app/src/{conversation,error,lib,client}.rs
     crates/crucible-app/src/client/{accounts,performing,reading}.rs
@@ -1394,6 +1395,7 @@ removable=(
     scripts/python/validate-node-preload.py
     # The agents door and the download of the releases it installs.
     crates/crucible-app/src/client/agents.rs crates/crucible-app/src/agent_download.rs
+    crates/crucible-app/src/client/agents/trying.rs
     crates/crucible-app/tests/headless/agents.rs
     crates/crucible-app/tests/headless/agents/{adding,npm,piped,registry,shipped_hold,uvx}.rs
     crates/crucible-app/tests/headless.rs crates/crucible-app/tests/headless/external.rs

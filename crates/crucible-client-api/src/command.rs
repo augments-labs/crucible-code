@@ -230,8 +230,8 @@ pub enum Command {
         /// nothing else.
         method: Name,
     },
-    /// Probe the user's own program for this agent, a catalog agent's or
-    /// Antigravity's, the one a launch would find at `program`, once,
+    /// Probe the user's own program for this agent, a catalog agent's or a
+    /// shipped agent's, the one a launch would find at `program`, once,
     /// confined, and add an instance that runs it where it is admitted.
     /// Changes nothing where it is not. The door finds the program again and
     /// refuses where it is not the one at `program`, asks the client its own

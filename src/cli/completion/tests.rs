@@ -47,6 +47,7 @@ const COMMANDS: &[&[&str]] = &[
     &["agents", "rollback"],
     &["agents", "remove"],
     &["agents", "verify"],
+    &["agents", "try"],
     &["agents", "sign-in"],
     &["agents", "unpack-check"],
     &["agents", "probe"],
