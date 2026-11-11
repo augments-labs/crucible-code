@@ -3307,12 +3307,16 @@ fn a_native_hostile_fence_label_reaches_the_terminal_as_nothing_but_its_name() {
 }
 
 #[test]
-fn a_native_hostile_tag_key_or_footnote_label_writes_no_escape_where_pictures_are_drawn() {
+fn a_native_hostile_tag_key_or_footnote_label_writes_no_escape_nor_a_tag_or_label_a_picture_cell() {
     for answer in [
         "<kbd\u{1b}]0;a title\u{7}>K</kbd> and <details \u{1b}_Gi=1;AAAA\u{1b}\\>\n",
         "<kbd>&amp; \u{1b}]8;;https://example.invalid\u{1b}\\ \u{1b}_Gi=1;AAAA\u{1b}\\</kbd>\n",
         "a[^\u{1b}]0;t\u{7}] and [^\u{1b}_Gi=1;AAAA\u{1b}\\]\n\n[^\u{1b}P1$r\u{1b}\\]: a note\n",
         "H<sub>\u{1b}]0;t\u{7}</sub>O and x<sup>\u{8}2\u{85}</sup>\n",
+        concat!(
+            "<kbd \u{10eeee}\u{305}>K</kbd> a[^\u{10eeee}\u{305}x] H<sub \u{10eeee}\u{305}>2</sub>",
+            " <details \u{10eeee}\u{305}>\n\n[^\u{10eeee}\u{305}x]: n\n",
+        ),
     ] {
         for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
             let window = Window::new(64, 12);
@@ -3338,6 +3342,10 @@ fn a_native_hostile_tag_key_or_footnote_label_writes_no_escape_where_pictures_ar
                     "{hostile:?} reached the terminal for {answer:?} with {glyphs:?}"
                 );
             }
+            assert!(
+                !written.contains('\u{10eeee}'),
+                "a picture cell was placed for {answer:?} with {glyphs:?}"
+            );
         }
     }
 }
