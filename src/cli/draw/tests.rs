@@ -2513,6 +2513,67 @@ fn a_change_offer_clipped_to_the_room_it_had_is_still_taken_off() {
     );
 }
 
+#[test]
+fn a_change_offer_too_short_to_name_its_key_is_not_drawn() {
+    // One column after the lead holds the mark of a cut alone, and two hold a
+    // bracket and the mark. Neither names a key, so neither is an offer, and
+    // nothing would know to take it off the row again.
+    let change = Shown::live(ToolOutput::ok("changed a.rs").showing(Diff::new([Line::new(
+        1,
+        Change::Added,
+        "a",
+    )])));
+    for width in [20, 21] {
+        let rows = finished_rows(&change, width, Style::drawn(Glyphs::Unicode), true);
+        let header = rows.first().expect("the row the box opens on");
+
+        assert_eq!(header.text(), "  ╭─ Added 1 line", "{width}");
+        assert!(
+            header.kinds().all(|slot| slot != Slot::Cut),
+            "{width}: {header:?}"
+        );
+    }
+}
+
+#[test]
+fn whatever_a_change_offers_is_taken_off_whole_at_every_width() {
+    // What is drawn as an offer and what is known for one are the same
+    // question, so no room leaves a piece of an offer on a finished row.
+    let change = Shown::live(ToolOutput::ok("changed a.rs").showing(Diff::new([Line::new(
+        1,
+        Change::Added,
+        "a",
+    )])));
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let mut offered = 0;
+        for width in 0..=60 {
+            let bare = finished_rows(&change, width, Style::drawn(glyphs), false)
+                .first()
+                .map(Row::text)
+                .expect("the row the box opens on");
+            let mut rows = finished_rows(&change, width, Style::drawn(glyphs), true);
+            rows.truncate(1);
+            let drawn = rows.first().map(Row::text).expect("the row");
+            if drawn != bare {
+                offered += 1;
+            }
+            unoffered(&mut rows);
+            let row = rows.first().expect("the row");
+
+            assert_eq!(
+                row.text(),
+                bare,
+                "{glyphs:?} at {width}: {drawn:?} was not taken off"
+            );
+            assert!(
+                row.kinds().all(|slot| slot != Slot::Cut),
+                "{glyphs:?} at {width}: {row:?}"
+            );
+        }
+        assert!(offered > 0, "{glyphs:?}: no width made an offer");
+    }
+}
+
 // Where a result is held against the row it was written on. Its text is kept
 // as it was agreed, which the formatter would otherwise re-wrap.
 #[rustfmt::skip]

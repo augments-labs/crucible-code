@@ -1727,7 +1727,8 @@ fn count(row: &mut Row, word: &str, lines: usize) {
 /// is held to: that ceiling keeps one event to about one row, and these rows
 /// are the event. Where `details` says the call's own line was cut, the
 /// header offers the key that shows the whole of it, two columns after what
-/// it says, or makes no offer where the row has no room for one.
+/// it says, or makes no offer where the row has no room for its opening
+/// bracket and the start of the key's name.
 fn block(diff: &Diff, failed: bool, window: usize, glyphs: Glyphs, details: bool) -> Vec<Row> {
     let left = columns(glyphs.called()) + 1;
     let room = Room {
@@ -1751,7 +1752,9 @@ fn block(diff: &Diff, failed: bool, window: usize, glyphs: Glyphs, details: bool
                 .saturating_sub(header.columns() + columns(lead)),
             glyphs,
         );
-        if !offer.is_empty() {
+        // Drawn only where [`unoffered`] will know it: a room that leaves the
+        // mark of a cut alone, or a bracket and the mark, names no key.
+        if change_offer(&offer) {
             header.push(Slot::Cut, format!("{lead}{offer}"));
         }
     }
