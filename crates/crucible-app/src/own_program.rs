@@ -31,7 +31,7 @@
 //! is admitted as the probe's was, and one that differs from the record
 //! replaces it.
 //! The name and version a start answered, or that it did not say, are shown
-//! where [`told`] reads the user's own program signed out, escaped as any
+//! where `told` reads the user's own program signed out, escaped as any
 //! other text a program gives.
 
 use std::ffi::OsString;
