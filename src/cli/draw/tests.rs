@@ -2279,7 +2279,28 @@ fn an_answer_a_guardrail_refused_says_the_answer_was_what_it_refused() {
 }
 
 #[test]
-fn a_guardrail_that_could_not_decide_about_a_prompt_says_nothing_was_asked() {
+fn a_guardrail_that_refused_what_the_person_said_says_it_was_not_sent() {
+    // An input check judges a prompt, a line typed while the turn ran and an
+    // answer to a question asked without waiting alike, and the last two are
+    // refused after the turn has asked the model something. What is true of
+    // all three is that the person's words were never sent.
+    let written = refusal(&Turned::Rejected {
+        rejection: crucible_runner::Rejection::new("no-prod", "it names production"),
+        stop: None,
+    });
+
+    assert!(
+        written.contains(
+            "the guardrail `no-prod` refused what you said, and it was not sent: it names \
+             production"
+        ),
+        "{written}"
+    );
+    assert!(!written.contains("nothing was asked"), "{written}");
+}
+
+#[test]
+fn a_guardrail_that_could_not_decide_about_what_the_person_said_says_it_was_not_sent() {
     let written = refusal(&Turned::Undecided {
         problem: crucible_runner::GuardrailError::undecided("no-secrets", "its list is missing"),
         stop: None,
@@ -2287,10 +2308,12 @@ fn a_guardrail_that_could_not_decide_about_a_prompt_says_nothing_was_asked() {
 
     assert!(
         written.contains(
-            "the guardrail `no-secrets` could not decide: its list is missing, and nothing was asked"
+            "the guardrail `no-secrets` could not decide: its list is missing, so what you said \
+             was not sent"
         ),
         "{written}"
     );
+    assert!(!written.contains("nothing was asked"), "{written}");
 }
 
 #[test]

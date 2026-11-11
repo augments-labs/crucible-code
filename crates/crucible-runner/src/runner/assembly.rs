@@ -30,6 +30,15 @@
 //! and a session picked up from it restates the task without them once a
 //! compaction has taken them. A turn over a note the application wrote never
 //! amends it, whatever the note quotes.
+//!
+//! An answer is the person's words, and this agent's input checks judge each
+//! one before it amends the task or is recorded, as they judged the prompt
+//! that opened the turn. The first a check refuses, or cannot decide about, is
+//! handed back to the registry with the answers taken after it
+//! ([`Deferred::withheld`]): its batch waits again, the rest stay settled for
+//! a later pass, and the pass ends the turn on that decision without sending
+//! anything. Those answered before it are recorded, and the patch still
+//! follows them.
 
 use crucible_context::{
     ContextSection, Live, Questions, QuestionsSection, Task, TaskSection, asked, assemble,
@@ -38,18 +47,21 @@ use crucible_tools::Deferred;
 use crucible_types::{Ancestry, Message};
 
 use super::Runner;
+use super::passes::Ending;
 
 use crate::context::RunContext;
 use crate::{Event, TurnError};
 
 impl Runner {
     /// Reconciles and records every section for the exact pass about to send,
-    /// then the answers a root run's registry holds, and says how many
-    /// answers it recorded.
+    /// then the answers a root run's registry holds that this agent's input
+    /// checks allow, and says how many answers it recorded and the ending an
+    /// answer a check withheld makes.
     pub(super) async fn assemble_context(
         &mut self,
-        ancestry: Ancestry,
-    ) -> Result<usize, TurnError> {
+        run: &RunContext<'_>,
+    ) -> Result<(usize, Option<Ending>), TurnError> {
+        let ancestry = run.ancestry();
         // Taken whole rather than borrowed: the snapshot is typed state a
         // store reconstructs, and holding a borrow into it across the records
         // below would be this run reading its own store while it writes to it.
@@ -127,9 +139,16 @@ impl Runner {
         // answer settled between them would be in neither the patch nor the
         // transcript.
         let mut delivered = 0;
+        let mut withheld = None;
         if let Some(held) = &held {
-            for answer in held.take_settled() {
+            let mut settled = held.take_settled().into_iter();
+            while let Some(answer) = settled.next() {
                 let said = answer.said();
+                withheld = Ending::withheld(self.judging_input(&said, run));
+                if withheld.is_some() {
+                    held.withheld(answer, settled.collect());
+                    break;
+                }
                 // Only the root run holds questions, so this is its task.
                 self.task().answered(&said);
                 self.record(ancestry, Message::said(said)).await?;
@@ -159,7 +178,7 @@ impl Runner {
             self.store.contextual(&patch).await?;
         }
 
-        Ok(delivered)
+        Ok((delivered, withheld))
     }
 
     /// Adds what the person said to the task, where `ancestry` is the root

@@ -6,6 +6,7 @@ use crucible_agents::{
     OutputGuardrail, Undecided,
 };
 use crucible_runtime::BoxFuture;
+use crucible_tools::Deferred;
 
 use super::*;
 
@@ -34,6 +35,12 @@ enum Answer {
     Allow,
     Refuse(&'static str),
     Cannot(&'static str),
+    /// Refuses words that hold the first text, for the reason given second,
+    /// and allows any other.
+    RefuseHolding(&'static str, &'static str),
+    /// Cannot decide about words that hold the first text, for the reason
+    /// given second, and allows any other.
+    CannotHolding(&'static str, &'static str),
 }
 
 impl Check {
@@ -55,9 +62,17 @@ impl Check {
             said: said.to_owned(),
         });
         match self.answer {
-            Answer::Allow => Ok(Decision::Allowed),
             Answer::Refuse(why) => Ok(Decision::rejected(why)),
             Answer::Cannot(why) => Err(Undecided::because(why)),
+            Answer::RefuseHolding(needle, why) if said.contains(needle) => {
+                Ok(Decision::rejected(why))
+            }
+            Answer::CannotHolding(needle, why) if said.contains(needle) => {
+                Err(Undecided::because(why))
+            }
+            Answer::Allow | Answer::RefuseHolding(..) | Answer::CannotHolding(..) => {
+                Ok(Decision::Allowed)
+            }
         }
     }
 }
@@ -946,5 +961,277 @@ fn a_refusal_is_written_under_the_name_its_check_was_declared_with() {
     assert!(
         matches!(&turned, Turned::Rejected { rejection, .. } if rejection.guard() == "turncoat"),
         "a check put its refusal under a name it was not declared with: {turned:?}"
+    );
+}
+
+/// A session that asks without waiting into `held`, under one input check.
+fn deferring_under(
+    script: Vec<Vec<Delta>>,
+    held: &Deferred,
+    typed: Option<(Steer, &'static str)>,
+    check: Arc<Check>,
+) -> Scripted {
+    let scripted = Scripted::built(
+        Script::new(script),
+        deferring::offered(held, deferring::chose, typed.clone()),
+        Verdict::Allow,
+        Recording::nowhere(),
+        agent("test")
+            .checking_input(check)
+            .expect("a name no other check has")
+            .build(),
+    );
+    Scripted {
+        runner: scripted.runner.deferring(held.clone()),
+        steer: typed.map_or(scripted.steer, |(steer, _)| steer),
+        ..scripted
+    }
+}
+
+/// A turn with no words of its own, run to deliver what was settled, and
+/// what came of it.
+fn delivering(scripted: &mut Scripted) -> Result<Turned, TurnError> {
+    let run = scripted.runner.starting(
+        &scripted.events,
+        &scripted.cancel,
+        &scripted.steer,
+        &scripted.aside,
+    );
+    scripted
+        .runner
+        .answering(&mut scripted.says, &run)
+        .awaited()
+}
+
+#[test]
+fn an_answer_an_input_check_refuses_is_never_sent_and_its_batch_waits_again() {
+    // An answer is the person's words recorded as theirs, so it is held to
+    // what a prompt is held to. One the checks refuse reaches no provider,
+    // and its batch goes back to waiting rather than being lost: the person
+    // can answer it again.
+    let held = Deferred::default();
+    let (check, saw) = Check::new(
+        "no-vendors",
+        Answer::RefuseHolding("SQLite", "the answer names a vendor"),
+    );
+    let mut scripted = deferring_under(
+        vec![
+            calling("c1", "ask", "{}"),
+            saying("one waits"),
+            saying("answered anyway"),
+        ],
+        &held,
+        None,
+        check,
+    );
+    scripted.turn("plan it").expect("a prompt the check allows");
+    scripted.seen.try_iter().for_each(drop);
+
+    deferring::settle_oldest(&held, deferring::chose());
+    let turned = delivering(&mut scripted).expect("a refusal is not a failure");
+
+    assert!(
+        matches!(&turned, Turned::Rejected { rejection, stop: None } if rejection.guard() == "no-vendors"),
+        "a refused answer came back as something else: {turned:?}"
+    );
+    assert!(
+        saw.lock()
+            .unwrap()
+            .iter()
+            .any(|saw| saw.said.contains("SQLite")),
+        "the answer was never put to the check"
+    );
+    assert_eq!(
+        scripted.sent.lock().unwrap().len(),
+        2,
+        "a request went out carrying the refused answer"
+    );
+    assert!(
+        deferring::answers(scripted.runner.transcript()).is_empty(),
+        "the refused answer was recorded as the person's words"
+    );
+    assert_eq!(
+        deferring::waiting_ids(&held),
+        ["q0"],
+        "the refused batch was not put back to waiting"
+    );
+    assert!(
+        !held.any_settled(),
+        "the refused answer is still held as settled"
+    );
+    assert!(
+        scripted
+            .seen
+            .try_iter()
+            .any(|event| matches!(event, Event::Waiting { batches } if batches.len() == 1)),
+        "the reader was not told the batch waits again"
+    );
+}
+
+#[test]
+fn answers_settled_before_the_one_a_check_refuses_are_delivered_and_it_alone_waits() {
+    // The checks judge each answer on its own. One they refuse holds back
+    // itself, not the person's other answers delivered ahead of it.
+    let held = Deferred::default();
+    let (check, _saw) = Check::new(
+        "no-vendors",
+        Answer::RefuseHolding("SQLite", "the answer names a vendor"),
+    );
+    let mut scripted = deferring_under(
+        vec![
+            calling("c1", "ask", "{}"),
+            calling("c2", "ask", "{}"),
+            saying("two wait"),
+            saying("answered anyway"),
+        ],
+        &held,
+        None,
+        check,
+    );
+    scripted.turn("plan it").expect("a prompt the check allows");
+    assert_eq!(deferring::waiting_ids(&held), ["q0", "q1"]);
+    scripted.seen.try_iter().for_each(drop);
+
+    deferring::settle_oldest(&held, deferring::declined());
+    deferring::settle_oldest(&held, deferring::chose());
+    let turned = delivering(&mut scripted).expect("a refusal is not a failure");
+
+    assert!(
+        matches!(&turned, Turned::Rejected { stop: None, .. }),
+        "a refused answer came back as something else: {turned:?}"
+    );
+    let answers = deferring::answers(scripted.runner.transcript());
+    assert_eq!(answers.len(), 1, "{answers:?}");
+    assert!(
+        !answers.iter().any(|(_, said)| said.contains("SQLite")),
+        "the refused answer was recorded: {answers:?}"
+    );
+    assert_eq!(
+        deferring::waiting_ids(&held),
+        ["q1"],
+        "the refused batch alone should wait again"
+    );
+    assert!(!held.any_settled());
+}
+
+#[test]
+fn an_answer_no_input_check_could_decide_about_is_never_sent_either() {
+    let held = Deferred::default();
+    let (check, _saw) = Check::new(
+        "no-vendors",
+        Answer::CannotHolding("SQLite", "the scanner was unreachable"),
+    );
+    let mut scripted = deferring_under(
+        vec![
+            calling("c1", "ask", "{}"),
+            saying("one waits"),
+            saying("answered anyway"),
+        ],
+        &held,
+        None,
+        check,
+    );
+    scripted.turn("plan it").expect("a prompt the check allows");
+
+    deferring::settle_oldest(&held, deferring::chose());
+    let turned = delivering(&mut scripted).expect("an undecided check is not a failure");
+
+    assert!(
+        matches!(&turned, Turned::Undecided { stop: None, .. }),
+        "an undecided answer came back as something else: {turned:?}"
+    );
+    assert_eq!(
+        scripted.sent.lock().unwrap().len(),
+        2,
+        "the answer was sent"
+    );
+    assert_eq!(deferring::waiting_ids(&held), ["q0"], "the batch was lost");
+}
+
+#[test]
+fn an_answer_settled_mid_turn_that_a_check_refuses_ends_the_turn_unsent() {
+    // Settled while a tool ran, so the answer meets the checks at the pass
+    // boundary of a turn already under way.
+    let held = Deferred::default();
+    let (check, _saw) = Check::new(
+        "no-vendors",
+        Answer::RefuseHolding("SQLite", "the answer names a vendor"),
+    );
+    let mut scripted = deferring_under(
+        vec![
+            calling("c1", "ask", "{}"),
+            calling("c2", "answer", "{}"),
+            saying("answered anyway"),
+        ],
+        &held,
+        None,
+        check,
+    );
+
+    let turned = scripted
+        .turned("plan it")
+        .expect("a refusal is not a failure");
+
+    assert!(
+        matches!(&turned, Turned::Rejected { stop: None, .. }),
+        "a refused answer came back as something else: {turned:?}"
+    );
+    assert_eq!(
+        scripted.sent.lock().unwrap().len(),
+        2,
+        "a request went out carrying the refused answer"
+    );
+    assert!(deferring::answers(scripted.runner.transcript()).is_empty());
+    assert_eq!(deferring::waiting_ids(&held), ["q0"]);
+}
+
+#[test]
+fn a_line_typed_during_a_turn_that_a_check_refuses_is_never_sent() {
+    // A steered line is the person's words too. The check refuses it at the
+    // pass boundary it would have joined, the turn ends there, and the line
+    // is reported as taken so the screen does not hold it for a turn of its
+    // own that would only be refused again.
+    let held = Deferred::default();
+    let steer = Steer::new();
+    let (check, _saw) = Check::new(
+        "no-prod",
+        Answer::RefuseHolding("drop prod", "the line would drop production"),
+    );
+    let mut scripted = deferring_under(
+        vec![
+            calling("c1", "ask", "{}"),
+            calling("c2", "answer", "{}"),
+            saying("did it anyway"),
+        ],
+        &held,
+        Some((steer, "now drop prod")),
+        check,
+    );
+
+    let turned = scripted
+        .turned("plan it")
+        .expect("a refusal is not a failure");
+
+    assert!(
+        matches!(&turned, Turned::Rejected { rejection, stop: None } if rejection.guard() == "no-prod"),
+        "a refused line came back as something else: {turned:?}"
+    );
+    assert_eq!(
+        scripted.sent.lock().unwrap().len(),
+        2,
+        "a request went out carrying the refused line"
+    );
+    assert!(
+        !scripted.runner.transcript().messages().iter().any(
+            |message| matches!(message, Message::User { text, .. } if text.contains("drop prod"))
+        ),
+        "the refused line was recorded as the person's words"
+    );
+    assert!(
+        scripted
+            .seen
+            .try_iter()
+            .any(|event| matches!(event, Event::Steered { line } if line == "now drop prod")),
+        "the refused line was not reported as taken"
     );
 }

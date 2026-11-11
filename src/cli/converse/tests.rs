@@ -2151,3 +2151,27 @@ fn a_panel_over_a_turn_reads_what_the_agent_holds_only_on_its_route() {
         assert_eq!(turn.counted().usage.context.external, read);
     }
 }
+
+#[test]
+fn answers_a_guardrail_withheld_are_refused_in_the_dock_where_their_batch_waits_again() {
+    // An input check that refuses an answer, or cannot decide about it, ends
+    // the turn and puts its batch back to waiting. The dock then says it was
+    // not sent, beside the draft, rather than that it was accepted.
+    let withheld = [
+        crucible_runner::Turned::Rejected {
+            rejection: crucible_runner::Rejection::new("no-prod", "it names production"),
+            stop: None,
+        },
+        crucible_runner::Turned::Undecided {
+            problem: crucible_runner::GuardrailError::undecided("no-prod", "its list is missing"),
+            stop: None,
+        },
+    ];
+    for turned in withheld {
+        let did = Did::Refused(turned);
+        assert_eq!(docked(&did, true), Err(WITHHELD.to_owned()));
+        // An answer the turn delivered before an output check refused the
+        // model's reply was sent all the same.
+        assert_eq!(docked(&did, false), Ok(()));
+    }
+}

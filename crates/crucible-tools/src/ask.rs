@@ -98,7 +98,9 @@ const ID: &str = "id";
 ///
 /// A batch is waiting from [`Deferred::register`] until [`Deferred::settle`]
 /// takes a reply for every question in it at once, and settled from then
-/// until [`Deferred::take_settled`] hands it out to be delivered. Every change
+/// until [`Deferred::take_settled`] hands it out to be delivered, or until
+/// [`Deferred::withheld`] puts it back to waiting because the answer was not
+/// delivered. Every change
 /// happens under one lock, so two settlements of one batch cannot both win,
 /// and a batch taken cannot be taken again.
 ///
@@ -389,7 +391,7 @@ impl Deferred {
     /// Takes every settled batch, in the order they were settled.
     ///
     /// A batch taken here is the caller's to deliver: it is never handed out
-    /// again.
+    /// again unless the caller hands it back through [`Deferred::withheld`].
     pub fn take_settled(&self) -> Vec<Delivered> {
         let mut held = self.held();
         if held.settled.is_empty() {
@@ -399,6 +401,25 @@ impl Deferred {
         let taken = std::mem::take(&mut held.settled);
         held.changed();
         taken
+    }
+
+    /// Hands back what [`Deferred::take_settled`] took and the caller did not
+    /// deliver: `refused` waits for an answer again, in its place among the
+    /// batches by id, and `rest`, taken after it, is settled again in the
+    /// order it was, ahead of anything settled since.
+    ///
+    /// For an answer the person's words were refused in: it was never
+    /// delivered, so its batch is still owed one, and the person is asked
+    /// again rather than ignored. Nothing is admitted here, because nothing
+    /// new is held: the batches were counted when they were registered, and
+    /// none can register while their answers are being delivered.
+    pub fn withheld(&self, refused: Delivered, rest: Vec<Delivered>) {
+        let mut held = self.held();
+        let id = refused.id();
+        let at = held.waiting.partition_point(|batch| batch.id() < id);
+        held.waiting.insert(at, refused.batch);
+        held.settled.splice(0..0, rest);
+        held.changed();
     }
 
     /// A number that moves on every change, and on nothing else.

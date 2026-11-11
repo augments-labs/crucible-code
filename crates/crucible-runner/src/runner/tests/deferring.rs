@@ -134,15 +134,15 @@ fn storage() -> Question {
     )
 }
 
-fn chose() -> Reply {
+pub(super) fn chose() -> Reply {
     Reply::Answered(Answered::new(["SQLite"]))
 }
 
-fn declined() -> Reply {
+pub(super) fn declined() -> Reply {
     Reply::Declined
 }
 
-fn settle_oldest(held: &Deferred, reply: Reply) {
+pub(super) fn settle_oldest(held: &Deferred, reply: Reply) {
     let oldest = held
         .waiting()
         .first()
@@ -153,7 +153,11 @@ fn settle_oldest(held: &Deferred, reply: Reply) {
 
 /// The tools a deferring session offers: the one that asks, and the
 /// stand-in for the person.
-fn offered(held: &Deferred, reply: fn() -> Reply, typed: Option<(Steer, &'static str)>) -> Tools {
+pub(super) fn offered(
+    held: &Deferred,
+    reply: fn() -> Reply,
+    typed: Option<(Steer, &'static str)>,
+) -> Tools {
     let mut offered = Tools::new();
     offered
         .add_builtin(Asking { held: held.clone() })
@@ -183,7 +187,7 @@ fn deferring(script: Vec<Vec<Delta>>, held: &Deferred, store: Arc<Recording>) ->
 }
 
 /// Every delivered answer in `transcript`, with where it sits.
-fn answers(transcript: &Transcript) -> Vec<(usize, String)> {
+pub(super) fn answers(transcript: &Transcript) -> Vec<(usize, String)> {
     transcript
         .messages()
         .iter()
@@ -773,7 +777,7 @@ fn an_answer_is_never_lost_to_a_crash_between_its_settling_and_its_delivery() {
 }
 
 /// The ids of the batches `held` lists as waiting, in order.
-fn waiting_ids(held: &Deferred) -> Vec<String> {
+pub(super) fn waiting_ids(held: &Deferred) -> Vec<String> {
     held.waiting()
         .iter()
         .map(|batch| batch.id().to_string())

@@ -540,7 +540,10 @@ pub enum Event {
         windows: PlanWindows,
     },
 
-    /// A turn ended.
+    /// A turn ended with the model stopping.
+    ///
+    /// A turn an input check refused at a pass boundary, after
+    /// [`Event::TurnStarted`], ends without this: its answer says why.
     TurnFinished {
         /// Which turn.
         turn: TurnId,
@@ -590,7 +593,8 @@ pub enum Event {
         files: Box<[Attachment]>,
     },
 
-    /// A line typed while the turn ran was worked into it.
+    /// A line typed while the turn ran was taken into it: worked in, or
+    /// refused by an input check, which then ends the turn.
     ///
     /// Posted where the line joins the turn — between one pass and the next —
     /// so the screen can commit it where it belongs: as the reader's own words,

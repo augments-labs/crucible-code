@@ -1174,18 +1174,8 @@ fn ran<T: Terminal>(
     // is read again once a turn has run: the one that delivered them left
     // nothing of the batch waiting. Not where nothing ran, which may be a
     // session resumed whose questions its first turn has yet to bring back.
-    if let Some((_, id)) = answering {
-        let outcome = match &took.did {
-            Did::Unsent(refusal) => Err(refusal.to_string()),
-            Did::Settled(settled) => settled.clone(),
-            Did::Unasked => Err(UNASKED.to_owned()),
-            Did::Reported
-            | Did::UsedUp
-            | Did::Uncertain
-            | Did::Refused(_)
-            | Did::Nothing
-            | Did::Stopped => Ok(()),
-        };
+    if let Some((era, id)) = answering {
+        let outcome = docked(&took.did, waits(held, &era, id));
         held.docking.answered(id, outcome);
     }
     if !matches!(took.did, Did::Unsent(_) | Did::Unasked) {
@@ -2042,6 +2032,31 @@ fn sent(
 
 /// What the dock says of answers that had no model to go to.
 const UNASKED: &str = "there is no model to send the answers to";
+
+/// Said in the dock where a guardrail kept its answers from being sent; the
+/// transcript says which, and why.
+const WITHHELD: &str = "a guardrail did not let the answers be sent";
+
+/// What became of the dock's answers, by what the work did and whether their
+/// batch still waits once it is done.
+///
+/// A refused turn that left the batch waiting is one whose input checks
+/// withheld the answers; one that delivered them and then refused the model's
+/// reply sent them all the same.
+fn docked(did: &Did, waits_again: bool) -> Result<(), String> {
+    match did {
+        Did::Unsent(refusal) => Err(refusal.to_string()),
+        Did::Settled(settled) => settled.clone(),
+        Did::Unasked => Err(UNASKED.to_owned()),
+        Did::Refused(_) if waits_again => Err(WITHHELD.to_owned()),
+        Did::Reported
+        | Did::UsedUp
+        | Did::Uncertain
+        | Did::Refused(_)
+        | Did::Nothing
+        | Did::Stopped => Ok(()),
+    }
+}
 
 /// Whether the batch of `era` numbered `id` waits, as the handle reads it.
 fn waits(held: &Held<'_>, era: &crucible_client_api::Era, id: crucible_types::QuestionId) -> bool {

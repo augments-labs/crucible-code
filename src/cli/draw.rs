@@ -1965,13 +1965,16 @@ const UNCERTAIN: &str = "what the agent was doing when it stopped may or may not
 /// The one ending of a turn that may have drawn nothing at all: a prompt
 /// refused on the way in is refused before any request is made, so no event
 /// was posted and the reader would otherwise be handed a fresh prompt with no
-/// word on why nothing answered. Drawn the way a failed turn is — on its own,
+/// word on why nothing answered. A line typed while the turn ran, or an answer
+/// to a question asked without waiting, is refused the same way at the pass
+/// that would have sent it, and the turn ends there. Drawn the way a failed turn is — on its own,
 /// with no mark in front, in the colour kept for trouble — because nobody's
 /// line asked for it either.
 ///
-/// Which check and what it said, and then whether anything was asked: a
-/// refusal with no stop beside it never reached a provider, and one with a
-/// stop is an answer that was made and that the check did not accept. A turn that
+/// Which check and what it said, and then whose words it judged: a refusal
+/// with no stop beside it is of what the person said, which was never sent,
+/// and one with a stop is an answer the model made that the check did not
+/// accept. A turn that
 /// ran says nothing here; it reported itself as it went.
 ///
 /// # Errors
@@ -1990,7 +1993,7 @@ pub(crate) fn refused<T: Terminal>(
             if stop.is_some() {
                 "the answer"
             } else {
-                "this prompt, and nothing was asked"
+                "what you said, and it was not sent"
             },
             rejection.why(),
         ),
@@ -1999,7 +2002,7 @@ pub(crate) fn refused<T: Terminal>(
             if stop.is_some() {
                 ", so the answer is not one it accepted"
             } else {
-                ", and nothing was asked"
+                ", so what you said was not sent"
             },
         ),
     };

@@ -527,6 +527,43 @@ fn one_of_two_simultaneous_settlements_wins_and_the_other_is_stale() {
 }
 
 #[test]
+fn an_answer_withheld_waits_again_in_id_order_and_the_rest_are_settled_again_first() {
+    let deferred = Deferred::default();
+    let first = deferred.register(asked("First")).unwrap();
+    let second = deferred.register(asked("Second")).unwrap();
+    let third = deferred.register(asked("Third")).unwrap();
+    let fourth = deferred.register(asked("Fourth")).unwrap();
+    for id in [first, third] {
+        deferred
+            .settle(id, vec![chose(&["Rust"]), chose(&[])])
+            .unwrap();
+    }
+    let mut taken = deferred.take_settled().into_iter();
+    let refused = taken.next().unwrap();
+    // Settled while the taken answers were out.
+    deferred
+        .settle(fourth, vec![chose(&["Rust"]), chose(&[])])
+        .unwrap();
+
+    let revision = deferred.revision();
+    deferred.withheld(refused, taken.collect());
+
+    let waiting: Vec<QuestionId> = deferred.waiting().iter().map(Batch::id).collect();
+    assert_eq!(
+        waiting,
+        [first, second],
+        "the refused batch waits in its place"
+    );
+    let settled: Vec<QuestionId> = deferred.take_settled().iter().map(Delivered::id).collect();
+    assert_eq!(
+        settled,
+        [third, fourth],
+        "the rest come back ahead of the later"
+    );
+    assert_ne!(deferred.revision(), revision, "handing back is a change");
+}
+
+#[test]
 fn take_settled_hands_each_settled_batch_out_exactly_once() {
     let deferred = Deferred::default();
     let first = deferred.register(asked("First")).unwrap();
