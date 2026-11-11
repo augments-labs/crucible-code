@@ -187,8 +187,9 @@ impl Conversation {
         if self.questions.is_some() {
             return Err(AppError::QuestionsHeld);
         }
-        let hold = questions.claim().ok_or(AppError::QuestionsHeld)?;
-        hold.questions().moved(self.session.id());
+        let hold = questions
+            .claim(self.session.id())
+            .ok_or(AppError::QuestionsHeld)?;
         Ok(Self {
             runner: self.runner.deferring(hold.questions().held().clone()),
             questions: Some(hold),

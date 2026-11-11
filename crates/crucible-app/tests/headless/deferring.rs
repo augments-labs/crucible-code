@@ -1184,3 +1184,30 @@ fn an_answer_at_a_door_that_cannot_deliver_it_is_refused_as_stale() -> Result<()
     assert_eq!(held.waiting().1.len(), 1);
     Ok(())
 }
+
+/// Once the conversation that held the handle is gone, nothing is left to
+/// deliver an answer, and whatever holds the handle next starts from an empty
+/// registry. An answer sent then would be told it settled and be lost, so it
+/// is refused as stale, the batch is as it was, and the handle is free to be
+/// held again.
+#[test]
+fn an_answer_to_a_handle_no_conversation_holds_is_refused_as_stale() -> Result<(), Failed> {
+    let tree = Tree::new("deferring-unheld")?;
+    let held = Questions::new();
+    let script = Script::new(vec![deferring("c1", "Language"), saying("carrying on")]);
+    let mut conversation = self::held(&tree, script, &held)?;
+    turned(&mut conversation, &prompt("plan it")?, &held)?;
+    let (era, id) = oldest(&held)?;
+    drop(conversation);
+
+    assert_eq!(
+        client::answer(&rust(&era, id)?, &held),
+        Outcome::Refused(ErrorCode::StaleQuestions.into()),
+        "an answer nothing could deliver was taken"
+    );
+    assert_eq!(oldest(&held)?, (era, id));
+
+    let again = Script::new(vec![saying("hello")]);
+    drop(self::held(&tree, again, &held)?);
+    Ok(())
+}

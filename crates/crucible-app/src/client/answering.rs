@@ -9,11 +9,12 @@
 //! but a test built with the `proof` feature. One conversation holds a handle
 //! at a time: a second start handed one already held is refused, since two
 //! holders would share one era and one registry, and the claim ends when the
-//! holding conversation is dropped. [`answer`] settles a batch there and nothing else, so it
-//! needs no conversation: it is the door for an answer while a turn has the
-//! conversation, and the running turn delivers it. While no turn runs,
-//! [`turn`](super::turn) takes the same command and starts the turn that
-//! delivers it.
+//! holding conversation is dropped. [`answer`] settles a batch there and
+//! nothing else, so it needs no conversation: it is the door for an answer
+//! while a turn has the conversation, and the running turn delivers it. While
+//! no turn runs, [`turn`](super::turn) takes the same command and starts the
+//! turn that delivers it. A handle no conversation holds settles nothing:
+//! nothing is left to deliver an answer, and the next holder empties it.
 //!
 //! A batch's id is unique within its session, not across sessions, so the
 //! handle keeps beside the registry the [`Era`] the batches belong to: the
@@ -65,7 +66,8 @@ struct Shared {
     /// The batches. Its own lock is taken per call and inside `era`'s.
     held: Deferred,
     /// Whether a conversation holds the handle: set by the [`Hold`] it keeps,
-    /// and cleared when that is dropped.
+    /// and cleared when that is dropped, under `era`'s lock, so a settling
+    /// that saw it set finished before the holder let go.
     claimed: AtomicBool,
 }
 
@@ -99,11 +101,20 @@ impl Questions {
         self.asking(tool)
     }
 
-    /// The claim of the one conversation holding the handle, or `None` while
-    /// another holds it. The claim lasts as long as the [`Hold`], so a
-    /// refused claim builds none: dropping one would end the holder's.
-    pub(crate) fn claim(self) -> Option<Hold> {
-        (!self.0.claimed.swap(true, Ordering::SeqCst)).then(|| Hold(self))
+    /// The claim of the one conversation holding the handle, recording into
+    /// the session `incoming` names, or `None` while another holds it. A claim
+    /// taken moves the questions there as [`Self::moved`] does, under the
+    /// same lock, so no answer settles between the claim and the move that
+    /// would empty it. The claim lasts as long as the [`Hold`], so a refused
+    /// claim builds none: dropping one would end the holder's.
+    pub(crate) fn claim(self, incoming: Option<&SessionId>) -> Option<Hold> {
+        let mut era = self.era();
+        if self.0.claimed.swap(true, Ordering::SeqCst) {
+            return None;
+        }
+        self.moving(&mut era, incoming);
+        drop(era);
+        Some(Hold(self))
     }
 
     /// The registry itself, for what the application wires to it: the
@@ -124,7 +135,11 @@ impl Questions {
     /// its own where it records nothing: the era becomes the incoming
     /// session's and every batch, waiting or settled, is forgotten, together.
     pub(crate) fn moved(&self, incoming: Option<&SessionId>) {
-        let mut era = self.era();
+        self.moving(&mut self.era(), incoming);
+    }
+
+    /// [`Self::moved`], with `era`'s lock already taken.
+    fn moving(&self, era: &mut Era, incoming: Option<&SessionId>) {
         *era = incoming.map_or_else(stint, |session| Era::Session(session.clone()));
         self.0.held.clear();
     }
@@ -136,11 +151,12 @@ impl Questions {
     }
 
     /// Settles the batch of `era` numbered `id` with `replies`, as the
-    /// registry settles one; a batch of another era is
-    /// [`Unsettled::Stale`], and nothing changes.
+    /// registry settles one; a batch of another era, or any batch while no
+    /// conversation holds the handle, is [`Unsettled::Stale`], and nothing
+    /// changes.
     fn settle(&self, era: &Era, id: QuestionId, replies: Vec<Reply>) -> Result<(), Unsettled> {
         let current = self.era();
-        if *current != *era {
+        if !self.0.claimed.load(Ordering::SeqCst) || *current != *era {
             return Err(Unsettled::Stale(id));
         }
         self.0.held.settle(id, replies)
@@ -182,6 +198,7 @@ impl Hold {
 
 impl Drop for Hold {
     fn drop(&mut self) {
+        let _settling = self.0.era();
         self.0.0.claimed.store(false, Ordering::SeqCst);
     }
 }
@@ -195,8 +212,9 @@ fn stint() -> Era {
 
 /// Settles the batch `request` answers in `held`, and says what came of it.
 ///
-/// The batch is settled whole or not at all. A batch not waiting, or one of
-/// an era that is not the handle's, is refused as
+/// The batch is settled whole or not at all. A batch not waiting, one of an
+/// era that is not the handle's, or any batch while no conversation holds the
+/// handle, is refused as
 /// [`ErrorCode::StaleQuestions`]; replies the batch cannot take are
 /// [`AnswerOutcome::Invalid`], naming the first that does not fit. Either way
 /// the batch is as it was, still waiting if it was.
