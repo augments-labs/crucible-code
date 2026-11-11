@@ -148,15 +148,21 @@ fn written_out(put: &[Pending], tree: &Tree) -> Vec<String> {
                 for root in &roots {
                     text = text.replace(root.as_str(), "<tree>");
                 }
-                Some(
-                    text.replace(std::path::MAIN_SEPARATOR, "/")
-                        .replace(".exe", "")
-                        .replace(".par", ""),
-                )
+                Some(portable(&text))
             }
             _ => None,
         })
         .collect()
+}
+
+/// `text` as [`written_out`] writes it once the tree is named: every
+/// separator as `/` and a program's suffix left out. A test looking for text
+/// the machine's separator could appear in, as a `\` an escape writes on
+/// Windows, writes what it looks for through this too.
+pub(crate) fn portable(text: &str) -> String {
+    text.replace(std::path::MAIN_SEPARATOR, "/")
+        .replace(".exe", "")
+        .replace(".par", "")
 }
 
 /// What an account question asks, its facts, and its choices, each by name

@@ -2029,9 +2029,9 @@ fn an_own_program_is_shown_the_name_and_version_it_answered() -> Result<(), Fail
                 .join("\n");
         assert!(screen.contains("is not signed in."), "{screen}");
         assert!(
-            screen.contains(&format!(
+            screen.contains(&crate::external::choosing::portable(&format!(
                 "fact: Your own program answered as {escaped}, version 1.2.3."
-            )),
+            ))),
             "{screen}"
         );
         assert!(!screen.contains('\u{1b}'), "{screen}");
