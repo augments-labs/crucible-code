@@ -92,8 +92,12 @@ Read the provider's own pages for each line of the report:
    the vendor's middle tier moved.
 5. Set the provider's `reviewed` to the date the pages were read.
 6. **A family crucible does not offer.** Read the vendor's page for the model.
-   Offer it as in 1, or add the model to `PASSED` with the reason. The check
-   never adds it: a family is chosen by hand.
+   Offer it as in 1, or decline the family: add the provider, the family the
+   report names and the reason to `PASSED_FAMILIES`. That quiets every model of
+   it, one released later included, until the row is removed, so remove it
+   when the family is worth another look. To decline only one model of the
+   family, add that model to `PASSED` with the reason instead. The check never
+   adds a family: it is chosen by hand.
 7. **A revised model.** The database dates an offered model after the
    provider's `reviewed` day, so the vendor released or revised it under the
    same name. Re-read the model's records against the vendor's pages as in 1,
