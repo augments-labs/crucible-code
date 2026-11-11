@@ -1154,8 +1154,10 @@ fn a_count_in_a_summary_of_a_change_is_bold_in_its_sides_hue_on_no_ground() {
             // number's where it clears the ground with no ground of its own
             // under it, and the table's green and its trouble where it does
             // not, which is Dark, the table a light terminal can be handed,
-            // and the sixteen, whose numbers are white on a ground.
-            let own = theme == Theme::Dark || depth == Depth::Basic;
+            // and the sixteen, whose numbers are white on a ground. The
+            // table that is the sixteen at every rung is held to them at
+            // every rung: two named inks compare as equal whatever they are.
+            let own = theme == Theme::Dark || theme == Theme::Ansi || depth == Depth::Basic;
             for (count, number, hue) in [
                 (added, Slot::AddedNumber, tones.green),
                 (removed, Slot::RemovedNumber, tones.trouble),
