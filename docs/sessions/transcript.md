@@ -275,12 +275,13 @@ that link to a pull request, an issue or a commit are followed by its
 reference instead, as in `the fix (#1324)`. The quiet address is not a link,
 and a drag in the full screen copies the words without it.
 
-An image, `![the build passing](docs/images/build.png)`, is drawn as the link
-`[image: the build passing]`, or `[image]` with no words, followed by its
-quiet address; nothing is fetched. A `!` before any other bracket is drawn as
-itself, and so is one after a backslash, which stays in front of it:
-`\![x](y.png)` is drawn `\!x (y.png)`. An address written as its own words,
-bare or between angle brackets, has nothing after it. In a table's cell a link
+An image, `![the build passing](https://example.com/build.png)`, is drawn as
+the link `[image: the build passing]`, or `[image]` with no words, followed by
+its quiet address; nothing is fetched. A `!` before any other bracket is drawn
+as itself, and so is one after a backslash, which stays in front of it:
+`\![x](https://example.com/y.png)` is drawn `\!x (example.com/y.png)`. An
+address written as its own words, bare or between angle brackets, has nothing
+after it. In a table's cell a link
 is drawn as it is in prose, an address as its reference included, but with
 nothing after its words: the whole of it is in the table's source.
 
