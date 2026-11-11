@@ -163,7 +163,8 @@ pub(in crate::cli::converse) fn draw<T: Terminal>(
 /// below.
 ///
 /// With the rows comes where a line of the dock is being written, counted
-/// from the first of them, which is where the cursor stands.
+/// from the first of them, which is where the cursor stands when the window
+/// draws that row.
 pub(super) fn over(
     around: Around<'_>,
     columns: usize,

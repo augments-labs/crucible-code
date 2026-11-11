@@ -1077,7 +1077,8 @@ struct Footed {
     /// list a `/`-started line has open.
     over: Vec<Row>,
     /// Where a line of the dock is being written in `over`, counted from its
-    /// first row: the cursor stands there instead of in the box.
+    /// first row: the cursor stands there instead of in the box, where the
+    /// window draws that row.
     writing: Option<Caret>,
     /// The box.
     boxed: Vec<Row>,
