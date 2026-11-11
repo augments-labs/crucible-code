@@ -45,6 +45,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use crucible_client_api::Author;
 use crucible_config::{Driver, ExternalAgent};
 use crucible_context::Room;
 use crucible_execution::Failure;
@@ -706,12 +707,49 @@ impl Conversation {
         ask: &mut dyn Asker,
         run: &RunContext<'_>,
     ) -> Result<Turned, TurnError> {
+        self.saying((prompt, Author::Person), attached, ask, run)
+            .await
+    }
+
+    /// [`Conversation::turn`] over a note the application wrote rather than
+    /// words the person did: recorded and sent as a turn is, and never kept as
+    /// the person's task, as [`Runner::noted`] says.
+    ///
+    /// On an installed agent's route it is the agent's turn like any other,
+    /// since that route keeps no task of the person's.
+    ///
+    /// # Errors
+    ///
+    /// As [`Conversation::turn`].
+    pub async fn noted(
+        &mut self,
+        note: &str,
+        attached: Box<[Attachment]>,
+        ask: &mut dyn Asker,
+        run: &RunContext<'_>,
+    ) -> Result<Turned, TurnError> {
+        self.saying((note, Author::Application), attached, ask, run)
+            .await
+    }
+
+    /// The turn over `said`, the words and who wrote them, for
+    /// [`Conversation::turn`] and [`Conversation::noted`].
+    async fn saying(
+        &mut self,
+        (words, author): (&str, Author),
+        attached: Box<[Attachment]>,
+        ask: &mut dyn Asker,
+        run: &RunContext<'_>,
+    ) -> Result<Turned, TurnError> {
         if let Some(outside) = self.outside.as_deref_mut() {
             outside::unattached(&attached)?;
-            return outside.turn(prompt, ask, run, &self.session).await;
+            return outside.turn(words, ask, run, &self.session).await;
         }
         let asked = self.runner.speed();
-        let turned = self.runner.turn(prompt, attached, ask, run).await;
+        let turned = match author {
+            Author::Person => self.runner.turn(words, attached, ask, run).await,
+            Author::Application => self.runner.noted(words, attached, ask, run).await,
+        };
         self.refusal_written(asked);
         turned
     }

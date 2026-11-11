@@ -272,8 +272,19 @@ withdraws it.\n\nTheir request:\n",
 }
 
 /// Appends `kept` as a quotation, saying when it was cut.
+///
+/// Every line break Unicode names starts a quoted line, not only the two
+/// [`str::lines`] knows: what is quoted can be the model's, and a break the
+/// quotation missed would let it draw a line of its own outside the quote.
 fn quote(text: &mut String, kept: &Kept, bound: usize) {
-    for line in kept.text.lines() {
+    let words = kept.text.replace("\r\n", "\n");
+    let breaks = |c| {
+        matches!(
+            c,
+            '\n' | '\r' | '\u{b}' | '\u{c}' | '\u{85}' | '\u{2028}' | '\u{2029}'
+        )
+    };
+    for line in words.split_terminator(breaks) {
         text.push_str("> ");
         text.push_str(line);
         text.push('\n');
@@ -457,6 +468,36 @@ mod tests {
         task.said("and add a benchmark");
         let changed = TaskSection::new(Some(&task), None);
         assert_eq!(changed.render(Seen::Known(&told)), None);
+    }
+
+    #[test]
+    fn the_first_words_after_a_recorded_empty_task_are_said_to_stand() {
+        let told = Task::default().state();
+        let mut task = Task::default();
+        task.said("make the parser streaming");
+
+        let section = TaskSection::new(Some(&task), None);
+
+        let fresh = section
+            .render(Seen::Known(&told))
+            .expect("new words are told");
+        assert_eq!(fresh.text(), STANDING);
+    }
+
+    #[test]
+    fn every_line_break_starts_a_quoted_line() {
+        let mut task = Task::default();
+        task.said("a\rb\u{85}c\u{2028}d\u{2029}e\u{b}f\u{c}g\r\nh\ni");
+
+        let told = restated(&task);
+
+        assert!(
+            told.contains("> a\n> b\n> c\n> d\n> e\n> f\n> g\n> h\n> i\n"),
+            "{told:?}"
+        );
+        for forged in ['\r', '\u{85}', '\u{2028}', '\u{2029}', '\u{b}', '\u{c}'] {
+            assert!(!told.contains(forged), "{forged:?} in {told:?}");
+        }
     }
 
     #[test]

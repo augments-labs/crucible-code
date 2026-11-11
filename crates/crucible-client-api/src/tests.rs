@@ -473,6 +473,7 @@ fn decisions() -> Vec<Decision> {
 fn commands() -> Vec<Command> {
     let mut commands = vec![
         Command::Prompt(Prompt::new(MARKER).unwrap()),
+        Command::Prompt(Prompt::application(MARKER).unwrap()),
         Command::Compact,
         Command::Cancel,
         Command::Clear,
@@ -1314,50 +1315,53 @@ const fn era_arm(one: &Era) -> (usize, usize) {
 
 const fn command_arm(one: &Command) -> (usize, usize) {
     match one {
-        Command::Prompt(_) => (0, 42),
-        Command::Compact => (1, 42),
-        Command::Cancel => (2, 42),
-        Command::Decide(_) => (3, 42),
-        Command::Clear => (4, 42),
-        Command::Resume(_) => (5, 42),
+        Command::Prompt(prompt) => match prompt.author() {
+            Author::Person => (0, 43),
+            Author::Application => (42, 43),
+        },
+        Command::Compact => (1, 43),
+        Command::Cancel => (2, 43),
+        Command::Decide(_) => (3, 43),
+        Command::Clear => (4, 43),
+        Command::Resume(_) => (5, 43),
         Command::SelectModel {
             effort: Some(_), ..
-        } => (6, 42),
-        Command::SelectModel { effort: None, .. } => (7, 42),
-        Command::SetEffort(_) => (8, 42),
-        Command::SetMode(_) => (9, 42),
-        Command::CycleMode => (10, 42),
-        Command::Login { .. } => (11, 42),
-        Command::Logout { .. } => (12, 42),
-        Command::InspectCache => (13, 42),
-        Command::CleanCache => (14, 42),
-        Command::Sandbox { enabled: true } => (15, 42),
-        Command::Sandbox { enabled: false } => (16, 42),
-        Command::Theme(Theme::Drawing(_)) => (17, 42),
-        Command::Theme(Theme::Syntax(_)) => (18, 42),
-        Command::Help => (19, 42),
-        Command::ReleaseNotes { version: None } => (20, 42),
-        Command::ReleaseNotes { version: Some(_) } => (21, 42),
-        Command::Exit => (22, 42),
-        Command::SetSpeed(_) => (23, 42),
-        Command::Context => (24, 42),
-        Command::Usage => (25, 42),
-        Command::Setting { .. } => (26, 42),
-        Command::AskLimits => (27, 42),
-        Command::Disconnect { .. } => (28, 42),
-        Command::RemoveIntegration { .. } => (29, 42),
-        Command::SignOut { .. } => (30, 42),
-        Command::Connect { instance: Some(_) } => (31, 42),
-        Command::Connect { instance: None } => (32, 42),
-        Command::AgentCatalog => (33, 42),
-        Command::InstallAgent { .. } => (34, 42),
-        Command::UpdateAgent { .. } => (35, 42),
-        Command::RollbackAgent { .. } => (36, 42),
-        Command::RemoveAgent { .. } => (37, 42),
-        Command::VerifyAgent { .. } => (38, 42),
-        Command::SignInAgent { .. } => (39, 42),
-        Command::AddAgent { .. } => (40, 42),
-        Command::Answer { .. } => (41, 42),
+        } => (6, 43),
+        Command::SelectModel { effort: None, .. } => (7, 43),
+        Command::SetEffort(_) => (8, 43),
+        Command::SetMode(_) => (9, 43),
+        Command::CycleMode => (10, 43),
+        Command::Login { .. } => (11, 43),
+        Command::Logout { .. } => (12, 43),
+        Command::InspectCache => (13, 43),
+        Command::CleanCache => (14, 43),
+        Command::Sandbox { enabled: true } => (15, 43),
+        Command::Sandbox { enabled: false } => (16, 43),
+        Command::Theme(Theme::Drawing(_)) => (17, 43),
+        Command::Theme(Theme::Syntax(_)) => (18, 43),
+        Command::Help => (19, 43),
+        Command::ReleaseNotes { version: None } => (20, 43),
+        Command::ReleaseNotes { version: Some(_) } => (21, 43),
+        Command::Exit => (22, 43),
+        Command::SetSpeed(_) => (23, 43),
+        Command::Context => (24, 43),
+        Command::Usage => (25, 43),
+        Command::Setting { .. } => (26, 43),
+        Command::AskLimits => (27, 43),
+        Command::Disconnect { .. } => (28, 43),
+        Command::RemoveIntegration { .. } => (29, 43),
+        Command::SignOut { .. } => (30, 43),
+        Command::Connect { instance: Some(_) } => (31, 43),
+        Command::Connect { instance: None } => (32, 43),
+        Command::AgentCatalog => (33, 43),
+        Command::InstallAgent { .. } => (34, 43),
+        Command::UpdateAgent { .. } => (35, 43),
+        Command::RollbackAgent { .. } => (36, 43),
+        Command::RemoveAgent { .. } => (37, 43),
+        Command::VerifyAgent { .. } => (38, 43),
+        Command::SignInAgent { .. } => (39, 43),
+        Command::AddAgent { .. } => (40, 43),
+        Command::Answer { .. } => (41, 43),
     }
 }
 
@@ -2402,6 +2406,79 @@ fn a_field_over_its_own_ceiling_is_refused_inside_a_frame_that_fits() {
 }
 
 #[test]
+fn a_prompt_says_who_wrote_it_and_says_the_person_by_saying_nothing() {
+    let author = |command: Value| {
+        Request::decode(&framed(&asking(&command)))
+            .map(|request| match request.command() {
+                Command::Prompt(prompt) => Some(prompt.author()),
+                _ => None,
+            })
+            .map_err(|refused| refused.refusal.code())
+    };
+
+    assert_eq!(
+        author(json!({"kind": "prompt", "text": "go"})),
+        Ok(Some(Author::Person))
+    );
+    assert_eq!(
+        author(json!({"kind": "prompt", "text": "go", "by": "application"})),
+        Ok(Some(Author::Application))
+    );
+
+    // The person has one spelling, and it is the field left out: a second
+    // would be a second way to say the same thing.
+    for by in [
+        json!("person"),
+        json!("Application"),
+        json!(""),
+        json!(1),
+        json!(true),
+    ] {
+        assert_eq!(
+            author(json!({"kind": "prompt", "text": "go", "by": by})),
+            Err(ErrorCode::Malformed),
+            "{by}"
+        );
+    }
+
+    // What this crate writes it reads back, author and all, and the person's
+    // prompt is written without the field.
+    for prompt in [
+        Prompt::new("go").unwrap(),
+        Prompt::application("go").unwrap(),
+    ] {
+        let request = Request::new(
+            Capabilities::every(),
+            Correlation::new(1),
+            Command::Prompt(prompt.clone()),
+        );
+        let frame = request.encode().unwrap();
+        let written: Value = serde_json::from_slice(&frame).unwrap();
+        assert_eq!(
+            written.pointer("/command/by").is_some(),
+            prompt.author() == Author::Application,
+            "{written}"
+        );
+        assert_eq!(
+            Request::decode(&frame).unwrap().command(),
+            &Command::Prompt(prompt)
+        );
+    }
+
+    // An application's prompt is bounded as the person's is.
+    assert_eq!(
+        Prompt::application(&"p".repeat(PROMPT_BYTES + 1))
+            .unwrap_err()
+            .code(),
+        ErrorCode::TooLarge
+    );
+    assert_eq!(
+        Prompt::application("").unwrap_err().code(),
+        ErrorCode::InvalidArgument
+    );
+}
+
+#[test]
 fn a_value_too_large_for_one_frame_is_not_encoded() {
     let many = vec![
         Asked {
@@ -2695,7 +2772,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // alone moves that number and this digest, and leaves the revision.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (6, 7_357_029_864_839_572_299),
+        (6, 7_989_617_246_589_073_285),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );

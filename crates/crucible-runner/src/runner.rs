@@ -129,6 +129,17 @@ enum After {
     Stopped,
 }
 
+/// Who wrote the words a turn is over.
+///
+/// The person's words are their task and amend it; a note the application
+/// wrote is recorded and sent like any words, and never stands as what the
+/// person asked for.
+#[derive(Clone, Copy)]
+enum Speaker {
+    Person,
+    Application,
+}
+
 /// Provider-controlled work retained during one turn.
 #[derive(Default)]
 struct TurnBounds {
@@ -1035,6 +1046,9 @@ impl Runner {
 
     /// Takes one turn: the prompt, and the exchange until the model yields.
     ///
+    /// The prompt is the person's, so it amends their task; a note the
+    /// application wrote is taken by [`Runner::noted`] instead.
+    ///
     /// The run's cancel arrives cleared: [`Cancel::reset`] is the caller's to
     /// call, on the thread that reads the keyboard, before the thread this
     /// runs on exists. Clearing it here would clear a key pressed in between,
@@ -1100,7 +1114,22 @@ impl Runner {
         ask: &mut dyn Ask,
         run: &RunContext<'_>,
     ) -> Result<Turned, TurnError> {
-        let turned = self.invoking(Some((prompt, attachments)), ask, run).await;
+        self.saying((prompt, attachments, Speaker::Person), ask, run)
+            .await
+    }
+
+    /// The turn over `said`, for [`Runner::turn`] and [`Runner::noted`].
+    ///
+    /// # Errors
+    ///
+    /// [`TurnError`], exactly as [`Runner::turn`] describes.
+    async fn saying(
+        &mut self,
+        said: (&str, Box<[Attachment]>, Speaker),
+        ask: &mut dyn Ask,
+        run: &RunContext<'_>,
+    ) -> Result<Turned, TurnError> {
+        let turned = self.invoking(Some(said), ask, run).await;
 
         // The invocation ends where the caller gets an answer it can act on,
         // and what the input checks made of these words ends with it. A
@@ -1111,6 +1140,34 @@ impl Runner {
             self.state.forget_checked();
         }
         turned
+    }
+
+    /// [`Runner::turn`] over a note the application wrote rather than words
+    /// the person did, such as the one a front end wakes the model with when
+    /// commands left running end while nobody is typing.
+    ///
+    /// Everything is as a turn is, the input check included, except that the
+    /// note is never kept as the person's task: it is recorded and sent, and a
+    /// compaction that takes it leaves nothing of it to be restated as what the
+    /// person asked for. What it quotes may be what a command printed, which is
+    /// nobody's instruction.
+    ///
+    /// # Errors
+    ///
+    /// [`TurnError`], exactly as [`Runner::turn`] describes.
+    ///
+    /// # Panics
+    ///
+    /// Where [`Runner::turn`] does.
+    pub async fn noted(
+        &mut self,
+        note: &str,
+        attachments: Box<[Attachment]>,
+        ask: &mut dyn Ask,
+        run: &RunContext<'_>,
+    ) -> Result<Turned, TurnError> {
+        self.saying((note, attachments, Speaker::Application), ask, run)
+            .await
     }
 
     /// A turn with no words of its own, run to deliver the answers settled in
@@ -1158,7 +1215,7 @@ impl Runner {
     /// [`TurnError`], exactly as [`Runner::turn`] describes.
     async fn invoking(
         &mut self,
-        said: Option<(&str, Box<[Attachment]>)>,
+        said: Option<(&str, Box<[Attachment]>, Speaker)>,
         ask: &mut dyn Ask,
         run: &RunContext<'_>,
     ) -> Result<Turned, TurnError> {
@@ -1206,7 +1263,7 @@ impl Runner {
         // turn began. A check reaching no decision is not a refusal and does
         // not say the prompt was rejected, because it did not say that. A
         // turn with nothing said has no words to judge.
-        if let Some((prompt, _)) = &said {
+        if let Some((prompt, _, _)) = &said {
             match self.checking_input(prompt, run) {
                 Ok(Judged::Allowed) => {}
                 Ok(Judged::Rejected(rejection)) => {
@@ -1228,8 +1285,11 @@ impl Runner {
         events.post(Event::TurnStarted {
             turn: self.state.turn,
         });
-        if let Some((prompt, attachments)) = said {
-            self.amend(run.ancestry(), prompt);
+        if let Some((prompt, attachments, speaker)) = said {
+            match speaker {
+                Speaker::Person => self.amend(run.ancestry(), prompt),
+                Speaker::Application => {}
+            }
             self.record(
                 run.ancestry(),
                 Message::User {

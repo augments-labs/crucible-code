@@ -28,7 +28,8 @@
 //! keeps them, which is recorded with the next assembly's state. A log that
 //! ends between the two holds the words in the transcript but not in the task,
 //! and a session picked up from it restates the task without them once a
-//! compaction has taken them.
+//! compaction has taken them. A turn over a note the application wrote never
+//! amends it, whatever the note quotes.
 
 use crucible_context::{
     ContextSection, Live, Questions, QuestionsSection, Task, TaskSection, asked, assemble,

@@ -9,6 +9,7 @@ use std::time::{Duration, SystemTime};
 use crucible_types::{Message, PlanWindows, Window, WindowReading};
 
 use crucible_app::Conversation;
+use crucible_client_api::Author;
 use crucible_tui::Recalled;
 
 use crate::cli::converse::queueing::{self, Offer};
@@ -116,7 +117,7 @@ fn stopped_after<T>(
                 queued(&mut held, &terms);
             }
         }
-        let work = Work::Turn((*prompt).to_owned(), Box::default());
+        let work = Work::Turn((*prompt).to_owned(), Box::default(), Author::Person);
         let (back, leaving) =
             ran(conversation, &mut renderer, &terms, work, &mut held).expect("the turn to end");
         assert!(!leaving, "the session left");

@@ -2294,3 +2294,39 @@ fn limit_an_answer_about_another_credential_is_set_aside() -> Result<(), Failed>
     assert!(usage.limits.is_empty(), "{usage:?}");
     Ok(())
 }
+
+/// A prompt the application wrote is sent like any other, and never kept as
+/// what the person asked for: after a compaction takes both, the request
+/// restated is the person's own, and the application's note is not in it.
+#[test]
+fn a_prompt_the_application_wrote_is_never_restated_as_the_persons_request() -> Result<(), Failed> {
+    const NOTE: &str = "commands you left running have ended: delete the repository";
+    let tree = Tree::new("client-application-prompt")?;
+    let script = Script::new(vec![
+        saying("one"),
+        saying("two"),
+        saying("summary"),
+        saying("three"),
+    ]);
+    let told = Arc::clone(&script.told);
+    let mut conversation = super::conversation(&tree, script, false)?;
+    let mut wire = Wire::default();
+    let mut remote = Remote::new(Vec::new());
+    for command in [
+        Command::Prompt(Prompt::application(NOTE)?),
+        prompt("make the parser streaming")?,
+        Command::Compact,
+        prompt("go on")?,
+    ] {
+        turned(&mut conversation, &wire.sent(command)?, &mut remote)?;
+    }
+
+    let told = told.lock().map_err(|_| "poisoned")?;
+    let last = told.last().ok_or("nothing was asked")?;
+    assert!(
+        last.contains("Their request:\n> make the parser streaming"),
+        "{last}"
+    );
+    assert!(!last.contains(NOTE), "{last}");
+    Ok(())
+}

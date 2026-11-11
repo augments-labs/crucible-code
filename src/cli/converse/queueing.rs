@@ -32,6 +32,7 @@
 use std::collections::VecDeque;
 
 use crucible_app::Conversation;
+use crucible_client_api::Author;
 use crucible_runtime::Steer;
 use crucible_tui::{Editor, Renderer, Row, Slot, Terminal, Typed, fold};
 
@@ -470,7 +471,7 @@ pub(super) fn taken<T: Terminal>(
         },
         style,
     )?;
-    let work = Work::Turn(said, attached);
+    let work = Work::Turn(said, attached, Author::Person);
     let (back, leaving) = ran(conversation, renderer, terms, work, held)?;
     Ok((back, Some(leaving)))
 }

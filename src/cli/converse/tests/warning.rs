@@ -7,6 +7,7 @@ use std::sync::atomic::Ordering;
 
 use crucible_app::catalog_fetch::trust_in;
 use crucible_app::content_use::{Consent, LAUNCHING, Routes, Serving, WARNED, agent_route};
+use crucible_client_api::Author;
 use crucible_runner::Tools;
 use crucible_session::Session;
 use crucible_tui::{Recording, Renderer};
@@ -380,7 +381,7 @@ fn answered_on(consent: Consent, keys: bool) -> (Result<bool, Fatal>, usize, boo
         conversation,
         &mut renderer,
         &unwarned,
-        Work::Turn("go".to_owned(), Box::default()),
+        Work::Turn("go".to_owned(), Box::default(), Author::Person),
         &mut held,
     )
     .expect("the turn ran");
@@ -480,7 +481,7 @@ fn the_question_before_a_dock_answer_says_the_answers_stay_in_the_dock() {
         id: crucible_types::QuestionId::numbered(1),
         replies: Vec::new(),
     });
-    let turn = Work::Turn("go".to_owned(), Box::default());
+    let turn = Work::Turn("go".to_owned(), Box::default(), Author::Person);
 
     let answered = going_back(&answer);
     assert!(answered.contains("in the dock"), "{answered}");
