@@ -578,10 +578,11 @@ enum Finding {
 /// Read through [`OFFERED`] and [`listed`], so the providers it looks at and the
 /// keys it reads are the generator's own, and it never proposes a provider
 /// crucible does not already offer; a family it does not offer is reported as a
-/// lead and chosen by hand, unless that provider's family is declined whole in
-/// `passed_families`, which quiets every model of it, a later one included. A
-/// newer model is one released after every offered model of its family, that
-/// calls tools and answers in text, and that nobody has declined in `passed`.
+/// lead and chosen by hand, unless that model is declined in `passed` or that
+/// provider's family is declined whole in `passed_families`, which quiets every
+/// model of it, a later one included. A newer model is one released after every
+/// offered model of its family, that calls tools and answers in text, and that
+/// nobody has declined in `passed`.
 /// Rungs are compared only where the database lists effort at all, since one
 /// that lists none says nothing either way, only in the words crucible's
 /// ladder has, and not for a model whose difference is `kept`.
