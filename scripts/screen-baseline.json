@@ -2513,7 +2513,7 @@
         "Vendor::answering(transcript::said(\"notes\"))",
         "Watched::in_default_colours( \"transcript-notes-80-fullscreen\", (80, 42), Some(&vendor), None, )"
       ],
-      "sha256": "2d46718e5e18aee878eab8e13b6eb9f789d2ccbb8b4e390d2b951f0789d7cc70"
+      "sha256": "2938efa6437b6ae18ec7f91f33cd81ecef61c30b2f7f62a7a6ab825094630132"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_notes_80_native.snap",
@@ -2522,7 +2522,7 @@
         "Vendor::answering(transcript::said(\"notes\"))",
         "Watched::drawn_in_colour( \"transcript-notes-80-native\", (80, 42), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "64d90c8abcabba38d8e941d2964aecd51993e7d61c8f6463954e7c03210a1062"
+      "sha256": "5032ae5e93824de5b5bd0573b4f6188331615c2d397a7d11d7b03508a4cb207a"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_quotes_80_fullscreen.snap",
