@@ -1810,19 +1810,37 @@ async fn instance(
     }
     let home = desk.switching.choosing.parent()?;
     let trust = crate::catalog_fetch::trust_in(home);
-    let (executable, own) = match would_run(home, row, &trust, steps) {
-        Running::One { executable, own } => (executable, own),
+    let agent = match would_run(home, row, &trust, steps) {
+        Running::One { executable, own } => unwritten(home, row, &executable, own)?,
         Running::Either { stored, own, note } => {
             let question = either(agent, &stored, &own, note);
-            match confirmed(capabilities, front, &question).await? {
-                0 => (stored.to_str()?.to_owned(), false),
-                1 => (AgentRow::Built(row).command(), true),
-                _ => return Some(None),
-            }
+            let answer = confirmed(capabilities, front, &question).await?;
+            let Some(agent) = answered(home, row, &stored, answer)? else {
+                return Some(None);
+            };
+            agent
         }
     };
-    let agent = unwritten(home, row, &executable, own)?;
     Some(Some((agent, false)))
+}
+
+/// The instance of `row`'s agent written beside the user file in `home` for
+/// `answer`, the choice taken of [`either`]'s question over crucible's release
+/// at `stored`: the release, or the user's own program named by its command;
+/// `Some(None)` where the person went back, and nothing where no instance can
+/// be written.
+fn answered(
+    home: &Path,
+    row: &'static crate::backends::Row,
+    stored: &Path,
+    answer: usize,
+) -> Option<Option<ExternalAgent>> {
+    let (executable, own) = match answer {
+        0 => (stored.to_str()?.to_owned(), false),
+        1 => (AgentRow::Built(row).command(), true),
+        _ => return Some(None),
+    };
+    unwritten(home, row, &executable, own).map(Some)
 }
 
 /// The program a new instance of a built-in row's agent is run as.
@@ -2654,6 +2672,54 @@ mod tests {
                 "sandboxed: {sandboxed}"
             );
         }
+    }
+
+    /// Each answer to the question over both programs writes what its choice
+    /// says: crucible's release with the profile directory beside the user
+    /// file, the user's own program by its command with none, and going back
+    /// writes nothing.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn each_answer_over_both_programs_writes_the_instance_its_choice_names() {
+        let sample = Sample::new("accounts-antigravity-answered");
+        let (stored, _) = stored_antigravity(&sample);
+        let (own, _) = own_agy(&sample);
+        let home = sample.home();
+        let question = either("Antigravity", &stored, &own, None);
+        let profile = home.join("agents/antigravity");
+
+        let written: Vec<(&str, Option<Option<ExternalAgent>>)> = question
+            .choices
+            .iter()
+            .enumerate()
+            .map(|(answer, (name, _))| {
+                (
+                    name.as_str(),
+                    answered(&home, &ANTIGRAVITY, &stored, answer),
+                )
+            })
+            .collect();
+
+        let [
+            (release, Some(Some(release_instance))),
+            (mine, Some(Some(own_instance))),
+            (back, Some(None)),
+        ] = written.as_slice()
+        else {
+            panic!("{written:?}");
+        };
+        assert_eq!(*release, "Crucible's release");
+        assert_eq!(release_instance.executable(), stored.to_string_lossy());
+        assert_eq!(
+            release_instance.profile(),
+            Some(profile.to_string_lossy().as_ref())
+        );
+        assert_eq!(*mine, "Your own program");
+        assert_eq!(
+            own_instance.executable(),
+            AgentRow::Built(&ANTIGRAVITY).command()
+        );
+        assert_eq!(own_instance.profile(), None, "{own_instance:?}");
+        assert_eq!(*back, "Go back");
     }
 
     fn method(id: &str, name: &str) -> AuthMethod {
