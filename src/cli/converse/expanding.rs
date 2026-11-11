@@ -16,6 +16,12 @@
 //! the blocks are those drawn when the view opened, and a click on a row that
 //! offered one result stands that result alone.
 //!
+//! After the blocks it stands the whole of each address the transcript drew
+//! shorter than it was written, newest first, under the word `address`: a
+//! forge's address drawn as its reference, and a quiet address cut short. They
+//! are lent and laid out as the blocks are, and a reference the answer wrote
+//! short itself is not one of them.
+//!
 //! It stands rather than being written into the transcript for the reason
 //! nothing else standing here is written down: the results are already in the
 //! record as the rows that could not fit them, and committing the text a second

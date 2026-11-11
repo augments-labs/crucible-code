@@ -60,3 +60,50 @@ fn an_image_reference_keeps_its_words_and_drops_its_marker() {
         );
     }
 }
+
+#[test]
+fn a_drag_over_a_worded_link_copies_its_words_and_not_its_quiet_address() {
+    let mut drawn = reading(60, 6);
+    drawn.answer("see [the guide](https://example.com/docs/guide/intro) now\n");
+    let rows = window(&drawn, 6);
+    let row = row_containing(&rows, "see the guide (example.com/docs/…) now");
+    drawn.take();
+
+    let wrote = drag(&mut drawn, (row, 0), (row, 59));
+
+    assert!(
+        wrote.contains(&onto_the_clipboard("see the guide now")),
+        "{rows:#?} gave {wrote:?}"
+    );
+}
+
+#[test]
+fn every_address_drawn_shorter_is_listed_whole_newest_first_after_the_blocks() {
+    let home = "https://github.com/augments-labs/crucible-code";
+    let mut drawn = reading(100, 20);
+    drawn.render.counts(Some(here()));
+    drawn.answer(&format!(
+        "a {home}/pull/1324 b #7 c [d](https://example.com/docs/guide/intro) \
+         e [f](https://example.com/x)\n\n{WRITTEN_TABLE}\nafter\n"
+    ));
+
+    // A reference the answer wrote short itself, and a quiet address shown
+    // whole, were drawn as written: neither is listed.
+    let listed: Vec<(&str, &str)> = drawn
+        .sources()
+        .map(|source| (source.word, source.text))
+        .collect();
+    let pull = format!("{home}/pull/1324");
+    assert_eq!(
+        listed,
+        [
+            ("table", WRITTEN_TABLE),
+            ("address", "https://example.com/docs/guide/intro"),
+            ("address", pull.as_str()),
+        ]
+    );
+
+    // The bound a list taken now is held to covers them.
+    let bound = drawn.sourced();
+    assert!(drawn.sources().all(|source| source.line < bound));
+}

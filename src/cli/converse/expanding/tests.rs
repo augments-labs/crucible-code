@@ -1823,3 +1823,56 @@ fn the_rows_of_a_source_are_counted_once_for_each_width() {
     assert_eq!(opened(&mut standing).counted.columns, 20);
     assert_eq!(opened(&mut standing).counted.rows.len(), 1);
 }
+
+#[test]
+fn ctrl_o_lists_the_whole_of_every_address_drawn_shorter_after_the_blocks() {
+    let here = "https://github.com/augments-labs/crucible-code";
+    let mut render = Renderer::new(Recording::new(100, 24));
+    render.wears(Style::coloured().palette());
+    render.counts(Some(crucible_tui::Forge::new(
+        "https://github.com",
+        "augments-labs/crucible-code",
+        "/issues/",
+    )));
+    render
+        .stream(&format!(
+            "a {here}/pull/1324 b #7 c [d](https://example.com/docs/guide/intro)\n\n\
+             | a | b |\n|---|---|\n| 1 | 2 |\n\nafter\n"
+        ))
+        .expect("a recording cannot fail");
+    render.settle().expect("a recording cannot fail");
+
+    let sources: Vec<Source<'_>> = render.sources().collect();
+    let kept = Kept::default();
+    let mut standing = Standing::default();
+    standing.open(&kept, render.sourced());
+    let rows = frame_of(&kept, &sources, &mut standing, 40);
+
+    let at = |wanted: &str| {
+        rows.iter()
+            .position(|row| row == wanted)
+            .unwrap_or_else(|| panic!("no row {wanted:?} in {rows:#?}"))
+    };
+    let pull = format!("{here}/pull/1324");
+    let order = [
+        at("table"),
+        at("| 1 | 2 |"),
+        at("https://example.com/docs/guide/intro"),
+        at(&pull),
+    ];
+    assert!(
+        order
+            .windows(2)
+            .all(|pair| matches!(pair, [before, after] if before < after)),
+        "{rows:#?}"
+    );
+    assert_eq!(
+        rows.iter().filter(|row| *row == "address").count(),
+        2,
+        "{rows:#?}"
+    );
+    assert!(
+        !rows.iter().any(|row| row.contains("issues/7")),
+        "{rows:#?}"
+    );
+}
