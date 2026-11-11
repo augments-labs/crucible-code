@@ -180,7 +180,8 @@ pub fn asking(
         | Command::RollbackAgent { .. }
         | Command::RemoveAgent { .. }
         | Command::VerifyAgent { .. }
-        | Command::SignInAgent { .. } => Err(ErrorCode::AgentsDoor.into()),
+        | Command::SignInAgent { .. }
+        | Command::TryOwnAgent { .. } => Err(ErrorCode::AgentsDoor.into()),
         Command::Prompt(_)
         | Command::Compact
         | Command::Cancel

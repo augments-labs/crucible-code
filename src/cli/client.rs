@@ -170,6 +170,7 @@ const fn claimed(command: &Command) -> Capabilities {
         | Command::RemoveAgent { .. }
         | Command::VerifyAgent { .. }
         | Command::SignInAgent { .. }
+        | Command::TryOwnAgent { .. }
         | Command::Exit => Capabilities::every(),
     }
 }
@@ -1042,6 +1043,7 @@ pub(crate) const fn coded(refused: &AgentsError) -> ErrorCode {
         | AgentsError::Unclouded { .. }
         | AgentsError::Unlocated(_)
         | AgentsError::Conversation(_)
+        | AgentsError::Untried(_)
         | AgentsError::Unnamed(_)
         | AgentsError::Unstored { .. }
         | AgentsError::Credentials(_)
@@ -1050,6 +1052,7 @@ pub(crate) const fn coded(refused: &AgentsError) -> ErrorCode {
         | AgentsError::HoldUnkept(_)
         | AgentsError::Piped(_)
         | AgentsError::Unconfined(_)
+        | AgentsError::Own { .. }
         | AgentsError::Unverified(_) => ErrorCode::Failed,
     }
 }

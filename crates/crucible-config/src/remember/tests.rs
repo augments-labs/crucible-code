@@ -1511,6 +1511,78 @@ fn adding_a_catalog_agent_writes_one_instance_under_the_first_free_name_and_noth
     );
 }
 
+/// The user's own program, once probed, is written under the name its probe
+/// was kept for, with its driver, the catalog agent it runs where it is a
+/// catalog instance, and its program alone; a name the file already holds is
+/// refused, and the file is left as it was.
+#[test]
+fn adding_an_own_program_writes_it_under_its_own_name_and_refuses_one_taken() {
+    // Each instance's name, driver, catalog agent, program and profile.
+    type Written = (String, Driver, Option<AgentKey>, String, Option<String>);
+    let goose = AgentKey::new("goose").expect("an agent key");
+    let executable = rooted("/h/tools/goose");
+    let spelled = Value::from(executable.as_str());
+    let catalog =
+        ExternalAgent::unwritten("goose", Driver::Catalog, &executable, None, Some(&goose))
+            .expect("a catalog instance");
+    let built =
+        ExternalAgent::unwritten("antigravity", Driver::Antigravity, &executable, None, None)
+            .expect("an Antigravity instance");
+
+    let fresh = adding_own("", FILE, &catalog).unwrap();
+    assert_eq!(
+        fresh,
+        format!(
+            "{{\n  \"externalAgents\": {{\n    \"goose\": {{\"agent\":\"goose\",\"driver\":\"catalog\",\"executable\":{spelled}}}\n  }}\n}}\n"
+        )
+    );
+    let both = adding_own(&fresh, FILE, &built).unwrap();
+    let settings = Settings::resolve(vec![Document::sample(&both, Origin::User)]);
+    let mut added: Vec<Written> = settings
+        .external_agents()
+        .into_iter()
+        .map(|agent| {
+            (
+                agent.name().to_owned(),
+                agent.driver(),
+                agent.agent().cloned(),
+                agent.executable().to_owned(),
+                agent.profile().map(str::to_owned),
+            )
+        })
+        .collect();
+    added.sort_by(|one, other| one.0.cmp(&other.0));
+    assert_eq!(
+        added,
+        [
+            (
+                "antigravity".to_owned(),
+                Driver::Antigravity,
+                None,
+                executable.clone(),
+                None
+            ),
+            (
+                "goose".to_owned(),
+                Driver::Catalog,
+                Some(goose.clone()),
+                executable.clone(),
+                None
+            ),
+        ]
+    );
+
+    let taken = adding_own(&both, FILE, &catalog);
+    assert!(
+        matches!(taken, Err(ConfigError::Unspliceable { .. })),
+        "{taken:?}"
+    );
+    assert!(matches!(
+        adding_own("{", FILE, &catalog),
+        Err(ConfigError::Malformed { .. })
+    ));
+}
+
 #[test]
 fn adding_an_instance_past_the_most_a_file_may_name_is_refused() {
     let goose = AgentKey::new("goose").expect("an agent key");

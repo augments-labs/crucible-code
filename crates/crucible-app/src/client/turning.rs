@@ -137,7 +137,8 @@ pub async fn turn(
         | Command::RollbackAgent { .. }
         | Command::RemoveAgent { .. }
         | Command::VerifyAgent { .. }
-        | Command::SignInAgent { .. } => Ended::Refused(ErrorCode::AgentsDoor.into()),
+        | Command::SignInAgent { .. }
+        | Command::TryOwnAgent { .. } => Ended::Refused(ErrorCode::AgentsDoor.into()),
         Command::Theme(_)
         | Command::Setting { .. }
         | Command::Cancel
@@ -214,7 +215,8 @@ pub fn interrupt(request: &Request, cancel: &Cancel) -> Outcome {
         | Command::RollbackAgent { .. }
         | Command::RemoveAgent { .. }
         | Command::VerifyAgent { .. }
-        | Command::SignInAgent { .. } => Outcome::Refused(ErrorCode::AgentsDoor.into()),
+        | Command::SignInAgent { .. }
+        | Command::TryOwnAgent { .. } => Outcome::Refused(ErrorCode::AgentsDoor.into()),
         Command::Prompt(_)
         | Command::Compact
         | Command::Theme(_)

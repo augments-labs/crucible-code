@@ -220,6 +220,18 @@
 //! listing says of an agent whose entry names neither such a place nor a
 //! variable that a sign-in made under the sandbox is not kept
 //! ([`Listed::keeps_no_sign_in`]).
+//!
+//! A try of the user's own program of an agent, a catalog agent's or
+//! Antigravity's, starts it, so it is refused as no conversation where no
+//! steps were lent ([`AgentsError::Untried`]). The door finds the program again
+//! as a launch of the instance that runs it, or of a new one where none of the
+//! agent is configured, would, as `/login` offers it, and refuses where that
+//! is not the program the move named, where an instance of the agent runs
+//! another, or where its directory is one an agent may not be given; it then
+//! asks its own yes, with what the program is, what it is given and what it
+//! can read, and starts nothing on a no. A catalog agent's answer is kept, and a new
+//! instance is written under a name of its own only once it was admitted: a
+//! refusal, or a write that fails, keeps nothing and writes nothing.
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -231,8 +243,8 @@ pub use crate::launching::{HandoverFailed, SignInTerminal};
 use crucible_auth::Store as Credentials;
 use crucible_client_api::bounds::ITEMS;
 use crucible_client_api::{
-    Capability, Choice, Command, Decision, ErrorCode, InstallProgress, Name, Pending, Refusal,
-    Request, Text,
+    Capabilities, Capability, Choice, Command, Correlation, Decision, ErrorCode, InstallProgress,
+    Name, Pending, Refusal, Request, Text,
 };
 use crucible_config::{AgentUpdate, Cloud, ConfigError, Driver, ExternalAgent, Home, Settings};
 /// A line a sign-in command said, as a channel is given it.
@@ -274,9 +286,13 @@ use crate::content_use::{self, Consent, agent_route};
 use crate::launching::{
     self, Agent, Launcher, Steps, Unlaunched, Unpiped, Unscripted, Unsmoked, quoted,
 };
+use crate::own_program::Unowned;
 use crate::providers::{Rows, Unnamed};
 use crate::remember::{self, RememberError};
 use crate::services::Services;
+use trying::{own_antigravity, own_refusal};
+
+mod trying;
 
 /// The most catalog agents a listing names; one with more says so.
 pub const LISTED: usize = 32;
@@ -356,6 +372,23 @@ pub struct Listed {
     /// The probe record the newest offered version was installed under, where
     /// it is a registry release installed under one.
     pub probed: Option<Probe>,
+    /// The path the user's own program of it leads to, where the door was
+    /// lent a conversation's steps and found one on their `PATH` as a try of
+    /// it finds one: the program a configured instance of it runs, else the
+    /// one its entry's guessed name finds. Nothing is started to find it.
+    pub own: Option<PathBuf>,
+}
+
+/// The user's own Antigravity, found on the `PATH` a conversation's steps
+/// look on, as a listing names it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnAntigravity {
+    /// The key a try of it names it by.
+    pub agent: AgentKey,
+    /// The path its links lead to.
+    pub program: PathBuf,
+    /// What it sees of the sign-in it keeps, as it would be launched now.
+    pub note: &'static str,
 }
 
 /// Which move a confirmed switch was.
@@ -391,6 +424,9 @@ pub enum Outcome {
         /// why it was the cached one where it was not verified, or why none
         /// could be read.
         registry: Option<Box<str>>,
+        /// The user's own Antigravity, where the door was lent a
+        /// conversation's steps and found one.
+        antigravity: Option<OwnAntigravity>,
     },
     /// Nobody said yes, so nothing was fetched or changed.
     Undecided,
@@ -455,6 +491,17 @@ pub enum Outcome {
         /// The method, by its id.
         method: Box<str>,
     },
+    /// The user's own program of the agent answered as one in a sandbox that
+    /// closed the network, and an instance runs it: one written for it, or
+    /// the one that already ran it.
+    Tried {
+        /// The agent.
+        agent: AgentKey,
+        /// The instance that runs it.
+        instance: Box<str>,
+        /// The canonical path of the program.
+        program: PathBuf,
+    },
     /// The installed versions, each hashed against its receipt, with a
     /// registry receipt's source and probe record checked too.
     Verified {
@@ -497,6 +544,17 @@ pub enum AgentsError {
     /// The catalog offers no release of the agent for this platform.
     #[error("the catalog offers no release of {0} for this platform")]
     Unlisted(AgentKey),
+    /// The user's own program of the agent was not taken for it, and nothing
+    /// was written.
+    #[error("{}", own_refusal(.agent, .program, .why))]
+    Own {
+        /// The agent.
+        agent: AgentKey,
+        /// The program, as it was asked to be tried.
+        program: PathBuf,
+        /// Why not.
+        why: Box<Unowned>,
+    },
     /// No signed catalog offers it, and the ACP Registry was not read or was
     /// not verified: the line says which.
     #[error("no agent catalog offers {agent} {version}; {why}")]
@@ -720,6 +778,13 @@ pub enum AgentsError {
          nothing was started"
     )]
     Conversation(Box<str>),
+    /// Trying the user's own program of the agent starts it, and no
+    /// conversation lent the steps that start it.
+    #[error(
+        "trying your own {0} starts it, which needs a conversation to start it in; \
+         nothing was started"
+    )]
+    Untried(AgentKey),
     /// The method's key has no name to be kept under.
     #[error(transparent)]
     Unnamed(#[from] Unnamed),
@@ -795,8 +860,9 @@ pub async fn run(
         None => return Ok(Outcome::Refused(ErrorCode::Busy.into())),
     }
     let agent = match command {
-        // A listing names no agent, and a sign-in names an instance instead.
-        Command::AgentCatalog | Command::SignInAgent { .. } => None,
+        // A listing names no agent, a sign-in names an instance instead, and a
+        // try is told its agent below.
+        Command::AgentCatalog | Command::SignInAgent { .. } | Command::TryOwnAgent { .. } => None,
         Command::InstallAgent { agent, .. }
         | Command::AddAgent { agent, .. }
         | Command::UpdateAgent { agent }
@@ -808,46 +874,14 @@ pub async fn run(
         },
         _ => return Ok(Outcome::Refused(ErrorCode::Busy.into())),
     };
-    let state = catalog_fetch::state_in(shelf.home.path());
-    let unrefreshed = catalog_fetch::refresh(&state, &shelf.catalog, Trigger::Opening)
-        .await
-        .err();
-    // Only a command that offers, installs, updates or rolls back an agent
-    // reads the registry; the cache is reused for its five minutes, and a
-    // failure is carried as the line the listing shows.
-    let (registry, registry_notice) = if needs_registry(command) {
-        match &shelf.registry {
-            Some(source) => {
-                match catalog_fetch::registry(shelf.home.path(), source, SystemTime::now()).await {
-                    Ok(view) => {
-                        let notice = view.unverified.clone();
-                        (Some(view), notice)
-                    }
-                    Err(why) => (None, Some(why.to_string().into())),
-                }
-            }
-            None => (None, None),
-        }
-    } else {
-        (None, None)
-    };
-    let settings = Settings::read_home(shelf.home)?;
-    let door = Door {
-        request,
-        shelf,
-        trust: Trust::load(&state, SystemTime::now()),
-        store: Store::new(shelf.home.path().join("programs")),
-        registry,
-        registry_notice,
-        user: crucible_config::user(shelf.home),
-        instances: settings.external_agents(),
-        // The user's own file alone: a checkout cannot ask for this.
-        standing: settings.agent_update() == AgentUpdate::Reviewed,
-    };
+    let (door, unrefreshed) = opened(request, shelf).await?;
     if let Command::SignInAgent { instance, method } = command {
         return door
             .sign_in(instance.as_str(), method.as_str(), front, &watching)
             .await;
+    }
+    if let Command::TryOwnAgent { agent, program } = command {
+        return door.try_own(agent.as_str(), program, front).await;
     }
     let Some(agent) = agent else {
         return Ok(door.listing(unrefreshed));
@@ -917,6 +951,116 @@ pub async fn run(
         Command::VerifyAgent { .. } => door.verify(agent),
         _ => Ok(Outcome::Refused(ErrorCode::Busy.into())),
     }
+}
+
+/// The door `request` is carried out with, lent `shelf`, once the catalog
+/// was fetched as a person asking for it and, for a command that offers,
+/// installs, updates or rolls back an agent, the registry read; and why the
+/// catalog was not refreshed, where it was not.
+///
+/// # Errors
+///
+/// [`AgentsError::Config`] where the configuration cannot be read.
+async fn opened<'a>(
+    request: &'a Request,
+    shelf: &'a Shelf<'a>,
+) -> Result<(Door<'a>, Option<FetchError>), AgentsError> {
+    let state = catalog_fetch::state_in(shelf.home.path());
+    let unrefreshed = catalog_fetch::refresh(&state, &shelf.catalog, Trigger::Opening)
+        .await
+        .err();
+    // Only a command that offers, installs, updates or rolls back an agent
+    // reads the registry; the cache is reused for its five minutes, and a
+    // failure is carried as the line the listing shows.
+    let (registry, registry_notice) = if needs_registry(request.command()) {
+        match &shelf.registry {
+            Some(source) => {
+                match catalog_fetch::registry(shelf.home.path(), source, SystemTime::now()).await {
+                    Ok(view) => {
+                        let notice = view.unverified.clone();
+                        (Some(view), notice)
+                    }
+                    Err(why) => (None, Some(why.to_string().into())),
+                }
+            }
+            None => (None, None),
+        }
+    } else {
+        (None, None)
+    };
+    let settings = Settings::read_home(shelf.home)?;
+    let door = Door {
+        request,
+        shelf,
+        trust: Trust::load(&state, SystemTime::now()),
+        store: Store::new(shelf.home.path().join("programs")),
+        registry,
+        registry_notice,
+        user: crucible_config::user(shelf.home),
+        instances: settings.external_agents(),
+        // The user's own file alone: a checkout cannot ask for this.
+        standing: settings.agent_update() == AgentUpdate::Reviewed,
+    };
+    Ok((door, unrefreshed))
+}
+
+/// What the door finds of the user's own program of one agent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OwnProgram {
+    /// The path the program's links lead to, as a try of it takes it.
+    Found(PathBuf),
+    /// The user's own program of the agent is found, leading to `program`,
+    /// but the instance `instance` of the agent is configured and runs
+    /// another program, so a try of it is refused as [`refused_beside`] says:
+    /// `/login` offers no second instance beside one configured.
+    Beside {
+        /// The path the program's links lead to.
+        program: PathBuf,
+        /// The configured instance's name, as the configuration spells it.
+        instance: Box<str>,
+    },
+    /// The agent is offered, or is Antigravity, but no program of the user's
+    /// own is found for it.
+    Unfound,
+    /// Neither the signed catalog nor the ACP Registry offers an agent of
+    /// that name.
+    Unlisted,
+}
+
+/// The door's refusal of a try of the user's own `program` of `agent`, which
+/// writes nothing, where the instance `instance` of the agent is configured
+/// and runs another program.
+pub fn refused_beside(agent: AgentKey, program: PathBuf, instance: &str) -> AgentsError {
+    AgentsError::Own {
+        agent,
+        program,
+        why: Box::new(Unowned::Beside(quoted(instance).into())),
+    }
+}
+
+/// The user's own program of `agent` the door, lent `shelf`, would try: found
+/// for that one agent as a listing finds it for each row it shows, after the
+/// same fetch of the catalog and read of the registry, so an agent past what a
+/// listing shows is found as one within it. Nothing is started or written.
+///
+/// # Errors
+///
+/// [`AgentsError::Untried`] where `shelf` lent no steps to start a program
+/// with, and [`AgentsError::Config`] where the configuration cannot be read.
+pub async fn own_program(shelf: &Shelf<'_>, agent: &str) -> Result<OwnProgram, AgentsError> {
+    let Ok(key) = AgentKey::new(agent) else {
+        return Ok(OwnProgram::Unlisted);
+    };
+    let steps = shelf
+        .steps
+        .ok_or_else(|| AgentsError::Untried(key.clone()))?;
+    let request = Request::new(
+        Capabilities::none().with(Capability::Install),
+        Correlation::new(1),
+        Command::AgentCatalog,
+    );
+    let (door, _) = opened(&request, shelf).await?;
+    Ok(door.own_program(&steps.trying(), &key))
 }
 
 /// Whether `command` may offer, install, update or roll back an agent the ACP
@@ -1085,6 +1229,7 @@ impl Door<'_> {
     /// the native runner is spelled with: the entry that backs a built-in is
     /// that driver's, and is no catalog row.
     fn listing(&self, unrefreshed: Option<FetchError>) -> Outcome {
+        let trying = self.shelf.steps.map(Steps::trying);
         let mut agents: Vec<Listed> = Vec::new();
         let mut more = false;
         for offer in self.trust.offers(None) {
@@ -1114,6 +1259,7 @@ impl Door<'_> {
                 keeps_no_sign_in,
                 registry: false,
                 probed: None,
+                own: trying.as_ref().and_then(|trying| self.own(trying, key)),
             });
         }
         // The ACP Registry's agents, after what the signed catalog offers: a
@@ -1144,6 +1290,7 @@ impl Door<'_> {
                     keeps_no_sign_in: true,
                     registry: true,
                     probed,
+                    own: trying.as_ref().and_then(|trying| self.own(trying, key)),
                 });
             }
         }
@@ -1157,6 +1304,9 @@ impl Door<'_> {
             more,
             unrefreshed,
             registry,
+            antigravity: trying
+                .as_ref()
+                .and_then(|trying| own_antigravity(trying, &self.instances)),
         }
     }
 
@@ -4184,5 +4334,16 @@ mod tests {
         assert!(!reviewed(true, How::Installed, Released::Catalog));
         assert!(!reviewed(false, How::Updated, Released::Catalog));
         assert!(reviewed(true, How::Updated, Released::Catalog));
+    }
+
+    #[test]
+    fn a_try_with_no_conversation_says_so_in_one_sentence() {
+        let agent = AgentKey::new("goose").expect("a key");
+
+        assert_eq!(
+            AgentsError::Untried(agent).to_string(),
+            "trying your own goose starts it, which needs a conversation to start it in; \
+             nothing was started"
+        );
     }
 }

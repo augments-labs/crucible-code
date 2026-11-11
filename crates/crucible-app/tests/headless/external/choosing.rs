@@ -19,14 +19,16 @@ use crucible_app::access::Route;
 use crucible_app::backends::{REGISTRY, Registry, Row};
 use crucible_app::catalog_fetch;
 use crucible_app::client::accounts::CHECK_AGAIN;
+use crucible_app::client::agents::{AgentsError, Outcome as Door, OwnProgram, refused_beside};
 use crucible_app::content_use::{Consent, Routes};
 use crucible_app::launching::Agent;
+use crucible_app::own_program;
 use crucible_client_api::{
     AgentAction, Capabilities as Asking, Capability, Command, LoginOutcome, Name, Outcome, Pending,
     Text,
 };
 use crucible_config::{Driver, Serves};
-use crucible_external_harnesses::catalog::{File, FileKind, SNAPSHOT, Trust, fixture};
+use crucible_external_harnesses::catalog::{File, FileKind, Keys, SNAPSHOT, Trust, fixture};
 use crucible_external_harnesses::fake_peer::{self, Reply, Script as Peer, scripts::claude};
 use crucible_external_harnesses::store::{Listing, Provenance, Source, Store, Version};
 use crucible_sandbox::{SandboxPolicy, SandboxService};
@@ -424,8 +426,9 @@ fn a_client_that_does_not_install_is_put_the_questions_it_was_put_before() -> Re
 /// Each agent the catalog offers is listed after the shipping ones, saying
 /// the version offered and, of an instance running the user's own program,
 /// so; choosing it asks what to do with that agent, whose instance running
-/// the user's own program has nothing to connect, and going back offers the
-/// agents again.
+/// the user's own program has nothing to connect until a probe of it is
+/// kept, and going back offers the agents again. Once trying it keeps one,
+/// that instance is offered Connect, and the user file is as it was.
 #[test]
 fn a_catalog_agent_is_listed_after_the_shipping_ones_and_its_own_program_is_not_connected()
 -> Result<(), Failed> {
@@ -463,6 +466,32 @@ fn a_catalog_agent_is_listed_after_the_shipping_ones_and_its_own_program_is_not_
     );
     assert_eq!(choices.first(), Some(&("Install", "Install goose 1.0.0.")));
     assert_eq!(file, before);
+
+    own_goose(&tools(&tree), true)?;
+    let mut conversation = own_sandboxed(&tree)?;
+    let (_, choices) = goose_managed(&tree, &mut conversation, &before)?;
+    assert_eq!(choices, ["Try your own", "Install", "Go back"]);
+    let (action, _) = chose_own(&tree, &mut conversation, &before, "goose")?;
+    let tried = carried(
+        &tree,
+        &conversation,
+        &action,
+        &mut Picking::of([Some("Try it")]),
+    )?;
+    let Ok(Door::Tried { instance, .. }) = tried else {
+        return Err(format!("the door answered {tried:?}").into());
+    };
+    assert_eq!(&*instance, "work");
+    assert_eq!(
+        std::fs::read_to_string(crate::Desk::new(&tree, &[])?.choosing)?,
+        before
+    );
+    assert!(
+        goose_record(&tree, "work")?.is_some(),
+        "no probe record was kept"
+    );
+    let (_, choices) = goose_managed(&tree, &mut conversation, &before)?;
+    assert_eq!(choices, ["Connect", "Install", "Go back"]);
     Ok(())
 }
 
@@ -907,4 +936,992 @@ fn a_catalog_method_named_like_a_fixed_choice_is_not_offered() -> Result<(), Fai
     assert_eq!(named, ["Install", "API key", "Go back"]);
     assert_eq!(file, before);
     Ok(())
+}
+
+/// Where the user's own programs lie on the `PATH` a test of them looks on.
+fn tools(tree: &Tree) -> PathBuf {
+    tree.0.join("tools")
+}
+
+/// The user's home a test of their own programs judges a directory against.
+fn user(tree: &Tree) -> PathBuf {
+    tree.0.join("user")
+}
+
+/// The user's own goose in `directory`, answering `initialize` as an agent
+/// where `answers` holds and with nothing at all where it does not, as a
+/// program a guessed name found that is no agent; and the path its links
+/// lead to.
+fn own_goose(directory: &std::path::Path, answers: bool) -> Result<PathBuf, Failed> {
+    use crucible_external_harnesses::fake_peer::scripts::acp;
+
+    let reply = if answers {
+        Reply::new()
+            .hear(1)
+            .say(acp::offering("goose-acp", "1.2.3", &json!([])))
+    } else {
+        Reply::new().hear(1)
+    };
+    let program = fake_peer::install(directory, "goose", &Peer::once(reply))?;
+    Ok(std::fs::canonicalize(program)?)
+}
+
+/// A conversation that took no agent run, whose steps start each agent under
+/// `service` with the sandbox on, the user's home [`user`], the programs
+/// looked for on `path`, and the catalog's trust state in `tree`'s home.
+fn own_stepped(
+    tree: &Tree,
+    service: Arc<dyn SandboxService>,
+    path: &std::path::Path,
+) -> Result<Conversation, Failed> {
+    use crucible_app::launching::{Launcher, Steps};
+    use crucible_sandbox::SandboxEnablement;
+
+    std::fs::create_dir_all(user(tree))?;
+    let policy = SandboxPolicy::standard(&tree.workspace()?)?.with_enabled(true);
+    let consent = Consent::new(Routes::production());
+    consent.keeps_in(crate::Desk::new(tree, &[])?.choosing);
+    let state = catalog_fetch::state_in(tree.home()?.path());
+    let sessions = tree.sessions();
+    let launcher =
+        Launcher::new(service, runtime()?, &policy, &consent, &state, &sessions).homed(user(tree));
+    let steps = Steps::new(
+        launcher,
+        Arc::new(SandboxEnablement::new(true, false)),
+        &REGISTRY,
+        Some(path.as_os_str().to_owned()),
+    );
+    Ok(crate::conversation(tree, Script::new(Vec::new()), false)?
+        .consenting(consent)
+        .stepping(steps))
+}
+
+/// [`own_stepped`] under the sandbox this machine has, its programs looked
+/// for in [`tools`].
+fn own_sandboxed(tree: &Tree) -> Result<Conversation, Failed> {
+    let sandbox: Arc<dyn SandboxService> = Arc::new(LocalSandbox::new().watching_on(runtime()?));
+    own_stepped(tree, sandbox, &tools(tree))
+}
+
+/// What the agents door answers `action`, chosen in a connect of
+/// `conversation`, asked by a client that claims every capability and answers
+/// as `picking` does, lent that conversation's steps and no catalog it can
+/// reach.
+fn carried(
+    tree: &Tree,
+    conversation: &Conversation,
+    action: &AgentAction,
+    picking: &mut Picking,
+) -> Result<Result<Door, AgentsError>, Failed> {
+    at_door(tree, conversation, action.command(), picking)
+}
+
+/// What the agents door answers `command`, asked as [`carried`] asks a move.
+fn at_door(
+    tree: &Tree,
+    conversation: &Conversation,
+    command: Command,
+    picking: &mut Picking,
+) -> Result<Result<Door, AgentsError>, Failed> {
+    use crucible_app::client::agents::{Watching, run};
+    use crucible_client_api::{Correlation, Request};
+
+    let home = tree.home()?;
+    let shelf = lent(&home, conversation, None);
+    let request = Request::new(Asking::every(), Correlation::new(2), command);
+    let mut progress = |_| {};
+    let cancel = crucible_runtime::Cancel::new();
+    let link = |_: crucible_execution::Text| {};
+    let watching = Watching {
+        progress: &mut progress,
+        cancel: &cancel,
+        link: &link,
+        sign_in: None,
+        terminal: None,
+    };
+    Ok(runtime()?.block_on(run(&request, &shelf, picking, watching)))
+}
+
+/// The shelf the agents door is lent in `home`, with `conversation`'s steps,
+/// no catalog it can reach, and the ACP Registry read from `registry`.
+fn lent<'a>(
+    home: &'a crucible_config::Home,
+    conversation: &'a Conversation,
+    registry: Option<catalog_fetch::RegistrySource>,
+) -> crucible_app::client::agents::Shelf<'a> {
+    crucible_app::client::agents::Shelf {
+        catalog: catalog_fetch::Source {
+            base: "http://127.0.0.1:1/catalog/".into(),
+            keys: Keys::new(&[]),
+            hosts: &[],
+            proxy: crucible_http::ProxyEnv::default(),
+        },
+        registry,
+        home,
+        smoke: None,
+        steps: conversation.steps(),
+    }
+}
+
+/// A registry source nothing answers at, so the door reads the index cached
+/// in its home, as a command line's door reads it within its five minutes.
+fn cached_registry() -> catalog_fetch::RegistrySource {
+    catalog_fetch::RegistrySource {
+        url: "http://127.0.0.1:1/registry.json".into(),
+        hosts: &[],
+        proxy: crucible_http::ProxyEnv::default(),
+    }
+}
+
+/// What the agents door lists in `tree` for `conversation`, the ACP
+/// Registry read from the index cached there, as `crucible agents search`
+/// asks it.
+pub(crate) fn listed_with_the_registry(
+    tree: &Tree,
+    conversation: &Conversation,
+) -> Result<Result<Door, AgentsError>, Failed> {
+    use crucible_app::client::agents::{Watching, run};
+    use crucible_client_api::{Correlation, Request};
+
+    let home = tree.home()?;
+    let shelf = lent(&home, conversation, Some(cached_registry()));
+    let request = Request::new(Asking::every(), Correlation::new(2), Command::AgentCatalog);
+    let mut progress = |_| {};
+    let cancel = crucible_runtime::Cancel::new();
+    let link = |_: crucible_execution::Text| {};
+    let watching = Watching {
+        progress: &mut progress,
+        cancel: &cancel,
+        link: &link,
+        sign_in: None,
+        terminal: None,
+    };
+    Ok(runtime()?.block_on(run(&request, &shelf, &mut Picking::of([]), watching)))
+}
+
+/// The user's own program of `agent` the agents door finds in `tree` for
+/// `conversation`, the ACP Registry read from the index cached there, as
+/// `crucible agents try` asks it.
+pub(crate) fn found_at_door(
+    tree: &Tree,
+    conversation: &Conversation,
+    agent: &str,
+) -> Result<Result<OwnProgram, AgentsError>, Failed> {
+    let home = tree.home()?;
+    let shelf = lent(&home, conversation, Some(cached_registry()));
+    Ok(runtime()?.block_on(crucible_app::client::agents::own_program(&shelf, agent)))
+}
+
+/// The ACP Registry agent `id`, released at 1.0.0 for this machine, whose
+/// program is started as `./id acp`.
+fn registered(id: &str) -> Value {
+    json!({
+        "id": id,
+        "name": id,
+        "version": "1.0.0",
+        "license": "Apache-2.0",
+        "license_url": "https://example.com/terms",
+        "distribution": {"binary": {platform(): {
+            "archive": "https://downloads.example.com/goose-1.0.0.tar.gz",
+            "cmd": format!("./{id}"),
+            "sha256": "a".repeat(64),
+            "args": ["acp"],
+        }}},
+    })
+}
+
+/// Writes in `tree`'s home the ACP Registry index listing `agents`, fetched
+/// now, as a read of it within its five minutes would find it.
+fn registry_cached(tree: &Tree, agents: &[Value]) -> Result<(), Failed> {
+    let path = catalog_fetch::registry_in(tree.home()?.path()).join("registry.json");
+    std::fs::create_dir_all(path.parent().ok_or("the cache's directory")?)?;
+    let index = json!({"version": "1.0.0", "agents": agents});
+    std::fs::write(&path, serde_json::to_vec(&index)?)?;
+    Ok(())
+}
+
+/// The move a connect of `conversation` naming no instance ends on, the user
+/// file holding `file`, where the client picks `agent` and then "Try your
+/// own"; and every question it was put.
+fn chose_own(
+    tree: &Tree,
+    conversation: &mut Conversation,
+    file: &str,
+    agent: &'static str,
+) -> Result<(AgentAction, Vec<Pending>), Failed> {
+    let mut picking = Picking::of([Some(agent), Some("Try your own")]);
+    let (outcome, after) = connecting_on(
+        tree,
+        conversation,
+        (file, None),
+        Asking::every(),
+        &mut picking,
+    )?;
+    assert_eq!(after, file, "a choice wrote the user file");
+    match outcome {
+        Outcome::Login(LoginOutcome::AgentChosen { action }) => Ok((action, picking.put)),
+        other => Err(format!("the connect ended on {other:?}, not a move").into()),
+    }
+}
+
+/// The instance the user file in `tree`'s home names `name`, as written.
+fn written(tree: &Tree, name: &str) -> Result<Option<Value>, Failed> {
+    let file = std::fs::read_to_string(crate::Desk::new(tree, &[])?.choosing)?;
+    let file: Value = serde_json::from_str(&file)?;
+    Ok(file.pointer(&format!("/externalAgents/{name}")).cloned())
+}
+
+/// The probe record kept for the instance `name` of goose, started as its
+/// entry here proposes, where one holds.
+fn goose_record(tree: &Tree, name: &str) -> Result<Option<own_program::Record>, Failed> {
+    let args: [Box<str>; 1] = ["acp".into()];
+    Ok(own_program::read(
+        tree.home()?.path(),
+        &own_program::Instance {
+            name,
+            driver: "catalog",
+            agent: Some("goose"),
+            args: &args,
+            env: &[],
+        },
+    ))
+}
+
+/// What the facts say of the directory `directory` an own program lies in,
+/// where it is given to the program read-only.
+fn readable(directory: &str) -> String {
+    format!(
+        "Everything in {directory} is readable to it, read-only, during its probe and at every \
+         launch, where the network is open to its vendor."
+    )
+}
+
+/// What the facts say on Linux of the home the program starts with.
+const PRIVATE_HOME: &str = "Under the sandbox on Linux it starts with a private home of its own, \
+                            and a sign-in made there is gone when that start ends.";
+
+/// A catalog agent with no instance whose guessed name is on the client's
+/// `PATH` is offered first as the user's own program, at the path its links
+/// lead to, before the install; its facts name that path, the entry's key,
+/// the arguments and each variable it is started with, escaped, and what it
+/// can read; and choosing it ends the connect on that move, with nothing
+/// started or written.
+#[test]
+fn a_catalog_agent_on_path_is_offered_as_the_users_own_before_install() -> Result<(), Failed> {
+    let tree = Tree::new("external-choosing-own-offered")?;
+    let mut goose = entry("goose", "1.0.0", ONE);
+    if let Some(env) = goose.pointer_mut("/targets/0/env") {
+        *env = json!({"GOOSE_MODE": "a\u{1b}b"});
+    }
+    trusting(&tree, &[goose])?;
+    let program = own_goose(&tools(&tree), true)?;
+    let mut conversation = own_sandboxed(&tree)?;
+
+    let (action, put) = chose_own(&tree, &mut conversation, "{}", "goose")?;
+
+    assert_eq!(
+        action,
+        AgentAction::TryOwn {
+            agent: Name::new("goose")?,
+            program: Text::cut(&program.to_string_lossy()),
+        }
+    );
+    let mut expected = vec![
+        "asks: What should Crucible do with goose?".to_owned(),
+        "fact: Crucible's store holds no version of it.".to_owned(),
+        "fact: No instance of it is configured, so there is nothing to sign in.".to_owned(),
+        "fact: Program: <tree>/tools/goose.".to_owned(),
+        "fact: Key: goose.".to_owned(),
+        "fact: Arguments: acp.".to_owned(),
+        "fact: Environment: GOOSE_MODE=a\\u{1b}b.".to_owned(),
+        format!("fact: {}", readable("<tree>/tools")),
+    ];
+    if cfg!(target_os = "linux") {
+        expected.push(format!("fact: {PRIVATE_HOME}"));
+    }
+    expected.extend([
+        "choice: Try your own (recommended): Try your own goose at <tree>/tools/goose.".to_owned(),
+        "choice: Install: Install goose 1.0.0.".to_owned(),
+        "choice: Go back: Choose another agent.".to_owned(),
+    ]);
+    let shown = written_out(&put, &tree);
+    assert_eq!(shown.get(1), Some(&portable(&expected.join("\n"))));
+    assert_eq!(
+        fake_peer::played(&tools(&tree)),
+        0,
+        "the program was started"
+    );
+    Ok(())
+}
+
+/// Choosing the user's own program probes it once, confined, after the door's
+/// own yes, and writes an instance that runs it by the path its links lead
+/// to, keeping what it answered for that instance.
+#[test]
+fn trying_your_own_probes_it_and_writes_the_instance() -> Result<(), Failed> {
+    let tree = Tree::new("external-choosing-own-tried")?;
+    trusting(&tree, &[entry("goose", "1.0.0", ONE)])?;
+    let program = own_goose(&tools(&tree), true)?;
+    let mut conversation = own_sandboxed(&tree)?;
+    let (action, _) = chose_own(&tree, &mut conversation, "{}", "goose")?;
+    let mut door = Picking::of([Some("Try it")]);
+
+    let tried = carried(&tree, &conversation, &action, &mut door)?;
+
+    let Ok(Door::Tried { instance, .. }) = tried else {
+        return Err(format!("the door answered {tried:?}").into());
+    };
+    assert_eq!(&*instance, "goose");
+    let asks = question_asked(&door.put);
+    assert_eq!(
+        asks.as_deref().map(portable),
+        Some(portable(&format!(
+            "Try your own goose at {}?",
+            program.display()
+        )))
+    );
+    assert_eq!(
+        written(&tree, "goose")?,
+        Some(json!({
+            "driver": "catalog",
+            "agent": "goose",
+            "executable": program.to_string_lossy(),
+        }))
+    );
+    let record = goose_record(&tree, "goose")?.ok_or("no probe record was kept")?;
+    assert_eq!((record.name(), record.version()), ("goose-acp", "1.2.3"));
+    Ok(())
+}
+
+/// What the first question `put` asks, whatever kind it is.
+fn question_asked(put: &[Pending]) -> Option<String> {
+    put.iter().find_map(|put| match put {
+        Pending::Install { asks, .. } | Pending::Account { asks, .. } => {
+            Some(asks.as_str().to_owned())
+        }
+        _ => None,
+    })
+}
+
+/// A guessed name that finds a program that is no agent is refused by its
+/// probe, saying it did not answer as one, and nothing is written or kept.
+#[test]
+fn a_wrong_guess_is_refused_and_writes_nothing() -> Result<(), Failed> {
+    let tree = Tree::new("external-choosing-own-wrong")?;
+    trusting(&tree, &[entry("goose", "1.0.0", ONE)])?;
+    own_goose(&tools(&tree), false)?;
+    let mut conversation = own_sandboxed(&tree)?;
+    let (action, _) = chose_own(&tree, &mut conversation, "{}", "goose")?;
+
+    let tried = carried(
+        &tree,
+        &conversation,
+        &action,
+        &mut Picking::of([Some("Try it")]),
+    )?;
+
+    let Err(refused @ AgentsError::Own { .. }) = tried else {
+        return Err(format!("the door answered {tried:?}").into());
+    };
+    assert!(
+        refused.to_string().contains("did not answer as an agent"),
+        "{refused}"
+    );
+    assert!(
+        refused.to_string().contains("nothing was written"),
+        "{refused}"
+    );
+    assert_eq!(written(&tree, "goose")?, None);
+    assert!(goose_record(&tree, "goose")?.is_none(), "a record was kept");
+    Ok(())
+}
+
+/// Where the sandbox cannot close the network the user's own program is not
+/// started: the refusal says it could not be checked, quotes why and points
+/// at the sandboxing page, and nothing is written or kept.
+#[test]
+fn trying_your_own_where_the_sandbox_cannot_close_writes_nothing() -> Result<(), Failed> {
+    let tree = Tree::new("external-choosing-own-unclosable")?;
+    trusting(&tree, &[entry("goose", "1.0.0", ONE)])?;
+    own_goose(&tools(&tree), true)?;
+    let mut conversation = own_stepped(
+        &tree,
+        Arc::new(crate::agents::registry::Unclosing),
+        &tools(&tree),
+    )?;
+    let (action, _) = chose_own(&tree, &mut conversation, "{}", "goose")?;
+
+    let tried = carried(
+        &tree,
+        &conversation,
+        &action,
+        &mut Picking::of([Some("Try it")]),
+    )?;
+
+    let Err(refused @ AgentsError::Own { .. }) = tried else {
+        return Err(format!("the door answered {tried:?}").into());
+    };
+    let said = refused.to_string();
+    assert!(said.contains("could not be checked"), "{said}");
+    assert!(said.contains("docs/security/sandboxing.md"), "{said}");
+    assert!(!said.contains("crucible agents install"), "{said}");
+    assert_eq!(
+        fake_peer::played(&tools(&tree)),
+        0,
+        "the program was started"
+    );
+    assert_eq!(written(&tree, "goose")?, None);
+    assert!(goose_record(&tree, "goose")?.is_none(), "a record was kept");
+    Ok(())
+}
+
+/// The choices and facts of the question about goose a connect of
+/// `conversation` puts, the user file holding `file`, where the client picks
+/// goose and then goes back and cancels.
+fn goose_managed(
+    tree: &Tree,
+    conversation: &mut Conversation,
+    file: &str,
+) -> Result<(Vec<String>, Vec<String>), Failed> {
+    let mut picking = Picking::of([Some("goose"), Some("Go back"), Some("Cancel")]);
+    let (outcome, after) = connecting_on(
+        tree,
+        conversation,
+        (file, None),
+        Asking::every(),
+        &mut picking,
+    )?;
+    assert_eq!(outcome, Outcome::Login(LoginOutcome::Undecided));
+    assert_eq!(after, file, "going back wrote the user file");
+    let (_, facts, choices) = question(&picking.put, 1).ok_or("the agent's question")?;
+    Ok((
+        facts.into_iter().map(portable).collect(),
+        choices
+            .into_iter()
+            .map(|(name, _)| name.to_owned())
+            .collect(),
+    ))
+}
+
+/// An instance that runs the user's own program, once a probe of it as it is
+/// configured is kept, is offered Connect, and no longer the try; its facts
+/// name the program it runs, and its note says that crucible did not review
+/// it and what its admission proves.
+#[test]
+fn an_instance_running_your_own_program_is_offered_connect() -> Result<(), Failed> {
+    let tree = Tree::new("external-choosing-own-connect")?;
+    trusting(&tree, &[entry("goose", "1.0.0", ONE)])?;
+    let program = own_goose(&tools(&tree), true)?;
+    let mut conversation = own_sandboxed(&tree)?;
+    let (action, _) = chose_own(&tree, &mut conversation, "{}", "goose")?;
+    carried(
+        &tree,
+        &conversation,
+        &action,
+        &mut Picking::of([Some("Try it")]),
+    )?
+    .map_err(|why| why.to_string())?;
+    let file = std::fs::read_to_string(crate::Desk::new(&tree, &[])?.choosing)?;
+
+    let (facts, choices) = goose_managed(&tree, &mut conversation, &file)?;
+
+    assert!(choices.iter().any(|name| name == "Connect"), "{choices:?}");
+    assert!(
+        !choices.iter().any(|name| name == "Try your own"),
+        "{choices:?}"
+    );
+    let shown = portable(&program.to_string_lossy());
+    assert_eq!(facts.first(), Some(&format!("Program: {shown}.")));
+    assert!(
+        facts.contains(&portable(
+            "Runs your own program, which Crucible did not review: its admission proves it \
+             speaks ACP, not which program it is."
+        )),
+        "{facts:?}"
+    );
+    Ok(())
+}
+
+/// A program in a directory no agent is given is still offered, saying why
+/// its directory is refused; choosing it runs nothing, asks nothing more and
+/// writes nothing.
+#[test]
+fn a_refused_root_is_listed_with_its_reason_and_runs_nothing() -> Result<(), Failed> {
+    let tree = Tree::new("external-choosing-own-refused")?;
+    trusting(&tree, &[entry("goose", "1.0.0", ONE)])?;
+    std::fs::create_dir_all(user(&tree))?;
+    let program = own_goose(&user(&tree), true)?;
+    let sandbox: Arc<dyn SandboxService> = Arc::new(LocalSandbox::new().watching_on(runtime()?));
+    let mut conversation = own_stepped(&tree, sandbox, &user(&tree))?;
+    let home = tree.home()?;
+    let own_program::Root::Refused(why) = own_program::root(
+        &program,
+        &std::fs::canonicalize(user(&tree))?,
+        home.path(),
+        &tree.sessions(),
+    ) else {
+        return Err("the user's home was given to an agent".into());
+    };
+
+    let (action, put) = chose_own(&tree, &mut conversation, "{}", "goose")?;
+
+    let (_, facts, _) = question(&put, 1).ok_or("the agent's question")?;
+    assert!(facts.contains(&why.as_str()), "{facts:?}");
+    let mut door = Picking::of([Some("Try it")]);
+    let tried = carried(&tree, &conversation, &action, &mut door)?;
+    let Err(refused @ AgentsError::Own { .. }) = tried else {
+        return Err(format!("the door answered {tried:?}").into());
+    };
+    assert!(refused.to_string().contains(&why), "{refused}");
+    assert!(door.put.is_empty(), "the door asked: {:?}", door.put);
+    assert_eq!(
+        fake_peer::played(&user(&tree)),
+        0,
+        "the program was started"
+    );
+    assert_eq!(written(&tree, "goose")?, None);
+    assert!(goose_record(&tree, "goose")?.is_none(), "a record was kept");
+    Ok(())
+}
+
+/// The facts say everything in the directory the program lies in is
+/// readable to it, read-only, at its probe and at every launch, and never
+/// that the directory holds no credential.
+#[test]
+fn the_facts_say_the_programs_directory_is_readable() -> Result<(), Failed> {
+    let tree = Tree::new("external-choosing-own-readable")?;
+    trusting(&tree, &[entry("goose", "1.0.0", ONE)])?;
+    let program = own_goose(&tools(&tree), true)?;
+    let mut conversation = own_sandboxed(&tree)?;
+
+    let (_, put) = chose_own(&tree, &mut conversation, "{}", "goose")?;
+
+    let (_, facts, _) = question(&put, 1).ok_or("the agent's question")?;
+    let directory = program.parent().ok_or("the program's directory")?;
+    let said = readable(&directory.display().to_string());
+    assert!(facts.contains(&said.as_str()), "{facts:?}");
+    assert!(
+        !facts.iter().any(|fact| fact.contains("credential")),
+        "{facts:?}"
+    );
+    assert_eq!(
+        facts.contains(&PRIVATE_HOME),
+        cfg!(target_os = "linux"),
+        "{facts:?}"
+    );
+    Ok(())
+}
+
+/// The user's own `agy` on `PATH`, with no Antigravity instance, is offered
+/// as the catalog agent's own program is, its facts carrying what it is told
+/// of its sign-in under the sandbox; trying it writes an Antigravity instance
+/// that runs it by the path its links lead to, with no profile directory.
+#[test]
+fn trying_your_own_agy_writes_an_antigravity_instance_with_no_profile() -> Result<(), Failed> {
+    use crucible_external_harnesses::antigravity;
+
+    let tree = Tree::new("external-choosing-own-agy")?;
+    let (mut conversation, program) = agy_of_your_own(&tree)?;
+
+    let (action, put) = chose_own(&tree, &mut conversation, "{}", "Antigravity")?;
+
+    assert_eq!(
+        action,
+        AgentAction::TryOwn {
+            agent: Name::new("antigravity")?,
+            program: Text::cut(&program.to_string_lossy()),
+        }
+    );
+    let (_, facts, _) = question(&put, 1).ok_or("the agent's question")?;
+    assert!(facts.contains(&antigravity::own_note(true)), "{facts:?}");
+    let tried = carried(
+        &tree,
+        &conversation,
+        &action,
+        &mut Picking::of([Some("Try it")]),
+    )?;
+    let Ok(Door::Tried { instance, .. }) = tried else {
+        return Err(format!("the door answered {tried:?}").into());
+    };
+    assert_eq!(
+        written(&tree, &instance)?,
+        Some(json!({
+            "driver": "antigravity",
+            "executable": program.to_string_lossy(),
+        }))
+    );
+    Ok(())
+}
+
+/// Where the sandbox cannot close the network the user's own `agy` is not
+/// started: the refusal says it could not be checked, quotes why, points at
+/// the sandboxing page and at the release Crucible's store holds, and nothing
+/// is written.
+#[test]
+fn trying_your_own_agy_where_the_sandbox_cannot_close_points_at_the_store() -> Result<(), Failed> {
+    let tree = Tree::new("external-choosing-own-agy-unclosable")?;
+    own_agy(&tree)?;
+    let mut conversation = own_stepped(
+        &tree,
+        Arc::new(crate::agents::registry::Unclosing),
+        &tools(&tree),
+    )?;
+    let (action, _) = chose_own(&tree, &mut conversation, "{}", "Antigravity")?;
+    let before = std::fs::read_to_string(crate::Desk::new(&tree, &[])?.choosing).ok();
+
+    let tried = carried(
+        &tree,
+        &conversation,
+        &action,
+        &mut Picking::of([Some("Try it")]),
+    )?;
+
+    let Err(refused @ AgentsError::Own { .. }) = tried else {
+        return Err(format!("the door answered {tried:?}").into());
+    };
+    let said = refused.to_string();
+    let why = crucible_sandbox::SandboxError::Unsupported {
+        feature: crucible_sandbox::SandboxFeature::NetworkDeny,
+    }
+    .to_string();
+    assert!(said.contains("could not be checked"), "{said}");
+    assert!(said.contains(&format!("({why})")), "{said}");
+    assert!(said.contains("docs/security/sandboxing.md"), "{said}");
+    assert!(
+        said.ends_with(
+            "Crucible's own release of Antigravity works on this machine: run `crucible agents \
+             install antigravity`."
+        ),
+        "{said}"
+    );
+    assert_eq!(
+        fake_peer::played(&tools(&tree)),
+        0,
+        "the program was started"
+    );
+    assert_eq!(
+        std::fs::read_to_string(crate::Desk::new(&tree, &[])?.choosing).ok(),
+        before,
+        "the user file was written"
+    );
+    Ok(())
+}
+
+/// Every choice's name among the account questions `put`.
+fn every_choice(put: &[Pending]) -> Vec<String> {
+    (0..)
+        .map_while(|at| question(put, at))
+        .flat_map(|(_, _, choices)| choices.into_iter().map(|(name, _)| name.to_owned()))
+        .collect()
+}
+
+/// With an instance of the agent configured that runs another program, the
+/// user's own program of it on `PATH` is offered neither by `/login`, whose
+/// every question `put` holds, nor by the door's listing, and a try of it at
+/// `program`, as `agent`, is refused, naming the instance `first`
+/// configured: it starts nothing and the user file stays as `file`.
+fn beside_is_refused(
+    tree: &Tree,
+    conversation: &Conversation,
+    (put, file): (&[Pending], &str),
+    (agent, program, first): (&str, &std::path::Path, &str),
+) -> Result<(), Failed> {
+    let choices = every_choice(put);
+    assert!(
+        !choices.iter().any(|name| name == "Try your own"),
+        "{choices:?}"
+    );
+    let listed = at_door(
+        tree,
+        conversation,
+        Command::AgentCatalog,
+        &mut Picking::of([Some("Try it")]),
+    )?;
+    let Ok(Door::Catalog {
+        agents,
+        antigravity,
+        ..
+    }) = listed
+    else {
+        return Err(format!("the listing answered {listed:?}").into());
+    };
+    assert_eq!(antigravity, None, "the listing offered the own Antigravity");
+    let own: Vec<_> = agents
+        .iter()
+        .filter_map(|listed| listed.own.as_ref())
+        .collect();
+    assert!(own.is_empty(), "the listing offered {own:?}");
+    let mut door = Picking::of([Some("Try it")]);
+    let tried = at_door(
+        tree,
+        conversation,
+        Command::TryOwnAgent {
+            agent: Name::new(agent)?,
+            program: Text::cut(&program.to_string_lossy()),
+        },
+        &mut door,
+    )?;
+    let Err(refused @ AgentsError::Own { .. }) = tried else {
+        return Err(format!("the door answered {tried:?}").into());
+    };
+    assert!(
+        refused.to_string().contains(&format!(
+            "the instance {first} configured for it runs another program"
+        )),
+        "{refused}"
+    );
+    // What `crucible agents try` asks the door for, and the refusal it says
+    // for what it is told: the door's own.
+    let found = found_at_door(tree, conversation, agent)?;
+    assert_eq!(
+        found.as_ref().ok(),
+        Some(&OwnProgram::Beside {
+            program: program.to_owned(),
+            instance: first.into(),
+        }),
+        "{found:?}"
+    );
+    assert_eq!(
+        refused_beside(AgentKey::new(agent)?, program.to_owned(), first).to_string(),
+        refused.to_string()
+    );
+    assert!(door.put.is_empty(), "the door asked: {:?}", door.put);
+    assert_eq!(
+        fake_peer::played(&tools(tree)),
+        0,
+        "the program was started"
+    );
+    assert_eq!(
+        std::fs::read_to_string(crate::Desk::new(tree, &[])?.choosing)?,
+        file,
+        "the user file was written"
+    );
+    Ok(())
+}
+
+/// The user file configuring the instances `names` of the driver `driver`,
+/// each run as a program that is not the user's own one on `PATH`, and of
+/// `agent` where it is a catalog agent's.
+fn beside(
+    tree: &Tree,
+    names: &[&str],
+    (driver, agent): (&str, Option<&str>),
+) -> Result<String, Failed> {
+    let elsewhere = tree.0.join("elsewhere").join(driver);
+    let mut instances = serde_json::Map::new();
+    for name in names {
+        let mut instance = json!({"driver": driver, "executable": elsewhere.to_string_lossy()});
+        if let (Some(agent), Some(fields)) = (agent, instance.as_object_mut()) {
+            fields.insert("agent".to_owned(), json!(agent));
+        }
+        instances.insert((*name).to_owned(), instance);
+    }
+    Ok(serde_json::to_string_pretty(
+        &json!({"externalAgents": instances}),
+    )?)
+}
+
+/// `/login` offers the user's own `agy` only where no Antigravity instance
+/// is configured, and the door neither lists nor writes it beside one that
+/// runs another program.
+#[test]
+fn an_own_agy_beside_a_configured_antigravity_is_neither_offered_nor_written() -> Result<(), Failed>
+{
+    let tree = Tree::new("external-choosing-own-agy-beside")?;
+    let (mut conversation, program) = agy_of_your_own(&tree)?;
+    // Two, so `/login` asks which rather than connecting the one.
+    let file = beside(&tree, &["play", "work"], ("antigravity", None))?;
+    let mut picking = Picking::of([Some("Antigravity"), Some("Go back"), Some("Cancel")]);
+
+    let (outcome, after) = connecting_on(
+        &tree,
+        &mut conversation,
+        (&file, None),
+        Asking::every(),
+        &mut picking,
+    )?;
+
+    assert_eq!(outcome, Outcome::Login(LoginOutcome::Undecided));
+    assert_eq!(after, file, "going back wrote the user file");
+    beside_is_refused(
+        &tree,
+        &conversation,
+        (&picking.put, &file),
+        ("antigravity", &program, "play"),
+    )
+}
+
+/// An Antigravity instance configured that runs the user's own `agy` keeps it
+/// listed, and a try of it probes it as that instance and writes no second.
+#[test]
+fn an_own_agy_a_configured_antigravity_runs_is_tried_as_that_instance() -> Result<(), Failed> {
+    let tree = Tree::new("external-choosing-own-agy-configured")?;
+    let (conversation, program) = agy_of_your_own(&tree)?;
+    let file = serde_json::to_string_pretty(&json!({
+        "externalAgents": {
+            "work": {"driver": "antigravity", "executable": program.to_string_lossy()}
+        }
+    }))?;
+    let user = crate::Desk::new(&tree, &[])?.choosing;
+    std::fs::create_dir_all(user.parent().ok_or("the user file's directory")?)?;
+    std::fs::write(&user, &file)?;
+
+    let listed = tried_at_door(&tree, &conversation, Command::AgentCatalog)?;
+    let tried = tried_at_door(
+        &tree,
+        &conversation,
+        Command::TryOwnAgent {
+            agent: Name::new("antigravity")?,
+            program: Text::cut(&program.to_string_lossy()),
+        },
+    )?;
+
+    let Ok(Door::Catalog { antigravity, .. }) = listed else {
+        return Err(format!("the listing answered {listed:?}").into());
+    };
+    assert_eq!(antigravity.map(|own| own.program), Some(program));
+    let Ok(Door::Tried { instance, .. }) = tried else {
+        return Err(format!("the door answered {tried:?}").into());
+    };
+    assert_eq!(&*instance, "work");
+    assert_eq!(
+        std::fs::read_to_string(crate::Desk::new(&tree, &[])?.choosing)?,
+        file,
+        "the user file was written"
+    );
+    Ok(())
+}
+
+/// `/login` offers the user's own program of a catalog agent with an
+/// instance configured only as that instance runs it, and the door neither
+/// lists nor writes it beside one that runs another program.
+#[test]
+fn an_own_goose_beside_a_configured_goose_is_neither_offered_nor_written() -> Result<(), Failed> {
+    let tree = Tree::new("external-choosing-own-goose-beside")?;
+    let (mut conversation, program) = goose_of_your_own(&tree)?;
+    let file = beside(&tree, &["work"], ("catalog", Some("goose")))?;
+    let mut picking = Picking::of([Some("goose"), Some("Go back"), Some("Cancel")]);
+
+    let (outcome, after) = connecting_on(
+        &tree,
+        &mut conversation,
+        (&file, None),
+        Asking::every(),
+        &mut picking,
+    )?;
+
+    assert_eq!(outcome, Outcome::Login(LoginOutcome::Undecided));
+    assert_eq!(after, file, "going back wrote the user file");
+    beside_is_refused(
+        &tree,
+        &conversation,
+        (&picking.put, &file),
+        ("goose", &program, "work"),
+    )
+}
+
+/// What the agents door answers `command`, asked as [`carried`] asks a move
+/// by a client that says yes to the door's question about a try.
+pub(crate) fn tried_at_door(
+    tree: &Tree,
+    conversation: &Conversation,
+    command: Command,
+) -> Result<Result<Door, AgentsError>, Failed> {
+    at_door(
+        tree,
+        conversation,
+        command,
+        &mut Picking::of([Some("Try it")]),
+    )
+}
+
+/// A tree whose catalog offers goose and whose user installed their own goose
+/// on the `PATH` a conversation's steps look on, which answers as an agent;
+/// that conversation, and the path the program's links lead to.
+pub(crate) fn goose_of_your_own(tree: &Tree) -> Result<(Conversation, PathBuf), Failed> {
+    trusting(tree, &[entry("goose", "1.0.0", ONE)])?;
+    let program = own_goose(&tools(tree), true)?;
+    Ok((own_sandboxed(tree)?, program))
+}
+
+/// A tree whose catalog offers nothing but whose cached ACP Registry index
+/// lists goose, and whose user installed their own goose on the `PATH` a
+/// conversation's steps look on, which answers as an agent; that
+/// conversation, and the path the program's links lead to.
+pub(crate) fn goose_of_the_registry(tree: &Tree) -> Result<(Conversation, PathBuf), Failed> {
+    registry_cached(tree, &[registered("goose")])?;
+    let program = own_goose(&tools(tree), true)?;
+    Ok((own_sandboxed(tree)?, program))
+}
+
+/// As [`goose_of_the_registry`], but the index lists, before goose, an agent
+/// whose id is a built-in driver's word, which no listing shows, and as many
+/// other agents as a listing shows, so goose is past what it shows.
+pub(crate) fn goose_past_the_listing(tree: &Tree) -> Result<(Conversation, PathBuf), Failed> {
+    use crucible_app::client::agents::LISTED;
+
+    let mut agents = vec![registered("claude")];
+    agents.extend((0..LISTED).map(|at| registered(&format!("listed-{at:02}"))));
+    agents.push(registered("goose"));
+    registry_cached(tree, &agents)?;
+    let program = own_goose(&tools(tree), true)?;
+    Ok((own_sandboxed(tree)?, program))
+}
+
+/// A tree whose user installed their own Antigravity on the `PATH` a
+/// conversation's steps look on, which answers as the reviewed release does;
+/// that conversation, and the path the program's links lead to.
+pub(crate) fn agy_of_your_own(tree: &Tree) -> Result<(Conversation, PathBuf), Failed> {
+    let program = own_agy(tree)?;
+    Ok((own_sandboxed(tree)?, program))
+}
+
+/// The user's own Antigravity installed on the `PATH` a conversation's steps
+/// look on in `tree`, answering as the reviewed release does: the path its
+/// links lead to.
+fn own_agy(tree: &Tree) -> Result<PathBuf, Failed> {
+    use crucible_external_harnesses::acp::SignIn;
+    use crucible_external_harnesses::antigravity::Manifest;
+    use crucible_external_harnesses::fake_peer::scripts::acp;
+
+    let shipped = SNAPSHOT.entries().first().ok_or("the snapshot's entry")?;
+    let reviewed = acp::initialized(
+        &shipped.admits.name,
+        &shipped.admits.version,
+        Manifest::REVIEWED.sign_in.first().map_or("", SignIn::id),
+    );
+    let program = fake_peer::install(
+        &tools(tree),
+        "agy",
+        &Peer::once(Reply::new().hear(1).say(reviewed.as_str())),
+    )?;
+    Ok(std::fs::canonicalize(program)?)
+}
+
+/// The instance `/login` writes in `tree`, set up by `of_your_own`, where the
+/// client picks the agent shown as `agent`, then "Try your own", and says yes
+/// to the door's question: as written, with the directory the user's own
+/// programs lie in written `<tools>`.
+pub(crate) fn tried_through_login(
+    tree: &Tree,
+    of_your_own: fn(&Tree) -> Result<(Conversation, PathBuf), Failed>,
+    agent: &'static str,
+) -> Result<String, Failed> {
+    let (mut conversation, _) = of_your_own(tree)?;
+    let (action, _) = chose_own(tree, &mut conversation, "{}", agent)?;
+    let tried = tried_at_door(tree, &conversation, action.command())?;
+    let Ok(Door::Tried { instance, .. }) = tried else {
+        return Err(format!("the door answered {tried:?}").into());
+    };
+    instance_written(tree, &instance)
+}
+
+/// The instance the user file in `tree`'s home names `name`, as written, with
+/// the directory the user's own programs lie in written `<tools>`.
+pub(crate) fn instance_written(tree: &Tree, name: &str) -> Result<String, Failed> {
+    let instance = written(tree, name)?.ok_or("no instance was written")?;
+    let tools = std::fs::canonicalize(tools(tree))?;
+    Ok(instance
+        .to_string()
+        .replace(&tools.to_string_lossy().replace('\\', "\\\\"), "<tools>"))
 }

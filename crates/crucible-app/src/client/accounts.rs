@@ -59,6 +59,8 @@
 //! | connect, no instance named, of a client claiming install | a catalog agent, then a sign-in method of its instance | [`LoginOutcome::AgentChosen`], that sign-in, nothing started, asked of its route or written |
 //! | connect, of a client claiming install, the agent read signed out, its instance in the file | a sign-in method | [`LoginOutcome::AgentChosen`], that sign-in, after the route's yes where it was asked and the agent's status read, nothing more |
 //! | connect, no instance named, of a client claiming install, the user file not readable | a catalog agent | said so, no move offered, then [`LoginOutcome::Undecided`] |
+//! | connect, no instance named, of a client claiming install, the agent's own program found and not yet tried | a catalog agent or Antigravity, then try your own | [`LoginOutcome::AgentChosen`], that try, nothing started, asked of its route or written |
+//! | connect, no instance named, of a client claiming install, the agent's own program tried and admitted | a catalog agent, then connect | as connect |
 //!
 //! A removal whose write fails after the conversation's run on the instance
 //! was stopped is told that the instance is stopped for this run only: the
@@ -176,7 +178,7 @@ use super::performing::{Desk, Performed};
 use crate::Conversation;
 use crate::backends::{AgentRow, Started, Unbelieved};
 use crate::launching::{Origin, Unlaunched, quoted};
-use crate::own_program::{Introduced, Platform};
+use crate::own_program::{Introduced, Platform, Trial, Trying};
 use crate::remember::{self, RememberError};
 
 /// What came of an account operation, in the application's own values.
@@ -593,7 +595,8 @@ pub async fn account(
         | Command::RollbackAgent { .. }
         | Command::RemoveAgent { .. }
         | Command::VerifyAgent { .. }
-        | Command::SignInAgent { .. } => Performed::Refused(Refusal::from(ErrorCode::AgentsDoor)),
+        | Command::SignInAgent { .. }
+        | Command::TryOwnAgent { .. } => Performed::Refused(Refusal::from(ErrorCode::AgentsDoor)),
         Command::Prompt(_)
         | Command::Compact
         | Command::Cancel
@@ -1078,6 +1081,7 @@ async fn choose(
     let shown = |row: &'static crate::backends::Row| shown_as(conversation, &AgentRow::Built(row));
     let releases = Releases::of(capabilities, desk);
     let (cataloged, more) = releases.as_ref().map_or_else(Default::default, listed);
+    let trying = conversation.steps().map(crate::launching::Steps::trying);
     for _ in 0..CHECKS {
         let mut choices: Vec<(String, String)> = rows
             .iter()
@@ -1094,7 +1098,7 @@ async fn choose(
             })
             .collect();
         let keys = releases.as_ref().map_or_else(Vec::new, |releases| {
-            catalog_rows(releases, &cataloged, &mut choices)
+            catalog_rows(releases, trying.as_ref(), &cataloged, &mut choices)
         });
         choices.push(("Cancel".to_owned(), "Change nothing.".to_owned()));
         let mut facts = vec![
@@ -1113,7 +1117,14 @@ async fn choose(
             // Past the shipping agents, a catalog agent's row, and past those,
             // Cancel.
             let key = keys.get(picked.checked_sub(rows.len())?)?;
-            match manage(front, capabilities, releases.as_ref()?, key).await? {
+            match manage(
+                front,
+                capabilities,
+                (releases.as_ref()?, trying.as_ref()),
+                key,
+            )
+            .await?
+            {
                 Some(Managed::Moving(action)) => return Some(Picked::Moving(action)),
                 Some(Managed::Connecting(agent)) => {
                     return Some(match catalog_row(conversation, &agent) {
@@ -1124,16 +1135,18 @@ async fn choose(
                 None => continue,
             }
         };
-        let Some((agent, written)) = instance(
+        let (agent, written) = match instance(
             desk,
             front,
             capabilities,
             (row, &shown(row)),
-            conversation.steps(),
+            (conversation.steps(), trying.as_ref()),
         )
         .await?
-        else {
-            continue;
+        {
+            Some(Taken::Instance(agent, written)) => (agent, written),
+            Some(Taken::Moving(action)) => return Some(Picked::Moving(action)),
+            None => continue,
         };
         let install = installable(releases.as_ref(), row);
         match found(
@@ -1377,6 +1390,7 @@ fn listed(releases: &Releases) -> (Vec<(AgentKey, Box<str>)>, bool) {
 /// of each row added, in order.
 fn catalog_rows<'a>(
     releases: &Releases,
+    trying: Option<&Trying>,
     cataloged: &'a [(AgentKey, Box<str>)],
     choices: &mut Vec<(String, String)>,
 ) -> Vec<&'a AgentKey> {
@@ -1391,7 +1405,7 @@ fn catalog_rows<'a>(
             quoted(version)
         );
         let note = match instances_of(releases, key).as_deref() {
-            Ok([one]) => releases.note(key, one.executable()),
+            Ok([one]) => catalog_note(releases, trying, key, one),
             Ok(_) => None,
             Err(_) => Some("Its instances could not be read.".to_owned()),
         };
@@ -1400,6 +1414,44 @@ fn catalog_rows<'a>(
     }
     keys
 }
+
+/// What a choice says of the instance `one` of the catalog agent `key`, as
+/// [`Releases::note`] says it, but of one that runs the user's own program
+/// whose probe record holds for it as it is configured, found as `trying`
+/// finds it: that its admission proves only that it speaks ACP.
+fn catalog_note(
+    releases: &Releases,
+    trying: Option<&Trying>,
+    key: &AgentKey,
+    one: &ExternalAgent,
+) -> Option<String> {
+    let note = releases.note(key, one.executable());
+    let own = releases
+        .store
+        .version_of(key, Path::new(one.executable()))
+        .is_none();
+    let fresh = own
+        && trying.is_some_and(|trying| {
+            trying
+                .catalog(key, Some(one.executable()))
+                .and_then(|trial| trial.fresh(trying, one.name()))
+                .is_some()
+        });
+    if fresh {
+        Some(FRESH_NOTE.to_owned())
+    } else {
+        note
+    }
+}
+
+/// What is said of an instance that runs the user's own program once a probe
+/// of it is kept: crucible did not review it, and its admission proves only
+/// that it speaks ACP.
+const FRESH_NOTE: &str = "Runs your own program, which Crucible did not review: its admission \
+                          proves it speaks ACP, not which program it is.";
+
+/// The choice that tries the user's own program of an agent.
+const TRY_OWN: &str = "Try your own";
 
 /// The instances of the catalog agent `key` the user file names now, read as
 /// the agents door reads them, so one the door added while this client ran is
@@ -1425,7 +1477,12 @@ fn instances_of(releases: &Releases, key: &AgentKey) -> Result<Vec<ExternalAgent
 /// or that there is none, and the instance's note; then offers the moves that
 /// apply, as [`moves`] finds them, a sign-in by each method the agent's entry
 /// gives for a configured instance, connecting that instance, and going back.
-/// Where the user file cannot
+/// Where the user's own program of the agent is found as `trying` finds it,
+/// as the instance runs it or, with none, by the entry's guessed name, trying
+/// it is offered first, with what a person is told of it before it is tried;
+/// once a probe of it is kept that holds for the instance as it is
+/// configured, the instance is offered Connect first instead, signed in by
+/// the methods its program answered. Where the user file cannot
 /// be read it says so, in what the door says of it, and offers going back alone,
 /// since the door refuses every move on that same read. Answers the move chosen,
 /// `Some(None)` where the client went back to the list of agents, and nothing
@@ -1433,11 +1490,11 @@ fn instances_of(releases: &Releases, key: &AgentKey) -> Result<Vec<ExternalAgent
 async fn manage(
     front: &mut dyn Front,
     capabilities: crucible_client_api::Capabilities,
-    releases: &Releases,
+    (releases, trying): (&Releases, Option<&Trying>),
     key: &AgentKey,
 ) -> Option<Option<Managed>> {
     let shown = quoted(key.as_str());
-    let noted = |one: &ExternalAgent| releases.note(key, one.executable());
+    let noted = |one: &ExternalAgent| catalog_note(releases, trying, key, one);
     let read = instances_of(releases, key);
     let unread = read
         .as_ref()
@@ -1460,7 +1517,24 @@ async fn manage(
     let running = instance
         .as_ref()
         .and_then(|one| releases.store.version_of(key, Path::new(one.executable())));
-    let mut facts = vec![held(&installed)];
+    // The user's own program, as the instance runs it or as the entry guesses
+    // it where there is none; never where the file could not be read, since
+    // the door refuses every move on that same read.
+    let trial = trying
+        .filter(|_| unread.is_none() && running.is_none())
+        .and_then(|trying| {
+            let trial = trying.catalog(key, instance.as_ref().map(ExternalAgent::executable))?;
+            Some((trying, trial))
+        });
+    let fresh = instance
+        .as_ref()
+        .zip(trial.as_ref())
+        .and_then(|(one, (trying, trial))| trial.fresh(trying, one.name()));
+    let mut facts = Vec::new();
+    match (&trial, &fresh) {
+        (Some((_, trial)), Some(_)) => facts.push(trial.program()),
+        _ => facts.push(held(&installed)),
+    }
     facts.push(match (&instance, &unread) {
         (Some(one), _) => format!("Agent: {}, run as {}.", one.name(), one.executable()),
         (None, Some(unread)) => unread.clone(),
@@ -1469,6 +1543,24 @@ async fn manage(
         }
     });
     facts.extend(instance.as_ref().and_then(noted));
+    let mut choices: Vec<(String, String)> = Vec::new();
+    let mut actions: Vec<Managed> = Vec::new();
+    if let (Some(one), Some(_)) = (&instance, &fresh) {
+        choices.push((
+            CONNECT.to_owned(),
+            "Move this conversation onto it.".to_owned(),
+        ));
+        actions.push(Managed::Connecting(one.clone()));
+    } else if let Some((trying, trial)) = &trial {
+        facts.extend(trial.facts(trying));
+        if let Some(action) = tried(key, trial) {
+            choices.push((
+                TRY_OWN.to_owned(),
+                format!("Try your own {shown} at {}.", trial.shown()),
+            ));
+            actions.push(Managed::Moving(action));
+        }
+    }
     let mut offered = if unread.is_some() {
         Vec::new()
     } else {
@@ -1477,20 +1569,24 @@ async fn manage(
     if let Some(one) = &instance {
         let named: Vec<String> = offered.iter().map(|(name, ..)| name.clone()).collect();
         let mut taken: Vec<&str> = named.iter().map(String::as_str).collect();
-        taken.extend([CONNECT, "Go back"]);
-        let methods = methods_of(releases, key, running.as_ref());
+        taken.extend([CONNECT, TRY_OWN, "Go back"]);
+        let methods = match &fresh {
+            Some(record) => record.methods(),
+            None => methods_of(releases, key, running.as_ref()),
+        };
         let (signing, more) = sign_ins(one, methods, &taken);
         if more {
             facts.push(MORE_METHODS.to_owned());
         }
         offered.extend(signing);
     }
-    let (mut choices, mut actions): (Vec<(String, String)>, Vec<Managed>) = offered
-        .into_iter()
-        .map(|(name, says, action)| ((name, says), Managed::Moving(action)))
-        .unzip();
-    // A row is made only for a release the store holds, so an instance run as
-    // anything else has nothing to connect.
+    for (name, says, action) in offered {
+        choices.push((name, says));
+        actions.push(Managed::Moving(action));
+    }
+    // A row is made only for a release the store holds, or for the user's own
+    // program whose probe record holds, so an instance run as anything else
+    // has nothing to connect.
     if let Some(one) = instance.filter(|_| running.is_some()) {
         choices.push((
             CONNECT.to_owned(),
@@ -1506,6 +1602,18 @@ async fn manage(
     };
     let picked = confirmed(capabilities, front, &question).await?;
     Some(actions.into_iter().nth(picked))
+}
+
+/// The move that tries the user's own program of `key` that `trial` found:
+/// nothing where the agent's key or the program's path cannot be named in
+/// the contract whole.
+fn tried(key: &AgentKey, trial: &Trial) -> Option<AgentAction> {
+    let program = Text::cut(&trial.canonical().to_string_lossy());
+    (!program.truncated()).then_some(())?;
+    Some(AgentAction::TryOwn {
+        agent: Name::new(key.as_str()).ok()?,
+        program,
+    })
 }
 
 /// What a question about a catalog agent says of the versions crucible's
@@ -1724,6 +1832,48 @@ fn installable(releases: Option<&Releases>, row: &crate::backends::Row) -> Optio
     })
 }
 
+/// Asks `front` what Crucible should do with the user's own Antigravity,
+/// shown as `agent`, that `trial` found as `trying` finds it, with no
+/// instance configured: try it, told first what it is told of it before it is
+/// tried, install `row`'s release where `releases` offers one, or go back.
+/// Answers the move chosen, `Some(None)` where the client went back to the
+/// list of agents, and nothing where it cancelled or answered nothing.
+async fn own_antigravity(
+    front: &mut dyn Front,
+    capabilities: crucible_client_api::Capabilities,
+    (row, agent): (&'static crate::backends::Row, &str),
+    releases: Option<&Releases>,
+    (trying, trial): (&Trying, &Trial),
+) -> Option<Option<AgentAction>> {
+    let key = AgentKey::new(row.driver.name()).ok()?;
+    let mut choices = Vec::new();
+    let mut actions = Vec::new();
+    if let Some(action) = tried(&key, trial) {
+        choices.push((
+            TRY_OWN.to_owned(),
+            format!("Try your own {agent} at {}.", trial.shown()),
+        ));
+        actions.push(action);
+    }
+    if let Some(action @ AgentAction::Install { .. }) = installable(releases, row) {
+        if let AgentAction::Install { version, .. } = &action {
+            choices.push((
+                "Install".to_owned(),
+                format!("Install {agent} {}.", quoted(version.as_str())),
+            ));
+        }
+        actions.push(action);
+    }
+    choices.push(("Go back".to_owned(), "Choose another agent.".to_owned()));
+    let question = Confirmation {
+        asks: format!("What should Crucible do with {agent}?"),
+        facts: trial.facts(trying),
+        choices,
+    };
+    let picked = confirmed(capabilities, front, &question).await?;
+    Some(actions.into_iter().nth(picked))
+}
+
 /// What was chosen among an agent's configured instances.
 enum Configured {
     /// The one configured, or the one picked of several.
@@ -1773,6 +1923,15 @@ async fn among(
     )
 }
 
+/// What a connect of a shipping agent goes through, or the move chosen in its
+/// place.
+enum Taken {
+    /// An instance, and whether the user file already names it.
+    Instance(ExternalAgent, bool),
+    /// A move on the agent the agents door carries out.
+    Moving(AgentAction),
+}
+
 /// The instance of `row`'s agent, shown as `agent`, a connect goes through:
 /// the one configured, one asked for of several, or one named after the
 /// agent where none is, its command looked for on the `PATH` of `steps`, as
@@ -1780,14 +1939,17 @@ async fn among(
 /// `Some(None)` where the client went back to the list
 /// of agents, and nothing where it cancelled or answered nothing. Asked of a
 /// client that claims [`Capability::Install`], each of several says its note,
-/// where crucible installs the agent's release.
+/// where crucible installs the agent's release; and where none is configured
+/// and the program on that `PATH` is the user's own Antigravity, as `trying`
+/// finds it, such a client is asked whether to try it, install the release
+/// or go back, told what it is told of the program before it is tried.
 async fn instance(
     desk: &Desk<'_>,
     front: &mut dyn Front,
     capabilities: crucible_client_api::Capabilities,
     (row, agent): (&'static crate::backends::Row, &str),
-    steps: Option<&crate::launching::Steps>,
-) -> Option<Option<(ExternalAgent, bool)>> {
+    (steps, trying): (Option<&crate::launching::Steps>, Option<&Trying>),
+) -> Option<Option<Taken>> {
     let configured: Vec<ExternalAgent> = desk
         .switching
         .settings
@@ -1809,13 +1971,29 @@ async fn instance(
             .and_then(|(releases, key)| releases.note(key, one.executable()))
     };
     match among(front, capabilities, agent, configured, &noted).await? {
-        Configured::One(one) => return Some(Some((one, true))),
+        Configured::One(one) => return Some(Some(Taken::Instance(one, true))),
         Configured::Back => return Some(None),
         Configured::Unconfigured => {}
     }
     let home = desk.switching.choosing.parent()?;
     let trust = crate::catalog_fetch::trust_in(home);
-    let agent = match would_run(home, row, &trust, steps) {
+    let running = would_run(home, row, &trust, steps);
+    let own = matches!(running, Running::One { own: true, .. });
+    if let (true, Driver::Antigravity, Some(trying)) = (own, row.driver, trying) {
+        let releases = Releases::of(capabilities, desk);
+        if let Some(trial) = releases.as_ref().and_then(|_| trying.antigravity(row)) {
+            return own_antigravity(
+                front,
+                capabilities,
+                (row, agent),
+                releases.as_ref(),
+                (trying, &trial),
+            )
+            .await
+            .map(|moving| moving.map(Taken::Moving));
+        }
+    }
+    let agent = match running {
         Running::One { executable, own } => unwritten(home, row, &executable, own)?,
         Running::Either { stored, own, note } => {
             let question = either(agent, &stored, &own, note);
@@ -1826,7 +2004,7 @@ async fn instance(
             }
         }
     };
-    Some(Some((agent, false)))
+    Some(Some(Taken::Instance(agent, false)))
 }
 
 /// The instance of `row`'s agent written beside the user file in `home` for

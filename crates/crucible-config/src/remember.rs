@@ -785,6 +785,49 @@ pub fn adding(
     Ok((written, instance))
 }
 
+/// The text of a configuration file with the instance `agent` in it, under
+/// its own name: its driver, the catalog agent it runs where it is a catalog
+/// instance, and its program, and nothing else, so it takes new work as any
+/// instance does. It is the instance a probe of the user's own program was
+/// kept for by that name, so a name the file already holds is refused rather
+/// than written over or passed over. Every other byte is where it was, and
+/// the text is read back as the user's file before it is returned.
+///
+/// # Errors
+///
+/// Refuses malformed or invalid configuration, either as it is or as it would
+/// be, and [`ConfigError::Unspliceable`] where the file already names an
+/// instance called as `agent` is, or the answer cannot be written without
+/// rewriting.
+pub fn adding_own(text: &str, file: &str, agent: &ExternalAgent) -> Result<String, ConfigError> {
+    let instance = agent.name();
+    let at = format!("externalAgents.{instance}");
+    let checked = if text.trim().is_empty() { "{}" } else { text };
+    let document = crate::document::Document::parse(checked, file, crate::document::Origin::User)?;
+    let mut block = serde_json::json!({
+        "driver": agent.driver().name(),
+        "executable": agent.executable(),
+    });
+    if let (Some(fields), Some(key)) = (block.as_object_mut(), agent.agent()) {
+        fields.insert("agent".to_owned(), Value::from(key.as_str()));
+    }
+    if document
+        .value()
+        .get("externalAgents")
+        .and_then(|agents| agents.get(instance))
+        .is_some()
+    {
+        return Err(ConfigError::Unspliceable {
+            file: file.into(),
+            at: at.into(),
+            written: block.to_string().into(),
+        });
+    }
+    let written = spliced_at(text, file, &["externalAgents", instance], &at, &block)?;
+    crate::document::Document::parse(&written, file, crate::document::Origin::User)?;
+    Ok(written)
+}
+
 /// The text of a configuration file where each installed agent `moved` names
 /// is started as the last program beside it, where its block's `executable`
 /// still names the first, the one it was shown naming: written over, and every

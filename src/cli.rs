@@ -376,6 +376,13 @@ enum AgentsAction {
         #[arg(long)]
         method: Option<String>,
     },
+    /// Start your own program of an agent once, confined with the network
+    /// closed, ask it only to initialize, write an instance that runs it once
+    /// it answers as an agent, and stop.
+    Try {
+        /// The agent, as the agent catalog names it, or antigravity.
+        agent: String,
+    },
     /// Unpack a download the agent catalog describes, or a package tree its
     /// lock describes, by the rules an install holds it to, write the file
     /// list it unpacked to as JSON, and stop.

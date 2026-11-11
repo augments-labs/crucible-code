@@ -1381,6 +1381,7 @@ removable=(
     # the writes, the start-up arm, the switch, and the refusals they raise.
     crates/crucible-app/src/{access,backends,launching,external,outside,own_program,probing}.rs
     crates/crucible-app/src/launching/{discovery,keyed,own,terminal}.rs
+    crates/crucible-app/src/own_program/trying.rs
     crates/crucible-app/src/{proof,content_use,remember,startup,switching}.rs
     crates/crucible-app/src/{conversation,error,lib,client}.rs
     crates/crucible-app/src/client/{accounts,performing,reading}.rs
@@ -1394,6 +1395,7 @@ removable=(
     scripts/python/validate-node-preload.py
     # The agents door and the download of the releases it installs.
     crates/crucible-app/src/client/agents.rs crates/crucible-app/src/agent_download.rs
+    crates/crucible-app/src/client/agents/trying.rs
     crates/crucible-app/tests/headless/agents.rs
     crates/crucible-app/tests/headless/agents/{adding,npm,piped,registry,shipped_hold,uvx}.rs
     crates/crucible-app/tests/headless.rs crates/crucible-app/tests/headless/external.rs
@@ -1688,16 +1690,17 @@ while IFS= read -r line; do
 done <<<"$probes"
 
 section "a request read from bytes is decided about first"
-# Seventeen commands change what the session may do or whom it acts as, or ask
+# Eighteen commands change what the session may do or whom it acts as, or ask
 # the host to work for whoever sent them: a permission mode, the sandbox, an
 # account signed in or out, an installed agent disconnected, removed or signed
-# out, a provider connected through one, and the catalog of agents listed,
+# out, a provider connected through one, the catalog of agents listed,
 # installed from, added from, updated, rolled back, removed, verified and signed
-# in to. The application performs them for whoever hands them in, which is safe
-# while every request is built on the host by the front end standing there.
+# in to, and the user's own program for one of its agents tried. The
+# application performs them for whoever hands them in, which is safe while
+# every request is built on the host by the front end standing there.
 # `Request::decode` is where one could come from somewhere else, and nothing
 # that ships calls it. A file that starts to is written down here with what it
-# does about each of the seventeen, so that reading requests from outside is a
+# does about each of the eighteen, so that reading requests from outside is a
 # decision taken command by command and not a line added. A row is
 # `file command what-is-done-about-it`.
 request_owner=crates/crucible-client-api/src
@@ -1716,6 +1719,7 @@ sandbox
 set_mode
 sign_in_agent
 sign_out
+try_own_agent
 update_agent
 verify_agent'
 decided=''
@@ -1750,10 +1754,12 @@ kinds=$(sed -n '/pub const KINDS: \[/,/\];/p' "$request_owner/command.rs" | grep
 # acts as for that agent, so they joined the others too. Adding a catalog
 # agent, the thirty-sixth, installs its program and writes an instance that
 # names it into the user's file, so it changes which program a route may start
-# and joined them as well.
+# and joined them as well. Trying the user's own program for a catalog agent,
+# the thirty-seventh, runs a program the user installed, confined, and writes
+# an instance that names it into the user's file, so it joined them too.
 # One more is one nobody has asked this of.
-if (($(grep -c . <<<"$kinds") != 36)); then
-    printf '    FAIL the client contract no longer has the 36 commands the seventeen were picked out of; decide whether the new one changes what a session may do, then move the 36 in this check\n'
+if (($(grep -c . <<<"$kinds") != 37)); then
+    printf '    FAIL the client contract no longer has the 37 commands the eighteen were picked out of; decide whether the new one changes what a session may do, then move the 37 in this check\n'
     failed=1
 fi
 while IFS= read -r word; do
@@ -1801,7 +1807,7 @@ done <<<"$decided"
 # Reading bytes is one way a request arrives from somewhere else. The other is
 # an adapter that reads a format of its own and builds the command: the variants
 # are public, and no `decode` is named on that road. So the files that name one
-# of the seventeen are written down too. They are the terminal, which builds
+# of the eighteen are written down too. They are the terminal, which builds
 # them from keys pressed on the host, and the application, which performs them,
 # or, at the door that asks a plan for its limits and the door for an installed
 # agent's account, refuses those it does not own unperformed. A file that joins
@@ -1809,13 +1815,16 @@ done <<<"$decided"
 # can be changed from, and it is added here by somebody who looked at where its
 # commands come from. The agents door performs the catalog's commands for a
 # client that claimed the capability they need, asking it before anything is
-# fetched or changed, and refuses every other. The terminal's client builds
+# fetched or changed, and refuses every other; a try of the user's own program
+# is asked too, before its one confined probe, and the door runs it only where
+# the program the move names is the one a launch would find. The terminal's
+# client builds
 # none: it names every command once, to decide from the command alone what a
 # request for it claims where its sender names no claim, so a new command
 # decides that too. `/login` names the one connect that claims install, and the
-# install, update, rollback or sign-in it then sends is the move that connect
-# handed back, the application's own command built on this host, handed to the
-# agents door as it came. `/agents` names the catalog read, a verify and an add,
+# install, update, rollback, sign-in or try of the user's own program it then
+# sends is the move that connect handed back, the application's own command
+# built on this host, handed to the agents door as it came. `/agents` names the catalog read, a verify and an add,
 # each built from the row marked and the key pressed on this host, and hands
 # each to the agents door as it is. `crucible agents` names the catalog read and
 # every move and sign-in it has subcommands for, each built from the words of
@@ -1856,13 +1865,13 @@ named=$(grep -rlE --include='*.rs' "(^|[^A-Za-z0-9_])Command::($variants)([^A-Za
 while IFS= read -r file; do
     [[ -z "$file" ]] && continue
     if ! grep -Fxq "$file" <<<"$naming"; then
-        printf '    FAIL %s names a command that changes what a session may do, and is not one of the files known to; find where its commands come from, decide about each of the seventeen if that is outside the host, then add the file here\n' "$file"
+        printf '    FAIL %s names a command that changes what a session may do, and is not one of the files known to; find where its commands come from, decide about each of the eighteen if that is outside the host, then add the file here\n' "$file"
         failed=1
     fi
 done <<<"$named"
 while IFS= read -r file; do
     if ! grep -Fxq "$file" <<<"$named"; then
-        printf '    FAIL %s was not found naming one of the seventeen; take it out, or the search measured nothing\n' "$file"
+        printf '    FAIL %s was not found naming one of the eighteen; take it out, or the search measured nothing\n' "$file"
         failed=1
     fi
 done <<<"$naming"

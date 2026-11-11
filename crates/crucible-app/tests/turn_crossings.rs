@@ -307,10 +307,14 @@ const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
     ),
     // The `crucible agents` subcommands that ask the agents door, which a
     // command line reaches before any conversation exists and which start
-    // none: carrying the one command out.
+    // none: waiting for the door to carry the one command out, and, for
+    // `crucible agents try`, to find the program it is asked to try. The
+    // site waits for a future `Desk::waited` is handed, and its two callers
+    // hand it only `crucible_app::client::agents` door calls: `Desk::asked`
+    // `door::run`, and `Desk::tried` `door::own_program` then `door::run`.
     (
         "src/cli/agents.rs",
-        ".block_on(door::run(request, lending, &mut front, watching))",
+        "self.runtime.block_on(work(&mut front, watching))",
         1,
     ),
     // `installing`'s download of a release, which `crucible agents install`
@@ -328,10 +332,11 @@ const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
         "runtime.block_on(initialized(",
         1,
     ),
-    // `own_program::tried`, the try of a program the user installed, which
-    // `crucible agents try` will run as `crucible agents probe` runs its
-    // probe: it starts that program once, confined, on a runtime of its own,
-    // and waits for its answer to `initialize`.
+    // `own_program::tried`, the try of a program the user installed with no
+    // agents door between, as `crucible agents probe` runs its probe: it
+    // starts that program once, confined, on a runtime of its own, and waits
+    // for its answer to `initialize`. `crucible agents try` asks the door
+    // instead, which awaits the same probe on the runtime its caller blocks.
     (
         "crates/crucible-app/src/own_program.rs",
         "runtime.block_on(probe(",

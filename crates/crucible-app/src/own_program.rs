@@ -73,6 +73,10 @@ use crate::launching::{
 };
 use crate::probing::{Hearing, Kept, Unprobed, policy, recorded};
 
+mod trying;
+
+pub(crate) use trying::{Trial, Trying};
+
 /// The home search directories an own program may lie in, though each is a
 /// place no agent is made able to write: reading one is what running from it
 /// takes, and it is never given writable.
@@ -858,6 +862,13 @@ pub enum Unowned {
     /// Its program lies in crucible's store, or was not found.
     #[error("{0} is not run as a program you installed")]
     NotOwn(Box<str>),
+    /// An instance of the agent is configured that runs another program, and
+    /// no second one is written beside it; the instance is named, quoted.
+    #[error(
+        "the instance {0} configured for it runs another program, and no second one is \
+         written beside it"
+    )]
+    Beside(Box<str>),
 }
 
 /// An empty directory only its owner may reach, made fresh under the system's
@@ -1329,6 +1340,17 @@ impl Dialect for Recording {
     }
 }
 
+/// Why the user's own `program` is not started where its directory would be
+/// judged against a home of the user's and none is known.
+pub(crate) fn homeless(program: &Program) -> Unowned {
+    Unowned::Root(format!(
+        "no home directory of yours is known, so whether the directory {} lies in may be \
+         given to an agent cannot be judged; set HOME, or USERPROFILE on Windows, to your \
+         home directory",
+        program.path().display()
+    ))
+}
+
 /// What a refusal of an own program says of `failure`.
 #[must_use]
 pub fn unadmitted(failure: &Failure) -> Unowned {
@@ -1350,15 +1372,16 @@ struct Proposed {
 }
 
 impl Proposed {
-    /// What the catalog instance `agent` of `key` is started as, where its
-    /// executable is found, as the entry's guessed name or as written,
-    /// outside the install store beside the trust state in `state`: the ACP
-    /// Registry's row where the cached registry lists the key, as belief
-    /// judges a release, else the signed catalog's offer. Nothing where no
-    /// entry proposes a program of its own, or the program lies in the store
-    /// or is not found, which belief then judges as a release.
+    /// What a catalog instance of `key` run as `executable` is started as,
+    /// where that is found, as the entry's guessed name or as written, or,
+    /// with no `executable`, as the guessed name alone, outside the install
+    /// store beside the trust state in `state`: the ACP Registry's row where
+    /// the cached registry lists the key, as belief judges a release, else the
+    /// signed catalog's offer. Nothing where no entry proposes a program of
+    /// its own, or the program lies in the store or is not found, which
+    /// belief then judges as a release.
     fn of(
-        agent: &ExternalAgent,
+        executable: Option<&str>,
         key: &AgentKey,
         state: &Path,
         lookup: impl Fn(&str) -> Option<OsString>,
@@ -1396,9 +1419,12 @@ impl Proposed {
                 Err(why) => return Some(Err(unreadable(why))),
             }
         };
-        let Discovery::Found(program) =
-            discover(agent.executable(), &[own.guess().to_owned()], lookup)
-        else {
+        let guess = own.guess().to_owned();
+        let Discovery::Found(program) = discover(
+            executable.unwrap_or(&guess),
+            std::slice::from_ref(&guess),
+            lookup,
+        ) else {
             return None;
         };
         let programs = crate::launching::programs_beside(state);
@@ -1456,7 +1482,7 @@ pub(crate) fn believed(
     state: &Path,
     lookup: impl Fn(&str) -> Option<OsString>,
 ) -> Option<Result<(CatalogRow, Program), Unbelieved>> {
-    let proposed = match Proposed::of(agent, key, state, lookup)? {
+    let proposed = match Proposed::of(Some(agent.executable()), key, state, lookup)? {
         Ok(proposed) => proposed,
         Err(why) => return Some(Err(why)),
     };
@@ -1494,7 +1520,8 @@ pub fn tried(
     let not_own = || Unowned::NotOwn(agent.name().into());
     let key = agent.agent().ok_or_else(not_own)?;
     let state = crate::catalog_fetch::state_in(places.crucible);
-    let proposed = Proposed::of(agent, key, &state, lookup).ok_or_else(not_own)??;
+    let proposed =
+        Proposed::of(Some(agent.executable()), key, &state, lookup).ok_or_else(not_own)??;
     let dialect = proposed.row(key, Vec::new())?.dialect(Mode::Ask);
     let instance = proposed.instance(agent, key);
     let (record, unfinished) = crate::services::serving(|services| {

@@ -333,6 +333,25 @@ pub fn adding(
     })
 }
 
+/// Writes the instance `agent` into `file` under its own name, which a probe
+/// of the user's own program was kept for, and changes nothing else in it.
+///
+/// # Errors
+///
+/// [`RememberError::Busy`] when another crucible holds the file,
+/// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
+/// [`RememberError::Unusable`] when what it already says is not configuration,
+/// already names an instance so, or would not be configuration with the
+/// instance in it.
+pub fn adding_own(
+    file: &Path,
+    agent: &crucible_config::ExternalAgent,
+) -> Result<(), RememberError> {
+    answered(file, |text, named| {
+        Ok((crucible_config::adding_own(text, named, agent)?, ()))
+    })
+}
+
 /// Takes the installed agent `instance` out of `file`, and changes nothing
 /// else in it.
 ///

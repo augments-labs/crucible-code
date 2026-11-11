@@ -21,7 +21,7 @@ use super::{
     Agent, AuthMethod, Launcher, Steps, Trust, Unlaunched, Unpiped, programs_beside, quoted,
 };
 use crate::backends::{AgentRow, Sandboxing, Unbelieved, Wire};
-use crate::own_program::{Introduced, Owned, Places, Recording, Unowned};
+use crate::own_program::{Introduced, Owned, Places, Recording, Trying, Unowned, homeless};
 
 impl Unpiped {
     /// Why the user's own program is not signed in by `method`'s command.
@@ -167,18 +167,26 @@ impl Launcher<'_> {
     }
 }
 
-/// Why the user's own `program` is not started where its directory would be
-/// judged against a home of the user's and none is known.
-fn homeless(program: &Program) -> Unowned {
-    Unowned::Root(format!(
-        "no home directory of yours is known, so whether the directory {} lies in may be \
-         given to an agent cannot be judged; set HOME, or USERPROFILE on Windows, to your \
-         home directory",
-        program.path().display()
-    ))
-}
-
 impl Steps {
+    /// What a trial of the user's own program is found and probed with from
+    /// these steps: their sandbox and runtime, the home every catalog agent
+    /// is given, else the shell's, their trust state, session logs and
+    /// `PATH`, and whether the sandbox is on now.
+    pub(crate) fn trying(&self) -> Trying {
+        let home = self
+            .home
+            .clone()
+            .filter(|home| home.is_absolute())
+            .or_else(std::env::home_dir);
+        Trying::new(
+            (Arc::clone(&self.service), self.runtime.clone()),
+            home,
+            (self.state.clone(), self.sessions.clone()),
+            self.path.clone(),
+            self.enablement.enabled(),
+        )
+    }
+
     /// [`Steps::account`], with what the program it started answered
     /// `initialize` with of itself, where that answer was heard and admits
     /// it.

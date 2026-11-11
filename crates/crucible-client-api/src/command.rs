@@ -11,7 +11,8 @@
 //! the host, and the command says only that it now can be read.
 //!
 //! The commands that install, add, update, roll back, remove, verify and sign
-//! in an agent from the reviewed catalog, and the one that lists it, are served
+//! in an agent from the reviewed catalog, the one that tries the user's own
+//! program for one, and the one that lists it, are served
 //! by a door of their own that no conversation is part of, and only of a client
 //! that claimed [`Capability::Install`]: [`Command::needs`] says which, and a
 //! conversation refuses them as [`ErrorCode::AgentsDoor`]. They name an agent
@@ -20,7 +21,9 @@
 //! takes. The names are only names: the door checks `agent` as an agent key,
 //! and finds `version`, `instance` and `method` by equality against the catalog
 //! or the configuration, before any of them is used, and none is ever read as a
-//! path, an argument or shell text.
+//! path, an argument or shell text. The own program a try names is compared,
+//! as words, with the path the door finds its entry's guess at on the host,
+//! and the program run is the one found, never the one named.
 
 use std::fmt;
 use std::str::FromStr;
@@ -28,7 +31,7 @@ use std::str::FromStr;
 use crucible_types::SessionId;
 use serde_json::Value;
 
-use crate::bounds::{Name, PROMPT_BYTES};
+use crate::bounds::{Name, PROMPT_BYTES, Text};
 use crate::error::{ErrorCode, Refusal};
 use crate::pending::Decision;
 use crate::request::Capability;
@@ -227,13 +230,29 @@ pub enum Command {
         /// nothing else.
         method: Name,
     },
+    /// Probe the user's own program for this agent, a catalog agent's or a
+    /// shipped agent's, the one a launch would find at `program`, once,
+    /// confined, and add an instance that runs it where it is admitted.
+    /// Changes nothing where it is not. The door finds the program again and
+    /// refuses where it is not the one at `program`, asks the client its own
+    /// yes before it starts anything, and is answered only to a client that
+    /// claimed [`Capability::Install`].
+    TryOwnAgent {
+        /// The agent, by the name the catalog gives it. The door checks it as
+        /// an agent key before it is used.
+        agent: Name,
+        /// The program, by the path its links lead to, as the move offered
+        /// named it. The door compares it with the one it finds and uses it
+        /// as nothing else.
+        program: Text,
+    },
     /// Leave the conversation.
     Exit,
 }
 
 impl Command {
     /// The word each arm crosses as, in the order the arms are declared.
-    pub const KINDS: [&'static str; 36] = [
+    pub const KINDS: [&'static str; 37] = [
         "prompt",
         "compact",
         "cancel",
@@ -269,6 +288,7 @@ impl Command {
         "remove_agent",
         "verify_agent",
         "sign_in_agent",
+        "try_own_agent",
         "exit",
     ];
 
@@ -311,6 +331,7 @@ impl Command {
             Self::RemoveAgent { .. } => "remove_agent",
             Self::VerifyAgent { .. } => "verify_agent",
             Self::SignInAgent { .. } => "sign_in_agent",
+            Self::TryOwnAgent { .. } => "try_own_agent",
             Self::Exit => "exit",
         }
     }
@@ -333,7 +354,8 @@ impl Command {
             | Self::RollbackAgent { .. }
             | Self::RemoveAgent { .. }
             | Self::VerifyAgent { .. }
-            | Self::SignInAgent { .. } => Some(Capability::Install),
+            | Self::SignInAgent { .. }
+            | Self::TryOwnAgent { .. } => Some(Capability::Install),
             Self::Prompt(_)
             | Self::Compact
             | Self::Cancel
@@ -398,6 +420,9 @@ impl Command {
             Self::SignInAgent { instance, method } => object
                 .with("instance", instance.as_str())
                 .with("method", method.as_str()),
+            Self::TryOwnAgent { agent, program } => object
+                .with("agent", agent.as_str())
+                .text("program", program),
             Self::Connect { instance } => {
                 object.maybe("instance", instance.as_ref().map(Name::as_str))
             }
@@ -512,6 +537,10 @@ impl Command {
             "sign_in_agent" => Self::SignInAgent {
                 instance: fields.name("instance")?,
                 method: fields.name("method")?,
+            },
+            "try_own_agent" => Self::TryOwnAgent {
+                agent: fields.name("agent")?,
+                program: fields.text("program")?,
             },
             "exit" => Self::Exit,
             _ => return Err(ErrorCode::UnknownCommand.into()),
