@@ -1214,6 +1214,15 @@ pub struct Source<'a> {
     pub text: &'a str,
 }
 
+impl Source<'_> {
+    /// Whether this is an address drawn shorter, of which a line may hold
+    /// several, rather than a block, which is a line of its own.
+    #[must_use]
+    pub fn is_address(&self) -> bool {
+        self.word == ADDRESS
+    }
+}
+
 /// What native mode hands over to the terminal's own scrollback.
 ///
 /// A line written into the reader's buffer is shown by the terminal from then

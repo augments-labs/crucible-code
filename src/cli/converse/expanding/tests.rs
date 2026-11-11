@@ -1825,6 +1825,50 @@ fn the_rows_of_a_source_are_counted_once_for_each_width() {
 }
 
 #[test]
+fn two_addresses_on_one_line_of_one_length_are_counted_apart() {
+    // As many bytes each, and on the same line, but the wide one is two
+    // columns a character where the other is one, so at 20 columns it folds
+    // into fewer rows. The view reaches as far down as it would were they
+    // on lines of their own.
+    let wide = format!("https://example.com/{}", "語".repeat(20));
+    let narrow = format!("https://example.com/{}", "a".repeat(60));
+    assert_eq!(wide.len(), narrow.len());
+    let kept = Kept::default();
+    let reach = |lines: [usize; 2]| {
+        let sources = [
+            Source {
+                line: lines[0],
+                word: "address",
+                text: &wide,
+            },
+            Source {
+                line: lines[1],
+                word: "address",
+                text: &narrow,
+            },
+        ];
+        let mut standing = Standing::default();
+        standing.open(&kept, 2);
+        laying(
+            &kept,
+            &sources,
+            opened(&mut standing),
+            Glyphs::Unicode,
+            Size {
+                columns: 20,
+                rows: 6,
+            },
+        );
+        let view = opened(&mut standing);
+        (view.laid, view.counted.addresses.len())
+    };
+
+    let apart = reach([0, 1]);
+    assert_eq!(apart.1, 2);
+    assert_eq!(reach([0, 0]), apart);
+}
+
+#[test]
 fn ctrl_o_lists_the_whole_of_every_address_drawn_shorter_after_the_blocks() {
     let here = "https://github.com/augments-labs/crucible-code";
     let mut render = Renderer::new(Recording::new(100, 24));
