@@ -330,12 +330,14 @@ impl Slashed {
             return settled;
         }
         if ended {
-            // The end of the answer is the break that ends the line, which an
-            // underline or a delimiter row complete at it is under.
+            // The end of the answer is the break that ends the line. It makes
+            // the line above a title where it is an underline, which the
+            // reader says by itself; a delimiter row it ends is not one it
+            // opens a table at, and is more of the paragraph.
             let claimed = self
                 .watch
                 .clone()
-                .is_some_and(|mut watch| matches!(watch.sees('\n'), Sight::Keep | Sight::Under(_)));
+                .is_some_and(|mut watch| matches!(watch.sees('\n'), Sight::Under(_)));
             if claimed {
                 return Verdict::Opens;
             }

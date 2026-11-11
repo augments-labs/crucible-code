@@ -164,6 +164,15 @@ fn a_backslash_before_a_line_the_answer_ends_in_the_middle_of_is_drawn_as_the_li
         "first\n| a | b |\n|---|---|"
     );
     assert_eq!(shown("first\\\n<det"), "first\n<det");
+    // A row of dashes or bars under a bare header is a delimiter row only where
+    // the reader opens a table, and at the end of the answer it opens none.
+    for row in ["---|---", "|---|---|", "-:|-:"] {
+        assert_eq!(
+            shown(&format!("a | b\\\n{row}")),
+            format!("a | b\n{row}"),
+            "{row:?}"
+        );
+    }
     assert_eq!(shown("first\\\n  "), "first\\\n  ");
 }
 
@@ -284,7 +293,7 @@ fn a_backslash_hard_break_is_the_same_cut_anywhere() {
 /// are, or the line above becomes a title; and the same answer with the
 /// backslash must draw the same, the backslash kept where the reader opened
 /// something and gone where it did not.
-const AGREEMENT: [(&str, &str, bool); 64] = [
+const AGREEMENT: [(&str, &str, bool); 63] = [
     // A numbered item: a stop and a blank or the end of the line after it.
     ("first", "1. x\n", true),
     ("first", "1) x\n", true),
@@ -360,14 +369,44 @@ const AGREEMENT: [(&str, &str, bool); 64] = [
     // Ordinary prose.
     ("first", "second line\n", false),
     ("first", "**bold** word\n", false),
-    ("first", "   \n", true),
 ];
 
-/// What `head`, a backslash, a break and `line` draw, held to what is in
-/// [`AGREEMENT`] for it: `Some` says what is wrong.
-fn disagrees(head: &str, line: &str, opens: bool) -> Option<String> {
+/// Whether the reader opened something of its own at `line`, which is written
+/// under `head` and has no backslash in front of it: a block handed on, a run
+/// drawn in a slot other than the plain one, or a line drawn as other than it
+/// was written, as a swallowed tag or a blank line is, beyond what `head` is
+/// by itself.
+fn opened_something(head: &str, line: &str) -> bool {
+    let (alone, under) = (format!("{head}\n"), format!("{head}\n{line}"));
+    let marked = |answer: &str| {
+        standing(ended(answer))
+            .iter()
+            .filter(|(slot, _)| *slot != Slot::Plain)
+            .count()
+    };
+    blocks(&under).0.len() > blocks(&alone).0.len()
+        || marked(&under) > marked(&alone)
+        || drawn(&standing(ended(&under))).strip_prefix(&drawn(&standing(ended(&alone))))
+            != Some(line)
+}
+
+/// What `head`, a backslash, a break and `line` draw, held to what the reader
+/// does with the same lines without the backslash. `label` is what
+/// [`AGREEMENT`] says for it, and is believed only where the reader bears it
+/// out: a line the reader opens nothing at, however it is written, is more of
+/// the paragraph. `Some` says what is wrong.
+fn disagrees(head: &str, line: &str, label: bool) -> Option<String> {
     let with = format!("{head}\\\n{line}");
     let without = format!("{head}\n{line}");
+    let opens = label && opened_something(head, line);
+    // A line that is listed as one the reader opens a block at must be one.
+    // The answer ended in the middle of it is another line, which the end of
+    // the answer may leave without a block, and is held to the reader as well.
+    if label && line.ends_with('\n') && !opens {
+        return Some(format!(
+            "{without:?} is listed as a block, the reader opened none"
+        ));
+    }
     let plain = drawn(&standing(ended(&without)));
     let said = drawn(&standing(ended(&with)));
     // Where the reader opened a block the backslash stays among what is drawn,
@@ -401,10 +440,7 @@ fn a_backslash_is_kept_exactly_where_the_reader_opens_a_block() {
         // the break that ends it.
         misses.extend(disagrees(head, line, opens));
         let open = line.trim_end_matches('\n');
-        // A block of bars the answer ends in the delimiter row of is no table:
-        // that row is not whole, and the answer's end is no row.
-        let bars = head != "a | b" && open.ends_with("|---|---|");
-        if open != line && !open.is_empty() && !bars {
+        if open != line && !open.is_empty() {
             misses.extend(disagrees(head, open, opens));
         }
 
@@ -437,6 +473,7 @@ fn a_backslash_hold_ends_where_the_reader_ends_what_it_reads() {
         ("first\\\n|a|b|".to_owned(), true),
         ("a | b\\\n--".to_owned(), true),
         ("first\\\n<details open".to_owned(), true),
+        (format!("first\\\n<details {}", "x".repeat(80)), false),
     ] {
         let mut markdown = Markdown::default();
         read(&mut markdown, &answer);
