@@ -31,10 +31,10 @@ expression: window.picture()
 |                                                                                |
 |An empty reference &#0; and an override &#x202E; are written as they came.      |
 |                                                                                |
-|~one~ is struck under GitHub's rules, and two is struck under both.             |
+|one is struck under GitHub's rules, and two is struck under both.               |
 |                                                                                |
-|A pair may cross a line break: ~the phrase goes                                 |
-|on~ here.                                                                       |
+|A pair may cross a line break: the phrase goes                                  |
+|on here.                                                                        |
 |                                                                                |
 |And these strike nothing: edit ~/.config/crucible/config.json then ~/bin/run,   |
 |between ~/a and ~/b, about ~5 minutes or ~10.                                   |
