@@ -184,13 +184,6 @@ fn seen(rows: &[Row]) -> Vec<Vec<(Slot, String)>> {
         .collect()
 }
 
-/// The one block the reader hands on for `answer`.
-fn block_of(answer: &str) -> Block {
-    let (mut blocks, _) = blocks(answer);
-    assert_eq!(blocks.len(), 1, "{answer:?}");
-    blocks.remove(0)
-}
-
 #[test]
 fn a_closed_fence_a_registered_drawer_takes_is_drawn_by_that_drawer() {
     for (glyphs, mark) in [(Glyphs::Unicode, "»"), (Glyphs::Ascii, ">")] {
@@ -430,10 +423,15 @@ fn a_fence_the_answer_ended_inside_is_drawn_as_written_and_handed_to_no_drawer()
 fn a_drawn_fence_is_asked_for_again_at_every_room_it_is_laid_out_in() {
     let stub = Stub::answering(Answer::Marked);
     let drawers = holding(&stub);
-    let block = block_of("```diff\n+a line longer than the narrow room\n```\n");
+    let fence = "```diff\n+a line longer than the narrow room\n```\n";
+    let (held, _) = blocks(fence);
+    assert_eq!(held.len(), 1, "{fence:?}");
+    let Some(block) = held.first() else {
+        panic!("{fence:?} was not held");
+    };
 
-    let wide = lay(&block, 60, Glyphs::Unicode, &Links::default(), &drawers);
-    let narrow = lay(&block, 12, Glyphs::Ascii, &Links::default(), &drawers);
+    let wide = lay(block, 60, Glyphs::Unicode, &Links::default(), &drawers);
+    let narrow = lay(block, 12, Glyphs::Ascii, &Links::default(), &drawers);
 
     assert_eq!(texts(&wide), ["» +a line longer than the narrow room"]);
     assert_eq!(texts(&narrow), ["> +a line lo"]);
@@ -459,11 +457,16 @@ fn a_drawn_fence_is_asked_for_again_at_every_room_it_is_laid_out_in() {
 fn a_page_printed_once_is_told_the_rows_the_record_lays_a_drawn_fence_out_as() {
     for answer in [Answer::Marked, Answer::NotHere, Answer::PastCap] {
         let drawers = holding(&Stub::answering(answer));
-        let block = block_of("```diff\n--- a/x.rs\n+++ b/x.rs\n@@ -1 +1 @@\n-old\n+new\n```\n");
+        let fence = "```diff\n--- a/x.rs\n+++ b/x.rs\n@@ -1 +1 @@\n-old\n+new\n```\n";
+        let (held, _) = blocks(fence);
+        assert_eq!(held.len(), 1, "{fence:?}");
+        let Some(block) = held.first() else {
+            panic!("{fence:?} was not held");
+        };
         for (room, glyphs) in [(ROOM, Glyphs::Unicode), (9, Glyphs::Ascii)] {
             let mut told = vec![Row::new()];
             tell(
-                &block,
+                block,
                 Room {
                     columns: room,
                     glyphs,
@@ -484,7 +487,7 @@ fn a_page_printed_once_is_told_the_rows_the_record_lays_a_drawn_fence_out_as() {
                 told.pop();
             }
 
-            let rows = lay(&block, room, glyphs, &Links::default(), &drawers);
+            let rows = lay(block, room, glyphs, &Links::default(), &drawers);
 
             assert!(!rows.is_empty());
             assert_eq!(seen(&told), seen(&rows), "{room} columns in {glyphs:?}");
@@ -611,9 +614,14 @@ fn what_a_reader_links_to_is_compared_by_its_forge_and_its_files_alone() {
     // by are handed beside the links, and two readers that link alike compare
     // alike whatever draws their fences.
     let drawers = holding(&Stub::answering(Answer::Marked));
-    let block = block_of("```diff\n+new\n```\n");
+    let fence = "```diff\n+new\n```\n";
+    let (held, _) = blocks(fence);
+    assert_eq!(held.len(), 1, "{fence:?}");
+    let Some(block) = held.first() else {
+        panic!("{fence:?} was not held");
+    };
     let before = counting.clone();
-    let rows = lay(&block, ROOM, Glyphs::Unicode, &counting, &drawers);
+    let rows = lay(block, ROOM, Glyphs::Unicode, &counting, &drawers);
     assert_eq!(texts(&rows), ["» +new"]);
     assert_eq!(counting, before);
 }

@@ -464,13 +464,14 @@ fn a_file_says_it_folds_exactly_when_its_box_counts_rows_it_hides() {
     }
 
     // A row that stands for the lines between two hunks is a row of the box:
-    // one short of the fold in lines, and past it with the gap.
+    // as many lines as the fold, and one row past it with the gap.
     let mut lines: Vec<(usize, Side, &str)> =
-        (1..FOLD).map(|at| (at, Side::Kept, "same")).collect();
+        (1..FOLD - 1).map(|at| (at, Side::Kept, "same")).collect();
     lines.push((900, Side::Kept, "far"));
     lines.push((901, Side::Kept, "far"));
+    assert_eq!(lines.len(), FOLD);
     let gapped = File::numbered(Some("x"), lines);
-    assert_eq!(gapped.lines().len(), FOLD + 2);
+    assert_eq!(gapped.lines().len(), FOLD + 1);
     assert!(gapped.folds());
     let narrow = texts(&drawn(&Change::new(vec![gapped]), 12, UNICODE));
     assert!(
