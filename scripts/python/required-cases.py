@@ -35,8 +35,9 @@ A case is rerun by exact name in the test binary the selection built, from its
 package's directory as cargo would run it, so the rerun is the code the suite
 ran and costs no build. Asking cargo for one package instead would resolve that
 package's features alone and build it again, different from what was tested.
-The binaries are rerun beside one another, no more at once than there are
-processors, as nextest runs tests, except that those holding a case of one of
+The binaries are rerun beside one another, no more binaries at once than there
+are processors, which stands in for nextest's one test per processor since each
+binary runs its own cases on threads of its own. Those holding a case of one of
 `.config/nextest.toml`'s test groups take turns.
 
     scripts/python/required-cases.py <artifacts> <doc-list> <doc-ignored-list> <selection>...
@@ -79,6 +80,17 @@ FILTER = re.compile(
 # The predicates a test group may be written with, in the order selector() is
 # given a test's fields, each with the matcher nextest uses when none is written.
 PREDICATES = {"package": "#", "binary": "#", "test": "~"}
+
+
+def processors():
+    """The processors this process may run on, as nextest counts them for its threads.
+
+    Where the system can say, that is the processors the process is allowed,
+    which a container or `taskset` can make fewer than the machine has.
+    """
+    if hasattr(os, "sched_getaffinity"):
+        return len(os.sched_getaffinity(0))
+    return os.cpu_count() or 1
 
 
 def slashed(path):
@@ -284,6 +296,8 @@ def self_test():
         ")",
         r"test(a\,b)",
         "package({pa,pb})",
+        "binary([^a]*)",
+        "test(/(/)",
     ):
         try:
             selector(expression)
@@ -297,7 +311,7 @@ def self_test():
         with open(path, "w", encoding="utf-8") as file:
             file.write(
                 "[test-groups]\nconfined = { max-threads = 1 }\n\n"
-                "[[profile.default.overrides]]\nfilter = 'package(a)'\ntest-group = 'confined'\n\n"
+                "[[profile.default.overrides]]\nfilter = 'package(a)'\nthreads-required = 1\ntest-group = 'confined'\n\n"
                 "[[profile.ci.overrides]]\nfilter = 'binary(b)'\ntest-group = 'confined'\n\n"
                 "[[profile.default.overrides]]\nfilter = 'package(z)'\nslow-timeout = '60s'\n\n"
                 "[[profile.default.overrides]]\nplatform = 'cfg(windows)'\ntest-group = 'serial'\n"
@@ -325,10 +339,14 @@ def self_test():
             print("    FAIL a test group no override fills read as grouping tests")
             return 1
         for written, said in (
-            ("[test-groups\n", "is not TOML"),
-            ("[[profile.default.overrides]]\nfilter = 'kind(lib)'\ntest-group = 'confined'\n", "teach selector()"),
+            (b"[test-groups\n", "is not TOML"),
+            (b"[test-groups]\nconfined = { max-threads = 1 } # \xff\n", "is not TOML"),
+            (b"[[profile.default.overrides]]\nfilter = 'kind(lib)'\ntest-group = 'confined'\n", "teach"),
+            (b"[[profile.default.overrides]]\nfilter = 5\ntest-group = 'confined'\n", "teach"),
+            (b"[[profile.default.overrides]]\nfilter = 'package(a)'\nthreads-required = 2\n", "teach"),
+            (b"[profile.ci]\ntest-threads = 4\n", "teach"),
         ):
-            with open(path, "w", encoding="utf-8") as file:
+            with open(path, "wb") as file:
                 file.write(written)
             printed = io.StringIO()
             with contextlib.redirect_stdout(printed):
@@ -350,7 +368,11 @@ def self_test():
         ):
             if any(picks(*test) for picks in real.values()) != expected:
                 verb = "missed" if expected else "also picked"
-                print(f"    FAIL the test groups of {NEXTEST} as read here {verb} {test}")
+                print(
+                    f"    FAIL the test groups of {NEXTEST} as read here {verb} {test}; either"
+                    " confining() misreads it, or it changed on purpose and these rows in"
+                    " self_test() should say what it now groups"
+                )
                 return 1
 
     jobs = schedule(
@@ -395,7 +417,7 @@ def self_test():
     asked = []
     overlaps = []
     # One processor runs no two reruns at once, so only more can show them meeting.
-    meeting = threading.Barrier(2, timeout=5) if (os.cpu_count() or 1) > 1 else None
+    meeting = threading.Barrier(2, timeout=5) if processors() > 1 else None
 
     def answered(binary, names):
         with guarded:
@@ -407,11 +429,11 @@ def self_test():
             if binary in ("c", "d") and meeting:
                 meeting.wait()
             else:
-                time.sleep(0.2)
+                time.sleep(0.02)
         finally:
             with guarded:
                 going.discard(binary)
-        return len(names) - (binary == "d")
+        return len(names) - (binary in ("b", "d"))
 
     run = {
         (package, kind, target): [(None, "one", None), (None, "two", None)]
@@ -442,8 +464,29 @@ def self_test():
         print(f"    FAIL the binary reruns asked {sorted(asked)}, not every binary but the examples")
         return 1
     lines = printed.getvalue().splitlines()
-    if failed != 1 or len(lines) != 1 or " in d test d " not in lines[0]:
-        print(f"    FAIL a rerun that did not all pass was reported as {lines}, exit {failed}")
+    if failed != 1 or len(lines) != 2:
+        print(f"    FAIL two reruns that did not all pass were reported as {lines}, exit {failed}")
+        return 1
+    if " in b lib b " not in lines[0] or " in d test d " not in lines[1]:
+        print(f"    FAIL the two reruns that did not all pass were not named in one order: {lines}")
+        return 1
+
+    now = [0, 0]
+
+    def counted(binary, names):
+        with guarded:
+            now[0] += 1
+            now[1] = max(now)
+        time.sleep(0.02)
+        with guarded:
+            now[0] -= 1
+        return len(names)
+
+    many = {(name, "lib", name): [(None, "one", None)] for name in "abcde"}
+    with contextlib.redirect_stdout(io.StringIO()):
+        rerun({key: key[2] for key in many}, many, {}, counted, width=lambda: 2)
+    if now[1] > 2:
+        print(f"    FAIL {now[1]} binary reruns went at once where two processors allow two")
         return 1
 
     with tempfile.TemporaryDirectory() as root:
@@ -603,6 +646,8 @@ def selector(expression):
     each with nextest's own matchers. Any other form is refused rather than
     guessed at, since a guess could let two binaries of one group run at once.
     """
+    if not isinstance(expression, str):
+        raise ValueError(f"the filter {expression!r} is not text")
     text = expression.strip()
     tokens = []
     at = 0
@@ -660,14 +705,18 @@ def selector(expression):
 def name_matcher(text, default):
     """nextest's `=` equal, `~` contains, `#` glob and `/regex/`, or the predicate's own.
 
-    nextest reads an escape in the first three and an alternation in a glob,
-    which fnmatch would take as they stand, so both are refused.
+    nextest reads an escape in the first three, and an alternation and a `[^`
+    negated class in a glob, which fnmatch would take as they stand, so all
+    three are refused, as is a regex Python cannot compile.
     """
     if len(text) > 1 and text.startswith("/") and text.endswith("/"):
-        pattern = re.compile(text[1:-1])
+        try:
+            pattern = re.compile(text[1:-1])
+        except re.error as error:
+            raise ValueError(f"cannot read {text!r} as a regex ({error})") from error
         return lambda value: pattern.search(value) is not None
     form, body = (text[0], text[1:]) if text[:1] in ("=", "~", "#") else (default, text)
-    if "\\" in body or (form == "#" and ("{" in body or "}" in body)):
+    if "\\" in body or (form == "#" and ("{" in body or "}" in body or "[^" in body)):
         raise ValueError(f"cannot read {text!r} as it stands")
     if form == "=":
         return lambda value: value == body
@@ -683,7 +732,9 @@ def confining(path):
     since a test that one profile or platform groups cannot be told apart here
     from one it does not, and an override naming only a platform groups every
     test. A checkout with no nextest configuration declares no groups, so
-    nothing takes turns.
+    nothing takes turns. A profile's `test-threads` and a test's
+    `threads-required` other than 1 change how many tests nextest runs at once
+    in a way no group says, so either is refused rather than read as nothing.
     """
     try:
         source = open(path, "rb")
@@ -692,8 +743,12 @@ def confining(path):
     with source:
         config = tomllib.load(source)
     picked = {}
-    for profile in config.get("profile", {}).values():
+    for name, profile in config.get("profile", {}).items():
+        if "test-threads" in profile:
+            raise ValueError(f"profile {name} sets test-threads")
         for override in profile.get("overrides", []):
+            if override.get("threads-required", 1) != 1:
+                raise ValueError(f"an override of profile {name} sets threads-required")
             if "test-group" in override:
                 picks = selector(override["filter"]) if "filter" in override else lambda *test: True
                 picked.setdefault(override["test-group"], []).append(picks)
@@ -707,12 +762,12 @@ def test_groups(path):
     """The test groups `confining()` reads there, or None once it has said why it cannot."""
     try:
         return confining(path)
-    except tomllib.TOMLDecodeError as error:
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as error:
         print(f"    FAIL {path} is not TOML ({error}); nextest cannot read it either, so mend the file")
     except ValueError as error:
         print(
             f"    FAIL {path} does not read as test groups here ({error});"
-            " teach selector() the form, so a group's reruns still take turns"
+            " teach confining() and selector() what it says, so reruns still take nextest's turns"
         )
     return None
 
@@ -742,15 +797,17 @@ def schedule(reruns, groups):
     return [keys for _, keys in jobs]
 
 
-def rerun(built, run, groups, ran=ran):
+def rerun(built, run, groups, ran=ran, width=processors):
     """Rerun every binary's required cases as `schedule()` allows, and say which did not all pass.
 
-    The reruns go no more at once than there are processors, as nextest runs
-    no more tests at once, and every line is printed in one order once all
-    have answered, so the output does not depend on which finished first.
+    No more binaries go at once than `width()` processors, which stands in for
+    nextest's one test per processor rather than matching it, since each binary
+    runs its own cases on threads of its own. Every line is printed in one
+    order once all have answered, so the output does not depend on which
+    finished first.
     """
     reruns = {key: [name for _, name, _ in cases] for key, cases in run.items() if key[1] != "doc"}
-    with ThreadPoolExecutor(max_workers=os.cpu_count() or 1) as pool:
+    with ThreadPoolExecutor(max_workers=width()) as pool:
         passed = dict(
             pair
             for job in pool.map(
