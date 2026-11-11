@@ -131,7 +131,9 @@ pub fn billing(conversation: &Conversation) -> api::Billing {
 /// Nothing, for a client that did not ask for [`Capability::Progress`]: this is
 /// the one place progress is handed to a client, so it is where that is held.
 /// Called by a consumer with no terminal — today the one the headless tests
-/// drive; the terminal draws a turn from the runner's events as they stand.
+/// drive. The terminal draws a turn from the runner's events as they stand,
+/// save what waits for an answer: on that report it asks here, as any client
+/// would, and draws its dock from what it is told.
 ///
 /// What waits for the person's answer is the one exception. It goes to a
 /// client that claimed [`Capability::Questions`], whether or not it asked for

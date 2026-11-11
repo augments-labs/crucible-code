@@ -39,8 +39,16 @@ fn pair() -> Batch {
     Batch::new(
         QuestionId::numbered(1),
         [
-            Question::new("Language", "Which language?", [Answer::new("Rust"), Answer::new("Python")]),
-            Question::new("Shell", "Which shell?", [Answer::new("bash"), Answer::new("zsh")]),
+            Question::new(
+                "Language",
+                "Which language?",
+                [Answer::new("Rust"), Answer::new("Python")],
+            ),
+            Question::new(
+                "Shell",
+                "Which shell?",
+                [Answer::new("bash"), Answer::new("zsh")],
+            ),
         ],
     )
 }
@@ -65,7 +73,9 @@ fn press(docking: &mut Docking, keys: &[Pressed]) -> Keyed {
 
 /// Types `text` a character at a time.
 fn typed(text: &str) -> Vec<Pressed> {
-    text.chars().map(|typed| Pressed::Key(Key::Char(typed))).collect()
+    text.chars()
+        .map(|typed| Pressed::Key(Key::Char(typed)))
+        .collect()
 }
 
 fn enter() -> Pressed {
@@ -75,7 +85,11 @@ fn enter() -> Pressed {
 /// What a submission asks for: the replies, where it asked for an answer.
 fn replies(keyed: Keyed) -> Vec<Replied> {
     match keyed {
-        Keyed::Submit(Command::Answer { era: asked, id, replies }) => {
+        Keyed::Submit(Command::Answer {
+            era: asked,
+            id,
+            replies,
+        }) => {
             assert_eq!(asked, era());
             assert_eq!(id, QuestionId::numbered(1));
             replies
@@ -142,7 +156,10 @@ fn escape_in_the_editor_leaves_the_editor_only_and_keeps_the_line() {
     let mut docking = opened(single(1));
     press(&mut docking, &[Pressed::Down, Pressed::Down, enter()]);
     press(&mut docking, &typed("Go"));
-    assert!(docking.rows(80, 40, Glyphs::default()).1.is_some(), "a caret while writing");
+    assert!(
+        docking.rows(80, 40, Glyphs::default()).1.is_some(),
+        "a caret while writing"
+    );
 
     assert_eq!(press(&mut docking, &[Pressed::Escape]), Keyed::Moved);
     assert!(docking.is_open() && docking.has_focus());
@@ -157,10 +174,17 @@ fn a_decline_asks_once_and_is_sent_alone_though_the_member_had_a_draft() {
     let mut docking = opened(single(1));
     press(&mut docking, &[Pressed::Key(Key::Char('n'))]);
     press(&mut docking, &typed("why"));
-    press(&mut docking, &[Pressed::Escape, Pressed::Down, Pressed::Down, Pressed::Down]);
+    press(
+        &mut docking,
+        &[Pressed::Escape, Pressed::Down, Pressed::Down, Pressed::Down],
+    );
 
     press(&mut docking, &[enter()]);
-    assert_eq!(docking.dock.phase, Phase::Answering, "asked to confirm first");
+    assert_eq!(
+        docking.dock.phase,
+        Phase::Answering,
+        "asked to confirm first"
+    );
     press(&mut docking, &[enter()]);
     assert_eq!(docking.dock.phase, Phase::Reviewing);
 
@@ -169,18 +193,49 @@ fn a_decline_asks_once_and_is_sent_alone_though_the_member_had_a_draft() {
 }
 
 #[test]
+fn a_decline_asks_its_second_press_in_a_room_too_short_for_the_row_of_keys() {
+    let mut docking = opened(single(1));
+    press(&mut docking, &[Pressed::Down, Pressed::Down, Pressed::Down]);
+    press(&mut docking, &[enter()]);
+    let whole = docking.rows(80, 40, Glyphs::default()).0.len();
+
+    let (rows, _) = docking.rows(80, whole - 1, Glyphs::default());
+    let drawn: Vec<String> = rows.iter().map(Row::text).collect();
+    assert!(rows.len() < whole, "{drawn:#?}");
+    assert!(
+        drawn.iter().any(|row| row.contains(CONFIRMING)),
+        "the second press is asked for\n{drawn:#?}"
+    );
+}
+
+#[test]
 fn undoing_a_decline_before_submitting_restores_the_draft() {
     let mut docking = opened(single(1));
     press(&mut docking, &[enter()]);
     // Keep editing, then decline.
     press(&mut docking, &[Pressed::Down, enter()]);
-    press(&mut docking, &[Pressed::Down, Pressed::Down, Pressed::Down, enter(), enter()]);
+    press(
+        &mut docking,
+        &[
+            Pressed::Down,
+            Pressed::Down,
+            Pressed::Down,
+            enter(),
+            enter(),
+        ],
+    );
     assert_eq!(docking.dock.phase, Phase::Reviewing);
 
     // Keep editing again, and undo it on the row that declined it.
     press(&mut docking, &[Pressed::Down, enter()]);
-    press(&mut docking, &[Pressed::Down, Pressed::Down, Pressed::Down, enter()]);
-    press(&mut docking, &[Pressed::Up, Pressed::Up, Pressed::Up, enter()]);
+    press(
+        &mut docking,
+        &[Pressed::Down, Pressed::Down, Pressed::Down, enter()],
+    );
+    press(
+        &mut docking,
+        &[Pressed::Up, Pressed::Up, Pressed::Up, enter()],
+    );
 
     let sent = replies(press(&mut docking, &[enter()]));
     assert_eq!(sent, vec![answered(&["Rust"], "")]);
@@ -218,9 +273,18 @@ fn a_refused_submission_keeps_the_draft_and_offers_a_retry() {
     press(&mut docking, &[enter()]);
     let _ = replies(press(&mut docking, &[enter()]));
 
-    docking.answered(QuestionId::numbered(1), Err("the questions moved on".to_owned()));
-    assert_eq!(docking.dock.phase, Phase::Refused("the questions moved on".to_owned()));
-    assert_eq!(docking.dock.marked_action(), Some(crucible_tui::Action::Retry));
+    docking.answered(
+        QuestionId::numbered(1),
+        Err("the questions moved on".to_owned()),
+    );
+    assert_eq!(
+        docking.dock.phase,
+        Phase::Refused("the questions moved on".to_owned())
+    );
+    assert_eq!(
+        docking.dock.marked_action(),
+        Some(crucible_tui::Action::Retry)
+    );
 
     let sent = replies(press(&mut docking, &[enter()]));
     assert_eq!(sent, vec![answered(&["Rust"], "")]);
@@ -247,7 +311,11 @@ fn a_listing_keeps_the_draft_of_a_batch_with_the_same_era_and_id() {
     press(&mut docking, &[enter()]);
     docking.waiting(era(), &[single(1), single(2)]);
 
-    assert_eq!(docking.dock.phase, Phase::Reviewing, "progress moved nothing");
+    assert_eq!(
+        docking.dock.phase,
+        Phase::Reviewing,
+        "progress moved nothing"
+    );
     let sent = replies(press(&mut docking, &[enter()]));
     assert_eq!(sent, vec![answered(&["Rust"], "")]);
 }
@@ -262,7 +330,10 @@ fn a_listing_of_another_era_drops_every_draft() {
     assert_eq!(docking.toggled(), Toggled::Opened);
     assert_eq!(docking.dock.phase, Phase::Answering);
     assert!(!docking.dock.batches.iter().any(|batch| {
-        batch.members.iter().any(|member| member.draft.chosen.takes(0))
+        batch
+            .members
+            .iter()
+            .any(|member| member.draft.chosen.takes(0))
     }));
 }
 
@@ -300,7 +371,11 @@ fn tab_reaches_the_composer_and_back_with_the_draft_intact() {
 #[test]
 fn the_keys_that_are_not_the_docks_pass_through() {
     let mut docking = opened(single(1));
-    for passed in [Pressed::Key(Key::Interrupt), Pressed::Resized, Pressed::Expand] {
+    for passed in [
+        Pressed::Key(Key::Interrupt),
+        Pressed::Resized,
+        Pressed::Expand,
+    ] {
         assert_eq!(docking.key(&passed), Keyed::Passed, "{passed:?}");
     }
 }
@@ -317,7 +392,10 @@ fn page_keys_scroll_a_note_taller_than_the_window_and_come_back() {
     let down = docking.rows(30, 14, Glyphs::default()).0;
     assert_ne!(top, down, "the window moved");
 
-    press(&mut docking, &[Pressed::PageUp, Pressed::PageUp, Pressed::PageUp]);
+    press(
+        &mut docking,
+        &[Pressed::PageUp, Pressed::PageUp, Pressed::PageUp],
+    );
     assert_eq!(docking.rows(30, 14, Glyphs::default()).0, top);
 }
 

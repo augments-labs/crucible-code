@@ -13,14 +13,14 @@ expression: window.picture()
 |  /login           sign in to a provider account                                |
 |  /logout          remove a stored account or API key                           |
 |  /catalog         browse and add coding agents from the ACP Registry           |
+|  /questions       open or close the questions waiting for you                  |
 |  /mode            ask · allowEdits · fullAccess                                |
 |  /sandbox         sandbox disabled (enter to configure)                        |
 |  /theme           pick the colours crucible draws with                         |
 |  /settings        settings, and what is in force                               |
 |  /resume          pick up an earlier session here                              |
 |  /cache           inspect or clean prompt-cache state                          |
-|  /compact         replace what is behind you with notes on it                  |
-|  ↓ 2 more                                                                      |
+|  ↓ 3 more                                                                      |
 |                                                                                |
 |                                                                                |
 |╭──────────────────────────────────────────────────────────────────────────────╮|

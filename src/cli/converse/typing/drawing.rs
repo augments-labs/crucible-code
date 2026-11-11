@@ -15,6 +15,7 @@ use crucible_tui::{
 use crate::cli::Fatal;
 use crate::cli::style::Style;
 
+use crate::cli::converse::docking::Docking;
 use crate::cli::converse::planning::Planning;
 use crate::cli::converse::queueing::{self, Prompts};
 
@@ -22,7 +23,7 @@ use super::{Opened, Says, command};
 
 /// What is drawn around the box between turns.
 ///
-/// Four facts in one value because a call taking them all beside the renderer,
+/// Six facts in one value because a call taking them all beside the renderer,
 /// the editor and the style is a call nobody can read — which is what the
 /// argument ceiling is there to stop.
 #[derive(Clone, Copy)]
@@ -39,9 +40,11 @@ pub(in crate::cli::converse) struct Around<'a> {
     /// The lines waiting behind the box, which only a used-up plan leaves
     /// there between turns.
     pub(super) queued: &'a Prompts,
+    /// The questions the model asked without waiting, docked over the box.
+    pub(super) docking: &'a Docking,
 }
 
-/// The four of them at one call.
+/// The six of them at one call.
 ///
 /// A function rather than a literal at each place that draws: the names are
 /// worth writing once, and the call that draws the box is worth keeping on one
@@ -52,6 +55,7 @@ pub(in crate::cli::converse) fn around<'a>(
     says: &'a Says,
     history: Recalled,
     queued: &'a Prompts,
+    docking: &'a Docking,
 ) -> Around<'a> {
     Around {
         planning,
@@ -59,6 +63,7 @@ pub(in crate::cli::converse) fn around<'a>(
         says,
         history,
         queued,
+        docking,
     }
 }
 
@@ -73,9 +78,11 @@ pub(in crate::cli::converse) fn around<'a>(
 /// so the transcript is what gives way to it rather than the box being pushed
 /// off the screen. How much of the window the two may take together is the
 /// renderer's to say ([`Renderer::room`]): the whole of it on the full screen,
-/// half in native mode, where a transcript row given up is gone for good. Both
-/// bands reach the renderer together so the prompt, status and map control
-/// come from one frame.
+/// half in native mode, where a transcript row given up is gone for good. The
+/// open dock is the one exception, through [`reach`]: it is a question being
+/// answered, so it may take the window in native mode as a question asked
+/// before the turn goes on does. Both bands reach the renderer together so the
+/// prompt, status and map control come from one frame.
 pub(in crate::cli::converse) fn draw<T: Terminal>(
     renderer: &mut Renderer<T>,
     editor: &Editor,
@@ -92,7 +99,8 @@ pub(in crate::cli::converse) fn draw<T: Terminal>(
     // the box have taken theirs, of what the renderer lets stand under the
     // transcript at all.
     let room = renderer.room().saturating_sub(boxed.rows.len() + 1);
-    let over = over(around, renderer.columns(), room, style);
+    let reach = reach(renderer, around.docking);
+    let over = over(around, renderer.columns(), room, reach, style);
 
     let pointed = boxed.pointed.as_ref().map(|(at, row)| (*at, row));
     let prompt = replacement(&boxed.rows, boxed.caret, pointed)?;
@@ -110,6 +118,11 @@ pub(in crate::cli::converse) fn draw<T: Terminal>(
 /// reader is looking at, and shrinking it to keep a card that has already been
 /// read is the wrong way round.
 ///
+/// The dock of questions asked without waiting is measured next, and stands
+/// over the list, under the plan: it is about the box rather than the turn,
+/// and it is one row until somebody opens it. Open, it is what the reader is
+/// answering, so the plan gives way to it rather than the other way round.
+///
 /// The lines a used-up plan held are measured last, in the panel a running
 /// turn stands them in, as they are measured there: what the window cannot fit
 /// of it gives way before the plan or the list does. It stands where it stands
@@ -117,7 +130,13 @@ pub(in crate::cli::converse) fn draw<T: Terminal>(
 /// keep the rule off what is above it. With nothing under it, it closes with a
 /// blank row of its own, which keeps the box off it in place of the one owed
 /// below.
-pub(super) fn over(around: Around<'_>, columns: usize, room: usize, style: Style) -> Vec<Row> {
+pub(super) fn over(
+    around: Around<'_>,
+    columns: usize,
+    room: usize,
+    reach: usize,
+    style: Style,
+) -> Vec<Row> {
     let mut listed = around.open.rows(columns, room, style.glyphs());
     let opened = !listed.is_empty();
 
@@ -127,31 +146,82 @@ pub(super) fn over(around: Around<'_>, columns: usize, room: usize, style: Style
     // an answer reads as part of it.
     let blank = usize::from(!opened);
 
+    let mut docked = docked(
+        around.docking,
+        columns,
+        (room + reach).saturating_sub(listed.len() + blank),
+        style,
+    );
+
     let mut planned = around.planning.rows(
         columns,
-        room.saturating_sub(listed.len() + blank),
+        room.saturating_sub(listed.len() + docked.len() + blank),
         style.glyphs(),
     );
 
     // The blank over the panel's rule, and the one the box is owed under a
     // plan, which the panel's own closing row stands in for only when it is
     // the last thing over the box.
-    let owed = usize::from(!opened && !planned.is_empty());
-    let left = room.saturating_sub(listed.len() + planned.len() + 1 + owed);
+    let owed = usize::from(!opened && !(planned.is_empty() && docked.is_empty()));
+    let left = room.saturating_sub(listed.len() + docked.len() + planned.len() + 1 + owed);
     let panel = queueing::panel(around.queued, columns, left, style);
 
-    let mut over = Vec::with_capacity(1 + panel.len() + planned.len() + blank + listed.len());
+    let mut over =
+        Vec::with_capacity(1 + panel.len() + planned.len() + docked.len() + blank + listed.len());
     let paneled = !panel.is_empty();
     if paneled {
         over.push(Row::new());
         over.extend(panel);
     }
-    let planning = !planned.is_empty();
+    let planning = !planned.is_empty() || !docked.is_empty();
     over.append(&mut planned);
+    over.append(&mut docked);
     if !opened && (!paneled || planning) {
         over.push(Row::new());
     }
     over.append(&mut listed);
+    over
+}
+
+/// How many rows past [`Renderer::room`] the dock may stand in: its closed
+/// row and the blank over it while it is closed, and the rest of the window
+/// while it is open, never more than the window holds past the share, which is
+/// nothing on the full screen and the half the share keeps for the transcript
+/// in native mode. A closed row the share cannot hold under a running turn
+/// would leave a question waiting with nothing on screen to say so. A dock
+/// opened is a question somebody is answering, and one the share cannot hold
+/// would otherwise fall back to its closed row, which says nothing of what was
+/// asked; the rows it pushes off the top stay in the scrollback, as a blocking
+/// question's do.
+pub(in crate::cli::converse) fn reach<T: Terminal>(
+    renderer: &Renderer<T>,
+    docking: &Docking,
+) -> usize {
+    /// The closed row and the blank that keeps it off what is above it.
+    const CLOSED: usize = 2;
+    let past = renderer.rows().saturating_sub(renderer.room());
+    if docking.is_open() {
+        past
+    } else {
+        past.min(CLOSED)
+    }
+}
+
+/// The dock in at most `room` rows, with a blank above it to keep it off the
+/// transcript or the plan; nothing where nothing waits or it has no room.
+pub(in crate::cli::converse) fn docked(
+    docking: &Docking,
+    columns: usize,
+    room: usize,
+    style: Style,
+) -> Vec<Row> {
+    let (rows, _) = docking.rows(columns, room.saturating_sub(1), style.glyphs());
+    if rows.is_empty() {
+        return rows;
+    }
+    let mut over = Vec::with_capacity(rows.len() + 1);
+    over.push(Row::new());
+    over.extend(rows);
     over
 }
 

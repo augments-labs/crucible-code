@@ -54,6 +54,7 @@ mod logout;
 mod model;
 pub(crate) mod notes;
 mod notes_list;
+pub(super) mod questions;
 mod resume;
 mod sandbox;
 mod settings;
@@ -89,6 +90,9 @@ pub(super) enum Command {
     Logout,
     /// The coding agents the agent catalog offers, searched, and one added.
     Agents,
+    /// The questions the model asked without waiting, in the dock above the
+    /// box: opened, or closed with every draft kept.
+    Questions,
     /// The permission mode: the one in force, or the one named.
     Mode,
     /// Inspect and configure operating-system confinement.
@@ -114,7 +118,7 @@ pub(super) enum Command {
 /// The ones that only say something first and the one that ends the session
 /// last. A list is read to find what you did not know to look for, and nobody
 /// is looking up how to leave.
-const EVERY: [Command; 19] = [
+const EVERY: [Command; 20] = [
     Command::Help,
     Command::ReleaseNotes,
     Command::Context,
@@ -125,6 +129,7 @@ const EVERY: [Command; 19] = [
     Command::Login,
     Command::Logout,
     Command::Agents,
+    Command::Questions,
     Command::Mode,
     Command::Sandbox,
     Command::Theme,
@@ -304,6 +309,7 @@ impl Command {
             Self::Login => "/login",
             Self::Logout => "/logout",
             Self::Agents => "/catalog",
+            Self::Questions => "/questions",
             Self::Mode => "/mode",
             Self::Sandbox => "/sandbox",
             Self::Theme => "/theme",
@@ -332,6 +338,7 @@ impl Command {
             Self::Login => "sign in to a provider account",
             Self::Logout => "remove a stored account or API key",
             Self::Agents => "browse and add coding agents from the ACP Registry",
+            Self::Questions => "open or close the questions waiting for you",
             // The ring itself rather than a sentence about it. `/mode` is the
             // one command that takes a word after it, and the words it takes
             // are the useful half of what there is to say.
@@ -376,6 +383,9 @@ impl Command {
             Self::Help | Self::Theme | Self::Settings | Self::Context | Self::Usage => {
                 MidTurn::Live
             }
+            // The dock is drawn over the box whether or not a turn runs, and
+            // an answer settled now is delivered by the turn running.
+            Self::Questions => MidTurn::Live,
             Self::Sandbox => {
                 MidTurn::Refused("changes the policy for new commands; open it between turns")
             }
@@ -1003,6 +1013,11 @@ fn answer<T: Terminal>(
             command: Command::Clear,
             ..
         } => clear::run(renderer, conversation, held, terms)?,
+
+        Wanted::Known {
+            command: Command::Questions,
+            ..
+        } => questions::run(renderer, &mut held.docking)?,
 
         Wanted::Unknown(word) => {
             for row in refusal(&terms.commands.snapshot(), word) {

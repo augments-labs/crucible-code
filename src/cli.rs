@@ -1370,8 +1370,10 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // the same generation. A registration committed after this point is for the
     // next reader to see, not for a runner already built.
     let catalogue = terms.providers.snapshot();
+    // The model's questions asked without waiting are held here for the
+    // dock over the box, which reads them back through the conversation.
     let conversation = assemble(&Startup {
-        questions: None,
+        questions: Some(crucible_app::client::Questions::new()),
         services,
         leaving,
         providers: &catalogue,

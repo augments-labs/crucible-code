@@ -240,9 +240,12 @@ pub(super) fn held<T: Terminal>(
                 Ok(()) => continue,
                 Err(said) => said,
             },
-            // Room to be made has no message to give back.
-            Answer::Back if matches!(work, Work::Room(_)) => UNSENT.to_owned(),
-            Answer::Cramped if matches!(work, Work::Room(_)) => CRAMPED_ROOM.to_owned(),
+            // Room to be made has no message to give back, and the dock's
+            // answers stay in the dock.
+            Answer::Back if matches!(work, Work::Room(_) | Work::Answer(_)) => UNSENT.to_owned(),
+            Answer::Cramped if matches!(work, Work::Room(_) | Work::Answer(_)) => {
+                CRAMPED_ROOM.to_owned()
+            }
             Answer::Back => KEPT.to_owned(),
             Answer::Cramped => CRAMPED_SEND.to_owned(),
         };
@@ -269,7 +272,8 @@ pub(super) fn unanswered(warned: &Warned) -> Box<str> {
 /// The warned route `work` would go on with no yes: the one a send to the
 /// conversation's provider is held by, or on an installed agent's route, the
 /// agent's own where the turn would start it. Room is not made on an agent's
-/// route, so nothing is started for it. Both are read from the yes the
+/// route, so nothing is started for it; an answer there is refused before it
+/// is sent, and is asked about as a turn would be all the same. Both are read from the yes the
 /// question writes to, so a route answered here is not asked again.
 fn unsent(conversation: &Conversation, terms: &Terms, work: &Work) -> Option<Warned> {
     match conversation.serving() {
@@ -277,7 +281,7 @@ fn unsent(conversation: &Conversation, terms: &Terms, work: &Work) -> Option<War
             .consent
             .unanswered(provider, conversation.settled().model()),
         None => match work {
-            Work::Turn(..) => terms.consent.asks(&conversation.launching()?),
+            Work::Turn(..) | Work::Answer(_) => terms.consent.asks(&conversation.launching()?),
             Work::Room(_) => None,
         },
     }

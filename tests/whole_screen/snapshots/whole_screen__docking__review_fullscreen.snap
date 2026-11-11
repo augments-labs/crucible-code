@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/docking.rs
+expression: still(&window)
+---
+80x24 cursor 21,4 scrolled 0
+|  ⎿ Asked as q0, without waiting. The answer will come late… (ctrl+o to expand)│|
+|                                                                               │|
+|Asked.                                                                         │|
+|                                                                               │|
+|* running (#s · ↓ 4 · esc to interrupt)                                        ●|
+|                                                                               ┃|
+|                                                                                |
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│  • Review before you submit                                                  │|
+|│                                                                              │|
+|│  ✓ Language                                                                  │|
+|│    Rust                                                                      │|
+|│                                                                              │|
+|│  ──────────────────────────────────────────────────────────────────────────  │|
+|│  › Submit batch                                                              │|
+|│    Keep editing                                                              │|
+|│    Close                                                                     │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|  enter select · tab composer · esc close                                       |
+|                                                                 99% window left|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|

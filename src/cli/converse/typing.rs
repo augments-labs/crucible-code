@@ -54,6 +54,7 @@ use crate::cli::standing;
 use crate::cli::style::Style;
 
 use super::command;
+use super::docking::{Docking, Keyed};
 use super::expanding::{self, Standing};
 use super::leaving::Leaving;
 use super::mode::tone;
@@ -155,6 +156,10 @@ pub(super) enum Asked {
     /// Nothing comes out of the box for it. Nobody typed this, so the half-
     /// written line somebody left there is still there afterwards.
     Woke(String),
+    /// `Submit batch` in the dock: the answers to the questions the model
+    /// asked without waiting, to be sent as the turn that delivers them.
+    /// Nothing comes out of the box for it either.
+    Answer(Command),
 }
 
 /// A finished line and the local-command provenance established while typing.
@@ -376,6 +381,9 @@ pub(crate) struct Between<'a> {
     /// turn. Empty at every other prompt: the loop above runs the queue as the
     /// next turn before it asks for a line.
     pub(crate) queued: &'a mut Prompts,
+    /// The questions the model asked without waiting, docked over the box,
+    /// which `Tab` hands the keys to while it is open.
+    pub(crate) docking: &'a mut Docking,
     /// Whether there is a keyboard to read. A session with a terminal at only
     /// one end reads whole lines instead, and the caller is what does that.
     pub(crate) keys: bool,
@@ -498,6 +506,7 @@ pub(crate) fn ask<T: Terminal>(
         left,
         aside,
         queued,
+        docking,
         keys,
     } = between;
 
@@ -543,7 +552,7 @@ pub(crate) fn ask<T: Terminal>(
         renderer,
         editor,
         style,
-        around(planning, &open, &says, recalling.place(), queued),
+        around(planning, &open, &says, recalling.place(), queued, docking),
     )?;
 
     let mut following = None;
@@ -570,7 +579,7 @@ pub(crate) fn ask<T: Terminal>(
                     renderer,
                     editor,
                     style,
-                    around(planning, &open, &says, recalling.place(), queued),
+                    around(planning, &open, &says, recalling.place(), queued, docking),
                 )?;
                 continue;
             };
@@ -594,6 +603,25 @@ pub(crate) fn ask<T: Terminal>(
             Pressed::SendAll => Pressed::Key(Key::Enter),
             arrived => arrived,
         };
+
+        // The dock has the keys while it has the focus, and hands back the
+        // ones it has no use for: a resize, the transcript's keys, a click.
+        if docking.has_focus() {
+            match docking.key(&arrived) {
+                Keyed::Passed => {}
+                Keyed::Still => continue,
+                Keyed::Moved | Keyed::Composer | Keyed::Closed => {
+                    draw(
+                        renderer,
+                        editor,
+                        style,
+                        around(planning, &open, &says, recalling.place(), queued, docking),
+                    )?;
+                    continue;
+                }
+                Keyed::Submit(command) => return Ok(Asked::Answer(command)),
+            }
+        }
 
         // Whether this key left the box looking like anything other than what
         // is already on screen. Answered by every arm and drawn on once, below:
@@ -673,6 +701,10 @@ pub(crate) fn ask<T: Terminal>(
             // open, nothing is standing and the key is one of the rest below.
             Pressed::Escape => open.close() || offered.is_some(),
 
+            // The key that crosses to the dock, where one is open; with none
+            // open there is nothing to cross to.
+            Pressed::Tab => docking.focused() || offered.is_some(),
+
             // Nothing is standing, so there is nothing to back out of and
             // nothing to explain — except the offer above, which is on screen
             // and has just been taken back. Ctrl+E and Ctrl+X among them, where
@@ -688,7 +720,6 @@ pub(crate) fn ask<T: Terminal>(
             // arrives as Return.
             Pressed::Explain
             | Pressed::Remove
-            | Pressed::Tab
             | Pressed::Rename
             | Pressed::All
             | Pressed::SendAll
@@ -815,7 +846,7 @@ pub(crate) fn ask<T: Terminal>(
                 renderer,
                 editor,
                 style,
-                around(planning, &open, &says, recalling.place(), queued),
+                around(planning, &open, &says, recalling.place(), queued, docking),
             )?;
         }
     }
@@ -976,6 +1007,18 @@ fn working<T: Terminal>(
     let left = room.saturating_sub(turn.len() + over.len());
     let listed = footing.opened_list.rows(columns, left, style.glyphs());
 
+    // The dock of questions asked without waiting stands over the list, at
+    // the window's width, in what the turn's rows and the list leave it: the
+    // turn is what is being watched until somebody opens the dock, and the
+    // closed dock is one row. Open, it may reach past the share, as it does at
+    // the prompt.
+    let docked = drawing::docked(
+        footing.docking,
+        columns,
+        (left + drawing::reach(renderer, footing.docking)).saturating_sub(listed.len()),
+        style,
+    );
+
     // A queue the share had no room to name stands taller, at the least the
     // panel can be drawn in, as any panel the share cannot hold does: it is the
     // only sign a line typed under the turn was kept. The rows over the box
@@ -992,6 +1035,7 @@ fn working<T: Terminal>(
             (turn, over) = stood;
         }
     }
+    over.extend(docked);
     over.extend(listed);
 
     Footed {
@@ -1051,6 +1095,8 @@ pub(super) struct Footing<'a> {
     /// mid-turn as it is between turns: the box is the same box, and a line
     /// being written under a running turn is written the same way.
     pub(super) history: Recalled,
+    /// The questions the model asked without waiting, docked over the box.
+    pub(super) docking: &'a Docking,
 }
 
 /// What the row under a running turn says.
@@ -1114,6 +1160,7 @@ pub(super) fn during<T: Terminal>(
         steer,
         terms,
         leaving,
+        docking,
     } = during;
     let commands = terms.commands.snapshot();
     let mut moved = false;
@@ -1182,10 +1229,34 @@ pub(super) fn during<T: Terminal>(
             continue;
         }
 
+        // And the dock, while it has the focus: its keys are its own, Esc
+        // closes it rather than stopping the turn, and what it has no use for
+        // is read below as it would be with the composer focused.
+        if docking.has_focus() {
+            match docking.key(&arrived) {
+                Keyed::Passed => {}
+                Keyed::Still => continue,
+                Keyed::Moved | Keyed::Composer | Keyed::Closed => {
+                    turning.redraw();
+                    moved = true;
+                    continue;
+                }
+                Keyed::Submit(command) => return Ok(Meanwhile::Answer(command)),
+            }
+        }
+
         // And the command list, which stands over the turn as they do and so
         // takes Esc before the turn sees it. It shares the rest of the keyboard
         // with the line, so only that key is read here.
         if arrived == Pressed::Escape && opened_list.close() {
+            moved = true;
+            continue;
+        }
+
+        // `Tab` crosses to the dock where one is open; anywhere else it is
+        // read below, where it means nothing while a turn runs.
+        if arrived == Pressed::Tab && docking.focused() {
+            turning.redraw();
             moved = true;
             continue;
         }
@@ -1524,6 +1595,7 @@ pub(super) fn during<T: Terminal>(
             opened_list,
             queued,
             history: recalling.place(),
+            docking,
         };
         match notice {
             Some(notice) => stand(renderer, editor, footing, &says.noticing(notice), style)?,
@@ -1618,6 +1690,10 @@ pub(super) enum Meanwhile {
     /// acted on here: the worker still holds the runner, and the session's log
     /// is finished by a thread its `Drop` waits for.
     Leaving,
+    /// `Submit batch` in the dock. The turn's own loop sends it, through the
+    /// door that settles questions while a turn has the conversation; the
+    /// running turn delivers what settles.
+    Answer(Command),
 }
 
 /// Everything one Ctrl+V during a turn reads or may change.
@@ -1964,6 +2040,9 @@ pub(super) struct During<'a> {
     /// is answered on a later one, and a clock that started again each time
     /// would be an offer nothing could ever take.
     pub(super) leaving: &'a mut Option<Instant>,
+    /// The questions the model asked without waiting, docked over the box.
+    /// The keys are the dock's while it has the focus; the turn goes on.
+    pub(super) docking: &'a mut Docking,
 }
 
 /// Puts the box under the turn, with the cursor in it.

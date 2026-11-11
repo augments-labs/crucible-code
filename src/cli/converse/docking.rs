@@ -24,12 +24,13 @@
 //! [`Editor`], which holds what the box holds and no more, and a line longer
 //! than a reply may carry is refused when it is sent, with the draft kept.
 
+use std::cell::Cell;
 use std::collections::BTreeSet;
 
 use crucible_client_api::{Command, Era, Picked, Refusal, Replied, Said};
 use crucible_tui::{
     Action, Batched, Caret, Chosen, Dock, Docked, Drafted, Editing, Editor, Focus, Glyphs, Key,
-    Member, Offer, Phase, Pressed, Row, Scrolled, Typed,
+    Member, Offer, Phase, Pressed, Row, Scrolled, Slot, Typed,
 };
 use crucible_types::{Batch, QuestionId};
 
@@ -68,7 +69,7 @@ pub(super) struct Docking {
     confirming: bool,
     /// The width, room and glyphs the dock was last drawn in, which a page
     /// key and a moved mark are measured against.
-    laid: Option<(usize, usize, Glyphs)>,
+    laid: Cell<Option<(usize, usize, Glyphs)>>,
 }
 
 impl Default for Docking {
@@ -86,7 +87,7 @@ impl Default for Docking {
             focus: false,
             editor: Editor::new(),
             confirming: false,
-            laid: None,
+            laid: Cell::new(None),
         }
     }
 }
@@ -129,20 +130,16 @@ impl Docking {
         let mut before = std::mem::take(&mut self.dock.batches);
         self.dock.batches = batches
             .iter()
-            .map(|batch| {
-                match before.iter().position(|kept| kept.key == batch.id()) {
+            .map(
+                |batch| match before.iter().position(|kept| kept.key == batch.id()) {
                     Some(at) => before.swap_remove(at),
                     None => batched(batch),
-                }
-            })
+                },
+            )
             .collect();
 
-        let still = front.and_then(|key| {
-            self.dock
-                .batches
-                .iter()
-                .position(|batch| batch.key == key)
-        });
+        let still =
+            front.and_then(|key| self.dock.batches.iter().position(|batch| batch.key == key));
         match still {
             Some(at) => self.dock.current = at,
             // The batch in front is gone, settled or dropped: what is in
@@ -241,20 +238,36 @@ impl Docking {
     }
 
     /// The dock in `room` rows of `columns`, and the caret of a line being
-    /// written in it.
+    /// written in it. The size is kept for the page keys, which is why a
+    /// shared borrow can draw it: the frame that stands the dock holds the
+    /// rest of the session lent too.
     pub(super) fn rows(
-        &mut self,
+        &self,
         columns: usize,
         room: usize,
         glyphs: Glyphs,
     ) -> (Vec<Row>, Option<Caret>) {
-        self.laid = Some((columns, room, glyphs));
-        let footer = self.footer();
-        Docked {
+        // The second press a decline waits for is asked in a row of its own,
+        // under the dock, which gives up its row of keys first when room is
+        // short: asked there, a decline in a short window would look like a
+        // key that did nothing.
+        let asking = usize::from(self.confirming);
+        let room = room.saturating_sub(asking);
+        self.laid.set(Some((columns, room, glyphs)));
+        let (mut rows, caret) = Docked {
             dock: &self.dock,
-            footer,
+            footer: self.footer(),
         }
-        .within(columns, room, glyphs)
+        .within(columns, room, glyphs);
+        if self.confirming && !rows.is_empty() {
+            rows.push(
+                Row::new()
+                    .then(Slot::Plain, "  ")
+                    .then(Slot::Quiet, CONFIRMING)
+                    .clipped(columns),
+            );
+        }
+        (rows, caret)
     }
 
     /// The quiet row under the open dock, naming the keys that work now.
@@ -265,11 +278,16 @@ impl Docking {
         if self.dock.focus.editing.is_some() {
             return WRITING;
         }
+        // Asked under the dock instead, by [`Docking::rows`].
         if self.confirming {
-            return CONFIRMING;
+            return "";
         }
         match self.dock.phase {
-            Phase::Answering if self.member().is_some_and(|member| member.draft.chosen.several()) => {
+            Phase::Answering
+                if self
+                    .member()
+                    .is_some_and(|member| member.draft.chosen.several()) =>
+            {
                 CHOOSING_SEVERAL
             }
             Phase::Answering => CHOOSING,
@@ -349,7 +367,10 @@ impl Docking {
         };
         let (writes, declines) = (member.writes_at(), member.declines_at());
         let several = member.draft.chosen.several();
-        let members = self.dock.front().map_or(0, |(_, batch)| batch.members.len());
+        let members = self
+            .dock
+            .front()
+            .map_or(0, |(_, batch)| batch.members.len());
         let marked = self.dock.focus.marked.min(declines);
 
         match pressed {
@@ -381,7 +402,10 @@ impl Docking {
                 Keyed::Moved
             }
             Pressed::Key(Key::Enter) if marked == writes => {
-                if self.member().is_some_and(|member| member.draft.written.is_empty()) {
+                if self
+                    .member()
+                    .is_some_and(|member| member.draft.written.is_empty())
+                {
                     return self.write(Editing::Written { column: 0 });
                 }
                 if let Some(member) = self.member_mut() {
@@ -507,7 +531,10 @@ impl Docking {
 
     /// On to the next question, or to the review after the last.
     fn next(&mut self) {
-        let members = self.dock.front().map_or(0, |(_, batch)| batch.members.len());
+        let members = self
+            .dock
+            .front()
+            .map_or(0, |(_, batch)| batch.members.len());
         let at = self.dock.open().map_or(0, |(at, _)| at);
         if at + 1 < members {
             self.dock.focus = Focus {
@@ -524,7 +551,7 @@ impl Docking {
     /// The window a page further up or down, from where it opens now and no
     /// further than it may go at this size.
     fn page(&mut self, down: bool) -> Keyed {
-        let Some((columns, room, glyphs)) = self.laid else {
+        let Some((columns, room, glyphs)) = self.laid.get() else {
             return Keyed::Still;
         };
         let docked = Docked {
@@ -548,7 +575,7 @@ impl Docking {
     /// Holds the window where it opens now, after the mark or the cursor
     /// moved, so a page key moves on from what is on screen.
     fn anchor(&mut self) {
-        let Some((columns, room, glyphs)) = self.laid else {
+        let Some((columns, room, glyphs)) = self.laid.get() else {
             return;
         };
         let at = Docked {

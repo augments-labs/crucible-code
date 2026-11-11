@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/docking.rs
+expression: still(&window)
+---
+80x24 cursor 23,0 scrolled 0
+|│ Tips                                                                        ││|
+|│                                                                             ││|
+|│ · /          opens the command list                                         ││|
+|│ · \ enter    adds a line without sending                                    ││|
+|│ · shift+tab  steps the permission mode                                      ││|
+|│ · ctrl+c     clears the line typed so far                                   │┃|
+|╰─────────────────────────────────────────────────────────────────────────────╯┃|
+|                                                                               ┃|
+|› go                                                                           ┃|
+|                                                                               ●|
+|● AskUser(Which language?)                                                     ┃|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│  Question for you                                                            │|
+|│                                                                              │|
+|│  Which language?                                                             │|
+|│                                                                              │|
+|│  › 1. Rust                                                                   │|
+|│    2. Python                                                                 │|
+|│    3. Something else                                                         │|
+|│                                                                              │|
+|│  ──────────────────────────────────────────────────────────────────────────  │|
+|│    4. Say it in the prompt instead                                           │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|  esc to cancel · n for a note                                                  |
