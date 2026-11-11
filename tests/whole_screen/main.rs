@@ -2141,8 +2141,13 @@ fn a_call_that_changed_a_file_in_colour() {
 const REWRITTEN: usize = 40;
 
 /// The header the box that call is drawn in opens with: the file the tool
-/// named and the counts of what moved in it.
-const CHANGED: &str = "\u{256D}\u{2500} notes.md +40 \u{2212}40";
+/// named and, in words, what moved in it.
+const CHANGED: &str = "\u{256D}\u{2500} notes.md \u{B7} Added 40 lines, removed 40 lines";
+
+/// The one row a log that kept the counts and not the lines says the same
+/// change in. Its words are the header's too, so a screen that is owed the box
+/// is also held to not having drawn this row in its place.
+const COUNTED: &str = "\u{23BF} Added 40 lines, removed 40 lines";
 
 /// The quiet row inside that box counting the lines the tool never kept, on
 /// both the live and the restored bounded preview.
@@ -2197,12 +2202,20 @@ fn change_header_survives_resume() {
     let again = window.picture();
 
     assert!(live.contains(CHANGED), "the live header: {live}");
+    assert!(
+        !live.contains(COUNTED),
+        "the live screen counted the change where its box goes: {live}"
+    );
     assert!(live.contains(UNSHOWN), "the live header's tail: {live}");
     assert!(live.contains(SHOWN), "the live block: {live}");
 
     assert!(
         again.contains(CHANGED),
         "the resumed screen forgot what the call changed: {again}"
+    );
+    assert!(
+        !again.contains(COUNTED),
+        "the resumed screen counted the change where its box goes: {again}"
     );
     assert!(
         again.contains(SHOWN),
@@ -2331,6 +2344,10 @@ fn a_resumed_session_says_what_the_reader_watched() {
     // The live screen first, because everything asserted of the resumed one is
     // only worth asserting if this is what the reader was actually shown.
     assert!(live.contains(CHANGED), "the live header: {live}");
+    assert!(
+        !live.contains(COUNTED),
+        "the live screen counted the change where its box goes: {live}"
+    );
     assert!(live.contains(UNSHOWN), "the live header's tail: {live}");
     assert!(live.contains(SHOWN), "the live block: {live}");
     assert!(
@@ -2354,6 +2371,10 @@ fn a_resumed_session_says_what_the_reader_watched() {
     assert!(
         again.contains(CHANGED),
         "the resumed screen forgot what the call changed: {again}"
+    );
+    assert!(
+        !again.contains(COUNTED),
+        "the resumed screen counted the change where its box goes: {again}"
     );
     assert!(
         again.contains(&top(1)),

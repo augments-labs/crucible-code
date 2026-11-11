@@ -322,7 +322,7 @@ under the call is the change itself, in a box:
 
 ```
 ● Edit(release.yml)
-  ╭─ release.yml +1 −1
+  ╭─ release.yml · Added 1 line, removed 1 line
   │    1 - # trend data
   │    1 + # what stops a tag
   │    2   budgets:
@@ -330,13 +330,16 @@ under the call is the change itself, in a box:
   ╰─
 ```
 
-The box opens on the file as the call named it and the count of lines added
-and removed. A line that went is marked `-` and one that came is marked `+`,
-each on ground saying which way, and within a replaced line the words that
-changed are raised. The lines around them did not move and are there to be read
-against; they alone wear the colours of the file's language, read from its
-extension. A line that changed keeps its side's colour, so an edit made only of
-changed lines shows no language colours at all.
+The box opens on the file as the call named it and, in words, how many lines
+were added and removed; a side with no lines is left out, so a call that only
+added one says `Added 1 line`. A line that went is marked `-` and one that came
+is marked `+`, each on ground saying which way. The ground runs unbroken from
+the line's number to one column short of the transcript's right edge, whatever
+the length of the line, and within a replaced line the words that changed are
+raised. The lines around them did not move and are there to be read against;
+they alone wear the colours of the file's language, read from its extension. A
+line that changed keeps its side's colour, so an edit made only of changed
+lines shows no language colours at all.
 Every line carries the number it has in the file, and both sides of a
 replacement start at the same one, since one line stands where the other did.
 
@@ -353,15 +356,17 @@ lines, and 128 bytes of them, for its language's colours, and raises the
 changed words in at most 8 replaced lines, each of at most 48 words and runs of
 spaces. Past either, the rest of the box is drawn plain: every sign, number and
 ground is still there, only the colours of the language or the raised words are
-left off. A line too long for the window is cut to it and ends in `…`.
+left off. A line too long for the transcript is cut where the grounds end, and
+its last column there is `…` (`...` in the ascii glyph set), on the line's own
+ground.
 
 The protected session log retains this bounded preview for resume, including the
 omitted count. Each retained line is limited to 1024 characters. Preview bodies
 stay out of model context; they can contain sensitive file text and receive the
 same file protection as the conversation. Sessions recorded before preview
 persistence show only their original change counts when resumed. A change
-recorded before the box named its file opens on its counts alone, and its lines
-are drawn without the language's colours.
+recorded before the box named its file opens on the summary alone, with no path
+and no dot before it, and its lines are drawn without the language's colours.
 
 `write` is the one that can have nothing to show. It is handed the new file and
 has to read the one it is about to discard, so a file over 1000000 bytes or one

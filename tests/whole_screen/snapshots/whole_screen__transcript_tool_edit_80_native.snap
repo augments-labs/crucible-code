@@ -21,7 +21,7 @@ expression: window.picture()
 |› show me the corpus                                                            |
 |                                                                                |
 |● Edit(the-long-note.md)                                                        |
-|  ╭─ the-long-note.md +100 −100                                                 |
+|  ╭─ the-long-note.md · Added 100 lines, removed 100 lines                      |
 |  │    1 - the line that was here, number 1                                     |
 |  │    2 - the line that was here, number 2                                     |
 |  │    3 - the line that was here, number 3                                     |
