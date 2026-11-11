@@ -121,7 +121,7 @@ pub struct PromptRows<'a> {
     /// A relative row and that row in its pointed palette state.
     pointed: Option<(usize, &'a Row)>,
     /// Where a line is being written in what stands over the box, which the
-    /// cursor stands at instead.
+    /// cursor stands at instead where the window draws it.
     over: Option<Caret>,
 }
 
@@ -1766,7 +1766,8 @@ impl<T: Terminal> Renderer<T> {
     /// palette state. The renderer chooses it from the pointer's absolute
     /// window row; the caller remains the owner of the component and its words.
     ///
-    /// [`PromptRows::writing_over`] stands the cursor in `over` instead.
+    /// [`PromptRows::writing_over`] stands the cursor in `over` instead, where
+    /// the window draws that row.
     ///
     /// # Errors
     ///

@@ -3546,3 +3546,32 @@ fn native_a_line_written_over_the_box_past_the_rows_the_window_draws_leaves_the_
         "{screen:#?}"
     );
 }
+
+#[test]
+fn native_a_line_written_on_the_first_row_the_window_does_not_draw_leaves_the_cursor_in_the_box() {
+    // The turn's row and three over the box, on a window with room for three:
+    // the note is the first row past those drawn, so the cursor stays in the
+    // box rather than on the row the box begins on.
+    let window = Window::new(40, 6);
+    let mut render = native(&window);
+    let (rows, caret) = boxed();
+    let prompt = PromptRows::new(&rows, caret, None)
+        .unwrap()
+        .writing_over(Some(Caret { row: 2, column: 8 }));
+    let over = [row("Which?"), row("  1. this"), row("Note: hi")];
+    render
+        .replace_running(prompt, &[row("* thinking")], &over, Palette::plain())
+        .unwrap();
+
+    let screen = window.screen();
+    assert!(
+        !screen.iter().any(|shown| shown == "Note: hi"),
+        "the note is drawn: {screen:#?}"
+    );
+    let (at, column) = window.caret();
+    assert_eq!(
+        (screen.get(at).map(String::as_str), column),
+        (Some("| > typed"), 4),
+        "{screen:#?}"
+    );
+}

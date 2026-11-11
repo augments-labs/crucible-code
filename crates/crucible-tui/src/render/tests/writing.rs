@@ -61,3 +61,25 @@ fn a_line_written_over_the_box_past_the_rows_the_window_draws_leaves_the_cursor_
     let (row, column) = screen.caret();
     assert_eq!((screen.row(row), column), ("│ ›  │", 4), "{screen:?}");
 }
+
+#[test]
+fn a_line_written_on_the_first_row_the_window_does_not_draw_leaves_the_cursor_in_the_box() {
+    // The turn's row and three over the box, on a window with room for three:
+    // the note is the first row past those drawn, so the cursor stays in the
+    // box rather than on the row the box begins on.
+    let mut drawn = Drawn::new(40, 6);
+    let over = vec![
+        Row::plain("Which?"),
+        Row::plain("  1. this"),
+        Row::plain("Note: hi"),
+    ];
+    writing_over(&mut drawn, &over, Caret { row: 2, column: 8 });
+
+    let screen = drawn.screen();
+    assert!(
+        (0..6).all(|row| screen.row(row) != "Note: hi"),
+        "the note is drawn: {screen:?}"
+    );
+    let (row, column) = screen.caret();
+    assert_eq!((screen.row(row), column), ("│ ›  │", 4), "{screen:?}");
+}
