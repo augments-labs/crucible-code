@@ -2016,10 +2016,10 @@ fn a_fold_drawn_too_narrow_to_name_its_key_is_kept_for_the_window_that_names_it(
 
 #[test]
 fn the_longest_change_a_tool_keeps_is_held_written_out_whole() {
-    // Every line the tool keeps, each as long as it keeps one and all but its
-    // last character a tab, which is written as the four columns it is drawn
-    // as: the most a change comes to written out.
-    let long = format!("{}x", "\t".repeat(Line::TEXT - 1));
+    // Every line the tool keeps, each as long as it keeps one and every
+    // character of it a tab, which is written as the four columns it is drawn
+    // as, to the end of its line: the most a change comes to written out.
+    let long = "\t".repeat(Line::TEXT);
     let widest = Diff::new((1..=Diff::LINES).map(|at| Line::new(at, Change::Added, long.clone())))
         .in_file("src/one.rs");
     let mut renderer = Renderer::new(Resizing::new(80, 60));
@@ -2038,12 +2038,13 @@ fn the_longest_change_a_tool_keeps_is_held_written_out_whole() {
     let held: Vec<&str> = kept.newest().map(Whole::text).collect();
     let text = held.first().copied().unwrap_or_default();
     // A number, a sign, and the line, ended.
-    let line = "  1 + ".len() + 4 * (Line::TEXT - 1) + "x\n".len();
+    let line = "  1 + ".len() + 4 * Line::TEXT + "\n".len();
     assert_eq!(
         text.len(),
         "src/one.rs · Added 64 lines\n".len() + Diff::LINES * line
     );
-    assert!(text.ends_with("    x\n"), "the last line was cut");
+    let last = format!(" 64 + {}\n", " ".repeat(4 * Line::TEXT));
+    assert!(text.ends_with(&last), "the last line was cut");
     assert!(!text.contains('\t'));
 }
 

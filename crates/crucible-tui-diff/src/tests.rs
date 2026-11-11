@@ -1173,11 +1173,23 @@ fn a_change_written_out_says_row_for_row_what_its_box_says_inside_its_frame() {
                 })
                 .collect();
             let written = Changes.written(change, glyphs);
+            // A row leaves off the blanks its line ends in, and those are all
+            // that is written and not drawn.
             assert_eq!(
-                written.lines().collect::<Vec<_>>(),
+                written.lines().map(str::trim_end).collect::<Vec<_>>(),
                 inside,
                 "{name} in {glyphs:?}"
             );
+            // Nothing written ends in a blank but the one line that does.
+            let ended_blank: Vec<&str> = written
+                .lines()
+                .filter(|line| line.ends_with(char::is_whitespace))
+                .collect();
+            if name == "jumped" {
+                assert_eq!(ended_blank, ["1200   d  "], "{glyphs:?}");
+            } else {
+                assert!(ended_blank.is_empty(), "{name} in {glyphs:?}: {written}");
+            }
         }
     }
     // What stands for lines and files is worded as the box words it.
@@ -1225,6 +1237,52 @@ fn a_change_written_out_holds_no_control_character_but_its_line_ends() {
             .any(|character| character.is_control() && character != '\n'),
         "{written:?}"
     );
+}
+
+#[test]
+fn a_change_of_trailing_blanks_alone_is_written_out_as_lines_that_differ() {
+    // Each pair changes only what its line ends in: spaces put on, a tab
+    // taken off, and spaces on a line that held nothing.
+    let change = Change::new(vec![File::numbered(
+        Some("src/x.rs"),
+        [
+            (1, Side::Kept, ""),
+            (2, Side::Removed, "let x = 1;"),
+            (2, Side::Added, "let x = 1;  "),
+            (3, Side::Removed, "}\t"),
+            (3, Side::Added, "}"),
+            (4, Side::Removed, ""),
+            (4, Side::Added, "  "),
+        ],
+    )]);
+    for glyphs in [UNICODE, ASCII] {
+        let written = Changes.written(&change, glyphs);
+        let lines: Vec<&str> = written.lines().skip(1).collect();
+        // A line's own blanks are written, a tab as the columns it stands
+        // for, and a line that holds nothing ends at its number or its sign.
+        assert_eq!(
+            lines,
+            [
+                "  1",
+                "  2 - let x = 1;",
+                "  2 + let x = 1;  ",
+                "  3 - }    ",
+                "  3 + }",
+                "  4 -",
+                "  4 +   ",
+            ],
+            "{glyphs:?}"
+        );
+        // Past its number and sign, no pair reads the same before and after.
+        for number in 2..=4 {
+            let said = |sign: char| {
+                let lead = format!("{number:>3} {sign}");
+                lines.iter().find_map(|line| line.strip_prefix(&lead))
+            };
+            assert!(said('-').is_some() && said('+').is_some(), "{written:?}");
+            assert_ne!(said('-'), said('+'), "line {number} in {glyphs:?}");
+        }
+    }
 }
 
 // A fence of an answer, read by the reader the transcript reads with and

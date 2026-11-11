@@ -2583,7 +2583,7 @@
     {
       "id": "CASE-TRANSCRIPT-CHANGE-WRITTEN-ROWS",
       "family": "transcript-blocks",
-      "obligation": "A change written out is, line for line, what its box says inside its frame when nothing is cut or folded, for a tool's file with a jump, a tab and lines never kept, more files than a change keeps, a file with no path, a rename with a binary file and a two-file diff, in both glyph sets, and it words the lines between, the lines and files not shown and a binary file as the box does.",
+      "obligation": "A change written out is, line for line and with the blanks a line ends in left off, what its box says inside its frame when nothing is cut or folded, for a tool's file with a jump, a tab, a line ending in spaces and lines never kept, more files than a change keeps, a file with no path, a rename with a binary file and a two-file diff, in both glyph sets; the line ending in spaces keeps them and is the only line written that ends in a blank; and it words the lines between, the lines and files not shown and a binary file as the box does.",
       "package": "crucible-tui-diff",
       "target": {
         "kind": "lib",
@@ -2591,7 +2591,7 @@
       },
       "case": "tests::a_change_written_out_says_row_for_row_what_its_box_says_inside_its_frame",
       "source": "crates/crucible-tui-diff/src/tests.rs",
-      "body_sha256": "2c5849ee917304a5a765c48f25287b9daa2b61d01cbaf8b0036198424e9d8a7b",
+      "body_sha256": "21d582423e567652c8fec827aec5fd13fb4af13fb21172c5f98ee49f95630457",
       "platforms": [
         "linux",
         "macos",
@@ -2610,6 +2610,24 @@
       "case": "tests::a_change_written_out_holds_no_control_character_but_its_line_ends",
       "source": "crates/crucible-tui-diff/src/tests.rs",
       "body_sha256": "05afb71abbe934014b05abbab6dd7ee2de176bb5a7771f3309ff8c1c9785c75c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-CHANGE-WRITTEN-TRAILING-BLANKS",
+      "family": "transcript-blocks",
+      "obligation": "A change whose pairs differ only in what a line ends in, spaces put on, a tab taken off and spaces on a line that held nothing, is written out in both glyph sets with each line's own blanks kept and the tab as four columns, a line that holds nothing ending at its number or its sign, so that past its number and sign no pair reads the same before and after.",
+      "package": "crucible-tui-diff",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui_diff"
+      },
+      "case": "tests::a_change_of_trailing_blanks_alone_is_written_out_as_lines_that_differ",
+      "source": "crates/crucible-tui-diff/src/tests.rs",
+      "body_sha256": "e1d05954d6f6dd36358c73c7d1df26d0af135b0cfb89efa5d39a5387b9cf2e2b",
       "platforms": [
         "linux",
         "macos",
@@ -2817,7 +2835,7 @@
     {
       "id": "CASE-TRANSCRIPT-CHANGE-KEPT-LONGEST",
       "family": "transcript-blocks",
-      "obligation": "The longest change a tool keeps, every line as long as one is kept and all tabs but its last character, is held written out whole: its summary and every line with each tab as four columns, the last line uncut and no tab left.",
+      "obligation": "The longest change a tool keeps, every line as long as one is kept and every character of it a tab, is held written out whole: its summary and every line with each tab as four columns to the end of the line, the last line uncut and no tab left.",
       "package": "crucible-code",
       "target": {
         "kind": "bin",
@@ -2825,7 +2843,7 @@
       },
       "case": "cli::draw::tests::the_longest_change_a_tool_keeps_is_held_written_out_whole",
       "source": "src/cli/draw/tests.rs",
-      "body_sha256": "6b6c03eba00e02d5e324aa2d9f6acd8c0aa36f7415e4053622988018c9662eb0",
+      "body_sha256": "ca4b6c56acb874a7c0fcf33166c168f1a439c52c4fb874d71a789a3211eff18e",
       "platforms": [
         "linux",
         "macos",

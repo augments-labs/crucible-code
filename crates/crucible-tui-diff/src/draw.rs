@@ -104,11 +104,14 @@ impl Changes {
     ///
     /// Each file is a line that names it and says what moved in it, worded as
     /// its header is, and then every line the change keeps: its number, as
-    /// wide as the widest, its sign, and its text. What stands in the box for
-    /// lines between two hunks, for lines and files the change does not hold,
-    /// and for a binary file stands here in the same words, between the same
-    /// marks in `glyphs`. Nothing is folded and nothing is cut to a room, so
-    /// this is what shows whole a change its box folded.
+    /// wide as the widest, its sign, and its text to its last blank. A row of
+    /// the box leaves the blanks a line ends in off; here they are written, so
+    /// two lines that differ only in them read differently, and a line that
+    /// holds nothing ends at its number or its sign. What stands in the box
+    /// for lines between two hunks, for lines and files the change does not
+    /// hold, and for a binary file stands here in the same words, between the
+    /// same marks in `glyphs`. Nothing is folded and nothing is cut to a room,
+    /// so this is what shows whole a change its box folded.
     ///
     /// It holds as much as the change does, which is bounded, and no control
     /// character but the line ends it writes.
@@ -117,7 +120,7 @@ impl Changes {
         let widest = numbered(change);
         let mut written = String::new();
         let mut line = |text: &str| {
-            written.push_str(text.trim_end());
+            written.push_str(text);
             written.push('\n');
         };
         for file in change.files() {
@@ -134,11 +137,16 @@ impl Changes {
                     Line::Gap { lines, section } => {
                         line(&standing(&parted(*lines, section.as_deref()), glyphs));
                     }
-                    Line::Text { side, number, text } => line(&format!(
-                        "{} {}",
-                        gutter(*number, widest, *side),
-                        flattened(text)
-                    )),
+                    Line::Text { side, number, text } => {
+                        let gutter = gutter(*number, widest, *side);
+                        if text.is_empty() {
+                            // The column of a sign a line that stayed leaves
+                            // empty is this function's, and not the line's.
+                            line(gutter.trim_end());
+                        } else {
+                            line(&format!("{gutter} {}", spelled(text)));
+                        }
+                    }
                 }
             }
             if file.is_binary() {
@@ -856,11 +864,16 @@ const fn elided(glyphs: Glyphs) -> &'static str {
     }
 }
 
-/// A line as it is drawn: its end trimmed, a tab as [`TAB`], and any other
-/// control character a space.
+/// A line as it is drawn: its end trimmed, and the rest as [`spelled`].
 fn flattened(text: &str) -> String {
+    spelled(text.trim_end())
+}
+
+/// `text` with a tab as [`TAB`] and any other control character a space, and
+/// nothing taken off either end of it.
+fn spelled(text: &str) -> String {
     let mut line = String::with_capacity(text.len());
-    for character in text.trim_end().chars() {
+    for character in text.chars() {
         match character {
             '\t' => line.push_str(TAB),
             control if control.is_control() => line.push(' '),
