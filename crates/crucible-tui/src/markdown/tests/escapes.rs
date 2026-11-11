@@ -49,8 +49,70 @@ fn a_backslash_hard_break_draws_no_backslash() {
         ("- item\\\n  goes on\n", "• item\n  goes on\n"),
         ("> quoted\\\n> goes on\n", "│ quoted\n│ goes on\n"),
         ("*lean\\\nstill*\n", "lean\nstill\n"),
+        // A line that only starts like a block is more of the paragraph.
+        ("first\\\n#hashtag\n", "first\n#hashtag\n"),
+        ("first\\\n-5 degrees\n", "first\n-5 degrees\n"),
+        ("first\\\n1.5 times\n", "first\n1.5 times\n"),
+        ("first\\\n12)maybe\n", "first\n12)maybe\n"),
+        ("first\\\n**bold** word\n", "first\nbold word\n"),
+        ("first\\\n$5 and $6\n", "first\n$5 and $6\n"),
+        ("first\\\n>no space\n", "first\n>no space\n"),
+        (
+            "first\\\n<b>not a block</b>\n",
+            "first\n<b>not a block</b>\n",
+        ),
+        ("first\\\n`span` here\n", "first\nspan here\n"),
+        ("first\\\n~~gone~~ here\n", "first\ngone here\n"),
     ] {
         assert_eq!(shown(answer), drawn_text, "{answer:?}");
+    }
+}
+
+/// A first line and the line under it that opens a block of its own, so that a
+/// backslash at the end of the first is no break.
+const OPENERS: [(&str, &str, &str); 17] = [
+    ("first", "first", "# heading\n"),
+    ("first", "first", "## heading\n"),
+    ("first", "first", "- next\n"),
+    ("first", "first", "* next\n"),
+    ("first", "first", "+ next\n"),
+    ("- item", "item", "- next\n"),
+    ("1. one", "one", "2. two\n"),
+    ("first", "first", "  - nested\n"),
+    ("first", "first", "```\ncode\n```\n"),
+    ("first", "first", "~~~\ncode\n~~~\n"),
+    ("first", "first", "> quote\n"),
+    ("first", "first", "***\n"),
+    ("first", "first", "___\n"),
+    ("first", "first", "| a | b |\n|---|---|\n| 1 | 2 |\n"),
+    ("first", "first", "$$\nx\n$$\n"),
+    ("first", "first", "\\[\nx\n\\]\n"),
+    (
+        "first",
+        "first",
+        "<details>\n<summary>s</summary>\nbody\n</details>\n",
+    ),
+];
+
+#[test]
+fn a_backslash_before_a_line_that_opens_a_block_is_kept_and_the_block_opens() {
+    for (head, word, opener) in OPENERS {
+        let with = format!("{head}\\\n{opener}");
+        let without = format!("{head}\n{opener}");
+        let kept = format!("{word}\\");
+        let (said, plain) = (ended(&with), ended(&without));
+        assert_eq!(
+            standing_text(&drawn(&said)),
+            standing_text(&drawn(&plain)).replacen(word, &kept, 1),
+            "{with:?} drew the block differently"
+        );
+        assert_eq!(slots(&standing(said)), slots(&standing(plain)), "{with:?}");
+    }
+    // A row of `-` or `=` under a line says what it was a title of, and the
+    // backslash stays in the title.
+    for under in ["---", "===", "-", "="] {
+        let said = shown(&format!("first\\\n{under}\n"));
+        assert!(said.starts_with("first\\"), "{under:?} drew {said:?}");
     }
 }
 
@@ -68,6 +130,16 @@ fn a_backslash_that_breaks_no_line_is_kept() {
         "`code\\\nspan`\n",
         "```\ncode\\\nmore\n```\n",
         "\n\n    code\\\n    more\n",
+        // The line under it opens a block of its own.
+        "first\\\n# heading\n",
+        "- item\\\n- next\n",
+        "1. one\\\n2. two\n",
+        "first\\\n```\ncode\n```\n",
+        "first\\\n> quote\n",
+        "first\\\n***\n",
+        "first\\\n| a | b |\n|---|---|\n| 1 | 2 |\n",
+        "first\\\n$$\nx\n$$\n",
+        "first\\\n<details>\n<summary>s</summary>\nb\n</details>\n",
     ] {
         let said = shown(answer);
         assert!(
@@ -75,6 +147,33 @@ fn a_backslash_that_breaks_no_line_is_kept() {
             "{answer:?} was drawn without its backslash as {said:?}"
         );
     }
+}
+
+#[test]
+fn a_backslash_before_a_line_the_answer_ends_in_the_middle_of_is_drawn_as_the_line_is() {
+    // The break and what stood after it were held for the line to say what it
+    // opens, and the answer's end is the line saying it opens nothing.
+    assert_eq!(shown("first\\\n#"), "first\n#");
+    assert!(shown("first\\\n-").starts_with("first\\"), "an underline");
+    assert_eq!(shown("first\\\n1."), "first\n1.");
+    assert_eq!(shown("first\\\n<det"), "first\n<det");
+    assert_eq!(shown("first\\\n  "), "first\\\n  ");
+}
+
+/// What a block is shown as, where it is told again from what it was written
+/// with.
+fn told(block: &Block) -> String {
+    let mut out = String::new();
+    tell(
+        block,
+        ROOM,
+        Glyphs::Unicode,
+        &Links::default(),
+        &mut |_, text, _| {
+            out.push_str(text);
+        },
+    );
+    out
 }
 
 #[test]
@@ -87,6 +186,34 @@ fn a_backslash_inside_display_math_is_kept() {
             .collect::<Vec<_>>(),
         ["$$\nx\\\ny\n$$\n"]
     );
+    // And it is drawn, when the block is shown as written: the break under it
+    // is no more of a paragraph, and the backslash is not a line break.
+    let shown: Vec<String> = blocks.iter().map(told).collect();
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    assert!(
+        shown.iter().all(|text| text.contains("x\\\ny")),
+        "the backslash was lost from {shown:?}"
+    );
+}
+
+#[test]
+fn an_entity_inside_display_math_is_kept_as_written() {
+    for source in [
+        "$$\na &lt; b &amp; c\n$$\n",
+        "\\[\n&#169; &#x41;\n\\]\n",
+        "$$\n&amp\n$$\n",
+    ] {
+        let (blocks, _) = blocks(source);
+        let shown: Vec<String> = blocks.iter().map(told).collect();
+        assert_eq!(shown.len(), 1, "{source:?} {shown:?}");
+        for entity in ["&lt;", "&amp;", "&#169;", "&#x41;", "&amp"] {
+            assert_eq!(
+                source.contains(entity),
+                shown.iter().any(|text| text.contains(entity)),
+                "{source:?} was shown as {shown:?}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -109,6 +236,26 @@ fn a_backslash_hard_break_is_the_same_cut_anywhere() {
         "- item\\\n  goes on\n",
         "> quoted\\\n> goes on\n",
         "a\\\nb\\\nc",
+        "first\\\n# heading\n",
+        "first\\\n#hashtag\n",
+        "- item\\\n- next\n",
+        "1. one\\\n2. two\n",
+        "first\\\n12) maybe\n",
+        "first\\\n```\ncode\n```\n",
+        "first\\\n~~~\ncode\n~~~\n",
+        "first\\\n> quote\n",
+        "first\\\n***\n",
+        "first\\\n*****************************\n",
+        "first\\\n***bold***\n",
+        "first\\\n---\n",
+        "first\\\n| a | b |\n|---|---|\n| 1 | 2 |\n",
+        "first\\\n$$\nx\n$$\n",
+        "first\\\n\\[\nx\n\\]\n",
+        "first\\\n\\begin{matrix}\nx\n\\end{matrix}\n",
+        "first\\\n<details>\n<summary>s</summary>\nb\n</details>\n",
+        "first\\\n   <summary>s</summary>\n",
+        "first\\\n#",
+        "first\\\n-",
     ] {
         drawn_the_same_cut_anywhere(answer);
         assert_eq!(
@@ -219,6 +366,8 @@ fn an_entity_inside_code_stays_as_written() {
         "~~~rust\n&amp;\n~~~\n",
         "\n    &amp; &#x41;\n",
         "<kbd>&amp; &lt;</kbd>\n",
+        "$$\na &lt; b &amp; c &copy; &#169;\n$$\n",
+        "\\[\n&#x41;\n\\]\n",
     ] {
         let said = shown(answer);
         for entity in ["&amp;", "&lt;", "&copy;", "&#169;", "&#x41;"] {
@@ -367,4 +516,80 @@ fn an_entity_is_drawn_in_a_table_cell() {
         !said.contains("&amp;") && !said.contains("&lt;"),
         "{said:?}"
     );
+}
+
+/// One answer read against a repository, cut into these deltas, with where
+/// each run points.
+fn counted_in(deltas: &[&str]) -> Vec<(Slot, String, Option<String>)> {
+    let mut markdown = Markdown::default().counting(Some(forge()));
+    let mut said = Vec::new();
+    let mut into = |slot, text: &str, link: Option<&str>| {
+        said.push((slot, text.to_owned(), link.map(str::to_owned)));
+    };
+    for delta in deltas {
+        markdown.read_runs(delta, ROOM, &mut into);
+    }
+    markdown.finish_runs(ROOM, &mut into);
+    said
+}
+
+/// What `said` points at: the words of each run that carries an address, and
+/// the address, with the runs of one address put together.
+fn pointed_at(said: &[(Slot, String, Option<String>)]) -> Vec<(String, String)> {
+    let mut points: Vec<(String, String)> = Vec::new();
+    for (_, text, link) in said {
+        let Some(link) = link else { continue };
+        match points.last_mut() {
+            Some((words, last)) if last == link => words.push_str(text),
+            _ => points.push((text.clone(), link.clone())),
+        }
+    }
+    points
+}
+
+#[test]
+fn a_number_sign_after_an_ampersand_that_is_no_entity_still_names_an_issue() {
+    let issue = "https://github.com/augments-labs/crucible-code/issues/12";
+    for (answer, points) in [
+        ("see &#12 now\n", vec![("#12", issue)]),
+        ("see &#12\n", vec![("#12", issue)]),
+        ("&#12", vec![("#12", issue)]),
+        ("see &#12, now\n", vec![("#12", issue)]),
+        ("a &#12a b\n", vec![("#12", issue)]),
+        ("a &#x1F b\n", vec![]),
+    ] {
+        let whole = counted_in(&[answer]);
+        assert_eq!(
+            wrote(&whole),
+            answer,
+            "{answer:?} was not drawn as written: {whole:?}"
+        );
+        let points: Vec<(String, String)> = points
+            .into_iter()
+            .map(|(words, address)| (words.to_owned(), address.to_owned()))
+            .collect();
+        assert_eq!(pointed_at(&whole), points, "{answer:?}: {whole:?}");
+
+        for cut in (1..answer.len()).filter(|cut| answer.is_char_boundary(*cut)) {
+            let (first, second) = answer.split_at(cut);
+            let said = counted_in(&[first, second]);
+            assert_eq!(wrote(&said), wrote(&whole), "{answer:?} cut at {cut}");
+            assert_eq!(pointed_at(&said), points, "{answer:?} cut at {cut}");
+        }
+    }
+}
+
+#[test]
+fn an_entity_inside_a_sub_or_a_sup_run_is_drawn_as_the_character_it_names() {
+    for (answer, drawn_text) in [
+        ("x<sup>&#50;</sup>\n", "x²\n"),
+        ("x<sub>&#x32;</sub>\n", "x₂\n"),
+        ("a<sup>&#49;&#48;</sup>b\n", "a¹⁰b\n"),
+        ("a <sup>&lt;b&gt;</sup>\n", "a <b>\n"),
+        ("a <sub>&#27;[31m</sub>\n", "a &#27;[31m\n"),
+        ("a <sub>&amp</sub>\n", "a &amp\n"),
+    ] {
+        assert_eq!(shown(answer), drawn_text, "{answer:?}");
+        drawn_the_same_cut_anywhere(answer);
+    }
 }

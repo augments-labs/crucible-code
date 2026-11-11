@@ -553,7 +553,10 @@ pub(crate) fn tell(
             }
         }
         Kind::DisplayMath | Kind::Mermaid | Kind::Diff | Kind::Image => {
-            let mut markdown = Markdown::new(glyphs).linking(links).as_written();
+            let mut markdown = Markdown::new(glyphs)
+                .linking(links)
+                .as_written()
+                .unescaped();
             let mut said = |said: Said<'_>| {
                 if let Said::Run { slot, text, link } = said {
                     put(slot, text, link);
@@ -1804,7 +1807,7 @@ pub struct Markdown {
     escaped: bool,
     /// A backslash and the break after it are held, with the spaces that have
     /// followed, until the line under it says whether it was blank.
-    slashed: Option<String>,
+    slashed: Option<escapes::Slashed>,
     /// An `&` and what has followed it, held until it is a whole reference or
     /// is none.
     entity: Option<String>,
@@ -1886,6 +1889,12 @@ pub struct Markdown {
     /// reader numbers no footnote and reads no `<details>` or `<summary>`,
     /// and a `<br>` is a space to it.
     unheld: bool,
+    /// Whether this reader reads neither a backslash before a break nor a
+    /// reference.
+    ///
+    /// What lays out a block shown as written, display math among them: its
+    /// words are source, and source is what was written.
+    unescaped: bool,
     /// Why the fence being read was not drawn, where it is a held fence that
     /// ran past its cap, so the frame it opens says so.
     ///
@@ -2029,6 +2038,15 @@ impl Markdown {
     #[must_use]
     pub fn as_written(mut self) -> Self {
         self.unheld = true;
+        self
+    }
+
+    /// This reader, reading neither a backslash before a line break nor a
+    /// reference: for a block whose words are shown exactly as they were
+    /// written, where `x\` and `a &lt; b` are what they say.
+    #[must_use]
+    pub(crate) fn unescaped(mut self) -> Self {
+        self.unescaped = true;
         self
     }
 
@@ -2294,7 +2312,7 @@ impl Markdown {
             // after a hash, a tag, and a reference. When what was held is
             // settled it has been drawn or put back, and this character starts
             // the run.
-            if self.holds_word(character, say) {
+            if self.holds_word(character, room, say) {
                 run = next;
                 continue;
             }
@@ -2325,7 +2343,7 @@ impl Markdown {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
                 self.end_line(room, say);
                 run = next;
-            } else if self.script.is_some() && character != '<' {
+            } else if self.script.is_some() && character != '<' && !self.opens_entity(character) {
                 run = if self.raises(character, say) {
                     next
                 } else {
@@ -3248,6 +3266,7 @@ impl Markdown {
         self.link = None;
         self.address = None;
         self.reference = None;
+        self.entity = None;
         self.defining = None;
         self.angle = None;
         self.tag = None;
@@ -3732,11 +3751,12 @@ impl Markdown {
     fn holds_word(
         &mut self,
         character: char,
+        room: usize,
         say: &mut dyn FnMut(Slot, &str, Option<&str>),
     ) -> bool {
         (self.reference.is_some() && self.referenced(character, say))
             || (self.tag.is_some() && self.tagged(character, say))
-            || (self.entity.is_some() && self.entitied(character, say))
+            || (self.entity.is_some() && self.entitied(character, room, say))
     }
 
     /// Shows the watch on the line, for a title or the header of a table,
@@ -4493,10 +4513,7 @@ impl Markdown {
         if let Some(written) = self.angle.take() {
             self.unangle(&written, room, say);
         }
-        self.unslash(true, "", room, say);
-        if let Some(written) = self.entity.take() {
-            self.unentity(&written, say);
-        }
+        self.unslash_at_end(room, say);
 
         // A header still waiting for its delimiter row is the prose it was
         // read as until then, and what was held back with it is read before
@@ -4509,6 +4526,13 @@ impl Markdown {
                 Some(level) => self.titled(&table, level),
                 None => self.release(&table, room, say),
             }
+        }
+
+        // A reference the message ended in the middle of, after what a header
+        // held back has been read, which is where its break and the start of
+        // the line under it were: they follow it, and it is no more of them.
+        if let Some(written) = self.entity.take() {
+            self.unentity(&written, room, say);
         }
 
         // A run of markers is held for the character that says what it was,
@@ -4701,6 +4725,7 @@ impl Markdown {
             syntax,
             glyphs: self.glyphs,
             unheld: self.unheld,
+            unescaped: self.unescaped,
             retract: self.retract,
             retitle: self.retitle.take(),
             refusal: self.refusal.filter(|_| ended != Inside::Opening),

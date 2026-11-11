@@ -3643,10 +3643,10 @@ fn a_native_hostile_entity_writes_no_escape_nor_a_picture_cell_and_is_drawn_as_w
     let rows = kept_natively(
         64,
         Glyphs::Unicode,
-        &["&#27;[31mred and &#x202E;gnirts and &#7; and &#0;\n"],
+        &["&#27;[31mred and &#x1b; and &#x202E;gnirts and &#7; and &#0;\n"],
     )
     .join("\n");
-    for words in ["&#27;[31m", "&#x202E;", "&#7;", "&#0;"] {
+    for words in ["&#27;[31m", "&#x1b;", "&#x202E;", "&#7;", "&#0;"] {
         assert!(rows.contains(words), "{rows:?} lost {words:?}");
     }
 }

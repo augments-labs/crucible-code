@@ -76,3 +76,62 @@ fn a_backslash_before_a_line_break_breaks_the_line_and_draws_no_backslash() {
         assert_eq!(rows, ["ends on it\\", "next"], "{glyphs:?}");
     }
 }
+
+#[test]
+fn a_block_shown_as_written_keeps_its_trailing_backslash_and_its_entities() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        assert_eq!(
+            drawn_at_thirty("$$\nx\\\ny\n$$\n", glyphs),
+            ["$$", "x\\", "y", "$$"],
+            "{glyphs:?}"
+        );
+        assert_eq!(
+            drawn_at_thirty("$$\na &lt; b &amp; c\n$$\n", glyphs),
+            ["$$", "a &lt; b &amp; c", "$$"],
+            "{glyphs:?}"
+        );
+    }
+}
+
+#[test]
+fn an_entity_in_a_script_is_drawn_as_the_character_it_names() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let rows = drawn_at_thirty("a <sup>&#49;</sup> b <sub>&#50;</sub>\n", glyphs);
+        assert!(
+            !rows.join(" ").contains("&#"),
+            "{glyphs:?} drew an entity as written in {rows:?}"
+        );
+    }
+}
+
+#[test]
+fn a_backslash_before_a_line_that_opens_a_block_is_drawn_and_the_block_opens() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        assert_eq!(
+            drawn_at_thirty("first\\\n- next\n", glyphs)
+                .first()
+                .map(String::as_str),
+            Some("first\\"),
+            "{glyphs:?}"
+        );
+        let rows = drawn_at_thirty("item\\\n# heading\n", glyphs);
+        assert_eq!(rows.first().map(String::as_str), Some("item\\"), "{rows:?}");
+        assert!(rows.iter().any(|row| row == "heading"), "{rows:?}");
+        let rows = drawn_at_thirty("first\\\nsecond\n", glyphs);
+        assert_eq!(rows, ["first", "second"], "{glyphs:?}");
+    }
+}
+
+#[test]
+fn an_ampersand_and_a_number_sign_that_are_no_entity_are_drawn_as_written() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        for answer in [
+            "see &#12 now\n",
+            "a &#x1F and &#12a b\n",
+            "tracked in &#99\n",
+        ] {
+            let rows = drawn_at_thirty(answer, glyphs);
+            assert_eq!(rows.join(" "), answer.trim_end(), "{glyphs:?}");
+        }
+    }
+}

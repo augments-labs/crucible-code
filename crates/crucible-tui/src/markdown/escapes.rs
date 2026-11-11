@@ -1,22 +1,33 @@
 //! The two escapes the reader resolves in prose: a backslash before a line
 //! break, and the named and numeric references that stand for one character.
 //!
-//! A backslash that ends a line breaks it, and is not drawn, when more of the
-//! same paragraph follows. It is held with the break after it until the line
-//! under it has said whether it is blank, and then given back as written or
-//! dropped, and the break goes through the scan as if no backslash had stood
-//! in front of it, so everything that watches a line sees the same stream.
-//! Where the backslash is not in prose -- code, a span, a heading, a block
-//! drawn as written -- it never reaches this module and is a character like
-//! any other.
+//! A backslash that ends a line breaks it, and is not drawn, when the line
+//! under it is more of the same paragraph. It is held with the break after it
+//! and the start of that line, until the start says what the line is, and is
+//! then given back as written or dropped. A blank line is the paragraph's end,
+//! and so is a line that opens a block of its own -- a heading, an item, a
+//! quote, a fence, a rule, a row of bars, display math, a `<details>` -- which
+//! the reader opens whether or not a backslash stood in front of it, so the
+//! backslash is drawn there as it was written. The break and the line go
+//! through the scan afterwards as if no backslash had stood in front of them,
+//! so everything that watches a line sees the same stream. The hold is the
+//! spaces and a few characters of the line, never more.
+//! Where the backslash is not in prose -- code, a span, a heading -- it never
+//! reaches this module and is a character like any other, and a reader made
+//! with [`Markdown::unescaped`] reads neither it nor a reference: that is the
+//! reader a block shown as written is laid out with, and what such a block
+//! says is what was written.
 //!
 //! A reference is held from its `&` until it is whole or is not one, and is
-//! then said as text under the slot the words around it wear. What it names
-//! is never read again: `&lt;details&gt;` opens nothing, `&#42;` leans on
-//! nothing. Three bounds keep a hold short: a name is at most [`LONGEST`]
-//! letters, a number at most [`DIGITS`] digits, and either needs its `;`, so
-//! a hold is never longer than a dozen characters and an answer that cuts one
-//! anywhere draws what the whole one draws.
+//! then said as text under the slot the words around it wear, or into the run
+//! of a `<sub>` or a `<sup>` it stands in. What it names is never read again:
+//! `&lt;details&gt;` opens nothing, `&#42;` leans on nothing. Three bounds keep
+//! a hold short: a name is at most [`LONGEST`] letters, a number at most
+//! [`DIGITS`] digits, and either needs its `;`, so a hold is never longer than
+//! a dozen characters and an answer that cuts one anywhere draws what the
+//! whole one draws. What is held and turns out to be no reference goes back
+//! into the scan after its `&`, so a number sign that follows it is read as it
+//! was before references were: an issue's number is still one.
 //!
 //! Hostile input: no reference is ever a way to put a character on the screen
 //! that the screen would not draw as itself. A control character, a format
@@ -26,7 +37,7 @@
 
 use std::borrow::Cow;
 
-use super::{Inside, MOST, Markdown, PLACEHOLDER};
+use super::{Inside, MOST, Markdown, PLACEHOLDER, Quoted};
 use crate::color::Slot;
 use crate::row;
 
@@ -172,57 +183,220 @@ pub(super) fn decoded(text: &str) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
+/// What the start of the line under a held break says about it.
+#[derive(Debug, PartialEq, Eq)]
+enum Verdict {
+    /// It may still be either.
+    Partly,
+    /// The line opens a block, or is blank: the backslash is the paragraph's
+    /// last character.
+    Opens,
+    /// The line is more of the paragraph: the backslash breaks it.
+    Continues,
+}
+
+/// The longest start of a line that is held to tell what it opens, which is a
+/// numbered item's, `123456789. `, or `\begin{smallmatrix*}` for display math.
+const START: usize = 24;
+
+/// A backslash that stands in front of a line break, held with the spaces that
+/// follow the break and as much of the line after them as it takes to tell
+/// what the line is.
+#[derive(Debug, Clone, Default)]
+pub(super) struct Slashed {
+    /// The blanks after the break.
+    spaces: String,
+    /// The first characters of the line, past [`START`] only while they are one
+    /// character repeated, the rest of which is counted in `more`.
+    text: String,
+    /// How many more of the character `text` is made of followed it.
+    more: usize,
+}
+
+impl Slashed {
+    /// Takes `character`, which is not one of the blanks that lead the line.
+    fn take(&mut self, character: char) {
+        let first = self.text.chars().next();
+        if self.text.len() >= START
+            && first == Some(character)
+            && self.text.chars().all(|held| held == character)
+        {
+            self.more = self.more.saturating_add(1);
+        } else {
+            self.text.push(character);
+        }
+    }
+
+    /// The break, the blanks and the start of the line as they were written.
+    fn replay(&self) -> String {
+        let first = self.text.chars().next();
+        let run = first.map_or(0, |first| {
+            self.text.chars().take_while(|c| *c == first).count()
+        });
+        let marks = self.text.get(..run).unwrap_or_default();
+        let rest = self.text.get(run..).unwrap_or_default();
+        let repeated: String = first.into_iter().cycle().take(self.more).collect();
+        format!("\n{}{marks}{repeated}{rest}", self.spaces)
+    }
+
+    /// What the line says it is, given whether the line above it was a quote's
+    /// and whether this reader opens display math.
+    fn says(&self, ended: bool, quoted: bool, display: bool) -> Verdict {
+        let text = if ended {
+            // The end of the answer is the break that ends the line.
+            format!("{}\n", self.text)
+        } else {
+            self.text.clone()
+        };
+        if self.text.len() > START {
+            return Verdict::Continues;
+        }
+        let Some(first) = text.chars().next() else {
+            return if ended {
+                Verdict::Opens
+            } else {
+                Verdict::Partly
+            };
+        };
+        let run = text.chars().take_while(|c| *c == first).count();
+        let after = text.chars().nth(run);
+        let length = run + self.more;
+        let by = |opens: bool| {
+            if opens {
+                Verdict::Opens
+            } else {
+                Verdict::Continues
+            }
+        };
+        match (first, after) {
+            // A blank line, and a row of bars.
+            ('\n' | '|', _) => Verdict::Opens,
+            // The hashes of a heading.
+            ('#', Some(after)) => by(after == ' '),
+            // A row of `=` is the underline of a title.
+            ('=', Some(after)) => by(after == '\n'),
+            // A bullet, a rule, an underline, or the delimiter of a table.
+            ('-' | '+' | '*' | '_', Some(after)) => {
+                by((first != '_' && length == 1 && after == ' ')
+                    || (first != '+' && length >= 3 && after == '\n')
+                    || (first == '-' && matches!(after, '\n' | '|' | ':')))
+            }
+            // A fence.
+            ('`' | '~', _) if length >= 3 => Verdict::Opens,
+            // A quote opens one, and the line of a quote it is in goes on with
+            // it.
+            ('>', Some(after)) => by(length == 1 && after == ' ' && !quoted),
+            ('0'..='9', _) => {
+                let digits = text.chars().take_while(char::is_ascii_digit).count();
+                match (digits <= super::NUMBERED, text.chars().nth(digits)) {
+                    (true, None) => Verdict::Partly,
+                    (true, Some('.' | ')')) => match text.chars().nth(digits + 1) {
+                        None => Verdict::Partly,
+                        Some(blank) => by(blank == ' '),
+                    },
+                    (false, _) | (true, Some(_)) => Verdict::Continues,
+                }
+            }
+            ('$' | '\\', _) if display => match super::opener(&format!("{}{text}", self.spaces)) {
+                super::Opener::Partly => Verdict::Partly,
+                super::Opener::Whole(_) => Verdict::Opens,
+                super::Opener::Not => Verdict::Continues,
+            },
+            ('<', _) => block_tag(&text),
+            // Nothing but a run of one character so far.
+            ('#' | '=' | '-' | '+' | '*' | '_' | '>' | '`' | '~', None) => Verdict::Partly,
+            _ => Verdict::Continues,
+        }
+    }
+}
+
+/// What `text`, which starts with `<`, says about a line that opens with a
+/// `<details>` or a `<summary>`, either of them closing as well.
+fn block_tag(text: &str) -> Verdict {
+    const NAMES: [&str; 2] = ["details", "summary"];
+    let rest = text.strip_prefix('<').unwrap_or_default();
+    let rest = rest.strip_prefix('/').unwrap_or(rest);
+    let letters = rest.chars().take_while(char::is_ascii_alphabetic).count();
+    let name = rest.get(..letters).unwrap_or_default().to_ascii_lowercase();
+    match rest.chars().nth(letters) {
+        None if NAMES.iter().any(|known| known.starts_with(&name)) => Verdict::Partly,
+        Some(' ' | '>' | '/') if NAMES.contains(&name.as_str()) => Verdict::Opens,
+        _ => Verdict::Continues,
+    }
+}
+
 impl Markdown {
     /// Reads `character` into a backslash standing in front of a line break,
-    /// and into the break and the spaces after it. Answers whether it was
-    /// taken.
+    /// and into the break, the spaces after it and the start of the line they
+    /// lead to. Answers whether it was taken.
     ///
-    /// A character that is neither is what settles it, and is read with the
-    /// break: a blank line is the paragraph's end, so the backslash is drawn as
-    /// written; anything else is more of the paragraph, so the line breaks and
-    /// the backslash is not drawn.
+    /// The start of the line is what settles it, and is read with the break: a
+    /// blank line is the paragraph's end and a line that opens a block is not
+    /// part of it, so the backslash is drawn as written; anything else is more
+    /// of the paragraph, so the line breaks and the backslash is not drawn.
     pub(super) fn slashes(
         &mut self,
         character: char,
         room: usize,
         say: &mut dyn FnMut(Slot, &str, Option<&str>),
     ) -> bool {
-        let Some(spaces) = self.slashed.as_mut() else {
+        let (quoted, display) = (self.line.quoted != Quoted::Not, self.holds());
+        let Some(held) = self.slashed.as_mut() else {
             // A heading's break is its end, and a key holds what is in it as
-            // written.
-            if self.escaped && character == '\n' && self.atx.is_none() && !self.line.key {
+            // written; so does a block shown that way, and display math past
+            // what is held of it.
+            if self.escaped
+                && character == '\n'
+                && self.atx.is_none()
+                && !self.line.key
+                && !self.unescaped
+                && self.passing.is_none()
+            {
                 self.escaped = false;
-                self.slashed = Some(String::new());
+                self.slashed = Some(Slashed::default());
                 return true;
             }
             return false;
         };
-        if matches!(character, ' ' | '\t') && spaces.len() < MOST {
-            spaces.push(character);
+        if held.text.is_empty()
+            && held.more == 0
+            && matches!(character, ' ' | '\t')
+            && held.spaces.len() < MOST
+        {
+            held.spaces.push(character);
             return true;
         }
-        self.unslash(
-            character == '\n',
-            character.encode_utf8(&mut [0; 4]),
-            room,
-            say,
-        );
+        held.take(character);
+        let verdict = held.says(false, quoted, display);
+        match verdict {
+            Verdict::Partly => {}
+            Verdict::Opens => self.unslash(true, room, say),
+            Verdict::Continues => self.unslash(false, room, say),
+        }
         true
     }
 
-    /// Lets go of a held backslash and its break, drawing the backslash where
-    /// `kept` says it stood in front of nothing, and reads the break, the
-    /// spaces after it and `then` as they would have been read had it not been
-    /// there. The whole of it goes through one scan, so that `then` meets what
-    /// the break left open and not what stood before the break.
-    pub(super) fn unslash(
+    /// Lets go of a held backslash and its break at the end of the answer,
+    /// which is the break the line under it ends with.
+    pub(super) fn unslash_at_end(
         &mut self,
-        kept: bool,
-        then: &str,
         room: usize,
         say: &mut dyn FnMut(Slot, &str, Option<&str>),
     ) {
-        let Some(spaces) = self.slashed.take() else {
+        let Some(held) = self.slashed.as_ref() else {
+            return;
+        };
+        let kept = held.says(true, self.line.quoted != Quoted::Not, self.holds()) == Verdict::Opens;
+        self.unslash(kept, room, say);
+    }
+
+    /// Lets go of a held backslash and its break, drawing the backslash where
+    /// `kept` says it stood in front of nothing a paragraph goes on with, and
+    /// reads the break and the line under it as they would have been read had
+    /// it not been there. The whole of it goes through one scan, so that the
+    /// line meets what the break left open and not what stood before the break.
+    fn unslash(&mut self, kept: bool, room: usize, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        let Some(held) = self.slashed.take() else {
             return;
         };
         if kept {
@@ -230,25 +404,30 @@ impl Markdown {
             self.started = true;
             self.previous = '\\';
         }
-        self.scan(&format!("\n{spaces}{then}"), room, say);
+        self.scan(&held.replay(), room, say);
     }
 
     /// Whether `character` opens a reference.
     ///
     /// Prose only, and not inside a span: code is where an entity is written
-    /// down as one.
+    /// down as one. Nor where a block is shown as written.
     pub(super) fn opens_entity(&self, character: char) -> bool {
-        character == '&' && self.inside == Inside::Prose && !self.line.code
+        character == '&'
+            && self.inside == Inside::Prose
+            && !self.line.code
+            && !self.unescaped
+            && self.passing.is_none()
     }
 
     /// Reads `character` into the reference being held. Answers whether it
     /// was taken.
     ///
-    /// `false` says it was no reference: what was held has gone out as
+    /// `false` says it was no reference: what was held has been handed on as
     /// written, and `character` is the caller's again, which may open the next.
     pub(super) fn entitied(
         &mut self,
         character: char,
+        room: usize,
         say: &mut dyn FnMut(Slot, &str, Option<&str>),
     ) -> bool {
         let Some(mut written) = self.entity.take() else {
@@ -260,27 +439,28 @@ impl Markdown {
                 self.entity = Some(written);
             }
             Shape::Whole(named) => {
-                self.started = true;
-                self.previous = named;
-                self.say(named.encode_utf8(&mut [0; 4]), say);
+                self.untag(named.encode_utf8(&mut [0; 4]), say);
             }
             Shape::Not => {
                 written.pop();
-                self.unentity(&written, say);
-                return false;
+                self.unentity(&written, room, say);
+                // What was held may have left a number open that this is the
+                // next digit of, or the end of.
+                return self.reference.is_some() && self.referenced(character, say);
             }
         }
         true
     }
 
-    /// Hands on a held reference as it was written.
+    /// Hands on a held reference that is none: the `&` as written, and what
+    /// followed it read again, as it was before it was held.
     pub(super) fn unentity(
         &mut self,
         written: &str,
+        room: usize,
         say: &mut dyn FnMut(Slot, &str, Option<&str>),
     ) {
-        self.started = true;
-        self.previous = written.chars().next_back().unwrap_or('&');
-        self.say(written, say);
+        self.untag("&", say);
+        self.again(written.get(1..).unwrap_or_default(), room, say);
     }
 }
