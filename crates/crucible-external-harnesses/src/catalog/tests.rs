@@ -3646,3 +3646,170 @@ fn a_registry_rows_survey_past_the_listed_files_is_refused() {
         .expect_err("a survey past the listed files");
     assert!(refused.to_string().contains("files"), "{refused}");
 }
+
+// A program the user installed, as a registry or catalog row proposes it: the
+// name it is guessed to go by, its arguments and its environment, and nothing
+// pinned.
+
+use super::OwnEntry;
+
+/// `entry` read as the catalog reads one, its one target moved to the
+/// platform this build runs on.
+#[allow(clippy::panic)]
+fn entry_here(mut entry: Value) -> Entry {
+    set(&mut entry, "/targets/0/platform", json!(here()));
+    Entry::unsigned(entry.to_string().as_bytes()).unwrap_or_else(|why| panic!("an entry: {why}"))
+}
+
+/// A registry index of one agent published here with `target`.
+#[allow(clippy::panic)]
+fn registry_with(target: &Value) -> RegistryIndex {
+    let index = json!({
+        "version": "1.0.0",
+        "agents": [registry_agent("own", &here(), target)],
+    });
+    RegistryIndex::parse(index.to_string().as_bytes(), at(0))
+        .unwrap_or_else(|why| panic!("a registry index: {why}"))
+}
+
+/// A registry row with no SHA-256, or with an archive this crucible cannot
+/// unpack, is never offered for install, yet still proposes the program the
+/// user may have installed themselves, with its arguments and environment.
+#[test]
+fn an_own_entry_without_sha256_is_read_but_never_installable() {
+    let platform = here();
+    let index = registry_of(&platform);
+    for (id, why) in [
+        ("unhashed", "no SHA-256"),
+        ("zipped", "an archive it cannot unpack"),
+    ] {
+        assert!(
+            index.offer(&agent(id)).is_err(),
+            "{id}, with {why}, is installable"
+        );
+        let entry = index.entry(&agent(id)).expect("listed");
+        let own = OwnEntry::registry(entry, &platform)
+            .expect("an own row is read")
+            .expect("a binary for this platform");
+        assert_eq!(own.guess(), "agent", "{id}: the file name of its cmd");
+        assert_eq!(own.args(), [Box::from("acp")], "{id}");
+    }
+    let zipped = index.entry(&agent("zipped")).expect("listed");
+    let own = OwnEntry::registry(zipped, &platform)
+        .expect("read")
+        .expect("a binary");
+    assert_eq!(
+        own.env(),
+        [Variable {
+            name: "AGENT_HOME".into(),
+            value: "/tmp/agent".into(),
+        }]
+    );
+    for id in ["npx", "elsewhere"] {
+        let entry = index.entry(&agent(id)).expect("listed");
+        assert_eq!(
+            OwnEntry::registry(entry, &platform).expect("read"),
+            None,
+            "{id} publishes no binary for this platform"
+        );
+    }
+    let absolute = registry_with(&json!({
+        "archive": "https://downloads.example.com/agent.tar.gz",
+        "cmd": "/usr/bin/agent",
+    }));
+    let refused = OwnEntry::registry(absolute.entry(&agent("own")).expect("listed"), &platform)
+        .expect_err("a cmd outside its directory");
+    assert!(refused.to_string().contains("cmd"), "{refused}");
+}
+
+/// A row that sets a variable a shell reads to choose a file of code to run
+/// first is refused, in any case, as a loader's variable is.
+#[test]
+fn an_own_entry_setting_bash_env_or_env_is_refused() {
+    let platform = here();
+    for name in ["BASH_ENV", "ENV", "bash_env", "Env", "LD_PRELOAD", "PATH"] {
+        let index = registry_with(&json!({
+            "archive": "https://downloads.example.com/agent.tar.gz",
+            "cmd": "./agent",
+            "env": {name: "/tmp/hook.sh"},
+        }));
+        let refused = OwnEntry::registry(index.entry(&agent("own")).expect("listed"), &platform)
+            .expect_err("a variable that chooses what code runs");
+        assert!(
+            matches!(&refused, CatalogError::Loader { name: refused, .. } if &**refused == name),
+            "{name}: {refused}"
+        );
+
+        let mut signed = binary();
+        set(&mut signed, "/targets/0/env", json!({name: "/tmp/hook.sh"}));
+        set(&mut signed, "/targets/0/platform", json!(here()));
+        if let Ok(entry) = Entry::unsigned(signed.to_string().as_bytes()) {
+            let refused = OwnEntry::catalog(&entry).expect_err("a shell's variable");
+            assert!(refused.to_string().contains(name), "{name}: {refused}");
+        }
+    }
+    let index = registry_with(&json!({
+        "archive": "https://downloads.example.com/agent.tar.gz",
+        "cmd": "./agent",
+        "env": {"BASH_ENVIRONMENT": "x", "ENVY": "y"},
+    }));
+    assert!(
+        OwnEntry::registry(index.entry(&agent("own")).expect("listed"), &platform).is_ok(),
+        "a name that only begins like one is not refused"
+    );
+}
+
+/// An npm or uvx catalog entry starts a pinned interpreter, not a program of
+/// its own, so it proposes nothing on `PATH`; a binary entry proposes the file
+/// name of its `cmd`.
+#[test]
+fn a_catalog_npm_or_uvx_entry_gives_no_guess() {
+    for entry in [uvx(), npm()] {
+        let entry = entry_here(entry);
+        assert_eq!(
+            OwnEntry::catalog(&entry).expect("read"),
+            None,
+            "{}",
+            entry.key
+        );
+    }
+    let mut goose = binary();
+    set(&mut goose, "/targets/0/cmd", json!("bin/goose"));
+    let goose = entry_here(goose);
+    let own = OwnEntry::catalog(&goose)
+        .expect("read")
+        .expect("a binary here");
+    assert_eq!(own.guess(), "goose");
+    assert_eq!(own.args(), [Box::from("acp")]);
+    assert_eq!(
+        own.env(),
+        [Variable {
+            name: "GOOSE_MODE".into(),
+            value: "acp".into(),
+        }]
+    );
+    let elsewhere = Entry::unsigned(binary().to_string().as_bytes()).expect("an entry");
+    if elsewhere.here().is_none() {
+        assert_eq!(
+            OwnEntry::catalog(&elsewhere).expect("read"),
+            None,
+            "no target here"
+        );
+    }
+}
+
+/// A signed entry still pins what it installs, whatever an own row may omit:
+/// an artifact with no SHA-256 is refused by name.
+#[test]
+fn an_entry_whose_artifact_has_no_sha256_is_still_refused() {
+    let refused = fetched(&without("/entries/0/targets/0/artifacts/0/sha256"));
+    assert!(
+        matches!(
+            &refused,
+            Err(CatalogError::Field { field, why: "is missing" })
+                if **field == *"entries[0].targets[0].artifacts[0].sha256"
+        ),
+        "{:?}",
+        refused.map(|_| "believed")
+    );
+}

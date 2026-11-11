@@ -41,6 +41,8 @@ mod unreadable;
 
 #[cfg(target_os = "macos")]
 pub(crate) use broker::hold_broker_directory;
+#[cfg(target_os = "macos")]
+pub(crate) use profile::RUNTIME_DIRECTORIES;
 
 #[cfg(target_os = "macos")]
 pub(super) fn probe() -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError> {

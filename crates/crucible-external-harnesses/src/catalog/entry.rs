@@ -1028,7 +1028,7 @@ impl<'a> Fields<'a> {
         }
     }
 
-    fn relative(&self, name: &str) -> Result<Box<str>, CatalogError> {
+    pub(super) fn relative(&self, name: &str) -> Result<Box<str>, CatalogError> {
         let path = self.text(name)?;
         if inside(&path) {
             Ok(path)
@@ -1125,7 +1125,7 @@ impl<'a> Fields<'a> {
     }
 
     /// Arguments, any of which may be empty.
-    fn arguments(&self, name: &str) -> Result<Vec<Box<str>>, CatalogError> {
+    pub(super) fn arguments(&self, name: &str) -> Result<Vec<Box<str>>, CatalogError> {
         self.each(name, |_| true, "is not text")
     }
 
@@ -1138,7 +1138,7 @@ impl<'a> Fields<'a> {
     }
 
     /// The variables the object field `name` sets, none where it is not given.
-    fn variables(&self, name: &str) -> Result<Vec<Variable>, CatalogError> {
+    pub(super) fn variables(&self, name: &str) -> Result<Vec<Variable>, CatalogError> {
         let set = match self.field(name) {
             None => return Ok(Vec::new()),
             Some(Value::Object(set)) => set,

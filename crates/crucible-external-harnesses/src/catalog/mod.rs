@@ -27,6 +27,11 @@
 //! parsed into owned values once, here, and every refusal names the field it
 //! is about. This module does no network work and decides no consent.
 //!
+//! A row of either may also propose a program the user installed themselves:
+//! [`OwnEntry`] keeps only the name it is guessed to go by on `PATH`, its
+//! arguments and its environment, under the same field rules, and is read
+//! whether or not the row could be installed.
+//!
 //! An entry becomes what its agent is run under as a [`CatalogProfile`]: owned
 //! data, with the hosts it reaches and those a sign-in link may open parsed by
 //! the sandbox's own parser, and the one check a sign-in link it prints is
@@ -46,6 +51,7 @@
 mod entry;
 #[cfg(feature = "proof")]
 pub mod fixture;
+mod own;
 mod profile;
 pub mod registry;
 mod snapshot;
@@ -60,6 +66,7 @@ use serde_json::Value;
 use crate::release::OwnedPin;
 use entry::Fields;
 
+pub use own::OwnEntry;
 #[cfg(test)]
 pub(crate) use profile::PASSED;
 pub(crate) use profile::passed;

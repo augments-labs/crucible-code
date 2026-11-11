@@ -20,7 +20,9 @@ use super::probe::Bwrap;
 use super::projection::Projection;
 
 /// Runtime roots that contain binaries and dynamic libraries, not user state.
-const RUNTIME_DIRECTORIES: &[&str] = &[
+/// Every confined program reads them without a rule of its policy's, so the
+/// crate gives them to whoever must know what is readable already.
+pub(crate) const RUNTIME_DIRECTORIES: &[&str] = &[
     "/usr",
     "/bin",
     "/sbin",
