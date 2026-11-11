@@ -9091,7 +9091,7 @@
     {
       "id": "CASE-TRANSCRIPT-SINGLE-TILDE-PARAGRAPH-AGREEMENT",
       "family": "transcript-blocks",
-      "obligation": "Across fifteen pairs of lines, where a double pair strikes words on the second line a single pair strikes the same words and draws the same text, and where it does not, a single pair strikes nothing and draws the text and slots of the same answer with its opener escaped.",
+      "obligation": "Across fourteen pairs of lines, where a double pair strikes words on the second line a single pair strikes the same words and draws the same text, and where it does not, a single pair strikes nothing and draws the text and slots of the same answer with its opener escaped; across a line and a numbered item below it, a double pair strikes `b1. c` while a single pair strikes nothing and draws the text and slots of the same answer with its opener escaped.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
@@ -9099,7 +9099,25 @@
       },
       "case": "markdown::tests::strikes::a_held_phrase_crosses_exactly_the_lines_a_double_pair_crosses",
       "source": "crates/crucible-tui/src/markdown/tests/strikes.rs",
-      "body_sha256": "68e5d392cf30f42d527b4fc5c11f6a56c8e1e8e3aadbc9f5d96c16240fbdd718",
+      "body_sha256": "e81b68322e1ede3bbdbe2e519298fd094151c63229dea952218c60b479fb2b97",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SINGLE-TILDE-NUMBERED-ITEM",
+      "family": "transcript-blocks",
+      "obligation": "`1. Copy ~/.bashrc to a backup` above `2. Remove the old .bashrc~ file`, `1. ~a` above `2. b~`, and `~a` above `1. b~` each draw their text as written, strike nothing and draw two, two and one ordinals, and draw the text and slots they draw whole when cut once at any character boundary.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::strikes::a_held_phrase_lets_go_where_the_reader_opens_a_numbered_item",
+      "source": "crates/crucible-tui/src/markdown/tests/strikes.rs",
+      "body_sha256": "20f882f79a6f934a52a627d3e2ae4174079a3f8b93241d4b4148a553ba7f6bc2",
       "platforms": [
         "linux",
         "macos",

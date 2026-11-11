@@ -195,7 +195,9 @@ fn a_single_tilde_changes_nothing_where_text_is_drawn_as_written() {
 fn a_held_phrase_crosses_exactly_the_lines_a_double_pair_crosses() {
     // One source for where a paragraph ends: whatever a pair of two tildes
     // carries over, a pair of one strikes the same words across, and whatever
-    // stops the one stops the other, which is then drawn as written.
+    // stops the one stops the other, which is then drawn as written. The one
+    // exception is a numbered item, which a pair of two is carried across and
+    // a pair of one is not, as it is not across a bullet.
     for written in [
         "a {t}b\nc{t} d\n",
         "a {t}b\n\nc{t} d\n",
@@ -205,7 +207,6 @@ fn a_held_phrase_crosses_exactly_the_lines_a_double_pair_crosses() {
         "a {t}b\n```\nc{t} d\n```\n",
         "a {t}b\n$$\nc{t} d\n$$\n",
         "a {t}b\n    c{t} d\n",
-        "a {t}b\n1. c{t} d\n",
         "a {t}b\n---\nc{t} d\n",
         "a {t}b\nc\n===\nd{t} e\n",
         "a {t}b\n| x | y |\n|---|---|\n| c{t} | d |\n",
@@ -237,6 +238,50 @@ fn a_held_phrase_crosses_exactly_the_lines_a_double_pair_crosses() {
                 )),
                 "{single:?}"
             );
+        }
+    }
+
+    let written = "a {t}b\n1. c{t} d\n";
+    let single = written.replace("{t}", "~");
+    assert_eq!(struck(&written.replace("{t}", "~~")), "b1. c");
+    assert_eq!(struck(&single), "", "{single:?}");
+    assert_eq!(
+        picture(ended(&single)),
+        picture(ended(
+            &written.replacen("{t}", "\\~", 1).replace("{t}", "~")
+        )),
+        "{single:?}"
+    );
+}
+
+#[test]
+fn a_held_phrase_lets_go_where_the_reader_opens_a_numbered_item() {
+    // A numbered item is a paragraph of its own, as a bullet is: a tilde above
+    // it is not closed by a tilde in it, and each item keeps its number.
+    for (answer, ordinals) in [
+        (
+            "1. Copy ~/.bashrc to a backup\n2. Remove the old .bashrc~ file\n",
+            2,
+        ),
+        ("1. ~a\n2. b~\n", 2),
+        ("~a\n1. b~\n", 1),
+    ] {
+        let said = standing(ended(answer));
+        assert_eq!(drawn(&said), answer, "{answer:?}");
+        assert!(
+            !said.iter().any(|(slot, _)| *slot == Slot::Struck),
+            "{answer:?}: {said:?}"
+        );
+        assert_eq!(
+            said.iter()
+                .filter(|(slot, _)| *slot == Slot::Ordinal)
+                .count(),
+            ordinals,
+            "{answer:?}: {said:?}"
+        );
+        let whole = picture(ended(answer));
+        for cut in (1..answer.len()).filter(|cut| answer.is_char_boundary(*cut)) {
+            assert_eq!(cut_at(answer, &[cut]), whole, "{answer:?} cut at {cut}");
         }
     }
 }

@@ -2649,6 +2649,9 @@ impl Markdown {
             }
             Lead::Stopped => {
                 if character == ' ' {
+                    // A numbered item is a paragraph of its own, as a bullet
+                    // is, so a phrase opened by a single tilde above it ends.
+                    self.unstrike(say);
                     self.item = Item::Open;
                 }
                 self.lead = Lead::Read;
