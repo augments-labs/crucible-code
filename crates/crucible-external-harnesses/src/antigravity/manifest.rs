@@ -1,13 +1,16 @@
 //! What this build knows of the agent that no catalog entry says.
 //!
-//! An agent is run only as a release someone read: which releases those are,
-//! with the name each answers initializing with and the archive each was
-//! published in, is the catalog entry keyed `antigravity`, from the catalog
-//! the trust state most lately believed or else the snapshot built into the
-//! binary. What stays here is what a release must hold to be run by this
-//! client at all: the protocol versions it answers in, the capabilities this
-//! client relies on and the sign-in method it must offer. An agent that
-//! describes itself otherwise when it is initialized is sent nothing more.
+//! A release from crucible's install store is run only as one someone read:
+//! which releases those are, with the name each answers initializing with and
+//! the archive each was published in, is the catalog entry keyed
+//! `antigravity`, from the catalog the trust state most lately believed or
+//! else the snapshot built into the binary. What stays here is what a release
+//! must hold to be run by this client at all: the protocol versions it answers
+//! in, the capabilities this client relies on and the sign-in method it must
+//! offer. An agent that describes itself otherwise when it is initialized is
+//! sent nothing more. The user's own program is no release anyone read, and
+//! [`Manifest::admits_own`] holds it to those same protocol versions,
+//! capabilities and sign-in method alone, never to a name or version.
 
 use crucible_execution::Failure;
 

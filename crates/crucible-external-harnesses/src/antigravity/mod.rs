@@ -1,5 +1,6 @@
-//! Google's Antigravity agent, spoken to over the Agent Client Protocol in a
-//! profile of its own.
+//! Google's Antigravity agent, spoken to over the Agent Client Protocol: a
+//! release crucible installs, run in a profile of its own, or the user's own
+//! program, run with the sign-in it already keeps.
 //!
 //! [`Antigravity`] is the protocol's client run as a release the catalog
 //! reviewed: the entry keyed [`AGENT`], from the catalog most lately believed
