@@ -1968,3 +1968,359 @@ fn an_own_program_under_the_sandbox_is_told_it_starts_signed_out() -> Result<(),
     );
     Ok(())
 }
+
+/// What a start was given: its arguments and its environment, by name.
+#[derive(Debug, Clone)]
+struct Seen {
+    /// Its arguments.
+    arguments: Vec<String>,
+    /// Its environment, each variable's name and value.
+    environment: Vec<(String, String)>,
+}
+
+/// A sandbox that starts each child as the one it wraps does, keeping what
+/// each was started with.
+struct Watched {
+    /// The sandbox that starts them.
+    local: std::sync::Arc<dyn crucible_sandbox::SandboxService>,
+    /// What each start was given, in order.
+    seen: std::sync::Arc<std::sync::Mutex<Vec<Seen>>>,
+}
+
+impl crucible_sandbox::SandboxService for Watched {
+    fn probe(
+        &self,
+    ) -> BoxFuture<
+        '_,
+        Result<
+            (
+                crucible_sandbox::SandboxBackendIdentity,
+                crucible_sandbox::SandboxCapabilities,
+            ),
+            crucible_sandbox::SandboxError,
+        >,
+    > {
+        self.local.probe()
+    }
+
+    fn prepare(
+        &self,
+        request: crucible_sandbox::SandboxRequest,
+    ) -> BoxFuture<
+        '_,
+        Result<Box<dyn crucible_sandbox::SandboxSession>, crucible_sandbox::SandboxError>,
+    > {
+        Box::pin(async move {
+            let session: Box<dyn crucible_sandbox::SandboxSession> = Box::new(WatchedSession(
+                self.local.prepare(request).await?,
+                self.seen.clone(),
+            ));
+            Ok(session)
+        })
+    }
+}
+
+/// Its session, which keeps what the command it stages is given.
+struct WatchedSession(
+    Box<dyn crucible_sandbox::SandboxSession>,
+    std::sync::Arc<std::sync::Mutex<Vec<Seen>>>,
+);
+
+impl crucible_sandbox::SandboxSession for WatchedSession {
+    fn inspection(&self) -> &crucible_sandbox::SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn materialize(&mut self) -> BoxFuture<'_, Result<(), crucible_sandbox::SandboxError>> {
+        self.0.materialize()
+    }
+
+    fn stage<'a>(
+        self: Box<Self>,
+        command: crucible_sandbox::SandboxCommand,
+    ) -> BoxFuture<
+        'a,
+        Result<Box<dyn crucible_sandbox::SandboxLaunch>, crucible_sandbox::SandboxError>,
+    >
+    where
+        Self: 'a,
+    {
+        if let Ok(mut seen) = self.1.lock() {
+            seen.push(Seen {
+                arguments: command
+                    .arguments()
+                    .iter()
+                    .map(|argument| argument.to_string_lossy().into_owned())
+                    .collect(),
+                environment: command
+                    .environment()
+                    .iter()
+                    .map(|(name, value)| (name.to_owned(), value.to_string_lossy().into_owned()))
+                    .collect(),
+            });
+        }
+        self.0.stage(command)
+    }
+}
+
+/// What starting the configured instance `work` of the user's own `goose`
+/// in `bench` comes to when it is started under the sandbox and takes a turn:
+/// how the turn ended, else why it did not; and what each start, a probe
+/// made first among them, was given.
+fn own_started(
+    bench: &Bench,
+    configured: &ExternalAgent,
+) -> Result<(Result<String, String>, Vec<Seen>), Failed> {
+    use crucible_app::launching::Launcher;
+    use crucible_execution::{SessionRef, TurnRequest};
+    use crucible_external_harnesses::Control;
+    use crucible_sandbox::SandboxPolicy;
+    use crucible_types::TurnId;
+
+    let runtime = super::runtime()?;
+    let state = catalog_fetch::state_in(bench.home.path());
+    let agent =
+        Agent::believing(configured, &REGISTRY, &state, |_| None).map_err(|why| why.to_string())?;
+    let consent = super::shipped_hold::shipped_given(agent.row().route())?;
+    let policy = SandboxPolicy::standard(&bench.tree.workspace()?)?.with_enabled(true);
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let launcher = Launcher::new(
+        std::sync::Arc::new(Watched {
+            local: crucible_app::probing::local(runtime.handle().clone()),
+            seen: seen.clone(),
+        }),
+        runtime.handle().clone(),
+        &policy,
+        &consent,
+        &state,
+        bench.home.sessions(),
+    );
+    let control = Control::new().ok_or("a control")?;
+    let trust = Trust::load(&state, SystemTime::now());
+    let programs = bench.home.path().join("programs");
+    let mut dialect = agent.dialect(
+        crucible_tools::Mode::Ask,
+        &trust,
+        &programs,
+        crucible_app::backends::Sandboxing {
+            on: true,
+            required: false,
+        },
+    )?;
+    let outcome = runtime.block_on(async {
+        let mut host = launcher
+            .launch(&agent, &control, dialect.as_mut(), None)
+            .await
+            .map_err(|why| why.to_string())?;
+        let turned = host
+            .turn(
+                dialect.as_mut(),
+                &SessionRef::new("one").ok_or("a session's name")?,
+                &TurnRequest::new(TurnId::FIRST, "go"),
+                &Unwatched,
+            )
+            .await;
+        drop(host.stop(crucible_external_harnesses::STOP_GRACE).await);
+        turned
+            .map(|outcome| format!("{outcome:?}"))
+            .map_err(|failure| failure.reason().as_str().to_owned())
+    });
+    let seen = seen.lock().map(|seen| seen.clone()).unwrap_or_default();
+    Ok((outcome, seen))
+}
+
+/// Where a turn's events go when none of them is looked at.
+struct Unwatched;
+
+impl crucible_execution::Sink for Unwatched {
+    fn post(&self, _: crucible_execution::Event) {}
+}
+
+/// A program that answers initializing with `initialized`, then opens a
+/// session and answers the turn taken in it, at every start.
+fn turning(initialized: &str) -> crucible_external_harnesses::fake_peer::Script {
+    use crucible_external_harnesses::fake_peer::Script;
+    use crucible_external_harnesses::fake_peer::scripts::acp;
+
+    Script::once(acp::opening(initialized).say(acp::stopped(2, "end_turn")))
+}
+
+/// The record kept for the instance `work` of the user's own `goose` started
+/// as the registry fixture's entry says, where one is kept.
+fn own_record(bench: &Bench) -> Option<crucible_app::own_program::Record> {
+    use crucible_external_harnesses::catalog::Variable;
+
+    crucible_app::own_program::read(
+        bench.home.path(),
+        &crucible_app::own_program::Instance {
+            name: "work",
+            driver: "catalog",
+            agent: Some("goose"),
+            args: &["acp".into()],
+            env: &[Variable {
+                name: "GOOSE_HOME".into(),
+                value: "/tmp/goose".into(),
+            }],
+        },
+    )
+}
+
+/// Moves the modification time of the program at `program` to `to`, as a
+/// program that updates itself in place does, leaving its bytes as they are.
+fn retimed(program: &Path, to: SystemTime) -> Result<(), Failed> {
+    fs::File::options()
+        .write(true)
+        .open(program)?
+        .set_modified(to)?;
+    Ok(())
+}
+
+/// The user's own program is started with the arguments its entry gives it
+/// for this platform and the variables its entry sets, as the store's
+/// release of the same entry is.
+#[test]
+fn an_own_program_is_started_with_its_entrys_arguments() -> Result<(), Failed> {
+    use crucible_external_harnesses::fake_peer::scripts::acp;
+
+    let bench = Bench::new("registry-own-arguments")?;
+    let (_, _, configured) = own_probed_with(
+        &bench,
+        &turning(&acp::offering("goose-acp", "1.2.3", &json!([]))),
+    )?;
+    let (started, seen) = own_started(&bench, &configured)?;
+    assert_eq!(started.as_deref(), Ok("Answered"), "{seen:?}");
+    let [launch] = seen.as_slice() else {
+        panic!("not started once, unprobed: {seen:?}");
+    };
+    assert_eq!(launch.arguments, ["acp"], "{launch:?}");
+    assert!(
+        launch
+            .environment
+            .contains(&("GOOSE_HOME".to_owned(), "/tmp/goose".to_owned())),
+        "{launch:?}"
+    );
+    Ok(())
+}
+
+/// The user's own program changed since its probe, as one that updates
+/// itself is, is probed again, confined, before it is started: one that
+/// still answers as an agent is started and its record kept fresh; one that
+/// no longer does is not started, and its record is removed.
+#[test]
+fn an_own_program_changed_since_its_probe_is_probed_again_before_its_launch() -> Result<(), Failed>
+{
+    use crucible_external_harnesses::fake_peer::scripts::acp;
+
+    let bench = Bench::new("registry-own-changed")?;
+    let (tools, program, configured) = own_probed_with(
+        &bench,
+        &turning(&acp::offering("goose-acp", "1.2.3", &json!([]))),
+    )?;
+    let canonical = fs::canonicalize(&program)?;
+    let (unchanged, seen) = own_started(&bench, &configured)?;
+    assert_eq!(unchanged.as_deref(), Ok("Answered"));
+    assert_eq!(seen.len(), 1, "an unchanged program was probed again");
+
+    retimed(&program, SystemTime::now() - Duration::from_hours(1))?;
+    assert!(
+        own_record(&bench).is_some_and(|record| !record.current(&canonical)),
+        "the record was not stale"
+    );
+    let (changed, seen) = own_started(&bench, &configured)?;
+    assert_eq!(changed.as_deref(), Ok("Answered"), "{seen:?}");
+    assert_eq!(seen.len(), 2, "a changed program was not probed first");
+    assert!(
+        own_record(&bench).is_some_and(|record| record.current(&canonical)),
+        "the record was not kept fresh"
+    );
+
+    fake_peer::install(
+        &tools,
+        "goose",
+        &turning(&acp::response(
+            0,
+            &json!({"protocolVersion": 2, "agentCapabilities": {}}),
+        )),
+    )?;
+    let (refused, seen) = own_started(&bench, &configured)?;
+    let refused = refused.expect_err("a program that no longer admits was started");
+    assert!(refused.contains("protocol version"), "{refused}");
+    assert_eq!(seen.len(), 1, "the program was started past its probe");
+    assert!(
+        own_record(&bench).is_none(),
+        "the record of a program that no longer admits was kept"
+    );
+    Ok(())
+}
+
+/// The user's own program is taken for an agent by the protocol it answers
+/// with and its capabilities, at its probe and at every start, never by its
+/// name and version: one that names neither is admitted, recorded as saying
+/// nothing of them; one that answers another protocol, or no capabilities,
+/// is refused; and a start whose answer differs from the record replaces it
+/// and goes on.
+#[test]
+fn an_own_program_with_no_agent_info_is_admitted_by_its_capabilities() -> Result<(), Failed> {
+    use crucible_app::own_program::DID_NOT_SAY;
+    use crucible_external_harnesses::fake_peer::scripts::acp;
+
+    let answering = |result: Value| turning(&acp::response(0, &result));
+    for (unadmitted, why) in [
+        (
+            json!({"protocolVersion": 2, "agentCapabilities": {}}),
+            "protocol version",
+        ),
+        (json!({"protocolVersion": 1}), "capabilities"),
+    ] {
+        let bench = Bench::new("registry-own-unadmitted")?;
+        let refused = own_probed_with(&bench, &answering(unadmitted.clone()))
+            .expect_err("a program that is no agent was admitted");
+        assert!(refused.to_string().contains(why), "{refused}");
+        assert!(own_record(&bench).is_none(), "{unadmitted} was recorded");
+    }
+
+    let bench = Bench::new("registry-own-no-agent-info")?;
+    let (tools, program, configured) = own_probed_with(
+        &bench,
+        &answering(json!({"protocolVersion": 1, "agentCapabilities": {}})),
+    )?;
+    let record = own_record(&bench).ok_or("nothing was recorded")?;
+    assert_eq!(record.name(), DID_NOT_SAY);
+    assert_eq!(record.version(), DID_NOT_SAY);
+    let (admitted, _) = own_started(&bench, &configured)?;
+    assert_eq!(admitted.as_deref(), Ok("Answered"));
+
+    // What it answers changes where the program itself does not, so each
+    // start below is held to its answer, not probed again.
+    let stamped = fs::metadata(&program)?.modified()?;
+    let answers = |result: Value| -> Result<(), Failed> {
+        fake_peer::install(&tools, "goose", &answering(result))?;
+        retimed(&program, stamped)
+    };
+    for (unadmitted, why) in [
+        (
+            json!({"protocolVersion": 2, "agentCapabilities": {}}),
+            "protocol version",
+        ),
+        (json!({"protocolVersion": 1}), "capabilities"),
+    ] {
+        answers(unadmitted.clone())?;
+        let (refused, seen) = own_started(&bench, &configured)?;
+        assert_eq!(seen.len(), 1, "{unadmitted} was probed again");
+        let refused = refused.expect_err("a start that is no agent was admitted");
+        assert!(refused.contains(why), "{unadmitted}: {refused}");
+    }
+
+    answers(json!({
+        "protocolVersion": 1,
+        "agentInfo": {"name": "goose-acp", "version": "2.0.0"},
+        "agentCapabilities": {"loadSession": true},
+    }))?;
+    let (admitted, seen) = own_started(&bench, &configured)?;
+    assert_eq!(admitted.as_deref(), Ok("Answered"));
+    assert_eq!(seen.len(), 1, "an unchanged program was probed again");
+    let record = own_record(&bench).ok_or("the record was not kept")?;
+    assert_eq!(record.name(), "goose-acp", "the record was not replaced");
+    assert_eq!(record.version(), "2.0.0");
+    Ok(())
+}

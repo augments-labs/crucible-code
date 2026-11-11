@@ -22,6 +22,14 @@
 //! the same driver, `agent:` key and declared arguments and environment it
 //! had when it was probed. At most [`RECORDS`] are kept, once those of
 //! instances that are gone are dropped.
+//!
+//! A launch holds the program to its record. One whose path, size or
+//! modification time changed since its probe, as a program that updates
+//! itself does, is probed again in process, confined, before it is started:
+//! it is started only where it is still admitted, and its record is replaced,
+//! or removed with the launch refused. Every start's answer to `initialize`
+//! is admitted as the probe's was, and one that differs from the record
+//! replaces it.
 
 use std::ffi::OsString;
 use std::fs;
@@ -630,7 +638,8 @@ pub fn forget(crucible: &Path, name: &str) -> std::io::Result<()> {
 }
 
 /// Keeps `record` for `instance` under `crucible`, in place of any it had,
-/// once every record of an instance not among `instances` is dropped.
+/// once every record of an instance not among `instances` is dropped; where
+/// the instances are not given, as at a launch, none is dropped.
 ///
 /// # Errors
 ///
@@ -639,7 +648,7 @@ pub fn forget(crucible: &Path, name: &str) -> std::io::Result<()> {
 fn keep(
     crucible: &Path,
     instance: &Instance<'_>,
-    instances: &[&str],
+    instances: Option<&[&str]>,
     record: &Record,
 ) -> Result<(), Unowned> {
     let dir = crucible.join(KEPT_IN);
@@ -656,7 +665,7 @@ fn keep(
         let live = owner
             .as_ref()
             .and_then(|owner| owner.text("instance"))
-            .is_some_and(|owner| instances.contains(&owner));
+            .is_some_and(|owner| instances.is_none_or(|instances| instances.contains(&owner)));
         if live {
             others = others.saturating_add(1);
         } else {
@@ -863,6 +872,72 @@ pub async fn probe<D: Dialect>(
     dialect: D,
     within: Duration,
 ) -> Result<Record, Unowned> {
+    let (canonical, said) = answer(service, runtime, places, program, dialect, within).await?;
+    admit(
+        places.crucible,
+        instance,
+        instances,
+        &canonical,
+        &Sandbox::Closed,
+        &said,
+    )
+}
+
+/// Probes again, as [`probe`] does, `instance`'s own program at `program`,
+/// changed since its record was kept: its record is replaced by what it
+/// answers now where that admits it, every other record kept as it is, and
+/// removed where it does not, so the launch that asked is refused and leaves
+/// no record behind.
+///
+/// # Errors
+///
+/// [`Unowned`] saying why it is no longer admitted.
+// Each is an input of its own, as for `probe`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn reprobe<D: Dialect>(
+    service: Arc<dyn SandboxService>,
+    runtime: Handle,
+    places: &Places<'_>,
+    instance: &Instance<'_>,
+    program: Program,
+    dialect: D,
+) -> Result<Record, Unowned> {
+    let admitted = match answer(service, runtime, places, program, dialect, REPROBING).await {
+        Ok((canonical, said)) => Record::answered(instance, &canonical, &Sandbox::Closed, &said)
+            .and_then(|record| {
+                keep(places.crucible, instance, None, &record)?;
+                Ok(record)
+            }),
+        Err(why) => Err(why),
+    };
+    if admitted.is_err() {
+        forget(places.crucible, instance.name)
+            .map_err(|why| Unowned::Unkept(places.crucible.join(KEPT_IN), why))?;
+    }
+    admitted
+}
+
+/// How long a program probed again before a launch is given to answer: as
+/// long as the intake gives a probe.
+const REPROBING: Duration = crate::probing::BOUND;
+
+/// The canonical path of `program`, and its whole answer to `initialize` alone,
+/// sent through `dialect` with the program started confined as [`probe`]
+/// says.
+///
+/// # Errors
+///
+/// [`Unowned`] where it was not started or did not answer.
+// Each is an input of its own, as for `probe`.
+#[allow(clippy::too_many_arguments)]
+async fn answer<D: Dialect>(
+    service: Arc<dyn SandboxService>,
+    runtime: Handle,
+    places: &Places<'_>,
+    program: Program,
+    dialect: D,
+    within: Duration,
+) -> Result<(PathBuf, Map<String, Value>), Unowned> {
     let canonical = fs::canonicalize(program.path())
         .map_err(|why| Unowned::Unreachable(program.path().to_owned(), why))?;
     let root = places.root(&canonical);
@@ -897,14 +972,7 @@ pub async fn probe<D: Dialect>(
         };
         return Err(Unowned::Probe(Unprobed::Unanswered(why.into())));
     };
-    admit(
-        places.crucible,
-        instance,
-        instances,
-        &canonical,
-        &Sandbox::Closed,
-        &said,
-    )
+    Ok((canonical, said))
 }
 
 /// Keeps, under crucible's home `crucible` and among the records of
@@ -925,7 +993,7 @@ pub(crate) fn admit(
     said: &Map<String, Value>,
 ) -> Result<Record, Unowned> {
     let record = Record::answered(instance, canonical, sandbox, said)?;
-    keep(crucible, instance, instances, &record)?;
+    keep(crucible, instance, Some(instances), &record)?;
     Ok(record)
 }
 
@@ -940,6 +1008,208 @@ pub(crate) fn admit(
 /// Why the agent's wire cannot be made.
 pub fn dialect(row: &AgentRow, program: &Path) -> Wire {
     row.own_dialect(Mode::Ask, None, program, Sandboxing::default())
+}
+
+/// A catalog instance whose program is the user's own, as its record is kept
+/// for it: what a launch holds that record to.
+#[derive(Debug, Clone)]
+pub(crate) struct Owned {
+    /// Crucible's home, where the record is kept.
+    crucible: PathBuf,
+    /// The instance's name.
+    name: Box<str>,
+    /// The catalog entry its `agent:` names.
+    key: Box<str>,
+    /// The arguments its entry starts it with.
+    args: Vec<Box<str>>,
+    /// The variables its entry starts it with.
+    env: Vec<Variable>,
+    /// The canonical path of its program.
+    canonical: PathBuf,
+}
+
+impl Owned {
+    /// The instance `name` of `row`, whose program is the user's own at
+    /// `program`, its record kept under `crucible`; none where `row` runs no
+    /// program the user installed.
+    ///
+    /// # Errors
+    ///
+    /// [`Unowned::Unreachable`] where the program cannot be followed.
+    pub(crate) fn of(
+        crucible: &Path,
+        name: &str,
+        row: &AgentRow,
+        program: &Path,
+    ) -> Option<Result<Self, Unowned>> {
+        let AgentRow::Catalog(catalog) = row else {
+            return None;
+        };
+        if !catalog.is_own() {
+            return None;
+        }
+        Some(
+            fs::canonicalize(program)
+                .map_err(|why| Unowned::Unreachable(program.to_owned(), why))
+                .map(|canonical| Self {
+                    crucible: crucible.to_owned(),
+                    name: name.into(),
+                    key: catalog.key().as_str().into(),
+                    args: catalog.profile().args().to_vec(),
+                    env: catalog.profile().env().to_vec(),
+                    canonical,
+                }),
+        )
+    }
+
+    /// The instance, as its record is held to it.
+    pub(crate) fn instance(&self) -> Instance<'_> {
+        Instance {
+            name: &self.name,
+            driver: crucible_config::Driver::Catalog.name(),
+            agent: Some(&self.key),
+            args: &self.args,
+            env: &self.env,
+        }
+    }
+
+    /// The canonical path of its program.
+    pub(crate) fn canonical(&self) -> &Path {
+        &self.canonical
+    }
+
+    /// Its record, where one is kept for it as it is configured now; whether
+    /// the program is still the one probed is [`Record::current`]'s to say.
+    pub(crate) fn record(&self) -> Option<Record> {
+        read(&self.crucible, &self.instance())
+    }
+
+    /// Replaces its record by what its program answered at a launch, `said`,
+    /// where that admits it and differs from the record kept, and the program
+    /// is still the one probed: the same bytes were held in a sandbox that
+    /// closed the network, so the record still says so. Nothing is changed
+    /// otherwise, and a record that cannot be written leaves the launch to go
+    /// on as it was.
+    fn answered(&self, said: &Map<String, Value>) {
+        let instance = self.instance();
+        let Some(kept) = self.record() else {
+            return;
+        };
+        if !kept.current(&self.canonical) {
+            return;
+        }
+        let Ok(now) = Record::answered(&instance, &self.canonical, &Sandbox::Closed, said) else {
+            return;
+        };
+        if now != kept {
+            let _ = keep(&self.crucible, &instance, None, &now);
+        }
+    }
+}
+
+/// The wire of a catalog instance whose program is the user's own, reading
+/// its answer to `initialize` at every launch: the wire admits it or refuses
+/// it as the probe did, and an answer that admits and differs from the
+/// record replaces the record.
+pub(crate) struct Recording {
+    /// The wire, which says what is sent and admits what is answered.
+    wire: Box<dyn Dialect>,
+    /// The instance whose record it keeps.
+    owned: Owned,
+    /// Whether the answer to `initialize` is still to come.
+    waiting: bool,
+}
+
+impl Recording {
+    /// `wire`, keeping `owned`'s record.
+    pub(crate) fn new(wire: Box<dyn Dialect>, owned: Owned) -> Self {
+        Self {
+            wire,
+            owned,
+            waiting: true,
+        }
+    }
+
+    /// Notes `frame`, where it answers `initialize`.
+    fn noted(&mut self, frame: &str) {
+        if !self.waiting {
+            return;
+        }
+        let Ok(Value::Object(said)) = serde_json::from_str::<Value>(frame) else {
+            return;
+        };
+        if said.get("id") != Some(&json!(0)) || said.contains_key("method") {
+            return;
+        }
+        self.waiting = false;
+        if said.contains_key("result") {
+            self.owned.answered(&said);
+        }
+    }
+}
+
+impl Dialect for Recording {
+    fn program(&self) -> &str {
+        self.wire.program()
+    }
+
+    fn request(&mut self, shape: Shape<'_>) -> crucible_external_harnesses::Request {
+        self.waiting = true;
+        self.wire.request(shape)
+    }
+
+    fn open(&mut self, turn: &crucible_execution::TurnRequest) -> Result<Vec<String>, Failure> {
+        self.wire.open(turn)
+    }
+
+    fn heard(&mut self, frame: &str) -> Result<Vec<crucible_external_harnesses::Act>, Failure> {
+        let acts = self.wire.heard(frame)?;
+        self.noted(frame);
+        Ok(acts)
+    }
+
+    fn answer(
+        &mut self,
+        native: &str,
+        decision: &crucible_execution::Decision,
+    ) -> Result<String, Failure> {
+        self.wire.answer(native, decision)
+    }
+
+    fn cancel(&mut self) -> Option<String> {
+        self.wire.cancel()
+    }
+
+    fn account(
+        &mut self,
+        step: Account,
+        shape: Shape<'_>,
+    ) -> Option<crucible_external_harnesses::Request> {
+        self.waiting = true;
+        self.wire.account(step, shape)
+    }
+
+    fn read(&self, step: Account, ran: &crucible_external_harnesses::Ran) -> Reading {
+        self.wire.read(step, ran)
+    }
+
+    fn spoken(&mut self, step: Account) -> Option<Vec<String>> {
+        self.wire.spoken(step)
+    }
+
+    fn told(
+        &mut self,
+        step: Account,
+        frame: &str,
+    ) -> Result<crucible_external_harnesses::Told, Failure> {
+        let told = self.wire.told(step, frame)?;
+        self.noted(frame);
+        Ok(told)
+    }
+
+    fn signing_in_with(&mut self, id: &str) -> bool {
+        self.wire.signing_in_with(id)
+    }
 }
 
 /// What a refusal of an own program says of `failure`.

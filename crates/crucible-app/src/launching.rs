@@ -345,6 +345,18 @@ pub enum Unlaunched {
     /// The directory the user's own program lies in is not given to an agent.
     #[error("{0}.")]
     Unowned(#[from] crate::own_program::Unowned),
+    /// The user's own program changed since it was probed, and probed again
+    /// it is no longer admitted; its record is gone with it.
+    #[error(
+        "{agent} runs your own program, which changed since it was probed; probed again, it \
+         is not started: {why}"
+    )]
+    Changed {
+        /// The instance.
+        agent: String,
+        /// Why it is not admitted now.
+        why: Box<crate::own_program::Unowned>,
+    },
     /// Its route is not one this build warns about.
     #[error("{0} is not an agent route this build knows, so nothing is started on it.")]
     Unknown(String),
@@ -1236,7 +1248,9 @@ impl Agent {
     /// Its wire, fresh for a run in `mode`, admitting the agent as the
     /// releases `trust` offers: a release in the install store `programs` as
     /// its row speaks to one, and the user's own program, named by where its
-    /// path leads, as its row speaks to that under `sandbox`.
+    /// path leads, as its row speaks to that under `sandbox`. A catalog
+    /// agent's own program is admitted at every start as its probe admitted
+    /// it, and an answer that differs from its record replaces the record.
     ///
     /// # Errors
     ///
@@ -1256,7 +1270,21 @@ impl Agent {
             Origin::Own => {
                 let canonical = std::fs::canonicalize(installed);
                 let program = canonical.as_deref().unwrap_or(installed);
-                self.row.own_dialect(mode, Some(trust), program, sandbox)
+                let wire = self.row.own_dialect(mode, Some(trust), program, sandbox)?;
+                let crucible = programs.parent().unwrap_or(programs);
+                Ok(
+                    match crate::own_program::Owned::of(
+                        crucible,
+                        &self.instance,
+                        &self.row,
+                        program,
+                    ) {
+                        Some(Ok(owned)) => {
+                            Box::new(crate::own_program::Recording::new(wire, owned))
+                        }
+                        Some(Err(_)) | None => wire,
+                    },
+                )
             }
         }
     }
@@ -3343,6 +3371,59 @@ impl<'a> Launcher<'a> {
         Ok((request, kept))
     }
 
+    /// Holds a start of `agent`, whose program at `program` is the user's
+    /// own, to its probe record under `places`' crucible home: a catalog
+    /// agent's program that changed since its probe, as one that updates
+    /// itself does, is probed again, confined, before it is started, and is
+    /// started only where it is still admitted; its record is then replaced,
+    /// and removed where it is not. A program of any other row is held to
+    /// nothing here.
+    ///
+    /// # Errors
+    ///
+    /// [`Unlaunched::Changed`] where it is no longer admitted, and
+    /// [`Unbelieved::OwnUnprobed`] where no record holds for it.
+    async fn probed_now(
+        &self,
+        agent: &Agent,
+        program: &Program,
+        places: &crate::own_program::Places<'_>,
+    ) -> Result<(), Unlaunched> {
+        let AgentRow::Catalog(catalog) = &agent.row else {
+            return Ok(());
+        };
+        let Some(owned) = crate::own_program::Owned::of(
+            places.crucible,
+            &agent.instance,
+            &agent.row,
+            program.path(),
+        ) else {
+            return Ok(());
+        };
+        let owned = owned?;
+        match owned.record() {
+            Some(record) if record.current(owned.canonical()) => Ok(()),
+            Some(_) => crate::own_program::reprobe(
+                Arc::clone(&self.service),
+                self.runtime.clone(),
+                places,
+                &owned.instance(),
+                program.clone(),
+                catalog.dialect(Mode::Ask),
+            )
+            .await
+            .map(drop)
+            .map_err(|why| Unlaunched::Changed {
+                agent: agent.instance.to_string(),
+                why: Box::new(why),
+            }),
+            None => Err(Unbelieved::OwnUnprobed {
+                key: catalog.key().clone(),
+            }
+            .into()),
+        }
+    }
+
     /// Starts `agent` with `request` for `life`, once every gate before a
     /// process has passed.
     async fn start(
@@ -3435,6 +3516,9 @@ impl<'a> Launcher<'a> {
                 crucible,
                 sessions: self.sessions,
             };
+            if signing_in.is_none() {
+                self.probed_now(agent, &program, &places).await?;
+            }
             policy = crate::own_program::launched(&policy, row, program.path(), &places)?;
         }
         for root in &kept {

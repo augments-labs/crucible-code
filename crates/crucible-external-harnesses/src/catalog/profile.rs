@@ -276,6 +276,18 @@ impl CatalogProfile {
         &self.key
     }
 
+    /// The arguments its entry starts it with.
+    #[must_use]
+    pub fn args(&self) -> &[Box<str>] {
+        &self.args
+    }
+
+    /// The variables its entry starts it with, by name and value.
+    #[must_use]
+    pub fn env(&self) -> &[Variable] {
+        &self.env
+    }
+
     /// The protocol versions its answer to initializing may carry: the one
     /// this client speaks, which is the one the intake initialized it in.
     #[must_use]
