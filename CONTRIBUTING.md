@@ -107,7 +107,8 @@ Vendors release and retire models several times a year. The `model-drift`
 workflow puts the models.dev database against the shipped lists on the 1st and
 15th of each month and keeps one `model-drift` issue open while they differ,
 reporting a newer model, one gone or deprecated, rungs that differ, a family
-crucible does not offer and an offered model revised since it was reviewed;
+crucible does not offer, an offered model revised since it was reviewed and a
+`labs` model of Mistral nothing holds or declines;
 [refresh-the-models](.agents/skills/refresh-the-models/SKILL.md) says how to
 settle it.
 
