@@ -276,9 +276,12 @@ table written without outer bars, nor the title of a heading underlined with
 
 - **A backslash at the end of a line.** In a paragraph, a list item or a quote,
   a `\` just before the line break breaks the line and is not drawn, once more
-  of the paragraph follows. When the message ends there, or a blank line comes
-  next, the backslash is drawn as written. In code, a code span, a heading,
-  display math and a block drawn as written it is an ordinary character.
+  of the same paragraph follows. When the message ends there, a blank line comes
+  next, or the next line opens a block (a heading, a list item, a fence, a
+  quote, a rule, a table row, display math or `<details>`), the backslash is
+  drawn as written and the block opens as it would have. In code, a code span, a
+  heading, display math and a block drawn as written it is an ordinary
+  character.
 - **Entities.** Outside code, `&name;` for the names below and every numeric
   reference, `&#169;` or `&#xA9;` with up to seven digits, is drawn as the
   character it names. What it names is text, never read again: `&lt;details&gt;`
@@ -288,8 +291,9 @@ table written without outer bars, nor the title of a heading underlined with
   `plusmn`, `times`, `divide`, `micro`, `para`, `sect`, `euro`, `pound`, `yen`,
   `cent`, `larr`, `rarr`, `uarr`, `darr`, `harr`, `rArr`, `lArr`, `hArr`, `ne`,
   `le`, `ge`, `infin` and `check`, and case matters. Any other name, an entity
-  without its `;`, and one inside code, a key, `<sub>` or `<sup>` are drawn as
-  written.
+  without its `;`, and one inside code, a key, display math or a block drawn as
+  written are drawn as written. Inside `<sub>` and `<sup>` it is decoded and
+  then drawn in the script, as far as the script has the character.
 - **An entity for a character a screen does not draw as itself.** A control
   character, an escape, a bidirectional override or other format character,
   zero, a surrogate and a value past the last character are drawn as written,
