@@ -207,3 +207,76 @@ fn every_shape_of_link_cut_anywhere_is_drawn_as_it_is_whole() {
         }
     }
 }
+
+/// A forge address, a worded link and an image, as one line of an answer.
+const THREE: &str = "https://github.com/augments-labs/crucible-code/pull/1324 \
+                     [the guide](https://example.com/docs/guide/intro) ![shot](out/shot.png)";
+
+/// Every place an answer's text is drawn as it was written, each holding
+/// [`THREE`].
+fn written_places() -> [(&'static str, String); 7] {
+    let three = THREE;
+    [
+        ("code span", format!("a `{three}` b\n")),
+        ("fence", format!("```\n{three}\n```\n")),
+        ("indented code", format!("before\n\n    {three}\n\nafter\n")),
+        ("display math", format!("$$\n{three}\n$$\n")),
+        ("key", format!("a <kbd>{three}</kbd> b\n")),
+        ("mermaid", format!("```mermaid\n{three}\n```\n")),
+        ("diff", format!("```diff\n+{three}\n```\n")),
+    ]
+}
+
+/// The rows `answer` is drawn as against this checkout's repository, at a
+/// hundred and forty columns, blank rows left out.
+fn drawn_against_here(answer: &str) -> Vec<String> {
+    let mut drawn = reading(140, 12);
+    drawn.render.counts(Some(here()));
+    drawn.answer(answer);
+    drawn
+        .rows()
+        .iter()
+        .map(|row| row.trim_end().to_owned())
+        .filter(|row| !row.is_empty())
+        .collect()
+}
+
+#[test]
+fn a_link_where_text_is_drawn_as_written_is_drawn_as_it_was_before_references() {
+    // Code, a key and a block drawn as written keep every byte: no reference,
+    // no quiet address and no image words. Display math draws a link as its
+    // words, as it always has, and nothing after them.
+    let three = THREE;
+    let plus = format!("+{three}");
+    let drawn = [
+        format!("a {three} b"),
+        format!("│ {three}"),
+        format!("│ {three}"),
+        "https://github.com/augments-labs/crucible-code/pull/1324 the guide !shot".to_owned(),
+        format!("a {three} b"),
+        format!("│ {three}"),
+        format!("│ {plus}"),
+    ];
+    for ((place, answer), row) in written_places().into_iter().zip(drawn) {
+        let rows = drawn_against_here(&answer);
+        assert!(rows.contains(&row), "{place}: {rows:#?}");
+        for shown in ["#1324", "(example.com", "[image"] {
+            assert!(
+                !rows.iter().any(|row| row.contains(shown)),
+                "{place} drew {shown:?}: {rows:#?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_run_with_no_colour_in_it_keeps_every_link_and_image_as_the_model_wrote_it() {
+    // With no colour the markdown is not read, so there is no reference, no
+    // quiet address and no image words: the text is what the model wrote.
+    let mut drawn = Drawn::new(200, 4);
+    drawn.render.counts(Some(here()));
+    drawn.stream(THREE).unwrap();
+    drawn.settle().unwrap();
+
+    assert_eq!(drawn.screen().row(0), THREE);
+}

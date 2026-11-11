@@ -3129,6 +3129,33 @@ fn a_native_hostile_forge_address_worded_link_or_image_writes_no_escape() {
     }
 }
 
+#[test]
+fn a_native_run_with_no_colour_in_it_keeps_every_link_and_image_as_the_model_wrote_it() {
+    let three = "https://github.com/augments-labs/crucible-code/pull/1324 \
+                 [the guide](https://example.com/docs/guide/intro) ![shot](out/shot.png)";
+    let window = Window::new(200, 12);
+    let mut render = native(&window);
+    render.counts(Some(crate::Forge::new(
+        "https://github.com",
+        "augments-labs/crucible-code",
+        "/issues/",
+    )));
+    stands(&mut render);
+    render.stream(three).unwrap();
+    render.settle().unwrap();
+    render.seal().unwrap();
+
+    let rows: Vec<String> = window
+        .all()
+        .into_iter()
+        .map(|row| row.trim_end().to_owned())
+        .collect();
+    assert!(rows.iter().any(|row| row == three), "{rows:#?}");
+    for shown in ["#1324", "(example.com", "[image"] {
+        assert!(!rows.iter().any(|row| row.contains(shown)), "{rows:#?}");
+    }
+}
+
 /// How many columns of blank stand in front of `row`'s first word.
 fn indent_of(row: &str) -> usize {
     row.len() - row.trim_start().len()

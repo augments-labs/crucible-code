@@ -668,6 +668,36 @@ mod tests {
     }
 
     #[test]
+    fn a_redirected_run_under_always_keeps_every_link_and_image_the_model_wrote() {
+        // A file keeps no quiet address and no image words either: it keeps
+        // the link the model wrote, which reads the same anywhere it is pasted.
+        let style = Style::resolve(
+            Output {
+                color: Some(Color::Always),
+                ..Output::default()
+            },
+            false,
+            None,
+            None,
+            &environment(&[("COLORTERM", "truecolor")]),
+        );
+        let mut render = crucible_tui::Renderer::new(crucible_tui::Recording::redirected(200, 24));
+        render.wears(style.palette());
+        render.counts(Some(crucible_tui::Forge::new(
+            "https://github.com",
+            "augments-labs/crucible-code",
+            "/issues/",
+        )));
+        let three = "https://github.com/augments-labs/crucible-code/pull/1324 \
+                     [the guide](https://example.com/docs/guide/intro) ![shot](out/shot.png)";
+
+        render.stream(three).unwrap();
+        render.settle().unwrap();
+
+        assert_eq!(render.terminal().written(), format!("{three}\n"));
+    }
+
+    #[test]
     fn a_run_that_named_no_font_is_drawn_with_the_characters_the_design_uses() {
         // Unicode is the answer rather than a platform guess: a font missing a
         // box-drawing glyph is invisible to this process, so ascii is something
