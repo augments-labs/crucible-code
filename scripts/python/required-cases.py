@@ -282,6 +282,7 @@ def self_test():
         ("package(=a) & (test(x) | test(y))", ("a", "a", "y"), True),
         ("package(=a) & (test(x) | test(y))", ("b", "b", "y"), False),
         (r"test(/\(a\/b\)/)", ("a", "a", "(a/b)"), True),
+        (r"test(/a\\</)", ("a", "a", "a\\<"), True),
     ):
         try:
             picked = selector(expression)(*test)
@@ -303,6 +304,8 @@ def self_test():
         "binary([^a]*)",
         "test(/(/)",
         "test(/[[:digit:]]x/)",
+        r"test(/\<a/)",
+        r"test(/\b{start}a/)",
     ):
         try:
             selector(expression)
@@ -509,9 +512,10 @@ def self_test():
         print(f"    FAIL {now[1]} binary reruns went at once where two processors allow two")
         return 1
 
-    # Grouped with d, a reruns after b and c, so lines printed as the reruns
-    # finished, or in the order they were scheduled, would name b before a.
-    late = {(name, "lib", name): [(None, "one", None)] for name in "abcd"}
+    # Grouped with d, a reruns after b and c, and b is handed in before a, so
+    # lines printed as the reruns finished, in the order they were scheduled
+    # or in the order they were handed in would name b before a.
+    late = {(name, "lib", name): [(None, "one", None)] for name in "dbca"}
     printed = io.StringIO()
     with contextlib.redirect_stdout(printed):
         rerun(
@@ -746,9 +750,17 @@ def name_matcher(text, default):
     negated class in a glob, which fnmatch would take as they stand, so all
     three are refused, as is a regex Python cannot compile. So is one Python
     warns it may read otherwise, which is where Rust's class syntax, such as
-    `[[:digit:]]` or `&&`, departs from Python's.
+    `[[:digit:]]` or `&&`, departs from Python's. Both read an escaped ASCII
+    punctuation mark as itself, except that Rust reads `\\<` and `\\>` as word
+    boundaries, and an escaped letter or digit, such as `\\b{start}`, can mean
+    something else in each, so a regex escaping any of these is refused too.
     """
     if len(text) > 1 and text.startswith("/") and text.endswith("/"):
+        if any(
+            not (escaped.isascii() and not escaped.isalnum()) or escaped in "<>"
+            for escaped in re.findall(r"\\(.)", text[1:-1], re.DOTALL)
+        ):
+            raise ValueError(f"cannot read {text!r} as a regex, as Rust may read an escape in it otherwise")
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("error", FutureWarning)
