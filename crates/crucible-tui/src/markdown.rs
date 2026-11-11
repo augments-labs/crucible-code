@@ -87,32 +87,34 @@
 //!
 //! A link's brackets holding a caret and a label, `[^1]` or `[^note]`, are a
 //! footnote, numbered in the order the answer first writes each label: a
-//! reference is drawn as its number in superscript, or under ascii as `[1]`,
-//! quiet. Where the brackets are the first thing a line says and a colon
+//! reference is drawn as its number in superscript, or under ascii as a quiet
+//! `[1]`. Where the brackets are the first thing a line says and a colon
 //! follows them, they are the note's definition, and the line is drawn quiet
 //! behind the number. A label is remembered until the message ends, so a
 //! definition takes its reference's number wherever either stands. The
-//! brackets are shown as written in a heading, a table's cell, code, a link's
-//! words and a block laid out again; for a label that is empty, longer than
-//! its cap, or holds whitespace or a control character; for a second
-//! definition of one label; and for a label first written past the cap.
+//! brackets are shown as written in a heading, a table's cell, code, from a
+//! `[` to the next `]` or the line's end, and a block laid out again; for a
+//! label that is empty, longer than its cap, or holds whitespace or a control
+//! character; for a second definition of one label; and for a label first
+//! written past the cap.
 //!
 //! Six tags, `<details>`, `<summary>`, `<br>`, `<kbd>`, `<sub>` and `<sup>`, in
-//! any letter case and with attributes, are read where prose is, and never in
-//! code or a link's words; any other `<` is shown as written, and so is one of
-//! the six that runs past its cap or its line. A paragraph's line inside a
-//! `<details>` block is drawn two columns in until `</details>` or the
-//! message's end, and a `<summary>` is drawn bold behind a mark; both are
-//! shown as written in a heading, a table's cell and a block laid out again.
+//! any letter case and with attributes holding no `<` or `>`, are read where
+//! prose is, and never in code or from a `[` to the next `]` or the line's
+//! end; any other `<` is shown as written, and so is one of the six that runs
+//! past its cap or its line. A paragraph's line inside a `<details>` block is
+//! drawn two columns in until `</details>` or the message's end, and a
+//! `<summary>` is drawn bold behind a mark; both are shown as written in a
+//! heading, a table's cell and a block laid out again.
 //! `<br>` breaks the line, and is a space in a heading, a table's cell and a
 //! block laid out again. A line that a `<br>`, `<details>` or `<summary>` is
 //! read on is neither the header of a table written without outer bars nor
 //! the title of a heading. What `<kbd>` holds is a key, in the code slot and
 //! under ascii in brackets, with nothing in it read; a `<sub>` or `<sup>` run
 //! is drawn quiet in sub or superscript characters where every one of its
-//! characters has one, and as its plain text where one does not. A tag is
-//! read away, and a line written at the margin that holds nothing but tags
-//! draws no row.
+//! characters has one, and as its plain text where one does not or the run
+//! passes its cap or its line. A tag is read away, and a line written at the
+//! margin that holds nothing but `<details>` and closing tags draws no row.
 //!
 //! On the way out, each settled run is told by the kind of thing it is, which
 //! is what a design colours: a span of code that names a file is a path, and a
