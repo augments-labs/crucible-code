@@ -302,6 +302,54 @@ pub trait Dialect: Send {
     }
 }
 
+/// A boxed wire is the wire it holds, so a caller given one chosen at run time
+/// drives it as it drives one it named.
+impl<D: Dialect + ?Sized> Dialect for Box<D> {
+    fn program(&self) -> &str {
+        (**self).program()
+    }
+
+    fn request(&mut self, shape: Shape<'_>) -> Request {
+        (**self).request(shape)
+    }
+
+    fn open(&mut self, turn: &TurnRequest) -> Result<Vec<String>, Failure> {
+        (**self).open(turn)
+    }
+
+    fn heard(&mut self, frame: &str) -> Result<Vec<Act>, Failure> {
+        (**self).heard(frame)
+    }
+
+    fn answer(&mut self, native: &str, decision: &Decision) -> Result<String, Failure> {
+        (**self).answer(native, decision)
+    }
+
+    fn cancel(&mut self) -> Option<String> {
+        (**self).cancel()
+    }
+
+    fn account(&mut self, step: Account, shape: Shape<'_>) -> Option<Request> {
+        (**self).account(step, shape)
+    }
+
+    fn read(&self, step: Account, ran: &Ran) -> Reading {
+        (**self).read(step, ran)
+    }
+
+    fn spoken(&mut self, step: Account) -> Option<Vec<String>> {
+        (**self).spoken(step)
+    }
+
+    fn told(&mut self, step: Account, frame: &str) -> Result<Told, Failure> {
+        (**self).told(step, frame)
+    }
+
+    fn signing_in_with(&mut self, id: &str) -> bool {
+        (**self).signing_in_with(id)
+    }
+}
+
 /// A decision settled in the table and on its way to the program.
 #[derive(Debug)]
 struct Decided {

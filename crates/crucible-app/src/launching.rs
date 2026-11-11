@@ -3476,7 +3476,7 @@ impl<'a> Launcher<'a> {
 /// probe sends the program is one fixed `initialize` that carries no content,
 /// the sandbox closes the network when it can, and when it cannot the probe is
 /// run only on a disposable runner with nothing of a user's on it.
-const PROBING: &str = "catalog-probe";
+pub(crate) const PROBING: &str = "catalog-probe";
 
 /// How far the sandbox held a probe in.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3488,13 +3488,13 @@ pub(crate) enum Sandbox {
     Unavailable(String),
 }
 
-/// A program started for the intake's probe.
+/// A program started for the intake's probe, spoken to over `D`.
 #[derive(Debug)]
-pub(crate) struct Probe {
+pub(crate) struct Probe<D = Acp> {
     /// The running program.
     pub(crate) host: Host,
     /// The wire it is spoken to over.
-    pub(crate) dialect: Acp,
+    pub(crate) dialect: D,
     /// How far it is held in.
     pub(crate) sandbox: Sandbox,
 }
@@ -3587,27 +3587,11 @@ pub(crate) async fn probing(
     if let (Some(reason), false) = (&unclosable, unconfined) {
         return Err(Unprobeable::Unclosable(reason.clone()));
     }
-    let readable = SandboxFilesystemRule::new(
+    let policy = crate::probing::policy(
         &root,
-        SandboxFilesystemAccess::ReadOnly,
         SandboxFilesystemProvenance::Workspace,
+        unclosable.is_none(),
     )?;
-    let policy = SandboxPolicy::new(
-        true,
-        [readable],
-        &root,
-        SandboxNetworkPolicy::Closed,
-        // The program lives as long as the probe waits for it, which is
-        // bounded by the caller, not by a ceiling on one command.
-        SandboxResourceLimits {
-            command_time: None,
-            cpu_seconds: None,
-            output_bytes: None,
-            ..SandboxResourceLimits::confining()
-        },
-    )?
-    // Without the sandbox its limits go with it, as for a command.
-    .with_enabled(unclosable.is_none());
     let mut dialect = Acp::cataloged(profile, Allowing::Nothing);
     let request = binned(
         led(
@@ -3631,7 +3615,7 @@ pub(crate) async fn probing(
 
 /// Why `service` cannot hold a program in with its network closed and its
 /// filesystem enforced, where it cannot; nothing where it can.
-async fn unclosable(service: &dyn SandboxService) -> Option<String> {
+pub(crate) async fn unclosable(service: &dyn SandboxService) -> Option<String> {
     match tokio::time::timeout(PREPARING, service.probe()).await {
         Ok(Ok((_, capabilities))) => {
             let enforced = [SandboxFeature::NetworkDeny, SandboxFeature::Filesystem]

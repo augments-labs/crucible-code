@@ -295,10 +295,7 @@ impl CatalogProfile {
             if initialized.capable() {
                 return Ok(());
             }
-            return Err(Failure::new(
-                "The program did not answer with its capabilities, so it is not taken for \
-                 an agent.",
-            ));
+            return Err(Failure::new(crate::acp::INCAPABLE));
         };
         if initialized.name() != Some(&**name) {
             return Err(Failure::new(&format!(

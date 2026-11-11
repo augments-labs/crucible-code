@@ -361,7 +361,35 @@ impl Stated {
     }
 }
 
+/// What an agent that answered with a protocol version this client does not
+/// speak is told.
+const UNSPOKEN: &str = "The agent answered with a protocol version this client does not speak.";
+
+/// What a program the user installed that answered with no capabilities is
+/// told.
+pub(crate) const INCAPABLE: &str =
+    "The program did not answer with its capabilities, so it is not taken for an agent.";
+
 impl Initialized {
+    /// What the result of initializing a program the user installed says,
+    /// where it is taken for an agent: it answered with the protocol version
+    /// this client speaks and with an `agentCapabilities` object. Its name and
+    /// version are kept and never compared.
+    ///
+    /// # Errors
+    ///
+    /// A [`Failure`] naming the first way it is not taken for one.
+    pub fn own(result: &Value) -> Result<Self, Failure> {
+        let initialized = Self::read(result);
+        if initialized.protocol != PROTOCOL {
+            return Err(Failure::new(UNSPOKEN));
+        }
+        if !initialized.capable() {
+            return Err(Failure::new(INCAPABLE));
+        }
+        Ok(initialized)
+    }
+
     /// What the result of initializing says.
     pub(crate) fn read(result: &Value) -> Self {
         let named = |value: Option<&Value>| {
@@ -624,9 +652,7 @@ impl Acp {
     fn admitted(&self, result: &Value) -> Result<Initialized, Failure> {
         let initialized = Initialized::read(result);
         if !self.reviewed.versions().contains(&initialized.protocol) {
-            return Err(Failure::new(
-                "The agent answered with a protocol version this client does not speak.",
-            ));
+            return Err(Failure::new(UNSPOKEN));
         }
         self.reviewed.admits(&initialized)?;
         Ok(initialized)
