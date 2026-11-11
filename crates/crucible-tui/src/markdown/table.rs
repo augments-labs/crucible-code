@@ -34,6 +34,7 @@
 //! row, a delimiter row, since a table was there first.
 //!
 use crate::color::Slot;
+use crate::forge::Forge;
 use crate::glyphs::Glyphs;
 use crate::row::Row;
 use crate::width;
@@ -353,10 +354,11 @@ impl Table {
     pub(super) fn laid(
         &self,
         glyphs: Glyphs,
+        forge: Option<&Forge>,
         room: usize,
         say: &mut dyn FnMut(Slot, &str, Option<&str>),
     ) {
-        let rows = self.rows(glyphs);
+        let rows = self.rows(glyphs, forge);
         let (Some(header), Some(delimiter)) = (rows.first(), self.lines.get(1)) else {
             self.spilt(say);
             return;
@@ -387,20 +389,42 @@ impl Table {
     }
 
     /// The rows that are drawn: every line but the delimiter, cut into cells and
-    /// read once each.
-    fn rows(&self, glyphs: Glyphs) -> Vec<Vec<Cell>> {
+    /// read once each, against the repository the answer's numbers count in.
+    fn rows(&self, glyphs: Glyphs, forge: Option<&Forge>) -> Vec<Vec<Cell>> {
+        self.drawn()
+            .map(|line| {
+                celled(line)
+                    .into_iter()
+                    .map(|cell| read(cell, glyphs, forge, &mut |_| {}))
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Tells `tell` the whole of every address the cells draw shorter than
+    /// written, in the order they are read: what the same links would tell in
+    /// a paragraph, since a cell is read by the reader a paragraph is.
+    pub(super) fn shortened(
+        &self,
+        glyphs: Glyphs,
+        forge: Option<&Forge>,
+        tell: &mut dyn FnMut(&str),
+    ) {
+        for line in self.drawn() {
+            for cell in celled(line) {
+                read(cell, glyphs, forge, &mut *tell);
+            }
+        }
+    }
+
+    /// Every line that is drawn as a row: all but the delimiter.
+    fn drawn(&self) -> impl Iterator<Item = &str> {
         self.lines
             .iter()
             .chain(std::iter::once(&self.line).filter(|line| !line.is_empty()))
             .enumerate()
             .filter(|(at, _)| *at != 1)
-            .map(|(_, line)| {
-                celled(line)
-                    .into_iter()
-                    .map(|cell| read(cell, glyphs))
-                    .collect()
-            })
-            .collect()
+            .map(|(_, line)| line.as_str())
     }
 }
 
@@ -661,17 +685,24 @@ fn wide(cell: &Cell) -> usize {
 /// A whole scanner for one cell, because a cell is markdown and this is what
 /// reads markdown. It holds nothing across the call — a fence needs two lines
 /// and a cell is one — so the reader is made here, used once and dropped.
-fn read(cell: &str, glyphs: Glyphs) -> Cell {
-    let markdown = super::Markdown::new(glyphs);
+///
+/// Against the same `forge` as the paragraphs around it, so an address is
+/// drawn as the same reference in a cell as out of one. Only the run of a
+/// link is kept: the quiet address a paragraph sets after its words is left
+/// out, since a column has no room to spare for it, and the whole address
+/// stays in the table's source. The whole of an address drawn shorter is
+/// told to `told`, as the reader tells it.
+fn read(cell: &str, glyphs: Glyphs, forge: Option<&Forge>, told: &mut dyn FnMut(&str)) -> Cell {
+    let markdown = super::Markdown::new(glyphs).counting(forge.cloned());
     let mut runs = Cell::new();
 
     // As written: a cell holds no block, and one reader holding another's
     // block back would leave the cell waiting on itself.
     let mut markdown = markdown.as_written();
-    let mut keep = |said: super::Said<'_>| {
-        if let super::Said::Run { slot, text, .. } = said {
-            runs.push((slot, text.to_owned()));
-        }
+    let mut keep = |said: super::Said<'_>| match said {
+        super::Said::Run { slot, text, .. } => runs.push((slot, text.to_owned())),
+        super::Said::Shortened(address) => told(address),
+        super::Said::Aside(_) | super::Said::Block(_) | super::Said::Retract => {}
     };
     markdown.read(cell, 0, &mut keep);
     markdown.finish(0, &mut keep);

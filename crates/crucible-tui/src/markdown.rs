@@ -18,7 +18,9 @@
 //! line inside a fence is held because a highlighter reads whole lines, and a
 //! link's words are held because nothing says they were a link's words until
 //! the `](` after them. Either one that runs past its bound, or past the line
-//! it is on, is handed out as the text it turned out to be.
+//! it is on, is handed out as the text it turned out to be. Besides them, a
+//! `!` that ends a delta waits the one character that says whether it opens
+//! an image.
 //!
 //! A table written without outer bars, and a heading written as a line over a
 //! row of `=` or `-`, are prose until the line under them arrives, and prose
@@ -119,7 +121,10 @@
 //! blank or a control character, or stands in code, a key or sub or
 //! superscript, is shown as written. A word written as `www.` and a host, after
 //! a space, an opening bracket or a mark of emphasis, is a link to the `https://`
-//! address that begins with it.
+//! address that begins with it. What any link is drawn as, a forge address
+//! as its reference, words followed by their quiet address, or an image as
+//! its words, is the `links` module's to decide, in a paragraph and in a
+//! table's cell alike.
 //!
 //! Six tags, `<details>`, `<summary>`, `<br>`, `<kbd>`, `<sub>` and `<sup>`, in
 //! any letter case and with attributes holding `<` or `>` only inside a quoted
@@ -159,15 +164,19 @@ use crate::chrome::{self, Frame, Label, Undrawn};
 use crate::color::Slot;
 use crate::escape::Escapes;
 use crate::files::Files;
-use crate::forge::Forge;
+use crate::forge::{DIGITS, Forge, named};
 use crate::glyphs::Glyphs;
 use crate::row::Row;
 use crate::width;
 
 mod escapes;
 mod kind;
+mod links;
 mod strikes;
 mod table;
+
+pub(crate) use links::SHORTENED_CAP;
+use links::spill;
 
 use crate::syntax::Syntax;
 use table::{Sight, Table};
@@ -473,6 +482,19 @@ pub enum Said<'a> {
     /// been one is on screen as prose until then. Everything before it was
     /// said is the line's own, and nothing else is taken.
     Retract,
+    /// What the reader adds after a link whose words are not its address, to
+    /// say where it goes: a space and the address, shortened, in brackets.
+    ///
+    /// Drawn quiet, and never a link nor read as markdown: it is this
+    /// program's text about the answer rather than the answer, so a drag that
+    /// copies the words around it leaves it out.
+    Aside(&'a str),
+    /// The whole of an address the answer was drawn with shorter than it was
+    /// written, as a forge's short form or a quiet address cut short.
+    ///
+    /// Told once it has been drawn, for whatever lists those addresses to be
+    /// read whole; it draws nothing itself.
+    Shortened(&'a str),
 }
 
 /// What a reader links its text to: the repository a bare number counts
@@ -537,9 +559,14 @@ pub(crate) fn tell(
     match block.kind {
         Kind::Table => {
             let mut kinds = kind::Kinds::default();
-            Table::of(&block.source).laid(glyphs, room, &mut |slot, text, link| {
-                kinds.tell(slot, text, link, &mut *put);
-            });
+            Table::of(&block.source).laid(
+                glyphs,
+                links.forge.as_ref(),
+                room,
+                &mut |slot, text, link| {
+                    kinds.tell(slot, text, link, &mut *put);
+                },
+            );
             kinds.flush(&mut *put);
         }
         // A character at a time, as the rule streamed before it was a block.
@@ -591,13 +618,14 @@ fn title(source: &str) -> Cow<'_, str> {
 fn headed(block: &Block, room: usize, glyphs: Glyphs, links: &Links) -> usize {
     let mut row = Row::new();
     let mut markdown = Markdown::new(glyphs).linking(links).as_written();
-    let mut said = |said: Said<'_>| {
-        if let Said::Run { slot, text, link } = said {
-            match link {
-                Some(link) => row.push_linked(slot, text, link),
-                None => row.push(slot, text),
-            }
-        }
+    let mut said = |said: Said<'_>| match said {
+        Said::Run { slot, text, link } => match link {
+            Some(link) => row.push_linked(slot, text, link),
+            None => row.push(slot, text),
+        },
+        // On the row the title's words take, so the rule is as wide.
+        Said::Aside(text) => row.push_structural(Slot::Quiet, text),
+        Said::Block(_) | Said::Retract | Said::Shortened(_) => {}
     };
     markdown.read(&title(&block.source), room, &mut said);
     markdown.finish(room, &mut said);
@@ -1383,6 +1411,9 @@ struct Link {
     /// Whether the bracket opened the line, where a footnote's label is its
     /// definition rather than a reference to it.
     first: bool,
+    /// Whether a `!` stood in front of the bracket, which makes the link an
+    /// image: one written out in full, and nothing else a bracket can open.
+    image: bool,
 }
 
 impl Link {
@@ -1414,19 +1445,6 @@ struct Reference {
     slug: Option<Box<str>>,
     /// The digits after the hash, as far as they have arrived.
     number: String,
-}
-
-/// How many digits a number is read as, at most.
-///
-/// A forge counts in the thousands and this is room for a great deal more than
-/// that. The bound is here for the reason every other one in this file is:
-/// what is held comes off a wire, and a run of digits nobody meant to end is
-/// not a reason to grow a string without limit.
-const DIGITS: usize = 12;
-
-/// What a repository is named with, either side of the slash.
-fn named(character: char) -> bool {
-    character.is_alphanumeric() || matches!(character, '.' | '_' | '-')
 }
 
 /// The words an answer puts in front of a number to say what it counts.
@@ -1902,6 +1920,11 @@ pub struct Markdown {
     /// What lays out a block shown as written, display math among them: its
     /// words are source, and source is what was written.
     unescaped: bool,
+    /// Whether the delta ended in a `!` of prose that has not been said,
+    /// because the bracket that would make it an image's may open the next.
+    ///
+    /// One character, said the moment anything but that bracket arrives.
+    bang: bool,
     /// Why the fence being read was not drawn, where it is a held fence that
     /// ran past its cap, so the frame it opens says so.
     ///
@@ -2123,9 +2146,11 @@ impl Markdown {
         loop {
             self.fresh = true;
             let resume = self.scan(rest, room, &mut |slot, text, link| {
-                if !strikes.borrow_mut().keep(slot, text, link) {
+                if let Some(address) = links::shortened(slot, text, link) {
+                    say(Said::Shortened(address));
+                } else if !strikes.borrow_mut().keep(slot, text, link) {
                     kinds.tell(slot, text, link, &mut |slot, text, link| {
-                        say(Said::Run { slot, text, link });
+                        say(links::said(slot, text, link));
                     });
                 }
             });
@@ -2145,13 +2170,13 @@ impl Markdown {
         if self.retract == Retract::Owed || self.retitle.is_some() || self.ready.is_some() {
             self.unstrike(&mut |slot, text, link| {
                 kinds.tell(slot, text, link, &mut |slot, text, link| {
-                    say(Said::Run { slot, text, link });
+                    say(links::said(slot, text, link));
                 });
             });
         }
         if self.retract == Retract::Owed {
             self.retract = Retract::Allowed;
-            kinds.flush(&mut |slot, text, link| say(Said::Run { slot, text, link }));
+            kinds.flush(&mut |slot, text, link| say(links::said(slot, text, link)));
             say(Said::Retract);
         }
         // The line taken back was a title: it is said again as a heading,
@@ -2166,8 +2191,15 @@ impl Markdown {
             heading.finish(room, say);
         }
         if let Some(block) = self.ready.take() {
-            kinds.flush(&mut |slot, text, link| say(Said::Run { slot, text, link }));
+            kinds.flush(&mut |slot, text, link| say(links::said(slot, text, link)));
+            let table = (block.kind == Kind::Table).then(|| Table::of(&block.source));
             say(Said::Block(block));
+            // After the table, so the record keeps them against its line.
+            if let Some(table) = table {
+                table.shortened(self.glyphs, self.forge.as_ref(), &mut |address| {
+                    say(Said::Shortened(address));
+                });
+            }
         }
     }
 
@@ -2193,6 +2225,8 @@ impl Markdown {
 
         for (at, character) in delta.char_indices() {
             let next = at.saturating_add(character.len_utf8());
+
+            let banged = self.unbang(character, say);
 
             // A block closed on the character before this one, and goes out
             // before anything after it does; so does the line it takes back.
@@ -2367,6 +2401,10 @@ impl Markdown {
                 self.started = true;
                 self.previous = '\\';
                 kept = true;
+                if self.kept_bang(character, say) {
+                    run = next;
+                    continue;
+                }
             }
 
             if character == '\n' {
@@ -2399,12 +2437,7 @@ impl Markdown {
                 self.started = true;
                 run = next;
             } else if self.opens_link(character) {
-                self.say(delta.get(run..at).unwrap_or_default(), say);
-                self.link = Some(Link {
-                    first: !self.started,
-                    ..Link::default()
-                });
-                self.started = true;
+                self.opens(delta.get(run..at).unwrap_or_default(), banged, say);
                 run = next;
             } else if self.opens_table(character) {
                 self.say(delta.get(run..at).unwrap_or_default(), say);
@@ -2469,7 +2502,7 @@ impl Markdown {
             }
         }
 
-        self.say(delta.get(run..).unwrap_or_default(), say);
+        self.ends(delta.get(run..).unwrap_or_default(), fresh, say);
         self.ready.is_some().then_some(delta.len())
     }
 
@@ -3289,6 +3322,10 @@ impl Markdown {
     /// Lets go of a table that has ended: as a block where blocks are held
     /// and it has the delimiter row that makes it one, and drawn as it stands
     /// otherwise.
+    ///
+    /// Either way, the whole of every address its cells draw shorter is told
+    /// once the table is: here where it is drawn, and as it is handed on where
+    /// it is held.
     fn lays(&mut self, table: &Table, room: usize, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
         if self.holds() && table.delimited() {
             self.ready = Some(Block {
@@ -3297,7 +3334,12 @@ impl Markdown {
                 closed: true,
             });
         } else {
-            table.laid(self.glyphs, room, say);
+            table.laid(self.glyphs, self.forge.as_ref(), room, say);
+            if table.delimited() {
+                table.shortened(self.glyphs, self.forge.as_ref(), &mut |address| {
+                    say(Slot::Link, address, Some(links::UNLINKED));
+                });
+            }
         }
     }
 
@@ -3448,10 +3490,10 @@ impl Markdown {
             (Part::Between, '(') if carries => link.part = Part::Target,
             // A second label only where there is a definition to name: with
             // none, the bracket after `]` is as ordinary as it ever was.
-            (Part::Between, '[') if carries && self.reads_definitions() => {
+            (Part::Between, '[') if carries && !link.image && self.reads_definitions() => {
                 link.part = Part::Second;
             }
-            (Part::Between, ':') if carries && self.opens_definition(&link) => {
+            (Part::Between, ':') if carries && !link.image && self.opens_definition(&link) => {
                 self.defining = Some(Defining {
                     label: link.label,
                     rest: String::new(),
@@ -3477,7 +3519,7 @@ impl Markdown {
             // is the character that says so, and is the caller's again: the
             // header is drawn in place of the marker and the line ends as any
             // other does.
-            (Part::Between, '\n') if self.alerts(&link).is_some() => {
+            (Part::Between, '\n') if !link.image && self.alerts(&link).is_some() => {
                 if let Some(alert) = self.alerts(&link) {
                     self.headline(alert, say);
                 }
@@ -3486,18 +3528,20 @@ impl Markdown {
             // A box takes the bullet's mark rather than following it, which is
             // why this stands above the arm that puts a bracket back: the
             // space after `]` is the marker's own and goes with it.
-            _ if self.boxed(&link, character) => {
+            _ if !link.image && self.boxed(&link, character) => {
                 self.tick(&link.label, say);
                 return true;
             }
             // `[TODO] fix this`, and every other bracket somebody meant,
             // where it is no footnote.
             _ => {
-                if let Some(taken) = self.cites(&link, character, say) {
-                    return taken;
-                }
-                if self.ties(&link, say) {
-                    return false;
+                if !link.image {
+                    if let Some(taken) = self.cites(&link, character, say) {
+                        return taken;
+                    }
+                    if self.ties(&link, say) {
+                        return false;
+                    }
                 }
                 self.pay(say);
                 spill(&link, say);
@@ -3572,38 +3616,6 @@ impl Markdown {
 
         self.wrote_address(&address, say);
         false
-    }
-
-    /// Hands on an address the answer wrote bare.
-    ///
-    /// Drawn as the link it is, so what can be acted on in a terminal looks
-    /// like it can. What ends a sentence is not part of it: a full stop after
-    /// an address belongs to the prose, and a reader who copies the row gets
-    /// an address that still resolves.
-    fn wrote_address(&mut self, address: &str, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
-        let ends = address.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '"']);
-
-        // A scheme and nothing after it is a word somebody wrote, not somewhere
-        // anybody can go, and `www.` needs a host to start with a letter or a
-        // digit.
-        let target = if let Some(host) = ends.strip_prefix(WWW) {
-            host.starts_with(|character: char| character.is_ascii_alphanumeric())
-                .then(|| format!("https://{ends}"))
-        } else {
-            (spelled(ends) == Spelled::Whole && !SCHEMES.contains(&ends)).then(|| ends.to_owned())
-        };
-        let Some(target) = target else {
-            self.say(address, say);
-            self.started = true;
-            self.previous = address.chars().next_back().unwrap_or('/');
-            return;
-        };
-
-        self.pay(say);
-        say(Slot::Link, ends, Some(&target));
-        self.started = true;
-        self.previous = ends.chars().next_back().unwrap_or('/');
-        self.say(&address[ends.len()..], say);
     }
 
     /// How many bytes in front of `character` belong to a reference opening
@@ -3693,32 +3705,6 @@ impl Markdown {
         // and whatever that was spent it.
         self.pay(say);
         say(Slot::Link, &words, Some(&address));
-    }
-
-    /// Hands on a link that arrived whole.
-    ///
-    /// The words wear the link's own slot and carry the address, which is not
-    /// written out beside them: the sentence the answer wrote goes on reading
-    /// as a sentence, and the address is the row's to hand to a terminal that
-    /// opens links -- which is how a reader reaches it, the same way they
-    /// reach one on any page. A link with no words is its address, since that
-    /// is the one thing there is to show. A link to a path is handed on as the
-    /// file it names in the checkout, which is the one form of it a terminal
-    /// can open; its words stay what the answer wrote. Nothing here is ever
-    /// written as anything but text: an address is bytes a model chose, and
-    /// the rule this file opens with is that none of them leaves as an
-    /// instruction.
-    fn wrote_link(&mut self, link: &Link, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
-        self.pay(say);
-
-        let target = target(&link.target);
-        let label = escapes::decoded(&link.label);
-        let words = if label.is_empty() { target } else { &label };
-
-        let file = self.files.as_ref().and_then(|files| files.address(target));
-        let address = file.as_deref().unwrap_or(target);
-        say(Slot::Link, words, (!address.is_empty()).then_some(address));
-        self.previous = words.chars().next_back().unwrap_or(')');
     }
 
     /// Whether a reference can be tied to a definition where the scan stands:
@@ -3989,21 +3975,6 @@ impl Markdown {
         self.again(&again, room, say);
     }
 
-    /// Hands on a reference's `words`, carrying the `address` its definition
-    /// gave, the way a link written out is.
-    fn wrote_reference_to(
-        &mut self,
-        words: &str,
-        address: &str,
-        say: &mut dyn FnMut(Slot, &str, Option<&str>),
-    ) {
-        self.pay(say);
-        let words = escapes::decoded(words);
-        let words = if words.is_empty() { address } else { &words };
-        say(Slot::Link, words, Some(address));
-        self.previous = words.chars().next_back().unwrap_or(']');
-    }
-
     /// Reads `character` into the angle address being held. Answers whether it
     /// was taken.
     ///
@@ -4026,10 +3997,11 @@ impl Markdown {
             let address = written.get(1..).and_then(angle_target);
             if let (Some(target), None, false) = (address, &self.script, self.line.key) {
                 self.pay(say);
-                say(
-                    Slot::Link,
+                self.drew(
                     written.get(1..).unwrap_or_default(),
+                    &target,
                     Some(&target),
+                    say,
                 );
                 self.started = true;
                 self.previous = '>';
@@ -4432,9 +4404,11 @@ impl Markdown {
         let mut kinds = std::mem::take(&mut self.kinds);
         let strikes = self.shared_strikes();
         let mut tell = |slot: Slot, text: &str, link: Option<&str>| {
-            if !strikes.borrow_mut().keep(slot, text, link) {
+            if let Some(address) = links::shortened(slot, text, link) {
+                say(Said::Shortened(address));
+            } else if !strikes.borrow_mut().keep(slot, text, link) {
                 kinds.tell(slot, text, link, &mut |slot, text, link| {
-                    say(Said::Run { slot, text, link });
+                    say(links::said(slot, text, link));
                 });
             }
         };
@@ -4482,7 +4456,7 @@ impl Markdown {
         self.definitions.clear();
         self.folded = false;
         self.hand_on(room, &mut kinds, say);
-        kinds.flush(&mut |slot, text, link| say(Said::Run { slot, text, link }));
+        kinds.flush(&mut |slot, text, link| say(links::said(slot, text, link)));
         self.kinds = kinds;
     }
 
@@ -4500,24 +4474,34 @@ impl Markdown {
         let mut kinds = std::mem::take(&mut self.kinds);
         let strikes = self.shared_strikes();
         let mut tell = |slot: Slot, text: &str, link: Option<&str>| {
-            if !strikes.borrow_mut().keep(slot, text, link) {
+            if let Some(address) = links::shortened(slot, text, link) {
+                say(Said::Shortened(address));
+            } else if !strikes.borrow_mut().keep(slot, text, link) {
                 kinds.tell(slot, text, link, &mut |slot, text, link| {
-                    say(Said::Run { slot, text, link });
+                    say(links::said(slot, text, link));
                 });
             }
         };
+        // The bang the line ended in came before whatever it held.
+        if std::mem::take(&mut self.bang) {
+            self.say("!", &mut tell);
+        }
         while let Some(table) = self.table.take_if(|table| table.pending()) {
             self.release(&table, room, &mut tell);
         }
         self.unstrike(&mut tell);
         self.hand_on(room, &mut kinds, say);
-        kinds.flush(&mut |slot, text, link| say(Said::Run { slot, text, link }));
+        kinds.flush(&mut |slot, text, link| say(links::said(slot, text, link)));
         self.kinds = kinds;
     }
 
     /// Lets go of whatever the scan was still holding, which a line's end does
     /// as well as a message's.
     fn close(&mut self, room: usize, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
+        // The bang the message ended in opens nothing now.
+        if std::mem::take(&mut self.bang) {
+            self.say("!", say);
+        }
         // The line the message ended in is as complete as a break would have
         // made it, and the `>` that would have ended an address never came.
         // First, since what they hand back is read again and may leave an
@@ -4610,8 +4594,7 @@ impl Markdown {
         // A footnote's label the end of the message came straight after is a
         // reference, as one a break came after is.
         if let Some(link) = self.link.take()
-            && self.cites(&link, '\n', say).is_none()
-            && !self.ties(&link, say)
+            && (link.image || (self.cites(&link, '\n', say).is_none() && !self.ties(&link, say)))
         {
             spill(&link, say);
         }
@@ -4742,6 +4725,10 @@ impl Markdown {
             fenced: self.fenced,
             syntax,
             glyphs: self.glyphs,
+            // Nor where the session is: the repository a number counts
+            // against and the checkout a path is read in.
+            forge: self.forge.take(),
+            files: self.files.take(),
             unheld: self.unheld,
             unescaped: self.unescaped,
             retract: self.retract,
@@ -4886,42 +4873,6 @@ impl Markdown {
             None => say(Slot::Quiet, code.trim_end_matches('\n'), None),
         }
     }
-}
-
-/// Writes a link back as the characters it was written with.
-///
-/// Exactly them, in order, so a bracket that was never a link costs the reader
-/// nothing at all.
-fn spill(link: &Link, say: &mut dyn FnMut(Slot, &str, Option<&str>)) {
-    say(Slot::Plain, "[", None);
-    if !link.label.is_empty() {
-        say(Slot::Plain, &link.label, None);
-    }
-    if link.part != Part::Label {
-        say(Slot::Plain, "]", None);
-    }
-    let opening = match link.part {
-        Part::Label | Part::Between => return,
-        Part::Target => "(",
-        Part::Second => "[",
-    };
-    say(Slot::Plain, opening, None);
-    if !link.target.is_empty() {
-        say(Slot::Plain, &link.target, None);
-    }
-}
-
-/// The address out of what stood between the brackets.
-///
-/// Markdown lets a title follow the address, and lets the address itself be
-/// wrapped in angle brackets. Neither is the destination, and the destination
-/// is the whole of what is worth a reader's columns.
-fn target(between: &str) -> &str {
-    between
-        .split_ascii_whitespace()
-        .next()
-        .unwrap_or_default()
-        .trim_matches(|character| character == '<' || character == '>')
 }
 
 /// The rule under a heading `line` was read from, where it has words to rule

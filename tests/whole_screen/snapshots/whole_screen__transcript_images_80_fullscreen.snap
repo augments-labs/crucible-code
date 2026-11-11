@@ -26,11 +26,11 @@ expression: window.picture()
 |                                                                                |
 |A picture from the checkout:                                                    |
 |                                                                                |
-|!the build passing                                                              |
+|[image: the build passing] (docs/images/build.png)                              |
 |                                                                                |
 |A picture from the network:                                                     |
 |                                                                                |
-|!a diagram of the flow                                                          |
+|[image: a diagram of the flow] (example.com/flow.png)                           |
 |                                                                                |
 |The corpus ends here.                                                           |
 |                                                                                |

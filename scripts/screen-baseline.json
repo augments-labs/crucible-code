@@ -954,7 +954,7 @@
         "Vendor::answering(IN_MARKDOWN)",
         "Watched::in_colour(\"answered-markdown\", 80, 32, &vendor)"
       ],
-      "sha256": "601d45a93d94e2cac6bf73dd9c8f42c6c0b0517ec0312ba5ed67ae95456883ed"
+      "sha256": "be1cc6c7eadfcff42ae03ebdbb4b1e92523b2f563edba111df3dbb3e3f982c30"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__an_environment_authenticated_session_never_claims_logout_removed_it.snap",
@@ -2270,7 +2270,7 @@
         "Vendor::answering(transcript::said(\"images\"))",
         "Watched::in_default_colours( \"transcript-images-80-fullscreen\", (80, 36), Some(&vendor), None, )"
       ],
-      "sha256": "4136a6c8858b0de5e5d43c49068658f9496cd48d184c36d74c194d27dc633a01"
+      "sha256": "51df6f7dbfb4ec4674a6282743769f46f7cf6fbed4cf31f879f2529dd923a4fe"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_images_80_native.snap",
@@ -2279,7 +2279,7 @@
         "Vendor::answering(transcript::said(\"images\"))",
         "Watched::drawn_in_colour( \"transcript-images-80-native\", (80, 36), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "b3fd1e39fb91c992d2674c2f6ac98862707a73001b9f5d43964fd92f0de26f3f"
+      "sha256": "1b011e2303f49d8b54bcac85f02cb1a0ed0a151c99aace77f91da590abf4987b"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_inline_80_fullscreen.snap",
@@ -2306,7 +2306,7 @@
         "Vendor::answering(transcript::said(\"links\"))",
         "Watched::in_default_colours( \"transcript-links-80-fullscreen\", (80, 48), Some(&vendor), None, )"
       ],
-      "sha256": "65140076f2d735cc37211a02f4b9b18ace13e7de3fae7e4a0be03e70fda2b6a3"
+      "sha256": "be48882f96465bb43936e056d0fd0f6b897b2dcf8d8e704275690847b8e40d71"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_links_80_native.snap",
@@ -2315,7 +2315,7 @@
         "Vendor::answering(transcript::said(\"links\"))",
         "Watched::drawn_in_colour( \"transcript-links-80-native\", (80, 48), &vendor, None, (\"unicode\", \"native\", Profile::default()), )"
       ],
-      "sha256": "b6eae8673eff7cdfe8c7da1aaaddc6699b0ddf4595da131af1e5c02f2470a952"
+      "sha256": "89561016e45e1342208e5ad8787c7f01368e8abfb5b83553535505dafb83e9a1"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__transcript_lists_80_fullscreen.snap",

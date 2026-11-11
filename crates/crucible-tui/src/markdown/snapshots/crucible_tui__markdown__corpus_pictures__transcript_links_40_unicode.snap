@@ -4,8 +4,8 @@ expression: "pictured(\"links\", 40, Glyphs::Unicode)"
 ---
 <Link>https://example.com/docs</>                
                                         
-A reference to <Link>the documentation</> defined
-before it.                              
+A reference to <Link>the documentation</>        
+<Quiet>(example.com/docs)</> defined before it.   
                                         
 A reference to [the changelog][notes]   
 defined after it.                       
@@ -17,16 +17,13 @@ An address in brackets,
 <Link>https://example.com/a</>, and one without, 
 <Link>www.example.com</>.                        
                                         
-An ordinary link to <Link>the issue list</>.     
+An ordinary link to <Link>the issue list</>      
+<Quiet>(example.com/issues)</>.                   
                                         
 Forge references:                       
-<Link>https://github.com/augments-labs/crucibl</>
-<Link>e-code/pull/1324</>,                       
-<Link>https://github.com/augments-labs/crucibl</>
-<Link>e-code/issues/1288</> and                  
-<Link>https://github.com/augments-labs/crucibl</>
-<Link>e-code/commit/0a1b2c3d4e5f60718293a4b5c6</>
-<Link>d7e8f901234567</>.                         
+<Link>augments-labs/crucible-code#1324</>,       
+<Link>augments-labs/crucible-code#1288</> and    
+<Link>augments-labs/crucible-code@0a1b2c3</>.    
                                         
 <Link>https://example.com/changelog</>           
                                         

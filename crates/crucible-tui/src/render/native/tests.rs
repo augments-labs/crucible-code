@@ -3063,6 +3063,99 @@ fn a_native_hostile_reference_angle_or_www_address_writes_no_escape_nor_a_pictur
     }
 }
 
+#[test]
+fn a_native_hostile_forge_address_worded_link_or_image_writes_no_escape() {
+    for answer in [
+        "https://github.com/augments-labs/crucible-code/pull/1\u{1b}]0;t\u{7} and https://github.com/o/r/commit/abcdef1\u{9b}31m\n",
+        "[fix\u{1b}]0;t\u{7}](https://github.com/o/r/pull/12) and [x](https://github.com/o/r/pull/12\u{85})\n",
+        "[guide](https://example.com/\u{1b}]8;;https://evil.invalid\u{1b}\\/a/b) and [g](https://example.com/\u{202e}\u{200b}x/y/z)\n",
+        "![alt\u{1b}]0;t\u{7}](out/\u{1b}_Gi=1;AAAA\u{1b}\\shot.png) and ![a](https://x.test/\u{202e}gnp.exe\u{9c})\n",
+        "[write](mailto:a\u{1b}]0;t\u{7}@b.test) and [w](mailto:a@b.test\u{8}\u{9b}2J)\n",
+        "| a |\n|---|\n| [g](https://example.com/\u{1b}]0;t\u{7}/x) https://github.com/o/r/pull/3\u{85} |\n",
+    ] {
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let window = Window::new(64, 12);
+            let mut render = native(&window);
+            render.draws(glyphs);
+            render.wears(colourful().addressing(true));
+            render.counts(Some(crate::Forge::new(
+                "https://github.com",
+                "augments-labs/crucible-code",
+                "/issues/",
+            )));
+            stands(&mut render);
+            render.stream(answer).unwrap();
+            render.settle().unwrap();
+            render.seal().unwrap();
+
+            // Each hyperlink sequence is taken out first: it may hold
+            // printable ASCII and nothing that ends it early.
+            let written = window.written();
+            let mut rest = written.as_str();
+            let mut kept = String::new();
+            while let Some(at) = rest.find("\u{1b}]8;") {
+                kept.push_str(&rest[..at]);
+                let after = &rest[at + 4..];
+                let end = after.find("\u{1b}\\").unwrap_or(after.len());
+                assert!(
+                    after[..end].bytes().all(|byte| byte.is_ascii_graphic()),
+                    "a link sequence carried {:?} for {answer:?}",
+                    &after[..end]
+                );
+                rest = &after[(end + 2).min(after.len())..];
+            }
+            kept.push_str(rest);
+
+            for hostile in [
+                "\u{1b}]",
+                "\u{1b}P",
+                "\u{1b}_",
+                "\u{1b}[31",
+                "\u{1b}[2J",
+                "\u{7}",
+                "\u{8}",
+                "\u{85}",
+                "\u{9b}",
+                "\u{9c}",
+                "\u{202e}",
+                "\u{200b}",
+            ] {
+                assert!(
+                    !kept.contains(hostile),
+                    "{hostile:?} reached the terminal for {answer:?} with {glyphs:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_native_run_with_no_colour_in_it_keeps_every_link_and_image_as_the_model_wrote_it() {
+    let three = "https://github.com/augments-labs/crucible-code/pull/1324 \
+                 [the guide](https://example.com/docs/guide/intro) ![shot](out/shot.png)";
+    let window = Window::new(200, 12);
+    let mut render = native(&window);
+    render.counts(Some(crate::Forge::new(
+        "https://github.com",
+        "augments-labs/crucible-code",
+        "/issues/",
+    )));
+    stands(&mut render);
+    render.stream(three).unwrap();
+    render.settle().unwrap();
+    render.seal().unwrap();
+
+    let rows: Vec<String> = window
+        .all()
+        .into_iter()
+        .map(|row| row.trim_end().to_owned())
+        .collect();
+    assert!(rows.iter().any(|row| row == three), "{rows:#?}");
+    for shown in ["#1324", "(example.com", "[image"] {
+        assert!(!rows.iter().any(|row| row.contains(shown)), "{rows:#?}");
+    }
+}
+
 /// How many columns of blank stand in front of `row`'s first word.
 fn indent_of(row: &str) -> usize {
     row.len() - row.trim_start().len()

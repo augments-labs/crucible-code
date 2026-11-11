@@ -8353,7 +8353,7 @@
     {
       "id": "CASE-TRANSCRIPT-REFERENCE-LINKS",
       "family": "transcript-blocks",
-      "obligation": "A reference link, `[words][label]`, `[words][]` or `[label]`, whose label an earlier line defined as one address is drawn as its words, a link to that address, and the definition line is drawn as its address, a link.",
+      "obligation": "A reference link, `[words][label]`, `[words][]` or `[label]`, whose label an earlier line defined as one address is drawn as its words, a link to that address, followed by its quiet address, and the definition line is drawn as its address, a link.",
       "package": "crucible-tui",
       "target": {
         "kind": "lib",
@@ -8361,7 +8361,7 @@
       },
       "case": "markdown::tests::a_reference_link_defined_earlier_reads_as_its_words",
       "source": "crates/crucible-tui/src/markdown/tests.rs",
-      "body_sha256": "f111e6bd9aa4a61eec881f5ee2d612667337099f703f9a97aa81746db98ca86a",
+      "body_sha256": "db660151229f4be31a720e3e7bf8ce2cef3097d86802c9c13779b2a591df076f",
       "platforms": [
         "linux",
         "macos",
@@ -8397,7 +8397,7 @@
       },
       "case": "markdown::tests::the_first_definition_of_a_label_wins",
       "source": "crates/crucible-tui/src/markdown/tests.rs",
-      "body_sha256": "a5c4156a29f406cf677f64c0031c9f65d3447744668b870d08f462ce9ffa2040",
+      "body_sha256": "4c761f42fa17a5a1a08423933e8e622768406fabe650950faad9cd8dacec4a40",
       "platforms": [
         "linux",
         "macos",
@@ -8415,7 +8415,7 @@
       },
       "case": "markdown::tests::a_definition_past_the_definition_cap_links_nothing_and_is_shown_as_written",
       "source": "crates/crucible-tui/src/markdown/tests.rs",
-      "body_sha256": "2692ea91054cb4e264807fde026785ec2d34fc4d589eefad024f7ab428678ada",
+      "body_sha256": "caef2e5d4a90e426c8d7fd1a0e35320581307bfbead47f10b4ca9da51f4ad593",
       "platforms": [
         "linux",
         "macos",
@@ -8433,7 +8433,7 @@
       },
       "case": "markdown::tests::definitions_past_the_byte_cap_link_nothing_and_are_shown_as_written",
       "source": "crates/crucible-tui/src/markdown/tests.rs",
-      "body_sha256": "c54b748aa1e0ae8376c5a1abc478241132a2da7905f31a562b0c1b3747c870e6",
+      "body_sha256": "aeedfc52f088b2e4dc808ded569af954810f930282a28058b651f8ad75facc0e",
       "platforms": [
         "linux",
         "macos",
@@ -8488,6 +8488,690 @@
       "case": "markdown::tests::an_answer_cut_anywhere_draws_the_reference_links_and_angle_addresses_the_whole_answer_draws",
       "source": "crates/crucible-tui/src/markdown/tests.rs",
       "body_sha256": "db693b8e582833fa5017827cdbb138e33645774645d89f51193d1039c866e4a6",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FORGE-HOME",
+      "family": "transcript-blocks",
+      "obligation": "A pull request, an issue with one trailing slash and a commit address in the checkout's own GitHub repository are read as `#1324`, `#1288` and the hash's first seven digits.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "forge::tests::a_pull_request_issue_and_commit_in_this_checkout_are_drawn_as_its_own",
+      "source": "crates/crucible-tui/src/forge.rs",
+      "body_sha256": "6fb5f151f2004400d387715bcaadffa35c639d6cc8c7c41efd0bc49f9508fb08",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FORGE-ELSEWHERE",
+      "family": "transcript-blocks",
+      "obligation": "A reference in another repository, or read with no forge in hand, names its repository: `owner/repo#N`, and `owner/repo@` and seven digits for a commit.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "forge::tests::a_reference_elsewhere_or_with_no_forge_names_its_repository",
+      "source": "crates/crucible-tui/src/forge.rs",
+      "body_sha256": "5d07a5daa94180d2e99fe655d8954dc680a12ec9955161d7bb28c9b8a539e389",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FORGE-OTHER-HOST",
+      "family": "transcript-blocks",
+      "obligation": "The checkout's repository slug on another host is read as another repository and named in full.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "forge::tests::the_same_repository_on_another_host_is_not_this_one",
+      "source": "crates/crucible-tui/src/forge.rs",
+      "body_sha256": "62e5e369b24f036eb3803e8cb6cfabb9d5fa181f551317bac6fcf3e792454b7d",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FORGE-MERGE-REQUEST",
+      "family": "transcript-blocks",
+      "obligation": "On GitLab a merge request is `!N`, an issue `#N` and a subgroup repository is named whole, and GitLab's spelling on GitHub, or GitHub's on GitLab, names nothing.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "forge::tests::a_merge_request_is_drawn_with_a_bang_and_an_issue_with_a_hash",
+      "source": "crates/crucible-tui/src/forge.rs",
+      "body_sha256": "b1b2f9d55a645a1064df58d48a253c845647ec418bfe64279f30a4fb8219efb2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FORGE-OWN-HOST",
+      "family": "transcript-blocks",
+      "obligation": "A host that is neither GitHub nor GitLab is read only as the checkout's own forge, and only in the spelling that forge uses.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "forge::tests::the_checkouts_own_host_is_read_in_the_spelling_its_forge_uses",
+      "source": "crates/crucible-tui/src/forge.rs",
+      "body_sha256": "6ebc02b5e439d86398bdcfb797315e2b0e315832a3bc5414b28d99b90e3cfab7",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FORGE-ORDINARY",
+      "family": "transcript-blocks",
+      "obligation": "An address with a tab, query or anchor, off `https`, on another host, with no number or a malformed repository, past twelve digits, a hash under seven or past forty hex digits, or a control character names no reference, while twelve digits, seven and forty hex digits still do.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "forge::tests::anything_past_the_item_or_off_the_web_s_encrypted_scheme_is_an_ordinary_link",
+      "source": "crates/crucible-tui/src/forge.rs",
+      "body_sha256": "f261cf37d2c65eb7df222457af3fa36c672098a94e0d83ca13b96faaa9de282b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FORGE-PICTURE-UNICODE",
+      "family": "transcript-corpus",
+      "obligation": "References, worded links, an autolink, an image and a table of links lay out at 64 columns in the unicode glyph set as the picture accepted for them.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "forge::tests::references_and_addresses_at_64_columns",
+      "source": "crates/crucible-tui/src/forge.rs",
+      "body_sha256": "673183b0ded71968d8b1bea3bbe6e37c44bfff4835f7fc893ae7c7b302541035",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FORGE-PICTURE-ASCII",
+      "family": "transcript-corpus",
+      "obligation": "References, worded links, an autolink, an image and a table of links lay out at 64 columns in the ascii glyph set as the picture accepted for them.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "forge::tests::references_and_addresses_at_64_columns_in_ascii",
+      "source": "crates/crucible-tui/src/forge.rs",
+      "body_sha256": "556046d8080e6d217494df23329d518922e8948a17106b27e5bcf3dbfd093c12",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-LINK-LINE-BREAK",
+      "family": "transcript-blocks",
+      "obligation": "A bare number and a link to a path on a later line are still counted against the session's repository and checkout.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::links::a_number_on_a_later_line_is_counted_against_the_same_repository",
+      "source": "crates/crucible-tui/src/markdown/tests/links.rs",
+      "body_sha256": "0c848bc3561db6ad2172a4fb04b4389d815345580f6bf9f75b0f9409adcff974",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-QUIET-ADDRESS",
+      "family": "transcript-blocks",
+      "obligation": "A link whose words are not its address draws its words, pointing at the address, then one quiet run of the address without its scheme or `mailto:`, ending in `/\u2026` after its first segment where a further segment or a query follows it.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::links::a_link_whose_words_are_not_its_address_is_followed_by_its_quiet_address",
+      "source": "crates/crucible-tui/src/markdown/tests/links.rs",
+      "body_sha256": "3e9c7d9a0d73fdbb5500d94a7f934b567ce4e7cac1a7287dd4bfd44aec38ddc1",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-QUIET-OWN-WORDS",
+      "family": "transcript-blocks",
+      "obligation": "A bare, angle or `www.` address, and a link whose words are its address with or without the scheme or `mailto:`, or that has no words, is drawn with no quiet run and one link.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::links::an_address_drawn_as_its_own_words_has_nothing_after_it",
+      "source": "crates/crucible-tui/src/markdown/tests/links.rs",
+      "body_sha256": "7e57b5210a24e2efa283d96164083d67b9ba789491ad1c9006c2fde9b11bab14",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-QUIET-BOUND",
+      "family": "transcript-blocks",
+      "obligation": "An address with a host, a `www.` one among them, is whole where nothing but a slash follows its host and first segment, and otherwise keeps them and `/\u2026`, or `\u2026` where a query or anchor follows the host; what stands before the ellipsis is cut at 24 columns, a wide character straddling the bound left out; one with no host is whole to 24 columns and keeps what fits; the words point at the whole address.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::links::a_quiet_address_stops_at_twenty_four_columns",
+      "source": "crates/crucible-tui/src/markdown/tests/links.rs",
+      "body_sha256": "71dfc104eaced293a21828d016c10f7d43b6fb3d4c24ad94732ff6e88b8b1656",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-QUIET-ASCII",
+      "family": "transcript-blocks",
+      "obligation": "In the ascii glyph set a cut quiet address ends in `...`.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::links::a_quiet_address_is_cut_with_the_glyph_sets_ellipsis",
+      "source": "crates/crucible-tui/src/markdown/tests/links.rs",
+      "body_sha256": "619096085432b8e8d6608f2ae626affb0c00bd76b148b76358232c94056b0af7",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FORGE-OWN-WORDS",
+      "family": "transcript-blocks",
+      "obligation": "A bare, angle or own-words forge address, or a worded one whose words are its reference short or naming its repository, is drawn as its reference, a link to the whole address with no quiet run, and with no forge in hand names its repository.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::links::a_forge_address_drawn_as_its_own_words_is_drawn_as_its_reference",
+      "source": "crates/crucible-tui/src/markdown/tests/links.rs",
+      "body_sha256": "98262f1e1871807fbd334ea435ab83c7f04df95b82db492129fd89adb29911db",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FORGE-WORDED",
+      "family": "transcript-blocks",
+      "obligation": "A worded link to a forge address keeps its words, pointing at the address, and is followed by its reference as the one quiet run.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::links::a_worded_forge_link_keeps_its_words_and_is_followed_by_its_reference",
+      "source": "crates/crucible-tui/src/markdown/tests/links.rs",
+      "body_sha256": "2dc38b47e8ff9c742efd3cc5cc007a5c7f4511ccf84feab0c0af114f0b528431",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FORGE-PAST-ITEM",
+      "family": "transcript-blocks",
+      "obligation": "A forge address with a tab, query or anchor, over `http`, or on another host is drawn as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::links::an_address_past_the_item_or_off_https_is_an_ordinary_link",
+      "source": "crates/crucible-tui/src/markdown/tests/links.rs",
+      "body_sha256": "2e58f7e1f08f01e4885a328644d0521dc60b6e20d9c8d0dc770c056dd32dcaee",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SHORTENED-TOLD",
+      "family": "transcript-sources",
+      "obligation": "The reader tells, in order, the whole of each forge address and each cut quiet address, and not a quiet address shown whole, a bare number or a bare address.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::links::every_address_drawn_shorter_than_written_is_told_whole_and_no_other",
+      "source": "crates/crucible-tui/src/markdown/tests/links.rs",
+      "body_sha256": "dd89c75b74ef760aa80773e1c556616f6239bb53b1dd9c1bc94cef8a2bb0585e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SHORTENED-CELLS",
+      "family": "transcript-sources",
+      "obligation": "A table's cells tell, in order, the whole of each address the same links tell in a paragraph, a bare and a worded forge address and a cut quiet address and not a whole one, whether the table is held as a block or drawn as it streams.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::links::a_cell_tells_the_addresses_it_draws_shorter_as_a_paragraph_does",
+      "source": "crates/crucible-tui/src/markdown/tests/links.rs",
+      "body_sha256": "d9ba4cdef7e15f202d30771e99a917951cfecd1f1460f998e235a35b24f6e6ff",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-IMAGE",
+      "family": "transcript-blocks",
+      "obligation": "`![alt](target)`, after a space or a word, is drawn as `[image: alt]` or `[image]` with its quiet address and points at the target, a path in the checkout as its file, while a bang whose brackets carry no address, before a space, after a backslash or in code opens no image.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::links::an_image_is_its_alt_words_in_brackets_and_its_quiet_address",
+      "source": "crates/crucible-tui/src/markdown/tests/links.rs",
+      "body_sha256": "ddff1ea61addde9b316e67ecc4d35b0e3b752cc7f6e987d21e5d8739427bb903",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-IMAGE-CUT",
+      "family": "transcript-blocks",
+      "obligation": "An image, and a bang that opens none, cut in two at any character boundary, draws the text and links it draws whole.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::links::an_image_cut_anywhere_is_the_image_it_was",
+      "source": "crates/crucible-tui/src/markdown/tests/links.rs",
+      "body_sha256": "7891a4696abda1ef580f3202becf2931f57bcf1ae0d1f5686a5142caffa6fe0d",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-LINK-CELL-AGREES",
+      "family": "transcript-blocks",
+      "obligation": "A table cell holding a forge address bare, between angle brackets or worded, a bare or worded address, an image or an e-mail link draws exactly the words a paragraph draws, without its quiet runs, with and without a forge.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::links::a_cell_draws_what_a_paragraph_draws_but_the_quiet_address",
+      "source": "crates/crucible-tui/src/markdown/tests/links.rs",
+      "body_sha256": "6251673aea8e6da52041b7fb4488899c900bd7e5dea715c7f79f765cfe3b6adc",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-LINK-ANGLE-AGREES",
+      "family": "transcript-blocks",
+      "obligation": "An address between angle brackets draws the text, links and shortened addresses the same address written bare does, with and without a forge.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::links::an_address_between_angle_brackets_is_drawn_as_the_bare_one_is",
+      "source": "crates/crucible-tui/src/markdown/tests/links.rs",
+      "body_sha256": "170210f18ca9b8a44322649b00bcd99f8f67cbfc2899b0ac06c364b8994d0f83",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-FORGE-SCREEN",
+      "family": "transcript-blocks",
+      "obligation": "On the screen a pull request address is drawn as `owner/repo#N` with no forge and as `#N` against its own, and its address is not drawn.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::links::a_pull_request_address_is_drawn_as_its_reference",
+      "source": "crates/crucible-tui/src/render/tests/links.rs",
+      "body_sha256": "f1b2b3bde818c85d75202b1ae8412323919de769980f51be158f94aeb10acccb",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-IMAGE-SCREEN-CUT",
+      "family": "transcript-blocks",
+      "obligation": "On the screen an image cut at any character boundary is drawn as `[image: alt] (path)` and no bang is drawn.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::links::an_image_reference_keeps_its_words_and_drops_its_marker",
+      "source": "crates/crucible-tui/src/render/tests/links.rs",
+      "body_sha256": "145450d9ec2610c694030cd61a3da8644f97abf0bbf132cb2206ea57d8791b65",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-QUIET-COPY",
+      "family": "transcript-blocks",
+      "obligation": "A drag over a row with a worded link copies the words and not the quiet address drawn after them.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::links::a_drag_over_a_worded_link_copies_its_words_and_not_its_quiet_address",
+      "source": "crates/crucible-tui/src/render/tests/links.rs",
+      "body_sha256": "2988e2be7799be2940b0a602581b048e0b6073b3c05ef42410a71192feb244fd",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SHORTENED-LISTED",
+      "family": "transcript-sources",
+      "obligation": "The sources list each drawn table, then the whole of each address drawn shorter, newest first, under `address`, and not a bare number or a quiet address shown whole, each before the bound a list is held to.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::links::every_address_drawn_shorter_is_listed_whole_newest_first_after_the_blocks",
+      "source": "crates/crucible-tui/src/render/tests/links.rs",
+      "body_sha256": "605c400f808775d7d57bfa5cc771ea2b5ea81cbbcf745f6a87b7a3078a1060bb",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SHORTENED-CAP",
+      "family": "transcript-sources",
+      "obligation": "Of seventy addresses drawn shorter, the sources list the newest sixty-four, newest first.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::links::the_list_of_addresses_drawn_shorter_keeps_the_newest_sixty_four",
+      "source": "crates/crucible-tui/src/render/tests/links.rs",
+      "body_sha256": "5603f03744f0fc8fcfcf12cb03409d233d666f58004d256b8a55aedfef3145b3",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-LINK-HOSTILE",
+      "family": "transcript-blocks",
+      "obligation": "With escapes, controls, reordering and invisible characters in a forge address, a worded link, an image, an e-mail link or a table cell's link, the redrawing screen writes none of them to the terminal, and each hyperlink sequence it writes is printable ASCII, in the unicode and the ascii glyph set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::links::a_hostile_forge_address_worded_link_or_image_writes_no_escape",
+      "source": "crates/crucible-tui/src/render/tests/links.rs",
+      "body_sha256": "c60ffb34465e70faced913f3b23ef4b284a41ec31331c0754a14b1537ebd1260",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-LINK-HOSTILE-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "With escapes, controls, reordering and invisible characters in a forge address, a worded link, an image, an e-mail link or a table cell's link, the native screen writes none of them to the terminal, and each hyperlink sequence it writes is printable ASCII, in the unicode and the ascii glyph set.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_hostile_forge_address_worded_link_or_image_writes_no_escape",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "a978a508f61bff6f91839166412269ff185c30193628e3df3d10d47802638542",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-LINK-SHAPES-CUT",
+      "family": "transcript-blocks",
+      "obligation": "A forge address bare or between angle brackets, a forge link whose words are its reference, a worded link, a worded forge link, an e-mail link and a table cell's commit address, cut at any character boundary, draw the named rows.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::links::every_shape_of_link_cut_anywhere_is_drawn_as_it_is_whole",
+      "source": "crates/crucible-tui/src/render/tests/links.rs",
+      "body_sha256": "5c09e497065192785a5f03de7be0152b79323ce4165553713e4d9cb11f3ba25c",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-LINK-AS-WRITTEN-PLACES",
+      "family": "transcript-blocks",
+      "obligation": "In a code span, a fence, indented code, a key, a mermaid and a diff fence a forge address, a worded link and an image are drawn as written, in display math as their words, and nowhere as a reference, a quiet address or image words.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::links::a_link_where_text_is_drawn_as_written_is_drawn_as_it_was_before_references",
+      "source": "crates/crucible-tui/src/render/tests/links.rs",
+      "body_sha256": "a83454ce7162eedfd55fd5c49bd6cd8940951ccea4b7ee6f9e258bf12b2bb3bc",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-LINK-NO-COLOUR",
+      "family": "transcript-blocks",
+      "obligation": "With no colour the redrawing screen draws a forge address, a worded link and an image as the model wrote them.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::links::a_run_with_no_colour_in_it_keeps_every_link_and_image_as_the_model_wrote_it",
+      "source": "crates/crucible-tui/src/render/tests/links.rs",
+      "body_sha256": "318b29b35ef4c3649e6c3a436ea5dd036fd2efa8e70a6bf1f73cd3e0aea54310",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-LINK-NO-COLOUR-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "With no colour the native screen draws a forge address, a worded link and an image as the model wrote them, with no reference, quiet address or image words.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_run_with_no_colour_in_it_keeps_every_link_and_image_as_the_model_wrote_it",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "71e2b6515f773a737ca2f7098d3bc3d1ce6cc9e7118d331a1fab1fbf5e34e4e7",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-LINK-REDIRECTED",
+      "family": "transcript-blocks",
+      "obligation": "Output that is not a terminal, under `output.color = always`, receives a forge address, a worded link and an image exactly as the model wrote them.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::style::tests::a_redirected_run_under_always_keeps_every_link_and_image_the_model_wrote",
+      "source": "src/cli/style.rs",
+      "body_sha256": "b2a197eaba38aa8984b5bde539b83fc57da416765cd444407294fbf20b571ac0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SHORTENED-VIEW",
+      "family": "transcript-sources",
+      "obligation": "The Ctrl+O view stands the table, then the whole of each address drawn shorter, newest first, two under `address`, and no bare number's address.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::expanding::tests::ctrl_o_lists_the_whole_of_every_address_drawn_shorter_after_the_blocks",
+      "source": "src/cli/converse/expanding/tests.rs",
+      "body_sha256": "98da50e0c82845cdbe6534deb7398e856e45473f109063e80b276c8885e832c6",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SHORTENED-OPENS",
+      "family": "transcript-sources",
+      "obligation": "The Ctrl+O view opens, and stands the whole address, when an address drawn shorter is all there is to show.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::expanding::tests::ctrl_o_opens_for_an_address_drawn_shorter_with_nothing_else_to_stand",
+      "source": "src/cli/converse/expanding/tests.rs",
+      "body_sha256": "2aabf1e39db94d581171ab768565a7f610f231e95d151bc50542755f42bb22e6",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SHORTENED-VIEW-CELLS",
+      "family": "transcript-sources",
+      "obligation": "The Ctrl+O view stands the whole of each forge address a table's cells drew as its reference, newest first: the second cell's before the first's, and both before that of the paragraph above the table.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::expanding::tests::ctrl_o_lists_an_address_a_table_cell_draws_shorter_newest_first",
+      "source": "src/cli/converse/expanding/tests.rs",
+      "body_sha256": "85151ae5a95b63ff807b23546ebfbb74f65ce6848e2b29826328e97e5cd6194b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SHORTENED-VIEW-COUNTED",
+      "family": "transcript-sources",
+      "obligation": "Two addresses of one byte length on one line, each folding into more than one row at 20 columns and into a different number of rows from the other, are each counted at the rows they take on lines of their own, and the view reaches as far as it does with them there.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::expanding::tests::two_addresses_on_one_line_of_one_length_are_counted_apart",
+      "source": "src/cli/converse/expanding/tests.rs",
+      "body_sha256": "fd91d66bf7112fcf7eba1d3ead61721e87b7ea745cfcb2a32664d9910b31e07b",
       "platforms": [
         "linux",
         "macos",
@@ -9081,7 +9765,7 @@
       },
       "case": "markdown::tests::strikes::a_single_tilde_changes_nothing_where_text_is_drawn_as_written",
       "source": "crates/crucible-tui/src/markdown/tests/strikes.rs",
-      "body_sha256": "19dd9010a8c7b7b7c7ed4057ff04c91779894c0ecdc338ecebdf061a88451861",
+      "body_sha256": "750a868b2532dca93a8d136a537c811ec347970049820a00e1739120c61d9bce",
       "platforms": [
         "linux",
         "macos",
