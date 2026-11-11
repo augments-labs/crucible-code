@@ -119,7 +119,23 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
+    use super::startup::Scratch;
     use super::{LIMIT, REPLY_WAIT, SHARED_RUNNER_LIMIT};
+
+    #[test]
+    fn each_window_launches_from_a_home_of_its_own() {
+        // Planted here rather than beside `Scratch`, which every startup probe
+        // compiles and tests: this is the one probe that takes windows at once.
+        let first = Scratch::in_window("\u{00a7}", 0).expect("a home");
+        let second = Scratch::in_window("\u{00a7}", 1).expect("a home");
+
+        assert_ne!(
+            first.path(),
+            second.path(),
+            "two windows taken at once share a home, so one restores the other's \
+             fixture under a running child and the first dropped removes both"
+        );
+    }
 
     #[test]
     fn the_windows_are_spread_across_the_startup_reply_wait() {

@@ -378,7 +378,7 @@ pub(crate) fn coloured_input(answering: Answering) -> Result<Readings, StartupEr
 /// done.
 ///
 /// What that gives up is part of the windows' own defence. A stall shorter
-/// than a launch lands on about one reading in each window, which the second
+/// than a launch usually lands on one reading in each window, which the second
 /// worst of twenty-two passes over; one that spans two launches lands on two in
 /// every window, and the median keeps it. [`best`] answers that instead, by
 /// taking a batch that went over again, and a batch costs one window's wall
@@ -482,11 +482,10 @@ const AT_LIBERTY: usize = 3;
 /// beat, and a startup that actually got slower is over budget in all three —
 /// which is the same claim the windows make, one layer up. A batch whose
 /// windows were taken at once has no window that sits outside a stall longer
-/// than a launch, so against one of those this is the whole of the defence.
-/// What makes that hold is that
-/// `again` launches the binary afresh every call, from a scratch home it builds
-/// itself: a batch reading state a previous one left would open already slow,
-/// and the guarantee would invert.
+/// than a launch, so against such a stall this is the whole of the defence.
+/// What makes that hold is that `again` launches the binary afresh every call,
+/// from a scratch home it builds itself: a batch reading state a previous one
+/// left would open already slow, and the guarantee would invert.
 pub(crate) fn best(
     budget: Duration,
     mut again: impl FnMut() -> Result<Readings, StartupError>,
@@ -542,13 +541,13 @@ fn overlapped(
         }
 
         let mut finished = Vec::with_capacity(WINDOWS);
-        for window in started {
-            finished.push(window.map(std::thread::ScopedJoinHandle::join));
+        for spawned in started {
+            finished.push(spawned.map(std::thread::ScopedJoinHandle::join));
         }
 
         let mut taken = Vec::with_capacity(RUNS);
-        for window in finished {
-            taken.extend(window?.map_err(|_| StartupError::Abandoned)??);
+        for joined in finished {
+            taken.extend(joined?.map_err(|_| StartupError::Abandoned)??);
         }
 
         Ok(Readings::new(taken))
@@ -1397,7 +1396,7 @@ impl Scratch {
     /// once, each of which needs a home of its own: one shared would have a
     /// window restore the fixture under another's running child, and be
     /// removed by whichever was dropped first.
-    fn in_window(name: &str, window: usize) -> Result<Self, StartupError> {
+    pub(crate) fn in_window(name: &str, window: usize) -> Result<Self, StartupError> {
         Self::holding(&Self::window_name(name, window), &configuration(None))
     }
 
