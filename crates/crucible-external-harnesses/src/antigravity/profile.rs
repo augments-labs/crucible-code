@@ -8,10 +8,12 @@
 //! named, so the agent signs in, keeps its files and unpacks itself inside the
 //! profile alone: its home for sign-in is the profile's directory, and its
 //! token is a file there rather than an entry in the shared keyring, so a
-//! sign-in another Google product keeps is never read as its own. The
-//! configuration refuses an instance without a profile, since its usual home
-//! is the one the Antigravity IDE signs in under; a launch given none keeps its
-//! files there, its token still in a file.
+//! sign-in another Google product keeps is never read as its own. A profile
+//! crucible makes is never one another Google product shares: a release from
+//! the store is refused a launch without one, since its usual home is the one
+//! the Antigravity IDE signs in under. The user's own program is given none
+//! unless the user names one, so it uses the sign-in its user already gave it,
+//! its token still in a file.
 //!
 //! A business sign-in is billed to a Google Cloud project in a location,
 //! which the agent reads from its own settings file in the profile and from

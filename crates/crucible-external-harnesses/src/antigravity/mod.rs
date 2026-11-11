@@ -8,8 +8,14 @@
 //! does. An agent that describes itself otherwise is sent nothing more. It is
 //! started with only the environment its profile builds, so no credential the
 //! shell holds for another use reaches it, and whether it is signed in is read
-//! from what the agent itself answers in that profile; a sign-in another Google
-//! product keeps is no evidence of its own.
+//! from what the agent itself answers in that profile. A profile crucible makes
+//! is never one another Google product shares.
+//!
+//! [`Antigravity::own`] is the client run as the user's own program instead,
+//! such as Google's `agy`, found under one of the [`COMMANDS`] or named by its
+//! path: it is admitted by what it answers, as [`Manifest::admits_own`] says,
+//! never by its name or version, and uses the sign-in its user already gave
+//! it unless the user names a profile for it. [`own_note`] tells the user so.
 //!
 //! It signs in by any of the four methods [`methods`] lists, the one asked
 //! for named by the user.
@@ -89,6 +95,22 @@ pub fn started(offered: Vec<OwnedPin>, program: Option<&std::path::Path>) -> Vec
     }
 }
 
+/// What the user is told of their own Antigravity program before it is
+/// chosen and wherever an instance runs one: whose sign-in it uses, given
+/// whether the sandbox is on.
+#[must_use]
+pub const fn own_note(sandboxed: bool) -> &'static str {
+    if sandboxed {
+        "Under the sandbox, your own Antigravity does not see the sign-in it keeps in \
+         ~/.gemini; the store release keeps a separate one. A business sign-in needs \
+         the store release or a profileDir you add."
+    } else {
+        "Your own Antigravity uses the sign-in it keeps in ~/.gemini, which another \
+         Google product may share; the store release keeps a separate one. A business \
+         sign-in needs the store release or a profileDir you add."
+    }
+}
+
 /// The command it is looked up as.
 const PROGRAM: &str = "antigravity";
 
@@ -104,6 +126,31 @@ const PROFILE: Profile = Profile {
 /// `offered`.
 fn admits(initialized: &Initialized, offered: &[Admits]) -> Result<(), Failure> {
     Manifest::REVIEWED.admits(initialized, offered)
+}
+
+/// The command names the agent is known under, in the order they are looked
+/// for: Google's command-line program, then the release's own name.
+pub const COMMANDS: &[&str] = &["agy", PROGRAM];
+
+/// The file a release's program is unpacked as.
+const RELEASED_FILE: &str = "agy_acp_server.par";
+
+/// The arguments the user's own program is started with, which serve the
+/// protocol from Google's command-line program.
+const OWN_ARGUMENTS: &[&str] = &["acp"];
+
+/// The protocol's client, as the user's own program is run.
+const OWN_PROFILE: Profile = Profile {
+    program: PROGRAM,
+    versions: Manifest::REVIEWED.protocols,
+    admits: admits_own,
+    sign_in: Manifest::REVIEWED.sign_in,
+};
+
+/// Whether the agent described as `initialized` holds what this client
+/// relies on, whatever release the catalog offers.
+fn admits_own(initialized: &Initialized, _offered: &[Admits]) -> Result<(), Failure> {
+    Manifest::REVIEWED.admits_own(initialized)
 }
 
 /// The Antigravity agent's wire.
@@ -131,6 +178,25 @@ impl Antigravity {
     #[must_use]
     pub fn allowing(allowing: Allowing, offered: &[OwnedPin]) -> Self {
         Self::new(Acp::allowing(PROFILE, allowing), offered)
+    }
+
+    /// The wire for the user's own program at `program`, its canonical path:
+    /// it is admitted by what it answers rather than as a release `offered`,
+    /// and is started as `agy acp`, unless its file is named as a release's
+    /// program is, when it is started as the newest release `offered` is.
+    /// With no profile it is given no home, so it reads the sign-in it
+    /// already keeps; one the user names is its home, as for a release.
+    #[must_use]
+    pub fn own(program: &std::path::Path, allowing: Allowing, offered: &[OwnedPin]) -> Self {
+        let released = program
+            .file_name()
+            .is_some_and(|name| name == RELEASED_FILE)
+            || program.file_stem().is_some_and(|stem| stem == PROGRAM);
+        let mut own = Self::new(Acp::allowing(OWN_PROFILE, allowing), offered);
+        if !released {
+            own.args = OWN_ARGUMENTS.iter().map(ToString::to_string).collect();
+        }
+        own
     }
 
     /// `acp`, held to the releases `offered`.

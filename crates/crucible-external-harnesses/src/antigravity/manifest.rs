@@ -68,7 +68,42 @@ impl Manifest {
                 "The agent answered in a protocol version its release does not use.",
             ));
         }
-        let missing = [
+        match self.lacking(initialized) {
+            Some(what) => Err(Failure::new(&format!(
+                "The agent no longer offers {what}, which its reviewed release did."
+            ))),
+            None => Ok(()),
+        }
+    }
+
+    /// Whether the agent described as `initialized`, a program the user
+    /// installed rather than a release the catalog offers, holds what this
+    /// client relies on: the protocol, the capabilities, which only an object
+    /// of them can offer, and the sign-in method. What it calls itself and its
+    /// version say nothing about whether it holds them, so neither is
+    /// compared with any release.
+    ///
+    /// # Errors
+    ///
+    /// A [`Failure`] naming the first thing it does not hold.
+    pub fn admits_own(&self, initialized: &Initialized) -> Result<(), Failure> {
+        if !self.protocols.contains(&initialized.protocol()) {
+            return Err(Failure::new(
+                "The agent answered in a protocol version this client does not use.",
+            ));
+        }
+        match self.lacking(initialized) {
+            Some(what) => Err(Failure::new(&format!(
+                "The agent does not offer {what}, which this client relies on."
+            ))),
+            None => Ok(()),
+        }
+    }
+
+    /// The first thing this client relies on that the agent described as
+    /// `initialized` does not offer.
+    fn lacking(&self, initialized: &Initialized) -> Option<&'static str> {
+        [
             (initialized.loads(), "loading a session"),
             (initialized.resumes(), "resuming a session"),
             (initialized.signs_out(), "signing out"),
@@ -80,12 +115,6 @@ impl Manifest {
             ),
         ]
         .into_iter()
-        .find_map(|(offered, what)| (!offered).then_some(what));
-        match missing {
-            Some(what) => Err(Failure::new(&format!(
-                "The agent no longer offers {what}, which its reviewed release did."
-            ))),
-            None => Ok(()),
-        }
+        .find_map(|(offered, what)| (!offered).then_some(what))
     }
 }
