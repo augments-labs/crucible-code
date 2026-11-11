@@ -711,9 +711,8 @@ pub fn entry() -> ExitCode {
                 Err(_) => ExitCode::FAILURE,
             }
         }
-        // Answered only as the first argument with exactly one path after
-        // it, so a dialect's own arguments that happen to start with it are
-        // still played to.
+        // Taken for a copy only as the first argument with exactly one more
+        // after it; every other start beginning with it is still played to.
         Some(first) if first == COPY && arguments.len() == 1 => match arguments.next() {
             Some(target) => copied_to(Path::new(&target)),
             None => ExitCode::FAILURE,
