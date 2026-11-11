@@ -19,7 +19,7 @@ use crucible_app::access::Route;
 use crucible_app::backends::{REGISTRY, Registry, Row};
 use crucible_app::catalog_fetch;
 use crucible_app::client::accounts::CHECK_AGAIN;
-use crucible_app::client::agents::{AgentsError, Outcome as Door};
+use crucible_app::client::agents::{AgentsError, Outcome as Door, OwnProgram, refused_beside};
 use crucible_app::content_use::{Consent, Routes};
 use crucible_app::launching::Agent;
 use crucible_app::own_program;
@@ -1106,7 +1106,7 @@ pub(crate) fn found_at_door(
     tree: &Tree,
     conversation: &Conversation,
     agent: &str,
-) -> Result<Result<crucible_app::client::agents::OwnProgram, AgentsError>, Failed> {
+) -> Result<Result<OwnProgram, AgentsError>, Failed> {
     let home = tree.home()?;
     let shelf = lent(&home, conversation, Some(cached_registry()));
     Ok(runtime()?.block_on(crucible_app::client::agents::own_program(&shelf, agent)))
@@ -1669,6 +1669,21 @@ fn beside_is_refused(
             "the instance {first} configured for it runs another program"
         )),
         "{refused}"
+    );
+    // What `crucible agents try` asks the door for, and the refusal it says
+    // for what it is told: the door's own.
+    let found = found_at_door(tree, conversation, agent)?;
+    assert_eq!(
+        found.as_ref().ok(),
+        Some(&OwnProgram::Beside {
+            program: program.to_owned(),
+            instance: first.into(),
+        }),
+        "{found:?}"
+    );
+    assert_eq!(
+        refused_beside(AgentKey::new(agent)?, program.to_owned(), first).to_string(),
+        refused.to_string()
     );
     assert!(door.put.is_empty(), "the door asked: {:?}", door.put);
     assert_eq!(

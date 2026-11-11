@@ -1763,3 +1763,36 @@ fn search_marks_a_program_of_your_own_found_on_path() {
          agents try goose)\n"
     );
 }
+
+/// Fails where a try refused beside a configured instance of the agent says
+/// no program of the user's own was found, rather than the door's reason
+/// naming that instance; or where one with no program found stops saying so.
+#[test]
+fn a_try_beside_a_configured_instance_says_why_and_one_unfound_says_path() {
+    let beside = taken(
+        "goose",
+        OwnProgram::Beside {
+            program: PathBuf::from("/opt/tools/goose"),
+            instance: "work".into(),
+        },
+    );
+    let unfound = taken("goose", OwnProgram::Unfound);
+
+    assert_eq!(
+        beside,
+        Err(
+            "Your own goose at /opt/tools/goose could not be tried (the instance work \
+             configured for it runs another program, and no second one is written beside it), \
+             so nothing was written."
+                .to_owned()
+        )
+    );
+    assert_eq!(
+        unfound,
+        Err(
+            "no program of your own for goose was found on PATH outside crucible's install \
+             store, so nothing was tried"
+                .to_owned()
+        )
+    );
+}

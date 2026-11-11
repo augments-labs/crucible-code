@@ -1009,12 +1009,33 @@ async fn opened<'a>(
 pub enum OwnProgram {
     /// The path the program's links lead to, as a try of it takes it.
     Found(PathBuf),
+    /// The user's own program of the agent is found, leading to `program`,
+    /// but the instance `instance` of the agent is configured and runs
+    /// another program, so a try of it is refused as [`refused_beside`] says:
+    /// `/login` offers no second instance beside one configured.
+    Beside {
+        /// The path the program's links lead to.
+        program: PathBuf,
+        /// The configured instance's name, as the configuration spells it.
+        instance: Box<str>,
+    },
     /// The agent is offered, or is Antigravity, but no program of the user's
     /// own is found for it.
     Unfound,
     /// Neither the signed catalog nor the ACP Registry offers an agent of
     /// that name.
     Unlisted,
+}
+
+/// The door's refusal of a try of the user's own `program` of `agent`, which
+/// writes nothing, where the instance `instance` of the agent is configured
+/// and runs another program.
+pub fn refused_beside(agent: AgentKey, program: PathBuf, instance: &str) -> AgentsError {
+    AgentsError::Own {
+        agent,
+        program,
+        why: Box::new(Unowned::Beside(quoted(instance).into())),
+    }
 }
 
 /// The user's own program of `agent` the door, lent `shelf`, would try: found

@@ -11,9 +11,9 @@ use crucible_types::shown::escaped;
 
 use super::{
     AgentsError, Confirmation, Door, Front, Outcome, OwnAntigravity, OwnProgram, confirmed,
+    refused_beside,
 };
 use crate::backends::{ANTIGRAVITY, kept_word};
-use crate::launching::quoted;
 use crate::own_program::{Trying, Unowned};
 use crate::remember;
 
@@ -45,6 +45,16 @@ pub(super) fn own_refusal(agent: &AgentKey, program: &Path, why: &Unowned) -> St
         _ => format!(
             "Your own {agent} at {program} could not be tried ({why}), so nothing was written."
         ),
+    }
+}
+
+/// Whether `instance` is one of the agent `key`: a catalog instance of it,
+/// or, for Antigravity's key, an Antigravity instance.
+fn of_agent(instance: &ExternalAgent, key: &AgentKey) -> bool {
+    match instance.driver() {
+        Driver::Catalog => instance.agent() == Some(key),
+        Driver::Antigravity => key.as_str() == ANTIGRAVITY_KEY,
+        Driver::Claude => false,
     }
 }
 
@@ -97,11 +107,14 @@ impl Door<'_> {
     /// What the door finds of the user's own program of `key` alone, as
     /// `trying` finds it: Antigravity's as a listing names it, and a catalog
     /// or registry agent's as [`Door::own`] finds it for the row a listing
-    /// would give it, wherever that row would fall.
+    /// would give it, wherever that row would fall. Where neither finds one,
+    /// it is [`Door::unrun`]'s answer.
     pub(super) fn own_program(&self, trying: &Trying, key: &AgentKey) -> OwnProgram {
         if key.as_str() == ANTIGRAVITY_KEY {
-            return own_antigravity(trying, &self.instances)
-                .map_or(OwnProgram::Unfound, |own| OwnProgram::Found(own.program));
+            return own_antigravity(trying, &self.instances).map_or_else(
+                || self.unrun(trying, key),
+                |own| OwnProgram::Found(own.program),
+            );
         }
         let offered = self
             .trust
@@ -118,7 +131,32 @@ impl Door<'_> {
             return OwnProgram::Unlisted;
         }
         self.own(trying, key)
-            .map_or(OwnProgram::Unfound, OwnProgram::Found)
+            .map_or_else(|| self.unrun(trying, key), OwnProgram::Found)
+    }
+
+    /// What the door finds of the user's own program of `key` where no
+    /// configured instance of it runs one: [`OwnProgram::Beside`], naming the
+    /// first instance of it configured, as a try of it is refused, where the
+    /// own program a guess of its name finds runs beside that instance, and
+    /// [`OwnProgram::Unfound`] where none of it is configured or none is
+    /// found.
+    fn unrun(&self, trying: &Trying, key: &AgentKey) -> OwnProgram {
+        let Some(instance) = self
+            .instances
+            .iter()
+            .find(|instance| of_agent(instance, key))
+        else {
+            return OwnProgram::Unfound;
+        };
+        let trial = if key.as_str() == ANTIGRAVITY_KEY {
+            trying.antigravity(&ANTIGRAVITY)
+        } else {
+            trying.catalog(key, None)
+        };
+        trial.map_or(OwnProgram::Unfound, |trial| OwnProgram::Beside {
+            program: trial.canonical().to_owned(),
+            instance: instance.name().into(),
+        })
     }
 
     /// Tries the user's own `program` of `agent`, a catalog agent's or
@@ -163,11 +201,7 @@ impl Door<'_> {
             why: Box::new(why),
         };
         let antigravity = key.as_str() == ANTIGRAVITY_KEY;
-        let of_it = |instance: &&ExternalAgent| match instance.driver() {
-            Driver::Catalog => instance.agent() == Some(&key),
-            Driver::Antigravity => antigravity,
-            Driver::Claude => false,
-        };
+        let of_it = |instance: &&ExternalAgent| of_agent(instance, &key);
         let configured = self.instances.iter().filter(of_it).find_map(|instance| {
             let trial = if antigravity {
                 (trying.leads(instance.executable())? == asked)
@@ -183,7 +217,7 @@ impl Door<'_> {
             // As `/login`, a new instance is written only where none of the
             // agent is configured.
             if let Some(instance) = self.instances.iter().find(of_it) {
-                return Err(refused(Unowned::Beside(quoted(instance.name()).into())));
+                return Err(refused_beside(key, asked, instance.name()));
             }
             let trial = if antigravity {
                 trying.antigravity(&ANTIGRAVITY)

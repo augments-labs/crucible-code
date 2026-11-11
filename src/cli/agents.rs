@@ -443,15 +443,9 @@ impl Desk<'_> {
             // the door found.
             let waited = self.waited(None, None, |front, watching| {
                 Box::pin(async move {
-                    let program = match door::own_program(lending, agent).await? {
-                        OwnProgram::Found(program) => program,
-                        OwnProgram::Unfound => return Ok(Err(unfound(agent))),
-                        OwnProgram::Unlisted => {
-                            return Ok(Err(format!(
-                                "the agent catalog lists no agent named {}, so nothing was tried",
-                                escaped(agent)
-                            )));
-                        }
+                    let program = match taken(agent, door::own_program(lending, agent).await?) {
+                        Ok(program) => program,
+                        Err(refused) => return Ok(Err(refused)),
                     };
                     let program = Text::cut(&program.to_string_lossy());
                     if program.truncated() {
@@ -790,6 +784,26 @@ fn install_request(command: Command) -> Request {
         Correlation::new(1),
         command,
     )
+}
+
+/// The program a try of `agent` takes, as the door `found` it, or why
+/// nothing was tried: beside a configured instance, the door's own refusal.
+fn taken(agent: &str, found: OwnProgram) -> Result<PathBuf, String> {
+    let unlisted = || {
+        format!(
+            "the agent catalog lists no agent named {}, so nothing was tried",
+            escaped(agent)
+        )
+    };
+    match found {
+        OwnProgram::Found(program) => Ok(program),
+        OwnProgram::Beside { program, instance } => Err(AgentKey::new(agent).map_or_else(
+            |_| unlisted(),
+            |key| caused(&door::refused_beside(key, program, &instance)),
+        )),
+        OwnProgram::Unfound => Err(unfound(agent)),
+        OwnProgram::Unlisted => Err(unlisted()),
+    }
 }
 
 /// Why a try of `agent` is refused where no program of the user's own is

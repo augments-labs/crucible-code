@@ -50,6 +50,9 @@ fn own_found(
     match found_at_door(tree, conversation, agent)? {
         Ok(OwnProgram::Found(program)) => Ok(Some(program)),
         Ok(OwnProgram::Unfound | OwnProgram::Unlisted) => Ok(None),
+        Ok(OwnProgram::Beside { instance, .. }) => {
+            Err(format!("the door refused a try beside the configured {instance}").into())
+        }
         Err(why) => Err(why.to_string().into()),
     }
 }
