@@ -294,7 +294,11 @@ fn ctrl_enter_readies_every_line_then_the_box_and_holds_them_from_the_turn() {
 
     assert_eq!(batched(&mut queue, &steer).as_deref(), Some("first"));
     assert_eq!(steer.take(), vec!["second".to_owned(), "third".to_owned()]);
-    assert_eq!(queue.waiting_count(), 0);
+    assert_eq!(
+        waiting(&queue),
+        vec!["second", "third"],
+        "waiting until the turn says it took them"
+    );
     assert!(matches!(queue.offer(&steer), Offer::Turn(_)));
 }
 

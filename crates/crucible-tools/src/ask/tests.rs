@@ -527,6 +527,43 @@ fn one_of_two_simultaneous_settlements_wins_and_the_other_is_stale() {
 }
 
 #[test]
+fn an_answer_withheld_waits_again_in_id_order_and_the_rest_are_settled_again_first() {
+    let deferred = Deferred::default();
+    let first = deferred.register(asked("First")).unwrap();
+    let second = deferred.register(asked("Second")).unwrap();
+    let third = deferred.register(asked("Third")).unwrap();
+    let fourth = deferred.register(asked("Fourth")).unwrap();
+    for id in [first, third] {
+        deferred
+            .settle(id, vec![chose(&["Rust"]), chose(&[])])
+            .unwrap();
+    }
+    let mut taken = deferred.take_settled().into_iter();
+    let refused = taken.next().unwrap();
+    // Settled while the taken answers were out.
+    deferred
+        .settle(fourth, vec![chose(&["Rust"]), chose(&[])])
+        .unwrap();
+
+    let revision = deferred.revision();
+    deferred.withheld(refused, taken.collect());
+
+    let waiting: Vec<QuestionId> = deferred.waiting().iter().map(Batch::id).collect();
+    assert_eq!(
+        waiting,
+        [first, second],
+        "the refused batch waits in its place"
+    );
+    let settled: Vec<QuestionId> = deferred.take_settled().iter().map(Delivered::id).collect();
+    assert_eq!(
+        settled,
+        [third, fourth],
+        "the rest come back ahead of the later"
+    );
+    assert_ne!(deferred.revision(), revision, "handing back is a change");
+}
+
+#[test]
 fn take_settled_hands_each_settled_batch_out_exactly_once() {
     let deferred = Deferred::default();
     let first = deferred.register(asked("First")).unwrap();
@@ -1296,4 +1333,28 @@ fn the_saved_form_is_read_and_written_by_the_registry_alone() {
     assert_eq!(Deferred::saved_next(&json!({})), None);
     assert!(Deferred::saved_waiting(&json!({ "next": 0 })).is_empty());
     assert_eq!(Deferred::saved_id(&json!({ "id": 3 })), None);
+}
+
+#[test]
+fn what_the_person_replied_is_their_choices_and_notes_and_nothing_the_model_wrote() {
+    let deferred = Deferred::default();
+    let id = deferred.register(asked("Language")).unwrap();
+    deferred
+        .settle(
+            id,
+            vec![noted(&["Zig"], "for the CLI"), chose(&["lint", "test"])],
+        )
+        .unwrap();
+
+    let replied = only(deferred.take_settled()).replied();
+    assert_eq!(
+        replied.lines().collect::<Vec<_>>(),
+        vec!["Zig", "for the CLI", "lint", "test"]
+    );
+
+    let declined = deferred.register(asked("Language")).unwrap();
+    deferred
+        .settle(declined, vec![Reply::Declined, chose(&[])])
+        .unwrap();
+    assert_eq!(only(deferred.take_settled()).replied(), "");
 }

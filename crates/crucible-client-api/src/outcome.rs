@@ -208,14 +208,20 @@ pub enum TurnOutcome {
         guard: Text,
         /// Its reason.
         why: Text,
-        /// Why the model had stopped, where it had been asked at all.
+        /// Why the model had stopped, where its last ending was what the
+        /// guardrail judged. `None` where the guardrail judged the person's
+        /// words: before the model was asked, or between one request and the
+        /// next, after the turn had started.
         stop: Option<Stop>,
     },
     /// A guardrail could not decide, so the turn did not go on.
     Undecided {
         /// What stopped it deciding.
         problem: Problem,
-        /// Why the model had stopped, where it had been asked at all.
+        /// Why the model had stopped, where its last ending was what the
+        /// guardrail judged. `None` where the guardrail judged the person's
+        /// words: before the model was asked, or between one request and the
+        /// next, after the turn had started.
         stop: Option<Stop>,
     },
     /// The turn could not be taken, or was not finished, for the reason the

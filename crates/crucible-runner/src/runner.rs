@@ -1174,12 +1174,14 @@ impl Runner {
     /// this runner's registry of questions asked without waiting (see
     /// [`Runner::deferring`]) while no turn was running to take them.
     ///
-    /// It is [`Runner::turn`] without the prompt: no input check runs, since
-    /// there are no words to judge, and nothing the person typed is recorded,
-    /// so the turn's first request carries the delivered answers and the
-    /// model's own words before them. Everything else is as a turn: it is
-    /// announced and finished by the same events, held to the same policy,
-    /// and returns the same answer.
+    /// It is [`Runner::turn`] without the prompt: nothing the person typed is
+    /// recorded, so the turn's first request carries the delivered answers and
+    /// the model's own words before them. Each answer is put to the input
+    /// checks as it is delivered, as in any turn, and one refused ends the turn
+    /// [`Turned::Rejected`] or [`Turned::Undecided`] with its batch waiting
+    /// again and no [`Event::TurnFinished`]. Everything else is as a turn: it
+    /// is announced by the same events, held to the same policy, and returns
+    /// the same answer.
     ///
     /// With no answer settled and undelivered, or no registry, there is
     /// nothing to say: it takes no pass, records nothing and reports nothing,
@@ -1350,12 +1352,34 @@ impl Runner {
             return Ok(committed.clone());
         }
 
+        let decision = self.judging_input(prompt, run)?;
+        self.state.commit(prompt, decision.clone());
+        Ok(decision)
+    }
+
+    /// What this agent's input checks make of `said`, committing nothing.
+    ///
+    /// The checks themselves, for [`Runner::checking_input`] to commit about
+    /// an invocation's prompt, and asked as they stand of the person's other
+    /// words: what they said in each answer delivered to a question asked
+    /// without waiting, and each line typed while a turn ran. Those join a
+    /// turn already under way at a pass boundary, are taken once and never
+    /// retried, and so have no invocation of their own for a decision to be
+    /// committed to.
+    ///
+    /// # Errors
+    ///
+    /// [`GuardrailError`] where a check ran and could not reach a decision.
+    fn judging_input(&self, said: &str, run: &RunContext<'_>) -> Result<Judged, GuardrailError> {
+        if self.agent.input_guardrails().is_empty() {
+            return Ok(Judged::Allowed);
+        }
+
         // The definition the checks are read off is held for the length of the
         // pass, so a check cannot be handed a list that something replaced
         // while it was being walked.
         let agent = Arc::clone(&self.agent);
-        let context = AgentContext::new(run.run(), agent.id(), prompt);
-        let mut decision = Judged::Allowed;
+        let context = AgentContext::new(run.run(), agent.id(), said);
         for guard in agent.input_guardrails() {
             // The name is the one the check was declared under, never taken
             // from what it answered, whether it refused or could not say.
@@ -1365,15 +1389,10 @@ impl Runner {
                 .map_err(|unsure| guard.unanswered(unsure.problem()))?
             {
                 Decision::Allowed => {}
-                Decision::Rejected(why) => {
-                    decision = Judged::Rejected(guard.refused(&why));
-                    break;
-                }
+                Decision::Rejected(why) => return Ok(Judged::Rejected(guard.refused(&why))),
             }
         }
-
-        self.state.commit(prompt, decision.clone());
-        Ok(decision)
+        Ok(Judged::Allowed)
     }
 
     /// What this agent's output checks make of `candidate`.

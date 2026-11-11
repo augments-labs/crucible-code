@@ -46,25 +46,43 @@ pub(super) enum Ending {
     /// The model's answer was accepted, and this is how it ended.
     Stopped(StopReason),
 
-    /// An output check refused the final candidate.
+    /// A check refused: an output check the final candidate, or an input
+    /// check what the person said while the turn ran.
     Rejected {
         /// Which check refused, and what it said about why.
         rejection: Rejection,
         /// How the model's own answer ended, which is a separate fact from
-        /// whether the answer was accepted.
-        stop: StopReason,
+        /// whether the answer was accepted; `None` where an input check
+        /// refused at a pass boundary, before the pass asked anything.
+        stop: Option<StopReason>,
     },
 
-    /// An output check ran and could not reach a decision.
+    /// A check ran and could not reach a decision.
     Undecided {
         /// What the check said about why not.
         problem: GuardrailError,
-        /// How the model's own answer ended.
-        stop: StopReason,
+        /// How the model's own answer ended; `None` for an input check.
+        stop: Option<StopReason>,
     },
 }
 
 impl Ending {
+    /// The ending an input check's decision about the person's words makes,
+    /// where it makes one: none where every check allowed them.
+    pub(super) fn withheld(judged: Result<Judged, GuardrailError>) -> Option<Self> {
+        match judged {
+            Ok(Judged::Allowed) => None,
+            Ok(Judged::Rejected(rejection)) => Some(Self::Rejected {
+                rejection,
+                stop: None,
+            }),
+            Err(problem) => Some(Self::Undecided {
+                problem,
+                stop: None,
+            }),
+        }
+    }
+
     /// Whether a turn whose last pass ended this way takes one more pass for
     /// an answer accepted while that pass ran.
     ///
@@ -94,14 +112,8 @@ impl Ending {
     pub(super) fn turned(self, run: RunId, spent: Spend) -> Turned {
         match self {
             Self::Stopped(stop) => Turned::Ran(RunResult::new(run, stop, spent)),
-            Self::Rejected { rejection, stop } => Turned::Rejected {
-                rejection,
-                stop: Some(stop),
-            },
-            Self::Undecided { problem, stop } => Turned::Undecided {
-                problem,
-                stop: Some(stop),
-            },
+            Self::Rejected { rejection, stop } => Turned::Rejected { rejection, stop },
+            Self::Undecided { problem, stop } => Turned::Undecided { problem, stop },
         }
     }
 }
@@ -154,15 +166,29 @@ impl<'a> AgentLoop<'a> {
     /// would put a sentence in the panel that nobody wrote. The line above it
     /// is already on their screen.
     ///
+    /// A typed line is the person's words, and goes through this agent's
+    /// input checks before it is recorded, as the prompt that opened the turn
+    /// did. The first one a check refuses, or cannot decide about, ends the
+    /// turn with nothing of it recorded or sent. Its `Steered` still goes out,
+    /// so the panel stops holding it as owed a turn of its own, where the same
+    /// check would refuse it again. The lines taken after it get no `Steered`
+    /// and nothing recorded, and so stay queued in the panel as the next
+    /// turn's, which is where a line typed too late for this one waits. A
+    /// note is the application's, never the person's, and is not checked.
+    ///
     /// An answer to a question the model asked without waiting comes after
     /// these, from [`Runner::assemble_context`], because when it is taken
     /// against the state the log records is what keeps a crash from losing
     /// it. It is the person's, and no `Steered` goes with it either.
-    async fn interjected(&mut self, counting: &Counting) -> Result<(), TurnError> {
+    async fn interjected(&mut self, counting: &Counting) -> Result<Option<Ending>, TurnError> {
         let run = self.run;
         let events = run.reporting();
         for line in run.steer().take() {
+            let withheld = Ending::withheld(self.runner.judging_input(&line, run));
             events.post(Event::Steered { line: line.clone() });
+            if withheld.is_some() {
+                return Ok(withheld);
+            }
             self.runner.amend(run.ancestry(), &line);
             self.runner
                 .record(run.ancestry(), Message::said(line))
@@ -187,14 +213,18 @@ impl<'a> AgentLoop<'a> {
                     .breakdown(counting.window, counting.reserve),
             });
         }
-        Ok(())
+        Ok(None)
     }
 
     /// The context this pass is sent under, and the answers that arrived
     /// since the last one, recorded; then what waits, if that changed.
-    async fn assembled(&mut self, counting: &Counting) -> Result<(), TurnError> {
+    ///
+    /// An answer an input check refused, or could not decide about, is the
+    /// ending: its batch waits again, and what waits is told before the turn
+    /// ends on it.
+    async fn assembled(&mut self, counting: &Counting) -> Result<Option<Ending>, TurnError> {
         let run = self.run;
-        let delivered = self.runner.assemble_context(run.ancestry()).await?;
+        let (delivered, withheld) = self.runner.assemble_context(run).await?;
         if delivered > 0 {
             run.reporting().post(Event::Carried {
                 breakdown: self
@@ -205,7 +235,7 @@ impl<'a> AgentLoop<'a> {
             });
         }
         self.runner.report_waiting(run);
-        Ok(())
+        Ok(withheld)
     }
 
     /// A tool pass's results recorded, with what they asked; then what
@@ -255,8 +285,18 @@ impl<'a> AgentLoop<'a> {
     ) -> Result<Ending, TurnError> {
         match self.runner.vouching(&text, self.run) {
             Ok(Judged::Allowed) => {}
-            Ok(Judged::Rejected(rejection)) => return Ok(Ending::Rejected { rejection, stop }),
-            Err(problem) => return Ok(Ending::Undecided { problem, stop }),
+            Ok(Judged::Rejected(rejection)) => {
+                return Ok(Ending::Rejected {
+                    rejection,
+                    stop: Some(stop),
+                });
+            }
+            Err(problem) => {
+                return Ok(Ending::Undecided {
+                    problem,
+                    stop: Some(stop),
+                });
+            }
         }
 
         self.runner
@@ -352,7 +392,9 @@ impl<'a> AgentLoop<'a> {
         loop {
             self.runner.flush_sandbox_audits(events).await?;
 
-            self.interjected(counting).await?;
+            if let Some(withheld) = self.interjected(counting).await? {
+                return Ok(withheld);
+            }
 
             // Read once per pass: `tool_search` can reveal a schema mid-turn.
             // The exact set measured here is handed to the request below, so an
@@ -386,7 +428,9 @@ impl<'a> AgentLoop<'a> {
             // compaction from the preceding loop iteration rewrote history.
             // Recording the fragments updates `runner.load` before it is read
             // below, so reserve and fullness see exactly what will be sent.
-            self.assembled(counting).await?;
+            if let Some(withheld) = self.assembled(counting).await? {
+                return Ok(withheld);
+            }
 
             // Recording is what measures the transcript, and it happens on the
             // runner rather than here; reading it back at the top of each pass

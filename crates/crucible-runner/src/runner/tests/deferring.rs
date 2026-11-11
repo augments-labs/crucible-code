@@ -61,11 +61,11 @@ impl Tool for Asking {
 }
 
 /// A tool that stands in for the person: while it runs, the oldest waiting
-/// batch is settled, and a line may be typed beside it.
+/// batch is settled, and lines may be typed beside it.
 struct Answering {
     held: Deferred,
     reply: fn() -> Reply,
-    typed: Option<(Steer, &'static str)>,
+    typed: Option<(Steer, &'static [&'static str])>,
 }
 
 impl DescribeTool for Answering {
@@ -100,8 +100,10 @@ impl Tool for Answering {
     ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
             settle_oldest(&self.held, (self.reply)());
-            if let Some((steer, line)) = &self.typed {
-                steer.say((*line).to_owned());
+            if let Some((steer, lines)) = &self.typed {
+                for line in *lines {
+                    steer.say((*line).to_owned());
+                }
             }
             Ok(ToolOutput::ok("looked"))
         })
@@ -134,15 +136,15 @@ fn storage() -> Question {
     )
 }
 
-fn chose() -> Reply {
+pub(super) fn chose() -> Reply {
     Reply::Answered(Answered::new(["SQLite"]))
 }
 
-fn declined() -> Reply {
+pub(super) fn declined() -> Reply {
     Reply::Declined
 }
 
-fn settle_oldest(held: &Deferred, reply: Reply) {
+pub(super) fn settle_oldest(held: &Deferred, reply: Reply) {
     let oldest = held
         .waiting()
         .first()
@@ -153,7 +155,11 @@ fn settle_oldest(held: &Deferred, reply: Reply) {
 
 /// The tools a deferring session offers: the one that asks, and the
 /// stand-in for the person.
-fn offered(held: &Deferred, reply: fn() -> Reply, typed: Option<(Steer, &'static str)>) -> Tools {
+pub(super) fn offered(
+    held: &Deferred,
+    reply: fn() -> Reply,
+    typed: Option<(Steer, &'static [&'static str])>,
+) -> Tools {
     let mut offered = Tools::new();
     offered
         .add_builtin(Asking { held: held.clone() })
@@ -183,7 +189,7 @@ fn deferring(script: Vec<Vec<Delta>>, held: &Deferred, store: Arc<Recording>) ->
 }
 
 /// Every delivered answer in `transcript`, with where it sits.
-fn answers(transcript: &Transcript) -> Vec<(usize, String)> {
+pub(super) fn answers(transcript: &Transcript) -> Vec<(usize, String)> {
     transcript
         .messages()
         .iter()
@@ -405,7 +411,7 @@ fn a_steered_line_and_an_answer_arriving_together_are_both_recorded_and_told_apa
             calling("c2", "answer", "{}"),
             saying("both read"),
         ]),
-        offered(&held, chose, Some((steer.clone(), "use the fast one"))),
+        offered(&held, chose, Some((steer.clone(), &["use the fast one"]))),
         Verdict::Allow,
         Recording::nowhere(),
     );
@@ -773,7 +779,7 @@ fn an_answer_is_never_lost_to_a_crash_between_its_settling_and_its_delivery() {
 }
 
 /// The ids of the batches `held` lists as waiting, in order.
-fn waiting_ids(held: &Deferred) -> Vec<String> {
+pub(super) fn waiting_ids(held: &Deferred) -> Vec<String> {
     held.waiting()
         .iter()
         .map(|batch| batch.id().to_string())

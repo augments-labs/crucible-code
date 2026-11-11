@@ -22,11 +22,16 @@ fn contexts(transcript: &Transcript) -> Vec<&Fragment> {
 fn static_context_is_assembled_once_in_stable_order_and_charged_before_fullness() {
     let mut scripted = Scripted::new(Script::new(Vec::new()), Tools::new(), Verdict::Allow);
     let before = scripted.runner.state.load;
-    let ancestry = Ancestry::new();
+    let run = scripted.runner.starting(
+        &scripted.events,
+        &scripted.cancel,
+        &scripted.steer,
+        &scripted.aside,
+    );
 
     scripted
         .runner
-        .assemble_context(ancestry)
+        .assemble_context(&run)
         .awaited()
         .expect("the first context");
 
@@ -74,7 +79,7 @@ fn static_context_is_assembled_once_in_stable_order_and_charged_before_fullness(
     let charged = scripted.runner.state.load.tokens();
     scripted
         .runner
-        .assemble_context(ancestry)
+        .assemble_context(&run)
         .awaited()
         .expect("unchanged context");
 
