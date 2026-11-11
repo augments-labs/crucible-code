@@ -1490,7 +1490,7 @@ const EXTERNAL_AGENT: Shape = Shape::Fields(&[
     },
     Field {
         name: "profileDir",
-        about: "For an antigravity agent or a catalog agent: an absolute path to the profile directory it signs in and keeps its state under. An Antigravity release from crucible's install store needs one; your own antigravity or agy program uses its own sign-in without one. Read only from the configuration file in your home directory",
+        about: "For an antigravity agent or a catalog agent: an absolute path to the profile directory it signs in and keeps its state under. An Antigravity release from crucible's install store needs one; your own antigravity or agy program without one is given none, so it looks for its sign-in in its usual home, ~/.gemini, which it does not see under the sandbox. Read only from the configuration file in your home directory",
         shape: Shape::Text,
         examples: &[],
         usual: None,
