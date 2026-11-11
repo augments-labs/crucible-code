@@ -160,3 +160,50 @@ fn a_hostile_forge_address_worded_link_or_image_writes_no_escape() {
         }
     }
 }
+
+#[test]
+fn every_shape_of_link_cut_anywhere_is_drawn_as_it_is_whole() {
+    // Each shape the reader settles, and the rows it is drawn as: a cut at
+    // any character boundary, inside the address, the brackets or the cell,
+    // is drawn as the answer streamed whole is.
+    let shapes: [(&str, &[&str]); 6] = [
+        (
+            "a https://github.com/augments-labs/crucible-code/pull/1324 b\n",
+            &["a #1324 b"],
+        ),
+        (
+            "a <https://github.com/someone/else/issues/12> b\n",
+            &["a someone/else#12 b"],
+        ),
+        (
+            "a [the guide](https://example.com/docs/guide/intro) b\n",
+            &["a the guide (example.com/docs/…) b"],
+        ),
+        (
+            "a [the fix](https://gitlab.com/group/sub/repo/-/merge_requests/3) b\n",
+            &["a the fix (group/sub/repo!3) b"],
+        ),
+        (
+            "a [write](mailto:someone.with.a.long.name@example.com) b\n",
+            &["a write (someone.with.a.long.name…) b"],
+        ),
+        (
+            "| what | where |\n|---|---|\n| fix | https://github.com/augments-labs/crucible-code/commit/abcdef1234567 |\n",
+            &["what │ where", "─────┼────────", "fix  │ abcdef1"],
+        ),
+    ];
+    for (answer, expected) in shapes {
+        for cut in (0..=answer.len()).filter(|&cut| answer.is_char_boundary(cut)) {
+            let mut drawn = reading(100, 6);
+            drawn.render.counts(Some(here()));
+            drawn.answer_in_pieces(answer, &[cut]);
+            let rows: Vec<String> = drawn
+                .rows()
+                .iter()
+                .map(|row| row.trim_end().to_owned())
+                .filter(|row| !row.is_empty())
+                .collect();
+            assert_eq!(rows, expected, "{answer:?} cut at {cut}");
+        }
+    }
+}
