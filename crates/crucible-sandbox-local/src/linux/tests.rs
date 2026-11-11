@@ -1454,6 +1454,94 @@ for name, number, arguments in [
 }
 
 #[test]
+fn a_closed_network_with_private_loopback_opens_only_local_ip_and_netlink_sockets() {
+    let service = crate::sample::service();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-private-loopback-families");
+    // AF_MCTP (45) is built into the kernels this runs on, so opening one
+    // where no filter refuses it loads no module. The families the allowance
+    // means still open, and Unix sockets still listen by path and abstractly.
+    let script = r#"
+import errno
+import socket
+
+for family, kind in [
+    (socket.AF_UNIX, socket.SOCK_STREAM),
+    (socket.AF_INET, socket.SOCK_STREAM),
+    (socket.AF_INET6, socket.SOCK_STREAM),
+    (socket.AF_NETLINK, socket.SOCK_RAW),
+]:
+    socket.socket(family, kind).close()
+
+for address in ["/tmp/private-loopback.sock", "\0private-loopback"]:
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(address)
+    server.listen(1)
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.connect(address)
+    client.close()
+    server.close()
+
+try:
+    socket.socket(45, socket.SOCK_DGRAM).close()
+except OSError as error:
+    if error.errno != errno.EPERM:
+        raise SystemExit(f"AF_MCTP refused with {error}, not EPERM")
+else:
+    raise SystemExit("an AF_MCTP socket opened")
+"#;
+    let (status, errors) = closed_python(
+        &service,
+        &sample,
+        SandboxPrivateLoopback::Granted,
+        script,
+        [],
+    );
+
+    assert!(status.success(), "{status}: {errors}");
+}
+
+#[test]
+fn a_closed_network_with_private_loopback_refuses_vsock() {
+    let service = crate::sample::service();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-private-loopback-vsock");
+    // A vsock listener is reachable from the host and the hypervisor whatever
+    // the network namespace. Where no filter refused it, opening one would
+    // load the vsock modules into the running kernel, so the script opens it
+    // only once a built-in family is seen refused by the same filter.
+    let script = r#"
+import errno
+import socket
+
+def refused(family, kind):
+    try:
+        socket.socket(family, kind).close()
+    except OSError as error:
+        return error.errno == errno.EPERM
+    return False
+
+if not refused(45, socket.SOCK_DGRAM):
+    raise SystemExit("the family filter is not in force; vsock was not tried")
+if not refused(socket.AF_VSOCK, socket.SOCK_STREAM):
+    raise SystemExit("an AF_VSOCK socket was not refused with EPERM")
+"#;
+    let (status, errors) = closed_python(
+        &service,
+        &sample,
+        SandboxPrivateLoopback::Granted,
+        script,
+        [],
+    );
+
+    assert!(status.success(), "{status}: {errors}");
+}
+
+#[test]
 fn a_closed_network_without_private_loopback_still_refuses_listen() {
     let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
@@ -1513,7 +1601,6 @@ fn ungranted_sibling_home_and_credential_paths_are_unreachable() {
             .expect("prepared sandbox");
     crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     let script = r#"
-import os
 import sys
 
 sibling, secret, home = sys.argv[1], sys.argv[2], sys.argv[3]
