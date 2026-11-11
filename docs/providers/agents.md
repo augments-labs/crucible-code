@@ -591,7 +591,8 @@ crucible's `programs/` directory, is run as your own program. An entry whose
 as `antigravity`; one installed under another name is found when the entry's
 `executable` names it or its path. It is started as `agy acp` and uses no
 release, so a trust state that cannot be used does not stop it. A program whose
-file is named `agy_acp_server.par`, `agy_acp_server.exe` or `antigravity` is the
+file name, without its extension, is `agy_acp_server` or `antigravity`, such as
+`agy_acp_server.par`, `agy_acp_server.exe` or `antigravity.exe`, is the
 exception: it is started as the newest release on offer is, and is refused
 while the trust state cannot be used, as a release is. It is admitted by what
 it answers, never by its name or version: protocol version 1, loading and
