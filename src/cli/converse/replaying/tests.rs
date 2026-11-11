@@ -613,6 +613,53 @@ fn a_glimpse_keeps_no_more_rows_than_it_was_asked_for() {
 }
 
 #[test]
+fn a_diff_fence_in_a_session_glimpsed_is_drawn_as_the_change_it_holds() {
+    // The preview's renderer is one of its own, and a renderer handed no
+    // drawers draws a fence as it was written: the picker would then show a
+    // diff as text that picking the session up draws as a change.
+    let mut transcript = Transcript::new();
+    transcript
+        .push(Message::said("change it"))
+        .expect("valid fixture transcript");
+    transcript
+        .push(Message::Agent {
+            continuation: None,
+            text: "```diff\n--- a/x.rs\n+++ b/x.rs\n@@ -1 +1 @@\n-old\n+new\n```\n".into(),
+            calls: Vec::new(),
+            stop: Some(StopReason::Yielded),
+        })
+        .expect("valid fixture transcript");
+    let runner = resumed(everything());
+    let pruned = Pruned::default();
+    // In colour, where an answer is read as the markdown it is.
+    let replay = Replay {
+        settled: crucible_app::Settled::from(&runner),
+        pruned: &pruned,
+        style: Style::coloured(),
+    };
+
+    let shown = glimpsed(transcript.messages(), &replay, 60, 64).expect("a recording cannot fail");
+    let said: Vec<String> = shown.iter().map(Row::text).collect();
+
+    // The box a change is drawn in: its path and what moved, and each line
+    // under its number and sign.
+    assert!(
+        said.iter()
+            .any(|row| row.contains("╭─ x.rs · Added 1 line, removed 1 line")),
+        "{said:#?}"
+    );
+    assert!(said.iter().any(|row| row.contains("1 - old")), "{said:#?}");
+    assert!(said.iter().any(|row| row.contains("1 + new")), "{said:#?}");
+    // And none of the fence as it was written.
+    assert!(
+        !said
+            .iter()
+            .any(|row| row.contains("+++ b/x.rs") || row.contains("@@")),
+        "{said:#?}"
+    );
+}
+
+#[test]
 fn a_resumed_session_is_put_back_on_the_screen() {
     let screen = screen(everything(), 80);
     println!("\n{screen}");

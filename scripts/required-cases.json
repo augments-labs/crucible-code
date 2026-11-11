@@ -2887,6 +2887,24 @@
       ]
     },
     {
+      "id": "CASE-TRANSCRIPT-DIFF-FENCE-GLIMPSED",
+      "family": "transcript-blocks",
+      "obligation": "A session glimpsed in colour whose answer is a closed diff fence shows the box a change is drawn in, its path with what moved and the removed and the added line each under its number and sign, and no row holding the fence's new-file header or its hunk header as written.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::replaying::tests::a_diff_fence_in_a_session_glimpsed_is_drawn_as_the_change_it_holds",
+      "source": "src/cli/converse/replaying/tests.rs",
+      "body_sha256": "fbc04a6c516b7d39c358097badca2e621830d39ca1bbf961274c751baeea2225",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
       "id": "CASE-TRANSCRIPT-PICTURE-TABLES-40-UNICODE",
       "family": "transcript-corpus",
       "obligation": "The corpus's tables answer lays out at 40 columns in the unicode glyph set as the picture accepted for it.",
