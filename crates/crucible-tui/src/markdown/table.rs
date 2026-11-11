@@ -104,7 +104,7 @@ pub(super) enum Sight {
 
 /// The lines of a block that opened with a bar, or that are a header and a
 /// delimiter row without one, until a line that is not its own.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(super) struct Table {
     /// Every line so far, the bars included and the break not.
     lines: Vec<String>,

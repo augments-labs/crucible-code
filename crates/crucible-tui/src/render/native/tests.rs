@@ -3574,3 +3574,79 @@ fn a_native_closing_details_tag_after_a_bare_table_is_no_row_of_it_whole_or_cut(
         }
     }
 }
+
+#[test]
+fn a_native_entity_is_drawn_as_the_character_it_names_and_a_backslash_break_draws_no_backslash() {
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let rows = kept_natively(30, glyphs, &["a &amp; b &lt;c&gt; &#169; &#x41;\n"]);
+        assert!(rows.iter().any(|row| row == "a & b <c> © A"), "{rows:#?}");
+
+        let rows = kept_natively(30, glyphs, &["first line\\\nsecond line\n"]);
+        assert!(rows.iter().any(|row| row == "first line"), "{rows:#?}");
+        assert!(rows.iter().any(|row| row == "second line"), "{rows:#?}");
+        assert!(!rows.iter().any(|row| row.contains('\\')), "{rows:#?}");
+
+        let rows = kept_natively(30, glyphs, &["ends on it\\\n\nnext\n"]);
+        assert!(rows.iter().any(|row| row == "ends on it\\"), "{rows:#?}");
+    }
+}
+
+#[test]
+fn a_native_hostile_entity_writes_no_escape_nor_a_picture_cell_and_is_drawn_as_written() {
+    for answer in [
+        "&#27;[31mred&#27;[0m and &#27;]0;t&#7;\n",
+        "&#x1b; and &#x1B;]8;;https://evil.invalid&#x7;\n",
+        "&#x202E;gnirts and &#8238;\n",
+        "&#7; bell, &#0; nothing and &#x0; nothing\n",
+        "a &#x10EEEE; b and &#1109742; c\n",
+    ] {
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let window = Window::new(64, 12);
+            let mut render = native(&window);
+            render.images(crate::terminal::graphics::Capability::Graphics {
+                protocol: crate::terminal::graphics::Protocol::Kitty,
+                cell: crate::terminal::graphics::Cell {
+                    width: 9,
+                    height: 18,
+                },
+            });
+            render.draws(glyphs);
+            stands(&mut render);
+            render.stream(answer).unwrap();
+            render.settle().unwrap();
+            render.seal().unwrap();
+
+            let written = window.written();
+            for hostile in [
+                "\u{1b}]",
+                "\u{1b}[31",
+                "\u{1b}P",
+                "\u{1b}_",
+                "\u{7}",
+                "\u{8}",
+                "\u{85}",
+                "\u{9c}",
+                "\u{202e}",
+                "\u{0}",
+            ] {
+                assert!(
+                    !written.contains(hostile),
+                    "{hostile:?} reached the terminal for {answer:?} with {glyphs:?}"
+                );
+            }
+            assert!(
+                !written.contains('\u{10eeee}'),
+                "a picture cell was placed for {answer:?} with {glyphs:?}"
+            );
+        }
+    }
+    let rows = kept_natively(
+        64,
+        Glyphs::Unicode,
+        &["&#27;[31mred and &#x1b; and &#x202E;gnirts and &#7; and &#0;\n"],
+    )
+    .join("\n");
+    for words in ["&#27;[31m", "&#x1b;", "&#x202E;", "&#7;", "&#0;"] {
+        assert!(rows.contains(words), "{rows:?} lost {words:?}");
+    }
+}

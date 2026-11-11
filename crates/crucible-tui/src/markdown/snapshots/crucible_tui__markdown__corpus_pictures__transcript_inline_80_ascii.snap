@@ -2,11 +2,10 @@
 source: crates/crucible-tui/src/markdown/corpus_pictures.rs
 expression: "pictured(\"inline\", 80, Glyphs::Ascii)"
 ---
-A line that ends in a backslash\                                                
+A line that ends in a backslash                                                 
 continues on the next row.                                                      
                                                                                 
-An ampersand written as &amp;, a tag as &lt;tag&gt;, a copy as &copy; and a     
-number as &#169;.                                                               
+An ampersand written as &, a tag as <tag>, a copy as © and a number as ©.       
                                                                                 
 An empty reference &#0; and an override &#x202E; are written as they came.      
                                                                                 
