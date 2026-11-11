@@ -589,7 +589,10 @@ or remove.
 crucible's `programs/` directory, is run as your own program. An entry whose
 `executable` is `antigravity` or `agy` is found as `agy` on your `PATH`, then
 as `antigravity`; one installed under another name is found when the entry's
-`executable` names it or its path. It is started as `agy acp` and uses no
+`executable` names it or its path. Of `agy` and `antigravity`, the first that
+can be run is the one tried, so an unrelated program named `agy` on your `PATH`
+is started ahead of Google's `antigravity`; set `executable` to a path to pick
+the one you mean. It is started with the single argument `acp` and uses no
 release, so a trust state that cannot be used does not stop it. A program whose
 file name, without its extension, is `agy_acp_server` or `antigravity`, such as
 `agy_acp_server.par`, `agy_acp_server.exe` or `antigravity.exe`, is the
