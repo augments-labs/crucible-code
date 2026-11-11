@@ -902,6 +902,12 @@ pub(crate) fn launch_policy(
     }
 }
 
+/// Whether [`launched`] decides the directory of `row`'s own program, under
+/// `conversation`, against the user's home: only for an own row confined.
+pub(crate) fn judged(conversation: &SandboxPolicy, row: &AgentRow) -> bool {
+    own_row(row) && conversation.enabled()
+}
+
 /// `conversation`'s policy as a launch of the user's own `program` of `row`'s
 /// agent is started under, with its directory decided against `places` as
 /// the probe's was: a catalog agent's own program and Antigravity's. Every
@@ -919,7 +925,7 @@ pub(crate) fn launched(
     program: &Path,
     places: &Places<'_>,
 ) -> Result<SandboxPolicy, Unowned> {
-    if !own_row(row) || !conversation.enabled() {
+    if !judged(conversation, row) {
         return Ok(conversation.clone());
     }
     let canonical =

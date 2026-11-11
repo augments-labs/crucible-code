@@ -2941,6 +2941,8 @@ pub struct Launcher<'a> {
     /// The home every catalog agent it starts is given, where it is not the
     /// shell's.
     home: Option<PathBuf>,
+    /// Whether this process's home is the user's where no home was told.
+    asks_home: bool,
 }
 
 impl std::fmt::Debug for Launcher<'_> {
@@ -2975,6 +2977,7 @@ impl<'a> Launcher<'a> {
             state,
             sessions,
             home: None,
+            asks_home: true,
         }
     }
 
@@ -2984,6 +2987,17 @@ impl<'a> Launcher<'a> {
     pub fn homed(self, home: impl Into<PathBuf>) -> Self {
         Self {
             home: Some(home.into()),
+            ..self
+        }
+    }
+
+    /// The same launcher knowing no home of the user's: told none, it takes
+    /// none from this process either.
+    #[must_use]
+    pub fn unhomed(self) -> Self {
+        Self {
+            home: None,
+            asks_home: false,
             ..self
         }
     }

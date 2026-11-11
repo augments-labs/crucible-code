@@ -77,7 +77,8 @@ impl Launcher<'_> {
     /// change since its probe brings, against the user's own home: the one
     /// this launcher was told of where that is absolute, else this process's.
     /// A home the child is started with is never that, since an entry can set
-    /// its own; where no home of the user's is known it is not started.
+    /// its own. That home is asked for only where it is used; where it is and
+    /// no home of the user's is known, the program is not started.
     ///
     /// # Errors
     ///
@@ -88,59 +89,57 @@ impl Launcher<'_> {
         own: &Own<'_>,
         policy: &SandboxPolicy,
     ) -> Result<SandboxPolicy, Unlaunched> {
-        let Some(home) = self
+        let home = self
             .home
             .clone()
             .filter(|home| home.is_absolute())
-            .or_else(std::env::home_dir)
-            .filter(|home| home.is_absolute())
-        else {
-            return Err(Unowned::Root(format!(
-                "no home of yours is known, so whether the directory {} lies in may be given \
-                 to an agent cannot be judged; set HOME to your home",
-                own.program.path().display()
-            ))
-            .into());
-        };
-        let places = Places {
-            home: &home,
+            .or_else(|| self.asks_home.then(std::env::home_dir).flatten())
+            .filter(|home| home.is_absolute());
+        let places = home.as_deref().map(|home| Places {
+            home,
             crucible: own.crucible,
             sessions: self.sessions,
-        };
+        });
+        let places = || places.as_ref().ok_or_else(|| homeless(own.program));
         if own.started {
-            self.probed_now(agent, own.program, &places).await?;
+            self.probed_now(agent, own.program, own.crucible, places)
+                .await?;
+        }
+        if !crate::own_program::judged(policy, &agent.row) {
+            return Ok(policy.clone());
         }
         Ok(crate::own_program::launched(
             policy,
             &agent.row,
             own.program.path(),
-            &places,
+            places()?,
         )?)
     }
 
     /// Holds a start of `agent`, whose program at `program` is the user's
-    /// own, to its probe record under `places`' crucible home: a catalog
+    /// own, to its probe record under `crucible`, crucible's home: a catalog
     /// agent's program that changed since its probe, as one that updates
-    /// itself does, is probed again, confined, before it is started, and is
-    /// started only where it is still admitted; its record is then replaced,
-    /// and removed where it is not. A program of any other row is held to
-    /// nothing here.
+    /// itself does, is probed again, confined, before it is started, against
+    /// the places `places` gives, and is started only where it is still
+    /// admitted; its record is then replaced, and removed where it is not. A
+    /// program of any other row is held to nothing here.
     ///
     /// # Errors
     ///
-    /// [`Unlaunched::Changed`] where it is no longer admitted, and
-    /// [`Unbelieved::OwnUnprobed`] where no record holds for it.
-    async fn probed_now(
+    /// [`Unlaunched::Changed`] where it is no longer admitted,
+    /// [`Unbelieved::OwnUnprobed`] where no record holds for it, and why
+    /// `places` gives none where it is probed again.
+    async fn probed_now<'p>(
         &self,
         agent: &Agent,
         program: &Program,
-        places: &Places<'_>,
+        crucible: &Path,
+        places: impl FnOnce() -> Result<&'p Places<'p>, Unowned>,
     ) -> Result<(), Unlaunched> {
         let AgentRow::Catalog(catalog) = &agent.row else {
             return Ok(());
         };
-        let Some(owned) = Owned::of(places.crucible, &agent.instance, &agent.row, program.path())
-        else {
+        let Some(owned) = Owned::of(crucible, &agent.instance, &agent.row, program.path()) else {
             return Ok(());
         };
         let owned = owned?;
@@ -149,7 +148,7 @@ impl Launcher<'_> {
             Some(_) => crate::own_program::reprobe(
                 Arc::clone(&self.service),
                 self.runtime.clone(),
-                places,
+                places()?,
                 &owned.instance(),
                 program.clone(),
                 catalog.dialect(Mode::Ask),
@@ -166,6 +165,17 @@ impl Launcher<'_> {
             .into()),
         }
     }
+}
+
+/// Why the user's own `program` is not started where its directory would be
+/// judged against a home of the user's and none is known.
+fn homeless(program: &Program) -> Unowned {
+    Unowned::Root(format!(
+        "no home directory of yours is known, so whether the directory {} lies in may be \
+         given to an agent cannot be judged; set HOME, or USERPROFILE on Windows, to your \
+         home directory",
+        program.path().display()
+    ))
 }
 
 impl Steps {

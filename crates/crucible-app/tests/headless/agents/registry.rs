@@ -2169,6 +2169,20 @@ fn own_started_in(
     configured: &ExternalAgent,
     home: Option<&Path>,
 ) -> Result<(Result<String, String>, Vec<Seen>), Failed> {
+    own_started_by(bench, configured, true, |launcher| match home {
+        Some(home) => launcher.homed(home),
+        None => launcher,
+    })
+}
+
+/// [`own_started`] with the sandbox on where `sandboxed`, by the launcher
+/// `told` makes of the one it is given.
+fn own_started_by(
+    bench: &Bench,
+    configured: &ExternalAgent,
+    sandboxed: bool,
+    told: impl FnOnce(crucible_app::launching::Launcher<'_>) -> crucible_app::launching::Launcher<'_>,
+) -> Result<(Result<String, String>, Vec<Seen>), Failed> {
     use crucible_app::launching::Launcher;
     use crucible_execution::{SessionRef, TurnRequest};
     use crucible_external_harnesses::Control;
@@ -2180,7 +2194,7 @@ fn own_started_in(
     let agent =
         Agent::believing(configured, &REGISTRY, &state, |_| None).map_err(|why| why.to_string())?;
     let consent = super::shipped_hold::shipped_given(agent.row().route())?;
-    let policy = SandboxPolicy::standard(&bench.tree.workspace()?)?.with_enabled(true);
+    let policy = SandboxPolicy::standard(&bench.tree.workspace()?)?.with_enabled(sandboxed);
     let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let launcher = Launcher::new(
         std::sync::Arc::new(Watched {
@@ -2193,10 +2207,7 @@ fn own_started_in(
         &state,
         bench.home.sessions(),
     );
-    let launcher = match home {
-        Some(home) => launcher.homed(home),
-        None => launcher,
-    };
+    let launcher = told(launcher);
     let control = Control::new().ok_or("a control")?;
     let trust = Trust::load(&state, SystemTime::now());
     let programs = bench.home.path().join("programs");
@@ -2205,7 +2216,7 @@ fn own_started_in(
         &trust,
         &programs,
         crucible_app::backends::Sandboxing {
-            on: true,
+            on: sandboxed,
             required: false,
         },
     )?;
@@ -2419,6 +2430,39 @@ fn an_own_program_is_judged_against_the_users_home_not_its_entrys() -> Result<()
         own_record_setting(&bench, &setting).is_none(),
         "the record of a program refused by its probe again was kept"
     );
+    Ok(())
+}
+
+/// The launcher `launcher` is, knowing no home of the user's.
+fn unhomed(
+    launcher: crucible_app::launching::Launcher<'_>,
+) -> crucible_app::launching::Launcher<'_> {
+    launcher.unhomed()
+}
+
+/// The user's home is asked for only where it is used: with no home of the
+/// user's known, an own program whose record holds starts with the sandbox
+/// off, and is refused, starting nothing, with it on, where its directory
+/// would be judged against that home.
+#[test]
+fn an_own_program_needs_a_home_only_where_its_directory_is_judged() -> Result<(), Failed> {
+    use crucible_external_harnesses::fake_peer::scripts::acp;
+
+    let bench = Bench::new("registry-own-unhomed")?;
+    let script = turning(&acp::offering("goose-acp", "1.2.3", &json!([])));
+    let (_, _, configured) = own_probed_with(&bench, &script)?;
+
+    let (started, _) = own_started_by(&bench, &configured, false, unhomed)?;
+    started.map_err(|why| format!("refused with the sandbox off: {why}"))?;
+
+    let (started, seen) = own_started_by(&bench, &configured, true, unhomed)?;
+    let refused = started.expect_err("judged against no home, the program was started");
+    assert!(
+        refused.contains("no home directory of yours is known"),
+        "{refused}"
+    );
+    assert!(refused.contains("USERPROFILE on Windows"), "{refused}");
+    assert!(seen.is_empty(), "started: {seen:?}");
     Ok(())
 }
 
