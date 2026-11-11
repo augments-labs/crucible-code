@@ -1043,6 +1043,7 @@ pub(crate) const fn coded(refused: &AgentsError) -> ErrorCode {
         | AgentsError::Unclouded { .. }
         | AgentsError::Unlocated(_)
         | AgentsError::Conversation(_)
+        | AgentsError::Untried(_)
         | AgentsError::Unnamed(_)
         | AgentsError::Unstored { .. }
         | AgentsError::Credentials(_)
@@ -1051,6 +1052,7 @@ pub(crate) const fn coded(refused: &AgentsError) -> ErrorCode {
         | AgentsError::HoldUnkept(_)
         | AgentsError::Piped(_)
         | AgentsError::Unconfined(_)
+        | AgentsError::Own { .. }
         | AgentsError::Unverified(_) => ErrorCode::Failed,
     }
 }

@@ -1081,6 +1081,7 @@ pub(super) fn refused(refusal: &AgentsError) -> String {
         | AgentsError::Script { .. }
         | AgentsError::NoMethod { .. }
         | AgentsError::Conversation(_)
+        | AgentsError::Untried(_)
         | AgentsError::Unnamed(_)
         | AgentsError::Unstored { .. }
         | AgentsError::Keyless(_)
@@ -1091,6 +1092,7 @@ pub(super) fn refused(refusal: &AgentsError) -> String {
         | AgentsError::Unlent(_)
         | AgentsError::Unconfined(_)
         | AgentsError::Piped(_)
+        | AgentsError::Own { .. }
         | AgentsError::Unverified(_) => format!("! {}", sentence(refusal)),
     }
 }
@@ -1181,6 +1183,7 @@ pub(super) fn sentence(refusal: &AgentsError) -> String {
         | AgentsError::Script { .. }
         | AgentsError::NoMethod { .. }
         | AgentsError::Conversation(_)
+        | AgentsError::Untried(_)
         | AgentsError::Unnamed(_)
         | AgentsError::Unstored { .. }
         | AgentsError::Keyless(_)
@@ -1191,6 +1194,7 @@ pub(super) fn sentence(refusal: &AgentsError) -> String {
         | AgentsError::Unlent(_)
         | AgentsError::Unconfined(_)
         | AgentsError::Piped(_)
+        | AgentsError::Own { .. }
         | AgentsError::Unverified(_) => refusal.to_string(),
     };
     within(&said, REFUSAL)
@@ -1338,6 +1342,15 @@ fn carried_out(outcome: &door::Outcome) -> Option<String> {
             shown(method)
         ),
         door::Outcome::Verified { agent, .. } => format!("{agent} checked against its receipts"),
+        door::Outcome::Tried {
+            agent,
+            instance,
+            program,
+        } => format!(
+            "your own {agent} at {} answered as an agent, and {} runs it",
+            shown(&program.display().to_string()),
+            named(instance)
+        ),
         door::Outcome::Catalog { agents, .. } => {
             format!("the catalog offers {} agents", agents.len())
         }

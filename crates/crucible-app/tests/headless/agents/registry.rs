@@ -1637,7 +1637,7 @@ fn own_on_path(bench: &Bench) -> Result<(PathBuf, PathBuf, ExternalAgent), Faile
 
 /// A sandbox that cannot say it closes the network, as one whose backend is
 /// missing: it starts nothing.
-struct Unclosing;
+pub(crate) struct Unclosing;
 
 impl crucible_sandbox::SandboxService for Unclosing {
     fn probe(

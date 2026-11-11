@@ -1814,9 +1814,9 @@ done <<<"$decided"
 # commands come from. The agents door performs the catalog's commands for a
 # client that claimed the capability they need, asking it before anything is
 # fetched or changed, and refuses every other; a try of the user's own program
-# is not asked again, since choosing the move offered is the yes for its one
-# confined probe, and the door runs it only where the program the move names
-# is the one it finds the entry's guess at. The terminal's client builds
+# is asked too, before its one confined probe, and the door runs it only where
+# the program the move names is the one a launch would find. The terminal's
+# client builds
 # none: it names every command once, to decide from the command alone what a
 # request for it claims where its sender names no claim, so a new command
 # decides that too. `/login` names the one connect that claims install, and the

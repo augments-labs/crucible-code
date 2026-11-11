@@ -575,6 +575,15 @@ impl Desk<'_> {
                 escaped(&instance),
                 escaped(&method)
             )),
+            Outcome::Tried {
+                agent,
+                instance,
+                program,
+            } => Answer::Done(format!(
+                "Your own {agent} at {} answered as an agent, and the instance {} runs it.\n",
+                escaped(&program.display().to_string()),
+                escaped(&instance)
+            )),
             Outcome::Kept { instance, method } => Answer::Done(format!(
                 "Kept the key for {} to sign in by {}; its agent is given it the next time it \
                  starts.\n",

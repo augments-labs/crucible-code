@@ -230,13 +230,13 @@ pub enum Command {
         /// nothing else.
         method: Name,
     },
-    /// Probe the user's own program for this catalog agent, the one its entry
-    /// guesses found at `program` on the host's `PATH`, once, confined, and
-    /// add an instance that runs it where it is admitted. Changes nothing
-    /// where it is not. Asking for it is the yes for that one probe of that
-    /// exact path and for nothing else: the door finds the guess again and
-    /// refuses where it is not found at `program`, and is answered only to a
-    /// client that claimed [`Capability::Install`].
+    /// Probe the user's own program for this agent, a catalog agent's or
+    /// Antigravity's, the one a launch would find at `program`, once,
+    /// confined, and add an instance that runs it where it is admitted.
+    /// Changes nothing where it is not. The door finds the program again and
+    /// refuses where it is not the one at `program`, asks the client its own
+    /// yes before it starts anything, and is answered only to a client that
+    /// claimed [`Capability::Install`].
     TryOwnAgent {
         /// The agent, by the name the catalog gives it. The door checks it as
         /// an agent key before it is used.

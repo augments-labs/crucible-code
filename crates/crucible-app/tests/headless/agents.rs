@@ -75,7 +75,7 @@ mod npm;
 #[path = "agents/piped.rs"]
 mod piped;
 #[path = "agents/registry.rs"]
-mod registry;
+pub(crate) mod registry;
 #[path = "agents/shipped_hold.rs"]
 mod shipped_hold;
 #[path = "agents/uvx.rs"]
@@ -534,6 +534,8 @@ const fn shape(outcome: &Result<Outcome, AgentsError>) -> &'static str {
         Ok(Outcome::SignedIn { .. }) => "Ok(SignedIn)",
         Ok(Outcome::Kept { .. }) => "Ok(Kept)",
         Ok(Outcome::Verified { .. }) => "Ok(Verified)",
+        Ok(Outcome::Tried { .. }) => "Ok(Tried)",
+        Err(AgentsError::Own { .. }) => "Err(Own)",
         Err(AgentsError::Config(_)) => "Err(Config)",
         Err(AgentsError::Unoffered { .. }) => "Err(Unoffered)",
         Err(AgentsError::Unlisted(_)) => "Err(Unlisted)",
@@ -566,6 +568,7 @@ const fn shape(outcome: &Result<Outcome, AgentsError>) -> &'static str {
         Err(AgentsError::Unclouded { .. }) => "Err(Unclouded)",
         Err(AgentsError::Unlocated(_)) => "Err(Unlocated)",
         Err(AgentsError::Conversation(_)) => "Err(Conversation)",
+        Err(AgentsError::Untried(_)) => "Err(Untried)",
         Err(AgentsError::Unnamed(_)) => "Err(Unnamed)",
         Err(AgentsError::Unstored { .. }) => "Err(Unstored)",
         Err(AgentsError::Keyless(_)) => "Err(Keyless)",

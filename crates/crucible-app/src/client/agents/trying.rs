@@ -1,0 +1,161 @@
+//! Trying the user's own program of an agent: probed once, confined, after
+//! the door's own yes, and written as the instance that runs it.
+
+use std::path::{Path, PathBuf};
+
+use crucible_client_api::{ErrorCode, Text};
+use crucible_config::{Driver, ExternalAgent};
+use crucible_types::AgentKey;
+use crucible_types::shown::escaped;
+
+use super::{AgentsError, Confirmation, Door, Front, Outcome, confirmed};
+use crate::backends::ANTIGRAVITY;
+use crate::own_program::Unowned;
+use crate::remember;
+
+/// The key the user's own Antigravity is tried under, which names no catalog
+/// agent.
+const ANTIGRAVITY_KEY: &str = "antigravity";
+
+/// What a client is told when the user's own `program` of `agent` was not
+/// taken for it, saying `why`.
+pub(super) fn own_refusal(agent: &AgentKey, program: &Path, why: &Unowned) -> String {
+    let program = escaped(&program.display().to_string());
+    match why {
+        Unowned::Probe(_) => format!(
+            "Your own {agent} at {program} did not answer as an agent ({why}), so nothing was \
+             written."
+        ),
+        Unowned::Unadmitted(_) => format!(
+            "Your own {agent} at {program} answered, but not as an agent Crucible can run \
+             ({why}), so nothing was written."
+        ),
+        Unowned::Unclosable(_) if agent.as_str() == ANTIGRAVITY_KEY => format!(
+            "Your own {agent} at {program} could not be checked: {why}. Crucible's own release \
+             of Antigravity works on this machine: run `crucible agents install antigravity`."
+        ),
+        Unowned::Unclosable(_) => {
+            format!("Your own {agent} at {program} could not be checked: {why}.")
+        }
+        Unowned::Root(_) => format!("{why} Nothing was run or written."),
+        _ => format!(
+            "Your own {agent} at {program} could not be tried ({why}), so nothing was written."
+        ),
+    }
+}
+
+impl Door<'_> {
+    /// Tries the user's own `program` of `agent`, a catalog agent's or
+    /// Antigravity's, as the instance that already runs it or a new one: the
+    /// program must be the one a launch of that instance would find, its
+    /// directory one an agent may be given, and `front` must say yes to the
+    /// door's own question before it is started, confined, with the network
+    /// closed, and asked `initialize` alone. What it answers is kept for a
+    /// catalog agent's instance, and a new instance is written only once it
+    /// is admitted; a refusal writes nothing and keeps nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentsError::Untried`] where no conversation lent the steps that
+    /// start it, [`AgentsError::Own`] where it is not the program a launch
+    /// would find, its directory is refused or it is not admitted, and
+    /// [`AgentsError::Remember`] where a new instance cannot be written.
+    pub(super) async fn try_own(
+        &self,
+        agent: &str,
+        program: &Text,
+        front: &mut dyn Front,
+    ) -> Result<Outcome, AgentsError> {
+        let invalid = || Ok(Outcome::Refused(ErrorCode::InvalidArgument.into()));
+        let Ok(key) = AgentKey::new(agent) else {
+            return invalid();
+        };
+        let asked = PathBuf::from(program.as_str());
+        if program.truncated() || !asked.is_absolute() {
+            return invalid();
+        }
+        let steps = self
+            .shelf
+            .steps
+            .ok_or_else(|| AgentsError::Untried(key.clone()))?;
+        let trying = steps.trying();
+        let refused = |why: Unowned| AgentsError::Own {
+            agent: key.clone(),
+            program: asked.clone(),
+            why: Box::new(why),
+        };
+        let antigravity = key.as_str() == ANTIGRAVITY_KEY;
+        let configured = self.instances.iter().find_map(|instance| {
+            let trial = match instance.driver() {
+                Driver::Catalog if instance.agent() == Some(&key) => {
+                    trying.catalog(&key, Some(instance.executable()))?
+                }
+                Driver::Antigravity if antigravity => (trying.leads(instance.executable())?
+                    == asked)
+                    .then(|| trying.antigravity(&ANTIGRAVITY))??,
+                _ => return None,
+            };
+            (trial.canonical() == asked).then(|| (instance.name().to_owned(), trial))
+        });
+        let (name, trial, new) = if let Some((name, trial)) = configured {
+            (name, trial, false)
+        } else {
+            let trial = if antigravity {
+                trying.antigravity(&ANTIGRAVITY)
+            } else {
+                trying.catalog(&key, None)
+            };
+            let trial = trial
+                .filter(|trial| trial.canonical() == asked)
+                .ok_or_else(|| refused(Unowned::NotOwn(program.as_str().into())))?;
+            let name =
+                crucible_config::free_name(&key, self.instances.iter().map(ExternalAgent::name));
+            (name, trial, true)
+        };
+        if let Some(why) = trial.refused() {
+            return Err(refused(Unowned::Root(why.to_owned())));
+        }
+        let shown = escaped(&asked.display().to_string());
+        let confirmation = Confirmation {
+            asks: format!("Try your own {key} at {shown}?"),
+            facts: trial.facts(&trying),
+            choices: vec![
+                (
+                    "Try it".to_owned(),
+                    "Start it once, confined with the network closed, ask it only `initialize`, \
+                     and keep what it answers."
+                        .to_owned(),
+                ),
+                ("Cancel".to_owned(), "Change nothing.".to_owned()),
+            ],
+        };
+        if confirmed(self.request, front, &confirmation).await != Some(0) {
+            return Ok(Outcome::Undecided);
+        }
+        let mut instances: Vec<&str> = self.instances.iter().map(ExternalAgent::name).collect();
+        if new {
+            instances.push(&name);
+        }
+        trial
+            .probe(&trying, &name, &instances)
+            .await
+            .map_err(refused)?;
+        if new {
+            let written = trial
+                .agent(&name)
+                .ok_or_else(|| refused(Unowned::Unnamed(asked.clone())))
+                .and_then(|instance| Ok(remember::adding_own(&self.user, &instance)?));
+            if let Err(why) = written {
+                // A record kept for an instance never written would hold
+                // for an instance the user later names so.
+                let _ = trying.forget(&name);
+                return Err(why);
+            }
+        }
+        Ok(Outcome::Tried {
+            agent: key,
+            instance: name.into(),
+            program: asked,
+        })
+    }
+}

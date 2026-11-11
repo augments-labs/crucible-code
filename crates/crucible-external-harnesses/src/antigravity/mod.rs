@@ -116,6 +116,14 @@ pub const fn own_note(sandboxed: bool) -> &'static str {
     }
 }
 
+/// The environment the user's own program is started with beyond what it
+/// passes on from the shell's: what its driver sets, with no profile. None of
+/// its variables says anything about an account, so each value may be shown.
+#[must_use]
+pub fn own_environment() -> Vec<(&'static str, String)> {
+    profile::environment(std::iter::empty(), None)
+}
+
 /// The ways the user's own Antigravity program can be signed in where it is
 /// run under the sandbox with no profile, and so cannot reach the sign-in it
 /// keeps in `~/.gemini`: turning the sandbox off, which is left out where

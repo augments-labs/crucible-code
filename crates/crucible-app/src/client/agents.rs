@@ -220,6 +220,17 @@
 //! listing says of an agent whose entry names neither such a place nor a
 //! variable that a sign-in made under the sandbox is not kept
 //! ([`Listed::keeps_no_sign_in`]).
+//!
+//! A try of the user's own program of an agent, a catalog agent's or
+//! Antigravity's, starts it, so it is refused as no conversation where no
+//! steps were lent ([`AgentsError::Untried`]). The door finds the program again
+//! as a launch of the instance that runs it, or of a new one, would, and
+//! refuses where that is not the program the move named or where its
+//! directory is one an agent may not be given; it then asks its own yes,
+//! with what the program is, what it is given and what it can read, and
+//! starts nothing on a no. A catalog agent's answer is kept, and a new
+//! instance is written under a name of its own only once it was admitted: a
+//! refusal, or a write that fails, keeps nothing and writes nothing.
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -274,9 +285,13 @@ use crate::content_use::{self, Consent, agent_route};
 use crate::launching::{
     self, Agent, Launcher, Steps, Unlaunched, Unpiped, Unscripted, Unsmoked, quoted,
 };
+use crate::own_program::Unowned;
 use crate::providers::{Rows, Unnamed};
 use crate::remember::{self, RememberError};
 use crate::services::Services;
+use trying::own_refusal;
+
+mod trying;
 
 /// The most catalog agents a listing names; one with more says so.
 pub const LISTED: usize = 32;
@@ -455,6 +470,17 @@ pub enum Outcome {
         /// The method, by its id.
         method: Box<str>,
     },
+    /// The user's own program of the agent answered as one in a sandbox that
+    /// closed the network, and an instance runs it: one written for it, or
+    /// the one that already ran it.
+    Tried {
+        /// The agent.
+        agent: AgentKey,
+        /// The instance that runs it.
+        instance: Box<str>,
+        /// The canonical path of the program.
+        program: PathBuf,
+    },
     /// The installed versions, each hashed against its receipt, with a
     /// registry receipt's source and probe record checked too.
     Verified {
@@ -497,6 +523,17 @@ pub enum AgentsError {
     /// The catalog offers no release of the agent for this platform.
     #[error("the catalog offers no release of {0} for this platform")]
     Unlisted(AgentKey),
+    /// The user's own program of the agent was not taken for it, and nothing
+    /// was written.
+    #[error("{}", own_refusal(.agent, .program, .why))]
+    Own {
+        /// The agent.
+        agent: AgentKey,
+        /// The program, as it was asked to be tried.
+        program: PathBuf,
+        /// Why not.
+        why: Box<Unowned>,
+    },
     /// No signed catalog offers it, and the ACP Registry was not read or was
     /// not verified: the line says which.
     #[error("no agent catalog offers {agent} {version}; {why}")]
@@ -720,6 +757,12 @@ pub enum AgentsError {
          nothing was started"
     )]
     Conversation(Box<str>),
+    /// Trying the user's own program of the agent starts it, and no
+    /// conversation lent the steps that start it.
+    #[error(
+        "trying your own {0} starts it, which needs a conversation to start it in; nothing          was started"
+    )]
+    Untried(AgentKey),
     /// The method's key has no name to be kept under.
     #[error(transparent)]
     Unnamed(#[from] Unnamed),
@@ -795,8 +838,9 @@ pub async fn run(
         None => return Ok(Outcome::Refused(ErrorCode::Busy.into())),
     }
     let agent = match command {
-        // A listing names no agent, and a sign-in names an instance instead.
-        Command::AgentCatalog | Command::SignInAgent { .. } => None,
+        // A listing names no agent, a sign-in names an instance instead, and a
+        // try is told its agent below.
+        Command::AgentCatalog | Command::SignInAgent { .. } | Command::TryOwnAgent { .. } => None,
         Command::InstallAgent { agent, .. }
         | Command::AddAgent { agent, .. }
         | Command::UpdateAgent { agent }
@@ -848,6 +892,9 @@ pub async fn run(
         return door
             .sign_in(instance.as_str(), method.as_str(), front, &watching)
             .await;
+    }
+    if let Command::TryOwnAgent { agent, program } = command {
+        return door.try_own(agent.as_str(), program, front).await;
     }
     let Some(agent) = agent else {
         return Ok(door.listing(unrefreshed));
