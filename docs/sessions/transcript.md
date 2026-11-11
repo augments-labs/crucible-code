@@ -309,6 +309,46 @@ table written without outer bars, nor the title of a heading underlined with
   `&#27;[31m` and `&#x202E;` among them. No entity puts an escape on the
   terminal.
 
+## Struck phrases and weight with emphasis
+
+- **One tilde on each side.** A phrase between two single tildes is struck
+  through, as one between two pairs is. A tilde opens a phrase when the
+  character after it is not a space, and is either a letter or a digit or comes
+  after a space, a punctuation mark or the start of the line. It closes the
+  phrase opened last and still open when the character before it is not a
+  space, and is either a letter or a digit or comes before a space, a
+  punctuation mark or the end of the line. Inside a word counts too. So `~one~`
+  strikes `one`, `takes 2~3 seconds, then 5~10` strikes `3 seconds, then 5`,
+  and `see ~/a~ here` strikes `/a`. A phrase may cross a line break inside one
+  paragraph. Two tildes and three or more read as they did before.
+- **A tilde with no closer is drawn as written.** `~/Projects`, `between ~/a
+  and ~/b` and `about ~5 minutes or ~10` keep every tilde. So does a tilde
+  whose only closer comes after the paragraph ends, or once 4 KiB of the answer
+  as written (the reader's `STRIKE_CAP`) has followed it, counted in bytes: a
+  phrase strikes only when what is written between its tildes is shorter than
+  that. When more than one tilde waits, the count runs from the oldest. A
+  paragraph ends at a blank line, a line that opens
+  a block of its own, a table, a block held until it closes, a line that turns
+  out to be a table's header or a heading's title, and the end of the message.
+- **Held until it settles.** What follows an opener is not drawn until its
+  closer arrives or one of the limits above is reached. Meanwhile the foot of
+  the transcript shows the last line of what is held, as it was written and
+  cut to the window's width, with any control character left out. It shows in
+  both [`output.screen`](../configuration/configuration.md#output) modes, is
+  never kept in the transcript or your terminal's scrollback, and gives way to
+  the phrase, struck or as written, once it settles.
+- **Where a tilde is never a marker.** In code, a key, a subscript or
+  superscript, a link's words and address, a bare address, after a backslash
+  (`\~`), and in a block drawn as written, a single tilde is a character.
+- **What a struck phrase looks like.** It takes the same look a pair of two
+  tildes gives the same words: the strike is drawn over weight, emphasis and a
+  heading's look, and code, a link, a quote and a done task keep theirs.
+- **Weight with emphasis.** A run that is both bold and italic, as in
+  `***both***`, the italic words of `**bold _italic_ bold**` or the bold words
+  of `*leant **and raised** again*`, is drawn bold and italic together, in
+  every theme and with either glyph set. Code and a strike are still drawn over
+  it.
+
 ## What is shown as written
 
 Some text is drawn exactly as the model wrote it, rather than as a block:

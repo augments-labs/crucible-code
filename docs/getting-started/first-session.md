@@ -870,10 +870,15 @@ one gets a tick and its words go behind you, subdued and struck through. The
 brackets have to open the item: `- see [TODO] in the grammar` is a bracket
 somebody wrote, and it stays one.
 
-A phrase between two `~~` is one the answer wrote and then took back, and it is
-drawn with a line through it and nothing else, struck rather than dimmed,
-because a retraction is still being read. Exactly two: `~/Projects` is a path,
-`~40` is an approximation, and both are left where they were.
+A phrase between two `~~`, or between two single `~`, is one the answer wrote
+and then took back, and it is drawn with a line through it and nothing else,
+struck rather than dimmed, because a retraction is still being read. A single
+tilde needs one to close it in the same paragraph: `~/Projects` is a path,
+`~40` is an approximation, and both are left where they were. Until the closing
+tilde arrives, the foot of the transcript shows the last line of what is
+held, as it was written. A run raised and leant on at once, as in
+`***both***`, is drawn bold and italic together. See
+[Struck phrases and weight with emphasis](../sessions/transcript.md#struck-phrases-and-weight-with-emphasis).
 
 A table is drawn as a table. The bars a model wrote are replaced by one rule
 between the columns and one under the header, every column is as wide as the
