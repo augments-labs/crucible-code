@@ -554,9 +554,14 @@ pub(crate) fn tell(
     match block.kind {
         Kind::Table => {
             let mut kinds = kind::Kinds::default();
-            Table::of(&block.source).laid(glyphs, room, &mut |slot, text, link| {
-                kinds.tell(slot, text, link, &mut *put);
-            });
+            Table::of(&block.source).laid(
+                glyphs,
+                links.forge.as_ref(),
+                room,
+                &mut |slot, text, link| {
+                    kinds.tell(slot, text, link, &mut *put);
+                },
+            );
             kinds.flush(&mut *put);
         }
         // A character at a time, as the rule streamed before it was a block.
@@ -3313,7 +3318,7 @@ impl Markdown {
                 closed: true,
             });
         } else {
-            table.laid(self.glyphs, room, say);
+            table.laid(self.glyphs, self.forge.as_ref(), room, say);
         }
     }
 

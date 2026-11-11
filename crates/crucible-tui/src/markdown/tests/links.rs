@@ -412,3 +412,79 @@ fn an_image_cut_anywhere_is_the_image_it_was() {
         }
     }
 }
+
+/// The one body row of a one-column table holding `written`, laid out against
+/// `forge` as the record lays a table block.
+fn celled(written: &str, forge: Option<Forge>) -> String {
+    let block = Block {
+        kind: Kind::Table,
+        source: format!("| x |\n|---|\n| {written} |\n"),
+        closed: true,
+    };
+    let links = Links { forge, files: None };
+    lay(&block, ROOM, Glyphs::Unicode, &links)
+        .last()
+        .map(|row| row.text().trim_end().to_owned())
+        .unwrap_or_default()
+}
+
+#[test]
+fn a_cell_draws_what_a_paragraph_draws_but_the_quiet_address() {
+    // One reader decides what a link is drawn as wherever it stands: a cell
+    // draws the words a paragraph does, and only the quiet address after
+    // them, which a column has no room to spare for, is left out.
+    let here = "https://github.com/augments-labs/crucible-code";
+    let pull = format!("{here}/pull/1324");
+    let elsewhere = "https://github.com/someone/else/issues/12";
+    let commit = format!("{here}/commit/abcdef1234567");
+    let shapes = [
+        pull.clone(),
+        format!("<{pull}>"),
+        format!("[the fix]({pull})"),
+        elsewhere.to_owned(),
+        commit,
+        "[the guide](https://example.com/docs/guide/intro)".to_owned(),
+        "https://example.com/docs/guide/intro".to_owned(),
+        "![the screenshot](out/shot.png)".to_owned(),
+        "[write](mailto:someone@example.com)".to_owned(),
+    ];
+    for forge in [Some(forge()), None] {
+        for written in &shapes {
+            let said = linked(written, forge.clone());
+            let words: String = said
+                .iter()
+                .filter(|(slot, _, _)| *slot != Slot::Quiet)
+                .map(|(_, text, _)| text.as_str())
+                .collect();
+            assert_eq!(
+                celled(written, forge.clone()),
+                words,
+                "{written:?} against {forge:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_address_between_angle_brackets_is_drawn_as_the_bare_one_is() {
+    let here = "https://github.com/augments-labs/crucible-code";
+    for address in [
+        format!("{here}/pull/1324"),
+        format!("{here}/commit/abcdef1234567"),
+        "https://github.com/someone/else/issues/12".to_owned(),
+        "https://gitlab.com/group/sub/repo/-/merge_requests/3".to_owned(),
+        "https://example.com/docs/guide/intro".to_owned(),
+    ] {
+        for forge in [Some(forge()), None] {
+            let bare = linked(&format!("see {address} now"), forge.clone());
+            let angled = linked(&format!("see <{address}> now"), forge.clone());
+            assert_eq!(wrote(&angled), wrote(&bare), "{address:?}");
+            assert_eq!(points(&angled), points(&bare), "{address:?}");
+            assert_eq!(
+                shortened(&format!("see <{address}> now"), forge.clone()),
+                shortened(&format!("see {address} now"), forge.clone()),
+                "{address:?}"
+            );
+        }
+    }
+}

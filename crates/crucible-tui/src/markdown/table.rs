@@ -34,6 +34,7 @@
 //! row, a delimiter row, since a table was there first.
 //!
 use crate::color::Slot;
+use crate::forge::Forge;
 use crate::glyphs::Glyphs;
 use crate::row::Row;
 use crate::width;
@@ -353,10 +354,11 @@ impl Table {
     pub(super) fn laid(
         &self,
         glyphs: Glyphs,
+        forge: Option<&Forge>,
         room: usize,
         say: &mut dyn FnMut(Slot, &str, Option<&str>),
     ) {
-        let rows = self.rows(glyphs);
+        let rows = self.rows(glyphs, forge);
         let (Some(header), Some(delimiter)) = (rows.first(), self.lines.get(1)) else {
             self.spilt(say);
             return;
@@ -387,8 +389,8 @@ impl Table {
     }
 
     /// The rows that are drawn: every line but the delimiter, cut into cells and
-    /// read once each.
-    fn rows(&self, glyphs: Glyphs) -> Vec<Vec<Cell>> {
+    /// read once each, against the repository the answer's numbers count in.
+    fn rows(&self, glyphs: Glyphs, forge: Option<&Forge>) -> Vec<Vec<Cell>> {
         self.lines
             .iter()
             .chain(std::iter::once(&self.line).filter(|line| !line.is_empty()))
@@ -397,7 +399,7 @@ impl Table {
             .map(|(_, line)| {
                 celled(line)
                     .into_iter()
-                    .map(|cell| read(cell, glyphs))
+                    .map(|cell| read(cell, glyphs, forge))
                     .collect()
             })
             .collect()
@@ -661,8 +663,14 @@ fn wide(cell: &Cell) -> usize {
 /// A whole scanner for one cell, because a cell is markdown and this is what
 /// reads markdown. It holds nothing across the call — a fence needs two lines
 /// and a cell is one — so the reader is made here, used once and dropped.
-fn read(cell: &str, glyphs: Glyphs) -> Cell {
-    let markdown = super::Markdown::new(glyphs);
+///
+/// Against the same `forge` as the paragraphs around it, so an address is
+/// drawn as the same reference in a cell as out of one. Only the run of a
+/// link is kept: the quiet address a paragraph sets after its words is left
+/// out, since a column has no room to spare for it, and the whole address
+/// stays in the table's source.
+fn read(cell: &str, glyphs: Glyphs, forge: Option<&Forge>) -> Cell {
+    let markdown = super::Markdown::new(glyphs).counting(forge.cloned());
     let mut runs = Cell::new();
 
     // As written: a cell holds no block, and one reader holding another's
