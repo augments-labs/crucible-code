@@ -862,6 +862,13 @@ pub enum Unowned {
     /// Its program lies in crucible's store, or was not found.
     #[error("{0} is not run as a program you installed")]
     NotOwn(Box<str>),
+    /// An instance of the agent is configured that runs another program, and
+    /// no second one is written beside it; the instance is named, quoted.
+    #[error(
+        "the instance {0} configured for it runs another program, and no second one is \
+         written beside it"
+    )]
+    Beside(Box<str>),
 }
 
 /// An empty directory only its owner may reach, made fresh under the system's

@@ -729,9 +729,9 @@ record is as recorded, 1 when any differs, and 1 when nothing is installed.
 `crucible agents try` tries your own program of the agent, as *Try your own*
 on [`/login`'s agent screen](../providers/agents.md#installed-coding-agents)
 does, with no conversation. The program is the one an instance of the agent
-runs, else the one the name the entry's command goes by finds on your `PATH`,
-outside crucible's install store; `crucible agents try antigravity` takes your
-own `agy`, else `antigravity`. It asks on this terminal, as an install does,
+runs, or, where none is configured, the one the name the entry's command goes
+by finds on your `PATH`, outside crucible's install store; `crucible agents try
+antigravity` takes your own `agy`, else `antigravity`. It asks on this terminal, as an install does,
 first showing the path the program's links lead to, the agent's key, the
 arguments and environment it is started with, and what it can read, then `1.
 Try it` and `2. Cancel`. On `1` it starts the program once, confined with the
@@ -742,7 +742,9 @@ it answers as an agent, it writes an instance that runs it under
 program answered, with `Your own goose at /usr/local/bin/goose answered as an
 agent, and the instance goose runs it.` It ends 1, having written and kept
 nothing, where the catalog and the registry list no such agent, where no
-program of your own is found, where its directory is one no agent is given or
+program of your own is found, where an instance of the agent is configured and
+runs another program, since `/login` writes no second one beside it, where its
+directory is one no agent is given or
 the sandbox here cannot close the network, both as
 [the agent's page](../providers/agents.md#installed-coding-agents) says, where
 it does not answer as an agent crucible can run, and where it is answered

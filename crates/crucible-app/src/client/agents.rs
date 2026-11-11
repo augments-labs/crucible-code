@@ -224,11 +224,12 @@
 //! A try of the user's own program of an agent, a catalog agent's or
 //! Antigravity's, starts it, so it is refused as no conversation where no
 //! steps were lent ([`AgentsError::Untried`]). The door finds the program again
-//! as a launch of the instance that runs it, or of a new one, would, and
-//! refuses where that is not the program the move named or where its
-//! directory is one an agent may not be given; it then asks its own yes,
-//! with what the program is, what it is given and what it can read, and
-//! starts nothing on a no. A catalog agent's answer is kept, and a new
+//! as a launch of the instance that runs it, or of a new one where none of the
+//! agent is configured, would, as `/login` offers it, and refuses where that
+//! is not the program the move named, where an instance of the agent runs
+//! another, or where its directory is one an agent may not be given; it then
+//! asks its own yes, with what the program is, what it is given and what it
+//! can read, and starts nothing on a no. A catalog agent's answer is kept, and a new
 //! instance is written under a name of its own only once it was admitted: a
 //! refusal, or a write that fails, keeps nothing and writes nothing.
 
@@ -1230,7 +1231,9 @@ impl Door<'_> {
             more,
             unrefreshed,
             registry,
-            antigravity: trying.as_ref().and_then(own_antigravity),
+            antigravity: trying
+                .as_ref()
+                .and_then(|trying| own_antigravity(trying, &self.instances)),
         }
     }
 

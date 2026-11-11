@@ -1520,6 +1520,204 @@ fn trying_your_own_agy_where_the_sandbox_cannot_close_points_at_the_store() -> R
     Ok(())
 }
 
+/// Every choice's name among the account questions `put`.
+fn every_choice(put: &[Pending]) -> Vec<String> {
+    (0..)
+        .map_while(|at| question(put, at))
+        .flat_map(|(_, _, choices)| choices.into_iter().map(|(name, _)| name.to_owned()))
+        .collect()
+}
+
+/// With an instance of the agent configured that runs another program, the
+/// user's own program of it on `PATH` is offered neither by `/login`, whose
+/// every question `put` holds, nor by the door's listing, and a try of it at
+/// `program`, as `agent`, is refused, naming the instance `first`
+/// configured: it starts nothing and the user file stays as `file`.
+fn beside_is_refused(
+    tree: &Tree,
+    conversation: &Conversation,
+    (put, file): (&[Pending], &str),
+    (agent, program, first): (&str, &std::path::Path, &str),
+) -> Result<(), Failed> {
+    let choices = every_choice(put);
+    assert!(
+        !choices.iter().any(|name| name == "Try your own"),
+        "{choices:?}"
+    );
+    let listed = at_door(
+        tree,
+        conversation,
+        Command::AgentCatalog,
+        &mut Picking::of([Some("Try it")]),
+    )?;
+    let Ok(Door::Catalog {
+        agents,
+        antigravity,
+        ..
+    }) = listed
+    else {
+        return Err(format!("the listing answered {listed:?}").into());
+    };
+    assert_eq!(antigravity, None, "the listing offered the own Antigravity");
+    let own: Vec<_> = agents
+        .iter()
+        .filter_map(|listed| listed.own.as_ref())
+        .collect();
+    assert!(own.is_empty(), "the listing offered {own:?}");
+    let mut door = Picking::of([Some("Try it")]);
+    let tried = at_door(
+        tree,
+        conversation,
+        Command::TryOwnAgent {
+            agent: Name::new(agent)?,
+            program: Text::cut(&program.to_string_lossy()),
+        },
+        &mut door,
+    )?;
+    let Err(refused @ AgentsError::Own { .. }) = tried else {
+        return Err(format!("the door answered {tried:?}").into());
+    };
+    assert!(
+        refused.to_string().contains(&format!(
+            "the instance {first} configured for it runs another program"
+        )),
+        "{refused}"
+    );
+    assert!(door.put.is_empty(), "the door asked: {:?}", door.put);
+    assert_eq!(
+        fake_peer::played(&tools(tree)),
+        0,
+        "the program was started"
+    );
+    assert_eq!(
+        std::fs::read_to_string(crate::Desk::new(tree, &[])?.choosing)?,
+        file,
+        "the user file was written"
+    );
+    Ok(())
+}
+
+/// The user file configuring the instances `names` of the driver `driver`,
+/// each run as a program that is not the user's own one on `PATH`, and of
+/// `agent` where it is a catalog agent's.
+fn beside(
+    tree: &Tree,
+    names: &[&str],
+    (driver, agent): (&str, Option<&str>),
+) -> Result<String, Failed> {
+    let elsewhere = tree.0.join("elsewhere").join(driver);
+    let mut instances = serde_json::Map::new();
+    for name in names {
+        let mut instance = json!({"driver": driver, "executable": elsewhere.to_string_lossy()});
+        if let (Some(agent), Some(fields)) = (agent, instance.as_object_mut()) {
+            fields.insert("agent".to_owned(), json!(agent));
+        }
+        instances.insert((*name).to_owned(), instance);
+    }
+    Ok(serde_json::to_string_pretty(
+        &json!({"externalAgents": instances}),
+    )?)
+}
+
+/// `/login` offers the user's own `agy` only where no Antigravity instance
+/// is configured, and the door neither lists nor writes it beside one that
+/// runs another program.
+#[test]
+fn an_own_agy_beside_a_configured_antigravity_is_neither_offered_nor_written() -> Result<(), Failed>
+{
+    let tree = Tree::new("external-choosing-own-agy-beside")?;
+    let (mut conversation, program) = agy_of_your_own(&tree)?;
+    // Two, so `/login` asks which rather than connecting the one.
+    let file = beside(&tree, &["play", "work"], ("antigravity", None))?;
+    let mut picking = Picking::of([Some("Antigravity"), Some("Go back"), Some("Cancel")]);
+
+    let (outcome, after) = connecting_on(
+        &tree,
+        &mut conversation,
+        (&file, None),
+        Asking::every(),
+        &mut picking,
+    )?;
+
+    assert_eq!(outcome, Outcome::Login(LoginOutcome::Undecided));
+    assert_eq!(after, file, "going back wrote the user file");
+    beside_is_refused(
+        &tree,
+        &conversation,
+        (&picking.put, &file),
+        ("antigravity", &program, "play"),
+    )
+}
+
+/// An Antigravity instance configured that runs the user's own `agy` keeps it
+/// listed, and a try of it probes it as that instance and writes no second.
+#[test]
+fn an_own_agy_a_configured_antigravity_runs_is_tried_as_that_instance() -> Result<(), Failed> {
+    let tree = Tree::new("external-choosing-own-agy-configured")?;
+    let (conversation, program) = agy_of_your_own(&tree)?;
+    let file = serde_json::to_string_pretty(&json!({
+        "externalAgents": {
+            "work": {"driver": "antigravity", "executable": program.to_string_lossy()}
+        }
+    }))?;
+    let user = crate::Desk::new(&tree, &[])?.choosing;
+    std::fs::create_dir_all(user.parent().ok_or("the user file's directory")?)?;
+    std::fs::write(&user, &file)?;
+
+    let listed = tried_at_door(&tree, &conversation, Command::AgentCatalog)?;
+    let tried = tried_at_door(
+        &tree,
+        &conversation,
+        Command::TryOwnAgent {
+            agent: Name::new("antigravity")?,
+            program: Text::cut(&program.to_string_lossy()),
+        },
+    )?;
+
+    let Ok(Door::Catalog { antigravity, .. }) = listed else {
+        return Err(format!("the listing answered {listed:?}").into());
+    };
+    assert_eq!(antigravity.map(|own| own.program), Some(program));
+    let Ok(Door::Tried { instance, .. }) = tried else {
+        return Err(format!("the door answered {tried:?}").into());
+    };
+    assert_eq!(&*instance, "work");
+    assert_eq!(
+        std::fs::read_to_string(crate::Desk::new(&tree, &[])?.choosing)?,
+        file,
+        "the user file was written"
+    );
+    Ok(())
+}
+
+/// `/login` offers the user's own program of a catalog agent with an
+/// instance configured only as that instance runs it, and the door neither
+/// lists nor writes it beside one that runs another program.
+#[test]
+fn an_own_goose_beside_a_configured_goose_is_neither_offered_nor_written() -> Result<(), Failed> {
+    let tree = Tree::new("external-choosing-own-goose-beside")?;
+    let (mut conversation, program) = goose_of_your_own(&tree)?;
+    let file = beside(&tree, &["work"], ("catalog", Some("goose")))?;
+    let mut picking = Picking::of([Some("goose"), Some("Go back"), Some("Cancel")]);
+
+    let (outcome, after) = connecting_on(
+        &tree,
+        &mut conversation,
+        (&file, None),
+        Asking::every(),
+        &mut picking,
+    )?;
+
+    assert_eq!(outcome, Outcome::Login(LoginOutcome::Undecided));
+    assert_eq!(after, file, "going back wrote the user file");
+    beside_is_refused(
+        &tree,
+        &conversation,
+        (&picking.put, &file),
+        ("goose", &program, "work"),
+    )
+}
+
 /// What the agents door answers `command`, asked as [`carried`] asks a move
 /// by a client that says yes to the door's question about a try.
 pub(crate) fn tried_at_door(
