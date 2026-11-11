@@ -158,6 +158,23 @@ whose receipt has no probe record for this machine is not started, and
 `crucible agents probe` takes one.
 The revocation and trust-state lines above are a signed catalog release's.
 
+A catalog or registry agent runs either as a release crucible installed or as
+your own program. An instance whose `executable` is found outside crucible's
+`programs` directory, as written or on `PATH` under the name its entry's
+command goes by, is your own program for that agent: nothing in it is pinned
+or reviewed, and no hash, receipt or revocation holds it. It is started with
+the arguments and environment the entry gives, and is held instead by a probe
+record. Until a record holds for the instance as it is configured now, it is
+not started, and the refusal names `crucible agents try <agent>`. The probe
+starts it once in the sandbox with the network closed, sends `initialize`
+alone, and admits it where it answers with protocol version 1 and its
+capabilities; it then keeps the name and version it gave, or `did not say`.
+That proves it speaks ACP, not that it is the program the entry describes. A
+change to the instance's driver, its `agent:` key or the arguments and
+environment its entry gives makes the record stale, and it is refused until it
+is tried again. It signs in by the methods its probe answered, and crucible
+runs no sign-in command for it.
+
 `/logout` lists each agent named under `externalAgents` after the stored
 credentials, as an external agent instance, and `/logout <name>` takes one
 directly. Taking one offers *Connect*, which reaches the agent's own provider

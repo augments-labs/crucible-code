@@ -532,6 +532,21 @@ variables, starting from a cleared
 environment, and it is run from the version installed, which stays read-only
 for the agent's other runs.
 
+A program you installed yourself and configured as a catalog or registry
+agent, one outside `programs`, is probed before it is first started: once, in
+the sandbox, with the network closed and nothing of yours readable but the
+directory it lies in. Where the sandbox cannot close the network, as where its
+backend is missing or unavailable, it is not probed and is not started; a
+registry install has the same need, while Antigravity's store release does
+not. Everything in the program's directory is readable to it during the probe
+and at every launch, where the network is open to its vendor. That directory
+is refused when it is your home or `/`, or is, lies within or contains a place
+no agent is made able to write, such as `~/.ssh` or crucible's home; `bin`,
+`.local/bin` and `.cargo/bin` in your home may themselves be read. A directory
+the sandbox already lets every program read, such as `/usr/bin`, gets no rule
+of its own, and any other is given read-only, never writable. The probe runs
+in an empty directory of its own, which is removed after.
+
 ## Environment and credentials
 
 The command environment is an explicit, bounded map rather than a copy of the
