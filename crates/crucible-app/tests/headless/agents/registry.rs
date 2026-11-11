@@ -7,7 +7,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crucible_app::backends::{AgentRow, CatalogRow, REGISTRY, Unbelieved, believed_registry};
+use crucible_app::backends::{
+    AgentRow, CatalogRow, REGISTRY, Sandboxing, Unbelieved, believed_registry,
+};
 use crucible_app::catalog_fetch::{self, RegistrySource, Source};
 use crucible_app::client::agents::{
     AgentsError, How, Outcome, Shelf, Typed, Watching, keep_key, run, runs_a_command,
@@ -2543,8 +2545,18 @@ fn an_own_program_with_no_agent_info_is_admitted_by_its_capabilities() -> Result
 /// to when the program answers the turn with the link to sign in: how the
 /// turn ended, else why it did not.
 fn own_agy_turned(tree: &crate::Tree, required: bool) -> Result<Result<String, String>, Failed> {
+    let (turned, _) = own_agy_started(tree, Sandboxing { on: true, required })?;
+    Ok(turned)
+}
+
+/// [`own_agy_turned`] started under `sandbox`, with what each start was
+/// given.
+fn own_agy_started(
+    tree: &crate::Tree,
+    sandbox: Sandboxing,
+) -> Result<(Result<String, String>, Vec<Seen>), Failed> {
     use crucible_app::access::Route;
-    use crucible_app::backends::{Registry, Row, Sandboxing};
+    use crucible_app::backends::{Registry, Row};
     use crucible_app::launching::Launcher;
     use crucible_config::{Driver, Serves};
     use crucible_execution::{SessionRef, TurnRequest};
@@ -2597,10 +2609,14 @@ fn own_agy_turned(tree: &crate::Tree, required: bool) -> Result<Result<String, S
     let home = tree.home()?;
     let state = catalog_fetch::state_in(home.path());
     let consent = super::shipped_hold::shipped_given(row.route)?;
-    let policy = SandboxPolicy::standard(&tree.workspace()?)?.with_enabled(true);
+    let policy = SandboxPolicy::standard(&tree.workspace()?)?.with_enabled(sandbox.on);
     let sessions = tree.sessions();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let launcher = Launcher::new(
-        crucible_app::probing::local(runtime.handle().clone()),
+        std::sync::Arc::new(Watched {
+            local: crucible_app::probing::local(runtime.handle().clone()),
+            seen: seen.clone(),
+        }),
         runtime.handle().clone(),
         &policy,
         &consent,
@@ -2613,9 +2629,9 @@ fn own_agy_turned(tree: &crate::Tree, required: bool) -> Result<Result<String, S
         crucible_tools::Mode::Ask,
         &trust,
         &home.path().join("programs"),
-        Sandboxing { on: true, required },
+        sandbox,
     )?;
-    Ok(runtime.block_on(async {
+    let turned = runtime.block_on(async {
         let mut host = launcher
             .launch(&agent, &control, dialect.as_mut(), None)
             .await
@@ -2632,7 +2648,46 @@ fn own_agy_turned(tree: &crate::Tree, required: bool) -> Result<Result<String, S
         turned
             .map(|outcome| format!("{outcome:?}"))
             .map_err(|failure| failure.reason().as_str().to_owned())
-    }))
+    });
+    let seen = seen.lock().map(|seen| seen.clone()).unwrap_or_default();
+    Ok((turned, seen))
+}
+
+/// A Gemini API key kept for Antigravity is not given to the user's own
+/// Antigravity started under the sandbox with no profile directory, which is
+/// offered no method that takes it; with the sandbox off, where it signs in
+/// by every method, it is given the key in the variable the method reads.
+#[test]
+fn an_own_agy_under_the_sandbox_is_given_no_kept_key() -> Result<(), Failed> {
+    const KEY: &str = "fake-gemini-key-for-an-own-agy";
+
+    for on in [true, false] {
+        let tree = crate::Tree::new("registry-own-agy-kept-key")?;
+        crucible_auth::Store::in_home(tree.home()?.path())
+            .naming(crucible_app::providers::Rows::production().names())
+            .keep("antigravity@gemini-api-key", KEY)?;
+        let (_, seen) = own_agy_started(
+            &tree,
+            Sandboxing {
+                on,
+                required: false,
+            },
+        )?;
+        let [start] = seen.as_slice() else {
+            panic!("not started once with the sandbox on: {on}: {seen:?}");
+        };
+        let given = start
+            .environment
+            .iter()
+            .find(|(name, _)| name == "GEMINI_API_KEY")
+            .map(|(_, value)| value.as_str());
+        assert_eq!(
+            given,
+            (!on).then_some(KEY),
+            "the kept key with the sandbox on: {on}"
+        );
+    }
+    Ok(())
 }
 
 /// A turn of the user's own Antigravity under the sandbox with no profile
