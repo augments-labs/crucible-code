@@ -508,7 +508,10 @@ impl Desk<'_> {
 
     /// What `work` comes to, waited for on the application's runtime with
     /// this terminal to ask on, lent `sign_in` and `handover`, and with how
-    /// far a download has come said as it comes.
+    /// far a download has come said as it comes. It is the desk's one wait,
+    /// and is handed only agents door calls, which start no conversation:
+    /// [`Desk::asked`]'s `door::run`, and [`Desk::tried`]'s
+    /// `door::own_program` then `door::run`.
     fn waited<'l, T>(
         &'l self,
         sign_in: Option<&'l dyn SignInChannel>,

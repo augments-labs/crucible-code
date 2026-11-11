@@ -308,7 +308,10 @@ const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
     // The `crucible agents` subcommands that ask the agents door, which a
     // command line reaches before any conversation exists and which start
     // none: waiting for the door to carry the one command out, and, for
-    // `crucible agents try`, to find the program it is asked to try.
+    // `crucible agents try`, to find the program it is asked to try. The
+    // site waits for a future `Desk::waited` is handed, and its two callers
+    // hand it only `crucible_app::client::agents` door calls: `Desk::asked`
+    // `door::run`, and `Desk::tried` `door::own_program` then `door::run`.
     (
         "src/cli/agents.rs",
         "self.runtime.block_on(work(&mut front, watching))",
