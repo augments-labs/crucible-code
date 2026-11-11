@@ -8945,6 +8945,474 @@
       ]
     },
     {
+      "id": "CASE-TRANSCRIPT-SINGLE-TILDE-STRIKES",
+      "family": "transcript-blocks",
+      "obligation": "Read whole, `~one~ and ~/Projects and cd ~/a and ~/b` strikes only `one`, `takes 2~3 seconds, then 5~10` strikes `3 seconds, then 5`, `see ~/a~ here` strikes `/a`, and a pair across a line break inside one paragraph strikes the words on both lines between them.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::strikes::single_tildes_strike_the_phrase_between_them",
+      "source": "crates/crucible-tui/src/markdown/tests/strikes.rs",
+      "body_sha256": "8db89432de39cbfe0fa824856beb053731fc405a1152131dcbe31cbf827c43a0",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SINGLE-TILDE-DRAWN",
+      "family": "transcript-blocks",
+      "obligation": "Read whole, those four answers draw their text with the two tildes of each struck phrase left out and every other tilde kept.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::strikes::a_struck_phrase_draws_without_its_tildes",
+      "source": "crates/crucible-tui/src/markdown/tests/strikes.rs",
+      "body_sha256": "710782e76101477ffd5d663d11aabbca329074838022b1e2e937c9f8f64f1c22",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SINGLE-TILDE-NO-CLOSER",
+      "family": "transcript-blocks",
+      "obligation": "Tilde paths, approximations, an opener whose only closer follows a blank line, a lone closer, a tilde ending a line and tildes standing between spaces draw exactly as written and strike nothing.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::strikes::a_single_tilde_with_no_closer_in_its_paragraph_is_drawn_as_written",
+      "source": "crates/crucible-tui/src/markdown/tests/strikes.rs",
+      "body_sha256": "f4b26d3d393ad207336a55d58ec576f8e7e55fc78afb6df8359224fd3fa5ec1e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SINGLE-TILDE-IN-EMPHASIS",
+      "family": "transcript-blocks",
+      "obligation": "`*see ~/a and ~/b*` draws `see ~/a and ~/b` under emphasis, with both tildes.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::strikes::a_tilde_path_inside_emphasis_stays_as_written_under_the_emphasis",
+      "source": "crates/crucible-tui/src/markdown/tests/strikes.rs",
+      "body_sha256": "f3ea77539307df51a17bf9ebcf7b9288c1ef0e651fcdb6738de49569277690cb",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SINGLE-TILDE-NEAREST",
+      "family": "transcript-blocks",
+      "obligation": "A single-tilde closer pairs with the nearest opener still open: `~a ~b~ c~ d` strikes `a b c` and draws no tilde, `~a ~b~ c` strikes `b` and keeps the first tilde, and `~a ~/b c~ d` strikes `/b c` and keeps the first tilde.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::strikes::a_closer_closes_the_innermost_opener_and_drops_the_ones_inside_it",
+      "source": "crates/crucible-tui/src/markdown/tests/strikes.rs",
+      "body_sha256": "2f88abcb533af14d2f986951257fd34cb2902490cf731ba22ec7ca6024b6d745",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DOUBLE-TILDE-UNCHANGED",
+      "family": "transcript-blocks",
+      "obligation": "A double pair strikes its phrase, single and double pairs strike the words of either nested inside the other, and three tildes at the start of a line open a fence.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::strikes::two_tildes_and_three_read_as_they_did",
+      "source": "crates/crucible-tui/src/markdown/tests/strikes.rs",
+      "body_sha256": "0be2996d50101b66cfcdcc5e42944f028859ff9df6fa7c302b2d95a6b2ee7e92",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SINGLE-TILDE-RANKING-AGREEMENT",
+      "family": "transcript-blocks",
+      "obligation": "Around plain text, weight, emphasis, both, a heading, a quote, a bullet, a done task, a numbered item and a summary, a single pair around a word, and around a code span and a link, draws the same text and slots as a double pair around the same words.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::strikes::a_single_pair_wears_what_a_double_pair_wears_where_it_stands",
+      "source": "crates/crucible-tui/src/markdown/tests/strikes.rs",
+      "body_sha256": "6dabd0f08f63e29710d9cd594f1bc2ab9f8cf86d128277224a615fb014f4455f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SINGLE-TILDE-AS-WRITTEN-PLACES",
+      "family": "transcript-blocks",
+      "obligation": "In a code span, a key, a subscript, a superscript, a link's address and words, an angle, bare or www address, after a backslash, in display math, in a plain, mermaid or diff fence and in an indented block, single tildes draw as written and nothing is struck.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::strikes::a_single_tilde_changes_nothing_where_text_is_drawn_as_written",
+      "source": "crates/crucible-tui/src/markdown/tests/strikes.rs",
+      "body_sha256": "19dd9010a8c7b7b7c7ed4057ff04c91779894c0ecdc338ecebdf061a88451861",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SINGLE-TILDE-PARAGRAPH-AGREEMENT",
+      "family": "transcript-blocks",
+      "obligation": "Across fifteen pairs of lines, where a double pair strikes words on the second line a single pair strikes the same words and draws the same text, and where it does not, a single pair strikes nothing and draws the text and slots of the same answer with its opener escaped.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::strikes::a_held_phrase_crosses_exactly_the_lines_a_double_pair_crosses",
+      "source": "crates/crucible-tui/src/markdown/tests/strikes.rs",
+      "body_sha256": "68e5d392cf30f42d527b4fc5c11f6a56c8e1e8e3aadbc9f5d96c16240fbdd718",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SINGLE-TILDE-BOUND",
+      "family": "transcript-blocks",
+      "obligation": "A phrase of STRIKE_CAP - 1 bytes between single tildes is struck, and one of STRIKE_CAP or STRIKE_CAP + 1 bytes strikes nothing and draws as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::strikes::a_phrase_strikes_only_when_its_closer_is_within_the_bound",
+      "source": "crates/crucible-tui/src/markdown/tests/strikes.rs",
+      "body_sha256": "eb975a7efdeb3d9b51aea563679859423402db08898e71e254a6ce41b8b41c75",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SINGLE-TILDE-BOUND-CUT",
+      "family": "transcript-blocks",
+      "obligation": "Phrases of STRIKE_CAP - 1, STRIKE_CAP and STRIKE_CAP + 1 bytes draw the text and slots they draw whole when cut once around the opener, at and just past the bound and around the closer, and when cut after the opener, past the bound and at the closer together.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::strikes::a_phrase_at_the_bound_draws_the_same_wherever_it_is_cut",
+      "source": "crates/crucible-tui/src/markdown/tests/strikes.rs",
+      "body_sha256": "f3f7131431a9bc47dfd75684c2a784f95e32208adac7419a6ad696f317abd153",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SINGLE-TILDE-CUT",
+      "family": "transcript-blocks",
+      "obligation": "Eleven answers with single tildes, a pair across a line break or a block, and weight with emphasis draw the text and slots they draw whole when cut once at any character boundary.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::strikes::an_answer_with_single_tildes_draws_the_same_wherever_it_is_cut",
+      "source": "crates/crucible-tui/src/markdown/tests/strikes.rs",
+      "body_sha256": "65e5adebf6362aba0c858e0b7c880af529cf62d5260882225f7a6a131327a23f",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SINGLE-TILDE-HELD",
+      "family": "transcript-blocks",
+      "obligation": "Unended, `look in ~/Projects` says only `look in `, holds a phrase and shows `~/Projects` as its held row; finished, it says `~/Projects` and then holds and shows nothing.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::strikes::an_unended_opener_holds_what_follows_it_out_of_the_record",
+      "source": "crates/crucible-tui/src/markdown/tests/strikes.rs",
+      "body_sha256": "795aade2886f68524d5213320b2f50ea8f61dd3891526440300e5f638c67bf3b",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SINGLE-TILDE-PREVIEW-CLIPPED",
+      "family": "transcript-blocks",
+      "obligation": "While a phrase that crossed a line break is held, its held row is the last line held, five columns wide at five columns, and once its closer arrives nothing is held or shown.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::strikes::the_held_phrase_is_shown_by_its_last_line_clipped_to_the_room",
+      "source": "crates/crucible-tui/src/markdown/tests/strikes.rs",
+      "body_sha256": "e5b5cda010bfb4a3e5b3ff30d149ce034055d7724230e02c14729e5f0d6ad578",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SINGLE-TILDE-PREVIEW-CONTROLS",
+      "family": "transcript-blocks",
+      "obligation": "The held row of a phrase written with an escape, a bell and a bidirectional override contains none of the three.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::strikes::the_held_phrase_is_shown_with_no_control_character_in_it",
+      "source": "crates/crucible-tui/src/markdown/tests/strikes.rs",
+      "body_sha256": "31ff07fdf0892e37adb68fe3f3e8ec213b788fd9d3349ca55edfb10ceb771b6e",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SINGLE-TILDE-HOLD-LETS-GO",
+      "family": "transcript-blocks",
+      "obligation": "After an opener and STRIKE_CAP - 1 bytes, only what came before the opener has been said and a phrase is held; two bytes more let go of it, saying the tilde and everything after it as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::strikes::a_held_phrase_lets_go_once_the_bound_is_reached",
+      "source": "crates/crucible-tui/src/markdown/tests/strikes.rs",
+      "body_sha256": "e74dd1c9786f2b6cde6f03939a1189b48e95e8f7b77cb9e2d4de2805024de42a",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BOLD-EMPHASIS",
+      "family": "transcript-blocks",
+      "obligation": "Italic inside bold, `***both***` and bold inside italic are drawn as weight and emphasis together, while a double-tilde strike and a code span under three stars keep their own slot.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::strikes::weight_and_emphasis_together_show_both",
+      "source": "crates/crucible-tui/src/markdown/tests/strikes.rs",
+      "body_sha256": "c4b1b764b07a22a4d18a903ca117856c8639b2a023d167bd35750e6e36dd21d2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SINGLE-TILDE-SCREEN",
+      "family": "transcript-blocks",
+      "obligation": "In the full screen, `~one~ and ~/Projects and cd ~/a and ~/b` draws its first row as `one and ~/Projects and cd ~/a and ~/b`.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::strikes::single_tildes_strike_and_paths_stay_as_written",
+      "source": "crates/crucible-tui/src/render/tests/strikes.rs",
+      "body_sha256": "3fa34a947c9ef3a82736514b63262dddd547d894611085f0f2611285b148a8b9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SINGLE-TILDE-NO-CLOSER-SCREEN",
+      "family": "transcript-blocks",
+      "obligation": "Four answers whose single tildes have no closer in their paragraph strike nothing when read, and in the full screen draw their non-blank lines exactly as written.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::strikes::a_tilde_with_no_closer_in_its_paragraph_strikes_nothing",
+      "source": "crates/crucible-tui/src/render/tests/strikes.rs",
+      "body_sha256": "e37a9f7e082a2d027a2260e39995b80cb6d9971e525c7560833e85bd2f6183c9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SINGLE-TILDE-STRIKE-SCREEN",
+      "family": "transcript-blocks",
+      "obligation": "In the full screen, with either glyph set, `one` in `~one~ and ~/Projects` is written under the strike's style and `/Projects` is not.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::strikes::a_struck_phrase_wears_the_strike_and_a_path_does_not",
+      "source": "crates/crucible-tui/src/render/tests/strikes.rs",
+      "body_sha256": "bf101895dcf71d0389017f0d603a0ea6afd6997f53072707237df0466457a1a6",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BOLD-EMPHASIS-SCREEN",
+      "family": "transcript-blocks",
+      "obligation": "In the full screen, with either glyph set, `a ***both*** b and **bold _italic_ bold**` draws without its markers, with `both` and `italic` written under bold and italic together.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::strikes::three_markers_are_drawn_bold_and_italic_together",
+      "source": "crates/crucible-tui/src/render/tests/strikes.rs",
+      "body_sha256": "d5e027b223f394659e02bf40995c8375b3d99bb41f2d747addbfc070f30d2a11",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SINGLE-TILDE-HELD-SCREEN",
+      "family": "transcript-blocks",
+      "obligation": "In the full screen, with either glyph set, a held `~/Projects` is not in the record, is the held row and is on screen; once the paragraph ends and the message settles nothing is held, the record has `look in ~/Projects`, and the screen shows that line and `next`.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::strikes::a_held_phrase_is_told_of_in_the_live_foot_and_joins_the_record_once_settled",
+      "source": "crates/crucible-tui/src/render/tests/strikes.rs",
+      "body_sha256": "b8e163011e3715e23879791f4aa3f8af588859f91d2f4cf55110e9bc1be31f58",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SINGLE-TILDE-HELD-HOSTILE-SCREEN",
+      "family": "transcript-blocks",
+      "obligation": "In the full screen, with either glyph set, a held phrase written with an escape, a bell and a bidirectional override has a held row and writes none of the three to the terminal.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::strikes::a_held_phrase_told_of_in_the_foot_writes_no_escape_it_holds",
+      "source": "crates/crucible-tui/src/render/tests/strikes.rs",
+      "body_sha256": "621c1d61034e287123bf0f5ec416c1db9a8c56b9c48f2e50458d302b7e6405f9",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SINGLE-TILDE-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In the native screen, with either glyph set, `~one~ and ~/Projects and cd ~/a and ~/b` is drawn as `one and ~/Projects and cd ~/a and ~/b`, `between ~/a and ~/b` as written, and `one` is written under the strike's style while `/Projects` is not.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_struck_phrase_wears_the_strike_and_a_path_stays_as_written",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "c04e552e613a00c9d4b288bb89324d7008eb3dd8a0b2d7e2f09e1debac3047ea",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-BOLD-EMPHASIS-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In the native screen, with either glyph set, `a ***both*** b` is drawn as `a both b` with `both` written under bold and italic together.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_run_under_three_markers_is_drawn_bold_and_italic_together",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "28d00720fcf4b87c64d3328b08cdd6e2558e86f66ec2e39a851dbdc542c91f17",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-SINGLE-TILDE-HELD-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In the native screen, with either glyph set, a held `~/Projects` is a row of its own and not in the scrollback; once settled no row is `~/Projects` alone, `look in ~/Projects` is drawn once, and a row is `next`.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_held_phrase_is_told_of_in_the_foot_and_joins_the_scrollback_once_settled",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "daad0fc826fbfde74626d32aa1264695d1a5d2b1f22869c6079ebc0c29ff519d",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
       "id": "CASE-TRANSCRIPT-REFERENCE-BEFORE-LINK",
       "family": "transcript-blocks",
       "obligation": "With a definition above, a second bracket after a bracket that names no definition still opens an inline link or a footnote reference, as it does with none, cut anywhere.",
