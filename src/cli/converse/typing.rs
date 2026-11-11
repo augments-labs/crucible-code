@@ -19,8 +19,9 @@
 //! the same in [`ask`] as in [`during`], because a key that meant one thing
 //! between turns and another during one would have to be relearned at exactly
 //! the moment there is something to lose. Esc belongs to whatever is standing:
-//! the command list a `/`-started line has open, in either loop; otherwise
-//! nothing between turns, and the turn itself while one runs.
+//! the command list a `/`-started line has open, in either loop; then the
+//! questions dock while it has the keys, which it closes or whose editor it
+//! leaves; otherwise nothing between turns, and the turn itself while one runs.
 //!
 //! It is one of the two places the mode changes — `/mode` is the other — which
 //! is why the runner is a parameter here. The mode is a fact about the session
@@ -54,7 +55,7 @@ use crate::cli::standing;
 use crate::cli::style::Style;
 
 use super::command;
-use super::docking::{Docking, Keyed};
+use super::docking::{Docking, Keyed, Submission};
 use super::expanding::{self, Standing};
 use super::leaving::Leaving;
 use super::mode::tone;
@@ -159,7 +160,7 @@ pub(super) enum Asked {
     /// `Submit batch` in the dock: the answers to the questions the model
     /// asked without waiting, to be sent as the turn that delivers them.
     /// Nothing comes out of the box for it either.
-    Answer(Command),
+    Answer(Submission),
 }
 
 /// A finished line and the local-command provenance established while typing.
@@ -1682,7 +1683,7 @@ pub(super) enum Meanwhile {
     /// `Submit batch` in the dock. The turn's own loop sends it, through the
     /// door that settles questions while a turn has the conversation; the
     /// running turn delivers what settles.
-    Answer(Command),
+    Answer(Submission),
 }
 
 /// Everything one Ctrl+V during a turn reads or may change.

@@ -53,10 +53,12 @@ const ACTING: &str = "enter select · tab composer · esc close";
 const ELSEWHERE: &str = "tab questions";
 
 /// The dock, and what the terminal keeps beside it.
-#[derive(Debug)]
+///
+/// Not `Debug`: the editor holds the line being written, which is the
+/// person's.
 pub(super) struct Docking {
     /// What is drawn.
-    pub(super) dock: Dock<QuestionId>,
+    dock: Dock<QuestionId>,
     /// The era every batch here was shown under, once one has been.
     era: Option<Era>,
     /// What the dock was doing when it was last closed, shown on reopening.
@@ -117,7 +119,27 @@ pub(super) enum Keyed {
     /// The dock closed, every draft kept.
     Closed,
     /// Every answer in the batch in front, to be sent through the client.
-    Submit(Command),
+    Submit(Submission),
+}
+
+/// Every answer of one batch, for the era and id it was shown under: the
+/// one thing the dock sends.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Submission {
+    pub(super) era: Era,
+    pub(super) id: QuestionId,
+    pub(super) replies: Vec<Replied>,
+}
+
+impl Submission {
+    /// The request that settles it.
+    pub(super) fn command(self) -> Command {
+        Command::Answer {
+            era: self.era,
+            id: self.id,
+            replies: self.replies,
+        }
+    }
 }
 
 impl Docking {
@@ -479,7 +501,7 @@ impl Docking {
             Ok(replies) => {
                 self.dock.phase = Phase::Submitting;
                 self.dock.focus.marked = 0;
-                Keyed::Submit(Command::Answer { era, id, replies })
+                Keyed::Submit(Submission { era, id, replies })
             }
             Err(refusal) => {
                 self.dock.phase = Phase::Refused(refusal.to_string());
@@ -499,6 +521,8 @@ impl Docking {
             Editing::Note { .. } => member.draft.note.clone(),
         };
         self.editor.clear();
+        // The line came out of this editor, so it is within the ceiling an
+        // edit is refused past and nothing here can refuse it.
         let _ = self.editor.put(&line);
         let column = self.editor.column();
         self.dock.focus.editing = Some(match editing {

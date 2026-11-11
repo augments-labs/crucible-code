@@ -78,7 +78,7 @@ use super::style::Style;
 use super::{Fatal, standing};
 use answering::{Answers, asked, cramped, read, verdict};
 use command::Ran;
-use docking::Toggled;
+use docking::{Submission, Toggled};
 use expanding::Standing;
 pub(crate) use first::First;
 use planning::Planning;
@@ -1099,10 +1099,12 @@ fn ran<T: Terminal>(
     }
     // The dock's answers, refused in the dock with the draft kept where they
     // could settle nothing or have no model to go to: a session resumed is
-    // not given back its questions until its first turn.
+    // not given back its questions until its first turn. This only spares a
+    // turn started for nothing; the door that settles them checks again and
+    // is the one that decides.
     let answering = match &work {
-        Work::Answer(Command::Answer { era, id, .. }) => Some((era.clone(), *id)),
-        Work::Answer(_) | Work::Turn(..) | Work::Room(_) => None,
+        Work::Answer(submission) => Some((submission.era.clone(), submission.id)),
+        Work::Turn(..) | Work::Room(_) => None,
     };
     if let Some((era, id)) = &answering {
         if !waits(held, era, *id) {
@@ -1588,20 +1590,20 @@ impl Turn<'_, '_> {
 
     /// Settles the dock's answers while the turn has the conversation; the
     /// turn delivers them. What came of it is shown in the dock.
-    fn answer(&mut self, command: Command) {
-        let Command::Answer { id, .. } = &command else {
-            return;
-        };
-        let id = *id;
+    fn answer(&mut self, submission: Submission) {
+        let id = submission.id;
         let outcome = match &self.held.questions {
-            Some(questions) => self.terms.answer(command, questions),
+            Some(questions) => self.terms.answer(submission.command(), questions),
             None => Outcome::Refused(ErrorCode::StaleQuestions.into()),
         };
         let said = match outcome {
-            Outcome::Answer(AnswerOutcome::Settled) => Ok(()),
-            Outcome::Answer(AnswerOutcome::Invalid { reason }) => Err(reason.as_str().to_owned()),
+            Outcome::Answer(answered) => match answered {
+                AnswerOutcome::Settled => Ok(()),
+                AnswerOutcome::Invalid { reason } => Err(reason.as_str().to_owned()),
+            },
             Outcome::Refused(refusal) => Err(refusal.to_string()),
-            // The door that settles answers answers with one of the three.
+            // The door that settles answers gives an answer's outcome or a
+            // refusal; no other kind of outcome is about a submission.
             _ => Err(Refusal::from(ErrorCode::StaleQuestions).to_string()),
         };
         self.held.docking.answered(id, said);
@@ -1982,9 +1984,14 @@ fn sent(
             Work::Room(why) => {
                 Ended::Room(conversation.compact(why, &run, &mut Spend::default()).await)
             }
-            Work::Answer(command) => {
+            Work::Answer(submission) => {
                 asking
-                    .turn(&mut conversation, command, Box::default(), &run)
+                    .turn(
+                        &mut conversation,
+                        submission.command(),
+                        Box::default(),
+                        &run,
+                    )
                     .await
             }
         };
@@ -2065,7 +2072,7 @@ enum Work {
     Room(Compacting),
     /// The dock's answers to questions the model asked without waiting,
     /// settled and delivered by the turn this starts.
-    Answer(Command),
+    Answer(Submission),
 }
 
 /// What the worker found to do.

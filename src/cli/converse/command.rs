@@ -516,8 +516,9 @@ pub(super) fn live<T: Terminal>(
             )?;
             Ok(())
         }
-        // The classifier decides which commands reach here; a live one this
-        // arm does not name is a build error at the match, not a silent skip.
+        // The classifier decides which commands reach here, and does nothing
+        // for any other. `/questions` is one: the turn's own loop opens or
+        // closes the dock before it asks the classifier.
         _ => Ok(()),
     }
 }

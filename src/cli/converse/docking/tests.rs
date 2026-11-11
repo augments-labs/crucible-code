@@ -1,4 +1,4 @@
-use crucible_client_api::{Command, Era, Picked, Replied, Said};
+use crucible_client_api::{Era, Picked, Replied, Said};
 use crucible_tui::{Glyphs, Key, Phase, Pressed};
 use crucible_types::{Answer, Batch, Question, QuestionId};
 
@@ -85,7 +85,7 @@ fn enter() -> Pressed {
 /// What a submission asks for: the replies, where it asked for an answer.
 fn replies(keyed: Keyed) -> Vec<Replied> {
     match keyed {
-        Keyed::Submit(Command::Answer {
+        Keyed::Submit(Submission {
             era: asked,
             id,
             replies,

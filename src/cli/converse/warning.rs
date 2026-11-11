@@ -89,7 +89,8 @@ pub(super) const CRAMPED_CHOICE: &str =
 pub(super) const CRAMPED_ROOM: &str =
     "! this route needs an answer first; make the window taller and try again";
 
-/// Said once room was going to be made and nothing was sent.
+/// Said once room was going to be made, or the dock's answers were going to
+/// be sent, and nothing was sent.
 pub(super) const UNSENT: &str = "nothing was sent";
 
 /// Said once the message is back in the box.
@@ -272,9 +273,10 @@ pub(super) fn unanswered(warned: &Warned) -> Box<str> {
 /// The warned route `work` would go on with no yes: the one a send to the
 /// conversation's provider is held by, or on an installed agent's route, the
 /// agent's own where the turn would start it. Room is not made on an agent's
-/// route, so nothing is started for it; an answer there is refused before it
-/// is sent, and is asked about as a turn would be all the same. Both are read from the yes the
-/// question writes to, so a route answered here is not asked again.
+/// route, so nothing is started for it. The dock's answers that reach this
+/// are asked about as a turn would be; ones with nothing left to settle were
+/// refused before it. Both are read from the yes the question writes to, so a
+/// route answered here is not asked again.
 fn unsent(conversation: &Conversation, terms: &Terms, work: &Work) -> Option<Warned> {
     match conversation.serving() {
         Some(provider) => terms
