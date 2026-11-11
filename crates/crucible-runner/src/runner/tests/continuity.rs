@@ -281,6 +281,102 @@ fn a_resumed_session_restates_the_task_its_log_recorded() {
 }
 
 #[test]
+fn a_session_picked_up_never_restates_the_words_of_the_session_left() {
+    let mut scripted = compacting(
+        vec![
+            saying("first"),
+            saying("second"),
+            saying("third"),
+            recap("kept context"),
+            saying("fourth"),
+        ],
+        Tools::new(),
+    );
+    scripted
+        .turn("rewrite the session left behind")
+        .expect("a turn in the session left");
+
+    scripted
+        .runner
+        .pick_up(Recording::started("a new session"), Transcript::new());
+    scripted.turn("make the parser streaming").expect("a turn");
+    scripted.turn("and add a benchmark").expect("a second turn");
+    compacted(&mut scripted);
+    scripted.turn("go on").expect("the turn after compaction");
+
+    let told = restated(&scripted.sent).expect("the person's words were restated");
+    in_order(
+        &told,
+        &["make the parser streaming", "and add a benchmark", "go on"],
+    );
+    assert!(
+        !told.contains("rewrite the session left behind"),
+        "the session left's words were restated in the one picked up: {told:?}"
+    );
+}
+
+#[test]
+fn an_answer_delivered_just_before_the_log_ends_is_restated_after_a_resume() {
+    let held = Deferred::default();
+    let id = held
+        .register(vec![Question::new(
+            "Storage",
+            "Which database should the cache use?",
+            [Answer::new("SQLite"), Answer::new("Postgres")],
+        )])
+        .expect("a batch fits");
+    held.settle(id, vec![Reply::Answered(Answered::new(["SQLite"]))])
+        .expect("the reply fits");
+    let store = Recording::started("a session that ends after an answer");
+    let first = Scripted::recording(
+        Script::new(vec![saying("first")]),
+        Tools::new(),
+        Verdict::Allow,
+        Arc::clone(&store),
+    );
+    let mut first = Scripted {
+        runner: first.runner.deferring(held),
+        ..first
+    };
+    // The answer is delivered at the turn's only assembly, so nothing after
+    // it records the task again before the log ends.
+    first
+        .turn("add a cache")
+        .expect("a turn that delivers the answer");
+    let answer = first
+        .runner
+        .transcript()
+        .messages()
+        .iter()
+        .find_map(|message| match message {
+            Message::User { text, .. } if text.contains("SQLite") => Some(text.to_string()),
+            _ => None,
+        })
+        .expect("the answer was delivered");
+    drop(first);
+
+    let (picked, replayed) = store.reopened();
+    let mut later = compacting(
+        vec![saying("continued"), recap("kept context"), saying("after")],
+        Tools::new(),
+    );
+    later.runner.pick_up(picked, replayed);
+    later.turn("go on").expect("the turn after the pick-up");
+    compacted(&mut later);
+    later.turn("finish").expect("the turn after compaction");
+
+    let told = restated(&later.sent).expect("the person's words were restated");
+    let mut said = vec!["add a cache"];
+    said.extend(answer.lines());
+    said.extend(["go on", "finish"]);
+    in_order(&told, &said);
+    assert!(
+        told.contains("only the reply is theirs"),
+        "the answer came back without saying whose words it quotes: {told:?}"
+    );
+}
+
+#[test]
 fn an_aside_is_not_an_amendment() {
     let mut scripted = compacting(
         vec![

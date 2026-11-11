@@ -509,7 +509,9 @@ impl Runner {
     ///
     /// Questions asked without waiting belong to a session too: the registry
     /// is emptied, and the session picked up brings back the ones it left
-    /// waiting.
+    /// waiting. So does the person's task: what was said in the session left
+    /// is never restated in the one picked up, which reads its own from its
+    /// log.
     pub fn pick_up(&mut self, store: Arc<dyn JournalStore>, transcript: Transcript) {
         self.permission.forget();
         self.state.forget_checked();

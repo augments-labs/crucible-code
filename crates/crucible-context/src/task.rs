@@ -10,6 +10,14 @@
 //! session cannot tell what the model was told, it restates them whole and
 //! verbatim, in the order they were said, as the person's.
 //!
+//! An answer is delivered in words that quote the model's question and the
+//! answers it offered beside the person's reply, so it is kept as an answer,
+//! never as the request, and its restatement says that only the reply is the
+//! person's. A restatement never claims more than it holds: a request that was
+//! not kept is said to be missing, and a later instruction left out, by the
+//! bound or because a recorded entry could not be read, is counted as not
+//! shown.
+//!
 //! The section's recorded state is the task itself, so a session picked up
 //! from its log has the person's words back without the messages that said
 //! them.
@@ -40,6 +48,10 @@ pub const MOST_AMENDMENTS: usize = 16;
 const STANDING: &str = "The person's request in this conversation, and every instruction \
 they give after it, stands until they withdraw it.";
 
+/// Said before an answer: the words it quotes are not all the person's.
+const ANSWER: &str = "Their answer to a question the model asked; the question and the \
+answers it offered are the model's words, and only the reply is theirs:";
+
 /// The person's request and every later instruction, as they said them.
 ///
 /// Its `Debug` is redacted: these are the person's words, and a log line or a
@@ -47,8 +59,47 @@ they give after it, stands until they withdraw it.";
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct Task {
     request: Option<Kept>,
-    amendments: VecDeque<Kept>,
+    amendments: VecDeque<Amendment>,
     dropped: u64,
+}
+
+/// What the person said after the request, and how they said it.
+#[derive(Clone, PartialEq, Eq)]
+struct Amendment {
+    words: Kept,
+    origin: Origin,
+}
+
+/// How a later instruction reached the conversation.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Origin {
+    /// Typed by the person, as a prompt or a line steered into a turn.
+    Instruction,
+    /// An answer to a question the model asked: its words quote the
+    /// model's question beside the person's reply.
+    Answer,
+}
+
+impl Amendment {
+    fn state(&self) -> Value {
+        let mut state = self.words.state();
+        if self.origin == Origin::Answer
+            && let Value::Object(fields) = &mut state
+        {
+            fields.insert("answer".into(), Value::Bool(true));
+        }
+        state
+    }
+
+    fn restored(state: &Value) -> Option<Self> {
+        let words = Kept::restored(state, AMENDMENT_BYTES)?;
+        let origin = if state.get("answer").and_then(Value::as_bool) == Some(true) {
+            Origin::Answer
+        } else {
+            Origin::Instruction
+        };
+        Some(Self { words, origin })
+    }
 }
 
 impl fmt::Debug for Task {
@@ -100,18 +151,33 @@ impl Kept {
 }
 
 impl Task {
-    /// Adds what the person said: the request when nothing is kept yet,
+    /// Adds what the person typed: the request when nothing is kept yet,
     /// otherwise a later instruction. Empty words add nothing.
     pub fn said(&mut self, text: &str) {
         if text.is_empty() {
             return;
         }
-        if self.request.is_none() {
+        if self.is_empty() {
             self.request = Some(Kept::within(text, REQUEST_BYTES));
             return;
         }
-        self.amendments
-            .push_back(Kept::within(text, AMENDMENT_BYTES));
+        self.amend(text, Origin::Instruction);
+    }
+
+    /// Adds the words an answer to a question the model asked was delivered
+    /// in. They quote the model's question, so they are never the request,
+    /// and the restatement says which part is the person's.
+    pub fn answered(&mut self, text: &str) {
+        if !text.is_empty() {
+            self.amend(text, Origin::Answer);
+        }
+    }
+
+    fn amend(&mut self, text: &str, origin: Origin) {
+        self.amendments.push_back(Amendment {
+            words: Kept::within(text, AMENDMENT_BYTES),
+            origin,
+        });
         while self.amendments.len() > MOST_AMENDMENTS {
             self.amendments.pop_front();
             self.dropped = self.dropped.saturating_add(1);
@@ -121,39 +187,38 @@ impl Task {
     /// Whether the person has said anything yet.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.request.is_none()
+        self.request.is_none() && self.amendments.is_empty() && self.dropped == 0
     }
 
     /// The task a recorded state holds, with every bound applied again.
     ///
     /// Lenient: a member it cannot read is left out rather than failing the
     /// pass, because the task is a reminder of what was said and the
-    /// transcript, not this state, is the record of it.
+    /// transcript, not this state, is the record of it. A later instruction
+    /// left out is counted with those not shown, so the restatement never
+    /// claims to be whole when it is not.
     #[must_use]
     pub fn restored(state: &Value) -> Self {
         let mut task = Self {
             request: state
                 .get("request")
-                .and_then(|request| Kept::restored(request, REQUEST_BYTES)),
+                .and_then(|request| Kept::restored(request, REQUEST_BYTES))
+                .filter(|request| !request.text.is_empty()),
             ..Self::default()
         };
-        let recorded: Vec<Kept> = state
+        let entries = state
             .get("amendments")
             .and_then(Value::as_array)
-            .map(|amendments| {
-                amendments
-                    .iter()
-                    .filter_map(|amendment| Kept::restored(amendment, AMENDMENT_BYTES))
-                    .collect()
-            })
-            .unwrap_or_default();
+            .map_or(&[][..], Vec::as_slice);
+        let recorded: Vec<Amendment> = entries.iter().filter_map(Amendment::restored).collect();
+        let unread = entries.len() - recorded.len();
         let over = recorded.len().saturating_sub(MOST_AMENDMENTS);
         task.amendments = recorded.into_iter().skip(over).collect();
         task.dropped = state
             .get("dropped")
             .and_then(Value::as_u64)
             .unwrap_or(0)
-            .saturating_add(u64::try_from(over).unwrap_or(u64::MAX));
+            .saturating_add(u64::try_from(over + unread).unwrap_or(u64::MAX));
         task
     }
 
@@ -165,7 +230,7 @@ impl Task {
         }
         state.insert(
             "amendments".into(),
-            Value::Array(self.amendments.iter().map(Kept::state).collect()),
+            Value::Array(self.amendments.iter().map(Amendment::state).collect()),
         );
         state.insert("dropped".into(), json!(self.dropped));
         Value::Object(state)
@@ -175,11 +240,13 @@ impl Task {
     /// has the messages that said them.
     fn restatement(&self) -> String {
         let mut text = String::from(
-            "The person's own words in this conversation follow, verbatim and oldest \
-first. Each still stands until the person withdraws it.\n\nTheir request:\n",
+            "The person's words in this conversation follow, verbatim and oldest first; \
+an answer says which of its words are the model's. Each still stands until the person \
+withdraws it.\n\nTheir request:\n",
         );
-        if let Some(request) = &self.request {
-            quote(&mut text, request, REQUEST_BYTES);
+        match &self.request {
+            Some(request) => quote(&mut text, request, REQUEST_BYTES),
+            None => text.push_str("(Their request was not kept.)\n"),
         }
         if self.dropped > 0 || !self.amendments.is_empty() {
             text.push_str("\nWhat they said after it, oldest first:\n");
@@ -194,7 +261,11 @@ first. Each still stands until the person withdraws it.\n\nTheir request:\n",
         }
         for amendment in &self.amendments {
             text.push('\n');
-            quote(&mut text, amendment, AMENDMENT_BYTES);
+            if amendment.origin == Origin::Answer {
+                text.push_str(ANSWER);
+                text.push('\n');
+            }
+            quote(&mut text, &amendment.words, AMENDMENT_BYTES);
         }
         text
     }
@@ -257,7 +328,7 @@ impl ContextSection for TaskSection<'_> {
         let text = match prior {
             // The model holds the standing sentence or a restatement, and
             // the messages since; a new instruction is one of those messages.
-            Seen::Known(told) if told.get("request").is_some() => return None,
+            Seen::Known(told) if !Task::restored(told).is_empty() => return None,
             Seen::Known(_) | Seen::Fresh => STANDING.to_owned(),
             Seen::Stale => task.restatement(),
             Seen::Unknown => format!(
@@ -418,6 +489,86 @@ mod tests {
 
         assert!(told.text().starts_with("This task context supersedes"));
         assert!(told.text().contains("> the request\n"));
+    }
+
+    #[test]
+    fn an_answer_says_the_question_is_the_models_and_only_the_reply_is_the_persons() {
+        let mut task = Task::default();
+        task.said("add a cache");
+        task.answered("The person answered question batch q1:\n- Storage: SQLite\n");
+        task.said("go on");
+
+        let told = restated(&task);
+
+        let marked = "the question and the answers it offered are the model's words";
+        assert_eq!(told.matches(marked).count(), 1, "{told:?}");
+        let request = told.find("> add a cache").expect("the request");
+        let answer = told.find(marked).expect("the answer is marked");
+        let reply = told.find("> - Storage: SQLite").expect("the reply");
+        let next = told.find("> go on").expect("the next instruction");
+        assert!(
+            request < answer && answer < reply && reply < next,
+            "{told:?}"
+        );
+        let recorded = TaskSection::new(Some(&task), None).snapshot();
+        assert_eq!(Task::restored(&recorded), task);
+    }
+
+    #[test]
+    fn later_words_with_no_request_kept_are_told_and_say_the_request_was_not() {
+        let mut task = Task::restored(&serde_json::json!({ "amendments": [{ "text": "b" }] }));
+        task.said("c");
+
+        let told = restated(&task);
+
+        assert!(told.contains("(Their request was not kept.)"), "{told:?}");
+        let earlier = told.find("> b").expect("the recorded instruction");
+        let later = told.find("> c").expect("the instruction after it");
+        assert!(earlier < later, "{told:?}");
+    }
+
+    #[test]
+    fn an_entry_the_record_cannot_read_is_counted_as_not_shown() {
+        let recorded = serde_json::json!({
+            "request": { "text": "the request" },
+            "amendments": [{ "text": "kept" }, { "txt": 1 }, 7],
+            "dropped": 0,
+        });
+
+        let told = restated(&Task::restored(&recorded));
+
+        assert!(
+            told.contains("(2 earlier instructions are not shown.)"),
+            "{told:?}"
+        );
+        assert!(told.contains("> kept\n"));
+    }
+
+    #[test]
+    fn an_empty_recorded_request_is_no_request() {
+        let mut task = Task::restored(&serde_json::json!({ "request": { "text": "" } }));
+        assert!(task.is_empty());
+
+        task.said("the real request");
+
+        assert!(
+            restated(&task).contains("Their request:\n> the real request\n"),
+            "{:?}",
+            restated(&task)
+        );
+    }
+
+    #[test]
+    fn empty_words_add_nothing_and_a_request_at_its_bound_is_kept_whole() {
+        let mut task = Task::default();
+        task.said("");
+        assert!(task.is_empty());
+
+        task.said(&"a".repeat(REQUEST_BYTES));
+
+        let told = restated(&task);
+        assert!(told.contains(&format!("> {}\n", "a".repeat(REQUEST_BYTES))));
+        assert!(!told.contains("Incomplete"), "{told:?}");
     }
 
     #[test]

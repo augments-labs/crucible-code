@@ -22,8 +22,13 @@
 //! the id brings the batch back and never hands the id out again.
 //!
 //! The person's task is the root run's as well. Each answer delivered amends
-//! it, and the patch recorded after the answers carries the task with them, so
-//! a log that holds the patch holds the answers it names.
+//! it, as an answer, and the patch recorded after the answers carries the task
+//! with them, so a log that holds the patch holds the answers it names. The
+//! other direction does not hold: words reach the log before the task that
+//! keeps them, which is recorded with the next assembly's state. A log that
+//! ends between the two holds the words in the transcript but not in the task,
+//! and a session picked up from it restates the task without them once a
+//! compaction has taken them.
 
 use crucible_context::{
     ContextSection, Live, Questions, QuestionsSection, Task, TaskSection, asked, assemble,
@@ -121,7 +126,8 @@ impl Runner {
         if let Some(held) = &held {
             for answer in held.take_settled() {
                 let said = answer.said();
-                self.amend(ancestry, &said);
+                // Only the root run holds questions, so this is its task.
+                self.task().answered(&said);
                 self.record(ancestry, Message::said(said)).await?;
                 delivered += 1;
             }
