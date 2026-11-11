@@ -1876,3 +1876,25 @@ fn ctrl_o_lists_the_whole_of_every_address_drawn_shorter_after_the_blocks() {
         "{rows:#?}"
     );
 }
+
+#[test]
+fn ctrl_o_opens_for_an_address_drawn_shorter_with_nothing_else_to_stand() {
+    let mut render = Renderer::new(Recording::new(100, 24));
+    render.wears(Style::coloured().palette());
+    render
+        .stream("see [the guide](https://example.com/docs/guide/intro) now\n")
+        .expect("a recording cannot fail");
+    render.settle().expect("a recording cannot fail");
+
+    let sources: Vec<Source<'_>> = render.sources().collect();
+    let kept = Kept::default();
+    let mut standing = Standing::default();
+    standing.open(&kept, render.sourced());
+    let rows = frame_of(&kept, &sources, &mut standing, 40);
+
+    assert!(
+        rows.iter()
+            .any(|row| row == "https://example.com/docs/guide/intro"),
+        "{rows:#?}"
+    );
+}

@@ -262,12 +262,13 @@ impl Standing {
         true
     }
 
-    /// Opens the view over everything cut so far, and the blocks drawn up to
-    /// the line `blocks` is one past.
+    /// Opens the view over everything cut so far, and the blocks and
+    /// shortened addresses drawn up to the line `blocks` is one past.
     ///
-    /// Nothing opens where nothing was cut and nothing was drawn as a block.
-    /// The key is offered by the rows that were cut, and by the blocks whose
-    /// sources are in the view, so a session with none of them has made no
+    /// Nothing opens where nothing was cut and nothing was drawn as a block
+    /// or shorter than its address. The key is offered by the rows that were
+    /// cut, and by the blocks and addresses whose sources are in the view, so
+    /// a session with none of them has made no
     /// offer, and a frame put up in answer to a press nobody meant is one that
     /// took the prompt away for no reason.
     pub(super) fn open(&mut self, kept: &Kept, blocks: usize) {
