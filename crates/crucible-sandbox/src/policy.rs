@@ -415,7 +415,8 @@ fn component_matches(pattern: &[u8], candidate: &[u8]) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SandboxNetworkPolicy {
     /// No host network namespace, inherited socket, loopback, Unix socket, DNS,
-    /// metadata address, or forwarding authority.
+    /// metadata address, or forwarding authority. Listening on a loopback of
+    /// the process's own is refused unless [`SandboxPrivateLoopback`] grants it.
     Closed,
     /// Domain mediation with overriding denies and explicit local connections.
     Domains(SandboxDomainPolicy),
@@ -428,6 +429,33 @@ impl SandboxNetworkPolicy {
             (Self::Domains(child), Self::Domains(parent)) => child.is_no_wider_than(parent),
             (Self::Domains(child), Self::Closed) => child.is_closed(),
         }
+    }
+}
+
+/// Whether a confined process under a closed network may listen on a loopback
+/// of its own.
+///
+/// Its own means a network namespace nothing else is in, so what listens there
+/// is reached only from inside it. A backend that shares the host's loopback
+/// cannot give one and does not apply this; a [`SandboxNetworkPolicy::Domains`]
+/// policy says what it may bind itself and does not read it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SandboxPrivateLoopback {
+    /// Binding and listening are refused, as closed networking has always
+    /// refused them.
+    #[default]
+    Refused,
+    /// Binding and listening are allowed inside the process's own network
+    /// namespace; nothing outside it becomes reachable.
+    Granted,
+}
+
+impl SandboxPrivateLoopback {
+    const fn is_no_wider_than(self, parent: Self) -> bool {
+        matches!(
+            (self, parent),
+            (Self::Refused, _) | (Self::Granted, Self::Granted)
+        )
     }
 }
 
@@ -491,6 +519,7 @@ pub struct SandboxPolicy {
     unreadable_patterns: Box<[SandboxUnreadablePattern]>,
     working_directory: PathBuf,
     network: SandboxNetworkPolicy,
+    private_loopback: SandboxPrivateLoopback,
     limits: SandboxResourceLimits,
     commands: SandboxCommandPolicy,
     persistent: bool,
@@ -587,6 +616,7 @@ impl SandboxPolicy {
             unreadable_patterns: Box::new([]),
             working_directory,
             network,
+            private_loopback: SandboxPrivateLoopback::Refused,
             limits,
             commands: SandboxCommandPolicy::allow_all(),
             persistent: false,
@@ -599,7 +629,8 @@ impl SandboxPolicy {
     /// # Errors
     ///
     /// Disabled required confinement, a wider filesystem grant or network policy,
-    /// relaxed resource ceiling, or new persistence authority is rejected.
+    /// a private loopback the parent lacks, relaxed resource ceiling, or new
+    /// persistence authority is rejected.
     pub fn restrict(parent: &Self, mut candidate: Self) -> Result<Self, SandboxPolicyError> {
         if parent.enabled && !candidate.enabled {
             return Err(SandboxPolicyError::ConfinementDisabled);
@@ -617,7 +648,11 @@ impl SandboxPolicy {
         {
             return Err(SandboxPolicyError::FilesystemWidening);
         }
-        if !candidate.network.is_no_wider_than(&parent.network) {
+        if !candidate.network.is_no_wider_than(&parent.network)
+            || !candidate
+                .private_loopback
+                .is_no_wider_than(parent.private_loopback)
+        {
             return Err(SandboxPolicyError::NetworkWidening);
         }
         if !is_no_wider_than(candidate.limits, parent.limits) {
@@ -749,6 +784,22 @@ impl SandboxPolicy {
         self
     }
 
+    /// Returns a copy that grants or refuses listening on a loopback of the
+    /// process's own under a closed network. Descendants still pass through
+    /// [`Self::restrict`], which refuses one gaining it from a parent without
+    /// it.
+    #[must_use]
+    pub const fn with_private_loopback(mut self, loopback: SandboxPrivateLoopback) -> Self {
+        self.private_loopback = loopback;
+        self
+    }
+
+    /// Whether a closed network lets the process listen on its own loopback.
+    #[must_use]
+    pub const fn private_loopback(&self) -> SandboxPrivateLoopback {
+        self.private_loopback
+    }
+
     /// Whether commands require verified operating-system confinement.
     #[must_use]
     pub const fn enabled(&self) -> bool {
@@ -846,6 +897,12 @@ impl SandboxPolicy {
             SandboxNetworkPolicy::Closed => digest.update(b"\0closed"),
             SandboxNetworkPolicy::Domains(policy) => policy.update_digest(&mut digest),
         }
+        // Refused adds nothing, so every policy without it keeps the identity
+        // it was stored under.
+        match self.private_loopback {
+            SandboxPrivateLoopback::Refused => {}
+            SandboxPrivateLoopback::Granted => digest.update(b"\0private-loopback"),
+        }
         update_limits(&mut digest, self.limits);
         digest.update(self.commands.digest());
         digest.update([u8::from(self.persistent), u8::from(self.snapshots)]);
@@ -861,6 +918,7 @@ impl std::fmt::Debug for SandboxPolicy {
             .field("unreadable_patterns", &self.unreadable_patterns.len())
             .field("working_directory", &"[absolute path]")
             .field("network", &self.network)
+            .field("private_loopback", &self.private_loopback)
             .field("limits", &self.limits)
             .field("commands", &self.commands)
             .field("persistent", &self.persistent)
@@ -1466,6 +1524,78 @@ mod tests {
         assert_eq!(
             SandboxPolicy::restrict(&no_state, added),
             Err(SandboxPolicyError::SessionWidening)
+        );
+    }
+
+    #[test]
+    fn private_loopback_is_refused_by_default_and_in_the_digest() {
+        let rules = vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)];
+        let refused = policy(true, rules);
+        let workspace =
+            Workspace::open(env!("CARGO_MANIFEST_DIR")).expect("this crate's own directory");
+        let standard = SandboxPolicy::standard(&workspace).expect("the standard policy");
+        // `new` and `standard` refuse it: every caller that does not ask, the
+        // smoke test's policy among them, is closed as it always was.
+        assert_eq!(refused.private_loopback(), SandboxPrivateLoopback::Refused);
+        assert_eq!(standard.private_loopback(), SandboxPrivateLoopback::Refused);
+        assert_eq!(
+            SandboxPrivateLoopback::default(),
+            SandboxPrivateLoopback::Refused
+        );
+
+        // Refused adds nothing to the identity: the fixed vector of an enabled
+        // policy without it is the one every stored digest was taken with.
+        let enabled = "0c087a9983c6d5baeb62fa6791ded47fe999f8ef105d47a7d09a920091076f36";
+        let hex =
+            |policy: &SandboxPolicy| policy.digest().map(|byte| format!("{byte:02x}")).concat();
+        assert_eq!(hex(&refused), enabled);
+        let asked_refused = refused
+            .clone()
+            .with_private_loopback(SandboxPrivateLoopback::Refused);
+        assert_eq!(asked_refused, refused);
+        assert_eq!(hex(&asked_refused), enabled);
+
+        let granted = refused
+            .clone()
+            .with_private_loopback(SandboxPrivateLoopback::Granted);
+        assert_eq!(granted.private_loopback(), SandboxPrivateLoopback::Granted);
+        assert_ne!(granted, refused);
+        assert_ne!(granted.digest(), refused.digest());
+        assert!(
+            format!("{granted:?}").contains("private_loopback: Granted"),
+            "{granted:?}"
+        );
+        assert!(
+            format!("{refused:?}").contains("private_loopback: Refused"),
+            "{refused:?}"
+        );
+    }
+
+    #[test]
+    fn a_child_cannot_gain_private_loopback_from_a_parent_without_it() {
+        let rules = vec![rule("/workspace", SandboxFilesystemAccess::ReadWrite)];
+        let without = policy(true, rules.clone());
+        let with = policy(true, rules).with_private_loopback(SandboxPrivateLoopback::Granted);
+
+        assert!(!SandboxPrivateLoopback::Granted.is_no_wider_than(SandboxPrivateLoopback::Refused));
+        assert!(SandboxPrivateLoopback::Refused.is_no_wider_than(SandboxPrivateLoopback::Granted));
+        assert_eq!(
+            SandboxPolicy::restrict(&without, with.clone()),
+            Err(SandboxPolicyError::NetworkWidening)
+        );
+        // A parent holding it may pass it on or drop it.
+        assert_eq!(
+            SandboxPolicy::restrict(&with, with.clone()).map(|child| child.private_loopback()),
+            Ok(SandboxPrivateLoopback::Granted)
+        );
+        assert_eq!(
+            SandboxPolicy::restrict(&with, without.clone()).map(|child| child.private_loopback()),
+            Ok(SandboxPrivateLoopback::Refused)
+        );
+        assert_eq!(
+            SandboxPolicy::restrict(&without, without.clone())
+                .map(|child| child.private_loopback()),
+            Ok(SandboxPrivateLoopback::Refused)
         );
     }
 
