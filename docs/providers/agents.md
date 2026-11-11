@@ -172,7 +172,11 @@ capabilities; it then keeps the name and version it gave, or `did not say`.
 That proves it speaks ACP, not that it is the program the entry describes. A
 change to the instance's driver, its `agent:` key or the arguments and
 environment its entry gives makes the record stale, and it is refused until it
-is tried again. It signs in by the methods its probe answered, and crucible
+is tried again. A program that changed since its probe, its path leading
+elsewhere or its size or modification time different, is probed again before
+it starts; refused there, it is not started and its record is removed. Every
+start is admitted as the probe was, and an answer that differs from the record
+replaces it. It signs in by the methods its probe answered, and crucible
 runs no sign-in command for it.
 
 `/logout` lists each agent named under `externalAgents` after the stored

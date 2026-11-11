@@ -547,6 +547,25 @@ the sandbox already lets every program read, such as `/usr/bin`, gets no rule
 of its own, and any other is given read-only, never writable. The probe runs
 in an empty directory of its own, which is removed after.
 
+A program changed since its probe, whose path leads elsewhere or whose size or
+modification time differs, is probed again in the same way before it is
+started, and a refusal there is the launch's: the program is not started and
+its old record is removed. Every start's answer to `initialize` is held to
+protocol version 1 and its capabilities as the probe's was, and an answer that
+differs from the record replaces it. On Linux the probe and every launch under
+the sandbox run with the sandbox's private home as `HOME`; on macOS and Windows
+the sandbox gives them none.
+
+Google's own `agy` or `antigravity`, run under the sandbox with no
+`profileDir`, cannot read the sign-in it keeps in `~/.gemini`, so it starts
+signed out. `/login` offers it no Google account or key, and a turn that fails
+for want of a sign-in names two ways instead of `/login`. On Linux a sign-in
+made under the sandbox would live on its private home and be gone when that
+start ends. Turning the sandbox off lets it read `~/.gemini`, and removes
+confinement from every command and agent in the conversation, not only from
+Antigravity; it is not offered where a project requires the sandbox. The store
+release keeps its sign-in in a profile directory of its own and needs neither.
+
 ## Environment and credentials
 
 The command environment is an explicit, bounded map rather than a copy of the
