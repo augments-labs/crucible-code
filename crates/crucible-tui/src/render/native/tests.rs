@@ -3511,3 +3511,38 @@ fn a_native_closing_details_tag_after_a_bare_table_is_no_row_of_it_whole_or_cut(
         }
     }
 }
+
+#[test]
+fn native_a_line_written_over_the_box_past_the_rows_the_window_draws_leaves_the_cursor_in_the_box()
+{
+    // The turn's row and four over the box, on a window with room for three
+    // over it: the note being written is not drawn, so the cursor stays in
+    // the box.
+    let window = Window::new(40, 6);
+    let mut render = native(&window);
+    let (rows, caret) = boxed();
+    let prompt = PromptRows::new(&rows, caret, None)
+        .unwrap()
+        .writing_over(Some(Caret { row: 3, column: 8 }));
+    let over = [
+        row("Which?"),
+        row("  1. this"),
+        row("  2. that"),
+        row("Note: hi"),
+    ];
+    render
+        .replace_running(prompt, &[row("* thinking")], &over, Palette::plain())
+        .unwrap();
+
+    let screen = window.screen();
+    assert!(
+        !screen.iter().any(|shown| shown == "Note: hi"),
+        "the note is drawn: {screen:#?}"
+    );
+    let (at, column) = window.caret();
+    assert_eq!(
+        (screen.get(at).map(String::as_str), column),
+        (Some("| > typed"), 4),
+        "{screen:#?}"
+    );
+}

@@ -38,3 +38,26 @@ fn a_caret_off_the_rows_over_the_box_leaves_the_cursor_in_the_box() {
         assert_eq!(drawn.screen().caret(), (8, 4), "{off:?}");
     }
 }
+
+#[test]
+fn a_line_written_over_the_box_past_the_rows_the_window_draws_leaves_the_cursor_in_the_box() {
+    // The turn's row and four over the box, on a window with room for three
+    // over it: the note being written is not drawn, so the keys have nowhere
+    // on the screen to stand but the box.
+    let mut drawn = Drawn::new(40, 6);
+    let over = vec![
+        Row::plain("Which?"),
+        Row::plain("  1. this"),
+        Row::plain("  2. that"),
+        Row::plain("Note: hi"),
+    ];
+    writing_over(&mut drawn, &over, Caret { row: 3, column: 8 });
+
+    let screen = drawn.screen();
+    assert!(
+        (0..6).all(|row| screen.row(row) != "Note: hi"),
+        "the note is drawn: {screen:?}"
+    );
+    let (row, column) = screen.caret();
+    assert_eq!((screen.row(row), column), ("│ ›  │", 4), "{screen:?}");
+}

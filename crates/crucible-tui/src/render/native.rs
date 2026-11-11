@@ -586,9 +586,15 @@ impl<T: Terminal> Renderer<T> {
             if rows > 0 {
                 let (row, at) = self
                     .standing
-                    .prompted
-                    .filter(|_| prompted > 0)
-                    .map(|caret| (pad + shown + turned + caret.row, caret.column))
+                    .written
+                    .filter(|caret| caret.row < turned)
+                    .map(|caret| (pad + shown + caret.row, caret.column))
+                    .or_else(|| {
+                        self.standing
+                            .prompted
+                            .filter(|_| prompted > 0)
+                            .map(|caret| (pad + shown + turned + caret.row, caret.column))
+                    })
                     .or_else(|| {
                         self.standing
                             .turned

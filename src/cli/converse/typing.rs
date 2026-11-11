@@ -2065,7 +2065,8 @@ pub(super) struct During<'a> {
     pub(super) docking: &'a mut Docking,
 }
 
-/// Puts the box under the turn, with the cursor in it.
+/// Puts the box under the turn, with the cursor in it, or in the line of
+/// the dock being written.
 ///
 /// The renderer receives the box and footing together so their replacement is
 /// one frame.
