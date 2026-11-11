@@ -9,9 +9,10 @@
 //!   `abcdef1` in the checkout's own repository and `owner/repo#1324` or
 //!   `owner/repo@abcdef1` anywhere else; a merge request is `!1324`.
 //! - Words that are not their address are followed by a space and the quiet
-//!   address: the address without its scheme, or `mailto:`, and once that is
-//!   past [`QUIET`] columns, its host and first segment and an ellipsis.
-//!   Nothing standing before the ellipsis is wider than [`QUIET`].
+//!   address: the address without its scheme, or `mailto:`, cut to its host
+//!   and first segment and an ellipsis where anything follows them, and one
+//!   with no host cut once it is past [`QUIET`] columns. Nothing standing
+//!   before the ellipsis is wider than [`QUIET`].
 //! - An address drawn as its own words has nothing after it.
 //! - An image, `![alt](target)`, is the words `[image: alt]`, or `[image]`
 //!   with no alt, followed by its quiet address; nothing is fetched. Only the
@@ -315,17 +316,22 @@ fn own(words: &str, target: &str) -> bool {
 
 /// The quiet address of `target`, and whether it was cut short.
 ///
-/// Without its scheme, and whole where that is [`QUIET`] columns or fewer.
-/// Longer, an address with a host keeps the host and its first segment, then
-/// the ellipsis where more follows; one without, a path or an e-mail address,
-/// keeps what fits. Either is cut at [`QUIET`] columns where it is still too
-/// wide, a wide character that would straddle the bound left out.
+/// Without its scheme. An address with a host, a `www.` one among them, keeps
+/// the host and its first segment, and the ellipsis where anything follows
+/// them: after a segment, behind the `/` that would have come next, and
+/// straight after a host that a query or an anchor follows, which put no `/`
+/// there. It is whole only where nothing follows. One with no host, a path or
+/// an e-mail address, is whole where it is [`QUIET`] columns or fewer and
+/// keeps what fits otherwise. Either is cut at [`QUIET`] columns where what is
+/// kept is still too wide, a wide character that would straddle the bound
+/// left out.
 fn quiet(target: &str, glyphs: Glyphs) -> (String, bool) {
-    let hosted = target.split_once("://").map(|(_, rest)| rest);
-    let written = hosted.unwrap_or_else(|| target.strip_prefix(MAILTO).unwrap_or(target));
-    if width::columns(written) <= QUIET {
-        return (written.to_owned(), false);
-    }
+    let hosted = target.split_once("://").map(|(_, rest)| rest).or_else(|| {
+        target
+            .strip_prefix(WWW)
+            .is_some_and(|host| host.starts_with(|character: char| character.is_ascii_alphanumeric()))
+            .then_some(target)
+    });
 
     let (mut kept, more) = match hosted {
         Some(rest) => {
@@ -341,18 +347,22 @@ fn quiet(target: &str, glyphs: Glyphs) -> (String, bool) {
                         .saturating_add(usize::from(path.starts_with('/')))..,
                 )
                 .unwrap_or_default();
-            let more = !after.is_empty() && after != "/";
-            let mut kept = host.to_owned();
-            if !segment.is_empty() {
-                kept.push('/');
-                kept.push_str(segment);
+            if after.is_empty() || after == "/" {
+                (rest.to_owned(), false)
+            } else {
+                let mut kept = host.to_owned();
+                if path.starts_with('/') {
+                    kept.push('/');
+                    kept.push_str(segment);
+                    kept.push('/');
+                }
+                (kept, true)
             }
-            if more {
-                kept.push('/');
-            }
-            (kept, more)
         }
-        None => (written.to_owned(), true),
+        None => {
+            let written = target.strip_prefix(MAILTO).unwrap_or(target);
+            (written.to_owned(), width::columns(written) > QUIET)
+        }
     };
 
     if width::columns(&kept) <= QUIET {

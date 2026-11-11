@@ -164,7 +164,7 @@ fn a_link_whose_words_are_not_its_address_is_followed_by_its_quiet_address() {
         ),
         (
             "see [the search](https://example.com/find?q=1) now",
-            "see the search (example.com/find?q=1) now",
+            "see the search (example.com/find/…) now",
             ("the search", "https://example.com/find?q=1"),
         ),
         (
@@ -233,11 +233,12 @@ fn an_address_drawn_as_its_own_words_has_nothing_after_it() {
 
 #[test]
 fn a_quiet_address_stops_at_twenty_four_columns() {
-    // An address of twenty-four columns or fewer, once its scheme is gone, is
-    // shown whole. A longer one keeps its host and first segment, and what
-    // stands before the ellipsis is never wider than the bound: a host or
-    // segment past it is cut there, and a wide character that would straddle
-    // the bound is left out rather than cut in half.
+    // An address with a host keeps its host and first segment, and the
+    // ellipsis where anything follows them; it is shown whole only where
+    // nothing does. Whatever is kept, what stands before the ellipsis is never
+    // wider than the bound: a host or segment past it is cut there, and a wide
+    // character that would straddle the bound is left out rather than cut in
+    // half. One with no host keeps what fits.
     let host = |columns: usize| format!("{}.io", "h".repeat(columns - 3));
     let segment = |columns: usize| "s".repeat(columns);
     let cases = [
@@ -257,7 +258,7 @@ fn a_quiet_address_stops_at_twenty_four_columns() {
         ),
         (
             format!("https://x/{}/z", segment(20)),
-            format!(" (x/{}/z)", segment(20)),
+            format!(" (x/{}/…)", segment(20)),
         ),
         (
             format!("https://x/{}/z", segment(21)),
@@ -278,6 +279,40 @@ fn a_quiet_address_stops_at_twenty_four_columns() {
         (
             format!("https://{}漢/a", "h".repeat(23)),
             format!(" ({}…)", "h".repeat(23)),
+        ),
+        (
+            "https://example.com/docs/guide".to_owned(),
+            " (example.com/docs/…)".to_owned(),
+        ),
+        (
+            "https://example.com/docs/".to_owned(),
+            " (example.com/docs/)".to_owned(),
+        ),
+        (
+            "https://example.com/docs#top".to_owned(),
+            " (example.com/docs/…)".to_owned(),
+        ),
+        // Nothing the address never had is put in front of the ellipsis.
+        (
+            "https://example.com?q=1".to_owned(),
+            " (example.com…)".to_owned(),
+        ),
+        (
+            "https://example.com#top".to_owned(),
+            " (example.com…)".to_owned(),
+        ),
+        // A `www.` address has its host as a bare one does.
+        (
+            "www.example.com/a/b/c/d/e/f/g/h/i".to_owned(),
+            " (www.example.com/a/…)".to_owned(),
+        ),
+        (
+            "www.example.com/a".to_owned(),
+            " (www.example.com/a)".to_owned(),
+        ),
+        (
+            "www.example.com?q=1".to_owned(),
+            " (www.example.com…)".to_owned(),
         ),
         (
             "src/a/b/c/d/e/f/g/h/ij.rs".to_owned(),
@@ -443,6 +478,7 @@ fn every_address_drawn_shorter_than_written_is_told_whole_and_no_other() {
             format!("{here}/pull/1"),
             format!("{here}/issues/2"),
             "https://example.com/docs/guide/intro".to_owned(),
+            "https://example.com/docs/guide".to_owned(),
         ]
     );
 }

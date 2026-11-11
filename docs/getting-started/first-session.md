@@ -837,8 +837,8 @@ reference people call it by: `#1324` in the repository you are in, and
 `owner/repo#1324` anywhere else, still a link to the whole address.
 
 A link whose words are not its address is followed by its address in the quiet
-grey, without its scheme, and cut short with an ellipsis once it is wider than
-24 columns, keeping its host and first segment where they fit:
+grey, without its scheme, keeping its host and first segment and an ellipsis
+where more follows them, with at most 24 columns before the ellipsis:
 `the guide (example.com/docs/…)`. An image is drawn as `[image: its words]`
 followed by its address the same way, and nothing is fetched.
 <kbd>Ctrl+O</kbd> lists every address drawn shorter in full. See

@@ -266,11 +266,14 @@ named in full.
 A link whose words are not its address is followed by a space and its quiet
 address in brackets, in the quiet grey: `[the guide](https://example.com/docs)`
 is drawn `the guide (example.com/docs)`. The address loses its scheme, or
-`mailto:`, and one wider than 24 columns is cut short with an ellipsis, `…`,
-or `...` in the ASCII glyph set. An address with a host keeps its host and
-first segment, `the guide (example.com/docs/…)`, and a path or an e-mail
-address keeps what fits; nothing before the ellipsis is wider than 24 columns,
-and a wide character that would cross that bound is left out. Words
+`mailto:`. One with a host, a `www.` address among them, keeps its host and
+first segment, and where anything follows them, a further segment, a query or
+an anchor, it ends in an ellipsis, `…`, or `...` in the ASCII glyph set:
+`[the guide](https://example.com/docs/guide)` is drawn
+`the guide (example.com/docs/…)`, and a query straight after the host is drawn
+`(example.com…)`. A path or an e-mail address is cut once it is wider than 24
+columns and keeps what fits. Nothing before the ellipsis is wider than 24
+columns, and a wide character that would cross that bound is left out. Words
 that link to a pull request, an issue or a commit are followed by its
 reference instead, as in `the fix (#1324)`. The quiet address is not a link,
 and a drag in the full screen copies the words without it.
@@ -291,7 +294,7 @@ link and image in output with no colour, including output that is not a
 terminal, is written as the model wrote it.
 
 <kbd>Ctrl+O</kbd> lists the whole of every address drawn shorter than it was
-written, a reference or a quiet address cut at 24 columns, newest first, each
+written, a reference or a quiet address cut with an ellipsis, newest first, each
 under the word `address`, after the cut results and the drawn blocks. It
 keeps the newest 64; an older one is still in the
 [session log](sessions.md) as the answer wrote it. A bare number such as `#7`
