@@ -15,7 +15,7 @@ use crate::color::Theme;
 use crate::drawing::{Drawers, Draws, Room};
 use crate::escape::Escapes;
 use crate::glyphs::Glyphs;
-use crate::markdown::{Markdown, Said};
+use crate::markdown::{Markdown, Offers, Said};
 use crate::record::Record;
 use crate::row::Row;
 use crate::width;
@@ -60,7 +60,7 @@ fn kept(deltas: &[&str], drawers: &Drawers, room: Room) -> Record {
 
     let Room { columns, glyphs } = room;
     let mut record = Record::new(columns);
-    record.draws_with(drawers.clone());
+    record.draws_with(drawers.clone(), Offers::Stand);
     let mut markdown = Markdown::new(glyphs);
     let mut escapes = Escapes::default();
     let mut write = |said: Said<'_>| match said {

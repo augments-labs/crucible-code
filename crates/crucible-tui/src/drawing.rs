@@ -22,6 +22,10 @@
 //!   give the same rows.
 //! - Its input is hostile: a block is model output, and a path or a name in it
 //!   is drawn safe.
+//! - A row of its that offers a key says so in [`EXPAND`], and
+//!   [`Draws::unoffered`] takes every such offer out of rows it laid out and
+//!   leaves what else they say. The reader asks it to where no key is read,
+//!   so a row reads there as one whose offer was withdrawn on a screen does.
 
 use std::sync::Arc;
 
@@ -35,7 +39,8 @@ use crate::row::Row;
 ///
 /// One action has one name: a drawer that folds what it was given offers the
 /// rest in these words, and so does a row that cut what came back, so the
-/// reader learns the key once.
+/// reader learns the key once. Where no key is read the drawer takes them
+/// out again, through [`Draws::unoffered`].
 pub const EXPAND: &str = "ctrl+o to expand";
 
 /// What a drawer is handed to lay a block out in.
@@ -197,6 +202,14 @@ pub trait Draws: Send + Sync {
     /// Why the block is shown as written instead: past this drawer's caps, or
     /// not something it draws.
     fn block(&self, source: &str, room: &Room) -> Result<Laid, Undrawn>;
+
+    /// Takes out of `rows`, which this drawer laid out, each offer of a key
+    /// they make and leaves the rest of what they say: the rows are going
+    /// where no key is read. The default changes nothing, for a drawer whose
+    /// rows offer none.
+    fn unoffered(&self, rows: &mut [Row]) {
+        let _ = rows;
+    }
 
     /// A display block as a picture. The default draws none.
     ///

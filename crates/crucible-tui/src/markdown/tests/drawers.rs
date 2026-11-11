@@ -2,11 +2,12 @@
 //! drawer is given, what each of its answers draws, and what stays exactly as
 //! it was written.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::chrome::Undrawn;
-use crate::drawing::{Drawers, Draws, Laid, Room};
+use crate::drawing::{Drawers, Draws, EXPAND, Laid, Room};
 use crate::dump::dump;
 
 /// A change to two files, as a model writes one in a fence.
@@ -493,6 +494,118 @@ fn a_page_printed_once_is_told_the_rows_the_record_lays_a_drawn_fence_out_as() {
             assert_eq!(seen(&told), seen(&rows), "{room} columns in {glyphs:?}");
         }
     }
+}
+
+/// A drawer that takes `diff` and draws one row, how many lines it was handed
+/// and an offer of the key that would show them. It declines a block that
+/// says `not a change`, takes the offer back out of rows when it is asked to,
+/// and counts how often it was asked.
+#[derive(Default)]
+struct Offering {
+    withdrawn: AtomicUsize,
+}
+
+impl Draws for Offering {
+    fn names(&self) -> &'static [&'static str] {
+        &["diff"]
+    }
+
+    fn block(&self, source: &str, _: &Room) -> Result<Laid, Undrawn> {
+        if source.contains("not a change") {
+            return Err(Undrawn::NotHere);
+        }
+        let row = Row::new()
+            .then(
+                Slot::Quiet,
+                format!("{} lines held · ", source.lines().count()),
+            )
+            .then(Slot::Cut, EXPAND);
+        Ok(Laid {
+            natural: (row.columns(), 1),
+            rows: vec![row],
+            narrow: None,
+        })
+    }
+
+    fn unoffered(&self, rows: &mut [Row]) {
+        self.withdrawn.fetch_add(1, Ordering::Relaxed);
+        for row in rows {
+            row.rewrite(|_, slot, text| {
+                (slot != Slot::Cut).then(|| (slot, text.trim_end_matches(" · ").to_owned()))
+            });
+        }
+    }
+}
+
+/// What a page printed once is told of the one block `fence` is, by `drawers`
+/// at [`ROOM`], as rows.
+fn told(fence: &str, drawers: &Drawers) -> Vec<Row> {
+    let (held, _) = blocks(fence);
+    let Some(block) = held.first() else {
+        panic!("{fence:?} was not held");
+    };
+    let room = Room {
+        columns: ROOM,
+        glyphs: Glyphs::Unicode,
+    };
+    let mut told = vec![Row::new()];
+    tell(
+        block,
+        room,
+        &Links::default(),
+        drawers,
+        &mut |slot, text, _| {
+            let mut pieces = text.split('\n');
+            if let (Some(piece), Some(row)) = (pieces.next(), told.last_mut()) {
+                row.push(slot, piece);
+            }
+            for piece in pieces {
+                told.push(Row::new().then(slot, piece));
+            }
+        },
+    );
+    if told.last().is_some_and(Row::is_empty) {
+        told.pop();
+    }
+    told
+}
+
+#[test]
+fn a_drawer_takes_its_offer_of_a_key_out_of_what_a_page_printed_once_is_told_and_no_other_rows() {
+    let offering = Arc::new(Offering::default());
+    let drawers = Drawers::default().with(Arc::clone(&offering) as Arc<dyn Draws>);
+    let asked = || offering.withdrawn.load(Ordering::Relaxed);
+    let fence = "```diff\n-old\n+new\n```\n";
+    let (held, _) = blocks(fence);
+    let Some(block) = held.first() else {
+        panic!("{fence:?} was not held");
+    };
+
+    // Laid out for a screen the offer stands, and the drawer is not asked.
+    let rows = lay(block, ROOM, Glyphs::Unicode, &Links::default(), &drawers);
+    assert_eq!(
+        seen(&rows),
+        [[
+            (Slot::Quiet, "2 lines held · ".to_owned()),
+            (Slot::Cut, EXPAND.to_owned())
+        ]]
+    );
+    assert_eq!(asked(), 0);
+
+    // No key is read on a page printed once: the drawer takes it out.
+    assert_eq!(
+        seen(&told(fence, &drawers)),
+        [[(Slot::Quiet, "2 lines held".to_owned())]]
+    );
+    assert_eq!(asked(), 1);
+
+    // A fence it declined is written as it was, and is not its rows to edit.
+    let declined = "```diff\nnot a change\n```\n";
+    assert_eq!(
+        texts(&told(declined, &drawers)),
+        ["┌─ diff", "│ not a change", "└─"]
+    );
+    assert_eq!(asked(), 1);
 }
 
 #[test]

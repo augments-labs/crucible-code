@@ -3908,6 +3908,28 @@ fn a_native_fence_of_an_answer_is_drawn_by_the_drawer_the_renderer_was_handed() 
 }
 
 #[test]
+fn a_native_drawn_fences_offer_of_a_key_stands_at_each_width_it_is_laid_out_for() {
+    use super::super::tests::drawers::offering;
+
+    // Ctrl+O lists the fence in this screen too, so the key is one that
+    // answers, in the window it was drawn in and in a narrower one.
+    for narrowed in [None, Some(40)] {
+        let (rows, _) = drawn_natively(
+            Glyphs::Unicode,
+            64,
+            CHANGE_FENCED,
+            Some(offering()),
+            narrowed,
+        );
+        assert_eq!(
+            rows,
+            ["Before.", "5 lines held · ctrl+o to expand", "After."],
+            "{narrowed:?}"
+        );
+    }
+}
+
+#[test]
 fn a_native_renderer_handed_no_drawer_draws_a_fence_exactly_as_it_was_written() {
     let (untold, written) = drawn_natively(Glyphs::Unicode, 64, CHANGE_FENCED, None, None);
     assert_eq!(

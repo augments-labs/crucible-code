@@ -54,6 +54,44 @@ pub(in crate::render) fn echoing() -> Drawers {
     Drawers::default().with(Arc::new(Echo))
 }
 
+/// A drawer that takes `diff` and draws one row: how many lines it was handed
+/// and an offer of the key that would show them, which it takes back out of
+/// its rows when it is asked to.
+pub(in crate::render) struct Offering;
+
+impl Draws for Offering {
+    fn names(&self) -> &'static [&'static str] {
+        &["diff"]
+    }
+
+    fn block(&self, source: &str, _: &Room) -> Result<Laid, Undrawn> {
+        let row = Row::new()
+            .then(
+                Slot::Quiet,
+                format!("{} lines held · ", source.lines().count()),
+            )
+            .then(Slot::Cut, crate::drawing::EXPAND);
+        Ok(Laid {
+            natural: (row.columns(), 1),
+            rows: vec![row],
+            narrow: None,
+        })
+    }
+
+    fn unoffered(&self, rows: &mut [Row]) {
+        for row in rows {
+            row.rewrite(|_, slot, text| {
+                (slot != Slot::Cut).then(|| (slot, text.trim_end_matches(" · ").to_owned()))
+            });
+        }
+    }
+}
+
+/// The registry holding [`Offering`] alone.
+pub(in crate::render) fn offering() -> Drawers {
+    Drawers::default().with(Arc::new(Offering))
+}
+
 /// An answer with a change in a fence between two lines of prose.
 const ANSWER: &str =
     "Before.\n\n```diff\n--- a/x.rs\n+++ b/x.rs\n@@ -1 +1 @@\n-old\n+new\n```\n\nAfter.\n";
@@ -207,6 +245,53 @@ fn a_redirected_run_is_written_a_fence_as_its_drawer_lays_it_out() {
         written,
         "Before.\n\n» --- a/x.rs\n» +++ b/x.rs\n» @@ -1 +1 @@\n» -old\n» +new\n\nAfter.\n"
     );
+}
+
+#[test]
+fn a_redirected_run_is_written_a_drawn_fence_with_its_offer_of_a_key_taken_out() {
+    // No key is read where the output is a file, so the drawer is asked to
+    // take its offer out: of what is written, and of what the run keeps, which
+    // is what a preview of a session shows.
+    let mut render = Renderer::new(Recording::redirected(80, 24));
+    render.wears(colourful());
+    render.drawers(offering());
+    render.stream(ANSWER).unwrap();
+    render.settle().unwrap();
+
+    assert_eq!(
+        render.terminal.written(),
+        "Before.\n\n5 lines held\n\nAfter.\n"
+    );
+    let kept = render.tail(24);
+    let texts: Vec<String> = kept.iter().map(Row::text).collect();
+    assert_eq!(said(&texts), ["Before.", "5 lines held", "After."]);
+    assert!(
+        kept.iter()
+            .all(|row| row.kinds().all(|slot| slot != Slot::Cut)),
+        "{kept:?}"
+    );
+}
+
+#[test]
+fn a_drawn_fences_offer_of_a_key_stands_on_the_screen_at_each_width_it_is_laid_out_for() {
+    // Ctrl+O lists the fence there, so the offer is one a key answers.
+    let mut drawn = reading(60, 16);
+    drawn.render.drawers(offering());
+    drawn.answer(ANSWER);
+    let offered = ["Before.", "5 lines held · ctrl+o to expand", "After."];
+    assert_eq!(said(&drawn.rows()), offered);
+
+    drawn.resize(40, 16);
+    assert_eq!(said(&drawn.rows()), offered);
+    let lit: Vec<String> = drawn
+        .render
+        .tail(16)
+        .iter()
+        .flat_map(Row::spans)
+        .filter(|(slot, _)| *slot == Slot::Cut)
+        .map(|(_, text)| text.to_owned())
+        .collect();
+    assert_eq!(lit, [crate::drawing::EXPAND]);
 }
 
 /// Fences whose paths and lines carry what a terminal would obey: an escape

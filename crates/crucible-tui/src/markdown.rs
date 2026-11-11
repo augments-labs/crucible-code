@@ -177,6 +177,7 @@ mod links;
 mod strikes;
 mod table;
 
+pub(crate) use drawn::{Offers, lay_unoffered};
 pub(crate) use links::SHORTENED_CAP;
 use links::spill;
 
@@ -519,7 +520,8 @@ pub(crate) struct Links {
 ///
 /// What the record keeps a block as, and what it lays it out with again at
 /// every width and glyph set it is asked for. A closed fence a drawer in
-/// `drawers` takes is the rows that drawer lays out: see [`drawn`].
+/// `drawers` takes is the rows that drawer lays out, a key it offers standing
+/// in them as on a screen; [`lay_unoffered`] is for where none is read.
 ///
 /// Lines rather than rows: one put back as it was written can be wider than
 /// the room, and is folded where it is drawn, as streamed text is.
@@ -531,7 +533,16 @@ pub(crate) fn lay(
     links: &Links,
     drawers: &Drawers,
 ) -> Vec<Row> {
-    let refusal = match drawn::asked(block, room, glyphs, drawers) {
+    let room = Room {
+        columns: room,
+        glyphs,
+    };
+    laid(block, room, links, drawers, Offers::Stand)
+}
+
+/// [`lay`], with what becomes of a key a drawer offers said by `offers`.
+fn laid(block: &Block, room: Room, links: &Links, drawers: &Drawers, offers: Offers) -> Vec<Row> {
+    let refusal = match drawn::asked(block, room, drawers, offers) {
         drawn::Asked::Drawn(rows) => return rows,
         drawn::Asked::Written(refusal) => refusal,
     };
@@ -546,10 +557,6 @@ pub(crate) fn lay(
             push(&mut rows, slot, piece, link);
         }
     };
-    let room = Room {
-        columns: room,
-        glyphs,
-    };
     told_undrawn(block, room, links, refusal, &mut put);
 
     // The break that ends the last line ends the block, and is no row of it.
@@ -563,7 +570,8 @@ pub(crate) fn lay(
 /// handed to `put` in order, a line's end as a break in the text.
 ///
 /// Runs rather than lines for a page printed once, which keeps each address
-/// beside its words as a run streamed past it would.
+/// beside its words as a run streamed past it would, and reads no key: a
+/// drawer takes its offers of one out.
 pub(crate) fn tell(
     block: &Block,
     room: Room,
@@ -571,7 +579,7 @@ pub(crate) fn tell(
     drawers: &Drawers,
     put: &mut dyn FnMut(Slot, &str, Option<&str>),
 ) {
-    match drawn::asked(block, room.columns, room.glyphs, drawers) {
+    match drawn::asked(block, room, drawers, Offers::Withdrawn) {
         drawn::Asked::Drawn(rows) => drawn::told(&rows, put),
         drawn::Asked::Written(refusal) => told_undrawn(block, room, links, refusal, put),
     }

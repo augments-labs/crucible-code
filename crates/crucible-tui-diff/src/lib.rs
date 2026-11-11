@@ -25,7 +25,8 @@
 //!   rest and names the key that shows them; the [`Change`] keeps every one of
 //!   them, and [`Changes::written`] writes every one out, in the words the box
 //!   is drawn in. [`unoffered`] takes the key out of a fold's row that nothing
-//!   answers any more.
+//!   answers any more, and [`Changes`] out of a fence drawn where no key is
+//!   read.
 //! - **Bounded when it is drawn.** One change reads at most [`SYNTAX_LINES`]
 //!   lines and [`SYNTAX_BYTES`] bytes for their colours, compares at most
 //!   [`PAIRS`] pairs of lines of at most [`TOKENS`] words each, and lays out no

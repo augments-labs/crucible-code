@@ -169,6 +169,9 @@ and the fold. A file of more than 32 rows is folded around a row such as
 `⋯  36 lines folded · ctrl+o to expand  ⋯`, and <kbd>Ctrl+O</kbd> lists the
 diff as the model wrote it, every line of it: see
 [The source of a table, formula, diagram or diff](#the-source-of-a-table-formula-diagram-or-diff).
+Where no key is read, in output sent to a file or a pipe and in the `/resume`
+preview of a session, the row keeps its count and names no key:
+`⋯  36 lines folded  ⋯`.
 
 A fence under either name that is not a unified diff is shown as written, in
 the frame of a [code block](#code-blocks). So is a diff past what a change

@@ -2023,6 +2023,24 @@
       ]
     },
     {
+      "id": "CASE-TRANSCRIPT-DRAWER-TOLD-NO-KEY",
+      "family": "transcript-blocks",
+      "obligation": "A drawer whose row offers a key is not asked to take it out of a closed fence laid out for a screen, where the row keeps the key in the slot that lights under the pointer; told to a page printed once the drawer is asked once and the row is its count alone; and a fence the drawer declined is told as it was written, the drawer asked nothing more.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "markdown::tests::drawers::a_drawer_takes_its_offer_of_a_key_out_of_what_a_page_printed_once_is_told_and_no_other_rows",
+      "source": "crates/crucible-tui/src/markdown/tests/drawers.rs",
+      "body_sha256": "b8568a461588614e29fb540e2e56d19ade4d1225722549eaf28dba8f18180de5",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
       "id": "CASE-TRANSCRIPT-DRAWER-NONE-REGISTERED",
       "family": "transcript-blocks",
       "obligation": "With no drawer registered a two-file diff fence is drawn as it was written, every line in the frame that names it, its frame and gutter quiet and its first lines in the colours its language gives them, with the ascii frame and gutter in the ascii glyph set, and a patch, a mermaid, a math and a text fence are each framed as written.",
@@ -2293,6 +2311,42 @@
       ]
     },
     {
+      "id": "CASE-TRANSCRIPT-DRAWER-RENDERER-REDIRECTED-NO-KEY",
+      "family": "transcript-blocks",
+      "obligation": "A run whose output is redirected, wearing colour and handed a drawer whose row offers a key, is written a diff fence as that drawer's row with the offer taken out, between the prose around it, and keeps the same rows with none in the slot that lights under the pointer.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::drawers::a_redirected_run_is_written_a_drawn_fence_with_its_offer_of_a_key_taken_out",
+      "source": "crates/crucible-tui/src/render/tests/drawers.rs",
+      "body_sha256": "dd34d090d84dfb9819194107423de6f2336069e0e0c544021c53d3e264cd39bc",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-RENDERER-OFFER",
+      "family": "transcript-blocks",
+      "obligation": "On a screen, a diff fence drawn by a drawer whose row offers a key shows the row naming the key at 60 columns and again once the window is 40 wide, where the only run in the slot that lights under the pointer is the key's words.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::tests::drawers::a_drawn_fences_offer_of_a_key_stands_on_the_screen_at_each_width_it_is_laid_out_for",
+      "source": "crates/crucible-tui/src/render/tests/drawers.rs",
+      "body_sha256": "aaabbae341cd9f5f42859ee9546209b5345e36e5da116093b43b3ef1515a87b7",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
       "id": "CASE-TRANSCRIPT-DRAWER-HOSTILE",
       "family": "transcript-blocks",
       "obligation": "Diff and patch fences whose paths and lines carry escapes that colour and clear, string and picture escapes, a hyperlink, a bell, a backspace, controls of the second set, an override, an isolate, a zero width space and a byte order mark are drawn on a screen by the drawer the renderer was handed, in the unicode and the ascii glyph set, and none of those reaches the terminal.",
@@ -2376,6 +2430,24 @@
       "case": "render::native::tests::a_native_drawn_fence_narrowed_is_the_fence_a_window_that_narrow_draws",
       "source": "crates/crucible-tui/src/render/native/tests.rs",
       "body_sha256": "08cf29d94a9d976658c4575543b17ee338dd28a25005e94253fcb20c62e72e44",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DRAWER-RENDERER-OFFER-NATIVE",
+      "family": "transcript-blocks",
+      "obligation": "In the native screen, a diff fence drawn by a drawer whose row offers a key shows the row naming the key in a 64-column window and in one narrowed to 40.",
+      "package": "crucible-tui",
+      "target": {
+        "kind": "lib",
+        "name": "crucible_tui"
+      },
+      "case": "render::native::tests::a_native_drawn_fences_offer_of_a_key_stands_at_each_width_it_is_laid_out_for",
+      "source": "crates/crucible-tui/src/render/native/tests.rs",
+      "body_sha256": "7352de703c2be546af7788c6428daf441b7be0c935df1f098980f18b699e8a0e",
       "platforms": [
         "linux",
         "macos",
@@ -2815,6 +2887,42 @@
       ]
     },
     {
+      "id": "CASE-TRANSCRIPT-DIFF-FENCE-FOLD-NO-KEY-AGREES",
+      "family": "transcript-blocks",
+      "obligation": "A folded change written as a diff fence of an answer, in a run whose output is redirected and that was handed the session's drawers, is kept as the rows a tool's call draws for the same change once each has its offer of a key taken out, slot for slot, and is written as their text with no key named, in both glyph sets at every window from 3 to 80 columns; at 80 the fold row written is its count between its marks, and at some width the call's rows named the key.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::draw::tests::a_folded_fence_written_where_no_key_opens_it_is_the_tools_change_with_its_key_taken_out",
+      "source": "src/cli/draw/tests.rs",
+      "body_sha256": "22ac61d02d221ce07aa248204c4126031a4d16dd5909162bec630034fa4725c2",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIFF-FENCE-FOLD-OFFERED",
+      "family": "transcript-blocks",
+      "obligation": "A folded change written as a diff fence of an answer on a screen 80 columns wide, in the fullscreen and the native screen and in both glyph sets, keeps one fold row that counts its lines and names the key, whose words are the only run in the slot that lights under the pointer, and the words reach the terminal.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::draw::tests::a_folded_fence_on_a_screen_names_the_key_that_lists_it_in_both_screen_modes",
+      "source": "src/cli/draw/tests.rs",
+      "body_sha256": "553d2fcefad792d186bd521cf5645452de828d70ceef0e4d3118bc6a6c97bd97",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
       "id": "CASE-TRANSCRIPT-CHANGE-FOLD-NARROW-KEPT",
       "family": "transcript-blocks",
       "obligation": "A folded change drawn in a window too narrow to name its key still counts its hidden lines, names no key there, and is kept written out, and the same window widened to 80 columns names the key on its fold row.",
@@ -2898,6 +3006,24 @@
       "case": "cli::converse::replaying::tests::a_diff_fence_in_a_session_glimpsed_is_drawn_as_the_change_it_holds",
       "source": "src/cli/converse/replaying/tests.rs",
       "body_sha256": "fbc04a6c516b7d39c358097badca2e621830d39ca1bbf961274c751baeea2225",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ]
+    },
+    {
+      "id": "CASE-TRANSCRIPT-DIFF-FENCE-GLIMPSED-FOLD-NO-KEY",
+      "family": "transcript-blocks",
+      "obligation": "A session glimpsed in colour whose answer is a closed diff fence of 64 added lines shows the change's header and one fold row that counts 36 lines between its marks, with no row naming a key and none in the slot that lights under the pointer.",
+      "package": "crucible-code",
+      "target": {
+        "kind": "bin",
+        "name": "crucible"
+      },
+      "case": "cli::converse::replaying::tests::a_folded_diff_fence_in_a_session_glimpsed_counts_its_lines_and_names_no_key",
+      "source": "src/cli/converse/replaying/tests.rs",
+      "body_sha256": "c1b61e1d87a41db75639b48517ba2b6d1628861d6797ef0b97fe88a323d68ceb",
       "platforms": [
         "linux",
         "macos",

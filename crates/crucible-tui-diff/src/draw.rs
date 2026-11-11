@@ -36,7 +36,8 @@
 //! box's own: the header, the number and sign of a line, and each row that
 //! stands for lines or files are worded by the functions the rows are drawn
 //! from. [`unoffered`] takes the key back out of a fold's row once nothing
-//! answers it.
+//! answers it, and [`Changes`] takes it out of every row of a fence it drew
+//! for where no key is read, so the two rows read the same.
 //!
 //! The rows are laid out once for the room and then clipped to it: no more of
 //! a line is laid out than the room shows, a line cut short ends in the glyph
@@ -212,6 +213,10 @@ impl Draws for Changes {
             NotADiff::Unread => Undrawn::NotHere,
         })?;
         Ok(self.draw(&change, room))
+    }
+
+    fn unoffered(&self, rows: &mut [Row]) {
+        rows.iter_mut().for_each(unoffered);
     }
 }
 

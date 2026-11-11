@@ -1803,6 +1803,117 @@ fn a_tools_change_and_the_fence_an_answer_says_it_in_are_drawn_as_the_same_rows(
 }
 
 #[test]
+fn a_folded_fence_written_where_no_key_opens_it_is_the_tools_change_with_its_key_taken_out() {
+    // One folded change, twice where nothing is pressed: what a call came
+    // back with once its fold stops offering, and a `diff` fence of an answer
+    // in a run whose output is a file. The rows are the same rows, in what the
+    // run keeps and in what it writes, in both glyph sets and at every width,
+    // the ones too narrow for the whole key among them.
+    let diff = long_change();
+    for (glyphs, counted) in [
+        (Glyphs::Unicode, "│  ⋯  36 lines folded  ⋯"),
+        (Glyphs::Ascii, "|  ...  36 lines folded  ..."),
+    ] {
+        let mut named = 0;
+        for window in 3..=80 {
+            let called =
+                Shown::live(ToolOutput::ok("changed it, 1 replacements").showing(diff.clone()));
+            let mut hung = finished_rows(&called, window, Style::drawn(glyphs), false);
+            if hung.iter().any(|row| row.text().contains("ctrl")) {
+                named += 1;
+            }
+            hung.iter_mut().for_each(crucible_tui_diff::unoffered);
+            // A call's change hangs two columns under its call, and a fence
+            // does not.
+            let tool: Vec<Vec<(Slot, String)>> = spans_of(&hung)
+                .into_iter()
+                .map(|row| row.into_iter().skip(1).collect())
+                .collect();
+
+            let mut renderer = Renderer::new(Recording::redirected(window - 2, 120));
+            renderer.wears(Style::coloured().palette());
+            renderer.draws(glyphs);
+            renderer.drawers(drawers());
+            renderer
+                .stream(&fence_of(&diff, "@@ -0,0 +1,64 @@"))
+                .expect("the fence to be written");
+            renderer.settle().expect("the answer to end");
+            let kept = renderer.tail(120);
+            let written = renderer.terminal().written();
+
+            assert_eq!(tool, spans_of(&kept), "{glyphs:?} at {window}");
+            assert_eq!(
+                written.lines().map(str::trim_end).collect::<Vec<_>>(),
+                texts(&hung)
+                    .iter()
+                    .map(|row| row.trim_start())
+                    .collect::<Vec<_>>(),
+                "{glyphs:?} at {window}"
+            );
+            assert!(!written.contains("ctrl"), "{glyphs:?} at {window}");
+            // With room for the whole row, the row is the count between its
+            // marks. A narrower room cut it while it still named the key.
+            if window == 80 {
+                assert_eq!(
+                    written
+                        .lines()
+                        .filter(|line| line.contains("lines folded"))
+                        .collect::<Vec<_>>(),
+                    [counted],
+                    "{glyphs:?}"
+                );
+            }
+        }
+        assert!(named > 0, "{glyphs:?}: no width named the key on a call");
+    }
+}
+
+#[test]
+fn a_folded_fence_on_a_screen_names_the_key_that_lists_it_in_both_screen_modes() {
+    // Ctrl+O lists the source of a drawn fence on either screen, so the fold
+    // of one names the key there, on the slot that lights under the pointer,
+    // and the words reach the terminal.
+    for mode in [ScreenMode::Fullscreen, ScreenMode::Native] {
+        for (glyphs, offered) in [
+            (
+                Glyphs::Unicode,
+                "│  ⋯  36 lines folded · ctrl+o to expand  ⋯",
+            ),
+            (
+                Glyphs::Ascii,
+                "|  ...  36 lines folded · ctrl+o to expand  ...",
+            ),
+        ] {
+            let mut renderer = Renderer::drawing(Recording::new(80, 120), mode);
+            renderer.wears(Style::coloured().palette());
+            renderer.draws(glyphs);
+            renderer.drawers(drawers());
+            renderer
+                .stream(&fence_of(&long_change(), "@@ -0,0 +1,64 @@"))
+                .expect("the fence to draw");
+            renderer.settle().expect("the answer to end");
+
+            let kept = renderer.tail(120);
+            let folds: Vec<String> = texts(&kept)
+                .into_iter()
+                .filter(|row| row.contains("lines folded"))
+                .collect();
+            assert_eq!(folds, [offered], "{mode:?} in {glyphs:?}");
+            let lit: Vec<(Slot, &str)> = kept
+                .iter()
+                .flat_map(Row::spans)
+                .filter(|(slot, _)| *slot == Slot::Cut)
+                .collect();
+            assert_eq!(lit, [(Slot::Cut, EXPAND)], "{mode:?} in {glyphs:?}");
+            assert!(
+                renderer.terminal().written().contains(EXPAND),
+                "{mode:?} in {glyphs:?}: the key never reached the terminal"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_folded_change_offers_its_key_and_is_kept_written_out_with_every_line() {
     // The fold counts what it hides and names the key that shows it, on the
     // slot that lights under the pointer. What the key opens is the change

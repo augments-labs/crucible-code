@@ -19,11 +19,16 @@
 //!   with nothing said of it. One that says it is past what it holds leaves
 //!   it as written in the frame, and with the words, the reader gives a fence
 //!   past its own hold.
-//! - A drawer's rows are laid out as it made them. Told to a page printed
-//!   once they are their runs with no address: a row gives its text and its
-//!   slots, and not where a run links.
+//! - A drawer's rows are laid out as it made them, but for a key they offer
+//!   where none is read. [`Offers`] says which place the rows are going to:
+//!   on a screen the offer stands, and for a page printed once, a run whose
+//!   output is a file and a preview of a session, the drawer that drew the
+//!   rows takes its offers out of them through [`Draws::unoffered`]. Rows no
+//!   drawer drew are never handed to one.
+//! - Told to a page printed once a drawer's rows are their runs with no
+//!   address: a row gives its text and its slots, and not where a run links.
 
-use super::{Block, Kind, Markdown};
+use super::{Block, Kind, Links, Markdown};
 use crate::chrome::Undrawn;
 use crate::color::Slot;
 use crate::drawing::{Drawers, Draws, Room};
@@ -39,21 +44,51 @@ pub(super) enum Asked {
     Written(Option<Undrawn>),
 }
 
-/// `block` as the drawer in `drawers` that takes its name lays it out `room`
-/// columns wide in `glyphs`, or that it is to be shown as written.
-pub(super) fn asked(block: &Block, room: usize, glyphs: Glyphs, drawers: &Drawers) -> Asked {
+/// What becomes of a key a drawer's rows offer, where the rows are going.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Offers {
+    /// They stand: the rows are for a screen whose keys are read.
+    Stand,
+    /// The drawer takes them out: no key is read where the rows are going.
+    Withdrawn,
+}
+
+/// `block` as the drawer in `drawers` that takes its name lays it out in
+/// `room`, its `offers` standing or taken out by it, or that it is to be
+/// shown as written.
+pub(super) fn asked(block: &Block, room: Room, drawers: &Drawers, offers: Offers) -> Asked {
     let Some((drawer, body)) = taken(block, drawers) else {
         return Asked::Written(None);
     };
+    match drawer.block(body, &room) {
+        Ok(mut laid) => {
+            match offers {
+                Offers::Stand => {}
+                Offers::Withdrawn => drawer.unoffered(&mut laid.rows),
+            }
+            Asked::Drawn(laid.rows)
+        }
+        Err(Undrawn::NotHere) => Asked::Written(None),
+        Err(Undrawn::PastCap) => Asked::Written(Some(Undrawn::PastCap)),
+    }
+}
+
+/// `block` laid out as [`super::lay`] lays it, for where no key is read: a
+/// run whose output is a file, and the rows such a run keeps, which are what
+/// a preview of a session shows. A drawer takes its offers of a key out.
+#[must_use]
+pub(crate) fn lay_unoffered(
+    block: &Block,
+    room: usize,
+    glyphs: Glyphs,
+    links: &Links,
+    drawers: &Drawers,
+) -> Vec<Row> {
     let room = Room {
         columns: room,
         glyphs,
     };
-    match drawer.block(body, &room) {
-        Ok(laid) => Asked::Drawn(laid.rows),
-        Err(Undrawn::NotHere) => Asked::Written(None),
-        Err(Undrawn::PastCap) => Asked::Written(Some(Undrawn::PastCap)),
-    }
+    super::laid(block, room, links, drawers, Offers::Withdrawn)
 }
 
 /// The drawer that takes `block`, and the lines between its two fence lines.
