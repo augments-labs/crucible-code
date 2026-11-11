@@ -294,8 +294,9 @@ running have ended. It is taken as a turn like any prompt, but is never kept as
 
 ## Where it is not there
 
-A run whose output is not a terminal has nobody to ask, so the tool is not
+A run that is not a terminal at both ends has nobody to ask, so the tool is not
 registered at all, not even for `tool_search` to find. Piping crucible's output
-to a file is one of those runs. A program driving crucible through its client
-protocol is the exception: one that holds questions for later is offered the
-tool, as above.
+to a file is one of those runs, and so is piping its input in from another
+program while it draws in a terminal. A program driving crucible through its
+client protocol is the exception: one that holds questions for later is offered
+the tool, as above.

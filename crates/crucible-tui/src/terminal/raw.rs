@@ -69,6 +69,17 @@ pub struct Raw {
     leave: fn() -> io::Result<()>,
 }
 
+/// Whether the session is a terminal at both ends, so somebody is at the keys
+/// and sees what they press.
+///
+/// What [`Raw::enter`] decides on, so whatever turns on there being somebody
+/// at the keys decides it the same way: output on a terminal with input from a
+/// pipe has a screen and nobody who can answer on it.
+#[must_use]
+pub fn keyed() -> bool {
+    io::stdin().is_terminal() && io::stdout().is_terminal()
+}
+
 impl Raw {
     /// Puts the terminal into raw mode, and returns what holds it there.
     ///
@@ -83,7 +94,7 @@ impl Raw {
     ///
     /// [`RawError::Enter`] if the terminal will not change mode.
     pub fn enter() -> Result<Option<Self>, RawError> {
-        if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        if !keyed() {
             return Ok(None);
         }
 

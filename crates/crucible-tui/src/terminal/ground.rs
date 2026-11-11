@@ -20,7 +20,6 @@
 //! the terminals that answer nothing at all are the parts that are easy to get
 //! wrong and impossible to notice.
 
-use std::io::IsTerminal;
 use std::time::Duration;
 
 /// The variables that say the terminal is not on this machine, or is behind
@@ -57,7 +56,7 @@ pub fn asked(patience: Duration, from: &dyn Fn(&str) -> Option<String>) -> Optio
     // terminal to answer it, and an answer is only worth having if the thing
     // that would use it is drawing on one. Asked of a pipe, the query bytes
     // would end up in whatever kept the output.
-    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+    if !super::raw::keyed() {
         return None;
     }
 
