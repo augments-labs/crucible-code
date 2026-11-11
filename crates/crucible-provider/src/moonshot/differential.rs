@@ -3,8 +3,10 @@
 //!
 //! The expected files under `fixtures/` were written once, by the revision
 //! this module arrived in, before any of the code they hold moved, and are not
-//! written again: a change that alters one of them alters what Kimi receives
-//! or what a turn is told, which is the thing these tests exist to catch.
+//! written again but in one way: a field added to a value they print is written
+//! into them at its unset value, with nothing else changed. Any other change
+//! to one of them alters what Kimi receives or what a turn is told, which is
+//! the thing these tests exist to catch.
 //! Each request is the address, every header in the order it is set, and the
 //! body; each response is the deltas it yields, one to a line, or the failure
 //! it ends in. The one value a release changes, the version in the user agent,

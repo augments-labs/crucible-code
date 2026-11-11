@@ -34,6 +34,9 @@ pub enum UsageError {
     /// A detail label was empty, unbounded, or not a safe static identifier.
     #[error("provider usage detail label was invalid")]
     InvalidDetailLabel,
+    /// A subset arrived without the total it is part of.
+    #[error("a prompt-cache usage subset arrived without the total it is part of")]
+    SubsetWithoutTotal,
 }
 
 /// Normalized input-token categories for one provider attempt.
@@ -47,6 +50,10 @@ pub struct InputTokenUsage {
     pub cache_read: Option<u64>,
     /// Provider-reported cache creation/write input.
     pub cache_write_or_creation: Option<u64>,
+    /// The part of `cache_write_or_creation` the provider kept for its longer
+    /// retention class, where it reports one. It is inside the write, never a
+    /// second quantity to add, and stays `None` where the provider did not say.
+    pub cache_write_extended: Option<u64>,
 }
 
 impl InputTokenUsage {
@@ -56,7 +63,29 @@ impl InputTokenUsage {
         uncached: None,
         cache_read: None,
         cache_write_or_creation: None,
+        cache_write_extended: None,
     };
+
+    /// The same counts, with `kept` of the write held for the provider's
+    /// longer retention class. Every other count stays as it was.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when there is no write total for `kept` to be part of,
+    /// or when `kept` exceeds it.
+    pub fn with_cache_write_extended(mut self, kept: u64) -> Result<Self, UsageError> {
+        self.cache_write_extended = Some(kept);
+        self.check_extended()?;
+        Ok(self)
+    }
+
+    fn check_extended(self) -> Result<(), UsageError> {
+        match (self.cache_write_extended, self.cache_write_or_creation) {
+            (Some(_), None) => Err(UsageError::SubsetWithoutTotal),
+            (Some(kept), Some(write)) if kept > write => Err(UsageError::SubsetExceedsTotal),
+            _ => Ok(()),
+        }
+    }
 
     /// An inclusive total with a documented cached-read subset.
     ///
@@ -80,6 +109,7 @@ impl InputTokenUsage {
             uncached,
             cache_read: read,
             cache_write_or_creation: None,
+            cache_write_extended: None,
         })
     }
 
@@ -99,6 +129,7 @@ impl InputTokenUsage {
             uncached,
             cache_read: read,
             cache_write_or_creation: write,
+            cache_write_extended: None,
         })
     }
 
@@ -129,6 +160,7 @@ impl InputTokenUsage {
             uncached,
             cache_read: read,
             cache_write_or_creation: write,
+            cache_write_extended: None,
         })
     }
 
@@ -248,6 +280,7 @@ impl ProviderUsage {
         for detail in details {
             ProviderNumericDetail::new(detail.label, detail.value)?;
         }
+        input.check_extended()?;
         if let (Some(reasoning), Some(output)) = (reasoning, output)
             && reasoning > output
         {
@@ -309,6 +342,10 @@ impl ProviderUsage {
                 .input
                 .cache_write_or_creation
                 .or(self.input.cache_write_or_creation),
+            cache_write_extended: newer
+                .input
+                .cache_write_extended
+                .or(self.input.cache_write_extended),
         };
         let mut details = self.details.to_vec();
         for detail in newer.details.iter().copied() {
@@ -1128,6 +1165,71 @@ mod tests {
             InputTokenUsage::disjoint(Some(u64::MAX), Some(1), Some(0)),
             Err(UsageError::Overflow)
         );
+    }
+
+    fn written(total: u64, write: u64) -> InputTokenUsage {
+        InputTokenUsage::inclusive_read_write(Some(total), Some(0), Some(write)).unwrap()
+    }
+
+    #[test]
+    fn a_longer_write_above_the_write_total_is_refused() {
+        assert_eq!(
+            written(1_000, 100).with_cache_write_extended(101),
+            Err(UsageError::SubsetExceedsTotal)
+        );
+        assert_eq!(
+            written(1_000, 100)
+                .with_cache_write_extended(100)
+                .unwrap()
+                .cache_write_extended,
+            Some(100)
+        );
+    }
+
+    #[test]
+    fn a_longer_write_with_no_write_total_is_refused() {
+        let unwritten = InputTokenUsage::inclusive_read(Some(1_000), Some(0)).unwrap();
+        assert_eq!(
+            unwritten.with_cache_write_extended(1),
+            Err(UsageError::SubsetWithoutTotal)
+        );
+    }
+
+    #[test]
+    fn a_longer_write_leaves_uncached_and_the_write_as_they_were() {
+        let base = written(1_000, 100);
+        let kept = base.with_cache_write_extended(70).unwrap();
+
+        assert_eq!(kept.uncached, base.uncached);
+        assert_eq!(kept.uncached, Some(900));
+        assert_eq!(kept.cache_write_or_creation, Some(100));
+        assert_eq!(kept.total, Some(1_000));
+    }
+
+    #[test]
+    fn merged_keeps_the_later_longer_write_or_the_earlier_one_where_the_later_has_none() {
+        let usage = |input| ProviderUsage::new(input, None, None, None, &[]).unwrap();
+        let earlier = usage(written(1_000, 100).with_cache_write_extended(70).unwrap());
+        let later = usage(written(1_000, 100).with_cache_write_extended(5).unwrap());
+        let silent = usage(written(1_000, 100));
+
+        assert_eq!(
+            earlier.merged(&later).unwrap().input.cache_write_extended,
+            Some(5)
+        );
+        assert_eq!(
+            earlier.merged(&silent).unwrap().input.cache_write_extended,
+            Some(70)
+        );
+    }
+
+    #[test]
+    fn a_merge_whose_write_total_ends_below_its_longer_write_is_refused() {
+        let usage = |input| ProviderUsage::new(input, None, None, None, &[]).unwrap();
+        let earlier = usage(written(1_000, 100).with_cache_write_extended(70).unwrap());
+        let later = usage(written(1_000, 50));
+
+        assert_eq!(earlier.merged(&later), Err(UsageError::SubsetExceedsTotal));
     }
 
     #[test]
