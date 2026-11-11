@@ -18,9 +18,10 @@
 //! and it settles as it does where nobody answers, so a front end that is
 //! wrong for ever cannot hold a turn for ever.
 //!
-//! An action is put only where it can be put whole. Questions with more
-//! answers than a list holds, or an answer whose name would be cut, are
-//! declined without being put; a call whose tool, subject, or line or address
+//! An action is put only where each of its lists and names fits whole.
+//! Questions with more answers than a list holds, an answer whose name would
+//! be cut, or an answer showing more rows than a list holds, are declined
+//! without being put; a call whose tool, subject, or line or address
 //! as sent would be cut is denied without being put, unless the front end says
 //! it draws from the whole value it is lent ([`Front::draws_whole`]). Either
 //! way no identity is spent on an action nobody was shown.
@@ -547,10 +548,13 @@ async fn ruled(
 /// More than [`ITEMS`] questions are declined without being put, and the asker
 /// hears "nobody is there": one pending action holds no more, and half of them
 /// answered is not an answer. So is a question offering more than [`ITEMS`]
-/// answers, or an answer whose name would be cut: an answer left out cannot be
-/// chosen, and a name that was cut is not the one the asker reads back. The
-/// question tool refuses a call that long before it asks anything, so this is
-/// the floor under an asker that does not.
+/// answers, an answer whose name would be cut, or an answer showing more rows
+/// than a list holds: an answer left out cannot be chosen, a name that was cut
+/// is not the one the asker reads back, and rows left out are not what the
+/// asker showed. The question tool refuses a call that long before it asks
+/// anything, so this is the floor under an asker that does not. Rows are held
+/// per list and not against the frame as a whole, which the question tool's
+/// own ceilings keep every set it can ask well inside.
 pub async fn questions(
     capabilities: Capabilities,
     front: &mut dyn Front,

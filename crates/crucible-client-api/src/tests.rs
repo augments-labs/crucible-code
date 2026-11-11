@@ -2309,11 +2309,15 @@ fn the_fullest_value_that_crosses_is_within_the_value_ceiling() {
     assert_eq!(Snapshot::decode(&frame).unwrap(), fullest);
 
     // Rows a choice shows are bounded by the list that holds them and not by
-    // this ceiling, so a value whose every choice shows a list of them is
-    // refused whole rather than sent, as it would be refused read.
+    // this ceiling, so a value whose choices show full lists of them is
+    // refused whole rather than sent. One question's worth is already over.
     let mut showing = fullest;
     if let Some(Pending::Questions { questions, .. }) = &mut showing.pending {
-        for choice in questions.iter_mut().flat_map(|asked| &mut asked.choices) {
+        for choice in questions
+            .iter_mut()
+            .take(1)
+            .flat_map(|asked| &mut asked.choices)
+        {
             choice.shows = vec![Text::cut("r"); ITEMS];
         }
     }

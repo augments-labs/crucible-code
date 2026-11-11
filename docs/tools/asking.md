@@ -262,8 +262,8 @@ answers the same questions. The protocol is revision 6. A front end that holds
 questions for later is offered `ask_user` without a terminal. A request that
 claims the `questions` capability is told what waits by a `waiting` progress
 report carrying an `era` and the waiting batches. An answer that shows a
-specimen carries its rows, in order, under `shows`, there and on a question a
-turn stops on, so the front end can draw what the terminal draws; an answer
+specimen carries its rows, in order, under `shows`, each a `text` with its own
+`truncated` flag, there and on a question a turn stops on, so the front end can draw what the terminal draws; an answer
 showing none has no `shows`. The front end answers one batch with an `answer`
 command:
 
