@@ -96,8 +96,9 @@ Read the provider's own pages for each line of the report:
    report names and the reason to `PASSED_FAMILIES`. That quiets every model of
    it, one released later included, until the row is removed, so remove it
    when the family is worth another look. To decline only one model of the
-   family, add that model to `PASSED` with the reason instead. The check never
-   adds a family: it is chosen by hand.
+   family, add that model to `PASSED` with the reason instead; a `labs-` model
+   of Mistral is settled by 8, not by a `PASSED` row. The check never adds a
+   family: it is chosen by hand.
 7. **A revised model.** The database dates an offered model after the
    provider's `reviewed` day, so the vendor released or revised it under the
    same name. Re-read the model's records against the vendor's pages as in 1,

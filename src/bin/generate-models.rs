@@ -601,7 +601,8 @@ enum Finding {
 /// ladder has, and not for a model whose difference is `kept`. A model named as
 /// a [`PREVIEW`] model is reported whether or not a coding session could ask
 /// for it, unless the hold `crucible_app::content_use` builds already warns of
-/// its route or `passed` declines it by name.
+/// its route or `passed` declines it by name; that rule reads its one provider
+/// from [`PREVIEW`], which is offered, rather than from `offered`.
 // Seven inputs of one comparison, each a different kind of thing and each named
 // at its two call sites; a struct holding them would only rename them.
 #[allow(clippy::too_many_arguments)]
@@ -865,7 +866,8 @@ fn reported(found: &[Finding]) -> String {
             Finding::Preview { provider, key } => writeln!(
                 out,
                 "- {provider}: `{}` is a Preview model by its vendor's terms, and nothing \
-                 asks before it is sent: hold it by name in `WARNED` or decline it in `PASSED`.",
+                 asks before it is sent: hold it by name in `WARNED`, or decline it in \
+                 `PASSED` only where its vendor no longer counts it a Preview model.",
                 shown(key)
             ),
         };
@@ -1317,9 +1319,25 @@ mod tests {
         assert!(
             report.contains(
                 "- mistral: `labs-x` is a Preview model by its vendor's terms, and nothing \
-                 asks before it is sent: hold it by name in `WARNED` or decline it in `PASSED`.\n"
+                 asks before it is sent: hold it by name in `WARNED`, or decline it in \
+                 `PASSED` only where its vendor no longer counts it a Preview model.\n"
             ),
             "{report}"
+        );
+
+        let forged = reported(&[Finding::Preview {
+            provider: "mistral",
+            key: String::from("labs-a`b\nc"),
+        }]);
+
+        assert_eq!(
+            forged.lines().filter(|line| line.starts_with("- ")).count(),
+            1,
+            "{forged}"
+        );
+        assert!(
+            forged.contains("- mistral: `labs-abc` is a Preview"),
+            "{forged}"
         );
     }
 
