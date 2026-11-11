@@ -864,10 +864,10 @@ impl Empty {
             .as_nanos();
         let path =
             std::env::temp_dir().join(format!("crucible-own-probe-{}-{nanos}", std::process::id()));
-        let mut made = fs::DirBuilder::new();
         #[cfg(unix)]
-        std::os::unix::fs::DirBuilderExt::mode(&mut made, 0o700);
-        made.create(&path)?;
+        std::os::unix::fs::DirBuilderExt::mode(&mut fs::DirBuilder::new(), 0o700).create(&path)?;
+        #[cfg(not(unix))]
+        fs::DirBuilder::new().create(&path)?;
         let path = fs::canonicalize(&path)?;
         Ok(Self { path })
     }
